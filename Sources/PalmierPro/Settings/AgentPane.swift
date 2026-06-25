@@ -8,6 +8,10 @@ struct AgentPane: View {
     @State private var draft: String = ""
     @FocusState private var isFocused: Bool
 
+    @AppStorage("useClaudeCodeRuntime") private var useClaudeRuntime: Bool = false
+    @AppStorage("claudeRuntimeWorkingDir") private var claudeWorkingDir: String = ""
+    @AppStorage("claudeRuntimePluginDir") private var claudePluginDir: String = ""
+
     private let consoleURL = URL(string: "https://console.anthropic.com/settings/keys")!
 
     var body: some View {
@@ -15,6 +19,8 @@ struct AgentPane: View {
             apiKeySection
             Divider().overlay(AppTheme.Border.subtleColor)
             mcpSection
+            Divider().overlay(AppTheme.Border.subtleColor)
+            claudeRuntimeSection
         }
         .onAppear(perform: refresh)
     }
@@ -218,5 +224,84 @@ struct AgentPane: View {
 
     private func openInstructions() {
         HelpWindowController.shared.show(tab: .mcp)
+    }
+
+    // MARK: - Claude Code runtime
+
+    private var claudeRuntimeSection: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                Text("Claude Code Runtime")
+                    .font(.system(size: AppTheme.FontSize.md, weight: .medium))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                Text("Run the in-app agent as an embedded Claude Code session — it drives the timeline over MCP and loads the musicvideo plugin, using your Claude subscription via the claude CLI.")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            runtimeRow {
+                Circle()
+                    .fill(claudeFound ? Color.green : AppTheme.Text.mutedColor)
+                    .frame(width: 8, height: 8)
+                Text(claudeFound ? "claude CLI detected" : "claude CLI not found")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                Spacer()
+                Toggle("", isOn: $useClaudeRuntime)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+
+            folderRow(title: "Project folder", path: $claudeWorkingDir)
+            folderRow(title: "Plugin folder", path: $claudePluginDir)
+        }
+    }
+
+    private var claudeFound: Bool { ClaudeCodeLocator.locateOnly() != nil }
+
+    private func runtimeRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            content()
+        }
+        .padding(.horizontal, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.smMd)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .fill(Color.black.opacity(AppTheme.Opacity.muted))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
+        )
+    }
+
+    private func folderRow(title: String, path: Binding<String>) -> some View {
+        runtimeRow {
+            Text(title)
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Text(path.wrappedValue.isEmpty ? "Not set" : path.wrappedValue)
+                .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            Button("Choose…") { chooseFolder(into: path) }
+                .buttonStyle(.plain)
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Accent.primary)
+        }
+    }
+
+    private func chooseFolder(into path: Binding<String>) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            path.wrappedValue = url.path
+        }
     }
 }
