@@ -25,6 +25,17 @@ struct ClaudeCodeEventMapper {
         for event in ClaudeStreamDecoder.decode(line: line) { ingest(event) }
     }
 
+    /// Append the user's own message (the stream does not echo it). Keeps `messages` the single,
+    /// correctly-ordered source of truth for the whole conversation.
+    mutating func appendUserText(_ text: String) {
+        messages.append(AgentMessage(role: .user, blocks: [.text(text)]))
+    }
+
+    /// Append a runtime-level note (e.g. "Claude Code CLI not found") as an assistant message.
+    mutating func appendNote(_ text: String) {
+        messages.append(AgentMessage(role: .assistant, blocks: [.text(text)]))
+    }
+
     mutating func ingest(_ event: ClaudeStreamEvent) {
         switch event {
         case .sessionStarted(let sid):
