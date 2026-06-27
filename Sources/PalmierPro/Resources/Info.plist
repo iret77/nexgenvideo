@@ -37,7 +37,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>io.palmier.pro</string>
+			<string>de.h5ventures.nexgenvideo</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>palmier</string>
@@ -55,7 +55,7 @@
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/iret77/nexgen-video/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>Jh56mT+7YZSRsLylQIPyP+4/ahRtTPzfQQaKDZoBsio=</string>
+	<string>I8xZDqcV6YIvhIFIkDw/RWceQKCQV7cpSQk+U1S0GNo=</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

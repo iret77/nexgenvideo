@@ -1,14 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-	<key>keychain-access-groups</key>
-	<array>
-		<string>MMFLRC7562.io.palmier.pro</string>
-	</array>
-	<key>com.apple.application-identifier</key>
-	<string>MMFLRC7562.io.palmier.pro</string>
-	<key>com.apple.developer.team-identifier</key>
-	<string>MMFLRC7562</string>
-</dict>
+<!-- Developer ID distribution outside the App Store: no provisioning profile and no team-specific
+     entitlements (keychain-access-groups / application-identifier / team-identifier removed with the
+     Palmier identity). Hardened Runtime is applied at codesign time via `--options runtime`. Add a
+     specific com.apple.security.cs.* entitlement here only if a notarized launch turns out to need it. -->
+<dict/>
 </plist>

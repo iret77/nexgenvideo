@@ -33,16 +33,28 @@ if [ -f "$ROOT/$ENV_FILE" ]; then
   set +a
 fi
 
-SIGNING_IDENTITY="${SIGNING_IDENTITY:-Developer ID Application: Palmier, Inc. (MMFLRC7562)}"
-NOTARY_PROFILE="${NOTARY_PROFILE:-palmier-notary}"
+# Signing + notarization are env-driven — no hard-coded team. In CI the Developer ID cert is
+# imported into a temporary keychain (added to the search list) and SIGN_IDENTITY is auto-detected
+# below; notarization uses an App Store Connect API key. Sparkle EdDSA signing of the DMG happens in
+# the release workflow (openssl), not here.
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+NOTARY_KEY_FILE="${NOTARY_KEY_FILE:-}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
+NOTARY_ISSUER="${NOTARY_ISSUER:-}"
 SENTRY_DSN="${SENTRY_DSN:-}"
-PROVISION_PROFILE="${PROVISION_PROFILE:-$ROOT/scripts/Palmier_Pro_Developer_ID.provisionprofile}"
 ENTITLEMENTS="$ROOT/scripts/PalmierPro.entitlements"
-KEYCHAIN_ACCESS_GROUP="${KEYCHAIN_ACCESS_GROUP:-MMFLRC7562.io.palmier.pro}"
 RESOURCES="$ROOT/Sources/PalmierPro/Resources"
 APP="$ROOT/.build/NexGenVideo.app"
-ZIP="$ROOT/.build/PalmierPro.zip"
-DMG="$ROOT/.build/PalmierPro.dmg"
+ZIP="$ROOT/.build/NexGenVideo.zip"
+DMG="$ROOT/.build/NexGenVideo.dmg"
+
+# For signed builds (fast/sign/dist), resolve the Developer ID Application identity from the keychain.
+if [ "$MODE" = "fast" ] || [ "$MODE" = "sign" ] || [ "$MODE" = "dist" ]; then
+  if [ -z "$SIGN_IDENTITY" ]; then
+    SIGN_IDENTITY="$(security find-identity -v -p codesigning | awk '/Developer ID Application/{print $2; exit}')"
+  fi
+  [ -n "$SIGN_IDENTITY" ] || { echo "!! no 'Developer ID Application' identity in the keychain (set SIGN_IDENTITY or import the cert)" >&2; exit 1; }
+fi
 
 echo "==> Building ($CONFIG)"
 swift build -c "$CONFIG"
@@ -114,8 +126,8 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
 touch "$APP"
 
 if [ "$MODE" = "fast" ]; then
-  echo "==> Codesigning main app with $SIGNING_IDENTITY (no timestamp, no helpers)"
-  codesign --force --sign "$SIGNING_IDENTITY" "$APP"
+  echo "==> Codesigning main app with $SIGN_IDENTITY (no timestamp, no helpers)"
+  codesign --force --sign "$SIGN_IDENTITY" "$APP"
   echo "==> Done: $APP (fast mode — stable identity, no dSYM, no nested re-sign)"
   exit 0
 fi
@@ -157,26 +169,18 @@ for helper in \
     "$SPARKLE_CURRENT/XPCServices/Downloader.xpc" \
     "$SPARKLE_CURRENT/XPCServices/Installer.xpc/Contents/MacOS/Installer" \
     "$SPARKLE_CURRENT/XPCServices/Installer.xpc"; do
-  [ -e "$helper" ] && codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$helper"
+  [ -e "$helper" ] && codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$helper"
 done
 
 echo "==> Codesigning Sparkle framework"
 codesign --force --options runtime --timestamp \
-  --sign "$SIGNING_IDENTITY" \
+  --sign "$SIGN_IDENTITY" \
   "$APP/Contents/Frameworks/Sparkle.framework"
-
-echo "==> Embedding provisioning profile + keychain access group"
-if [ ! -f "$PROVISION_PROFILE" ]; then
-  echo "!! provisioning profile not found at $PROVISION_PROFILE" >&2
-  exit 1
-fi
-cp "$PROVISION_PROFILE" "$APP/Contents/embedded.provisionprofile"
-inject_plist PalmierClerkKeychainAccessGroup "$KEYCHAIN_ACCESS_GROUP"
 
 echo "==> Codesigning main app"
 codesign --force --options runtime --timestamp \
   --entitlements "$ENTITLEMENTS" \
-  --sign "$SIGNING_IDENTITY" \
+  --sign "$SIGN_IDENTITY" \
   "$APP"
 codesign --verify --strict --verbose=2 "$APP"
 
@@ -185,13 +189,18 @@ if [ "$MODE" = "sign" ]; then
   exit 0
 fi
 
+if [ -z "$NOTARY_KEY_FILE" ] || [ -z "$NOTARY_KEY_ID" ] || [ -z "$NOTARY_ISSUER" ]; then
+  echo "!! notarization needs NOTARY_KEY_FILE / NOTARY_KEY_ID / NOTARY_ISSUER" >&2
+  exit 1
+fi
+
 echo "==> Zipping .app for notarization"
 rm -f "$ZIP"
 /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
 
 echo "==> Submitting to Apple notary (this can take several minutes)"
 xcrun notarytool submit "$ZIP" \
-  --keychain-profile "$NOTARY_PROFILE" \
+  --key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
   --wait
 
 echo "==> Stapling ticket to .app"
@@ -201,22 +210,22 @@ rm -f "$ZIP"
 echo "==> Building DMG"
 rm -f "$DMG"
 STAGING="$(mktemp -d)"
-cp -R "$APP" "$STAGING/PalmierPro.app"
+cp -R "$APP" "$STAGING/NexGenVideo.app"
 ln -s /Applications "$STAGING/Applications"
 cp "$RESOURCES/AppIcon.icns" "$STAGING/.VolumeIcon.icns"
 hdiutil create \
-  -volname "PalmierPro" \
+  -volname "NexGen Video" \
   -srcfolder "$STAGING" \
   -ov -format UDZO \
   "$DMG"
 rm -rf "$STAGING"
 
 echo "==> Codesigning DMG"
-codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG"
+codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
 
 echo "==> Submitting DMG to notary"
 xcrun notarytool submit "$DMG" \
-  --keychain-profile "$NOTARY_PROFILE" \
+  --key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
   --wait
 
 echo "==> Stapling DMG"
@@ -224,19 +233,8 @@ xcrun stapler staple "$DMG"
 
 upload_dsyms
 
-echo "==> Signing DMG with Sparkle EdDSA key"
-SPARKLE_SIG="$("$ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update" "$DMG")"
-
 echo ""
 echo "==> Done"
 echo "   App: $APP"
 echo "   DMG: $DMG"
-echo ""
-echo "Sparkle signature for appcast entry:"
-echo "  $SPARKLE_SIG"
-echo ""
-echo "Add an <item> to appcast.xml with:"
-echo "  - version, shortVersionString from Info.plist"
-echo "  - url pointing at the GitHub Release download"
-echo "  - length=$(stat -f%z "$DMG")"
-echo "  - the sparkle:edSignature from above"
+echo "   (Sparkle EdDSA signing + appcast update happen in the release workflow.)"
