@@ -11,6 +11,7 @@ struct AgentPane: View {
     @AppStorage("useClaudeCodeRuntime") private var useClaudeRuntime: Bool = false
     @AppStorage("claudeRuntimeWorkingDir") private var claudeWorkingDir: String = ""
     @AppStorage("claudeRuntimePluginDir") private var claudePluginDir: String = ""
+    @AppStorage("claudeRuntimePermissionMode") private var claudePermissionMode: String = "bypassPermissions"
 
     private let consoleURL = URL(string: "https://console.anthropic.com/settings/keys")!
 
@@ -256,10 +257,30 @@ struct AgentPane: View {
 
             folderRow(title: "Project folder", path: $claudeWorkingDir)
             folderRow(title: "Plugin folder", path: $claudePluginDir)
+            permissionRow
         }
     }
 
     private var claudeFound: Bool { ClaudeCodeLocator.locateOnly() != nil }
+
+    private var permissionRow: some View {
+        runtimeRow {
+            Text("Permissions")
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Spacer()
+            Picker("", selection: $claudePermissionMode) {
+                Text("Bypass (headless)").tag("bypassPermissions")
+                Text("Accept edits").tag("acceptEdits")
+                Text("Don't ask").tag("dontAsk")
+                Text("Default (prompt)").tag("default")
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .fixedSize()
+        }
+    }
 
     private func runtimeRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {

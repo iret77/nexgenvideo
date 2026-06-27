@@ -10,8 +10,12 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     var pluginDirectories: [URL]
     /// Palmier's local MCP server port.
     var mcpPort: Int
-    /// e.g. "acceptEdits", "dontAsk", "bypassPermissions".
+    /// e.g. "bypassPermissions", "acceptEdits", "dontAsk", "default".
     var permissionMode: String
+    /// Comma-separated setting sources (user/project/local). "project,local" keeps the session
+    /// hermetic — drops the user's global CLAUDE.md / hooks / settings — while keeping subscription
+    /// auth (verified against claude v2.1.191). Empty → omit the flag (load all sources).
+    var settingSources: String
     /// Optional allowlist (e.g. ["mcp__palmier"]). Empty → rely on permissionMode alone.
     var allowedTools: [String]
     /// Model alias or full id; nil = user default.
@@ -25,7 +29,8 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         workingDirectory: URL,
         pluginDirectories: [URL] = [],
         mcpPort: Int = 19789,
-        permissionMode: String = "acceptEdits",
+        permissionMode: String = "bypassPermissions",
+        settingSources: String = "project,local",
         allowedTools: [String] = [],
         model: String? = nil,
         sessionId: String? = nil,
@@ -35,6 +40,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         self.pluginDirectories = pluginDirectories
         self.mcpPort = mcpPort
         self.permissionMode = permissionMode
+        self.settingSources = settingSources
         self.allowedTools = allowedTools
         self.model = model
         self.sessionId = sessionId
@@ -64,6 +70,10 @@ enum ClaudeCodeLaunch {
         for dir in cfg.pluginDirectories {
             args.append("--plugin-dir")
             args.append(dir.path)
+        }
+        if !cfg.settingSources.isEmpty {
+            args.append("--setting-sources")
+            args.append(cfg.settingSources)
         }
         if !cfg.allowedTools.isEmpty {
             args.append("--allowedTools")

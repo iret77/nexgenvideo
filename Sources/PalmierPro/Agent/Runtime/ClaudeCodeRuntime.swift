@@ -26,7 +26,7 @@ final class ClaudeCodeRuntime {
     init(
         pluginDirectories: [URL] = [],
         mcpPort: Int = 19789,
-        permissionMode: String = "acceptEdits",
+        permissionMode: String = "bypassPermissions",
         resolveExecutable: @escaping () -> URL? = { ClaudeCodeLocator.resolve().executableURL },
         resolveWorkingDirectory: @MainActor @escaping () -> URL?,
         onUpdate: @MainActor @escaping ([AgentMessage], Bool) -> Void

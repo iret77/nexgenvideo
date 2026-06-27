@@ -347,6 +347,7 @@ final class AgentService {
         ClaudeCodeRuntime(
             pluginDirectories: Self.configuredPluginDirectories(),
             mcpPort: Int(MCPService.port),
+            permissionMode: Self.configuredPermissionMode(),
             resolveWorkingDirectory: { [weak self] in
                 Self.configuredWorkingDirectory(projectURL: self?.editor?.projectURL)
             },
@@ -355,6 +356,11 @@ final class AgentService {
                 self?.isStreaming = isStreaming
             }
         )
+    }
+
+    private static func configuredPermissionMode() -> String {
+        let value = UserDefaults.standard.string(forKey: "claudeRuntimePermissionMode")
+        return (value?.isEmpty == false) ? value! : "bypassPermissions"
     }
 
     private static func configuredPluginDirectories() -> [URL] {

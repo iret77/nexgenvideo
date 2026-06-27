@@ -22,9 +22,26 @@ struct ClaudeCodeLaunchTests {
         #expect(valueAfter("--input-format", args) == "stream-json")
         #expect(valueAfter("--output-format", args) == "stream-json")
         #expect(args.contains("--strict-mcp-config"))
-        #expect(valueAfter("--permission-mode", args) == "acceptEdits")
+        #expect(valueAfter("--permission-mode", args) == "bypassPermissions")
+        #expect(valueAfter("--setting-sources", args) == "project,local")
         #expect(valueAfter("--add-dir", args) == "/tmp/proj")
         #expect(valueAfter("--mcp-config", args)?.contains("19789") == true)
+    }
+
+    @Test func permissionModeAndSettingSourcesConfigurable() {
+        let cfg = ClaudeCodeLaunchConfig(
+            workingDirectory: URL(fileURLWithPath: "/tmp/proj"),
+            permissionMode: "acceptEdits",
+            settingSources: "user,project,local"
+        )
+        let args = ClaudeCodeLaunch.arguments(cfg)
+        #expect(valueAfter("--permission-mode", args) == "acceptEdits")
+        #expect(valueAfter("--setting-sources", args) == "user,project,local")
+    }
+
+    @Test func settingSourcesOmittedWhenEmpty() {
+        let cfg = ClaudeCodeLaunchConfig(workingDirectory: URL(fileURLWithPath: "/tmp/proj"), settingSources: "")
+        #expect(!ClaudeCodeLaunch.arguments(cfg).contains("--setting-sources"))
     }
 
     @Test func pluginDirectoriesAppendedInOrder() {
