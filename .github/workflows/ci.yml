@@ -37,10 +37,13 @@ jobs:
 
   bundle-app:
     name: Bundle .app
-    # Produces a runnable, ad-hoc-signed PalmierPro.app as a downloadable artifact — no secrets,
-    # no local build. Download from the run's Artifacts, unzip, right-click → Open (Gatekeeper).
+    # Builds a runnable, ad-hoc-signed NexGenVideo.app (no secrets, no local build) and publishes it
+    # as the rolling `dev-latest` prerelease — a stable public download link, no token, no login:
+    #   https://github.com/iret77/nexgen-video/releases/download/dev-latest/NexGenVideo.zip
     runs-on: macos-26
     timeout-minutes: 40
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -54,9 +57,23 @@ jobs:
       - name: Bundle (debug, ad-hoc signed)
         run: scripts/bundle.sh debug
 
+      - name: Zip .app
+        run: ditto -c -k --keepParent .build/NexGenVideo.app .build/NexGenVideo.zip
+
       - name: Upload .app artifact
         uses: actions/upload-artifact@v4
         with:
           name: NexGenVideo-app
-          path: .build/NexGenVideo.app
+          path: .build/NexGenVideo.zip
           if-no-files-found: error
+
+      - name: Publish rolling dev release
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete dev-latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create dev-latest .build/NexGenVideo.zip \
+            --prerelease \
+            --title "NexGen Video — latest dev build" \
+            --notes "Auto-built from \`${{ github.sha }}\`. Ad-hoc signed — after download: \`xattr -dr com.apple.quarantine NexGenVideo.app\` (or right-click → Open)."
