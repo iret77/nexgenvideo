@@ -40,7 +40,7 @@ PROVISION_PROFILE="${PROVISION_PROFILE:-$ROOT/scripts/Palmier_Pro_Developer_ID.p
 ENTITLEMENTS="$ROOT/scripts/PalmierPro.entitlements"
 KEYCHAIN_ACCESS_GROUP="${KEYCHAIN_ACCESS_GROUP:-MMFLRC7562.io.palmier.pro}"
 RESOURCES="$ROOT/Sources/PalmierPro/Resources"
-APP="$ROOT/.build/PalmierPro.app"
+APP="$ROOT/.build/NexGenVideo.app"
 ZIP="$ROOT/.build/PalmierPro.zip"
 DMG="$ROOT/.build/PalmierPro.dmg"
 

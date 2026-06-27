@@ -284,7 +284,7 @@ private enum ExportProjectMode: String {
         switch self {
         case .video: format?.displayName ?? "Video"
         case .xml: "XML"
-        case .palmier: "Palmier Project"
+        case .palmier: "NexGen Video Project"
         }
     }
 }

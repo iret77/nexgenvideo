@@ -14,7 +14,7 @@ done
 "$ROOT/scripts/bundle.sh" debug --fast
 
 if ! $stream; then
-    open "$ROOT/.build/PalmierPro.app"
+    open "$ROOT/.build/NexGenVideo.app"
     exit 0
 fi
 
@@ -22,14 +22,14 @@ echo "Streaming OSLog (subsystem=io.palmier.pro). Ctrl-C to quit app and stop." 
 echo >&2
 
 cleanup() {
-    pid=$(pgrep -f "PalmierPro.app/Contents/MacOS/PalmierPro" | head -1 || true)
+    pid=$(pgrep -f "NexGenVideo.app/Contents/MacOS/PalmierPro" | head -1 || true)
     if [ -n "$pid" ]; then
         osascript -e 'quit app "PalmierPro"' 2>/dev/null || kill "$pid" 2>/dev/null || true
     fi
 }
 trap cleanup INT TERM EXIT
 
-( sleep 0.5 && open "$ROOT/.build/PalmierPro.app" ) &
+( sleep 0.5 && open "$ROOT/.build/NexGenVideo.app" ) &
 log stream \
     --predicate 'subsystem == "io.palmier.pro"' \
     --level info \
