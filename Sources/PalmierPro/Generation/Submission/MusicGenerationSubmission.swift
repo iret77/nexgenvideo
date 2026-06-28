@@ -31,7 +31,7 @@ struct MusicGenerationSubmission {
         onPhase: @MainActor (Phase) -> Void = { _ in },
         onFinished: @escaping @MainActor () -> Void = {}
     ) async throws {
-        var videoURL: String?
+        let videoURL: String? = nil
         if mode == .videoToMusic {
             onPhase(.exporting)
             let mp4 = try await TimelineRenderer.render(
@@ -42,12 +42,9 @@ struct MusicGenerationSubmission {
                 shortSide: 360,
                 includeAudio: false
             )
-            defer { try? FileManager.default.removeItem(at: mp4) }
+            try? FileManager.default.removeItem(at: mp4)
             onPhase(.uploading)
-            videoURL = try await GenerationBackend.uploadReference(
-                fileURL: mp4,
-                contentType: "video/mp4"
-            )
+            throw GenerationBackendError.notConfigured
         }
 
         let durationSeconds = max(1, Int(spanSeconds.rounded()))

@@ -1,5 +1,4 @@
 import Foundation
-@preconcurrency import Combine
 
 /// Used by replace-clip callbacks so only the
 /// first successful asset of an N-image generation swaps the clip
@@ -239,16 +238,10 @@ final class GenerationService {
                     group.addTask { (i, hit) }
                     continue
                 }
-                let contentType = Self.contentType(for: url, fallback: type)
+                _ = Self.contentType(for: url, fallback: type)
                 group.addTask {
-                    let uploaded = try await GenerationBackend.uploadReference(
-                        fileURL: url,
-                        contentType: contentType,
-                    )
-                    if let cacheKey {
-                        await Self.recordUploadCache(asset: cacheKey, url: uploaded)
-                    }
-                    return (i, uploaded)
+                    // Generation transport removed; BYO-provider upload lands later.
+                    throw GenerationBackendError.notConfigured
                 }
             }
             var results = [(Int, String)]()
@@ -302,13 +295,10 @@ final class GenerationService {
         Log.generation.notice("run \(runId) start model=\(genInput.model) placeholders=\(placeholders.count)")
         defer { Log.generation.notice("run \(runId) settled") }
 
-        let jobId: String
+        // Generation transport removed; BYO-provider submission lands later.
+        _ = params
         do {
-            jobId = try await GenerationBackend.submit(
-                model: genInput.model,
-                params: params,
-                projectId: editor.projectId,
-            )
+            throw GenerationBackendError.notConfigured
         } catch {
             let message = error.localizedDescription
             Log.generation.error("submit failed model=\(genInput.model) error=\(message)")
@@ -317,49 +307,6 @@ final class GenerationService {
             }
             onFailure?()
             return
-        }
-
-        guard let publisher = GenerationBackend.subscribe(jobId: jobId) else {
-            for placeholder in placeholders {
-                placeholder.generationStatus = .failed("Backend not configured")
-            }
-            onFailure?()
-            return
-        }
-
-        let stream = AsyncStream<BackendGenerationJob?> { continuation in
-            let cancellable = publisher
-                .receive(on: DispatchQueue.main)
-                .sink(
-                    receiveCompletion: { _ in continuation.finish() },
-                    receiveValue: { value in continuation.yield(value) },
-                )
-            continuation.onTermination = { _ in cancellable.cancel() }
-        }
-
-        for await jobOpt in stream {
-            guard let job = jobOpt else { continue }
-            switch job.status {
-            case .succeeded:
-                await finalizeSuccess(
-                    job: job,
-                    placeholders: placeholders,
-                    editor: editor,
-                    onComplete: onComplete,
-                    onFailure: onFailure,
-                )
-                return
-            case .failed:
-                let message = job.errorMessage ?? "Generation failed"
-                Log.generation.error("job \(jobId) failed: \(message)")
-                for placeholder in placeholders {
-                    placeholder.generationStatus = .failed(message)
-                }
-                onFailure?()
-                return
-            case .queued, .running:
-                continue
-            }
         }
     }
 

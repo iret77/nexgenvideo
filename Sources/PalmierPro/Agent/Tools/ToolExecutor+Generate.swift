@@ -221,11 +221,10 @@ extension ToolExecutor {
             guard videoAsset.type == .video else {
                 throw ToolError("videoSourceMediaRef must be a video asset (got \(videoAsset.type.rawValue)).")
             }
-            guard let fileURL = editor.mediaResolver.resolveURL(for: videoAsset.id) else {
+            guard editor.mediaResolver.resolveURL(for: videoAsset.id) != nil else {
                 throw ToolError("Could not read the video source file.")
             }
-            videoURL = try await GenerationBackend.uploadReference(fileURL: fileURL, contentType: "video/mp4")
-            spanSeconds = videoAsset.duration
+            throw GenerationBackendError.notConfigured
         } else if let start = args.int("videoSourceStartFrame"), let end = args.int("videoSourceEndFrame") {
             guard acceptsVideo else {
                 throw ToolError("Model '\(model.id)' does not accept a video input (see list_models 'inputs').")
@@ -238,10 +237,8 @@ extension ToolExecutor {
                 startFrame: start, frameCount: end - start,
                 shortSide: 360, includeAudio: false
             )
-            defer { try? FileManager.default.removeItem(at: mp4) }
-            videoURL = try await GenerationBackend.uploadReference(fileURL: mp4, contentType: "video/mp4")
-            spanSeconds = Double(end - start) / Double(max(1, editor.timeline.fps))
-            placementStartFrame = start
+            try? FileManager.default.removeItem(at: mp4)
+            throw GenerationBackendError.notConfigured
         }
 
         // A video-only model (no text input, e.g. Mirelo) needs a source.
