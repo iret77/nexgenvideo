@@ -4,6 +4,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case models
     case agent
+    case providers
     case storage
 
     var id: String { rawValue }
@@ -13,6 +14,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .models: return "Models"
         case .agent: return "Agent"
+        case .providers: return "Providers"
         case .storage: return "Storage"
         }
     }
@@ -22,6 +24,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: return "gearshape"
         case .models: return "square.stack.3d.up"
         case .agent: return "paperplane"
+        case .providers: return "key.horizontal"
         case .storage: return "internaldrive"
         }
     }
@@ -112,6 +115,8 @@ private struct SettingsDetail: View {
                         ModelsPane()
                     case .agent:
                         AgentPane()
+                    case .providers:
+                        ProvidersPane()
                     case .storage:
                         StoragePane()
                     }
