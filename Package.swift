@@ -36,7 +36,6 @@ let package = Package(
             path: "Sources/PalmierPro",
             exclude: [
                 "Resources/Info.plist",
-                "Resources/AppIcon.icon",
                 "Resources/AppIcon.icns",
                 "Resources/AppIcon.png",
             ],

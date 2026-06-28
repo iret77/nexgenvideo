@@ -100,7 +100,7 @@ struct WelcomeOverlay: View {
     private var heroImage: some View {
         Group {
             if let hero = Self.hero {
-                Image(nsImage: hero).resizable().aspectRatio(contentMode: .fill)
+                Image(nsImage: hero).resizable().aspectRatio(contentMode: .fit)
             } else {
                 AppTheme.aiGradient
             }
@@ -113,8 +113,8 @@ struct WelcomeOverlay: View {
     private static func loadHero() -> NSImage? {
         guard let root = Bundle.main.resourceURL else { return nil }
         let candidates = [
-            root.appendingPathComponent("Images/welcome-butterfly.jpg"),
-            root.appendingPathComponent("PalmierPro_PalmierPro.bundle/Images/welcome-butterfly.jpg"),
+            root.appendingPathComponent("Images/welcome-splash.png"),
+            root.appendingPathComponent("PalmierPro_PalmierPro.bundle/Images/welcome-splash.png"),
         ]
         for url in candidates where FileManager.default.fileExists(atPath: url.path) {
             return NSImage(contentsOf: url)
