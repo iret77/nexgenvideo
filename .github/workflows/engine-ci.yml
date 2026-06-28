@@ -20,6 +20,6 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install engine
-        run: pip install -e ./engine
+        run: pip install -e ./engine pytest
       - name: Test
         run: pytest engine/tests -q
