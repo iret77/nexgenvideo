@@ -68,12 +68,28 @@ gehostete Generierung will, nutzt das Original-Produkt — nicht diesen Fork.
    Asset-Graph-Bible, Konsistenz/Reference-Engine, Sanity/Linter-Framework,
    **Render-Dispatch + Cost-Guard + Provider-Driver**, State-Aggregator, MCP-Spine,
    Projekt-Layout/Paths, scene3d/Pano, Frame-Compliance. **Ruft die Provider** (mit den vom Host
-   verwalteten Keys). Wird mit der App gebündelt, vom eingebetteten Claude per `--plugin-dir` geladen.
+   verwalteten Keys). Lebt im **Monorepo** (Unterordner `engine/`), wird mit der App gebündelt und vom
+   eingebetteten Claude per `--plugin-dir` geladen.
 3. **Format-Packs (dünn)** — die **einzige** Daseinsberechtigung eines Packs ist
    **kategoriespezifisches Wissen**, das *nicht* jedes Videoformat braucht. Ein Pack begleitet den
    User in NexGen durch den Prozess seiner Kategorie (Konzept → final geschnittenes Video), nutzt für
    Konsistenz/Bible/Kamera/Render/Effekte aber **den Core**. Erstes Pack: `musicvideo`; geplant:
    `explainer`, `fiction`/`shortmovie`, `trailer`, `vacation`, …
+
+**Ein Repo, ein Produkt (Monorepo).** Alle drei Schichten leben in `nexgen-video` — *kein* eigenes
+Core-Repo, *kein* Submodul:
+
+```
+nexgen-video/
+  Sources/PalmierPro/   ← Swift-Host (App)
+  engine/               ← Generic Production Engine (Python, generisch)
+  packs/musicvideo/     ← erstes Format-Pack (dünn); weitere Packs daneben
+```
+
+Das heutige separate `musicvideo`-Repo „geht auf" in `engine/` (generische Teile) + `packs/musicvideo/`
+(Musik-Spezifika). Begründung: ein autonomes Produkt = ein Repo, eine Versionierung, kein
+Submodul-Schmerz. Ein eigenes `nexgen-core`-Repo bräuchte es nur, wenn die Engine von *Fremd-Hosts*
+mitgenutzt würde — bei „NexGen ist *der* Host" trifft das nicht zu.
 
 ### 4.1 Core ↔ Plugin — die verbindliche Grenze
 
@@ -217,9 +233,9 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 
 ## 9. Offene Entscheidungen
 
-- **Wo lebt der Generic Core physisch?** Eigenes Repo `iret77/nexgen-core` (von der App
-  gebündelt/submoduled) **vs.** Unterordner im nexgen-video-Repo. *Plan-Tendenz: eigenes Repo*
-  (sauberer Schnitt, eigene Versionierung, mehrere Packs). **Noch zu entscheiden.**
+- ✅ **Entschieden 2026-06-28 — Monorepo:** Generic Core + erste Packs leben in `nexgen-video`
+  (`engine/`, `packs/<pack>/`), *kein* eigenes Repo, *kein* Submodul. Die alte „eigenes
+  `nexgen-core`-Repo"-Tendenz war Über-Strukturierung und ist verworfen (ein autonomes Produkt = ein Repo).
 - Mapping `.palmier`-Projektort ↔ Engine-Projektordner (Layout v2 `_studio/`) — Detaildesign.
 - `io.palmier.project`-UTI behalten oder migrieren.
 
@@ -231,7 +247,7 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 2. **Provider-Layer:** API-Key-Verwaltung (Keychain) für REST-Provider **+ Anbindung MCP-nativer
    Tools (z. B. ACE Studio 2)** + Generate-Tools über MCP + provider-gespeister Modell-Katalog in der UI.
 3. **Generic-Core-Extraktion** aus `musicvideo` (MOVE-Tier 1:1 verschieben, dann MIXED hinter
-   Interfaces; bestehende Tests als Regressionsnetz) → `nexgen-core`; Multi-Pack-Wiring (Core immer
+   Interfaces; bestehende Tests als Regressionsnetz) → `engine/` im Monorepo; Multi-Pack-Wiring (Core immer
    + aktiviertes Pack) + Packs-UI.
 4. **`musicvideo` als In-App-Workflow-Pack** (Konzept → final geschnittenes Video).
 5. **Bidirektionale Review-UX** (Preview/Approve/Comment/Trim, Frame-Gates).
