@@ -99,9 +99,11 @@ final class ClaudeCodeRuntime {
     }
 
     private func consume(_ stream: AsyncThrowingStream<String, Error>) async {
+        var sawOutput = false
         do {
             for try await line in stream {
                 let events = ClaudeStreamDecoder.decode(line: line)
+                if !events.isEmpty { sawOutput = true }
                 for event in events { mapper.ingest(event) }
                 let finished = events.contains { event in
                     if case .turnFinished = event { return true }
@@ -111,6 +113,17 @@ final class ClaudeCodeRuntime {
             }
         } catch {
             mapper.appendNote("Claude Code stream error: \(error.localizedDescription)")
+        }
+        // A session that ends with no parseable output almost always means claude exited early
+        // (not logged in, a rejected flag/MCP config, a missing plugin venv, …). Surface its stderr
+        // so the failure isn't silent.
+        if !sawOutput, !Task.isCancelled {
+            let stderr = (process?.drainStderr() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            mapper.appendNote(
+                stderr.isEmpty
+                    ? "Claude Code produced no output. Verify the CLI runs and is logged in — try `claude -p \"hi\"` in Terminal."
+                    : "Claude Code produced no output.\nstderr:\n\(stderr)"
+            )
         }
         onUpdate(mapper.messages, false)
     }
