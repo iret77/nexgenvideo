@@ -74,6 +74,7 @@ final class ClaudeCodeRuntime {
         let config = ClaudeCodeLaunchConfig(
             workingDirectory: workingDirectory,
             pluginDirectories: pluginDirectories,
+            pluginMcpServers: Self.loadPluginMcpServers(pluginDirectories),
             mcpPort: mcpPort,
             permissionMode: permissionMode
         )
@@ -82,7 +83,8 @@ final class ClaudeCodeRuntime {
             let stream = try newProcess.start(
                 executableURL: executable,
                 arguments: ClaudeCodeLaunch.arguments(config),
-                workingDirectory: workingDirectory
+                workingDirectory: workingDirectory,
+                environment: Self.childEnvironment()
             )
             process = newProcess
             newProcess.send(line: ClaudeCodeLaunch.userMessageLine(firstMessage))
@@ -116,5 +118,58 @@ final class ClaudeCodeRuntime {
     private func fail(_ note: String) {
         mapper.appendNote(note)
         onUpdate(mapper.messages, false)
+    }
+
+    // MARK: - Launch resolution (I/O)
+
+    /// Read each plugin dir's `.mcp.json` and return its servers (name → serialized JSON entry),
+    /// expanding `${CLAUDE_PLUGIN_ROOT}` to the plugin dir. Lets the plugin's MCP server (e.g.
+    /// musicvideo's stdio server) coexist with `nexgen` under `--strict-mcp-config`.
+    private static func loadPluginMcpServers(_ dirs: [URL]) -> [String: String] {
+        var result: [String: String] = [:]
+        for dir in dirs {
+            let url = dir.appendingPathComponent(".mcp.json")
+            guard let data = try? Data(contentsOf: url),
+                  let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let servers = json["mcpServers"] as? [String: Any]
+            else { continue }
+            for (name, entry) in servers {
+                guard let entryData = try? JSONSerialization.data(withJSONObject: entry),
+                      let entryString = String(data: entryData, encoding: .utf8)
+                else { continue }
+                result[name] = entryString.replacingOccurrences(of: "${CLAUDE_PLUGIN_ROOT}", with: dir.path)
+            }
+        }
+        return result
+    }
+
+    private static let providerEnvNames: [(GenerationProvider, String)] = [
+        (.fal, "FAL_KEY"),
+        (.runway, "RUNWAYML_API_SECRET"),
+        (.openart, "OPENART_API_KEY"),
+        (.higgsfield, "HIGGSFIELD_API_KEY"),
+        (.elevenlabs, "ELEVENLABS_API_KEY"),
+    ]
+
+    /// Environment for the spawned `claude`: inherit the app's, augment PATH with the common
+    /// tool locations a Finder-launched app misses (so the plugin's python/uv/claude resolve), and
+    /// inject the BYO provider keys the pipeline's render step reads (e.g. FAL_KEY).
+    private static func childEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let extra = [
+            "/opt/homebrew/bin", "/usr/local/bin",
+            (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin"),
+        ]
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for path in (env["PATH"] ?? "").split(separator: ":").map(String.init) + extra
+        where !path.isEmpty && seen.insert(path).inserted {
+            ordered.append(path)
+        }
+        env["PATH"] = ordered.joined(separator: ":")
+        for (provider, name) in providerEnvNames {
+            if let key = ProviderKeychain.load(provider) { env[name] = key }
+        }
+        return env
     }
 }

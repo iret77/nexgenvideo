@@ -8,6 +8,10 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     var workingDirectory: URL
     /// Generic core first, then any active format pack(s) (e.g. musicvideo).
     var pluginDirectories: [URL]
+    /// Plugin-contributed MCP servers (name → serialized JSON entry, already
+    /// `${CLAUDE_PLUGIN_ROOT}`-expanded). Merged alongside `nexgen` so they survive
+    /// `--strict-mcp-config`. Read from each plugin dir's `.mcp.json` at launch.
+    var pluginMcpServers: [String: String]
     /// Palmier's local MCP server port.
     var mcpPort: Int
     /// e.g. "bypassPermissions", "acceptEdits", "dontAsk", "default".
@@ -28,6 +32,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     init(
         workingDirectory: URL,
         pluginDirectories: [URL] = [],
+        pluginMcpServers: [String: String] = [:],
         mcpPort: Int = 19789,
         permissionMode: String = "bypassPermissions",
         settingSources: String = "project,local",
@@ -38,6 +43,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     ) {
         self.workingDirectory = workingDirectory
         self.pluginDirectories = pluginDirectories
+        self.pluginMcpServers = pluginMcpServers
         self.mcpPort = mcpPort
         self.permissionMode = permissionMode
         self.settingSources = settingSources
@@ -50,9 +56,15 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
 
 enum ClaudeCodeLaunch {
 
-    /// Inline MCP config (passed via --mcp-config) registering Palmier's local HTTP MCP server.
-    static func mcpConfigJSON(port: Int) -> String {
-        "{\"mcpServers\":{\"nexgen\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:\(port)/mcp\"}}}"
+    /// Inline MCP config (passed via --mcp-config). Always registers the local `nexgen` HTTP server;
+    /// merges in any plugin-contributed servers (e.g. musicvideo's stdio server) so both survive
+    /// `--strict-mcp-config`. `pluginServers` values are already-serialized JSON objects.
+    static func mcpConfigJSON(port: Int, pluginServers: [String: String] = [:]) -> String {
+        var entries = ["\"nexgen\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:\(port)/mcp\"}"]
+        for name in pluginServers.keys.sorted() where name != "nexgen" {
+            entries.append("\"\(name)\":\(pluginServers[name]!)")
+        }
+        return "{\"mcpServers\":{\(entries.joined(separator: ","))}}"
     }
 
     /// Argv for `claude` (excluding the executable path). Hermetic: --strict-mcp-config so only
@@ -62,7 +74,7 @@ enum ClaudeCodeLaunch {
             "-p",
             "--input-format", "stream-json",
             "--output-format", "stream-json",
-            "--mcp-config", mcpConfigJSON(port: cfg.mcpPort),
+            "--mcp-config", mcpConfigJSON(port: cfg.mcpPort, pluginServers: cfg.pluginMcpServers),
             "--strict-mcp-config",
             "--permission-mode", cfg.permissionMode,
             "--add-dir", cfg.workingDirectory.path,
