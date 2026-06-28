@@ -80,18 +80,44 @@ Riskanteste Naht: Music-Annahmen in generischem Code (`Shot.duration_s` ↔ `per
 
 ## 5. Provider- & Modell-Einbindung
 
-NexGen bindet die **Generator-Plattformen direkt ein** — der User bringt API-Keys mit:
-**Runway, fal.ai, OpenArt, Higgsfield, ElevenLabs, …**, über alle Modalitäten: **Video, Bild,
-Musik, SFX**.
+NexGen bindet **Generator-Plattformen direkt ein** — der User bringt die Zugänge mit. Modalitäten:
+**Video, Bild, Musik, SFX, Stimme/Vertonung.** Zwei Integrationsklassen:
 
+**(a) REST/API-Provider** — z. B. **Runway, fal.ai, OpenArt, Higgsfield, ElevenLabs**.
 - **API-Keys** pro Provider in den Settings (Sektion „Providers"), in der **Keychain** gespeichert,
   nie im Repo/Klartext. Der Host reicht sie an die Engine.
-- **Modell-Katalog** kommt aus der **Provider-Registry der Engine** (nicht aus Convex). In der UI
+- **Modell-Katalog** kommt aus der **Provider-Registry der Engine** (nicht aus Convex), in der UI
   pro Modalität auswählbar/aktivierbar.
-- **Generierung als MCP-Tools.** Die Engine exponiert Generate-/Render-Operationen über den
-  MCP-Server → sowohl `claude -p` als auch der In-App-Agent rufen sie auf. Der Host legt fertige
-  Clips per `import_media` (referenziert in place, kostenlos) + `add_clips` frame-genau auf die
-  Timeline.
+- Die Engine ruft die Provider (Render-Dispatch, Cost-Guard) und exponiert Generate-/Render-Ops als
+  **MCP-Tools** → sowohl `claude -p` als auch der In-App-Agent rufen sie auf.
+
+**(b) MCP-native Tools** — Apps, die selbst einen MCP-Server mitbringen. Hier braucht es **keinen
+Key/Driver**: NexGens eingebettete Claude-Runtime hängt sie als **zusätzlichen MCP-Server** in die
+`mcpServers`-Config (neben NexGens Timeline-MCP), Claude orchestriert sie direkt.
+
+Fertige Clips/Audio landen in beiden Fällen per `import_media` (referenziert in place, kostenlos) +
+`add_clips` frame-/beat-genau auf der NexGen-Timeline.
+
+### 5.1 ACE Studio 2 (MCP-native Vertonung — Stimme, Instrumente, SFX, Video-Scoring)
+
+**ACE Studio 2** (Timedomain, seit Dez 2025) ist ein All-in-One-KI-Musikstudio: 140+ KI-Stimmen in
+8 Sprachen (Verse25-Vocal-Synth), KI-Instrumente, Generative Kits, **Video Composer** (analysiert
+Video szenen-/frame-genau und generiert passende Musik + SFX als editierbare Timeline-Clips, bis
+~45 min / 2 GB), DAW-Integration (ACE Bridge 2). Es deckt die **Vertonungs-Modalität** ab —
+KI-Gesang, Instrumental, SFX, Score-to-Picture — und ergänzt/ersetzt teils den ElevenLabs-Pfad.
+
+**Anbindung (MCP-nativ, Klasse b):** ACE Studio läuft als lokale App mit eigenem **MCP-Server** —
+Transport **HTTP `http://localhost:21572/mcp`** oder **stdio** (Befehl aus ACE Preferences → General
+→ MCP Server), **kein Auth** (lokal). Der Server exponiert Projekt-Info, Track-Erstellung/-Edit und
+MIDI. NexGens eingebettete Claude-Runtime trägt ihn als zusätzlichen `mcpServers`-Eintrag → Claude
+erzeugt/editiert dort Vokals/Instrumente/SFX und legt die exportierten Audio-Clips per NexGen-MCP auf
+die Timeline.
+
+**Caveats (Stand Web-Recherche 2026-06):** der ACE-MCP-Server ist **experimentell**; **Video
+Composer ist derzeit GUI-only** (noch nicht über MCP fernsteuerbar). Heißt: Vokal-/Track-/MIDI-Arbeit
+ist schon MCP-automatisierbar, die One-Click-Video-Vertonung (Video Composer) bleibt bis auf Weiteres
+ein manueller ACE-Schritt — bei MCP-Erweiterung von ACE automatisierbar. Quellen: `docs.acestudio.ai`
+(MCP-Server, Video Composer), `acestudio.ai/blog` (2.0 / 2.0.7-Release).
 
 ## 6. Claude-Anbindung (zwei austauschbare Backends)
 
@@ -137,8 +163,8 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 1. **De-Palmier-isierung / Autonomie:** Clerk, Convex, Palmiers Generierung, die Convex-Models-Pane
    raus; kein Sign-in; Upstream-Referenzen entfernen (README, MCP-Name, interne `PalmierPro`/
    `io.palmier.*`-Reste schrittweise).
-2. **Provider-Layer:** API-Key-Verwaltung (Keychain) + Generate-Tools über MCP + provider-gespeister
-   Modell-Katalog in der UI.
+2. **Provider-Layer:** API-Key-Verwaltung (Keychain) für REST-Provider **+ Anbindung MCP-nativer
+   Tools (z. B. ACE Studio 2)** + Generate-Tools über MCP + provider-gespeister Modell-Katalog in der UI.
 3. **Generic-Core-Extraktion** aus `musicvideo` (MOVE-Tier 1:1 verschieben, dann MIXED hinter
    Interfaces; bestehende Tests als Regressionsnetz) → `nexgen-core`; Multi-Pack-Wiring (Core immer
    + aktiviertes Pack) + Packs-UI.
