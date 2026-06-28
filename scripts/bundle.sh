@@ -209,16 +209,37 @@ rm -f "$ZIP"
 
 echo "==> Building DMG"
 rm -f "$DMG"
-STAGING="$(mktemp -d)"
-cp -R "$APP" "$STAGING/NexGenVideo.app"
-ln -s /Applications "$STAGING/Applications"
-cp "$RESOURCES/AppIcon.icns" "$STAGING/.VolumeIcon.icns"
-hdiutil create \
-  -volname "NexGen Video" \
-  -srcfolder "$STAGING" \
-  -ov -format UDZO \
-  "$DMG"
-rm -rf "$STAGING"
+DMG_VOLNAME="NexGen Video"
+
+# Resize the splash to the DMG window size for a crisp background (sips is macOS-only).
+DMG_BG=""
+DMG_BG_SRC="$RESOURCES/Images/welcome-splash.png"
+if command -v sips >/dev/null 2>&1 && [ -f "$DMG_BG_SRC" ]; then
+  DMG_BG="$(mktemp -d)/dmg-bg.png"
+  sips -z 400 600 "$DMG_BG_SRC" --out "$DMG_BG" >/dev/null 2>&1 || DMG_BG=""
+fi
+
+# Prefer dmgbuild (headless — writes the .DS_Store directly, no Finder/AppleScript) for a branded
+# window background; fall back to a plain DMG so a release is never blocked on cosmetics.
+DMG_DONE=""
+if python3 -m pip install --quiet --user dmgbuild >/dev/null 2>&1; then
+  export PATH="$(python3 -m site --user-base 2>/dev/null)/bin:$PATH"
+  if DMG_APP="$APP" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" \
+       dmgbuild -s "$ROOT/scripts/dmg-settings.py" "$DMG_VOLNAME" "$DMG"; then
+    DMG_DONE="branded background"
+  fi
+fi
+if [ -z "$DMG_DONE" ]; then
+  echo "!! dmgbuild unavailable or failed — building a plain DMG (volume icon only)"
+  STAGING="$(mktemp -d)"
+  cp -R "$APP" "$STAGING/NexGenVideo.app"
+  ln -s /Applications "$STAGING/Applications"
+  cp "$RESOURCES/AppIcon.icns" "$STAGING/.VolumeIcon.icns"
+  hdiutil create -volname "$DMG_VOLNAME" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
+  rm -rf "$STAGING"
+  DMG_DONE="plain"
+fi
+echo "==> DMG: $DMG_DONE"
 
 echo "==> Codesigning DMG"
 codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
