@@ -1,0 +1,25 @@
+name: Engine CI
+
+on:
+  push:
+    paths:
+      - 'engine/**'
+      - '.github/workflows/engine-ci.yml'
+  pull_request:
+    paths:
+      - 'engine/**'
+      - '.github/workflows/engine-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install engine
+        run: pip install -e ./engine pytest
+      - name: Test
+        run: pytest engine/tests -q

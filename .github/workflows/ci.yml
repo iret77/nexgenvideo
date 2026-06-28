@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ['engine/**', 'packs/**', 'docs/**', '**/*.md']
   pull_request:
+    paths-ignore: ['engine/**', 'packs/**', 'docs/**', '**/*.md']
   workflow_dispatch:
 
 concurrency:

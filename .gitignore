@@ -34,3 +34,10 @@ models/*/.venv/
 models/*/build*/
 models/*/checkpoint*
 models/*/convert*.log
+
+# Python (engine/ + packs/)
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nexgen-engine"
+version = "0.0.1"
+description = "NexGenVideo Generic Production Engine — format-neutral consistency/render/sanity core extracted from the musicvideo pipeline."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2",
+    "pyyaml",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["nexgen_engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

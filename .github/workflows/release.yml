@@ -25,8 +25,10 @@ on:
         default: true
         type: boolean
   # Every push to main rebuilds and refreshes the signed + notarized `dev-latest` rolling download.
+  # Skip when a push touches only the Python engine / packs / docs — the Swift app is unchanged.
   push:
     branches: [main]
+    paths-ignore: ['engine/**', 'packs/**', 'docs/**', '**/*.md']
   # On PRs touching the signing setup, run the FULL pipeline end-to-end in dry mode (build → sign →
   # notarize → staple → DMG → dev-latest), so the whole thing is validated under our identity pre-merge.
   pull_request:
