@@ -6,15 +6,21 @@ struct TitleBarLeadingView: View {
     var body: some View {
         HStack(spacing: AppTheme.Spacing.smMd) {
             Button(action: { editor.agentPanelVisible.toggle() }) {
-                Image(systemName: editor.agentPanelVisible ? "bubble.left.fill" : "bubble.left")
-                    .font(.system(size: AppTheme.FontSize.md))
-                    .foregroundStyle(AppTheme.aiGradient)
-                    .opacity(editor.agentPanelVisible ? 1 : AppTheme.Opacity.strong)
-                    .frame(width: AppTheme.IconSize.lg, height: AppTheme.IconSize.lg)
-                    .hoverHighlight()
+                HStack(spacing: AppTheme.Spacing.xs) {
+                    Image(systemName: editor.agentPanelVisible ? "bubble.left.fill" : "bubble.left")
+                        .font(.system(size: AppTheme.FontSize.md))
+                        .foregroundStyle(AppTheme.aiGradient)
+                    Text("Agent")
+                        .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                }
+                .opacity(editor.agentPanelVisible ? 1 : AppTheme.Opacity.strong)
+                .padding(.horizontal, AppTheme.Spacing.xs)
+                .frame(height: AppTheme.IconSize.lg)
+                .hoverHighlight()
             }
             .buttonStyle(.plain)
-            .help("Toggle Agent Panel")
+            .help("Toggle Agent Panel (⌘A)")
         }
     }
 }
