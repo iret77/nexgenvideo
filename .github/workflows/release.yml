@@ -154,8 +154,8 @@ jobs:
           gh release delete dev-latest --cleanup-tag --yes 2>/dev/null || true
           gh release create dev-latest .build/NexGenVideo.dmg \
             --prerelease \
-            --title "NexGen Video — latest dev build" \
-            --notes "Signed with our Developer ID (high5 ventures GmbH) and notarized by Apple — open the DMG and drag NexGen Video to Applications. No Gatekeeper workaround needed. Auto-built from \`${{ github.sha }}\`."
+            --title "NexGenVideo — latest dev build" \
+            --notes "Signed with our Developer ID (high5 ventures GmbH) and notarized by Apple — open the DMG and drag NexGenVideo to Applications. No Gatekeeper workaround needed. Auto-built from \`${{ github.sha }}\`."
 
       - name: Publish GitHub release + appcast
         if: ${{ env.REL_DRY == 'false' }}
@@ -175,8 +175,8 @@ jobs:
           fi
           git push origin "HEAD:${{ github.ref_name }}"
           gh release create "$TAG" .build/NexGenVideo.dmg \
-            --title "NexGen Video $TAG" \
-            --notes "NexGen Video $REL_VERSION (build ${BUILD_NUMBER})." \
+            --title "NexGenVideo $TAG" \
+            --notes "NexGenVideo $REL_VERSION (build ${BUILD_NUMBER})." \
             --target "$(git rev-parse HEAD)"
 
       - name: Clean up keychain

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
     <channel>
-        <title>NexGen Video</title>
+        <title>NexGenVideo</title>
         <link>https://raw.githubusercontent.com/iret77/nexgen-video/main/appcast.xml</link>
-        <description>Updates for NexGen Video</description>
+        <description>Updates for NexGenVideo</description>
         <language>en</language>
         <!-- No releases published yet. Items are intentionally empty so Sparkle offers no update —
              and never the upstream palmier-io builds. Add <item> entries here once the fork has its

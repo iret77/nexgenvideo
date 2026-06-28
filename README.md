@@ -1,13 +1,13 @@
 <div align="center">
 
-<img src="./assets/nexgen-splash.png" alt="NexGen Video" width="820" />
+<img src="./assets/nexgen-splash.png" alt="NexGenVideo" width="820" />
 
-# NexGen Video
+# NexGenVideo
 
 **The video editor built for AI.**
 
 <a href="https://github.com/iret77/nexgen-video/releases/download/dev-latest/NexGenVideo.dmg">
-  <img src="./assets/macos-badge.png" alt="Download NexGen Video for macOS" width="180" />
+  <img src="./assets/macos-badge.png" alt="Download NexGenVideo for macOS" width="180" />
 </a>
 
 <sub><i>Requires macOS 26 (Tahoe) on Apple Silicon</i></sub>
@@ -34,15 +34,15 @@
 
 </div>
 
-<img src="./assets/palmier-ui.png" alt="NexGen Video UI" width="900" />
+<img src="./assets/palmier-ui.png" alt="NexGenVideo UI" width="900" />
 
 ---
 
-NexGen Video is an open source video editor for Mac. You and your agent can generate and edit videos together inside the timeline.
+NexGenVideo is an open source video editor for Mac. You and your agent can generate and edit videos together inside the timeline.
 
 ### Swift-native video editor
 
-We built NexGen Video from scratch with Swift. The north star is Premiere Pro, with our take on integrating AI into the workflow.
+We built NexGenVideo from scratch with Swift. The north star is Premiere Pro, with our take on integrating AI into the workflow.
 
 ### Built-in Generative AI
 
@@ -87,7 +87,7 @@ We bundle a [mcpb](https://github.com/modelcontextprotocol/mcpb) with the app th
 
 ## FAQ
 
-**Is NexGen Video fully open source?**
+**Is NexGenVideo fully open source?**
 
 Yes — the whole app is open source: editor, MCP server, and agent chat. Generation runs through third-party providers (fal.ai, Runway, …) that you connect with your own API keys; only those providers' models are external.
 
@@ -124,6 +124,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
-NexGen Video is a fork of Palmier Pro, open source under [GPLv3](LICENSE).
+NexGenVideo is a fork of Palmier Pro, open source under [GPLv3](LICENSE).
 
-Copyright (C) 2026 Palmier, Inc. and the NexGen Video contributors.
+Copyright (C) 2026 Palmier, Inc. and the NexGenVideo contributors.

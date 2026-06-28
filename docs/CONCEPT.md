@@ -1,4 +1,4 @@
-# NexGen Video — Konzept (autoritativ)
+# NexGenVideo — Konzept (autoritativ)
 
 > **Diese Datei ist die maßgebliche Produkt- und Architektur-Quelle.** Sie vereint das
 > ursprüngliche Integrationskonzept aus `musicvideo/docs/v1-studio-plan.md` (Abschnitt
@@ -7,9 +7,9 @@
 > Für die Produktions-Disziplin im Detail (Bible/Anker, Reference-Mode, Sanity-Gates, Render,
 > 3D/Pano) bleibt `musicvideo/docs/v1-studio-plan.md` die Referenz des **Pakets** — nicht der Plattform.
 
-## 1. Was NexGen Video ist
+## 1. Was NexGenVideo ist
 
-NexGen Video ist ein **KI-nativer macOS-Videoeditor**, technischer Fork von
+NexGenVideo ist ein **KI-nativer macOS-Videoeditor**, technischer Fork von
 `palmier-io/palmier-pro` (Swift 6.2, SwiftUI + AppKit, AVFoundation, macOS 26, arm64,
 non-sandboxed Developer-ID-App), aber **in sich vollständig autonom**: nutzbar **ohne jede
 Verbindung, Referenz oder Abhängigkeit zum Upstream-Projekt oder dessen Diensten**.
@@ -265,7 +265,7 @@ rollendes signiertes Prerelease als öffentlicher Direktlink. PRs immer `--repo 
 ## 12. Status (Stand 2026-06-28)
 
 **Auf `main` (erledigt):** eigenes Developer-ID-Signing/Notarisierung; Rebrand Display-Name →
-„NexGen Video"; Icon + Splash; eigenes Hosting des Such-CoreML-Modells (weg von Palmiers HF);
+„NexGenVideo"; Icon + Splash; eigenes Hosting des Such-CoreML-Modells (weg von Palmiers HF);
 eingebettete `claude -p`-Runtime (`Agent/Runtime/*`) + AgentPane-„Runtime"-Section; Bundle-ID
 `de.h5ventures.nexgenvideo`; Sparkle-Feed auf unser Repo.
 

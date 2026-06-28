@@ -1,4 +1,4 @@
-# dmgbuild settings for the NexGen Video DMG — headless branded window (no Finder/AppleScript).
+# dmgbuild settings for the NexGenVideo DMG — headless branded window (no Finder/AppleScript).
 # Driven by env vars from bundle.sh. Icon positions are best-effort guesses (the DMG can't be
 # rendered in CI); adjust icon_locations / window_rect after a visual check on a Mac.
 import os

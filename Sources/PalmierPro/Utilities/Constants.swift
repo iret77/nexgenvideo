@@ -115,7 +115,7 @@ enum Project {
 
     static var storageDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents/NexGen Video", isDirectory: true)
+            .appendingPathComponent("Documents/NexGenVideo", isDirectory: true)
     }
 
     nonisolated static func ensureStorageDirectory() {

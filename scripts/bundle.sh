@@ -195,7 +195,7 @@ rm -f "$ZIP"
 
 echo "==> Building DMG"
 rm -f "$DMG"
-DMG_VOLNAME="NexGen Video"
+DMG_VOLNAME="NexGenVideo"
 
 # Resize the splash to the DMG window size for a crisp background (sips is macOS-only).
 DMG_BG=""

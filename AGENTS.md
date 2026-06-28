@@ -1,11 +1,11 @@
-# NexGen Video (internal target: PalmierPro)
+# NexGenVideo (internal target: PalmierPro)
 
 AI-native macOS video editor. Swift 6.2, SwiftUI + AppKit, AVFoundation. macOS 26 only, arm64 only. Non-sandboxed Developer ID app.
 
 ## Concept — read first
 
 The authoritative product vision and target architecture live in [docs/CONCEPT.md](docs/CONCEPT.md):
-autonomous NexGen Video (no upstream/palmier-io services), generation providers (Runway, fal.ai,
+autonomous NexGenVideo (no upstream/palmier-io services), generation providers (Runway, fal.ai,
 OpenArt, Higgsfield, ElevenLabs, …) bound via BYO API keys, Claude orchestrating via API key *or*
 `claude -p`, format-packs like `musicvideo` driving in-app workflows. Read it before planning any
 architecture, generation/provider, or de-Palmier-ization work — it supersedes the "Palmier-Integration"

@@ -145,7 +145,7 @@ private struct NewProjectCard: View {
 
 private struct WelcomeTitle: View {
     var body: some View {
-        Text("Welcome to NexGen Video")
+        Text("Welcome to NexGenVideo")
             .font(.system(size: AppTheme.FontSize.title2, weight: .light))
             .tracking(AppTheme.Tracking.tight)
             .foregroundStyle(AppTheme.Text.primaryColor)
@@ -195,7 +195,7 @@ final class HomeWindowController: NSWindowController {
         let window = NSWindow(contentViewController: hostingController)
         window.setContentSize(AppTheme.Window.homeDefault)
         window.minSize = AppTheme.Window.homeMin
-        window.title = "NexGen Video"
+        window.title = "NexGenVideo"
         window.setFrameAutosaveName("PalmierProHome-v2")
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = AppTheme.Background.base.withAlphaComponent(0.4)

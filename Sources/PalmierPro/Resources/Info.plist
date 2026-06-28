@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>NexGen Video</string>
+	<string>NexGenVideo</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>NexGen Video Project</string>
+			<string>NexGenVideo Project</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSItemContentTypes</key>
@@ -28,7 +28,7 @@
 	<key>CFBundleIdentifier</key>
 	<string>de.h5ventures.nexgenvideo</string>
 	<key>CFBundleName</key>
-	<string>NexGen Video</string>
+	<string>NexGenVideo</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -64,7 +64,7 @@
 				<string>com.apple.package</string>
 			</array>
 			<key>UTTypeDescription</key>
-			<string>NexGen Video Project</string>
+			<string>NexGenVideo Project</string>
 			<key>UTTypeIdentifier</key>
 			<string>io.palmier.project</string>
 			<key>UTTypeTagSpecification</key>

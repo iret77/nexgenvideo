@@ -19,8 +19,8 @@ enum MainMenuBuilder {
 
     private static func appMenu() -> NSMenuItem {
         let item = NSMenuItem()
-        let menu = NSMenu(title: "NexGen Video")
-        menu.addItem(withTitle: "About NexGen Video", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let menu = NSMenu(title: "NexGenVideo")
+        menu.addItem(withTitle: "About NexGenVideo", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         menu.addItem(.separator())
         let updatesItem = NSMenuItem(title: "Check for Updates…", action: #selector(Updater.checkForUpdates(_:)), keyEquivalent: "")
         updatesItem.target = Updater.shared
@@ -28,7 +28,7 @@ enum MainMenuBuilder {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit NexGen Video", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit NexGenVideo", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.submenu = menu
         return item
     }

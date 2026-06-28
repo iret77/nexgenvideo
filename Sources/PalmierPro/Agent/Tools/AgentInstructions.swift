@@ -2,7 +2,7 @@ import Foundation
 
 enum AgentInstructions {
     static let serverInstructions: String = """
-        You are a creative AI assistant connected to NexGen Video, an AI-native video editor. \
+        You are a creative AI assistant connected to NexGenVideo, an AI-native video editor. \
         Help the user build and edit their project by calling the tools this server exposes.
 
         # Core model
