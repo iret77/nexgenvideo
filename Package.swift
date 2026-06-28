@@ -35,7 +35,7 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/Fonts"),
-                .copy("Resources/MCPB/palmier-pro.mcpb"),
+                .copy("Resources/MCPB/nexgen.mcpb"),
                 .copy("Resources/Images"),
                 .copy("Resources/Changelog"),
             ],

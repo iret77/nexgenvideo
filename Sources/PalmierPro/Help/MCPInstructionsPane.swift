@@ -6,18 +6,18 @@ struct MCPInstructionsPane: View {
     private var mcpEndpoint: String { "\(serverURL)/mcp" }
 
     private var claudeCodeCommand: String {
-        "claude mcp add --transport http palmier-pro \(mcpEndpoint)"
+        "claude mcp add --transport http nexgen \(mcpEndpoint)"
     }
 
     private var codexCommand: String {
-        "codex mcp add palmier-pro --url \(mcpEndpoint)"
+        "codex mcp add nexgen --url \(mcpEndpoint)"
     }
 
     private var cursorJSONConfig: String {
         """
         {
           "mcpServers": {
-            "palmier-pro": {
+            "nexgen": {
               "type": "http",
               "url": "\(mcpEndpoint)"
             }
@@ -30,7 +30,7 @@ struct MCPInstructionsPane: View {
         """
         {
           "mcpServers": {
-            "palmier-pro": {
+            "nexgen": {
               "command": "npx",
               "args": [
                 "-y",
@@ -52,7 +52,7 @@ struct MCPInstructionsPane: View {
             let data = try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]),
             let encoded = data.base64EncodedString().addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
         else { return nil }
-        return URL(string: "cursor://anysphere.cursor-deeplink/mcp/install?name=palmier-pro&config=\(encoded)")
+        return URL(string: "cursor://anysphere.cursor-deeplink/mcp/install?name=nexgen&config=\(encoded)")
     }
 
     var body: some View {
@@ -142,7 +142,7 @@ struct MCPInstructionsPane: View {
 
     private func openClaudeDesktopBundle() {
         guard let resourceURL = Bundle.main.resourceURL else { return }
-        let url = resourceURL.appendingPathComponent("palmier-pro.mcpb")
+        let url = resourceURL.appendingPathComponent("nexgen.mcpb")
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         NSWorkspace.shared.open(url, configuration: .init(), completionHandler: nil)
     }

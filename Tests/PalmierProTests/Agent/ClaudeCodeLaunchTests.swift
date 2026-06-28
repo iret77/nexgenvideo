@@ -12,7 +12,7 @@ struct ClaudeCodeLaunchTests {
 
     @Test func mcpConfigJSONShape() {
         #expect(ClaudeCodeLaunch.mcpConfigJSON(port: 19789) ==
-            #"{"mcpServers":{"palmier":{"type":"http","url":"http://127.0.0.1:19789/mcp"}}}"#)
+            #"{"mcpServers":{"nexgen":{"type":"http","url":"http://127.0.0.1:19789/mcp"}}}"#)
     }
 
     @Test func coreFlagsArePresent() {
@@ -57,10 +57,10 @@ struct ClaudeCodeLaunchTests {
     @Test func allowedToolsJoinedWhenPresent() {
         let cfg = ClaudeCodeLaunchConfig(
             workingDirectory: URL(fileURLWithPath: "/tmp/proj"),
-            allowedTools: ["mcp__palmier", "mcp__plugin:musicvideo:musicvideo"]
+            allowedTools: ["mcp__nexgen", "mcp__plugin:musicvideo:musicvideo"]
         )
         let args = ClaudeCodeLaunch.arguments(cfg)
-        #expect(valueAfter("--allowedTools", args) == "mcp__palmier mcp__plugin:musicvideo:musicvideo")
+        #expect(valueAfter("--allowedTools", args) == "mcp__nexgen mcp__plugin:musicvideo:musicvideo")
     }
 
     @Test func allowedToolsOmittedWhenEmpty() {

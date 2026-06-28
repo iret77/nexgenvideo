@@ -16,7 +16,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     /// hermetic — drops the user's global CLAUDE.md / hooks / settings — while keeping subscription
     /// auth (verified against claude v2.1.191). Empty → omit the flag (load all sources).
     var settingSources: String
-    /// Optional allowlist (e.g. ["mcp__palmier"]). Empty → rely on permissionMode alone.
+    /// Optional allowlist (e.g. ["mcp__nexgen"]). Empty → rely on permissionMode alone.
     var allowedTools: [String]
     /// Model alias or full id; nil = user default.
     var model: String?
@@ -52,7 +52,7 @@ enum ClaudeCodeLaunch {
 
     /// Inline MCP config (passed via --mcp-config) registering Palmier's local HTTP MCP server.
     static func mcpConfigJSON(port: Int) -> String {
-        "{\"mcpServers\":{\"palmier\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:\(port)/mcp\"}}}"
+        "{\"mcpServers\":{\"nexgen\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:\(port)/mcp\"}}}"
     }
 
     /// Argv for `claude` (excluding the executable path). Hermetic: --strict-mcp-config so only

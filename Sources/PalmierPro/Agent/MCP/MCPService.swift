@@ -35,7 +35,7 @@ final class MCPService {
     func start() {
         let httpServer = MCPHTTPServer(port: Self.port) { [weak self] in
             let server = Server(
-                name: "palmier-pro",
+                name: "nexgen",
                 version: "1.0.0",
                 instructions: AgentInstructions.serverInstructions,
                 capabilities: .init(
@@ -97,13 +97,13 @@ final class MCPService {
         let resources = [
             Resource(
                 name: "Video Models",
-                uri: "palmier://models/video",
+                uri: "nexgen://models/video",
                 description: "Available AI video generation models and their capabilities",
                 mimeType: "application/json"
             ),
             Resource(
                 name: "Image Models",
-                uri: "palmier://models/image",
+                uri: "nexgen://models/image",
                 description: "Available AI image generation models and their capabilities",
                 mimeType: "application/json"
             ),
@@ -121,10 +121,10 @@ final class MCPService {
     @MainActor
     private static func readResource(uri: String) -> ReadResource.Result {
         switch uri {
-        case "palmier://models/video":
+        case "nexgen://models/video":
             let json = ToolExecutor.jsonString(VideoModelConfig.allModels.map { ToolExecutor.videoModelInfo($0) }) ?? "[]"
             return .init(contents: [.text(json, uri: uri, mimeType: "application/json")])
-        case "palmier://models/image":
+        case "nexgen://models/image":
             let json = ToolExecutor.jsonString(ImageModelConfig.allModels.map { ToolExecutor.imageModelInfo($0) }) ?? "[]"
             return .init(contents: [.text(json, uri: uri, mimeType: "application/json")])
         default:
