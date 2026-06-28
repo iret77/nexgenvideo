@@ -1,7 +1,6 @@
 import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case account
     case general
     case models
     case agent
@@ -11,7 +10,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .account: return "Account"
         case .general: return "General"
         case .models: return "Models"
         case .agent: return "Agent"
@@ -21,7 +19,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .account: return "person.circle"
         case .general: return "gearshape"
         case .models: return "square.stack.3d.up"
         case .agent: return "paperplane"
@@ -31,17 +28,14 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 }
 
 struct SettingsView: View {
-    @Bindable private var account = AccountService.shared
     @State private var selectedTab: SettingsTab
 
-    init(initialTab: SettingsTab = .account) {
+    init(initialTab: SettingsTab = .general) {
         _selectedTab = State(initialValue: initialTab)
     }
 
     private var visibleTabs: [SettingsTab] {
-        SettingsTab.allCases.filter { tab in
-            !(tab == .account && account.isMisconfigured)
-        }
+        SettingsTab.allCases
     }
 
     var body: some View {
@@ -67,13 +61,9 @@ struct SettingsView: View {
 private struct SettingsSidebar: View {
     @Binding var selectedTab: SettingsTab
     let visibleTabs: [SettingsTab]
-    @Bindable private var account = AccountService.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !account.isMisconfigured {
-                IdentityStrip()
-            }
             tabList
             Spacer(minLength: 0)
         }
@@ -115,8 +105,6 @@ private struct SettingsDetail: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                     switch tab {
-                    case .account:
-                        AccountPane()
                     case .general:
                         NotificationsPane()
                         PrivacyPane()

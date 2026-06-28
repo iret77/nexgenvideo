@@ -42,8 +42,6 @@ struct TitleBarTrailingView: View {
                 .help("Export (⌘E)")
             }
             .buttonStyle(.plain)
-
-            UserAvatarButton()
         }
     }
 }

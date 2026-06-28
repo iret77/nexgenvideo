@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 
 struct FeedbackView: View {
-    @Bindable private var account = AccountService.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var message: String = ""
@@ -31,8 +30,7 @@ struct FeedbackView: View {
     }
 
     private var hasReplyEmail: Bool {
-        if account.isSignedIn { return account.account?.user.email != nil }
-        return !trimmedEmail.isEmpty
+        !trimmedEmail.isEmpty
     }
 
     private var canSubmit: Bool {
@@ -62,9 +60,7 @@ struct FeedbackView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             descriptionField
 
-            if !account.isSignedIn {
-                emailField
-            }
+            emailField
 
             mayContactRow
 
@@ -176,11 +172,7 @@ struct FeedbackView: View {
     }
 
     private var contextNoteText: String {
-        if account.isSignedIn {
-            return "App version \(Self.appVersion) and macOS \(Self.osVersion) are included."
-        } else {
-            return "App version \(Self.appVersion) and macOS \(Self.osVersion) are included."
-        }
+        "App version \(Self.appVersion) and macOS \(Self.osVersion) are included."
     }
 
     private var footer: some View {
@@ -234,15 +226,14 @@ struct FeedbackView: View {
     }
 
     private var successDetailText: String {
-        let replyAddr = account.account?.user.email
-            ?? (trimmedEmail.isEmpty ? nil : trimmedEmail)
+        let replyAddr = trimmedEmail.isEmpty ? nil : trimmedEmail
         if let replyAddr, mayContact {
-            return "We read every message and may reach out at \(replyAddr)."
+            return "Recorded locally with a reply address of \(replyAddr)."
         }
         if replyAddr != nil {
-            return "We read every message. We won't email you, as requested."
+            return "Recorded locally. We won't email you, as requested."
         }
-        return "We read every message. Add an email next time if you'd like a reply."
+        return "Recorded locally. Add an email next time if you'd like a reply."
     }
 
     // MARK: - Helpers
@@ -259,20 +250,12 @@ struct FeedbackView: View {
         isSending = true
         Task { @MainActor in
             defer { isSending = false }
-            do {
-                let attachedScreenshot = (includeScreenshot ? screenshot : nil)?.base64EncodedString()
-                try await account.sendFeedback(
-                    message: trimmedMessage,
-                    email: trimmedEmail.isEmpty ? nil : trimmedEmail,
-                    mayContact: hasReplyEmail ? mayContact : false,
-                    screenshotPngBase64: attachedScreenshot,
-                    appVersion: Self.appVersion,
-                    osVersion: Self.osVersion
-                )
-                didSend = true
-            } catch {
-                errorText = error.localizedDescription
-            }
+            Log.app.notice(
+                "feedback recorded app=\(Self.appVersion) os=\(Self.osVersion) "
+                + "email=\(trimmedEmail.isEmpty ? "none" : trimmedEmail) "
+                + "mayContact=\(hasReplyEmail ? mayContact : false)\n\(trimmedMessage)"
+            )
+            didSend = true
         }
     }
 

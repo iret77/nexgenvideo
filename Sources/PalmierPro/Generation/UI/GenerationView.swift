@@ -4,7 +4,6 @@ struct GenerationView: View {
     let maxPanelHeight: Double
 
     @Environment(EditorViewModel.self) var editor
-    @Bindable private var account = AccountService.shared
     @State private var prompt = ""
     @State private var selectedType: GenerationType = .video
     @State private var selectedVideoModelIndex = 0
@@ -184,7 +183,6 @@ struct GenerationView: View {
     private var isPromptEmpty: Bool { trimmedPrompt.isEmpty }
 
     private var canSubmit: Bool {
-        guard canAffordGeneration else { return false }
         if selectedType == .video && videoModel.requiresSourceVideo {
             guard sourceVideo != nil else { return false }
             if videoModel.requiresReferenceImage && imageReferences.isEmpty { return false }
@@ -334,63 +332,6 @@ struct GenerationView: View {
         return trim
     }
 
-    /// Live credit estimate for the current form state.
-    private var estimatedCost: Int? {
-        switch selectedType {
-        case .video:
-            return CostEstimator.videoCost(
-                model: videoModel,
-                durationSeconds: effectiveVideoSeconds,
-                resolution: effectiveResolution,
-                generateAudio: effectiveGenerateAudio
-            )
-        case .image:
-            let quality = imageModel.qualities != nil ? selectedQuality : nil
-            return CostEstimator.imageCost(
-                model: imageModel,
-                resolution: effectiveResolution,
-                quality: quality,
-                numImages: selectedNumImages
-            )
-        case .audio:
-            let duration: Int? = audioModel.inputs.contains(.video)
-                ? (audioVideoSource == nil ? nil : effectiveAudioVideoSeconds)
-                : (audioModel.durations != nil ? selectedAudioDuration : nil)
-            return CostEstimator.audioCost(
-                model: audioModel, prompt: trimmedPrompt, durationSeconds: duration
-            )
-        }
-    }
-
-    private var remainingCredits: Int? {
-        guard let budget = AccountService.shared.budgetCredits else { return nil }
-        return max(0, budget - AccountService.shared.spentCredits)
-    }
-
-    private var hasInsufficientCredits: Bool {
-        guard let cost = estimatedCost, let left = remainingCredits else { return false }
-        return cost > left
-    }
-
-    private var canAffordGeneration: Bool {
-        guard let left = remainingCredits else { return true }
-        if let cost = estimatedCost { return cost <= left }
-        return left > 0
-    }
-
-    private var costHelpText: String {
-        guard let cost = estimatedCost else {
-            return "Estimated cost. Actual billing may differ slightly."
-        }
-        guard let left = remainingCredits else {
-            return "\(cost) credits estimated. Actual billing may differ."
-        }
-        if cost > left {
-            return "\(cost) credits needed. Only \(left.formatted()) remaining."
-        }
-        return "\(cost) credits. \((left - cost).formatted()) credits remaining after this generation."
-    }
-
     private var settingsSummary: String {
         var parts: [String] = []
         if selectedType == .audio {
@@ -436,8 +377,6 @@ struct GenerationView: View {
         }
     }
 
-    private var aiAllowed: Bool { account.aiAllowed }
-
     private var catalogLoadingView: some View {
         VStack(spacing: AppTheme.Spacing.md) {
             ProgressView()
@@ -465,7 +404,6 @@ struct GenerationView: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 typeTabs
                 Spacer()
-                CreditSummaryView(style: .compact)
                 ProjectActivityButton()
                 Button {
                     editor.pendingEditReplacementClipId = nil
@@ -827,26 +765,12 @@ struct GenerationView: View {
 
                 Spacer(minLength: AppTheme.Spacing.xs)
 
-                costEstimateLabel
                 submitButton
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, AppTheme.Spacing.md)
             .padding(.vertical, AppTheme.Spacing.sm)
         }
-    }
-
-    private var costEstimateLabel: some View {
-        HStack(spacing: AppTheme.Spacing.xs) {
-            Image(systemName: "dollarsign.circle.fill")
-                .font(.system(size: AppTheme.FontSize.sm))
-            Text(estimatedCost.map { $0.formatted() } ?? "—")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-                .monospacedDigit()
-                .lineLimit(1)
-        }
-        .foregroundStyle(hasInsufficientCredits ? .red : AppTheme.Text.secondaryColor)
-        .help(costHelpText)
     }
 
     private var voicePicker: some View {
@@ -1296,10 +1220,9 @@ struct GenerationView: View {
 
     private var submitButton: some View {
         Button {
-            if aiAllowed { submitGeneration() }
-            else if !account.isMisconfigured { Task { await account.signInWithGoogle() } }
+            submitGeneration()
         } label: {
-            Image(systemName: aiAllowed ? "arrow.up" : "person.crop.circle")
+            Image(systemName: "arrow.up")
                 .font(.system(size: AppTheme.FontSize.sm, weight: .bold))
                 .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
         }
@@ -1307,9 +1230,8 @@ struct GenerationView: View {
         .buttonBorderShape(.circle)
         .controlSize(.regular)
         .tint(AppTheme.Accent.primary)
-        .disabled(aiAllowed ? !canSubmit : account.isMisconfigured)
-        .opacity((aiAllowed ? canSubmit : !account.isMisconfigured) ? 1 : AppTheme.Opacity.strong)
-        .help(aiAllowed ? "" : (account.isMisconfigured ? "AI is unavailable" : "Sign in to generate"))
+        .disabled(!canSubmit)
+        .opacity(canSubmit ? 1 : AppTheme.Opacity.strong)
     }
 
     // MARK: - Type picker

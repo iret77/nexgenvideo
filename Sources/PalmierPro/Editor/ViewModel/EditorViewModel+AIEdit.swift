@@ -1,9 +1,7 @@
 import Foundation
 
 extension EditorViewModel {
-    var aiEditAllowed: Bool {
-        AccountService.shared.isSignedIn && !AccountService.shared.isMisconfigured
-    }
+    var aiEditAllowed: Bool { true }
 
     func aiEditActions(clipId: String) -> [EditAction] {
         guard let (clip, asset) = aiEditClipAsset(clipId), clip.mediaType.isVisual else { return [] }

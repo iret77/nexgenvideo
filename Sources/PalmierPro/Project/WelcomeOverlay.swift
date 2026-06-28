@@ -5,7 +5,6 @@ import SwiftUI
 struct WelcomeOverlay: View {
     let onDismiss: () -> Void
 
-    @Bindable private var account = AccountService.shared
     private static let hero: NSImage? = loadHero()
 
     var body: some View {
@@ -52,17 +51,10 @@ struct WelcomeOverlay: View {
         .shadow(AppTheme.Shadow.lg)
     }
 
-    @ViewBuilder
     private var signInButton: some View {
-        if account.aiAllowed || account.isMisconfigured {
-            Button("Get started") { onDismiss() }
-                .buttonStyle(.capsule(.prominent, size: .regular))
-                .keyboardShortcut(.defaultAction)
-        } else {
-            Button("Sign In") { Task { await account.signInWithGoogle() } }
-                .buttonStyle(.capsule(.prominent, size: .regular))
-                .keyboardShortcut(.defaultAction)
-        }
+        Button("Get started") { onDismiss() }
+            .buttonStyle(.capsule(.prominent, size: .regular))
+            .keyboardShortcut(.defaultAction)
     }
 
 

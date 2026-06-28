@@ -280,15 +280,7 @@ struct AgentPanelView: View {
     private func errorCTA(for error: AgentStreamError?) -> ErrorCTA? {
         guard let error else { return nil }
         switch error {
-        case .unauthenticated:
-            return ErrorCTA(title: "Sign in") {
-                SettingsWindowController.shared.show(tab: .account)
-            }
-        case .insufficientCredits:
-            return ErrorCTA(title: "View plans") {
-                SettingsWindowController.shared.show(tab: .account)
-            }
-        case .upstream:
+        case .unauthenticated, .insufficientCredits, .upstream:
             return nil
         }
     }
@@ -316,32 +308,21 @@ struct AgentPanelView: View {
 
     @ViewBuilder
     private var missingKeyState: some View {
-        let account = AccountService.shared
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Button(action: { SettingsWindowController.shared.show(tab: .account) }) {
-                Text(missingKeyPrimaryAction(account: account))
-                    .underline()
-                    .foregroundStyle(AppTheme.Accent.primary)
-            }
-            .buttonStyle(.plain)
-
-            Text("or use")
+            Text("Add")
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
 
             Button(action: { SettingsWindowController.shared.show(tab: .agent) }) {
-                Text("your own Anthropic key")
+                Text("your Anthropic API key")
                     .underline()
                     .foregroundStyle(AppTheme.Accent.primary)
             }
             .buttonStyle(.plain)
+
+            Text("to start")
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
         }
         .font(.system(size: AppTheme.FontSize.md, weight: .medium))
-    }
-
-    private func missingKeyPrimaryAction(account: AccountService) -> String {
-        if !account.isSignedIn { return "Sign in" }
-        if !account.isPaid { return "Subscribe" }
-        return "Open Settings"
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {

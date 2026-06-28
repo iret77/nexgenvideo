@@ -38,16 +38,9 @@ final class AgentService {
 
     var hasApiKey: Bool { !apiKey.isEmpty }
 
-    var canStream: Bool {
-        if hasApiKey { return true }
-        let account = AccountService.shared
-        return account.isSignedIn && account.hasCredits
-    }
+    var canStream: Bool { hasApiKey }
 
-    var availableModels: [AnthropicModel] {
-        if hasApiKey { return AnthropicModel.allCases }
-        return AccountService.shared.isPaid ? [.sonnet46] : [.haiku45]
-    }
+    var availableModels: [AnthropicModel] { AnthropicModel.allCases }
 
     private func selectClient() -> (any AgentClient)? {
         guard hasApiKey else { return nil }
@@ -301,7 +294,7 @@ final class AgentService {
             return
         }
         guard canStream else {
-            streamError = .upstream("Sign in to a paid plan or add an Anthropic API key to start.")
+            streamError = .upstream("Add an Anthropic API key in Settings to start.")
             return
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
