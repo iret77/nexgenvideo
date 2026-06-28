@@ -1,18 +1,19 @@
 <div align="center">
 
-# Palmier Pro
+<img src="./assets/nexgen-splash.png" alt="NexGen Video" width="820" />
+
+# NexGen Video
 
 **The video editor built for AI.**
 
-<a href="https://github.com/palmier-io/palmier-pro/releases/latest/download/PalmierPro.dmg">
-  <img src="./assets/macos-badge.png" alt="Download Palmier Pro for macOS" width="180" />
+<a href="https://github.com/iret77/nexgen-video/releases/download/dev-latest/NexGenVideo.dmg">
+  <img src="./assets/macos-badge.png" alt="Download NexGen Video for macOS" width="180" />
 </a>
 
 <sub><i>Requires macOS 26 (Tahoe) on Apple Silicon</i></sub>
 
 <a href="https://x.com/Palmier_io"><img src="https://img.shields.io/badge/Follow-%40Palmier__io-000000?style=flat&logo=x&logoColor=white" alt="Follow on X" /></a>
 <a href="https://discord.com/invite/SMVW6pKYmg"><img src="https://img.shields.io/badge/Join-Discord-5865F2?style=flat&logo=discord&logoColor=white" alt="Join Discord" /></a>
-<a href="https://www.ycombinator.com/companies/palmier"><img src="https://img.shields.io/badge/Y%20Combinator-S24-orange" alt="Y Combinator S24" /></a>
 
 <p>
   <strong>English</strong> ·
@@ -34,15 +35,15 @@
 
 </div>
 
-<img src="./assets/palmier-ui.png" alt="Palmier Pro UI" width="900" />
+<img src="./assets/palmier-ui.png" alt="NexGen Video UI" width="900" />
 
 ---
 
-Palmier Pro is an open source video editor for Mac. You and your agent can generate and edit videos together inside the timeline.
+NexGen Video is an open source video editor for Mac. You and your agent can generate and edit videos together inside the timeline.
 
 ### Swift-native video editor
 
-We built Palmier Pro from scratch with Swift. The north star is Premiere Pro, with our take on integrating AI into the workflow.
+We built NexGen Video from scratch with Swift. The north star is Premiere Pro, with our take on integrating AI into the workflow.
 
 ### Built-in Generative AI
 
@@ -87,7 +88,7 @@ We bundle a [mcpb](https://github.com/modelcontextprotocol/mcpb) with the app th
 
 ## FAQ
 
-**Is Palmier Pro fully open source?**
+**Is NexGen Video fully open source?**
 
 The video editor (without the generative AI features) is fully open source. The MCP server and the agent chat are also open source. The only thing that is closed source is the generative AI processing.
 
@@ -112,15 +113,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Discord:** Join the community on **[Discord](https://discord.com/invite/SMVW6pKYmg)**.
 - **Twitter / X:** Follow **[@Palmier_io](https://x.com/Palmier_io)** for updates and announcements.
 - **Instagram:** Follow [@palmier.io](https://www.instagram.com/palmier.io) 
-- **Feedback &amp; Support:** Create a [Github Issue](https://github.com/palmier-io/palmier-pro/issues) or email us at founders@palmier.io
+- **Feedback &amp; Support:** Create a [Github Issue](https://github.com/iret77/nexgen-video/issues) or email us at founders@palmier.io
 
 ## Star History
 
 <a href="https://www.star-history.com/?type=date&repos=palmier-io%2Fpalmier-pro">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=palmier-io/palmier-pro&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=palmier-io/palmier-pro&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=palmier-io/palmier-pro&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=iret77/nexgen-video&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=iret77/nexgen-video&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=iret77/nexgen-video&type=date&legend=top-left" />
  </picture>
 </a>
 
@@ -128,4 +129,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 Copyright (C) 2026 Palmier, Inc.
 
-Palmier Pro is open source under [GPLv3](LICENSE).
+NexGen Video is open source under [GPLv3](LICENSE).
