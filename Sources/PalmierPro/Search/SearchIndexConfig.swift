@@ -3,7 +3,8 @@ import Foundation
 enum SearchIndexConfig {
     static let enabledDefaultsKey = "searchIndexEnabled"
     static let visualMatchCosineFloor: Float = 0.05
-    static let hostedURL = URL(string: "https://huggingface.co/palmier-io/siglip2-base-coreml/resolve/main")!
+    // Model assets are mirrored to our own GitHub release, not a third-party HuggingFace account.
+    static let hostedURL = URL(string: "https://github.com/iret77/nexgen-video/releases/download/model-siglip2-base-patch16-256-v1")!
 
     static var enabled: Bool {
         get { UserDefaults.standard.object(forKey: enabledDefaultsKey) as? Bool ?? true }
