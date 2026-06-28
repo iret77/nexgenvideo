@@ -28,6 +28,7 @@ enum FalInputBuilder {
         case .plainSeconds:  input["duration"] = String(p.duration)
         case .secondsSuffix: input["duration"] = "\(p.duration)s"
         }
+        if model.videoImageRef, let image = p.referenceImageURLs.first { input["image_url"] = image }
         if model.videoSendsAspectRatio { input["aspect_ratio"] = p.aspectRatio }
         if model.videoSendsResolution, let resolution = p.resolution { input["resolution"] = resolution }
         if model.videoGeneratesAudio { input["generate_audio"] = p.generateAudio }

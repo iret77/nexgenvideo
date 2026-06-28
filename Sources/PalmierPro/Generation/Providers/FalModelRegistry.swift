@@ -41,6 +41,7 @@ struct FalModel: Sendable {
     var videoSendsAspectRatio: Bool = true
     var videoSendsResolution: Bool = false
     var videoGeneratesAudio: Bool = false
+    var videoImageRef: Bool = false   // image-to-video: emit `image_url` from the reference image
     var audioMode: FalAudioMode = .tts
 }
 
@@ -118,35 +119,43 @@ enum FalModelRegistry {
               duration: .secondsSuffix, sendsResolution: true, generatesAudio: true),
         video("fal-ai/minimax/hailuo-02/standard/text-to-video", "Hailuo 02 Standard",
               durations: [6, 10], aspects: ["16:9", "9:16"], sendsAspect: false),
+        // Image-to-video: the input image is a required image reference; aspect is image-driven.
+        video("fal-ai/kling-video/v2.5-turbo/pro/image-to-video", "Kling 2.5 Turbo Pro (image)",
+              durations: [5, 10], aspects: ["16:9", "9:16"], sendsAspect: false, i2v: true),
+        video("fal-ai/bytedance/seedance/v1/pro/image-to-video", "Seedance 1.0 Pro (image)",
+              durations: [5, 10], aspects: ["16:9", "9:16"], resolutions: ["480p", "720p", "1080p"],
+              sendsAspect: false, sendsResolution: true, i2v: true),
     ]
 
     private static func video(
         _ id: String, _ name: String,
         durations: [Int], aspects: [String], resolutions: [String]? = nil,
         duration: FalDurationMode = .plainSeconds,
-        sendsAspect: Bool = true, sendsResolution: Bool = false, generatesAudio: Bool = false
+        sendsAspect: Bool = true, sendsResolution: Bool = false, generatesAudio: Bool = false,
+        i2v: Bool = false
     ) -> FalModel {
         FalModel(
             entry: CatalogEntry(
                 id: id, kind: .video, displayName: name,
                 allowedEndpoints: [id], responseShape: .video,
-                uiCapabilities: .video(videoCaps(durations: durations, aspects: aspects, resolutions: resolutions))
+                uiCapabilities: .video(videoCaps(durations: durations, aspects: aspects, resolutions: resolutions, requiresImage: i2v))
             ),
             videoDuration: duration,
             videoSendsAspectRatio: sendsAspect,
             videoSendsResolution: sendsResolution,
-            videoGeneratesAudio: generatesAudio
+            videoGeneratesAudio: generatesAudio,
+            videoImageRef: i2v
         )
     }
 
-    private static func videoCaps(durations: [Int], aspects: [String], resolutions: [String]?) -> VideoCaps {
+    private static func videoCaps(durations: [Int], aspects: [String], resolutions: [String]?, requiresImage: Bool = false) -> VideoCaps {
         VideoCaps(
             durations: durations, resolutions: resolutions, aspectRatios: aspects,
             supportsFirstFrame: false, supportsLastFrame: false,
-            maxReferenceImages: 0, maxReferenceVideos: 0, maxReferenceAudios: 0,
-            maxTotalReferences: 0, maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil,
+            maxReferenceImages: requiresImage ? 1 : 0, maxReferenceVideos: 0, maxReferenceAudios: 0,
+            maxTotalReferences: requiresImage ? 1 : 0, maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil,
             framesAndReferencesExclusive: false, referenceTagNoun: "reference",
-            requiresSourceVideo: false, requiresReferenceImage: false
+            requiresSourceVideo: false, requiresReferenceImage: requiresImage
         )
     }
 
