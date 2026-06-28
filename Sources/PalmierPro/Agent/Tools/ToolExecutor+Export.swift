@@ -37,7 +37,7 @@ extension ToolExecutor {
             return try exportVideo(editor, format: format, resolution: resolution, outputURL: outputURL)
         case .xml:
             return try exportXML(editor, outputURL: outputURL)
-        case .palmier:
+        case .nexgen:
             return try await exportPalmier(editor, outputURL: outputURL)
         }
     }
@@ -144,7 +144,7 @@ extension ToolExecutor {
 
         return try jsonResult([
             "status": warnings.isEmpty ? "exported" : "exportedWithWarnings",
-            "mode": ExportProjectMode.palmier.rawValue,
+            "mode": ExportProjectMode.nexgen.rawValue,
             "path": outputURL.path,
             "collectedMediaRefs": report.collected,
             "copiedInternalMediaCount": report.copiedInternal,
@@ -192,7 +192,7 @@ extension ToolExecutor {
         var isDirectory = ObjCBool(false)
         if fm.fileExists(atPath: expanded, isDirectory: &isDirectory),
            isDirectory.boolValue,
-           !(mode == .palmier && rawExtension == expectedExtension) {
+           !(mode == .nexgen && rawExtension == expectedExtension) {
             throw ToolError("export_project: outputPath must include a filename")
         }
 
@@ -253,15 +253,20 @@ private struct ExportProjectArgs: DecodableToolArgs {
 private enum ExportProjectMode: String {
     case video
     case xml
-    case palmier
+    case nexgen
 
     init(named raw: String?) throws {
         guard let raw else {
             self = .video
             return
         }
-        guard let mode = Self(rawValue: raw.normalizedExportOption) else {
-            throw ToolError("export_project: mode must be video, xml, or palmier")
+        let normalized = raw.normalizedExportOption
+        if normalized == "palmier" {   // back-compat alias for the old mode name
+            self = .nexgen
+            return
+        }
+        guard let mode = Self(rawValue: normalized) else {
+            throw ToolError("export_project: mode must be video, xml, or nexgen")
         }
         self = mode
     }
@@ -270,7 +275,7 @@ private enum ExportProjectMode: String {
         switch self {
         case .video: format?.fileExtension ?? ExportFormat.h264.fileExtension
         case .xml: "xml"
-        case .palmier: Project.fileExtension
+        case .nexgen: Project.fileExtension
         }
     }
 
@@ -284,7 +289,7 @@ private enum ExportProjectMode: String {
         switch self {
         case .video: format?.displayName ?? "Video"
         case .xml: "XML"
-        case .palmier: "NexGen Video Project"
+        case .nexgen: "NexGen Video Project"
         }
     }
 }

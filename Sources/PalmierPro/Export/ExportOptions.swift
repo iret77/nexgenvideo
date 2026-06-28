@@ -57,7 +57,7 @@ enum ExportResolution: String, CaseIterable, Identifiable {
 enum ExportMode: String, CaseIterable, Identifiable {
     case video = "Video (.mp4)"
     case xml = "Timeline (.xml)"
-    case palmierProject = "NexGen Video Project (.palmier)"
+    case palmierProject = "NexGen Video Project (.nexgen)"
 
     var id: String { rawValue }
 }

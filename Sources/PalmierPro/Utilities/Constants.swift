@@ -103,7 +103,7 @@ enum Trim {
 }
 
 enum Project {
-    static let fileExtension = "palmier"
+    static let fileExtension = "nexgen"
     static let registryFilename = "project-registry.json"
     static let typeIdentifier = "io.palmier.project"
     static let defaultProjectName = "Untitled Project"

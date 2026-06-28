@@ -361,20 +361,40 @@ struct GenerationView: View {
         [GridItem(.adaptive(minimum: AppTheme.GenerationPanel.referenceTileWidth), spacing: AppTheme.Spacing.xs)]
     }
 
-    private var catalogReady: Bool {
-        !videoModels.isEmpty
-            && !imageModels.isEmpty
-            && !audioModels.isEmpty
+    private func modelCount(for type: GenerationType) -> Int {
+        switch type {
+        case .video: videoModels.count
+        case .image: imageModels.count
+        case .audio: audioModels.count
+        }
+    }
+
+    /// Modalities that have at least one model. Drives the visible type tabs.
+    private var availableTypes: [GenerationType] {
+        GenerationType.allCases.filter { modelCount(for: $0) > 0 }
     }
 
     var body: some View {
         Group {
-            if catalogReady {
+            if !ModelCatalog.shared.isLoaded {
+                catalogLoadingView
+            } else if availableTypes.isEmpty {
+                emptyCatalogView
+            } else if availableTypes.contains(selectedType) {
                 bodyContent
             } else {
+                // selectedType transiently empty; normalizeSelectedType fixes it next frame.
                 catalogLoadingView
             }
         }
+        .onAppear { normalizeSelectedType() }
+        .onChange(of: availableTypes) { _, _ in normalizeSelectedType() }
+    }
+
+    /// selectedType must never point at an empty modality; the model accessors trap on an empty array.
+    private func normalizeSelectedType() {
+        guard !availableTypes.contains(selectedType) else { return }
+        selectedType = availableTypes.first ?? .image
     }
 
     private var catalogLoadingView: some View {
@@ -383,6 +403,35 @@ struct GenerationView: View {
             Text("Loading models…")
                 .font(.system(size: AppTheme.FontSize.sm))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: AppTheme.GenerationPanel.loadingHeight)
+        .background {
+            RoundedRectangle(cornerRadius: AppTheme.Radius.lg)
+                .fill(AppTheme.aiGradientDark)
+                .allowsHitTesting(false)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.lg))
+        .shadow(AppTheme.Shadow.sm)
+        .padding(.horizontal, AppTheme.Spacing.sm)
+        .padding(.bottom, AppTheme.Spacing.sm)
+    }
+
+    private var emptyCatalogView: some View {
+        VStack(spacing: AppTheme.Spacing.md) {
+            Image(systemName: "square.stack.3d.up.slash")
+                .font(.system(size: AppTheme.FontSize.xl))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+            Text("No models available")
+                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Text("Add a provider API key to get started.")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+            Button("Open Providers…") {
+                SettingsWindowController.shared.show(tab: .providers)
+            }
+            .controlSize(.small)
         }
         .frame(maxWidth: .infinity)
         .frame(height: AppTheme.GenerationPanel.loadingHeight)
@@ -1242,7 +1291,7 @@ struct GenerationView: View {
 
     private var typeTabs: some View {
         HStack(spacing: 0) {
-            ForEach(GenerationType.allCases, id: \.self) { type in
+            ForEach(availableTypes, id: \.self) { type in
                 Button {
                     withAnimation(.easeInOut(duration: AppTheme.Anim.hover)) { selectedType = type }
                 } label: {

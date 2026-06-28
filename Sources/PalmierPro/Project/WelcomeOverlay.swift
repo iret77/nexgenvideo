@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// First-launch welcome shown over the Home screen
+/// First-launch welcome shown over the Home screen — the splash art fills the card.
 struct WelcomeOverlay: View {
     let onDismiss: () -> Void
 
@@ -12,64 +12,54 @@ struct WelcomeOverlay: View {
             Color.black.opacity(AppTheme.Opacity.strong)
                 .ignoresSafeArea()
             card
-                .frame(width: 520)
+                .frame(width: 560, height: 373)
         }
         .transition(.opacity)
     }
 
     private var card: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                Text("Welcome to NexGen Video")
-                    .font(.system(size: AppTheme.FontSize.title2, weight: .light))
-                    .tracking(AppTheme.Tracking.tight)
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                Text("A video editor built for AI. Generate, and edit all in one place.")
-                    .font(.system(size: AppTheme.FontSize.smMd))
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            heroImage
-            HStack(spacing: AppTheme.Spacing.sm) {
-                Button("Skip") { onDismiss() }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                signInButton
-            }
-            .padding(.top, AppTheme.Spacing.lg)
+        ZStack(alignment: .bottom) {
+            splash
+            buttonsBar
         }
-        .padding(AppTheme.Spacing.xxl)
-        .background(
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.mdLg, style: .continuous))
+        .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.mdLg, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.mdLg, style: .continuous)
-                        .strokeBorder(AppTheme.Border.primaryColor, lineWidth: AppTheme.BorderWidth.hairline)
-                )
+                .strokeBorder(AppTheme.Border.primaryColor, lineWidth: AppTheme.BorderWidth.hairline)
         )
         .shadow(AppTheme.Shadow.lg)
     }
 
-    private var signInButton: some View {
-        Button("Get started") { onDismiss() }
-            .buttonStyle(.capsule(.prominent, size: .regular))
-            .keyboardShortcut(.defaultAction)
-    }
-
-
-    @ViewBuilder
-    private var heroImage: some View {
+    private var splash: some View {
         Group {
             if let hero = Self.hero {
-                Image(nsImage: hero).resizable().aspectRatio(contentMode: .fit)
+                Image(nsImage: hero).resizable().aspectRatio(contentMode: .fill)
             } else {
                 AppTheme.aiGradient
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var buttonsBar: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Button("Skip") { onDismiss() }
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .keyboardShortcut(.cancelAction)
+            Spacer()
+            Button("Get started") { onDismiss() }
+                .buttonStyle(.capsule(.prominent, size: .regular))
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(AppTheme.Spacing.lg)
         .frame(maxWidth: .infinity)
-        .frame(height: 240)
-        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
+        .background(
+            LinearGradient(
+                colors: [.clear, Color.black.opacity(AppTheme.Opacity.strong)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 
     private static func loadHero() -> NSImage? {
