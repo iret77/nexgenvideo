@@ -1,0 +1,96 @@
+id: americana-desert-corbijn-joshua-tree
+name: "Americana Desert — Corbijn Joshua-Tree school"
+description: |
+  Weite, archetypisch-amerikanische Wuesten-Landschaft als emotionaler
+  Anker. Vorbild Anton Corbijn's U2-Joshua-Tree-Visualbogen (1986)
+  und die seither verbreitete Country-/Indie-Roadmovie-Aesthetik:
+  Mojave-Vistas, Death Valley, Twentynine Palms, kleine Motels.
+  Performer klein in der Welt, Architektur und Horizont tragen die
+  Stimmung. Fuer Country-Rock, Indie-Folk, Americana-Tracks mit
+  Roadmovie- oder Sehnsuchts-Bogen.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized]
+  moods: [melancholic, introspective, narrative, cinematic, dreamy]
+  tempo_bands: [slow, medium]
+  concept_types: [narrative, hybrid, performance]
+  figures: [artist_only, artist_plus_others]
+  aspect_ratios: []
+
+references:
+  - name: "Anton Corbijn (U2 Joshua Tree visual era)"
+    role: director
+    notable_works:
+      - "U2 — Joshua Tree album visuals (1986-1987, Mojave Desert photography)"
+      - "U2 — Joshua Tree Tour 2018/19 narrative films (with Sebastian Wintero)"
+      - "Joshua Tree photography: Bodie, Harmony Motel Twentynine Palms, Zabriskie Point, Death Valley Junction"
+    sources:
+      - label: "Wikipedia — The Joshua Tree (album)"
+        url: "https://en.wikipedia.org/wiki/The_Joshua_Tree"
+      - label: "Wikipedia — In God's Country (Joshua Tree)"
+        url: "https://en.wikipedia.org/wiki/In_God's_Country"
+      - label: "uDiscoverMusic — The Joshua Tree: How U2 Became Rock's Hottest Ticket"
+        url: "https://www.udiscovermusic.com/stories/u2-the-joshua-tree-album/"
+      - label: "Albumism — Rediscover U2's 'The Joshua Tree' (1987)"
+        url: "https://albumism.com/features/tribute-celebrating-35-years-of-u2-the-joshua-tree"
+      - label: "Sebastian Wintero — U2 Joshua Tree Tour Director Anton Corbijn"
+        url: "https://sebastianw.dk/u2-joshua-tree-tour-films/"
+  - name: "Joshua-Tree location lineage (music-video filming tradition)"
+    role: music_video
+    notable_works:
+      - "Joshua Tree National Park as music-video location for desert-vibes shoots (Tom Petty-Feel videos, Pioneertown)"
+    sources:
+      - label: "The Secret Tours — Every Music Video filmed in Joshua Tree: And at FOUR ACES"
+        url: "https://thesecrettours.com/music-videos-in-joshua-tree-and-at-four-aces/"
+      - label: "The Joshua Tree Earth — Digital Preservation of U2's Iconic Landmark"
+        url: "https://thejoshuatree.earth/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, aerial]
+    notes: "Weite Wuesten-/Horizont-Aufnahme, oft mit einem markanten Element (Joshua Tree, Motel, Strommast)."
+  - role: reveal
+    framing_hint: [ms, mcu]
+    notes: "Performer in der Landschaft eingeordnet, Mittel-Distanz."
+  - role: detail
+    framing_hint: [cu, ecu]
+    notes: "Augen, Hand am Gitarrenhals, Sand, Wind-Haare — emotionale Naehe-Beats."
+  - role: resolve
+    framing_hint: [wide, full]
+    notes: "Rueck zur Weite zum Schluss, Subject wieder klein in der Welt."
+
+framing_mix:
+  wide_pct: 20
+  full_pct: 15
+  ms_pct: 20
+  mcu_pct: 15
+  cu_pct: 15
+  ecu_pct: 5
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 5
+
+asl_range:
+  min_s: 3.0
+  max_s: 12.0
+  typical_s: 5.5
+
+camera_vocabulary:
+  - "static hold on horizon"
+  - "slow lateral track across landscape"
+  - "drone aerial reveal"
+  - "rack-focus from sand to subject"
+  - "single long crane move"
+
+lighting_signature: |
+  natural desert daylight, golden-hour heavy bias, hard shadows
+  with deep contrast, deep blue sky, occasional black-and-white or
+  sepia grade in Corbijn tradition, lens flare on direct sun.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, uDiscoverMusic, Albumism,
+  Secret Tours, Joshua Tree Earth and Sebastian Wintero pages
+  describing Corbijn's Mojave shoots and the broader music-video
+  Joshua-Tree filming tradition. Specific framing_mix derived
+  qualitatively, not Cinemetrics-grade.

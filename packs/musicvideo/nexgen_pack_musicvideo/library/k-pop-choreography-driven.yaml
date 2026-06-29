@@ -1,0 +1,94 @@
+id: k-pop-choreography-driven
+name: "K-Pop / Mainstream Pop — choreography-driven set pieces"
+description: |
+  Choreographie-getriebene Performance-Videos in der K-Pop-Tradition
+  (BLACKPINK, Stray Kids, Lisa). Klare Set-Pieces, gruppen-
+  synchronisierte Tanz-Sequenzen, schnelle aber lesbare Cuts auf den
+  Beat, Concept-Wechsel pro Section. Empfohlen fuer Mainstream-Pop-
+  und K-Pop-Releases mit Tanz-Fokus.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
+  moods: [high_energy, euphoric, cinematic]
+  tempo_bands: [medium, uptempo, fast]
+  concept_types: [performance, hybrid]
+  figures: [artist_only, artist_plus_others, others_only]
+  aspect_ratios: []
+
+references:
+  - name: "Kyle Hanagami"
+    role: director
+    notable_works:
+      - "BLACKPINK — Boombayah choreography (2016)"
+      - "Lisa — Rockstar (2024, MTV VMA Best Choreography + Best Direction nominations)"
+      - "TWICE, aespa, Red Velvet choreographies"
+    sources:
+      - label: "Billboard — Meet the Choreographer Behind Your Favorite K-Pop Moves"
+        url: "https://www.billboard.com/music/pop/kpop-choreographer-kyle-hanagami-blackpink-interview-1235310481/"
+      - label: "AllKpop — Kyle Hanagami reveals he was inspired by BLACKPINK for Mean Girls 2024 choreography"
+        url: "https://www.allkpop.com/article/2024/01/choreographer-kyle-hanagami-reveals-he-was-inspired-by-blackpink-for-the-choreography-of-the-movie-mean-girls-2024"
+      - label: "Yahoo Entertainment — BLACKPINK Choreographer Reveals Iconic Cameo Plans at Coachella Set"
+        url: "https://www.yahoo.com/entertainment/music/articles/blackpink-choreographer-reveals-iconic-act-165318262.html"
+  - name: "Stray Kids (JYP Entertainment / 3RACHA)"
+    role: music_video
+    notable_works:
+      - "Stray Kids — concept-driven music video sequence (2019-)"
+      - "Stray Kids — MTV VMA Best K-Pop nominations"
+    sources:
+      - label: "Wikipedia — Stray Kids"
+        url: "https://en.wikipedia.org/wiki/Stray_Kids"
+      - label: "Yahoo Entertainment — MTV VMA 2024: Jungkook, Lisa, Stray Kids & More Earn Best K-Pop Nominations"
+        url: "https://www.yahoo.com/entertainment/mtv-vma-2024-jungkook-lisa-064149393.html"
+      - label: "The Bias List — The Top 10 K-Pop Choreography of 2024"
+        url: "https://thebiaslist.com/2024/12/23/the-top-10-k-pop-choreography-of-2024/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Set-Piece-Reveal: Tanzgruppe in voller Choreografie sichtbar."
+  - role: performance
+    framing_hint: [ms, mcu]
+    notes: "Mid-Group oder Lead-Performer in Mittel-Distanz, Beat-genau geschnitten."
+  - role: reveal
+    framing_hint: [cu, ecu]
+    notes: "Augen-CU des Leads, Hand-Akzent, Schmuck-Detail auf Hit."
+  - role: cutaway
+    framing_hint: [insert, ots]
+    notes: "Crew-Pose-Insert, Symbol-Frame, Logo-Element."
+
+framing_mix:
+  wide_pct: 15
+  full_pct: 15
+  ms_pct: 25
+  mcu_pct: 15
+  cu_pct: 15
+  ecu_pct: 5
+  ots_pct: 5
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 0.8
+  max_s: 3.0
+  typical_s: 1.5
+
+camera_vocabulary:
+  - "orbital crane around dance formation"
+  - "rapid push-in on Lead"
+  - "synchronized whip pan between performers"
+  - "drone reveal above choreography"
+  - "match-cut on choreographed beat"
+
+lighting_signature: |
+  saturated set-piece keys (single bold accent colour per concept),
+  strong frontal soft key with rim/back light separation, neon/LED
+  practicals as part of choreographed visuals, frequent concept-
+  driven colour shifts mid-section.
+
+approximation_basis: |
+  Aggregation of the cited Billboard, AllKpop, Yahoo Entertainment,
+  Wikipedia and The Bias List sources describing Kyle Hanagami's
+  K-Pop choreography work and Stray Kids' "Concept Matjib" approach.
+  Specific framing_mix derived qualitatively, not from per-video
+  Cinemetrics.

@@ -1,0 +1,89 @@
+id: anime-action-trigger-energy
+name: "Anime Action — Studio Trigger / Imaishi energy"
+description: |
+  Hochgetaktete Action-Anime-Sprache in der Schule Hiroyuki Imaishi /
+  Studio Trigger: schnelle, raumgreifende Animation, dynamische
+  Storyboards, "roving close-ups" durch Bewegung, Zoom-und-Smash-
+  Pacing auf den Beat, cel-shaded Look. Empfohlen fuer Hochenergie-
+  Tracks mit Anime-Aesthetik (Battle-Shonen, AMV-Energy,
+  Mecha-Performance).
+
+triggers:
+  visual_mediums: [2d_animation, illustration, mixed]
+  moods: [high_energy, euphoric, aggressive, cinematic]
+  tempo_bands: [medium, uptempo, fast]
+  concept_types: [performance, hybrid, narrative]
+  figures: [artist_only, artist_plus_others, others_only]
+  aspect_ratios: []
+
+references:
+  - name: "Studio Trigger (Hiroyuki Imaishi, Masahiko Otsuka)"
+    role: director
+    notable_works:
+      - "Kill la Kill (2013)"
+      - "Promare (2019)"
+      - "Cyberpunk: Edgerunners (2022)"
+      - "Gurren Lagann (2007, Gainax-era)"
+    sources:
+      - label: "Wikipedia — Studio Trigger"
+        url: "https://en.wikipedia.org/wiki/Studio_Trigger"
+      - label: "Wikipedia — Hiroyuki Imaishi"
+        url: "https://en.wikipedia.org/wiki/Hiroyuki_Imaishi"
+      - label: "All the Anime — Interview: Studio Trigger"
+        url: "https://blog.alltheanime.com/interview-studio-trigger/"
+      - label: "GKIDS Films — Promare"
+        url: "https://gkids.com/films/promare/"
+      - label: "TV Tropes — Hiroyuki Imaishi (Creator)"
+        url: "https://tvtropes.org/pmwiki/pmwiki.php/Creator/HiroyukiImaishi"
+      - label: "Slant Magazine — Promare Review"
+        url: "https://www.slantmagazine.com/film/review-promare-finds-studio-trigger-spinning-its-anime-wheels/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Action-Welt-Anker, oft schon mit Subject in dynamischer Pose."
+  - role: performance
+    framing_hint: [ms, mcu]
+    notes: "Subject in Aktion, Kamera traekt mit, dynamisches Profil/Frontal."
+  - role: reveal
+    framing_hint: [cu, ecu]
+    notes: "Augen, geballte Faeuste, Schwert-Detail — Impact-Beats."
+  - role: cutaway
+    framing_hint: [insert, pov]
+    notes: "Symbol-Insert oder POV-Smash auf den nachfolgenden Hit."
+
+framing_mix:
+  wide_pct: 10
+  full_pct: 10
+  ms_pct: 25
+  mcu_pct: 20
+  cu_pct: 20
+  ecu_pct: 5
+  ots_pct: 0
+  pov_pct: 5
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 0.5
+  max_s: 3.5
+  typical_s: 1.5
+
+camera_vocabulary:
+  - "rapid push-in on impact"
+  - "smash zoom"
+  - "whip pan into next shot"
+  - "lateral track following the action"
+  - "vertical tilt up for power moments"
+
+lighting_signature: |
+  cel-shaded with bold flat colours, saturated accent palette (often
+  one bold colour per scene — Promare's pink/cyan, Kill la Kill's
+  red), strong rim lighting on subjects, simplified background gradients.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, All the Anime, GKIDS,
+  TV Tropes and Slant Magazine pages describing Imaishi's
+  "fast and frantic, elaborate storyboarding, punchy direction"
+  approach. Pace values approximate the genre's typical Animation-
+  Music-Video range, not per-scene Cinemetrics.

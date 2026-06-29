@@ -28,7 +28,7 @@ def _tempo_check(ctx: object) -> list:
 
 
 def _analysis_phase(project_dir: object) -> object:
-    """Audio analysis (beat/downbeat/stems/chords). Ports from musicvideo next."""
+    """Audio analysis (beat/downbeat/stems/chords). The real DSP ports in next."""
     raise NotImplementedError("music analysis phase not yet ported")
 
 

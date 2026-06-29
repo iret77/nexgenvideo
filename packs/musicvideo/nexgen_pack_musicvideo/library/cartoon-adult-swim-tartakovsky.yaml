@@ -1,0 +1,93 @@
+id: cartoon-adult-swim-tartakovsky
+name: "Cartoon Adult-Swim — Tartakovsky/Roiland school"
+description: |
+  Westliche TV-Animation in der Adult-Swim-Tradition: limitierte
+  2D-Cel-Animation, klare Linien, stark stilisierte Charakter-Designs,
+  irrwitziger oder dunkler Humor, Action-Sequenzen mit "Tartakovsky-
+  Composition" (theatralische Posen, klare Silhouetten). Empfohlen
+  fuer ironische / surreal-komische / dunkel-humoristische Tracks mit
+  cartoonigem Look.
+
+triggers:
+  visual_mediums: [2d_animation, illustration, mixed]
+  moods: [high_energy, cinematic, narrative, aggressive, dreamy]
+  tempo_bands: [medium, uptempo, fast]
+  concept_types: [narrative, performance, abstract, hybrid]
+  figures: [artist_only, artist_plus_others, others_only]
+  aspect_ratios: []
+
+references:
+  - name: "Genndy Tartakovsky"
+    role: director
+    notable_works:
+      - "Samurai Jack (2001-2017)"
+      - "Genndy Tartakovsky's Primal (2019-)"
+      - "Star Wars: Clone Wars (2003-2005)"
+    sources:
+      - label: "Variety — Genndy Tartakovsky Teases New Heist Series in Adult Swim Panel (2024)"
+        url: "https://variety.com/2024/film/global/genndy-tartakovsky-musical-series-1236036232/"
+      - label: "Warner Bros Discovery — Genndy Tartakovsky's Primal Returns to Adult Swim"
+        url: "https://press.wbd.com/us/media-release/epic-saga-continues-emmyr-award-winning-series-genndy-tartakovskys-primal-returns"
+      - label: "Warner Bros Discovery — Adult Swim Annecy International Animation Film Festival"
+        url: "https://press.wbd.com/us/media-release/adult-swim-reveals-new-and-returning-series-and-forthcoming-special-featuring-top"
+  - name: "Adult Swim animated series tradition"
+    role: music_video
+    notable_works:
+      - "Rick and Morty (Justin Roiland, Dan Harmon)"
+      - "Rick and Morty: The Anime (Takashi Sano, 2024)"
+    sources:
+      - label: "Warner Bros Discovery — Rick and Morty Season 8 (2025)"
+        url: "https://press.wbd.com/us/media-release/adult-swim-0/season-eight-adult-swims-global-hit-series-rick-and-morty-arrives-may-25"
+      - label: "Warner Bros Discovery — Rick and Morty: The Anime Premiere"
+        url: "https://press.wbd.com/us/media-release/adult-swim-0/all-new-series-rick-and-morty-anime-premieres-august-15-adult-swim"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Theatralisch komponiertes Establishing — klare Silhouette, oft minimalistisches BG."
+  - role: performance
+    framing_hint: [ms, mcu]
+    notes: "Charakter in Mittel-Distanz, Mimik klar lesbar."
+  - role: reveal
+    framing_hint: [cu, ecu]
+    notes: "Augen-CU als Reaction-Beat, Gag- oder Schock-Pointe."
+  - role: cutaway
+    framing_hint: [insert, ots]
+    notes: "Detail-Insert auf Prop, Sight-Gag oder Subtext-Element."
+
+framing_mix:
+  wide_pct: 15
+  full_pct: 10
+  ms_pct: 25
+  mcu_pct: 20
+  cu_pct: 15
+  ecu_pct: 5
+  ots_pct: 5
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 1.0
+  max_s: 5.0
+  typical_s: 2.5
+
+camera_vocabulary:
+  - "static hold with theatrical staging"
+  - "snap zoom on reaction"
+  - "lateral pan revealing gag"
+  - "match-cut on action"
+  - "freeze-frame punctuation"
+
+lighting_signature: |
+  flat cel-lit with bold outlines and limited colour palette, single
+  colour-keyed background per scene, hard cast shadows for dramatic
+  beats, deliberate use of black silhouette against bright colour
+  fields (Tartakovsky signature).
+
+approximation_basis: |
+  Aggregation of the cited Variety, Warner Bros Discovery press
+  releases and the Adult Swim Annecy presentation. Tartakovsky's
+  Samurai Jack and Primal serve as the framing-mix and pacing
+  reference. Values are qualitative, derived from the cited sources
+  describing his theatrical and minimalist visual approach.

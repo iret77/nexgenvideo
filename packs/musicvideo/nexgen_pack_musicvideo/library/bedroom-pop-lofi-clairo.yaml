@@ -1,0 +1,94 @@
+id: bedroom-pop-lofi-clairo
+name: "Bedroom-Pop Lo-Fi — Clairo / Mac DeMarco school"
+description: |
+  Lo-Fi, einfache Aesthetik aus dem Bedroom-Pop: Self-Recording-
+  Look, Macbook-Photo-Booth-Cam, ein Zimmer, sichtbare Imperfektion.
+  Vorbild Clairo's "Pretty Girl" (2017, in 30 Minuten im Kinder-
+  zimmer aufgenommen) und Mac DeMarco's Vintage-Bias. Fuer authentisch-
+  intime Indie-Tracks ohne Production-Bombast.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
+  moods: [intimate, melancholic, introspective, dreamy]
+  tempo_bands: [slow, medium]
+  concept_types: [performance, narrative, hybrid, documentary]
+  figures: [artist_only]
+  aspect_ratios: []
+
+references:
+  - name: "Clairo (Claire Cottrill)"
+    role: music_video
+    notable_works:
+      - "Pretty Girl (2017, self-recorded music video, Photo Booth on MacBook in childhood bedroom)"
+      - "Diary 001 (2018)"
+    sources:
+      - label: "Wikipedia — Pretty Girl (Clairo song)"
+        url: "https://en.wikipedia.org/wiki/Pretty_Girl_(Clairo_song)"
+      - label: "The FADER — Clairo would like to leave her bedroom now, please"
+        url: "https://www.thefader.com/2018/05/24/clairo-diary-001-pretty-girl-4ever-interview"
+      - label: "Hypebeast — New Bedroom Pop Artists You Should Check Out (Clairo, Zack Villere, Rex Orange County)"
+        url: "https://hypebeast.com/2018/10/best-bedroom-pop-music-clairo-zack-villere-rex-orange-county"
+      - label: "Cherwell — The beauty of bedroom pop"
+        url: "https://cherwell.org/2020/07/20/the-beauty-of-bedroom-pop/"
+  - name: "Mac DeMarco"
+    role: music_video
+    notable_works:
+      - "Mac DeMarco — Salad Days (low-budget DIY video style)"
+      - "Mac DeMarco — Chamber of Reflection"
+    sources:
+      - label: "Medium — Mac DeMarco & Gen Z: Why The Indie Singer Is Conquering a Generation"
+        url: "https://medium.com/@salvadorlopz/mac-demarco-gen-z-why-the-indie-singer-is-conquering-a-generation-ae81f32d2094"
+      - label: "Kore Studios — The Kore Guide to Bedroom Pop"
+        url: "https://www.kore-studios.com/the-kore-guide-to-bedroom-pop/"
+      - label: "Hotel Ugly — What Genre is Mac DeMarco? Guide to His Sound and Style"
+        url: "https://hotelugly.com/news/what-genre-is-mac-demarco-guide-to-his-sound-and-style/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [ms, mcu]
+    notes: "Performer in seinem Raum — Bett, Schreibtisch, sichtbares Kabel-Spaghetti."
+  - role: detail
+    framing_hint: [cu, ecu]
+    notes: "Imperfektionen werden gefeiert — Pickel, ungemachtes Haar, schiefe Brille."
+  - role: cutaway
+    framing_hint: [insert]
+    notes: "Objekt-Insert: Tee, Kassette, Buch, Foto-Sammlung."
+  - role: resolve
+    framing_hint: [ms]
+    notes: "Zurueck zur ruhigen Mittel-Distanz."
+
+framing_mix:
+  wide_pct: 0
+  full_pct: 5
+  ms_pct: 30
+  mcu_pct: 25
+  cu_pct: 25
+  ecu_pct: 5
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 10
+  aerial_pct: 0
+
+asl_range:
+  min_s: 4.0
+  max_s: 15.0
+  typical_s: 7.0
+
+camera_vocabulary:
+  - "static handheld laptop cam"
+  - "self-shot iPhone hold"
+  - "gentle natural-light push"
+  - "deliberate camera shake (authenticity marker)"
+
+lighting_signature: |
+  available room light (window, bedside lamp, fairy lights),
+  unmotivated colour bias (often warm yellow tungsten or cool
+  daylight), low-contrast, deliberate over- or under-exposure as
+  authenticity marker, no rim or fill.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, FADER interview, Hypebeast,
+  Cherwell, Medium, Kore Studios and Hotel Ugly articles describing
+  Clairo's self-recorded Pretty Girl approach and the broader
+  bedroom-pop "DIY authenticity" aesthetic. Specific framing_mix
+  derived qualitatively, not Cinemetrics-grade.

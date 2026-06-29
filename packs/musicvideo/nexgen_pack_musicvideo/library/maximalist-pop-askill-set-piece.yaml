@@ -1,0 +1,92 @@
+id: maximalist-pop-askill-set-piece
+name: "Maximalist Pop — Daniel Askill set piece"
+description: |
+  Ein-Location-Set-Piece mit hoher choreografischer Dichte, Vorbild
+  Daniel Askill (Sia — Chandelier, Lady Gaga — Stupid Love). Single-
+  Performer in eindringlicher Tanz-Performance, dezenter Naturalismus
+  in der Komposition, Choreografie traegt die ganze Aussage. Fuer
+  Maximalist-Pop-Tracks mit klarem Performer-Fokus.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized]
+  moods: [euphoric, high_energy, dreamy, cinematic, melancholic, aggressive]
+  tempo_bands: [medium, uptempo]
+  concept_types: [performance, hybrid, narrative]
+  figures: [artist_only, artist_plus_others]
+  aspect_ratios: []
+
+references:
+  - name: "Daniel Askill"
+    role: director
+    notable_works:
+      - "Sia — Chandelier (2014, 2.8+ billion YouTube views, Maddie Ziegler choreography by Ryan Heffington)"
+      - "Sia — Chandelier (alternative one-take version, 2014)"
+      - "Lady Gaga — Stupid Love (2020)"
+    sources:
+      - label: "Wikipedia — Chandelier (song)"
+        url: "https://en.wikipedia.org/wiki/Chandelier_(song)"
+      - label: "Billboard — Sia's Chandelier Video: Dance Moms Star Maddie Ziegler Delivers Dazzling Performance"
+        url: "https://www.billboard.com/music/music-news/sia-chandelier-video-dance-moms-maddie-ziegler-6077552/"
+      - label: "The Music Network — ARIA-winning Aussie director shoots Lady Gaga's Stupid Love video"
+        url: "https://themusicnetwork.com/aussie-director-lady-gaga-video/"
+      - label: "VideoStatic — Sia 'Chandelier' (Sia & Daniel Askill, dir.)"
+        url: "https://www.videostatic.com/watch-it/2014/05/06/sia-chandelier-sia-daniel-askill-dir"
+      - label: "Medium — Aesthetic, mood, and meaning in movement — Official music video for Sia's Chandelier"
+        url: "https://kathrynboland-55843.medium.com/aesthetic-mood-and-meaning-in-movement-and-more-official-music-video-for-sias-chandelier-2d1c31264295"
+  - name: "Ryan Heffington (Choreographer)"
+    role: choreographer
+    notable_works:
+      - "Sia — Chandelier choreography (2014)"
+      - "Sia — multiple subsequent collaborations"
+    sources:
+      - label: "Billboard — Sia's Chandelier Video, Heffington choreography credit"
+        url: "https://www.billboard.com/music/music-news/sia-chandelier-video-dance-moms-maddie-ziegler-6077552/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Leerer Set-Anker, Performer noch klein im Raum."
+  - role: performance
+    framing_hint: [ms, full]
+    notes: "Choreografie im Mittel- und Ganz-Body, Beat-getaktet."
+  - role: reveal
+    framing_hint: [mcu, cu]
+    notes: "Gesicht in Choreografie-Spitze, Ausdruck-Beats."
+  - role: detail
+    framing_hint: [ecu, insert]
+    notes: "Hand, Fuss, Bewegungs-Abdruck — Intensitaets-Akzente."
+
+framing_mix:
+  wide_pct: 15
+  full_pct: 25
+  ms_pct: 25
+  mcu_pct: 15
+  cu_pct: 10
+  ecu_pct: 5
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 1.5
+  max_s: 5.0
+  typical_s: 2.5
+
+camera_vocabulary:
+  - "static hold framing choreography"
+  - "slow circle dolly around performer"
+  - "match-cut on choreographed beat"
+  - "occasional whip pan between performer and detail"
+
+lighting_signature: |
+  desaturated grey-and-earth-tone palette with single motivated
+  practical, soft side-key with deep shadow detail, grimy set-
+  texture preserved, occasional bold colour-wash for hook moments.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, Billboard, Music Network,
+  VideoStatic and Medium analyses describing Askill's Chandelier
+  approach (single dirty apartment, Heffington choreography, Sia +
+  Askill co-direction, Sebastian Wintero DOP). Specific framing_mix
+  derived qualitatively from these descriptions.

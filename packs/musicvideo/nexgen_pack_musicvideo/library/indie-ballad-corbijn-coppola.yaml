@@ -1,0 +1,97 @@
+id: indie-ballad-corbijn-coppola
+name: "Indie Ballad — Corbijn / Coppola school"
+description: |
+  Reduziert, atmosphaerisch, oft single-Location oder ein klar
+  abgegrenzter Welt-Ausschnitt. Bild-Komposition steht ueber Action.
+  Vorbild: Anton Corbijn (Depeche Mode, Joy Division, U2) und Sofia
+  Coppola (The Virgin Suicides-Aesthetik, Romy Mars, Phoenix). Bestens
+  fuer langsame Ballads mit hohem Stimmungsanteil.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized]
+  moods: [introspective, melancholic, dreamy, intimate, cinematic]
+  tempo_bands: [slow, medium]
+  concept_types: [narrative, performance, hybrid, abstract]
+  figures: [artist_only, artist_plus_others]
+  aspect_ratios: []
+
+references:
+  - name: "Anton Corbijn"
+    role: director
+    notable_works:
+      - "Depeche Mode — Enjoy the Silence"
+      - "Depeche Mode — Before We Drown (2024)"
+      - "Joy Division — Atmosphere"
+      - "U2 — One"
+      - "Nirvana — Heart-Shaped Box"
+    sources:
+      - label: "Wikipedia — Anton Corbijn"
+        url: "https://en.wikipedia.org/wiki/Anton_Corbijn"
+      - label: "IMVDb — Anton Corbijn directorial credits"
+        url: "https://imvdb.com/n/anton-corbijn/videography-by-position/dir"
+      - label: "IMDb — Anton Corbijn"
+        url: "https://www.imdb.com/name/nm0179221/"
+      - label: "Musée Magazine — Anton Corbijn: Unexpected Moments (2024)"
+        url: "https://museemagazine.com/features/2024/4/23/anton-corbijn-unexpected-moments"
+      - label: "Depeche Mode official — Before We Drown music video out now"
+        url: "https://www.facebook.com/depechemode/videos/before-we-drown-music-video-out-now-directed-by-anton-corbijn-httpsdepechemodeln/935517560914563/"
+  - name: "Sofia Coppola"
+    role: director
+    notable_works:
+      - "The White Stripes — I Just Don't Know What to Do with Myself"
+      - "Phoenix — Chloroform"
+      - "Romy Mars — A-Lister (2025)"
+    sources:
+      - label: "IMVDb — Sofia Coppola directorial credits"
+        url: "https://imvdb.com/n/sofia-coppola/videography-by-position/dir"
+      - label: "Wikipedia — Category: Music videos directed by Sofia Coppola"
+        url: "https://en.wikipedia.org/wiki/Category:Music_videos_directed_by_Sofia_Coppola"
+      - label: "IMDb — Sofia Coppola"
+        url: "https://www.imdb.com/name/nm0001068/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, ms]
+    notes: "Stimmungs-Anker, oft schon mit Subject — 1 pro Section."
+  - role: reveal
+    framing_hint: [mcu, ms]
+    notes: "Performer in der Atmosphaere, ruhig."
+  - role: detail
+    framing_hint: [cu, ecu]
+    notes: "Augen, Atmen, Lippen — emotionale Naehe."
+  - role: resolve
+    framing_hint: [ms, full]
+    notes: "Rueck zum Mittel-Body, gelegentlich Wide-Echo."
+
+framing_mix:
+  wide_pct: 10
+  full_pct: 5
+  ms_pct: 30
+  mcu_pct: 25
+  cu_pct: 20
+  ecu_pct: 5
+  ots_pct: 5
+  pov_pct: 0
+  insert_pct: 0
+  aerial_pct: 0
+
+asl_range:
+  min_s: 3.0
+  max_s: 10.0
+  typical_s: 5.5
+
+camera_vocabulary:
+  - "static hold"
+  - "slow push-in"
+  - "gentle handheld"
+  - "single dolly move per phrase"
+
+lighting_signature: |
+  black-and-white frequent in Corbijn work, otherwise muted natural
+  light with single window/lamp key, soft fall-off, low saturation.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, Musée Magazine, IMVDb and IMDb
+  pages describing Corbijn's reduced black-and-white portrait style
+  and Coppola's restrained naturalist aesthetic. Specific ASL and
+  framing distribution vary per video.

@@ -1,0 +1,96 @@
+id: cinematic-rock-romanek
+name: "Cinematic Rock — Romanek / Sigismondi school"
+description: |
+  Konzeptionell, bildstark, Story-driven, oft duester oder
+  introspektiv. Vorbild: Mark Romanek (Nine Inch Nails, Johnny Cash —
+  Hurt) und Floria Sigismondi (Marilyn Manson, The Cure). Empfohlen
+  fuer Rock-/Alt-Tracks mit erzaehlerischem Kern und visuell starkem
+  Konzept.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized]
+  moods: [melancholic, introspective, aggressive, cinematic, narrative]
+  tempo_bands: [slow, medium]
+  concept_types: [narrative, hybrid, abstract]
+  figures: [artist_only, artist_plus_others]
+  aspect_ratios: []
+
+references:
+  - name: "Mark Romanek"
+    role: director
+    notable_works:
+      - "Nine Inch Nails — Closer"
+      - "Johnny Cash — Hurt (2003)"
+      - "Audioslave — Cochise"
+      - "Janet Jackson — Got 'til It's Gone"
+    sources:
+      - label: "Wikipedia — Mark Romanek"
+        url: "https://en.wikipedia.org/wiki/Mark_Romanek"
+      - label: "Wikipedia — Mark Romanek videography"
+        url: "https://en.wikipedia.org/wiki/Mark_Romanek_videography"
+      - label: "lafilm.edu — 8 Music Video Directors Who Rewrote the Rules of Cinema"
+        url: "https://www.lafilm.edu/blog/8-music-video-directors-rewrote-the-rules-of-cinema/"
+      - label: "Indigo Productions — The Music Videos of Mark Romanek"
+        url: "https://www.indigoprod.com/the-music-videos-of-mark-romanek/"
+  - name: "Floria Sigismondi"
+    role: director
+    notable_works:
+      - "Marilyn Manson — The Beautiful People"
+      - "The Cure — The 13th"
+      - "David Bowie — Little Wonder"
+    sources:
+      - label: "Wikipedia — Floria Sigismondi"
+        url: "https://en.wikipedia.org/wiki/Floria_Sigismondi"
+      - label: "lafilm.edu — 8 Music Video Directors Who Rewrote the Rules of Cinema"
+        url: "https://www.lafilm.edu/blog/8-music-video-directors-rewrote-the-rules-of-cinema/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Konzept-Welt-Anker pro Section, oft surreal komponiert — 1 Shot."
+  - role: reveal
+    framing_hint: [mcu, ms]
+    notes: "Performer im Konzept verankert, oft frontal."
+  - role: detail
+    framing_hint: [ecu, cu]
+    notes: "Symbol-Inserts, Augen, Haende, Texturen."
+  - role: cutaway
+    framing_hint: [insert]
+    notes: "Konzept-Symbole, Objekte als Metaphern."
+  - role: resolve
+    framing_hint: [ms, full]
+    notes: "Rueck zum Performer am Section-Ende."
+
+framing_mix:
+  wide_pct: 10
+  full_pct: 10
+  ms_pct: 20
+  mcu_pct: 20
+  cu_pct: 20
+  ecu_pct: 10
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 10
+  aerial_pct: 0
+
+asl_range:
+  min_s: 2.0
+  max_s: 8.0
+  typical_s: 4.0
+
+camera_vocabulary:
+  - "static hold"
+  - "slow push-in"
+  - "vertical crane"
+  - "controlled slow-mo"
+
+lighting_signature: |
+  high-contrast key with deep shadows, often black-and-white or
+  desaturated grade; single hard light source; symbolic motivated
+  practicals.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, lafilm.edu and Indigo Productions
+  sources describing Romanek's "four-minute panic attack" approach and
+  Sigismondi's gothic visceral aesthetic. Specific ASL varies per
+  video.

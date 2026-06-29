@@ -1,0 +1,100 @@
+id: visual-album-khalil-joseph
+name: "Visual Album / Documentary — Khalil Joseph + Beyoncé Lemonade school"
+description: |
+  Lange-Form visuelle Suiten, die Performance, narrative Mini-Filme,
+  Doku-Verite und Voiceover-Poetry vermischen. Vorbild Kahlil Joseph
+  (Kendrick Lamar — m.A.A.d., Flying Lotus — Until the Quiet Comes)
+  und Beyoncé's Lemonade-Visual-Album-Ansatz mit einem Cinematographer-
+  Kollektiv. Fuer ambitionierte Concept-Releases mit gemischten
+  Modi (Performance + Narrative + Doku-Stuetze).
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
+  moods: [narrative, melancholic, introspective, cinematic, intimate, dreamy]
+  tempo_bands: [slow, medium]
+  concept_types: [narrative, hybrid, documentary, performance]
+  figures: [artist_only, artist_plus_others, others_only]
+  aspect_ratios: []
+
+references:
+  - name: "Kahlil Joseph"
+    role: director
+    notable_works:
+      - "Flying Lotus — Until the Quiet Comes (short film)"
+      - "Kendrick Lamar — m.A.A.d. (15-minute short film)"
+      - "Beyoncé — Lemonade (2016, co-direction)"
+    sources:
+      - label: "Hollywood Reporter — Beyoncé's Lemonade: The Directors and Cinematographer Behind the Visual Masterpiece"
+        url: "https://www.hollywoodreporter.com/music/music-news/beyonces-lemonade-directors-cinematographer-behind-887337/"
+      - label: "Filmcentric — Tag: kahlil joseph"
+        url: "https://filmcentric.wordpress.com/tag/kahlil-joseph/"
+      - label: "Film School Rejects — The Staggering Cadre of Diverse Filmmakers Behind Beyoncé's Lemonade"
+        url: "https://filmschoolrejects.com/beyonce-lemonade-filmmakers/"
+  - name: "Beyoncé — Lemonade (2016) + Homecoming (2019)"
+    role: music_video
+    notable_works:
+      - "Lemonade (visual album with Kahlil Joseph + cinematographer cadre Khalik Allah, Pär Ekberg, Chayse Irvin, Reed Morano, Malik Sayeed et al.)"
+      - "Homecoming: A Film by Beyoncé (2019, cinematographer Mark Ritchie, Coachella documentary)"
+    sources:
+      - label: "Billboard — These Directors & Cinematographers Helped Make Beyoncé's Lemonade a Visual Masterpiece"
+        url: "https://www.billboard.com/music/music-news/beyonce-lemonade-directors-cinematographers-7341810/"
+      - label: "Filmcentric — Two Films by Beyoncé: Lemonade and Homecoming"
+        url: "https://filmcentric.wordpress.com/2019/10/16/two-films-by-beyonce/"
+      - label: "IMDb — Lemonade (TV Special 2016)"
+        url: "https://www.imdb.com/title/tt5662106/"
+      - label: "Film-Grab — Lemonade"
+        url: "https://film-grab.com/2017/01/27/lemonade/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Geographischer oder atmosphaerischer Welt-Anker pro Mini-Film."
+  - role: reveal
+    framing_hint: [ms, mcu]
+    notes: "Performer im narrativen Kontext, oft im Ensemble."
+  - role: detail
+    framing_hint: [cu, ecu, insert]
+    notes: "Texture-, Hand-, Schmuck-Inserts; Voiceover-getaktet."
+  - role: cutaway
+    framing_hint: [ots, pov]
+    notes: "Documentary-Vérité-Einsprenger zwischen den Performance-Sektionen."
+  - role: resolve
+    framing_hint: [ms, full]
+    notes: "Performer geerdet zur Section-Schluss."
+
+framing_mix:
+  wide_pct: 15
+  full_pct: 10
+  ms_pct: 20
+  mcu_pct: 20
+  cu_pct: 15
+  ecu_pct: 5
+  ots_pct: 5
+  pov_pct: 0
+  insert_pct: 10
+  aerial_pct: 0
+
+asl_range:
+  min_s: 3.0
+  max_s: 12.0
+  typical_s: 5.0
+
+camera_vocabulary:
+  - "static documentary hold"
+  - "gentle handheld follow"
+  - "anamorphic lateral track"
+  - "slow crane reveal"
+  - "Steadicam ensemble shot"
+
+lighting_signature: |
+  natural daylight bias, golden-hour heavy, motivated practicals
+  indoors, varying colour grade per mini-film (Lemonade's chapter-
+  by-chapter palettes), high contrast for narrative beats, soft
+  documentary feel for vérité segments.
+
+approximation_basis: |
+  Aggregation of the cited Hollywood Reporter, Billboard,
+  Filmcentric, Film School Rejects, IMDb and Film-Grab pages
+  describing Joseph's short-film approach and Beyoncé's Lemonade
+  + Homecoming as visual-album / performance-documentary hybrids.
+  Specific framing_mix derived qualitatively, not Cinemetrics-grade.

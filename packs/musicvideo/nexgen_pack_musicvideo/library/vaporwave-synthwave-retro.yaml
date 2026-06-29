@@ -1,0 +1,102 @@
+id: vaporwave-synthwave-retro
+name: "Vaporwave / Synthwave — retro-futurism aesthetic"
+description: |
+  Retro-futuristische 80er-Aesthetik fuer Synthwave und
+  Vaporwave-Tracks: Neon-Grid-Sonnenuntergaenge, VHS-Distortion,
+  Memphis-Geometrie, 3D-Wireframe-Skulpturen, Glitch-Art.
+  Vaporwave skewt langsam-melancholisch / Internet-irony,
+  Synthwave skewt schnell-heroisch / 80s-action-tribute. Fuer
+  retro-elektronische, ambient-elektronische und Internet-Mikrogenre-
+  Tracks.
+
+triggers:
+  visual_mediums: [live_action_stylized, 3d_cg, illustration, mixed]
+  moods: [dreamy, melancholic, euphoric, cinematic, high_energy]
+  tempo_bands: [slow, medium, uptempo]
+  concept_types: [abstract, performance, hybrid]
+  figures: [artist_only, artist_plus_others, none]
+  aspect_ratios: []
+
+references:
+  - name: "Synthwave (visual genre)"
+    role: music_video
+    notable_works:
+      - "Kavinsky — Nightcall (Drive 2011 soundtrack)"
+      - "The Midnight — Sunset"
+      - "Carpenter Brut — Turbo Killer"
+    sources:
+      - label: "Wikipedia — Synthwave"
+        url: "https://en.wikipedia.org/wiki/Synthwave"
+      - label: "Aesthetics Wiki — Synthwave"
+        url: "https://aesthetics.fandom.com/wiki/Synthwave"
+      - label: "Voltage Control — Deep dive into Synthwave and the eternal future nostalgia"
+        url: "https://www.voltagecontrol.blog/deep-dive-into-synthwave-and-the-eternal-future-nostalgia/"
+      - label: "PremiumBeat — The Visual Styles of the Synthwave and Vaporwave Video"
+        url: "https://www.premiumbeat.com/blog/synthwave-vaporwave-visual-styles/"
+  - name: "Vaporwave (visual genre)"
+    role: music_video
+    notable_works:
+      - "Macintosh Plus — Floral Shoppe (Lisa Frank 420 / Modern Computing)"
+      - "Saint Pepsi — Skylar Spence catalogue"
+    sources:
+      - label: "Wikipedia — Vaporwave"
+        url: "https://en.wikipedia.org/wiki/Vaporwave"
+      - label: "Aesthetics Wiki — Vaporwave"
+        url: "https://aesthetics.fandom.com/wiki/Vaporwave"
+      - label: "UC Press JPMS — Reconstructed Nostalgia: Aesthetic Commonalities and Self-Soothing in Chillwave, Synthwave, and Vaporwave"
+        url: "https://online.ucpress.edu/jpms/article/33/1/70/116330/Reconstructed-NostalgiaAesthetic-Commonalities-and"
+      - label: "Adobe Express — What is vaporwave? Tips for vaporwave design"
+        url: "https://www.adobe.com/uk/express/learn/blog/what-is-vaporwave"
+      - label: "Adobe Blog — Explore the lighthearted retro-futurism of Vintage Vaporwave design"
+        url: "https://blog.adobe.com/en/publish/2021/05/25/explore-the-lighthearted-retro-futurism-of-vintage-vaporwave-design"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, aerial]
+    notes: "Neon-Grid-Landschaft oder Wireframe-3D-Welt-Anker."
+  - role: reveal
+    framing_hint: [ms, mcu]
+    notes: "Performer im neon Setpiece, VHS-tracking overlay."
+  - role: detail
+    framing_hint: [cu, insert]
+    notes: "Glitch-Beat, geometrisches Symbol-Insert (Memphis, Ancient-Sculpture)."
+  - role: cutaway
+    framing_hint: [insert, pov]
+    notes: "VHS-Header, 90s-Web-UI-Mockup, retro-Computer-Screen."
+
+framing_mix:
+  wide_pct: 20
+  full_pct: 10
+  ms_pct: 20
+  mcu_pct: 15
+  cu_pct: 10
+  ecu_pct: 5
+  ots_pct: 0
+  pov_pct: 5
+  insert_pct: 10
+  aerial_pct: 5
+
+asl_range:
+  min_s: 2.0
+  max_s: 8.0
+  typical_s: 4.0
+
+camera_vocabulary:
+  - "VHS-distorted static hold"
+  - "synthwave grid push-forward"
+  - "glitch-cut on beat"
+  - "slow tilt across neon sunset"
+  - "scan-line overlay"
+
+lighting_signature: |
+  saturated magenta-cyan-purple palette with neon glow, scan-line
+  overlay, deliberate chromatic aberration, VHS tracking noise,
+  Synthwave skewt high-saturation-high-key (sunset/grid),
+  Vaporwave skewt washed-pastel-low-contrast (vapor/dream).
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, Aesthetics Wiki,
+  Voltage Control, PremiumBeat, UC Press JPMS and Adobe articles
+  describing Synthwave's "earnest 80s-retro-futurism" and
+  Vaporwave's "slowed-down nostalgic glitch" aesthetics. Not tied
+  to a single auteur — the pattern represents the visual genre.

@@ -1,0 +1,77 @@
+id: intimate-acoustic-tiny-desk
+name: "Intimate Acoustic — single-room performance, close-up bias"
+description: |
+  Single-Location-Performance in einem warm-beleuchteten Raum, Kamera
+  bleibt nah, Schnitt langsam. Vorbild: NPR Tiny Desk und vergleichbare
+  Live-Performance-Formate. Empfohlen fuer ruhige Akustik-Tracks, wo der
+  Performer im Mittelpunkt steht und die Welt drum herum minimal bleibt.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized]
+  moods: [intimate, melancholic, introspective]
+  tempo_bands: [slow, medium]
+  concept_types: [performance, hybrid]
+  figures: [artist_only, artist_plus_others]
+  aspect_ratios: []
+
+references:
+  - name: "NPR Music Tiny Desk Concert series"
+    role: music_video
+    notable_works:
+      - "Wilco — Tiny Desk Concert (behind-the-scenes 360)"
+      - "Infinity Song — Tiny Desk Concert (2026)"
+    sources:
+      - label: "NPR — Wilco In 360: Behind The Scenes At NPR Music's Tiny Desk"
+        url: "https://www.npr.org/sections/allsongs/2016/02/25/467952320/wilco-in-360-behind-the-scenes-at-npr-musics-tiny-desk"
+      - label: "NPR — Tiny Desk Concert series page"
+        url: "https://www.npr.org/series/tiny-desk-concerts/"
+      - label: "4Filming — Where Is NPR Tiny Desk Filmed?"
+        url: "https://4filming.com/where-is-npr-tiny-desk-filmed/"
+      - label: "Musifie — Tiny Desk Concert overview"
+        url: "https://musifie.com/blogs/tiny-desk-concert-everything-you-need-to-know/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [ms, mcu]
+    notes: "Sanfter Establishing-Shot des Performers im Raum — nicht WIDE, weil Welt-Kontext nebensaechlich ist."
+  - role: detail
+    framing_hint: [cu, ecu]
+    notes: "Hand auf Saiten, Ausdruck im Gesicht, Texture-Beats."
+  - role: reaction
+    framing_hint: [mcu]
+    notes: "Gelegentlich Mitspieler oder Zuhoerer."
+  - role: resolve
+    framing_hint: [ms]
+    notes: "Rueck zur ruhigen Mittel-Distanz am Ende einer Phrase."
+
+framing_mix:
+  wide_pct: 0
+  full_pct: 0
+  ms_pct: 30
+  mcu_pct: 25
+  cu_pct: 30
+  ecu_pct: 10
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 3.0
+  max_s: 8.0
+  typical_s: 5.0
+
+camera_vocabulary:
+  - "static hold"
+  - "slow push-in"
+  - "subtle handheld breathing"
+
+lighting_signature: |
+  warm tungsten or natural-window key from one side, soft fall-off,
+  visible practical lamps in the room, low contrast, no harsh shadows.
+
+approximation_basis: |
+  Qualitative aggregation from the cited Tiny Desk source pages and
+  general live-acoustic-format conventions. Not Cinemetrics-grade;
+  refine via real shot counts of specific Tiny Desk concerts if
+  needed.

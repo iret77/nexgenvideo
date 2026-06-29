@@ -1,0 +1,89 @@
+id: one-shot-ok-go-precision
+name: "One-Shot — OK Go precision choreography"
+description: |
+  Single-Take-Music-Video als ganze Konzept-Saeule: minutiose
+  Choreografie und Set-Engineering in einer ununterbrochenen
+  Einstellung. Vorbild OK Go + Damian Kulash / Trish Sie. Set-
+  Pieces mit Treadmills, Robots, Spiegeln, Trampolinen. Plan-
+  Komplexitaet > Cut-Komplexitaet. Geeignet fuer Tracks mit klarer
+  Eskalation und einem klaren visuellen Spielzug.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
+  moods: [euphoric, high_energy, cinematic, narrative, dreamy]
+  tempo_bands: [medium, uptempo, fast]
+  concept_types: [performance, hybrid, abstract]
+  figures: [artist_only, artist_plus_others]
+  aspect_ratios: []
+
+references:
+  - name: "OK Go (Damian Kulash, Trish Sie)"
+    role: director
+    notable_works:
+      - "Here It Goes Again (2006, treadmill choreography, single take)"
+      - "This Too Shall Pass (Rube Goldberg machine, single take)"
+      - "The One Moment (2016, 4.2-second actual shot stretched to 4-minute video)"
+      - "Love (2025, 29 robotic arms + 60 mirrors, single take in Budapest train station)"
+    sources:
+      - label: "OK Go — Background Notes and Full Credits for The One Moment Video"
+        url: "https://okgo.net/2016/11/23/background-notes-and-full-credits-for-the-one-moment-video/"
+      - label: "No Film School — How OK GO Stretched a 4.2-Second Shot into a 4-Minute Music Video"
+        url: "https://nofilmschool.com/2016/11/ok-go-the-one-moment-slow-motion-music-video"
+      - label: "PetaPixel — This OK Go Music Video Shows 4 Minutes Shot in 4 Seconds"
+        url: "https://petapixel.com/2016/11/24/ok-go-music-video-shows-4-minutes-shot-4-seconds/"
+      - label: "PetaPixel — OK Go Release One Take Music Video Featuring 29 Robots and 60 Mirrors"
+        url: "https://petapixel.com/2025/04/29/ok-go-release-one-take-music-video-featuring-29-robots-and-60-mirrors/"
+      - label: "Wikipedia — OK Go videography"
+        url: "https://en.wikipedia.org/wiki/OK_Go_videography"
+      - label: "Music Musings & Such — Reel-to-Real: Damian Kulash and Trish Sie: OK Go – Here It Goes Again"
+        url: "https://www.musicmusingsandsuch.com/musicmusingsandsuch/2022/4/21/feature-reel-to-real-damian-kulash-and-trish-sie-ok-go-here-it-goes-again-2006"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, ms]
+    notes: "Setpiece-Start: Tracking-Kamera positioniert die Welt im ersten Frame."
+  - role: performance
+    framing_hint: [ms, full]
+    notes: "Choreografie laeuft kontinuierlich, Kamera bewegt sich mit (kein Cut)."
+  - role: reveal
+    framing_hint: [mcu, cu]
+    notes: "Beat-genaue Naehe-Momente innerhalb des durchlaufenden Takes."
+  - role: resolve
+    framing_hint: [wide, full]
+    notes: "Schluss-Reveal des kompletten Sets oder Trick-Punchline."
+
+framing_mix:
+  wide_pct: 25
+  full_pct: 20
+  ms_pct: 25
+  mcu_pct: 15
+  cu_pct: 10
+  ecu_pct: 0
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 60.0
+  max_s: 240.0
+  typical_s: 180.0
+
+camera_vocabulary:
+  - "continuous tracking shot"
+  - "Steadicam / gimbal long take"
+  - "synchronized lateral dolly"
+  - "single long crane move"
+
+lighting_signature: |
+  fully pre-lit set with constant exposure across the entire
+  choreographed run, daylight or controlled practical mix, no
+  lighting changes mid-shot (camera + performers move through fixed
+  light field), bright high-key bias for clarity.
+
+approximation_basis: |
+  Aggregation of the cited OK Go official blog, No Film School,
+  PetaPixel articles and the OK Go Wikipedia videography page
+  describing Kulash + Sie's precision-engineered single-take
+  approach. ASL-range reflects the genre's typical full-song
+  single-take (one shot = one video), not per-cut.

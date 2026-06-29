@@ -1,0 +1,100 @@
+id: stop-motion-aardman-laika
+name: "Stop-Motion — Aardman/Laika craft school"
+description: |
+  Handgemacht-spuerbare Stop-Motion-Aesthetik in der Aardman-Tradition
+  (Clay, Puppet, taktiles Material) oder der Laika-Tradition (Multi-
+  Medium-Fusion, Motion-Control-Kamera, hyperdetailgenaue Sets).
+  Empfohlen fuer eigenwillige, atmosphaerische oder kindliche Tracks
+  mit handwerklichem Charme.
+
+triggers:
+  visual_mediums: [stop_motion, mixed]
+  moods: [intimate, dreamy, melancholic, narrative, cinematic, introspective]
+  tempo_bands: [slow, medium]
+  concept_types: [narrative, abstract, hybrid]
+  figures: [artist_only, artist_plus_others, others_only, none]
+  aspect_ratios: []
+
+references:
+  - name: "Aardman Animations"
+    role: director
+    notable_works:
+      - "Peter Gabriel — Sledgehammer (1986, multiple award-winning music video)"
+      - "Wallace & Gromit series"
+      - "Chicken Run (2000)"
+      - "Shaun the Sheep"
+      - "Morph"
+    sources:
+      - label: "Wikipedia — Aardman Animations"
+        url: "https://en.wikipedia.org/wiki/Aardman_Animations"
+      - label: "Animation Studies 2.0 — Hidden In Plain Sight: Aardman's American Dream"
+        url: "https://blog.animationstudies.org/hidden-in-plain-sight-aardmans-american-dream/"
+      - label: "Popfixion — Aardman et Laika: les rois du Stop Motion"
+        url: "https://www.popfixion.fr/articles/article-155-Animation-Aardman-et-Laika-les-rois-du-Stop-Motion"
+  - name: "Laika Studios"
+    role: director
+    notable_works:
+      - "Coraline (2009)"
+      - "ParaNorman (2012)"
+      - "The Boxtrolls (2014)"
+      - "Kubo and the Two Strings (2016)"
+      - "Missing Link (2019)"
+    sources:
+      - label: "It's Nice That — Laika's 20 years of stop-motion carry lessons aplenty in craft and storytelling"
+        url: "https://www.itsnicethat.com/features/laika-20-years-of-stop-motion-animation-partnership-200326"
+      - label: "Screen Daily — How Laika made ambitious stop-motion animation 'Missing Link'"
+        url: "https://www.screendaily.com/features/how-laika-made-ambitious-stop-motion-animation-missing-link/5145578.article"
+      - label: "Focus Features — Two Years in the Making"
+        url: "https://www.focusfeatures.com/article/two__years_in_the_making"
+      - label: "DeeDee Studio — How does Laika produce stop motion animation?"
+        url: "https://www.deedeestudio.net/en/post/laika-produce-stop-motion-animation"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Setpiece-Anker, taktiles Material klar erkennbar — Wolle, Clay, Holz."
+  - role: reveal
+    framing_hint: [ms, mcu]
+    notes: "Charakter in der Mittel-Distanz, Mimik handwerklich animiert."
+  - role: detail
+    framing_hint: [cu, ecu, insert]
+    notes: "Texture-Inserts: Fingerabdruecke im Clay, Stoff-Naht, Material-Detail."
+  - role: resolve
+    framing_hint: [ms, full]
+    notes: "Rueck zum Setpiece am Ende einer Phrase."
+
+framing_mix:
+  wide_pct: 15
+  full_pct: 10
+  ms_pct: 25
+  mcu_pct: 20
+  cu_pct: 15
+  ecu_pct: 5
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 10
+  aerial_pct: 0
+
+asl_range:
+  min_s: 2.0
+  max_s: 8.0
+  typical_s: 4.0
+
+camera_vocabulary:
+  - "motion-control slow push-in"
+  - "static hold on tactile detail"
+  - "rack-focus between foreground and miniature background"
+  - "gentle dolly-along on miniature set"
+
+lighting_signature: |
+  warm practical sources (lamps, candles, sun-through-window),
+  visible texture in shadows (clay fingerprints, fabric weave),
+  three-point lighting on character with motivated practical bg,
+  Aardman skews bright primary palette, Laika skews moody desaturated.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, Animation Studies, It's Nice
+  That, Screen Daily and Focus Features articles describing Aardman's
+  Sledgehammer music video work and Laika's craft-driven approach.
+  Specific framing_mix derived qualitatively, not from per-frame
+  Cinemetrics.

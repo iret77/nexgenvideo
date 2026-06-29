@@ -1,0 +1,99 @@
+id: mtv-80s-mulcahy-mallet
+name: "80s MTV — Mulcahy / Mallet / MGMM era"
+description: |
+  Klassische 80er-MTV-Aesthetik in der Tradition von Russell Mulcahy
+  ("Video Killed the Radio Star", Duran Duran-Klassiker) und David
+  Mallet (Queen — Bohemian Rhapsody, David Bowie — Ashes to Ashes).
+  Schnelle Cuts auf Beat, Tracking-Shots, Neon-Lichter, Wind-bewegte
+  Stoffe, Spot-Color-Akzente, faux-widescreen. Empfohlen fuer
+  retro-poppige Tracks oder bewusst nostalgische Performance-Konzepte.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
+  moods: [euphoric, high_energy, dreamy, cinematic]
+  tempo_bands: [medium, uptempo, fast]
+  concept_types: [performance, narrative, hybrid]
+  figures: [artist_only, artist_plus_others]
+  aspect_ratios: []
+
+references:
+  - name: "Russell Mulcahy"
+    role: director
+    notable_works:
+      - "The Buggles — Video Killed the Radio Star (1979, first video aired on MTV)"
+      - "Duran Duran — Hungry Like the Wolf (1982)"
+      - "Duran Duran — Rio (1982)"
+      - "Bonnie Tyler — Total Eclipse of the Heart (1983)"
+      - "Kim Carnes — Bette Davis Eyes (1981)"
+    sources:
+      - label: "Wikipedia — Russell Mulcahy"
+        url: "https://en.wikipedia.org/wiki/Russell_Mulcahy"
+      - label: "IMVDb — Russell Mulcahy music video credits by year"
+        url: "https://imvdb.com/n/russell-mulcahy/videography-by-year"
+      - label: "Billboard — Russell Mulcahy & Duran Duran's John Taylor look back on classic videos"
+        url: "https://www.billboard.com/articles/news/6296755/russell-mulcahy-duran-duran-john-taylor-classic-videos"
+      - label: "Duran Duran official — Director Russell Mulcahy and John Taylor look back"
+        url: "https://duranduran.com/2014/director-russell-mulcahy-and-duran-durans-john-taylor-look-back-on-their-classic-music-videos/"
+  - name: "David Mallet"
+    role: director
+    notable_works:
+      - "Queen — Bohemian Rhapsody (1975)"
+      - "David Bowie — Ashes to Ashes (1980)"
+      - "Blondie — Heart of Glass"
+      - "AC/DC — Highway to Hell"
+    sources:
+      - label: "Wikipedia — David Mallet (director)"
+        url: "https://en.wikipedia.org/wiki/David_Mallet_(director)"
+      - label: "Den of Geek — Video Killed The Radio Star DVD"
+        url: "https://www.denofgeek.com/movies/video-killed-the-radio-star-dvd/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Performer-im-Set Establishing — Bandstage, Studio, Neon-Strasse."
+  - role: performance
+    framing_hint: [ms, mcu]
+    notes: "Beat-getaktete Performer-Shots, oft frontal mit Profil-Wechsel."
+  - role: reveal
+    framing_hint: [cu, ecu]
+    notes: "Augen, Mund, Hand am Instrument — auf Hook-Beats."
+  - role: cutaway
+    framing_hint: [insert, ots]
+    notes: "Spot-Color-Detail, fan-bewegtes Tuch, Glitter-Akzent."
+
+framing_mix:
+  wide_pct: 15
+  full_pct: 10
+  ms_pct: 30
+  mcu_pct: 20
+  cu_pct: 15
+  ecu_pct: 5
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 0.5
+  max_s: 3.0
+  typical_s: 1.5
+
+camera_vocabulary:
+  - "rapid tracking shot"
+  - "snap zoom on hook"
+  - "fan-blown wind motion"
+  - "tilt across neon facade"
+  - "spot-color in monochrome frame"
+
+lighting_signature: |
+  hard neon and tungsten practicals, glowing rim-lights, theatrical
+  haze, saturated single-colour washes (red, magenta, cyan), faux-
+  widescreen mat with deliberate aspect crop.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, IMVDb, Billboard and Duran
+  Duran official interviews describing Mulcahy's "fast cuts,
+  tracking shots, glowing lights, neo-noir lighting, windblown
+  drapery, fans, spot color, body painting, glass matte shots and
+  faux widescreen aspect ratio". Pace values approximate the genre's
+  typical 80s MTV range.
