@@ -23,6 +23,7 @@ from nexgen_engine.core.gates import CORE_PHASES
 from nexgen_engine.core.modes import Mode
 from nexgen_engine.pack import discover_packs
 from nexgen_engine.render import costs as costs_mod
+from nexgen_engine.render import manifest as manifest_mod
 from nexgen_engine.sanity.audit import AuditContext, SanityCheck, audit
 from nexgen_engine.sanity.checks import register_core_checks
 from nexgen_engine.shotlist import schema as shotlist_schema
@@ -135,6 +136,73 @@ def show_artifact(project_dir: str, gate: str) -> dict[str, Any]:
     return {"gate": gate, "markdown": show_gate_artifact(Path(project_dir), gate)}
 
 
+def _ordered_shot_ids(project_dir: Path) -> list[str]:
+    """Ordered shot IDs from the latest shotlist (empty if no shotlist yet).
+
+    Only the ordered IDs are read — no music/song fields are touched."""
+    shotlist = shotlist_schema.load(project_dir)
+    return [s.id for s in shotlist.shots] if shotlist is not None else []
+
+
+def next_render_shot(project_dir: str, phase: str) -> dict[str, Any]:
+    """The next unrendered shot for *phase*, plus its prompt/framing for the agent."""
+    root = Path(project_dir)
+    shotlist = shotlist_schema.load(root)
+    ordered = [s.id for s in shotlist.shots] if shotlist is not None else []
+    man = manifest_mod.load(root, phase)
+    shot_id = manifest_mod.next_unrendered(ordered, man)
+    if shot_id is None:
+        return {"phase": phase, "shot_id": None, "done": True}
+    shot = next((s for s in shotlist.shots if s.id == shot_id), None) if shotlist else None
+    return {
+        "phase": phase,
+        "shot_id": shot_id,
+        "done": False,
+        "visual_prompt": shot.visual_prompt if shot else None,
+        "framing": shot.framing.value if shot and shot.framing else None,
+    }
+
+
+def record_render(
+    project_dir: str,
+    phase: str,
+    shot_id: str,
+    output: str | None,
+    cost_eur: float = 0.0,
+    status: str = "rendered",
+) -> dict[str, Any]:
+    """Upsert a shot's render result into the phase manifest and persist it."""
+    root = Path(project_dir)
+    man = manifest_mod.load(root, phase)
+    manifest_mod.record(
+        man, shot_id, output=output, cost_eur=cost_eur, status=status, phase=phase
+    )
+    manifest_mod.save(root, man)
+    entry = man.entries[shot_id]
+    return {
+        "phase": phase,
+        "shot_id": shot_id,
+        "status": entry.status,
+        "output": entry.output,
+        "cost_eur": entry.cost_eur,
+        "updated_at": entry.updated_at,
+        "spent_eur": manifest_mod.spent(man),
+    }
+
+
+def get_render_manifest(project_dir: str, phase: str) -> dict[str, Any]:
+    """The phase manifest's entries plus its rendered/pending/failed/spend summary."""
+    root = Path(project_dir)
+    ordered = _ordered_shot_ids(root)
+    man = manifest_mod.load(root, phase)
+    return {
+        "project": man.project,
+        "phase": phase,
+        "entries": {sid: e.model_dump() for sid, e in man.entries.items()},
+        "summary": manifest_mod.summary(ordered, man),
+    }
+
+
 @mcp.tool()
 def get_project_state(project_dir: str) -> dict[str, Any]:
     """Where a project stands: meta, gate/phase status, next open phase. Read-only.
@@ -224,6 +292,48 @@ def show_artifact_tool(project_dir: str, gate: str) -> dict[str, Any]:
     formatter, or one whose artifact isn't written yet, yields a clear "nothing yet"
     string instead of raising. `project_dir` is the `_studio/` data root."""
     return show_artifact(project_dir, gate)
+
+
+@mcp.tool(name="next_render_shot")
+def next_render_shot_tool(project_dir: str, phase: str) -> dict[str, Any]:
+    """The next shot to render for `phase`, in shotlist order. Read-only.
+
+    Loads the latest shotlist (for ordered shot IDs) and the phase's render manifest,
+    then returns the first shot whose entry is missing or not yet `rendered`, with its
+    `visual_prompt` and `framing` so the agent can drive nexgen's own
+    generateImage/generateVideo. Returns `{phase, shot_id: null, done: true}` once every
+    shot is rendered (or when there's no shotlist). `project_dir` is the `_studio/` data
+    root; `phase` is the render phase (e.g. preview/final)."""
+    return next_render_shot(project_dir, phase)
+
+
+@mcp.tool(name="record_render")
+def record_render_tool(
+    project_dir: str,
+    phase: str,
+    shot_id: str,
+    output: str | None,
+    cost_eur: float = 0.0,
+    status: str = "rendered",
+) -> dict[str, Any]:
+    """Record a shot's render result into the phase manifest. WRITES.
+
+    Upserts `shot_id`'s entry (status, `output` path-or-URL, `cost_eur`) into
+    `renders/manifest-<phase>.json`, stamps `updated_at`, and returns the saved entry
+    plus the manifest's running `spent_eur`. `status` is one of rendered/pending/failed.
+    `project_dir` is the `_studio/` data root."""
+    return record_render(project_dir, phase, shot_id, output, cost_eur, status)
+
+
+@mcp.tool(name="get_render_manifest")
+def get_render_manifest_tool(project_dir: str, phase: str) -> dict[str, Any]:
+    """The phase's render manifest and its progress summary. Read-only.
+
+    Returns `{project, phase, entries, summary}` where `entries` maps shot_id → its
+    render record and `summary` is `{total, rendered, pending, failed, spent_eur}`
+    (`total` from the latest shotlist's shot count). `project_dir` is the `_studio/`
+    data root."""
+    return get_render_manifest(project_dir, phase)
 
 
 def main() -> None:  # pragma: no cover
