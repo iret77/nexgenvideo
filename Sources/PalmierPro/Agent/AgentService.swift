@@ -336,7 +336,8 @@ final class AgentService {
     private lazy var claudeRuntime: ClaudeCodeRuntime = makeClaudeRuntime()
 
     private func makeClaudeRuntime() -> ClaudeCodeRuntime {
-        ClaudeCodeRuntime(
+        Self.ensureEngineBootstrapped()
+        return ClaudeCodeRuntime(
             pluginDirectories: Self.configuredPluginDirectories(),
             mcpPort: Int(MCPService.port),
             permissionMode: Self.configuredPermissionMode(),
@@ -367,6 +368,18 @@ final class AgentService {
             return URL(fileURLWithPath: override)
         }
         return projectURL
+    }
+
+    nonisolated(unsafe) private static var engineBootstrapStarted = false
+
+    /// One-time background bootstrap of the bundled engine venv (uv) when the Claude Code
+    /// runtime is first used. Idempotent; on success it sets `claudeRuntimeEnginePython`,
+    /// which ClaudeCodeRuntime registers as the `engine` MCP server. No-op without a bundled
+    /// engine (dev builds). The benign worst case of the unsynchronized flag is two bootstraps.
+    private static func ensureEngineBootstrapped() {
+        guard !engineBootstrapStarted, case .notBootstrapped = EngineRuntime.status() else { return }
+        engineBootstrapStarted = true
+        Task.detached { await EngineRuntime.bootstrap() }
     }
 
     private func kickOffStream() {
