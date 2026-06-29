@@ -413,7 +413,7 @@ path strings + the structural fields `character_refs`/`framing`. The
 provider's output moderation additionally flags pure **visual gestalt**
 that no token linter can detect. The mandatory
 **test-shot-before-batch** process lives in the render phase
-(`.claude/phases/render.md`).
+(`${CLAUDE_PLUGIN_ROOT}/phases/render.md`).
 
 **Severity note:** `BLOCKING_RISK_MULTI_CHARACTER` is `warn`, not
 `error` — a `warn` finding does **not block the batch automatically**;
@@ -670,7 +670,7 @@ Escape (in both directions): `pacing_ok: <reason>` in `Shot.notes`.
 - **Content-filter risk:** linter clean ≠ renders through. The
   provider's output moderation also flags pure visual gestalt that no
   token linter sees. The mandatory test-shot-before-batch process is
-  defined in the render phase (`.claude/phases/render.md`) — do not
+  defined in the render phase (`${CLAUDE_PLUGIN_ROOT}/phases/render.md`) — do not
   promise the user a safe batch from a clean linter (Rule 3).
 - **Still-only workaround (c)** → never without explicit user approval
   via `AskUserQuestion`; minimum deployment; medium restriction; rest

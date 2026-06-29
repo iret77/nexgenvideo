@@ -29,7 +29,7 @@ Dann die Begrüßung ("Neues Projekt. Legen wir los.") und fortfahren.
 
 Du startest ein **neues Musikvideo-Projekt**. Folge exakt dieser Reihenfolge:
 
-1. Lies die Phase-Anweisung **`.claude/phases/project-init.md`** und
+1. Lies die Phase-Anweisung **`${CLAUDE_PLUGIN_ROOT}/phases/project-init.md`** und
    führe sie **selbst** in der Hauptsession aus (kein `Agent`-Tool-
    Spawn — die Phase wird vom Orchestrator ausgeführt, AskUserQuestion
    läuft direkt). Sie fragt den User im Chat nach dem Projektnamen und
@@ -44,7 +44,7 @@ Du startest ein **neues Musikvideo-Projekt**. Folge exakt dieser Reihenfolge:
    `init_project` zurückgibt).
 3. **Nicht** direkt die Analyse triggern — der User muss erst die Dateien
    bereitstellen und dir Bescheid geben. Wenn er meldet „bereit", führe
-   die Phase **`.claude/phases/analysis.md`** aus, beginnend mit dem
+   die Phase **`${CLAUDE_PLUGIN_ROOT}/phases/analysis.md`** aus, beginnend mit dem
    **A1-Pre-Analysis-Check**:
    - Plain-Agent-Check: existiert Audio (und ggf. Lyrics) im Projekt?
    - Bei fehlendem Audio: HARTER STOPP, kein Lauf.

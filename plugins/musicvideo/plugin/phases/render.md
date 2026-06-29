@@ -89,7 +89,7 @@ mode.
 Before rendering, re-check these sanity codes (they do not hard-block,
 but they are clear indicators that the visual_prompt does not benefit
 from the reference path; the authoring spec is in
-`.claude/phases/shotlist.md`, rules 4 and 5):
+`${CLAUDE_PLUGIN_ROOT}/phases/shotlist.md`, rules 4 and 5):
 
 - `REFERENCE_MODE_IDENTITY_REDUNDANT` (warn) — bible char name +
   identity description in the prompt. The sheets carry the identity; the
@@ -128,7 +128,7 @@ but they delay the batch and produce half-failed manifests.
 3. Evaluate:
    - **Test shot succeeded** → start the batch (loop over all shots).
    - **Content-policy fail** → do NOT batch. First apply the workaround
-     table from `.claude/phases/shotlist.md` rule 3 (reliable: (a)
+     table from `${CLAUDE_PLUGIN_ROOT}/phases/shotlist.md` rule 3 (reliable: (a)
      single-char shot/reverse-shot, or (c) still frame via `generateImage`
      + Ken Burns/pan-zoom on the timeline), patch the shotlist, render a
      new test shot, then batch.
@@ -330,7 +330,7 @@ pan-zoom).
 - **Budget exceeded (`estimate_cost` over_budget):** abort; this is a
   deliberate brake, never bypass it silently.
 - **Content-policy fail:** do not batch. Apply the workaround table from
-  `.claude/phases/shotlist.md` rule 3, patch the shotlist, re-run the
+  `${CLAUDE_PLUGIN_ROOT}/phases/shotlist.md` rule 3, patch the shotlist, re-run the
   test shot (step 4). If a single shot still will not pass: still-only
   workaround (the user animates a `generateImage` still on the timeline).
 - **Generation unavailable** (`get_timeline` `canGenerate: false`, model

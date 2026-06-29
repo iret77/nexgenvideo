@@ -16,11 +16,11 @@ Projekt holst du über den Engine-MCP-Tool-Call
 
 ## Architektur — wie Phasen ausgeführt werden (PFLICHT lesen)
 
-Phase-Anweisungen liegen unter `.claude/phases/<phase>.md`. Sie sind
+Phase-Anweisungen liegen unter `${CLAUDE_PLUGIN_ROOT}/phases/<phase>.md`. Sie sind
 **nicht** als Sub-Agents gespawnt, sondern werden **vom Orchestrator
 selbst** (Claude in der Hauptsession) ausgeführt:
 
-1. Lies die zur offenen Phase gehörige `.claude/phases/<phase>.md`
+1. Lies die zur offenen Phase gehörige `${CLAUDE_PLUGIN_ROOT}/phases/<phase>.md`
    komplett ein.
 2. Folge den dort beschriebenen Schritten in der Hauptsession.
 3. `AskUserQuestion`-Calls landen direkt im User-Chat und werden
@@ -64,16 +64,16 @@ und interpretiert das Ergebnis.
 
    | Gate | Phase-Datei |
    |---|---|
-   | `analysis` | `.claude/phases/analysis.md` (Vorbedingung: Analyse-Artefakt existiert; falls nicht, vorher `run_phase(project_dir, "analysis")`) |
-   | `brief` | `.claude/phases/brief.md` |
-   | `production_design` | `.claude/phases/production-design.md` |
-   | `treatment` | `.claude/phases/treatment.md` |
-   | `storyboard` | `.claude/phases/storyboard.md` |
-   | `bible` | `.claude/phases/bible.md` (Pass 2) |
-   | `shotlist` | `.claude/phases/shotlist.md` (Pass 2) |
-   | `sanity` | `.claude/phases/sanity.md` (Pass 2) |
-   | `frames` | `.claude/phases/frame.md` (Pass 2) |
-   | `videos_preview` / `videos_final` | `.claude/phases/render.md` (Pass 2, mit passender Phase) |
+   | `analysis` | `${CLAUDE_PLUGIN_ROOT}/phases/analysis.md` (Vorbedingung: Analyse-Artefakt existiert; falls nicht, vorher `run_phase(project_dir, "analysis")`) |
+   | `brief` | `${CLAUDE_PLUGIN_ROOT}/phases/brief.md` |
+   | `production_design` | `${CLAUDE_PLUGIN_ROOT}/phases/production-design.md` |
+   | `treatment` | `${CLAUDE_PLUGIN_ROOT}/phases/treatment.md` |
+   | `storyboard` | `${CLAUDE_PLUGIN_ROOT}/phases/storyboard.md` |
+   | `bible` | `${CLAUDE_PLUGIN_ROOT}/phases/bible.md` (Pass 2) |
+   | `shotlist` | `${CLAUDE_PLUGIN_ROOT}/phases/shotlist.md` (Pass 2) |
+   | `sanity` | `${CLAUDE_PLUGIN_ROOT}/phases/sanity.md` (Pass 2) |
+   | `frames` | `${CLAUDE_PLUGIN_ROOT}/phases/frame.md` (Pass 2) |
+   | `videos_preview` / `videos_final` | `${CLAUDE_PLUGIN_ROOT}/phases/render.md` (Pass 2, mit passender Phase) |
 
 4. **Artefakt-Anzeige nach Phase-Abschluss (PFLICHT, bindend).** Sobald
    die Phase ihr Artefakt geschrieben hat, **bevor** du `AskUserQuestion`
