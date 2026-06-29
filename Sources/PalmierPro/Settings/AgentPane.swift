@@ -6,6 +6,8 @@ struct AgentPane: View {
     @State private var hasKey: Bool = false
     @State private var maskedKey: String = ""
     @State private var draft: String = ""
+    @State private var engineStatus: EngineRuntime.Status = .unavailable
+    @State private var isBootstrapping: Bool = false
     @FocusState private var isFocused: Bool
 
     @AppStorage("useClaudeCodeRuntime") private var useClaudeRuntime: Bool = false
@@ -129,6 +131,7 @@ struct AgentPane: View {
         let key = AnthropicKeychain.load() ?? ""
         hasKey = !key.isEmpty
         maskedKey = mask(key)
+        engineStatus = EngineRuntime.status()
     }
 
     private func save() {
@@ -269,6 +272,7 @@ struct AgentPane: View {
             folderRow(title: "Project folder", path: $claudeWorkingDir)
             folderRow(title: "Plugin folder", path: $claudePluginDir)
             permissionRow
+            engineRow
         }
     }
 
@@ -290,6 +294,72 @@ struct AgentPane: View {
             .pickerStyle(.menu)
             .controlSize(.small)
             .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private var engineRow: some View {
+        runtimeRow {
+            Text("Engine")
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+
+            switch engineStatus {
+            case .unavailable:
+                Text("Engine not bundled (dev build)")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                Spacer()
+
+            case .notBootstrapped:
+                Text(isBootstrapping ? "Setting up…" : "Not set up")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                Spacer()
+                if isBootstrapping {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Button("Set up engine", action: setUpEngine)
+                        .buttonStyle(.capsule(.prominent, size: .regular))
+                        .controlSize(.small)
+                }
+
+            case .ready(let python):
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 8, height: 8)
+                Text("Engine ready")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                Text(python)
+                    .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+
+            case .failed(let msg):
+                Circle()
+                    .fill(AppTheme.Status.errorColor)
+                    .frame(width: 8, height: 8)
+                Text(msg)
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+            }
+        }
+    }
+
+    private func setUpEngine() {
+        guard !isBootstrapping else { return }
+        isBootstrapping = true
+        Task {
+            let result = await EngineRuntime.bootstrap()
+            isBootstrapping = false
+            engineStatus = result
         }
     }
 
