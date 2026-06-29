@@ -136,6 +136,40 @@ def show_artifact(project_dir: str, gate: str) -> dict[str, Any]:
     return {"gate": gate, "markdown": show_gate_artifact(Path(project_dir), gate)}
 
 
+def _dump_phase_result(result: Any) -> Any:
+    """Best-effort JSON-friendly form of whatever a phase runner returns."""
+    dump = getattr(result, "model_dump", None)
+    if callable(dump):
+        return dump(mode="json")
+    if isinstance(result, (dict, list, str, int, float, bool)) or result is None:
+        return result
+    return str(result)
+
+
+def run_phase(project_dir: str, phase: str) -> dict[str, Any]:
+    """Run a pack-registered pipeline phase runner, dispatched generically by name."""
+    runner = discover_packs().engine.phases.get(phase)
+    if runner is None:
+        return {
+            "phase": phase,
+            "runner": None,
+            "note": "no code runner registered; this phase is agent-driven",
+        }
+    try:
+        result = runner(Path(project_dir))
+    except (ModuleNotFoundError, ImportError) as e:
+        return {
+            "phase": phase,
+            "error": "missing_dependencies",
+            "detail": str(e),
+            "hint": "This phase needs optional dependencies. Install the plugin's "
+            "extra (e.g. the musicvideo [audio] stack) to run it.",
+        }
+    except Exception as e:
+        return {"phase": phase, "error": "phase_failed", "detail": str(e)}
+    return {"phase": phase, "ok": True, "result": _dump_phase_result(result)}
+
+
 def _ordered_shot_ids(project_dir: Path) -> list[str]:
     """Ordered shot IDs from the latest shotlist (empty if no shotlist yet).
 
@@ -292,6 +326,24 @@ def show_artifact_tool(project_dir: str, gate: str) -> dict[str, Any]:
     formatter, or one whose artifact isn't written yet, yields a clear "nothing yet"
     string instead of raising. `project_dir` is the `_studio/` data root."""
     return show_artifact(project_dir, gate)
+
+
+@mcp.tool(name="run_phase")
+def run_phase_tool(project_dir: str, phase: str) -> dict[str, Any]:
+    """Run a registered pipeline phase for the project. WRITES.
+
+    Dispatches to whatever phase runner the active pack registered under `phase`
+    (e.g. musicvideo's `analysis`) and runs it — heavy compute may be involved.
+    A phase runner may write artifacts into the project. The planning phases
+    (brief/treatment/storyboard/…) are agent-driven and have no code runner; for
+    those this returns `{phase, runner: null, note: ...}` rather than raising.
+
+    If a runner exists but its optional dependencies are absent (e.g. analysis
+    needs the musicvideo `[audio]` stack), returns `{phase, error:
+    "missing_dependencies", detail, hint}`; any other failure returns `{phase,
+    error: "phase_failed", detail}`. On success returns `{phase, ok: true,
+    result}`. `project_dir` is the `_studio/` data root."""
+    return run_phase(project_dir, phase)
 
 
 @mcp.tool(name="next_render_shot")
