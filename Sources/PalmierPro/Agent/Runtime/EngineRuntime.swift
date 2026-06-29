@@ -99,6 +99,41 @@ enum EngineRuntime {
         }
     }
 
+    // MARK: - Optional audio extra
+
+    /// Outcome of an opt-in extra install. Sendable so it can cross the async boundary back to the UI.
+    enum InstallResult: Equatable, Sendable {
+        case installed
+        case failed(String)
+    }
+
+    /// Install a plugin's optional extra into the engine venv: `uv pip install -e <root>[<extra>]`.
+    /// Long-running (minutes) and may fail — these DSP deps are heavy/fragile on macOS arm64 — so it
+    /// never throws: it returns `.installed` on success or `.failed(message)` with the captured error.
+    /// Requires the venv (engine bootstrap) to be ready; if not, returns a `.failed` explaining that.
+    static func installExtra(pluginInstallRoot: URL, extra: String) async -> InstallResult {
+        guard isVenvReady else {
+            return .failed("Engine is not set up yet — set up the engine first.")
+        }
+        let target = "\(pluginInstallRoot.path)[\(extra)]"
+        do {
+            try await run("uv", ["pip", "install", "--python", venvPython.path, "-e", target])
+            return .installed
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    /// Whether the audio extra is usable in the venv, probed by importing librosa — the module-level
+    /// anchor of the DSP stack. Runs the venv python with `import librosa`; exit 0 ⇒ present. Cheap-ish
+    /// (one subprocess) but still a process spawn, so callers should invoke it sparingly (on appear /
+    /// after engine-ready / after an install), not on every view refresh. Any failure (no venv, import
+    /// error, missing python) reads as not-installed.
+    static func audioExtraInstalled() async -> Bool {
+        guard isVenvReady else { return false }
+        return await succeeds(venvPython, ["-c", "import librosa"])
+    }
+
     // MARK: - Process
 
     private static func run(_ tool: String, _ args: [String]) async throws {
@@ -119,6 +154,27 @@ enum EngineRuntime {
             if process.terminationStatus != 0 {
                 let msg = String(decoding: errData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
                 throw EngineError.command("\(tool) \(args.first ?? "") failed (\(process.terminationStatus)): \(msg)")
+            }
+        }.value
+    }
+
+    /// Run an executable to completion and report whether it exited 0. Non-throwing: a failed launch (or
+    /// any error) reads as `false`. Used for cheap presence probes (e.g. `python -c "import …"`).
+    private static func succeeds(_ executable: URL, _ args: [String]) async -> Bool {
+        let env = augmentedEnvironment()
+        return await Task.detached {
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = args
+            process.environment = env
+            process.standardError = Pipe()
+            process.standardOutput = Pipe()
+            do {
+                try process.run()
+                process.waitUntilExit()
+                return process.terminationStatus == 0
+            } catch {
+                return false
             }
         }.value
     }

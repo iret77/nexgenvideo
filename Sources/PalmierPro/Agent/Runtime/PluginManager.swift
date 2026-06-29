@@ -74,4 +74,35 @@ enum PluginManager {
             fm.fileExists(atPath: $0.installRoot.appendingPathComponent("pyproject.toml").path)
         }
     }
+
+    /// Installable plugins whose `pyproject.toml` declares an `audio` extra under
+    /// `[project.optional-dependencies]` — i.e. plugins carrying a heavy optional DSP stack the user can
+    /// opt into. Convention: a plugin exposing heavy DSP names its extra `audio`. Detected by a
+    /// lightweight line scan (no TOML parser): the section header followed by an `audio = [` (or
+    /// `audio=[`) key. Plugins without the extra, or with an unreadable manifest, are simply omitted.
+    static func audioExtraPlugins() -> [Plugin] {
+        installablePlugins().filter {
+            let manifest = $0.installRoot.appendingPathComponent("pyproject.toml")
+            guard let toml = try? String(contentsOf: manifest, encoding: .utf8) else { return false }
+            return declaresAudioExtra(in: toml)
+        }
+    }
+
+    /// True iff `toml` contains an `audio` key under the `[project.optional-dependencies]` table.
+    /// Scans line-by-line: enters the table on its header, leaves on the next `[...]` header, and matches
+    /// an `audio` assignment inside it. Tolerant of whitespace; ignores `audio` mentions elsewhere.
+    static func declaresAudioExtra(in toml: String) -> Bool {
+        var inOptionalDeps = false
+        for rawLine in toml.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                inOptionalDeps = (line == "[project.optional-dependencies]")
+                continue
+            }
+            guard inOptionalDeps else { continue }
+            let key = line.prefix { $0 != "=" }.trimmingCharacters(in: .whitespaces)
+            if key == "audio" { return true }
+        }
+        return false
+    }
 }
