@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import re
 from enum import Enum
+from pathlib import Path
 from typing import Annotated
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from nexgen_engine.core.modes import Mode
 
 SCHEMA_VERSION = "shotlist/v3"
+SHOTLIST_SUBDIR = "shotlist"
+SHOTLIST_VERSION_RE = re.compile(r"^v(\d+)$")
 SHOT_ID_RE = re.compile(r"^s\d{3}$")
 CAMERA_ID_RE = re.compile(r"^cam\d{2}$")
 DURATION_EPSILON = 1e-3
@@ -423,3 +427,46 @@ class Shotlist(BaseModel):
                         f"mode={self.mode.value}: shot {shot.id} braucht ein section-Label"
                     )
         return self
+
+
+def latest_version(project_dir: Path) -> int | None:
+    """Highest N among `<data_root>/shotlist/vN.yaml`, or None if none exist."""
+    versions = [
+        int(m.group(1))
+        for p in (project_dir / SHOTLIST_SUBDIR).glob("v*.yaml")
+        if (m := SHOTLIST_VERSION_RE.match(p.stem)) is not None
+    ]
+    return max(versions) if versions else None
+
+
+def shotlist_path(project_dir: Path, version: int) -> Path:
+    return project_dir / SHOTLIST_SUBDIR / f"v{version}.yaml"
+
+
+def load(project_dir: Path) -> Shotlist | None:
+    """Load the latest versioned shotlist (`shotlist/vN.yaml`, highest N), or
+    None if the project has none yet. `project_dir` is the data root."""
+    version = latest_version(project_dir)
+    if version is None:
+        return None
+    data = yaml.safe_load(shotlist_path(project_dir, version).read_text(encoding="utf-8"))
+    return Shotlist.model_validate(data)
+
+
+def save(project_dir: Path, shotlist: Shotlist, version: int | None = None) -> Path:
+    """Write a shotlist to `shotlist/vN.yaml`. With no `version`, the next free N
+    (one past the current latest, starting at 1). Returns the written path."""
+    if version is None:
+        latest = latest_version(project_dir)
+        version = 1 if latest is None else latest + 1
+    path = shotlist_path(project_dir, version)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(
+            shotlist.model_dump(by_alias=True, mode="json"),
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    return path
