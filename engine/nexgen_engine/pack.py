@@ -94,3 +94,19 @@ class PackRegistry:
     def load(self, pack: Pack) -> None:
         pack.register(self.engine)
         self.packs.append(pack)
+
+
+def discover_packs() -> PackRegistry:
+    """Find installed packs via the `nexgen.packs` entry-point group, instantiate each,
+    and load it into a fresh registry. A broken pack is skipped, not fatal. This is how
+    the engine (and its MCP) pick up whatever format packs are installed in the runtime."""
+    from importlib.metadata import entry_points
+
+    registry = PackRegistry()
+    for entry in entry_points(group="nexgen.packs"):
+        try:
+            pack_cls = entry.load()
+            registry.load(pack_cls())
+        except Exception:
+            continue
+    return registry
