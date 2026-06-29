@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from nexgen_engine.pack import DurationBand, EngineRegistry
 
+from nexgen_pack_musicvideo.checks import pacing as _pacing_check
+from nexgen_pack_musicvideo.checks import tempo as _tempo_check
+
 #: Music shot-duration bands per mode. These were the engine-side MODE_DURATION_RANGES;
 #: supplied by the pack now, so the engine's Shot/sanity logic stays format-neutral.
 _DURATION_BANDS: dict[str, tuple[float, float]] = {
@@ -21,12 +24,6 @@ class MusicDurationPolicy:
         return DurationBand(label=str(key), min_s=lo, max_s=hi)
 
 
-def _tempo_check(ctx: object) -> list:
-    """Music tempo/pacing validation. The real logic lands here once the audio
-    analysis phase moves into the pack (it needs BPM). Placeholder: no findings yet."""
-    return []
-
-
 def _analysis_phase(project_dir: object) -> object:
     """Audio analysis (beat/downbeat/stems/chords). The real DSP ports in next."""
     raise NotImplementedError("music analysis phase not yet ported")
@@ -40,4 +37,5 @@ class MusicvideoPack:
         registry.register_duration_policy(MusicDurationPolicy())
         registry.register_project_dirs(["audio", "lyrics", "analysis"])
         registry.register_sanity_check("tempo", _tempo_check)
+        registry.register_sanity_check("pacing", _pacing_check)
         registry.register_phase("analysis", _analysis_phase)
