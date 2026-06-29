@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from nexgen_engine.core import gates as gates_mod
 from nexgen_engine.core import project as project_mod
 from nexgen_engine.core.gates import CORE_PHASES
+from nexgen_engine.render import costs as costs_mod
 
 
 class PhaseStatus(BaseModel):
@@ -23,6 +24,8 @@ class ProjectState(BaseModel):
     project: str
     mode: str
     budget_eur: float
+    budget_spent_eur: float
+    budget_remaining_eur: float
     phases: list[PhaseStatus]
     next_phase: str | None
 
@@ -32,10 +35,16 @@ def build_snapshot(project_dir: Path, phase_order: tuple[str, ...] = CORE_PHASES
     g = gates_mod.load(project_dir)
     phases = [PhaseStatus(phase=p, approved=g.get(p).approved) for p in phase_order]
     next_phase = next((p.phase for p in phases if not p.approved), None)
+    try:
+        spent = costs_mod.already_spent_in_project(project_dir)
+    except Exception:  # no render ledger yet (fresh project) → nothing spent
+        spent = 0.0
     return ProjectState(
         project=meta.project,
         mode=meta.mode.value,
         budget_eur=meta.budget_eur,
+        budget_spent_eur=spent,
+        budget_remaining_eur=max(0.0, meta.budget_eur - spent),
         phases=phases,
         next_phase=next_phase,
     )

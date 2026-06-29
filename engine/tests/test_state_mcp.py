@@ -29,3 +29,13 @@ def test_mcp_get_project_state(tmp_path: Path):
     assert state["project"] == "demo"
     assert state["mode"] == "section"
     assert any(p["phase"] == "bible" for p in state["phases"])
+
+
+def test_snapshot_includes_budget(tmp_path):
+    from nexgen_engine.core import layout as layout_mod
+    from nexgen_engine.core.modes import Mode
+    data_root = layout_mod.init_project(tmp_path / "p", "demo", mode=Mode.BEAT, budget_eur=80.0)
+    snap = build_snapshot(data_root)
+    assert snap.budget_eur == 80.0
+    assert snap.budget_spent_eur == 0.0          # fresh project, nothing rendered
+    assert snap.budget_remaining_eur == 80.0
