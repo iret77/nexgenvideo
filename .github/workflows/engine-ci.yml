@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'engine/**'
+      - 'packs/**'
       - '.github/workflows/engine-ci.yml'
   pull_request:
     paths:
       - 'engine/**'
+      - 'packs/**'
       - '.github/workflows/engine-ci.yml'
   workflow_dispatch:
 
@@ -19,7 +21,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install engine
-        run: pip install -e ./engine pytest
+      - name: Install engine + packs
+        run: pip install -e ./engine -e ./packs/musicvideo pytest
       - name: Test
-        run: pytest engine/tests -q
+        run: pytest engine/tests packs/musicvideo/tests -q

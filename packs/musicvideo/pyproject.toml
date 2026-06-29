@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nexgen-pack-musicvideo"
+version = "0.0.1"
+description = "NexGenVideo music-video format pack — registers music-specific behavior against the engine contract."
+requires-python = ">=3.11"
+# nexgen-engine is provided by the environment (installed alongside in CI / bundled by the app).
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["nexgen_pack_musicvideo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
