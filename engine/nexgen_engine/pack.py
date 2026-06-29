@@ -52,9 +52,15 @@ class EngineRegistry:
         self.sanity_checks: dict[str, SanityCheck] = {}
         self.duration_policy: DurationPolicy | None = None
         self.libraries: dict[str, object] = {}
+        self.project_dirs: list[str] = []
 
     def register_phase(self, name: str, runner: PhaseRunner) -> None:
         self.phases[name] = runner
+
+    def register_project_dirs(self, dirs: list[str]) -> None:
+        """Extra project-layout subdirs the pack needs (e.g. music: audio/lyrics/analysis).
+        The engine creates its own core dirs (bible, treatment, frames, …) regardless."""
+        self.project_dirs.extend(dirs)
 
     def register_sanity_check(self, name: str, check: SanityCheck) -> None:
         self.sanity_checks[name] = check
