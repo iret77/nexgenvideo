@@ -118,6 +118,34 @@ find "$APP/Contents/Resources/engine" "$APP/Contents/Resources/packs" \
   \( -name '__pycache__' -o -name '*.egg-info' -o -name '.venv' -o -name '.pytest_cache' \) \
   -prune -exec rm -rf {} + 2>/dev/null || true
 
+# why: ship a self-contained `uv` inside the .app so a non-developer Mac needs no `brew`/`uv`/
+# system Python — uv is a static binary that, on first launch, downloads + manages its own CPython
+# for the engine venv. Pinned version (reproducible, no surprise auto-updates); checksum-verified
+# against the release's published .sha256; build fails loudly rather than shipping a broken bundle.
+UV_VERSION="0.11.25"
+UV_ASSET="uv-aarch64-apple-darwin.tar.gz"
+UV_URL="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${UV_ASSET}"
+echo "==> Bundling uv ${UV_VERSION} (${UV_ASSET})"
+UV_TMP="$(mktemp -d)"
+trap 'rm -rf "$UV_TMP"' EXIT
+curl -fsSL --retry 3 -o "$UV_TMP/uv.tar.gz" "$UV_URL" \
+  || { echo "!! failed to download uv from $UV_URL" >&2; exit 1; }
+curl -fsSL --retry 3 -o "$UV_TMP/uv.tar.gz.sha256" "${UV_URL}.sha256" \
+  || { echo "!! failed to download uv checksum from ${UV_URL}.sha256" >&2; exit 1; }
+( cd "$UV_TMP" && EXPECTED="$(awk '{print $1}' uv.tar.gz.sha256)" \
+  && echo "${EXPECTED}  uv.tar.gz" | shasum -a 256 -c - ) \
+  || { echo "!! uv tarball checksum mismatch — refusing to bundle" >&2; exit 1; }
+tar -xzf "$UV_TMP/uv.tar.gz" -C "$UV_TMP" \
+  || { echo "!! failed to extract uv tarball" >&2; exit 1; }
+mkdir -p "$APP/Contents/Resources/bin"
+for tool in uv uvx; do
+  SRC="$UV_TMP/uv-aarch64-apple-darwin/$tool"
+  [ -f "$SRC" ] || { echo "!! $tool missing from uv tarball" >&2; exit 1; }
+  cp "$SRC" "$APP/Contents/Resources/bin/$tool"
+  chmod +x "$APP/Contents/Resources/bin/$tool"
+done
+[ -x "$APP/Contents/Resources/bin/uv" ] || { echo "!! bundled uv is not executable" >&2; exit 1; }
+
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/PalmierPro"
 touch "$APP"
 
@@ -166,6 +194,15 @@ for helper in \
     "$SPARKLE_CURRENT/XPCServices/Installer.xpc/Contents/MacOS/Installer" \
     "$SPARKLE_CURRENT/XPCServices/Installer.xpc"; do
   [ -e "$helper" ] && codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$helper"
+done
+
+# why: hardened runtime + notarization require EVERY nested Mach-O to carry a valid signature
+# with --options runtime. The dist path signs nested executables individually (no --deep), so the
+# bundled uv/uvx must be signed here, before the outer app sign — otherwise notarization rejects it.
+echo "==> Codesigning bundled uv/uvx"
+for tool in uv uvx; do
+  BIN_TOOL="$APP/Contents/Resources/bin/$tool"
+  [ -e "$BIN_TOOL" ] && codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$BIN_TOOL"
 done
 
 echo "==> Codesigning Sparkle framework"

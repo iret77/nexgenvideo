@@ -14,6 +14,14 @@ enum EngineRuntime {
     static var bundledEngineDir: URL? { Bundle.main.resourceURL?.appendingPathComponent("engine") }
     static var bundledPacksDir: URL? { Bundle.main.resourceURL?.appendingPathComponent("packs") }
 
+    // uv shipped inside the .app (bundle.sh → Contents/Resources/bin/uv). Self-contained: it
+    // downloads + manages its own CPython, so a release Mac needs no brew/uv/system Python.
+    static var bundledUV: URL? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("bin/uv"),
+              FileManager.default.isExecutableFile(atPath: url.path) else { return nil }
+        return url
+    }
+
     static var venvDir: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return support.appendingPathComponent("NexGenVideo/engine-venv", isDirectory: true)
@@ -45,7 +53,7 @@ enum EngineRuntime {
         case command(String)
         var errorDescription: String? {
             switch self {
-            case .toolNotFound(let t): return "\(t) not found. Install it (e.g. `brew install uv`)."
+            case .toolNotFound(let t): return "Engine runtime tool \"\(t)\" is missing from this build."
             case .command(let m): return m
             }
         }
@@ -62,7 +70,8 @@ enum EngineRuntime {
             if !isVenvReady {
                 try FileManager.default.createDirectory(
                     at: venvDir.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try await run("uv", ["venv", "--python", "3.11", venvDir.path])
+                // --python 3.12 lets uv fetch + manage its own CPython; no system Python required.
+                try await run("uv", ["venv", "--python", "3.12", venvDir.path])
             }
             var installArgs = ["pip", "install", "--python", venvPython.path, "-e", engine.path]
             if let packs = bundledPacksDir,
@@ -105,6 +114,9 @@ enum EngineRuntime {
     }
 
     private static func resolve(_ tool: String) throws -> URL {
+        // Release path: prefer the uv shipped inside the .app. Fall back to PATH/homebrew/~/.local
+        // only for dev builds run from .build (no bundled uv) where a developer has uv installed.
+        if tool == "uv", let bundled = bundledUV { return bundled }
         let candidates = [
             "/opt/homebrew/bin", "/usr/local/bin",
             (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin"),
