@@ -25,8 +25,16 @@ class MusicDurationPolicy:
 
 
 def _analysis_phase(project_dir: object) -> object:
-    """Audio analysis (beat/downbeat/stems/chords). The real DSP ports in next."""
-    raise NotImplementedError("music analysis phase not yet ported")
+    """Audio analysis (beat/downbeat/stems/chords).
+
+    The DSP pipeline pulls heavy deps (librosa/numpy/sklearn, plus the optional
+    madmom/essentia/demucs/whisperx stack) only when the phase actually runs, so
+    importing the pack stays free of them. Install via the ``audio`` extra:
+    ``pip install -e ./packs/musicvideo[audio]``.
+    """
+    from nexgen_pack_musicvideo.analysis.pipeline import run_phase
+
+    return run_phase(project_dir)
 
 
 class MusicvideoPack:
