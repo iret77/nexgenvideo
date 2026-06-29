@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 
 from nexgen_engine.bible import schema as bible_schema
 from nexgen_engine.core.gates import CORE_PHASES
+from nexgen_engine.pack import discover_packs
 from nexgen_engine.state import build_snapshot
 
 mcp = FastMCP("engine")
@@ -27,7 +28,8 @@ def project_state(project_dir: str) -> dict[str, Any]:
 
 
 def phases() -> list[str]:
-    return list(CORE_PHASES)
+    pack_phases = sorted(p for p in discover_packs().engine.phases if p not in CORE_PHASES)
+    return list(CORE_PHASES) + pack_phases
 
 
 def bible(project_dir: str) -> dict[str, Any] | None:
