@@ -48,6 +48,14 @@ enum EngineRuntime {
         return .notBootstrapped
     }
 
+    /// Tear the engine down: delete the venv and clear the published python path so `status()` returns
+    /// `.notBootstrapped` again. Best-effort and non-throwing — a missing venv or remove failure is
+    /// swallowed; clearing the defaults key is what actually flips the status back.
+    static func reset() {
+        try? FileManager.default.removeItem(at: venvDir)
+        UserDefaults.standard.removeObject(forKey: pythonDefaultsKey)
+    }
+
     enum EngineError: LocalizedError {
         case toolNotFound(String)
         case command(String)

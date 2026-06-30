@@ -10,6 +10,7 @@ struct AgentPane: View {
     @State private var isBootstrapping: Bool = false
     @State private var audioState: AudioState = .unknown
     @State private var isInstallingAudio: Bool = false
+    @State private var plugins: [PluginManager.Plugin] = []
     @State private var audioPlugins: [PluginManager.Plugin] = []
     @FocusState private var isFocused: Bool
 
@@ -34,6 +35,8 @@ struct AgentPane: View {
             mcpSection
             Divider().overlay(AppTheme.Border.subtleColor)
             claudeRuntimeSection
+            Divider().overlay(AppTheme.Border.subtleColor)
+            pluginsSection
         }
         .onAppear(perform: refresh)
     }
@@ -142,6 +145,7 @@ struct AgentPane: View {
         hasKey = !key.isEmpty
         maskedKey = mask(key)
         engineStatus = EngineRuntime.status()
+        plugins = PluginManager.discoverPlugins()
         audioPlugins = engineReady ? PluginManager.audioExtraPlugins() : []
         refreshAudioState()
     }
@@ -285,7 +289,6 @@ struct AgentPane: View {
             folderRow(title: "Plugin folder", path: $claudePluginDir)
             permissionRow
             engineRow
-            audioRow
         }
     }
 
@@ -351,6 +354,10 @@ struct AgentPane: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
+                Button("Reset", action: resetEngine)
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+                    .help("Remove the engine. You'll need to set it up again to use it.")
 
             case .failed(let msg):
                 Circle()
@@ -378,7 +385,50 @@ struct AgentPane: View {
         }
     }
 
-    // MARK: - Audio analysis extra
+    private func resetEngine() {
+        Task {
+            EngineRuntime.reset()
+            engineStatus = EngineRuntime.status()
+            audioPlugins = []
+            audioState = .unknown
+        }
+    }
+
+    // MARK: - Plugins
+
+    private var pluginsSection: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                Text("Plugins")
+                    .font(.system(size: AppTheme.FontSize.md, weight: .medium))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                Text("Installed format packs and their optional capabilities.")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if plugins.isEmpty {
+                runtimeRow {
+                    Text("No plugins installed")
+                        .font(.system(size: AppTheme.FontSize.sm))
+                        .foregroundStyle(AppTheme.Text.mutedColor)
+                    Spacer()
+                }
+            } else {
+                ForEach(plugins, id: \.name) { plugin in
+                    runtimeRow {
+                        Text(plugin.name)
+                            .font(.system(size: AppTheme.FontSize.sm))
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                        Spacer()
+                    }
+                }
+            }
+
+            audioRow
+        }
+    }
 
     private var engineReady: Bool {
         if case .ready = engineStatus { return true }
