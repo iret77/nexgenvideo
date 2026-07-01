@@ -19,13 +19,33 @@ struct AgentPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-            apiKeySection
+            runAgentSection
             Divider().overlay(AppTheme.Border.subtleColor)
             mcpSection
-            Divider().overlay(AppTheme.Border.subtleColor)
-            claudeRuntimeSection
         }
         .onAppear(perform: refresh)
+    }
+
+    // MARK: - Run the in-app agent
+
+    private var runAgentSection: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            runAgentHeader
+            apiKeySection
+            claudeRuntimeSection
+        }
+    }
+
+    private var runAgentHeader: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text("Run the Agent")
+                .font(.system(size: AppTheme.FontSize.md, weight: .medium))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+            Text("Two ways to power the in-app agent — pick one. Bring your own Anthropic API key, or run it through Claude Code using your Claude subscription.")
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var apiKeySection: some View {
@@ -38,7 +58,7 @@ struct AgentPane: View {
             .opacity(useClaudeRuntime ? AppTheme.Opacity.strong : 1)
 
             if useClaudeRuntime {
-                Text("Not used while the Claude Code Runtime below is on — that runs the agent instead.")
+                Text("Not used while Claude Code below is on — that runs the agent instead.")
                     .font(.system(size: AppTheme.FontSize.sm))
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .fixedSize(horizontal: false, vertical: true)
@@ -53,7 +73,7 @@ struct AgentPane: View {
                 .foregroundStyle(AppTheme.Text.primaryColor)
 
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-                Text("Use your own API key for the AI chat. Stored in your macOS Keychain.")
+                Text("Option A — bring your own key. Stored in your macOS Keychain.")
                     .font(.system(size: AppTheme.FontSize.sm))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
@@ -246,10 +266,10 @@ struct AgentPane: View {
     private var claudeRuntimeSection: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text("Claude Code Runtime")
+                Text("Claude Code")
                     .font(.system(size: AppTheme.FontSize.md, weight: .medium))
                     .foregroundStyle(AppTheme.Text.primaryColor)
-                Text("An alternative to the API key above: run the in-app agent as an embedded Claude Code session that drives the timeline over MCP and loads the plugin from the folder below, using your Claude subscription via the claude CLI.")
+                Text("Option B — run the in-app agent as an embedded Claude Code session on your Claude subscription via the claude CLI. It drives the timeline over MCP and loads the plugin from the folder below.")
                     .font(.system(size: AppTheme.FontSize.sm))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)

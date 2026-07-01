@@ -17,13 +17,20 @@ struct InspectorView: View {
         case ai = "AI Edit"
     }
 
-    // Cockpit tabs shown in the no-selection branch. Pipeline/Shotlist/Sanity/Cost land in later
+    // Cockpit tabs shown in Project mode. Pipeline/Shotlist/Sanity/Cost land in later
     // increments — only Project + Bible are wired now.
     enum CockpitTab: String, Hashable, CaseIterable {
         case project = "Project"
         case bible = "Bible"
     }
 
+    // Top-level inspector mode: the selection-driven inspector vs. the always-reachable project cockpit.
+    enum InspectorMode: String, Hashable, CaseIterable {
+        case selection = "Selection"
+        case project = "Project"
+    }
+
+    @State private var inspectorMode: InspectorMode = .selection
     @State private var preferredTab: ClipTab = .video
     @State private var preferredAssetTab: AssetTab = .details
     @State private var cockpitTab: CockpitTab = .project
@@ -35,25 +42,52 @@ struct InspectorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if editor.isMarqueeSelecting {
-                marqueeSelectionSummary
-            } else if selectedVisualClip != nil || selectedAudioClip != nil {
-                clipInspectorContent()
-            } else if let asset = selectedMediaAsset {
-                mediaAssetInspectorContent(asset)
-            } else {
-                cockpitContent
+            modeSwitch
+            Group {
+                switch inspectorMode {
+                case .project:
+                    cockpitContent
+                case .selection:
+                    selectionContent
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onChange(of: editor.selectedClipIds) { _, _ in
+        .onChange(of: editor.selectedClipIds) { _, ids in
             if !editor.isMarqueeSelecting { resolvePreferredTab() }
+            if !ids.isEmpty { inspectorMode = .selection }
+        }
+        .onChange(of: editor.selectedMediaAssetIds) { _, ids in
+            if !ids.isEmpty { inspectorMode = .selection }
         }
         .onChange(of: editor.isMarqueeSelecting) { _, selecting in
             if !selecting { resolvePreferredTab() }
         }
         .onChange(of: preferredTab) { _, newTab in
             if newTab != .video { editor.cropEditingActive = false }
+        }
+    }
+
+    private var modeSwitch: some View {
+        genericTabBar(
+            titles: InspectorMode.allCases.map(\.rawValue),
+            selected: inspectorMode.rawValue,
+            raisedBackground: true
+        ) { title in
+            if let mode = InspectorMode(rawValue: title) { inspectorMode = mode }
+        }
+    }
+
+    @ViewBuilder
+    private var selectionContent: some View {
+        if editor.isMarqueeSelecting {
+            marqueeSelectionSummary
+        } else if selectedVisualClip != nil || selectedAudioClip != nil {
+            clipInspectorContent()
+        } else if let asset = selectedMediaAsset {
+            mediaAssetInspectorContent(asset)
+        } else {
+            cockpitContent
         }
     }
 

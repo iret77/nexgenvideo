@@ -2,10 +2,10 @@ import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
-    case models
     case agent
     case plugins
     case providers
+    case models
     case storage
 
     var id: String { rawValue }
