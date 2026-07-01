@@ -72,7 +72,7 @@ final class ModelDownloader: @unchecked Sendable {
         if let existing = Self.installed(for: manifest) { return existing }
 
         let fm = FileManager.default
-        let staging = fm.temporaryDirectory.appendingPathComponent("palmier-model-\(UUID().uuidString)")
+        let staging = fm.temporaryDirectory.appendingPathComponent("nexgen-model-\(UUID().uuidString)")
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }
 

@@ -7,10 +7,10 @@
   "long_description": "Connects Claude Desktop to the local MCP server inside NexGenVideo — an AI-native Mac video editor. Once installed, Claude can read your timeline, edit clips, generate media, and manage tracks. Requires NexGenVideo to be running with a project open.",
   "icon": "icon.png",
   "author": {
-    "name": "Palmier",
-    "url": "https://palmier.io"
+    "name": "NexGenVideo",
+    "url": "https://github.com/iret77/nexgen-video"
   },
-  "homepage": "https://palmier.io",
+  "homepage": "https://github.com/iret77/nexgen-video",
   "keywords": ["video", "editor", "timeline", "creative", "media"],
   "server": {
     "type": "node",

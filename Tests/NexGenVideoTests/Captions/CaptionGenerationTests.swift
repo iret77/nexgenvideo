@@ -111,7 +111,7 @@ private func mediaAsset(_ id: String, hasAudio: Bool = true) -> MediaAsset {
             AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 48000, channels: 2, interleaved: true)
         )
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("palmier-fmt-test-\(UUID().uuidString).caf")
+            .appendingPathComponent("nexgen-fmt-test-\(UUID().uuidString).caf")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let file = try AVAudioFile(

@@ -12,7 +12,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     /// `${CLAUDE_PLUGIN_ROOT}`-expanded). Merged alongside `nexgen` so they survive
     /// `--strict-mcp-config`. Read from each plugin dir's `.mcp.json` at launch.
     var pluginMcpServers: [String: String]
-    /// Palmier's local MCP server port.
+    /// NexGenVideo's local MCP server port.
     var mcpPort: Int
     /// e.g. "bypassPermissions", "acceptEdits", "dontAsk", "default".
     var permissionMode: String
@@ -68,7 +68,7 @@ enum ClaudeCodeLaunch {
     }
 
     /// Argv for `claude` (excluding the executable path). Hermetic: --strict-mcp-config so only
-    /// Palmier's MCP is visible, not the user's global servers.
+    /// NexGenVideo's MCP is visible, not the user's global servers.
     static func arguments(_ cfg: ClaudeCodeLaunchConfig) -> [String] {
         var args: [String] = [
             "-p",

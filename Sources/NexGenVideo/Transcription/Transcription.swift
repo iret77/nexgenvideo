@@ -202,7 +202,7 @@ enum Transcription {
     /// Decode the asset's audio track to a PCM file with AVAssetReader
     private static func extractAudioTrack(from videoURL: URL, range: ClosedRange<Double>? = nil) async throws -> URL {
         let outURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("palmier-stt-\(UUID().uuidString).caf")
+            .appendingPathComponent("nexgen-stt-\(UUID().uuidString).caf")
         Log.transcription.notice(
             "extract start video=\(videoURL.lastPathComponent)",
             telemetry: "Transcription audio extraction started",

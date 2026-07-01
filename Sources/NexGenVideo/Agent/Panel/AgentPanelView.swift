@@ -285,7 +285,7 @@ struct AgentPanelView: View {
     private func errorCTA(for error: AgentStreamError?) -> ErrorCTA? {
         guard let error else { return nil }
         switch error {
-        case .unauthenticated, .insufficientCredits, .upstream:
+        case .upstream:
             return nil
         }
     }
