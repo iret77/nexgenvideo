@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum KeychainStore {
-    private static let service: String = Bundle.main.bundleIdentifier ?? "io.palmier.pro"
+    private static let service: String = Bundle.main.bundleIdentifier ?? "de.h5ventures.nexgenvideo"
 
     static func save(_ value: String, account: String) {
         let data = Data(value.utf8)
