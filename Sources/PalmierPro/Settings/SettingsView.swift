@@ -4,6 +4,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case models
     case agent
+    case plugins
     case providers
     case storage
 
@@ -14,6 +15,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .models: return "Models"
         case .agent: return "Agent"
+        case .plugins: return "Plugins"
         case .providers: return "Providers"
         case .storage: return "Storage"
         }
@@ -24,6 +26,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: return "gearshape"
         case .models: return "square.stack.3d.up"
         case .agent: return "paperplane"
+        case .plugins: return "puzzlepiece.extension"
         case .providers: return "key.horizontal"
         case .storage: return "internaldrive"
         }
@@ -115,6 +118,8 @@ private struct SettingsDetail: View {
                         ModelsPane()
                     case .agent:
                         AgentPane()
+                    case .plugins:
+                        PluginsPane()
                     case .providers:
                         ProvidersPane()
                     case .storage:

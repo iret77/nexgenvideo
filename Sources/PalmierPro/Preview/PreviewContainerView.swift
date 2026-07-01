@@ -456,6 +456,10 @@ struct PreviewContainerView: View {
             }
 
             overflowMenu
+
+            UpdateBadgeView()
+
+            ExportButton()
         }
     }
 
