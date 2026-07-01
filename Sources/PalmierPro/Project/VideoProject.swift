@@ -322,8 +322,6 @@ final class VideoProject: NSDocument {
         window.backgroundColor = NSColor(AppTheme.Background.surfaceColor)
         window.center()
 
-        window.addTitlebarSwiftUI(TitleBarTrailingView().environment(editorViewModel), side: .trailing, width: AppTheme.Window.projectTitlebarTrailingWidth)
-
         let controller = EditorWindowController(editorViewModel: editorViewModel, window: window)
         controller.shouldCascadeWindows = true
         controller.installKeyMonitor()
@@ -462,44 +460,4 @@ final class VideoProject: NSDocument {
             data: ["restored": restored, "missing": missing, "manifestEntries": editorViewModel.mediaManifest.entries.count]
         )
     }
-}
-
-// MARK: - NSWindow helper
-
-extension NSWindow {
-    func addTitlebarSwiftUI<V: View>(_ view: V, side: NSLayoutConstraint.Attribute, width: CGFloat) {
-        let host = NSHostingController(rootView: view.tint(AppTheme.Accent.primary))
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-
-        let wrapper = CornerAdaptiveView()
-        wrapper.frame = NSRect(x: 0, y: 0, width: width, height: 28)
-        wrapper.addSubview(host.view)
-
-        let safeArea = wrapper.layoutGuide(for: .safeArea(cornerAdaptation: .horizontal))
-        var constraints = [
-            host.view.topAnchor.constraint(equalTo: wrapper.topAnchor),
-            host.view.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
-        ]
-        if side == .leading {
-            constraints.append(contentsOf: [
-                host.view.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor),
-                host.view.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor),
-            ])
-        } else {
-            constraints.append(contentsOf: [
-                host.view.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor),
-                host.view.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor),
-            ])
-        }
-        NSLayoutConstraint.activate(constraints)
-
-        let accessory = NSTitlebarAccessoryViewController()
-        accessory.view = wrapper
-        accessory.layoutAttribute = side
-        addTitlebarAccessoryViewController(accessory)
-    }
-}
-
-private class CornerAdaptiveView: NSView {
-    override class var requiresConstraintBasedLayout: Bool { true }
 }
