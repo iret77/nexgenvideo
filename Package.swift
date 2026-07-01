@@ -3,10 +3,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "PalmierPro",
+    name: "NexGenVideo",
     platforms: [.macOS(.v26)],
     products: [
-        .executable(name: "PalmierPro", targets: ["PalmierPro"]),
+        .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),
     ],
     dependencies: [
         .package(url: "https://github.com/dmrschmidt/DSWaveformImage", from: "14.2.2"),
@@ -18,7 +18,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "PalmierPro",
+            name: "NexGenVideo",
             dependencies: [
                 .product(name: "DSWaveformImage", package: "DSWaveformImage"),
                 .product(name: "MCP", package: "swift-sdk"),
@@ -27,7 +27,7 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "Lottie", package: "lottie-ios"),
             ],
-            path: "Sources/PalmierPro",
+            path: "Sources/NexGenVideo",
             exclude: [
                 "Resources/Info.plist",
                 "Resources/AppIcon.icns",
@@ -43,9 +43,9 @@ let package = Package(
         ),
         .plugin(name: "MetalCIKernelPlugin", capability: .buildTool()),
         .testTarget(
-            name: "PalmierProTests",
-            dependencies: ["PalmierPro"],
-            path: "Tests/PalmierProTests"
+            name: "NexGenVideoTests",
+            dependencies: ["NexGenVideo"],
+            path: "Tests/NexGenVideoTests"
         ),
     ]
 )

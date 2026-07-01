@@ -42,8 +42,8 @@ NOTARY_KEY_FILE="${NOTARY_KEY_FILE:-}"
 NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
 NOTARY_ISSUER="${NOTARY_ISSUER:-}"
 SENTRY_DSN="${SENTRY_DSN:-}"
-ENTITLEMENTS="$ROOT/scripts/PalmierPro.entitlements"
-RESOURCES="$ROOT/Sources/PalmierPro/Resources"
+ENTITLEMENTS="$ROOT/scripts/NexGenVideo.entitlements"
+RESOURCES="$ROOT/Sources/NexGenVideo/Resources"
 APP="$ROOT/.build/NexGenVideo.app"
 ZIP="$ROOT/.build/NexGenVideo.zip"
 DMG="$ROOT/.build/NexGenVideo.dmg"
@@ -58,13 +58,13 @@ fi
 
 echo "==> Building ($CONFIG)"
 swift build -c "$CONFIG"
-BIN="$(swift build -c "$CONFIG" --show-bin-path)/PalmierPro"
+BIN="$(swift build -c "$CONFIG" --show-bin-path)/NexGenVideo"
 SPARKLE_FW="$ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
-cp "$BIN" "$APP/Contents/MacOS/PalmierPro"
+cp "$BIN" "$APP/Contents/MacOS/NexGenVideo"
 cp "$RESOURCES/Info.plist" "$APP/Contents/Info.plist"
 
 if [ -n "$SENTRY_DSN" ]; then
@@ -79,7 +79,7 @@ cp "$RESOURCES/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/Sparkle.framework"
 
 # Flatten SwiftPM's resource bundle into the app's Resources tree.
-RES_BUNDLE="$(dirname "$BIN")/PalmierPro_PalmierPro.bundle"
+RES_BUNDLE="$(dirname "$BIN")/NexGenVideo_NexGenVideo.bundle"
 if [ -d "$RES_BUNDLE/Fonts" ]; then
   cp -R "$RES_BUNDLE/Fonts" "$APP/Contents/Resources/"
 else
@@ -146,7 +146,7 @@ for tool in uv uvx; do
 done
 [ -x "$APP/Contents/Resources/bin/uv" ] || { echo "!! bundled uv is not executable" >&2; exit 1; }
 
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/PalmierPro"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/NexGenVideo"
 touch "$APP"
 
 if [ "$MODE" = "fast" ]; then
@@ -156,10 +156,10 @@ if [ "$MODE" = "fast" ]; then
   exit 0
 fi
 
-DSYM="$ROOT/.build/PalmierPro.dSYM"
+DSYM="$ROOT/.build/NexGenVideo.dSYM"
 echo "==> Generating dSYM"
 rm -rf "$DSYM"
-dsymutil "$APP/Contents/MacOS/PalmierPro" -o "$DSYM"
+dsymutil "$APP/Contents/MacOS/NexGenVideo" -o "$DSYM"
 
 upload_dsyms() {
   if [ -z "${SENTRY_AUTH_TOKEN:-}" ] || [ -z "${SENTRY_ORG:-}" ] || [ -z "${SENTRY_PROJECT:-}" ]; then

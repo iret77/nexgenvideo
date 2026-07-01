@@ -34,10 +34,10 @@ on:
   pull_request:
     paths:
       - "scripts/bundle.sh"
-      - "scripts/PalmierPro.entitlements"
+      - "scripts/NexGenVideo.entitlements"
       - "scripts/update_appcast.py"
       - ".github/workflows/release.yml"
-      - "Sources/PalmierPro/Resources/Info.plist"
+      - "Sources/NexGenVideo/Resources/Info.plist"
 
 permissions:
   contents: write
@@ -119,7 +119,7 @@ jobs:
       - name: Bump version
         run: |
           set -euo pipefail
-          PLIST="Sources/PalmierPro/Resources/Info.plist"
+          PLIST="Sources/NexGenVideo/Resources/Info.plist"
           CUR="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST")"
           NEW=$((CUR + 1))
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $REL_VERSION" "$PLIST"
@@ -169,7 +169,7 @@ jobs:
           TAG="v$REL_VERSION"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Sources/PalmierPro/Resources/Info.plist
+          git add Sources/NexGenVideo/Resources/Info.plist
           git commit -m "release: bump to $REL_VERSION (build ${BUILD_NUMBER})"
           if [ -n "${ED_SIGNATURE:-}" ]; then
             python3 scripts/update_appcast.py "$REL_VERSION" "$BUILD_NUMBER" "$DMG_LENGTH" "$ED_SIGNATURE" "$TAG"

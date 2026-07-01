@@ -81,7 +81,7 @@ Core-Repo, *kein* Submodul:
 
 ```
 nexgen-video/
-  Sources/PalmierPro/   ← Swift-Host (App)
+  Sources/NexGenVideo/   ← Swift-Host (App)
   engine/               ← Generic Production Engine (Python, generisch)
   plugins/musicvideo/   ← erstes Format-Plugin (dünn, enthält einen Pack); weitere daneben
 ```
@@ -208,7 +208,7 @@ Claude steuert die eingebundenen Modelle und orchestriert das Projekt — **nach
 
 Die beiden sind **sich gegenseitig ausschließende** Backends desselben In-App-Agenten (ist die
 Runtime an, wird der API-Key-Pfad übersprungen). **Keine Claude-Desktop-App nötig.** Die
-eingebettete Runtime liegt unter `Sources/PalmierPro/Agent/Runtime/` (Process, Event-Mapper,
+eingebettete Runtime liegt unter `Sources/NexGenVideo/Agent/Runtime/` (Process, Event-Mapper,
 Locator, Launch); sie lädt Generic Core + aktiviertes Pack via `--plugin-dir`, spricht NexGens
 MCP (`127.0.0.1:19789/mcp`) hermetisch (`--strict-mcp-config`), Auth über Abo (`--setting-sources
 project,local`, `--permission-mode bypassPermissions` headless). Verifizierter CLI-Vertrag:
@@ -266,7 +266,7 @@ rollendes signiertes Prerelease als öffentlicher Direktlink. PRs immer `--repo 
 
 **Auf `main` (erledigt):**
 - Eigenes Developer-ID-Signing/Notarisierung; Bundle-ID `de.h5ventures.nexgenvideo`; Sparkle-Feed auf unser Repo.
-- Rebrand: Wortmarke **„NexGenVideo"** (ein Wort) überall sichtbar; Icon + Splash; Projekt-Extension `.nexgen` (`.palmier` öffnet weiter).
+- Rebrand: Wortmarke **„NexGenVideo"** (ein Wort) überall sichtbar; Icon + Splash; Projekt-Extension `.ngv` + UTI `de.h5ventures.nexgenvideo.project`.
 - Eigenes Hosting des Such-CoreML-Modells (weg von Palmiers HF).
 - Eingebettete `claude -p`-Runtime (`Agent/Runtime/*`) + AgentPane-„Runtime"-Section.
 - **Phase-1-De-Palmier-isierung abgeschlossen:** Clerk-Login, Convex-Backend und die Convex-Models-Pane entfernt; MCP-Servername `nexgen`; Changelog-Feed auf unser Repo.
@@ -288,7 +288,7 @@ rollendes signiertes Prerelease als öffentlicher Direktlink. PRs immer `--repo 
 - Mesh-/Splat-Import + POV-Extraction/Restyle für Marble (3D-Konsistenz-Workflow) als Folge-Arbeit.
 - Weitere Provider (Runway, OpenArt, Higgsfield, ElevenLabs-direkt) als eigene Clients.
 - Generic Engine + Format-Plugins (Monorepo `engine/` + `plugins/`, §4/§9/§10) — noch nicht angelegt.
-- Interner Modulname `PalmierPro` + `io.palmier.project`-UTI bewusst beibehalten (unsichtbar, hohes Bau-/Merge-Risiko).
+- Interner Modulname/Target auf `NexGenVideo` umbenannt; Projekt-Extension `.ngv` + UTI `de.h5ventures.nexgenvideo.project`.
 
 ---
 

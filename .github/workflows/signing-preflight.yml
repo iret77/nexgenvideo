@@ -9,10 +9,10 @@ on:
   pull_request:
     paths:
       - "scripts/bundle.sh"
-      - "scripts/PalmierPro.entitlements"
+      - "scripts/NexGenVideo.entitlements"
       - ".github/workflows/release.yml"
       - ".github/workflows/signing-preflight.yml"
-      - "Sources/PalmierPro/Resources/Info.plist"
+      - "Sources/NexGenVideo/Resources/Info.plist"
   workflow_dispatch:
 
 jobs:

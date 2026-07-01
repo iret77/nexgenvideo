@@ -18,19 +18,19 @@ if ! $stream; then
     exit 0
 fi
 
-echo "Streaming OSLog (subsystem=io.palmier.pro). Ctrl-C to quit app and stop." >&2
+echo "Streaming OSLog (subsystem=de.h5ventures.nexgenvideo). Ctrl-C to quit app and stop." >&2
 echo >&2
 
 cleanup() {
-    pid=$(pgrep -f "NexGenVideo.app/Contents/MacOS/PalmierPro" | head -1 || true)
+    pid=$(pgrep -f "NexGenVideo.app/Contents/MacOS/NexGenVideo" | head -1 || true)
     if [ -n "$pid" ]; then
-        osascript -e 'quit app "PalmierPro"' 2>/dev/null || kill "$pid" 2>/dev/null || true
+        osascript -e 'quit app "NexGenVideo"' 2>/dev/null || kill "$pid" 2>/dev/null || true
     fi
 }
 trap cleanup INT TERM EXIT
 
 ( sleep 0.5 && open "$ROOT/.build/NexGenVideo.app" ) &
 log stream \
-    --predicate 'subsystem == "io.palmier.pro"' \
+    --predicate 'subsystem == "de.h5ventures.nexgenvideo"' \
     --level info \
     --style compact
