@@ -43,6 +43,33 @@ final class EditorViewModel {
         }
     }
 
+    /// The top-level workspace focus (docs/UI_UX_CONCEPT.md §3). A focus rearranges the *same*
+    /// canonical panels — it never forks a variant. Edit = cutting (Inspector + expanded timeline);
+    /// Produce = generating (cockpit prominent, timeline collapsed).
+    enum WorkspaceFocus: String, CaseIterable, Sendable {
+        case edit, produce
+        var label: String { self == .edit ? "Edit" : "Produce" }
+    }
+
+    /// The three canonical left-sidebar surfaces, presented as tabs of one sidebar (not separate columns).
+    enum LeftSidebarTab: String, CaseIterable, Sendable {
+        case media, project, agent
+        var label: String {
+            switch self {
+            case .media: "Media"
+            case .project: "Project"
+            case .agent: "Agent"
+            }
+        }
+        var sfSymbol: String {
+            switch self {
+            case .media: "photo.on.rectangle.angled"
+            case .project: "square.stack.3d.up"
+            case .agent: "sparkles"
+            }
+        }
+    }
+
     var focusedPanel: FocusedPanel?
     var maximizedPanel: FocusedPanel?
 
@@ -179,6 +206,32 @@ final class EditorViewModel {
         UserDefaults.standard.object(forKey: "inspectorPanelVisible") as? Bool ?? true
     }() {
         didSet { UserDefaults.standard.set(inspectorPanelVisible, forKey: "inspectorPanelVisible") }
+    }
+
+    var workspaceFocus: WorkspaceFocus = {
+        if let raw = UserDefaults.standard.string(forKey: "workspaceFocus"),
+           let focus = WorkspaceFocus(rawValue: raw) { return focus }
+        return .edit
+    }() {
+        didSet { UserDefaults.standard.set(workspaceFocus.rawValue, forKey: "workspaceFocus") }
+    }
+
+    var leftSidebarTab: LeftSidebarTab = {
+        if let raw = UserDefaults.standard.string(forKey: "leftSidebarTab"),
+           let tab = LeftSidebarTab(rawValue: raw) { return tab }
+        return .media
+    }() {
+        didSet { UserDefaults.standard.set(leftSidebarTab.rawValue, forKey: "leftSidebarTab") }
+    }
+
+    /// Selected tab of the Project cockpit. Kept on the view model (not local `@State`) so the status
+    /// strip can deep-link into a specific panel (e.g. clicking it opens Project → Pipeline).
+    var cockpitTab: CockpitTab = .project
+
+    /// Reveal the Project cockpit on a specific panel (used by the status strip / cross-panel links).
+    func revealCockpit(_ tab: CockpitTab) {
+        cockpitTab = tab
+        leftSidebarTab = .project
     }
 
     var keyframesPanelVisible: Bool = {

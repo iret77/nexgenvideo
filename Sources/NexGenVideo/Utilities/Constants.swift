@@ -39,6 +39,7 @@ enum Layout {
     // Headers & toolbars
     static let panelHeaderHeight: CGFloat = 28
     static let toolbarHeight: CGFloat = 38
+    static let statusStripHeight: CGFloat = 30
 
     static let panelGap: CGFloat = 5
 

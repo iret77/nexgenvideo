@@ -17,26 +17,8 @@ struct InspectorView: View {
         case ai = "AI Edit"
     }
 
-    // Cockpit tabs shown in Project mode. Each routes to a read-only engine-state panel.
-    enum CockpitTab: String, Hashable, CaseIterable {
-        case project = "Project"
-        case bible = "Bible"
-        case pipeline = "Pipeline"
-        case shotlist = "Shotlist"
-        case sanity = "Sanity"
-        case cost = "Cost"
-    }
-
-    // Top-level inspector mode: the selection-driven inspector vs. the always-reachable project cockpit.
-    enum InspectorMode: String, Hashable, CaseIterable {
-        case selection = "Selection"
-        case project = "Project"
-    }
-
-    @State private var inspectorMode: InspectorMode = .selection
     @State private var preferredTab: ClipTab = .video
     @State private var preferredAssetTab: AssetTab = .details
-    @State private var cockpitTab: CockpitTab = .project
     @State private var transformExpanded = true
     @State var collapsedAdjustSections: Set<String> = ["Curves", "Color Wheels", "Hue Curves", "LUTs", "Effects"]
     @State var collapsedAdjustSubgroups: Set<String> = [
@@ -45,53 +27,167 @@ struct InspectorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            modeSwitch
+            breadcrumbHeader
             Group {
-                switch inspectorMode {
-                case .project:
-                    cockpitContent
-                case .selection:
-                    selectionContent
-                }
+                inspectorContent
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onChange(of: editor.selectedClipIds) { _, ids in
+        .onChange(of: editor.selectedClipIds) { _, _ in
             if !editor.isMarqueeSelecting { resolvePreferredTab() }
-            if !ids.isEmpty { inspectorMode = .selection }
+            promoteSelection()
         }
-        .onChange(of: editor.selectedMediaAssetIds) { _, ids in
-            if !ids.isEmpty { inspectorMode = .selection }
+        .onChange(of: editor.selectedMediaAssetIds) { _, _ in
+            promoteSelection()
         }
         .onChange(of: editor.isMarqueeSelecting) { _, selecting in
             if !selecting { resolvePreferredTab() }
+            promoteSelection()
         }
         .onChange(of: preferredTab) { _, newTab in
             if newTab != .video { editor.cropEditingActive = false }
         }
+        .onAppear { promoteSelection() }
     }
 
-    private var modeSwitch: some View {
-        genericTabBar(
-            titles: InspectorMode.allCases.map(\.rawValue),
-            selected: inspectorMode.rawValue,
-            raisedBackground: true
-        ) { title in
-            if let mode = InspectorMode(rawValue: title) { inspectorMode = mode }
+    /// A multi-clip timeline selection — the one documented exception to the single-inspected-object
+    /// rule. Batch editing across selected clips stays a first-class NLE feature.
+    private var isMultiClipSelection: Bool {
+        !editor.isMarqueeSelecting && editor.selectedClipIds.count > 1
+    }
+
+    @ViewBuilder
+    private var inspectorContent: some View {
+        if editor.isMarqueeSelecting {
+            marqueeSelectionSummary
+        } else if isMultiClipSelection {
+            clipInspectorContent()
+        } else if let object = editor.inspectedObject {
+            objectInspector(object)
+        } else {
+            emptyInspectorState
         }
     }
 
     @ViewBuilder
-    private var selectionContent: some View {
-        if editor.isMarqueeSelecting {
-            marqueeSelectionSummary
-        } else if selectedVisualClip != nil || selectedAudioClip != nil {
+    private func objectInspector(_ object: InspectedObject) -> some View {
+        switch object {
+        case .clip:
             clipInspectorContent()
-        } else if let asset = selectedMediaAsset {
-            mediaAssetInspectorContent(asset)
-        } else {
-            cockpitContent
+        case .mediaAsset(let id):
+            if let asset = mediaAsset(id: id) {
+                mediaAssetInspectorContent(asset)
+            } else {
+                emptyInspectorState
+            }
+        case .entity, .look, .shot, .shotUse:
+            cockpitObjectPlaceholder
         }
+    }
+
+    /// Promote the current timeline/media selection to the app-global inspected object. A single clip or
+    /// asset promotes; a marquee/multi/empty selection clears only a clip/asset object — a cockpit object
+    /// (entity/shot/look) is left intact, since it was focused from the Project surface, not from here.
+    private func promoteSelection() {
+        if let object = editor.selectionInspectedObject {
+            editor.inspectedObject = object
+            return
+        }
+        // Selection cleared: keep a cockpit object (entity/shot/look), drop a clip/asset object.
+        guard let current = editor.inspectedObject else { return }
+        switch current {
+        case .clip, .mediaAsset:
+            editor.inspectedObject = nil
+        case .entity, .look, .shot, .shotUse:
+            break
+        }
+    }
+
+    private func mediaAsset(id: String) -> MediaAsset? {
+        editor.mediaAssets.first { $0.id == id }
+    }
+
+    // MARK: - Breadcrumb header
+
+    /// Lightweight graph over the app-owned timeline + media, enough to resolve clip/asset breadcrumbs.
+    private var objectGraph: ObjectGraph {
+        var names: [String: String] = [:]
+        for asset in editor.mediaAssets { names[asset.id] = asset.name }
+        return ObjectGraph.from(bible: nil, shotlist: nil, timeline: editor.timeline, assetNames: names)
+    }
+
+    private var currentBreadcrumb: ObjectBreadcrumb {
+        if editor.isMarqueeSelecting {
+            return ObjectBreadcrumb(segments: [.init(label: "\(editor.selectedClipIds.count) selected", object: nil)])
+        }
+        if isMultiClipSelection {
+            return ObjectBreadcrumb(segments: [.init(label: "\(editor.selectedClipIds.count) clips", object: nil)])
+        }
+        if let object = editor.inspectedObject {
+            return objectGraph.breadcrumb(for: object)
+        }
+        return ObjectBreadcrumb(segments: [])
+    }
+
+    @ViewBuilder
+    private var breadcrumbHeader: some View {
+        let crumb = currentBreadcrumb
+        if !crumb.segments.isEmpty {
+            HStack(spacing: AppTheme.Spacing.xxs) {
+                ForEach(Array(crumb.segments.enumerated()), id: \.offset) { index, segment in
+                    if index > 0 {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
+                            .foregroundStyle(AppTheme.Text.mutedColor)
+                    }
+                    Text(segment.label)
+                        .font(.system(size: AppTheme.FontSize.xs, weight: index == crumb.segments.count - 1 ? .medium : .regular))
+                        .foregroundStyle(index == crumb.segments.count - 1 ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.vertical, AppTheme.Spacing.sm)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AppTheme.Background.raisedColor)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.hairline)
+            }
+        }
+    }
+
+    private var emptyInspectorState: some View {
+        VStack(spacing: AppTheme.Spacing.sm) {
+            Spacer()
+            Image(systemName: "cursorarrow.rays")
+                .font(.system(size: AppTheme.FontSize.xl))
+                .foregroundStyle(AppTheme.Text.mutedColor)
+            Text("Select a clip or asset to inspect it")
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(AppTheme.Spacing.lg)
+    }
+
+    private var cockpitObjectPlaceholder: some View {
+        VStack(spacing: AppTheme.Spacing.sm) {
+            Spacer()
+            Text(currentBreadcrumb.flatText)
+                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .multilineTextAlignment(.center)
+            Text("Open the Project tab to work with this.")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(AppTheme.Spacing.lg)
     }
 
     private var marqueeSelectionSummary: some View {
@@ -116,65 +212,7 @@ struct InspectorView: View {
         editor.cropEditingActive = false
     }
 
-    // MARK: - Cockpit (no-selection)
-
-    private var cockpitContent: some View {
-        VStack(spacing: 0) {
-            cockpitTabBar
-            Group {
-                switch cockpitTab {
-                case .project: projectMetadataContent
-                case .bible: BiblePanelView()
-                case .pipeline: PipelinePanelView()
-                case .shotlist: ShotlistPanelView()
-                case .sanity: SanityPanelView()
-                case .cost: CostPanelView()
-                }
-            }
-        }
-    }
-
-    private var cockpitTabBar: some View {
-        genericTabBar(
-            titles: CockpitTab.allCases.map(\.rawValue),
-            selected: cockpitTab.rawValue,
-            raisedBackground: true
-        ) { title in
-            if let tab = CockpitTab(rawValue: title) { cockpitTab = tab }
-        }
-    }
-
-    // MARK: - Project Metadata
-
-    private var projectMetadataContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                metadataSection(title: "Project") {
-                    if let url = editor.projectURL {
-                        plainMetadataRow(
-                            label: "Name",
-                            value: url.deletingPathExtension().lastPathComponent
-                        )
-                        plainMetadataRow(
-                            label: "Path",
-                            value: url.path,
-                            truncate: .middle
-                        )
-                    }
-                    plainMetadataRow(label: "Duration", value: formatDuration(Double(editor.timeline.totalFrames) / Double(editor.timeline.fps)))
-                }
-
-                metadataSection(title: "Settings") {
-                    menuMetadataRow(label: "Resolution", value: "\(editor.timeline.width) × \(editor.timeline.height)") { qualityMenuItems }
-                    menuMetadataRow(label: "Frame Rate", value: "\(editor.timeline.fps) fps") { fpsMenuItems }
-                    menuMetadataRow(label: "Aspect Ratio", value: formatAspectRatio(width: editor.timeline.width, height: editor.timeline.height)) { aspectMenuItems }
-                }
-            }
-            .padding(.horizontal, AppTheme.Spacing.lg)
-            .padding(.vertical, AppTheme.Spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
+    // MARK: - Metadata rows (shared by the clip/asset inspectors)
 
     private func metadataSection<Content: View>(
         title: String,
@@ -214,97 +252,6 @@ struct InspectorView: View {
                 .padding(.horizontal, AppTheme.Spacing.xs)
         }
         .frame(height: AppTheme.IconSize.md)
-    }
-
-    private func formatAspectRatio(width: Int, height: Int) -> String {
-        let gcd = gcd(width, height)
-        return "\(width / gcd):\(height / gcd)"
-    }
-
-    private func menuMetadataRow<MenuContent: View>(
-        label: String,
-        value: String,
-        @ViewBuilder menu: @escaping () -> MenuContent
-    ) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Text(label)
-                .font(.system(size: AppTheme.FontSize.xs))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .fixedSize()
-            Spacer()
-            Menu {
-                menu()
-            } label: {
-                HStack(spacing: AppTheme.Spacing.xxs) {
-                    Text(value)
-                        .font(.system(size: AppTheme.FontSize.xs))
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                }
-                .padding(.horizontal, AppTheme.Spacing.xs)
-                .frame(height: AppTheme.IconSize.md)
-                .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
-            }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-        }
-    }
-
-    @ViewBuilder
-    private var aspectMenuItems: some View {
-        ForEach(AspectPreset.allCases, id: \.self) { preset in
-            Button {
-                editor.applyTimelineSettings(fps: editor.timeline.fps, width: preset.width, height: preset.height)
-            } label: {
-                HStack {
-                    Text(preset.label)
-                    Spacer()
-                    if editor.timeline.width == preset.width && editor.timeline.height == preset.height {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var fpsMenuItems: some View {
-        ForEach([24, 25, 30, 50, 60], id: \.self) { fps in
-            Button {
-                editor.applyTimelineSettings(fps: fps, width: editor.timeline.width, height: editor.timeline.height)
-            } label: {
-                HStack {
-                    Text("\(fps) fps")
-                    Spacer()
-                    if editor.timeline.fps == fps {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var qualityMenuItems: some View {
-        ForEach(QualityPreset.allCases, id: \.self) { preset in
-            Button {
-                let (w, h) = preset.resolution(currentWidth: editor.timeline.width, currentHeight: editor.timeline.height)
-                editor.applyTimelineSettings(fps: editor.timeline.fps, width: w, height: h)
-            } label: {
-                HStack {
-                    Text(preset.label)
-                    Spacer()
-                    if preset.matches(width: editor.timeline.width, height: editor.timeline.height) {
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-        }
     }
 
     // MARK: - Clip Inspector
@@ -404,39 +351,7 @@ struct InspectorView: View {
         raisedBackground: Bool = false,
         onSelect: @escaping (String) -> Void
     ) -> some View {
-        HStack(spacing: AppTheme.Spacing.md) {
-            ForEach(titles, id: \.self) { title in
-                let isActive = selected == title
-                let isAI = title == "AI Edit"
-                let foreground: AnyShapeStyle = isAI
-                    ? AnyShapeStyle(AppTheme.aiGradient.opacity(isActive ? 1 : 0.6))
-                    : AnyShapeStyle(isActive ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-                Button {
-                    onSelect(title)
-                } label: {
-                    VStack(spacing: AppTheme.Spacing.xs) {
-                        Text(title)
-                            .font(.system(size: AppTheme.FontSize.sm, weight: isActive ? .medium : .regular))
-                            .foregroundStyle(foreground)
-                        Rectangle()
-                            .fill(isActive ? foreground : AnyShapeStyle(Color.clear))
-                            .frame(height: AppTheme.BorderWidth.medium)
-                    }
-                    .padding(.vertical, AppTheme.Spacing.xs)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, AppTheme.Spacing.lg)
-        .padding(.top, AppTheme.Spacing.xs)
-        .background(raisedBackground ? AppTheme.Background.raisedColor : Color.clear)
-        .overlay(alignment: .bottom) {
-            if raisedBackground {
-                Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.thin)
-            }
-        }
+        SegmentedTabBar(titles: titles, selected: selected, raisedBackground: raisedBackground, onSelect: onSelect)
     }
 
     @ViewBuilder
@@ -1075,13 +990,6 @@ struct InspectorView: View {
 
     private var selectedVisualClip: Clip? { selectedVisualClips.first }
     private var selectedAudioClip: Clip? { selectedAudioClips.first }
-
-    private var selectedMediaAsset: MediaAsset? {
-        guard editor.selectedMediaAssetIds.count == 1,
-              let id = editor.selectedMediaAssetIds.first else { return nil }
-        return editor.mediaAssets.first { $0.id == id }
-    }
-
 
     private func fileSize(for url: URL) -> String? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
