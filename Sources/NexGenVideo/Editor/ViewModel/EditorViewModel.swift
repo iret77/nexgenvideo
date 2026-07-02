@@ -43,6 +43,33 @@ final class EditorViewModel {
         }
     }
 
+    /// The top-level workspace focus (docs/UI_UX_CONCEPT.md §3). A focus rearranges the *same*
+    /// canonical panels — it never forks a variant. Edit = cutting (Inspector + expanded timeline);
+    /// Produce = generating (cockpit prominent, timeline collapsed).
+    enum WorkspaceFocus: String, CaseIterable, Sendable {
+        case edit, produce
+        var label: String { self == .edit ? "Edit" : "Produce" }
+    }
+
+    /// The three canonical left-sidebar surfaces, presented as tabs of one sidebar (not separate columns).
+    enum LeftSidebarTab: String, CaseIterable, Sendable {
+        case media, project, agent
+        var label: String {
+            switch self {
+            case .media: "Media"
+            case .project: "Project"
+            case .agent: "Agent"
+            }
+        }
+        var sfSymbol: String {
+            switch self {
+            case .media: "photo.on.rectangle.angled"
+            case .project: "square.stack.3d.up"
+            case .agent: "sparkles"
+            }
+        }
+    }
+
     var focusedPanel: FocusedPanel?
     var maximizedPanel: FocusedPanel?
 
@@ -63,6 +90,24 @@ final class EditorViewModel {
     var selectedTimelineRange: TimelineRangeSelection?
     var selectedMediaAssetIds: Set<String> = []
     var selectedFolderIds: Set<String> = []
+
+    /// The single app-global inspected object driving the Inspector (Phase 0 selection law). The sets
+    /// above are per-panel local selection (multi-select, marquee, ripple actions); only a *single*,
+    /// focused object is ever inspected. Cockpit panels set this directly (`.entity`, `.shot`, `.look`);
+    /// the timeline/media panels promote via `selectionInspectedObject`. See docs/UI_UX_CONCEPT.md §3.
+    var inspectedObject: InspectedObject?
+
+    /// The inspected object implied by the current timeline/media selection: a *single* selected clip or
+    /// asset promotes; a marquee, a multi-selection, or an empty selection yields nil (the Inspector then
+    /// shows a summary or panel content, never a half-inspected object). Consumed by the Inspector.
+    var selectionInspectedObject: InspectedObject? {
+        InspectedObject.fromSelection(
+            clipIDs: selectedClipIds,
+            mediaAssetIDs: selectedMediaAssetIds,
+            isMarquee: isMarqueeSelecting
+        )
+    }
+
     var pendingSwapClipId: String?
     var clipClipboard: [ClipClipboardEntry] = []
     var zoomScale: Double = Defaults.pixelsPerFrame
@@ -145,10 +190,19 @@ final class EditorViewModel {
     let generationService = GenerationService()
     let agentService = AgentService()
 
-    var agentPanelVisible: Bool = {
-        UserDefaults.standard.object(forKey: "agentPanelVisible") as? Bool ?? false
-    }() {
-        didSet { UserDefaults.standard.set(agentPanelVisible, forKey: "agentPanelVisible") }
+    /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
+    /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:
+    /// setting it `true` shows the sidebar on the Agent tab; `false` returns to the Media tab.
+    var agentPanelVisible: Bool {
+        get { mediaPanelVisible && leftSidebarTab == .agent }
+        set {
+            if newValue {
+                mediaPanelVisible = true
+                leftSidebarTab = .agent
+            } else if leftSidebarTab == .agent {
+                leftSidebarTab = .media
+            }
+        }
     }
 
     var mediaPanelVisible: Bool = {
@@ -161,6 +215,38 @@ final class EditorViewModel {
         UserDefaults.standard.object(forKey: "inspectorPanelVisible") as? Bool ?? true
     }() {
         didSet { UserDefaults.standard.set(inspectorPanelVisible, forKey: "inspectorPanelVisible") }
+    }
+
+    var workspaceFocus: WorkspaceFocus = {
+        if let raw = UserDefaults.standard.string(forKey: "workspaceFocus"),
+           let focus = WorkspaceFocus(rawValue: raw) { return focus }
+        return .edit
+    }() {
+        didSet { UserDefaults.standard.set(workspaceFocus.rawValue, forKey: "workspaceFocus") }
+    }
+
+    var leftSidebarTab: LeftSidebarTab = {
+        if let raw = UserDefaults.standard.string(forKey: "leftSidebarTab"),
+           let tab = LeftSidebarTab(rawValue: raw) { return tab }
+        return .media
+    }() {
+        didSet { UserDefaults.standard.set(leftSidebarTab.rawValue, forKey: "leftSidebarTab") }
+    }
+
+    /// Selected tab of the Project cockpit. Kept on the view model (not local `@State`) so the status
+    /// strip can deep-link into a specific panel (e.g. clicking it opens Project → Pipeline).
+    var cockpitTab: CockpitTab = .project
+
+    /// Reveal the Project cockpit on a specific panel (used by the status strip / cross-panel links).
+    func revealCockpit(_ tab: CockpitTab) {
+        cockpitTab = tab
+        leftSidebarTab = .project
+    }
+
+    /// Switch the workspace focus. Entering Produce surfaces the Project cockpit as the sidebar default.
+    func setWorkspaceFocus(_ focus: WorkspaceFocus) {
+        workspaceFocus = focus
+        if focus == .produce { leftSidebarTab = .project }
     }
 
     var keyframesPanelVisible: Bool = {
