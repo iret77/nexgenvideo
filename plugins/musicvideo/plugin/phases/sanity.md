@@ -110,13 +110,12 @@ Present the findings as a table (level / code / shot_id / message).
 ### 5. Pre-render generation-availability check (before the frame pilot)
 
 Before the frame phase spends money, confirm the host can actually
-generate. Call `get_timeline` and verify `canGenerate` is true; or call
-`list_models` with `type="image"` and confirm the brief's frame /
-bible image model is in the catalog (`loaded=true`). If generation is
-unavailable (`canGenerate: false`, catalog not loaded, or the model
-missing): tell the user — the keys are bound in the host (Keychain /
-Settings), never via a shell command — and do not let the frame phase
-start until generation is available.
+generate. Call `list_models` with `type="image"` and confirm `loaded`
+is `true` and the brief's frame / bible image model is present in
+`models`. If generation is unavailable (`loaded=false`, catalog not
+loaded, or the model missing): tell the user — the keys are bound in
+the host (Keychain / Settings), never via a shell command — and do not
+let the frame phase start until generation is available.
 
 This availability check is the seam where the old reference-planner
 pre-flight lived: ref budgeting itself is now folded into the engine
@@ -131,7 +130,7 @@ instead of attempting a render.
   explicitly, every time.
 - Accepted warnings go into the gate approval note.
 - Out of scope for this phase:
-  - No rendering (no `generateImage` / `generateVideo`).
+  - No rendering (no `generate_image` / `generate_video`).
   - No silent prompt rewriting.
   - No schema changes.
 
@@ -143,8 +142,8 @@ instead of attempting a render.
 - **`REF_BUDGET_EXCEEDED` for the pilot shot:** the shot shares too many
   bible anchors — escalate to a storyboard adjustment instead of
   attempting a render.
-- **Generation unavailable** (`canGenerate: false` or the model missing
-  from `list_models`): surface it to the user; keys are bound in the
+- **Generation unavailable** (the model missing from `list_models`, or
+  `loaded=false`): surface it to the user; keys are bound in the
   host, never a shell command. Do not let the frame phase start.
 - **Analysis quality degraded** (`NO_ALIGNMENT`, `HEURISTIC_DOWNBEATS`,
   `SINGLE_STRUCTURE_SOURCE`, `boundary_divergence` anomalies): surface

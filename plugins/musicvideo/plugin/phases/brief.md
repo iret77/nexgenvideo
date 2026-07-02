@@ -169,9 +169,9 @@ The orchestrator starts you fresh; you detect the state yourself.
 
    Resolve the concrete model IDs against the host's registered image
    models. Before approval, verify the matching generation capability is
-   available in the host (the `nexgen` generation catalog reports which
-   models are usable; `get_timeline` exposes `canGenerate`). On a missing
-   model / unavailable provider: warn and suggest an alternative
+   available in the host — call `list_models` with `type="image"` and
+   confirm `loaded=true` and the chosen model appears in `models`. On a
+   missing model / unavailable provider: warn and suggest an alternative
    registered model. Never demand a shell command from the user — keys
    are managed in the host (Keychain / Settings), the user binds them
    there.

@@ -14,7 +14,7 @@ identity anchors (reference images and/or generated multi-view sheets),
 the world-zone inventory per location, and the global look definition.
 
 The bible sheets are produced with the host's own generation: each sheet
-is a `generateImage` call whose prompt the agent composes from the bible
+is a `generate_image` call whose prompt the agent composes from the bible
 entity + brief style. The hard reasoning (which view, which anchor
 chain) is yours; the pixels come from the host.
 
@@ -43,7 +43,7 @@ chain) is yours; the pixels come from the host.
 ### 1. Resume behavior (check this first — mandatory)
 
 You are spawned fresh on every `/continue`. Before regenerating any
-sheets (`generateImage` calls cost real money):
+sheets (`generate_image` calls cost real money):
 
 - Call `get_bible(project_dir)`. Does a bible exist?
   - **Yes, valid** → summarize compactly (number of
@@ -140,7 +140,7 @@ From treatment + brief + storyboard, for every entity:
 - final `name`
 - `visual_prompt` — a compact descriptive sentence (min. 40 characters,
   present tense, concrete; this `visual_prompt` is used inside the
-  sheet-generation `generateImage` prompt)
+  sheet-generation `generate_image` prompt)
 - `attributes` — dict with 3-6 keys (age, hair, clothing, …)
 
 User approval per entity via `AskUserQuestion` (see the approval loop
@@ -184,7 +184,7 @@ generated** images, never mirrors of the uploads.
 
 #### The generation mechanic (per required view)
 
-One `generateImage` call per required view. You compose the prompt; the
+One `generate_image` call per required view. You compose the prompt; the
 host generates and the result is brought into the project at the sheet
 path.
 
@@ -198,15 +198,16 @@ path.
 2. **Pick the model** from the brief routing: `brief.bible_image_model`
    for high-consistency character/location sheets (fallback
    `brief.frame_image_model`). Verify availability first — call
-   `get_timeline` (`canGenerate` must be true) or `list_models` with
-   `type="image"`; never guess key presence. If unavailable: quote the
-   reason and offer a registered alternative model.
+   `list_models` with `type="image"` and confirm `loaded=true` and the
+   model is present in `models`; never guess key presence. If
+   unavailable: quote the reason and offer a registered alternative
+   model.
 3. **Anchor images.** When you have user uploads or a prior sheet to
    anchor against, first `import_media(source={path: <abs path to the
    anchor PNG>})` to get a `mediaRef`, then pass those mediaRefs in
-   `generateImage(..., referenceMediaRefs=[...])`. Pure text-only
+   `generate_image(..., referenceMediaRefs=[...])`. Pure text-only
    sheets pass no refs.
-4. **Generate:** `generateImage(prompt=<composed>, model=<model>,
+4. **Generate:** `generate_image(prompt=<composed>, model=<model>,
    aspectRatio=<square or the entity's natural ratio>,
    referenceMediaRefs=[...])`. The call returns an async placeholder
    asset; wait until the asset is ready (`get_media` shows its
@@ -221,10 +222,10 @@ So that front/side/back/expression of a character look like the
 uploads but **sequentially**, with the consolidated front sheet as the
 primary anchor:
 
-1. **Front first.** `generateImage` with the user uploads as anchors
+1. **Front first.** `generate_image` with the user uploads as anchors
    (imported as mediaRefs) or text-only. The output front is the
    canonical identity.
-2. **Side, back, expression afterwards.** `generateImage` with the
+2. **Side, back, expression afterwards.** `generate_image` with the
    **front sheet** as the primary `referenceMediaRefs` entry (import
    `bible/<id>/front.png` first), optionally plus 1-2 of the uploads as
    supporting anchors. Never anchor a follow-up view only on the raw
@@ -269,7 +270,7 @@ flat per-view sheets above are the **baseline** and are always
 sufficient. As an **optional** location-consistency enhancement, you may
 anchor the views on a single world-model panorama:
 
-- Call `generateImage` with model **`marble/marble-1.1`** (the Marble
+- Call `generate_image` with model **`marble/marble-1.1`** (the Marble
   world-model) and a prompt describing the empty location ("Empty
   <location-type>. <wall-precise constraints>. Empty environment, only
   architecture visible."). Marble returns an **equirectangular
@@ -281,7 +282,7 @@ anchor the views on a single world-model panorama:
 - **POV extraction / re-style is a follow-up** (not available yet): there
   is no deterministic POV-extract or restyle tool on this surface. So
   Scene3D stays purely an anchor aid — you still generate each flat
-  `Location.sheets[<view>]` via `generateImage` as above. If the
+  `Location.sheets[<view>]` via `generate_image` as above. If the
   panorama does not help (hallucinated geometry, wrong layout), drop it
   and fall back to the flat sheets with text + upload anchors. Do not
   force it.
@@ -306,7 +307,7 @@ After every sheet generation:
 1. `Read` the PNG inline.
 2. `AskUserQuestion`: keep / regenerate / regenerate-with-hint (free
    text).
-3. On "regenerate with hint": run `generateImage` again with the hint
+3. On "regenerate with hint": run `generate_image` again with the hint
    folded into the composed prompt.
 4. Only once the user approves: next sheet.
 
@@ -356,15 +357,15 @@ full). After user approval: `approve_gate(project_dir, "bible")`.
 - `attributes` is a dict, not a list.
 - `visual_prompt` non-empty for every entity.
 - Sheet generation runs exclusively through the host's `nexgen`
-  `generateImage` tool. Reference anchors are media assets — import the
+  `generate_image` tool. Reference anchors are media assets — import the
   on-disk PNG via `import_media` first, then pass the mediaRef in
   `referenceMediaRefs`. Never guess provider/key availability; check via
-  `get_timeline` (`canGenerate`) / `list_models`.
+  `list_models` (`loaded=true` + the model present in `models`).
 - Scene3D (`marble/marble-1.1` panorama) is **optional** — the flat
   per-view sheets are the baseline; POV-extract/restyle is a follow-up
   and not available yet.
 - Out of scope for this phase: do not write a shotlist; no video render
-  (`generateVideo`); the user never invokes shell commands. The heavy
+  (`generate_video`); the user never invokes shell commands. The heavy
   silent jobs that have a code runner go through `run_phase`, never the
   `Agent` tool.
 
@@ -372,10 +373,10 @@ full). After user approval: `approve_gate(project_dir, "bible")`.
 
 - **Storyboard demand looks contradictory** (e.g. 12 views per
   location): do not generate — go back to the storyboard agent.
-- **Image generation unavailable** (`canGenerate: false`, or
-  `list_models` shows the model missing): quote the reason, offer a
-  registered alternative model; keys are bound in the host (Keychain /
-  Settings), never a shell command.
+- **Image generation unavailable** (`list_models` shows the model
+  missing, or `loaded=false`): quote the reason, offer a registered
+  alternative model; keys are bound in the host (Keychain / Settings),
+  never a shell command.
 - **Marble panorama does not fit** (hallucinated doors, missing objects,
   completely wrong geometry): drop the panorama and fall back to flat
   sheets with text + upload anchors; or the user reworks the storyboard

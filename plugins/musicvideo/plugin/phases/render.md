@@ -16,7 +16,7 @@ in the model (cheap vs. final) and the render phase name
 
 The render is a per-shot loop driven by the engine: `next_render_shot`
 hands you the next unrendered shot, you build the clip prompt and call
-the host's `generateVideo`, then log the result with `record_render` —
+the host's `generate_video`, then log the result with `record_render` —
 repeat until `next_render_shot` reports `done`.
 
 ## Inputs
@@ -45,7 +45,7 @@ repeat until `next_render_shot` reports `done`.
 ### 1. Resume check (mandatory, always first)
 
 You are re-spawned fresh on every `/continue`. Before re-rendering any
-video (`generateVideo` calls are expensive, often several EUR per shot):
+video (`generate_video` calls are expensive, often several EUR per shot):
 
 - Call `get_render_manifest(project_dir, "<phase>")`. Reconcile per
   shot: rendered + approved / rendered + pending / marked-for-redo /
@@ -129,7 +129,7 @@ but they delay the batch and produce half-failed manifests.
    - **Test shot succeeded** → start the batch (loop over all shots).
    - **Content-policy fail** → do NOT batch. First apply the workaround
      table from `${CLAUDE_PLUGIN_ROOT}/phases/shotlist.md` rule 3 (reliable: (a)
-     single-char shot/reverse-shot, or (c) still frame via `generateImage`
+     single-char shot/reverse-shot, or (c) still frame via `generate_image`
      + Ken Burns/pan-zoom on the timeline), patch the shotlist, render a
      new test shot, then batch.
    - **Other errors** (credits, model unavailable, timeout) → resolve
@@ -181,7 +181,7 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    - Otherwise (`keyframe_strategy=none`, NO bible refs): text-to-video
      (no start frame). Sanity has already blocked the other case
      (`MISSING_BIBLE_ANCHOR_FOR_T2V`).
-5. **Render:** `generateVideo(prompt=<built>, model=<model>,
+5. **Render:** `generate_video(prompt=<built>, model=<model>,
    duration=<shot.duration_s>, aspectRatio=<brief aspect>,
    resolution=<brief.final_resolution for final / a cheaper res for
    preview>, startFrameMediaRef=..., endFrameMediaRef=...,
@@ -193,7 +193,7 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    it `status="failed"` and keep the loop going.
 7. **Budget check** after every shot via `estimate_cost(project_dir)`.
    If `over_budget` would flip true, abort the batch and escalate to the
-   user before further `generateVideo` calls.
+   user before further `generate_video` calls.
 
 **Crash tolerance + resume semantics:** every `record_render` persists
 the manifest incrementally, so a crash mid-batch leaves a consistent
@@ -278,7 +278,7 @@ call-out the path just floats in the answer and the user never views it.
 Once clips exist, you may lay them onto the host timeline so the user can
 review the cut and drop the song over it:
 
-- Each rendered clip is already a host media asset (from `generateVideo`).
+- Each rendered clip is already a host media asset (from `generate_video`).
   External clips can be brought in via `import_media`.
 - Place them in shotlist order on a video track via `add_clips` — one
   entry per shot, `startFrame`/`durationFrames` derived from the shot's
@@ -296,7 +296,7 @@ review the cut and drop the song over it:
 Explicitly list to the user, at the end: which shots rendered, which
 failed, total spend (`estimate_cost`), and any still-only shots (marked
 `still_only_approved:` in `Shot.notes`) — the user produces those stills
-via `generateImage` and animates them on the timeline (Ken Burns /
+via `generate_image` and animates them on the timeline (Ken Burns /
 pan-zoom).
 
 ## Mandatory rules
@@ -308,7 +308,7 @@ pan-zoom).
 - Videos are never presented bare for approval: spec block + anchor
   frames + clip, always together (step 8).
 - The render loop is driven by `next_render_shot` →
-  build prompt → `generateVideo` → `record_render`, repeated until
+  build prompt → `generate_video` → `record_render`, repeated until
   `done`. Budget is checked via `estimate_cost` after every shot; gates
   are `videos_preview` / `videos_final` via `approve_gate`.
 - **What you do NOT do:**
@@ -332,9 +332,9 @@ pan-zoom).
 - **Content-policy fail:** do not batch. Apply the workaround table from
   `${CLAUDE_PLUGIN_ROOT}/phases/shotlist.md` rule 3, patch the shotlist, re-run the
   test shot (step 4). If a single shot still will not pass: still-only
-  workaround (the user animates a `generateImage` still on the timeline).
-- **Generation unavailable** (`get_timeline` `canGenerate: false`, model
-  missing from `list_models`): surface it; keys/credits are bound in the
+  workaround (the user animates a `generate_image` still on the timeline).
+- **Generation unavailable** (model missing from `list_models`, or
+  `loaded=false`): surface it; keys/credits are bound in the
   host, never a shell command.
 - **Shotlist drift** (fewer shots or changed shot IDs versus the
   manifest): warn the user before rendering.
@@ -356,8 +356,8 @@ instead of as a video. Strict discipline (same as shotlist rule 3):
    from the Ken Burns cut, not the model.
 
 **Marker:** `Shot.notes` contains `still_only_approved: <justification +
-user quote>`. The render loop skips this shot (no `generateVideo`); the
-user generates the still via `generateImage` and animates it on the host
+user quote>`. The render loop skips this shot (no `generate_video`); the
+user generates the still via `generate_image` and animates it on the host
 timeline. Estimate and budget guard exclude the shot.
 
 **Reporting:** see step 11 — list the still-only shots at the end so the

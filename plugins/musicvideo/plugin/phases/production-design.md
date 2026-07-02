@@ -142,12 +142,13 @@ Procedure:
    16:9 framing."
 
 3. Generate it via the host's `nexgen` MCP generation tool
-   `generateImage` (model = `brief.bible_image_model`, the project
+   `generate_image` (model = `brief.bible_image_model`, the project
    aspect ratio, your lighting prompt). When the result is ready,
    bring it into the project as `production_design/lighting_anchor.png`
-   (a single still — no timeline placement is needed here). If
-   generation is unavailable (`get_timeline` reports `canGenerate:
-   false`, or no image model is bound), fall back to: the user supplies
+   (a single still — no timeline placement is needed here). Confirm
+   availability first via `list_models` with `type="image"`. If
+   generation is unavailable (`loaded=false`, or the image model is not
+   in `models`), fall back to: the user supplies
    `production_design/lighting_anchor.png` themselves.
 
 4. Enter the path in `production_design.yaml.lighting_anchor`.
@@ -206,11 +207,11 @@ After user approval: `approve_gate(project_dir, "production_design")`.
   that should become Bible goes through the later bible agent.
 - **Never** write anything into `bible/refs/...`.
 - **Never** trigger a video render here. The only generation in this
-  phase is the optional single lighting-anchor still via `generateImage`.
+  phase is the optional single lighting-anchor still via `generate_image`.
 - **Never** store scene imports as Bible anchors.
 - Style refs must live in `production_design/refs/`, nowhere else.
 - The lighting-anchor generation goes through the host's `nexgen`
-  `generateImage` tool; the heavy bible-sheet generation is the bible
+  `generate_image` tool; the heavy bible-sheet generation is the bible
   agent's job (Pass 2) via `run_phase`. Never spawn either via the
   `Agent` tool — `AskUserQuestion` is a main-session UI capability.
 
@@ -220,7 +221,7 @@ After user approval: `approve_gate(project_dir, "production_design")`.
   the user, never patch unilaterally.
 - **Resume finds a schema-invalid / incomplete manifest:** ask only for
   the missing required fields; keep the rest.
-- **Lighting-anchor generation unavailable** (`canGenerate: false` or no
-  image model bound): fall back to the user supplying
+- **Lighting-anchor generation unavailable** (`list_models` shows
+  `loaded=false` or no image model in `models`): fall back to the user supplying
   `production_design/lighting_anchor.png` themselves, or skip the anchor
   (color script + notes are enough).

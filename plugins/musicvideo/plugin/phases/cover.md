@@ -11,7 +11,7 @@ All paths below are relative to the **project data root**.
 
 Produce album/cover artwork per selected platform format: one clean
 image (mandatory) plus optionally a second variant with artist + title.
-Every cover is a `generateImage` call whose prompt the agent composes
+Every cover is a `generate_image` call whose prompt the agent composes
 from the subject hint + bible refs + format-specific layout.
 
 | Format | Aspect | Use |
@@ -86,11 +86,12 @@ Briefly clarify with the user for the current format:
 Compose the cover prompt from the subject hint + the format layout note
 + `bible.look.style` (verbatim). For the reference images: import the
 chosen bible sheets via `import_media(source={path:...})` and pass the
-mediaRefs in `generateImage(..., referenceMediaRefs=[...])`. Confirm
-generation availability first (`get_timeline` `canGenerate`).
+mediaRefs in `generate_image(..., referenceMediaRefs=[...])`. Confirm
+generation availability first via `list_models` (`loaded=true` + the
+model present in `models`).
 
 ```
-generateImage(
+generate_image(
   prompt="<concrete motif, format layout, bible.look.style verbatim>",
   model="<chosen image model>",
   aspectRatio="1:1 | 16:9 | 9:16 per the format",
@@ -135,7 +136,7 @@ covers-with-text; a deterministic overlay is the safety variant when the
 user prioritizes correctness over aesthetics.
 
 **With the text-capable image model:** fold the artist + title into the
-`generateImage` prompt — "integrate the title '<title>' and artist
+`generate_image` prompt — "integrate the title '<title>' and artist
 '<artist>' as part of the cover typography" — anchored on the clean
 cover (`cover/<format>_clean.png`) imported as a `referenceMediaRefs`
 entry so the composition carries over. Bring the result in as
@@ -176,18 +177,18 @@ via `Read`, get final user approval, and set the gate
   variant is additive; the original is kept.
 - The aspect is **not** derived from the brief — `format` determines
   everything. The brief aspect is for the video render, not for covers.
-- Cover generation runs through the host's `nexgen` `generateImage`
+- Cover generation runs through the host's `nexgen` `generate_image`
   tool; bible refs are imported via `import_media` first, then passed as
   `referenceMediaRefs`. Provider costs accrue per attempt — tell the
   user the estimate before the call (`estimate_cost` shows the project
   budget picture).
-- Never guess generation availability; check `get_timeline`
-  (`canGenerate`) / `list_models`.
+- Never guess generation availability; check `list_models` (`loaded=true`
+  + the model present in `models`).
 
 ## Failure modes & escalation
 
-- **Generation unavailable** (`canGenerate: false`, or the chosen model
-  missing from `list_models`): inform the user and either have the model
+- **Generation unavailable** (the chosen model missing from
+  `list_models`, or `loaded=false`): inform the user and either have the model
   / key bound in the host, or fall back to the deterministic overlay for
   the text variant (it needs no provider). Keys are bound in the host
   (Keychain / Settings), never a shell command.

@@ -355,7 +355,7 @@ master, but render sheets in an illustrated style (see the bible phase).
 | # | Solution | Risk | Effort |
 |---|---|---|---|
 | **(a)** | Split the shot into **single-character shot + reverse shot** — two consecutive shots on two bible IDs. Single-character has empirically p_fail≈0. | **Primary solution.** | low |
-| **(c)** | Generate a **still frame in the image model** (`generateImage`) + **Ken Burns / pan-zoom in the NLE** (the host timeline). The image model is a different model family and presumably does not carry the video output filter. Motion is done in the edit. | presumed low | medium (NLE work) |
+| **(c)** | Generate a **still frame in the image model** (`generate_image`) + **Ken Burns / pan-zoom in the NLE** (the host timeline). The image model is a different model family and presumably does not carry the video output filter. Motion is done in the edit. | presumed low | medium (NLE work) |
 
 (There is no solution (b) — the labels (a)/(c) are kept as in the
 original registry.)
@@ -387,7 +387,7 @@ still-only shot manually in the NLE, hence strict rules):
 **Markers in the shot** (NOT optional):
 - `Shot.notes` must contain `still_only_approved: <justification + user
   quote>` as soon as (c) is chosen. The render phase skips still-only
-  shots; the user produces the still via `generateImage` and animates it
+  shots; the user produces the still via `generate_image` and animates it
   in the NLE.
 
 **NOT recommended:**
@@ -677,5 +677,5 @@ Escape (in both directions): `pacing_ok: <reason>` in `Shot.notes`.
   positions; `still_only_approved:` marker in `Shot.notes` (Rule 3).
 - **Out of scope for this phase:**
   - No frame rendering (that is the frame agent's job).
-  - No video render calls (`generateVideo`).
+  - No video render calls (`generate_video`).
   - No schema changes, no matter how much you want them.

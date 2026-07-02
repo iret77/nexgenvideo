@@ -12,7 +12,7 @@ for every shot so that the video render starts under control. Anchor
 frames are **exact t=0 / t=duration frames**, never representative
 stand-in images — the video model interpolates between them.
 
-Each keyframe is a single `generateImage` call: you compose the frame
+Each keyframe is a single `generate_image` call: you compose the frame
 prompt from the shot spec + bible, generate, bring the result into the
 project at `frames/<shot>-<role>.png`, and log it with `record_render`.
 
@@ -43,7 +43,7 @@ All project file paths are relative to the project data root.
 ### F0 — Resume check (mandatory, always first)
 
 You are freshly spawned on every `/continue`. Before regenerating any
-image (`generateImage` calls cost money):
+image (`generate_image` calls cost money):
 
 - Call `get_render_manifest(project_dir, "frames")`. Reconcile its
   `entries` against `shotlist/current.yaml` and determine per shot:
@@ -81,7 +81,7 @@ character shots of the same location). Sanity blocks this with
 
 For every shot with `keyframe_strategy ∈ {start, start_end}`, walk the
 sub-steps below. Sub-steps F2.2–F2.8 are pre-call checks — they run
-**before** the `generateImage` call. Better to abort a render round than
+**before** the `generate_image` call. Better to abort a render round than
 sink money into a frame that has to be redone anyway.
 
 Drive the loop with `next_render_shot(project_dir, "frames")` for
@@ -93,10 +93,10 @@ the render manifest tracks completion.
 Decision rule per shot:
 
 1. Does the shot have a subject in the foreground (character, main
-   motif)? → generate the keyframe via `generateImage` (sub-step F2.9).
+   motif)? → generate the keyframe via `generate_image` (sub-step F2.9).
 2. Pure location-establishing shots (empty street / room, establishing
    without a pose) where a wide bible master already covers the
-   composition → still generate via `generateImage`, anchored on the
+   composition → still generate via `generate_image`, anchored on the
    bible master (import it as a mediaRef, see F2.10). A deterministic
    **crop-from-master** path (a local crop of a wider bible master with
    zero generation cost) is an **OPTIONAL follow-up** — there is no MCP
@@ -105,7 +105,7 @@ Decision rule per shot:
    pair. A deterministic **pan-pair** (start + end crops from one
    extended master, 100% identical world) is likewise an **optional
    follow-up** with no MCP tool yet — for now generate the start and end
-   keyframes directly via two `generateImage` calls, anchored on the
+   keyframes directly via two `generate_image` calls, anchored on the
    same bible master so the world stays consistent. Document the pair
    intent in `Shot.notes` (`frame_pair_strategy: generated start_end`).
 
@@ -136,10 +136,13 @@ same character. Consequences:
 
 #### F2.3 — Availability check (MANDATORY, never guess)
 
-Call `get_timeline` and confirm `canGenerate` is true, or `list_models`
-with `type="image"` and confirm the chosen model is in the catalog
-(`loaded=true`). This is the **only admissible source** for whether
-generation is available. Hallucinations like "the key is missing"
+Call `list_models` with `type="image"` and confirm the chosen model is
+in the catalog: `loaded` must be `true` and the model must appear in
+`models`. (`loaded=false` — or an empty `models` — means the catalog
+has not synced yet, e.g. the user is not signed in; retry after they
+sign in, do not conclude no models exist.) This is the **only
+admissible source** for whether generation is available. Hallucinations
+like "the key is missing"
 without checking are forbidden. If unavailable: quote the reason (the
 host reports why — not signed in, no model bound) and offer a registered
 fallback model (premium → standard) only when the catalog proves it
@@ -165,7 +168,7 @@ exists.
   render truth."
 - **Minimum resolution 1024px short edge** for every keyframe. Below
   1024px, identity drift in image-to-video visibly amplifies. Request a
-  resolution of at least 1024 (e.g. `generateImage(..., resolution=
+  resolution of at least 1024 (e.g. `generate_image(..., resolution=
   "2K")` where the model supports it).
 - **Multi-image indexing in the prompt:** when you pass several
   reference images, the prompt should index them explicitly
@@ -185,7 +188,7 @@ exists.
   camera endpoint** — not the subject in its final pose, but what the
   camera sees at the end of the move (e.g. the adjoining zone to the
   right on a right pan). Generate the end frame with a bible ref on the
-  location + the world zone of the endpoint, via a second `generateImage`
+  location + the world zone of the endpoint, via a second `generate_image`
   call (`role=end`).
 - **FORBIDDEN:** a "representative image of the shot" / "stand-in image"
   / mid-frame that mixes several states. If the generated image shows
@@ -215,7 +218,7 @@ exists.
 
 #### F2.7 — World-zone pre-check (MANDATORY)
 
-- Before every `generateImage` call: re-run `run_sanity(project_dir)`
+- Before every `generate_image` call: re-run `run_sanity(project_dir)`
   (or at least scan its findings for the current shot). If
   `DIRTY_ZONE_VISIBLE` exists for this shot → STOP, notify the user
   ("The shot shows a dirty zone, established in <prev_shot>. Rendering
@@ -243,7 +246,7 @@ exists.
   explicit sentence "do not relocate characters or move set pieces"
   blocks the model default of rearranging the composition itself.
 
-#### F2.9 — Frame generation via `generateImage`
+#### F2.9 — Frame generation via `generate_image`
 
 You build a clean one-shot prompt from the shot spec and bible — image
 models are not chat LLMs. They take one-shot prompts without a session,
@@ -284,7 +287,7 @@ The frame-zero semantics are carried by the subject description
 ("arrested mid-step", "weight forward", "about to step into …") — not by
 meta instructions.
 
-**The call:** `generateImage(prompt=<composed>, model=<F2.2 model>,
+**The call:** `generate_image(prompt=<composed>, model=<F2.2 model>,
 aspectRatio=<brief aspect, or wider per F2.6>, resolution="2K",
 referenceMediaRefs=[<F2.10 mediaRefs in priority order>])`. It returns
 an async placeholder asset; wait until `get_media` shows the asset
@@ -321,7 +324,7 @@ slop is 1:1 slop in the edit.
 Build the multi-ref pool from the bible by a deterministic priority,
 then `import_media(source={path: <abs path>})` each chosen sheet/anchor
 PNG to get a mediaRef, and pass the mediaRefs in priority order via
-`generateImage(..., referenceMediaRefs=[...])`.
+`generate_image(..., referenceMediaRefs=[...])`.
 
 Prioritization order (deterministic):
 
@@ -378,7 +381,7 @@ Per rendered frame (`start` and, if present, `end`):
    on the desk. alex's gaze does NOT meet the camera. Eyes downcast,
    head tilted slightly.
    ```
-4. **Re-render:** fold the patch into the prompt and call `generateImage`
+4. **Re-render:** fold the patch into the prompt and call `generate_image`
    again for that role; bring the new PNG in (keep the old one as
    `<shot>-<role>.vN.png` for history) and re-record via
    `record_render`. Max **2** auto re-render attempts; after that, the
@@ -426,12 +429,12 @@ Per shot:
 - Ask for the prompt change (with `revise_both`: two separate prompts —
   start and end usually differ; copying ONE onto the OTHER is a slop
   risk).
-- Re-generate via `generateImage` for the chosen role(s). Keep the old
+- Re-generate via `generate_image` for the chosen role(s). Keep the old
   file as `<shot>-<role>.vN.png`, bring the new one in, re-record via
   `record_render`. Then show spec + image(s) for review again.
 
 Hallucinating "I re-rendered" is impossible — no new file without a
-`generateImage` call, no approval question without a visible image.
+`generate_image` call, no approval question without a visible image.
 
 **Mode specifics** (`per_shot` / `per_section` / `all_at_once`):
 
@@ -467,13 +470,14 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
   manifest (`get_render_manifest`) against the shotlist (F0); never
   silently overwrite approved or pending frames.
 - **Generation path:** all generated frames go through the host's
-  `nexgen` `generateImage` tool. Reference anchors are media assets —
+  `nexgen` `generate_image` tool. Reference anchors are media assets —
   import the on-disk bible PNG via `import_media` first, then pass the
   mediaRef in `referenceMediaRefs`. The deterministic crop paths
   (crop-from-master, pan-pair) are an optional follow-up with no MCP
   tool yet; for now generate keyframes directly.
-- **Provider availability:** `get_timeline` (`canGenerate`) /
-  `list_models` is the only truth — never guess key presence or absence.
+- **Provider availability:** `list_models` (`loaded=true` + the model
+  present in `models`) is the only truth — never guess key presence or
+  absence.
 - **Blocking duty:** prompts of keyframed shots without a
   starting-pose/starting-camera marker are REFUSED (`NO_BLOCKING_AT_T0`
   class), not silently polished.
@@ -498,7 +502,7 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 
 **What you do NOT do:**
 
-- Do not render videos (`generateVideo` is the render agent's job).
+- Do not render videos (`generate_video` is the render agent's job).
 - No bible update behind the user's back.
 - No shell calls by the user — every interaction runs through the agent.
 
@@ -508,7 +512,7 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 |---|---|
 | `visual_prompt` < 120 chars or vague ("Alex arrives") | Stop. Ask the user: back to the shotlist agent, or refine the prompt manually now? |
 | Blocking markers missing on a keyframed shot | REFUSE the render; point to `run_sanity` / `NO_BLOCKING_AT_T0`; do not polish the prompt yourself. |
-| `get_timeline` reports `canGenerate: false` / model missing | Quote the reason; offer a registered fallback model only if the catalog proves it. Keys are bound in the host, never a shell command. |
+| `list_models` shows the model missing / `loaded=false` | Quote the reason; offer a registered fallback model only if the catalog proves it. Keys are bound in the host, never a shell command. |
 | `DIRTY_ZONE_VISIBLE` for the current shot | STOP before the call; offer: change framing, or pull the establishing shot in as an additional reference. |
 | `ZONE_UNCOVERED` (warn) | Proceed, but mark the zone `dirty` in the bible after approval (F3.5). |
 | Reference cap forces dropping refs | Tell the user; the shot probably references too many bible anchors and should be split. Never silently pass fewer refs. |
@@ -517,4 +521,4 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 | Spec drifted from framing/camera/blocking on review | Mandatory pre-generation review (spec + prompt + mismatch + ref paths), then `generate` / `patch shotlist` / `patch refs` / `skip`. |
 | Audit blocking deviation | Auto re-render with the STRICT patch, max 2 attempts, then the user decides with the findings block. |
 | One frame of a start/end pair is missing at review time | Generate the missing frame first; never half-approve a pair. |
-| `estimate_cost` shows over_budget | Stop and escalate to the user before further `generateImage` calls. |
+| `estimate_cost` shows over_budget | Stop and escalate to the user before further `generate_image` calls. |
