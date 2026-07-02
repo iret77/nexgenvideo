@@ -10,9 +10,12 @@ struct EditorView: NSViewControllerRepresentable {
 
     func updateNSViewController(_ controller: EditorSplitViewController, context: Context) {
         controller.applyLayoutIfNeeded(editor.layoutPreset)
-        controller.applyAgentVisibility(editor.agentPanelVisible)
         controller.applyMediaVisibility(editor.mediaPanelVisible)
-        controller.applyInspectorVisibility(editor.inspectorPanelVisible)
+        // Produce hides the Inspector unless an object is being inspected; Edit follows the user's pref.
+        let inspectorVisible = editor.workspaceFocus == .edit
+            ? editor.inspectorPanelVisible
+            : (editor.inspectedObject != nil)
+        controller.applyInspectorVisibility(inspectorVisible)
         controller.applyMaximize(editor.maximizedPanel)
         controller.updateTourFrame(stepIndex: editor.tour.stepIndex, anchorRevision: editor.tour.anchorRevision)
     }
@@ -58,16 +61,14 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private var currentMaximized: EditorViewModel.FocusedPanel?
     private var pendingPositioning: (() -> Void)?
     private var isPositioning = false
-    private weak var agentSplitItem: NSSplitViewItem?
     private weak var mediaSplitItem: NSSplitViewItem?
     private weak var previewSplitItem: NSSplitViewItem?
     private weak var inspectorSplitItem: NSSplitViewItem?
     private weak var timelineSplitItem: NSSplitViewItem?
 
-    private lazy var mediaHC: NSViewController     = makeHosting(MediaPanelView(), panel: .media)
+    private lazy var mediaHC: NSViewController     = makeHosting(LeftSidebarView(), panel: .media)
     private lazy var previewHC: NSViewController   = makeHosting(PreviewContainerView(), panel: .preview)
     private lazy var inspectorHC: NSViewController = makeHosting(InspectorView(), panel: .inspector)
-    private lazy var agentHC: NSViewController     = makeHosting(AgentPanelView(), panel: .agent)
     private lazy var timelineHC: NSViewController  = makeHosting(
         VStack(spacing: 0) {
             ToolbarView().frame(height: Layout.toolbarHeight)
@@ -121,7 +122,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     func leafItem(for panel: EditorViewModel.FocusedPanel) -> NSSplitViewItem? {
         switch panel {
-        case .agent:     return agentSplitItem
+        case .agent:     return mediaSplitItem   // Agent lives in the left sidebar now.
         case .media:     return mediaSplitItem
         case .preview:   return previewSplitItem
         case .inspector: return inspectorSplitItem
@@ -156,15 +157,9 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     /// On unmaximize, leaves restore their visibility-flag state
     private func restoredCollapseState(for item: NSSplitViewItem) -> Bool {
-        if item === agentSplitItem     { return !editor.agentPanelVisible }
         if item === mediaSplitItem     { return !editor.mediaPanelVisible }
         if item === inspectorSplitItem { return !editor.inspectorPanelVisible }
         return false
-    }
-
-    func applyAgentVisibility(_ visible: Bool) {
-        guard currentMaximized == nil else { return }
-        applyCollapsed(item: agentSplitItem, collapsed: !visible)
     }
 
     func applyMediaVisibility(_ visible: Bool) {
@@ -190,7 +185,6 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         while !splitViewItems.isEmpty {
             removeSplitViewItem(splitViewItems.last!)
         }
-        agentSplitItem = nil
         mediaSplitItem = nil
         previewSplitItem = nil
         inspectorSplitItem = nil
@@ -199,21 +193,12 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         currentPreset = preset
         splitView.isVertical = true
 
-        // Preset layout lives in an inner VC so the agent can be a sibling column.
         let presetRoot = makeChildSplit(isVertical: false, autosave: SplitAutosave.preset(preset))
         switch preset {
         case .default:  buildDefaultLayout(into: presetRoot)
         case .media:    buildMediaLayout(into: presetRoot)
         case .vertical: buildVerticalLayout(into: presetRoot)
         }
-
-        let agentItem = NSSplitViewItem(viewController: agentHC)
-        agentItem.canCollapse = false
-        agentItem.isCollapsed = !editor.agentPanelVisible
-        agentItem.minimumThickness = Layout.agentPanelMin
-        agentItem.maximumThickness = Layout.agentPanelMax
-        addSplitViewItem(agentItem)
-        agentSplitItem = agentItem
 
         let presetItem = NSSplitViewItem(viewController: presetRoot)
         presetItem.minimumThickness = 400

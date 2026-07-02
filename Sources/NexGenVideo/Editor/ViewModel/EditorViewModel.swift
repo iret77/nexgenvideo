@@ -190,10 +190,19 @@ final class EditorViewModel {
     let generationService = GenerationService()
     let agentService = AgentService()
 
-    var agentPanelVisible: Bool = {
-        UserDefaults.standard.object(forKey: "agentPanelVisible") as? Bool ?? false
-    }() {
-        didSet { UserDefaults.standard.set(agentPanelVisible, forKey: "agentPanelVisible") }
+    /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
+    /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:
+    /// setting it `true` shows the sidebar on the Agent tab; `false` returns to the Media tab.
+    var agentPanelVisible: Bool {
+        get { mediaPanelVisible && leftSidebarTab == .agent }
+        set {
+            if newValue {
+                mediaPanelVisible = true
+                leftSidebarTab = .agent
+            } else if leftSidebarTab == .agent {
+                leftSidebarTab = .media
+            }
+        }
     }
 
     var mediaPanelVisible: Bool = {
@@ -232,6 +241,12 @@ final class EditorViewModel {
     func revealCockpit(_ tab: CockpitTab) {
         cockpitTab = tab
         leftSidebarTab = .project
+    }
+
+    /// Switch the workspace focus. Entering Produce surfaces the Project cockpit as the sidebar default.
+    func setWorkspaceFocus(_ focus: WorkspaceFocus) {
+        workspaceFocus = focus
+        if focus == .produce { leftSidebarTab = .project }
     }
 
     var keyframesPanelVisible: Bool = {

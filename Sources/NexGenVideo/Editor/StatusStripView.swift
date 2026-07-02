@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The collapsed Pipeline — a slim, always-visible strip showing phase · gate · budget. It reads the
-/// *same* project state the Pipeline panel renders, in a compact density; clicking it reveals
-/// Project → Pipeline (docs/UI_UX_CONCEPT.md §3). It is not a second pipeline widget.
+/// The always-visible top strip: the `Edit ↔ Produce` focus toggle plus the collapsed Pipeline
+/// (phase · gate · budget). The pipeline readout reads the *same* project state the Pipeline panel
+/// renders, in a compact density; clicking it reveals Project → Pipeline (docs/UI_UX_CONCEPT.md §3).
 struct StatusStripView: View {
     @Environment(EditorViewModel.self) private var editor
 
@@ -10,6 +10,54 @@ struct StatusStripView: View {
     @State private var loadToken = 0
 
     var body: some View {
+        HStack(spacing: AppTheme.Spacing.md) {
+            focusToggle
+            pipelineSummary
+        }
+        .padding(.horizontal, AppTheme.Spacing.lg)
+        .frame(maxWidth: .infinity)
+        .frame(height: Layout.statusStripHeight)
+        .background(AppTheme.Background.raisedColor)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.hairline)
+        }
+        .task(id: editor.projectURL) { await load() }
+    }
+
+    // MARK: - Focus toggle
+
+    private var focusToggle: some View {
+        HStack(spacing: AppTheme.Spacing.xxs) {
+            ForEach(EditorViewModel.WorkspaceFocus.allCases, id: \.self) { focus in
+                let selected = editor.workspaceFocus == focus
+                Button {
+                    withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) {
+                        editor.setWorkspaceFocus(focus)
+                    }
+                } label: {
+                    Text(focus.label)
+                        .font(.system(size: AppTheme.FontSize.xs, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
+                        .padding(.horizontal, AppTheme.Spacing.sm)
+                        .padding(.vertical, AppTheme.Spacing.xxs)
+                        .background {
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+                                .fill(selected ? AppTheme.Background.surfaceColor : Color.clear)
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.xs))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(AppTheme.Spacing.xxs)
+        .background {
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm).fill(AppTheme.Background.baseColor)
+        }
+    }
+
+    // MARK: - Collapsed Pipeline
+
+    private var pipelineSummary: some View {
         Button {
             editor.revealCockpit(.pipeline)
         } label: {
@@ -28,17 +76,10 @@ struct StatusStripView: View {
                     .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
-            .padding(.horizontal, AppTheme.Spacing.lg)
             .frame(maxWidth: .infinity)
-            .frame(height: Layout.statusStripHeight)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(AppTheme.Background.raisedColor)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.hairline)
-        }
-        .task(id: editor.projectURL) { await load() }
     }
 
     @ViewBuilder

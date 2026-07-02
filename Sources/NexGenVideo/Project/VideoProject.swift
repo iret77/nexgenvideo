@@ -295,9 +295,12 @@ final class VideoProject: NSDocument {
             self?.updateChangeCount(.changeDone)
         }
 
-        let editorView = EditorView()
+        let editorView = VStack(spacing: 0) {
+            StatusStripView()
+            EditorView()
+                .focusEffectDisabled()
+        }
             .environment(editorViewModel)
-            .focusEffectDisabled()
             .sheet(isPresented: Bindable(editorViewModel).showExportDialog) { [editorViewModel] in
                 ExportView()
                     .environment(editorViewModel)
