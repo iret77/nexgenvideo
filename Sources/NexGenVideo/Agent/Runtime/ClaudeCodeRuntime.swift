@@ -41,12 +41,15 @@ final class ClaudeCodeRuntime {
 
     var messages: [AgentMessage] { mapper.messages }
 
-    func send(text: String) {
+    /// `context` (e.g. the user's current selection) is prepended to the payload sent to the model but
+    /// never shown in the transcript — the user sees exactly what they typed.
+    func send(text: String, context: String? = nil) {
         mapper.appendUserText(text)
+        let payload = context.map { "\($0)\n\n\(text)" } ?? text
         if process == nil {
-            guard startSession(firstMessage: text) else { return }  // failure path already published
+            guard startSession(firstMessage: payload) else { return }  // failure path already published
         } else {
-            process?.send(line: ClaudeCodeLaunch.userMessageLine(text))
+            process?.send(line: ClaudeCodeLaunch.userMessageLine(payload))
         }
         onUpdate(mapper.messages, true)
     }

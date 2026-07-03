@@ -10,6 +10,7 @@ struct EditorView: NSViewControllerRepresentable {
 
     func updateNSViewController(_ controller: EditorSplitViewController, context: Context) {
         controller.applyLayoutIfNeeded(editor.layoutPreset)
+        controller.applyFocusIfNeeded(editor.workspaceFocus)
         controller.applyMediaVisibility(editor.mediaPanelVisible)
         // Produce hides the Inspector unless an object is being inspected; Edit follows the user's pref.
         let inspectorVisible = editor.workspaceFocus == .edit
@@ -40,12 +41,15 @@ class PaddedDividerSplitViewController: NSSplitViewController {
 
 /// Autosave keys for the editor splits, defined once so call sites can't drift.
 private enum SplitAutosave {
-    static let root         = "editor.root"
-    static let defaultH     = "editor.default.h"
-    static let mediaTop     = "editor.media.top"
-    static let mediaRight   = "editor.media.right"
-    static let verticalTop  = "editor.vertical.top"
-    static let verticalLeft = "editor.vertical.left"
+    static let root          = "editor.root"
+    static let defaultH      = "editor.default.h"
+    static let mediaTop      = "editor.media.top"
+    static let mediaRight    = "editor.media.right"
+    static let verticalTop   = "editor.vertical.top"
+    static let verticalLeft  = "editor.vertical.left"
+    static let produceRoot   = "editor.produce.root"
+    static let produceCenter = "editor.produce.center"
+    static let produceRight  = "editor.produce.right"
     static func preset(_ p: LayoutPreset) -> String { "editor.\(p.rawValue).preset" }
 
     /// AppKit persists divider frames under this key; no public API queries it.
@@ -58,6 +62,7 @@ private enum SplitAutosave {
 final class EditorSplitViewController: PaddedDividerSplitViewController {
     let editor: EditorViewModel
     private var currentPreset: LayoutPreset?
+    private var currentFocus: EditorViewModel.WorkspaceFocus?
     private var currentMaximized: EditorViewModel.FocusedPanel?
     private var pendingPositioning: (() -> Void)?
     private var isPositioning = false
@@ -65,17 +70,13 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private weak var previewSplitItem: NSSplitViewItem?
     private weak var inspectorSplitItem: NSSplitViewItem?
     private weak var timelineSplitItem: NSSplitViewItem?
+    private weak var cockpitSplitItem: NSSplitViewItem?
 
     private lazy var mediaHC: NSViewController     = makeHosting(LeftSidebarView(), panel: .media)
     private lazy var previewHC: NSViewController   = makeHosting(PreviewContainerView(), panel: .preview)
     private lazy var inspectorHC: NSViewController = makeHosting(InspectorView(), panel: .inspector)
-    private lazy var timelineHC: NSViewController  = makeHosting(
-        VStack(spacing: 0) {
-            ToolbarView().frame(height: Layout.toolbarHeight)
-            TimelineContainerView()
-        },
-        panel: .timeline
-    )
+    private lazy var cockpitHC: NSViewController   = makeHosting(ProjectCockpitView(), panel: .project)
+    private lazy var timelineHC: NSViewController  = makeHosting(TimelinePanel(), panel: .timeline)
 
     init(editor: EditorViewModel) {
         self.editor = editor
@@ -106,6 +107,18 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         }
     }
 
+    func applyFocusIfNeeded(_ focus: EditorViewModel.WorkspaceFocus) {
+        guard focus != currentFocus else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, focus != self.currentFocus else { return }
+            if self.currentMaximized != nil {
+                self.currentMaximized = nil
+                self.editor.maximizedPanel = nil
+            }
+            self.buildLayout(self.currentPreset ?? self.editor.layoutPreset)
+        }
+    }
+
     func applyMaximize(_ panel: EditorViewModel.FocusedPanel?) {
         guard panel != currentMaximized else { return }
         currentMaximized = panel
@@ -127,6 +140,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         case .preview:   return previewSplitItem
         case .inspector: return inspectorSplitItem
         case .timeline:  return timelineSplitItem
+        case .project:   return cockpitSplitItem // Only mounted in Produce focus.
         }
     }
 
@@ -189,20 +203,76 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         previewSplitItem = nil
         inspectorSplitItem = nil
         timelineSplitItem = nil
+        cockpitSplitItem = nil
 
         currentPreset = preset
+        currentFocus = editor.workspaceFocus
         splitView.isVertical = true
 
-        let presetRoot = makeChildSplit(isVertical: false, autosave: SplitAutosave.preset(preset))
-        switch preset {
-        case .default:  buildDefaultLayout(into: presetRoot)
-        case .media:    buildMediaLayout(into: presetRoot)
-        case .vertical: buildVerticalLayout(into: presetRoot)
+        // Produce is one opinionated arrangement; the layout presets are Edit arrangements.
+        let isProduce = editor.workspaceFocus == .produce
+        let presetRoot = makeChildSplit(
+            isVertical: false,
+            autosave: isProduce ? SplitAutosave.produceRoot : SplitAutosave.preset(preset)
+        )
+        if isProduce {
+            buildProduceLayout(into: presetRoot)
+        } else {
+            switch preset {
+            case .default:  buildDefaultLayout(into: presetRoot)
+            case .media:    buildMediaLayout(into: presetRoot)
+            case .vertical: buildVerticalLayout(into: presetRoot)
+            }
         }
 
         let presetItem = NSSplitViewItem(viewController: presetRoot)
         presetItem.minimumThickness = 400
         addSplitViewItem(presetItem)
+    }
+
+    // MARK: - Produce layout
+    // [Sidebar (Media/Agent)] | [Cockpit / Timeline strip] | [Preview / Inspector]
+    // The cockpit is the center work surface; the timeline is a fixed display strip of accumulating
+    // shot blocks; the preview stays reachable, docked above the Inspector. Same canonical components,
+    // rearranged (docs/UI_UX_CONCEPT.md §3).
+
+    private func buildProduceLayout(into target: NSSplitViewController) {
+        target.splitView.isVertical = true
+
+        let centerSplit = makeChildSplit(isVertical: false, autosave: SplitAutosave.produceCenter)
+        let cockpitItem = NSSplitViewItem(viewController: cockpitHC)
+        cockpitItem.minimumThickness = Layout.previewMinHeight
+        centerSplit.addSplitViewItem(cockpitItem)
+        cockpitSplitItem = cockpitItem
+        let stripItem = makeTimelineItem()
+        stripItem.minimumThickness = Layout.produceTimelineStripHeight
+        stripItem.maximumThickness = Layout.produceTimelineStripHeight
+        centerSplit.addSplitViewItem(stripItem)
+
+        let rightSplit = makeChildSplit(isVertical: false, autosave: SplitAutosave.produceRight)
+        let previewItem = makePreviewItem()
+        previewItem.minimumThickness = Layout.producePreviewMinHeight
+        rightSplit.addSplitViewItem(previewItem)
+        rightSplit.addSplitViewItem(makeInspectorItem())
+
+        target.addSplitViewItem(makeMediaItem())
+        let centerItem = NSSplitViewItem(viewController: centerSplit)
+        centerItem.minimumThickness = Layout.previewMinWidth
+        target.addSplitViewItem(centerItem)
+        let rightItem = NSSplitViewItem(viewController: rightSplit)
+        rightItem.minimumThickness = Layout.inspectorMin
+        target.addSplitViewItem(rightItem)
+
+        applyAfterLayout { [weak self, weak target, weak rightSplit] in
+            guard let self, let target, let rightSplit else { return }
+            let targetW = target.view.bounds.width
+            let rightH = rightSplit.view.bounds.height
+            self.positionIfUnsaved(target) {
+                $0.setPosition(Layout.mediaPanelDefault, ofDividerAt: 0)
+                $0.setPosition(targetW - Layout.producePreviewDefaultWidth, ofDividerAt: 1)
+            }
+            self.positionIfUnsaved(rightSplit) { $0.setPosition(round(rightH * 0.35), ofDividerAt: 0) }
+        }
     }
 
     // MARK: - Default layout
@@ -309,7 +379,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     private func makeMediaItem() -> NSSplitViewItem {
         let item = NSSplitViewItem(viewController: mediaHC)
-        item.minimumThickness = Layout.mediaPanelMin + AppTheme.MediaPanel.tabRailWidth
+        item.minimumThickness = Layout.mediaPanelMin
         item.canCollapse = false
         item.isCollapsed = !editor.mediaPanelVisible
         mediaSplitItem = item
@@ -387,6 +457,25 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         isPositioning = true
         work()
         isPositioning = false
+    }
+}
+
+// MARK: - Timeline panel (focus-aware)
+
+/// The one canonical timeline, dressed per focus: in Edit it carries the toolbar and full interaction;
+/// in Produce it is a display strip of accumulating shot blocks — no toolbar, no editing gestures
+/// (docs/UI_UX_CONCEPT.md §3: it never pretends to be an editing surface when collapsed).
+private struct TimelinePanel: View {
+    @Environment(EditorViewModel.self) private var editor
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if editor.workspaceFocus == .edit {
+                ToolbarView().frame(height: Layout.toolbarHeight)
+            }
+            TimelineContainerView()
+                .allowsHitTesting(editor.workspaceFocus == .edit)
+        }
     }
 }
 

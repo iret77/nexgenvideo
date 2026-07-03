@@ -61,10 +61,10 @@ struct BiblePanelView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                 switch section {
-                case .characters: entityList(bible.characters)
-                case .ensembles: entityList(bible.ensembles)
-                case .props: entityList(bible.props)
-                case .locations: entityList(bible.locations)
+                case .characters: entityList(bible.characters, kind: .character)
+                case .ensembles: entityList(bible.ensembles, kind: .ensemble)
+                case .props: entityList(bible.props, kind: .prop)
+                case .locations: entityList(bible.locations, kind: .location)
                 case .look: lookContent(bible.look)
                 }
             }
@@ -88,7 +88,7 @@ struct BiblePanelView: View {
     // MARK: - Entity list
 
     @ViewBuilder
-    private func entityList<Entity: BibleEntity & Identifiable>(_ entities: [Entity]) -> some View {
+    private func entityList<Entity: BibleEntity & Identifiable>(_ entities: [Entity], kind: BibleEntityKind) -> some View {
         if entities.isEmpty {
             emptyState(
                 icon: "tray",
@@ -97,7 +97,18 @@ struct BiblePanelView: View {
             )
         } else {
             ForEach(entities) { entity in
+                let ref = BibleEntityRef(kind: kind, id: entity.id)
+                let isInspected = editor.inspectedObject == .entity(ref)
                 BibleEntityCard(entity: entity, projectDir: editor.studioProjectDir)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                            .strokeBorder(
+                                isInspected ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium) : Color.clear,
+                                lineWidth: AppTheme.BorderWidth.medium
+                            )
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+                    .onTapGesture { editor.inspectedObject = .entity(ref) }
             }
         }
     }
@@ -126,8 +137,15 @@ struct BiblePanelView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                    .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+                    .strokeBorder(
+                        editor.inspectedObject == .look
+                            ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium)
+                            : AppTheme.Border.subtleColor,
+                        lineWidth: editor.inspectedObject == .look ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline
+                    )
             )
+            .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+            .onTapGesture { editor.inspectedObject = .look }
         }
     }
 

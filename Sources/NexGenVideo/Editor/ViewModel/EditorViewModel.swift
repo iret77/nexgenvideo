@@ -34,6 +34,8 @@ final class EditorViewModel {
 
     enum FocusedPanel: String {
         case media, preview, inspector, timeline, agent
+        /// The Project cockpit when it is the center work surface (Produce focus).
+        case project
 
         var accessibilityID: String { rawValue + "Panel" }
 
@@ -106,6 +108,48 @@ final class EditorViewModel {
             mediaAssetIDs: selectedMediaAssetIds,
             isMarquee: isMarqueeSelecting
         )
+    }
+
+    /// Agent grounding: one line describing what the user is currently inspecting/selecting, so scoped
+    /// prose ("make this warmer") resolves against the selection instead of a guess — the Photoshop
+    /// scope principle (docs/UI_UX_CONCEPT.md §4). Nil when nothing is selected.
+    var selectionContextHint: String? {
+        if selectedClipIds.count > 1 {
+            return "\(selectedClipIds.count) timeline clips are selected"
+        }
+        guard let object = inspectedObject else { return nil }
+        switch object {
+        case .clip(let id):
+            var perPrefixCount: [String: Int] = [:]
+            for track in timeline.tracks {
+                let prefix = track.type.trackLabelPrefix
+                let ordinal = (perPrefixCount[prefix] ?? 0) + 1
+                perPrefixCount[prefix] = ordinal
+                guard let clip = track.clips.first(where: { $0.id == id }) else { continue }
+                let name = mediaAssets.first { $0.id == clip.mediaRef }?.name ?? "clip"
+                let range = "\(formatTimecode(frame: clip.startFrame, fps: timeline.fps))–\(formatTimecode(frame: clip.endFrame, fps: timeline.fps))"
+                return "the timeline clip \u{201C}\(name)\u{201D} (track \(prefix)\(ordinal), \(range))"
+            }
+            return "a timeline clip"
+        case .mediaAsset(let id):
+            guard let asset = mediaAssets.first(where: { $0.id == id }) else { return "a library asset" }
+            return "the library asset \u{201C}\(asset.name)\u{201D} (\(asset.type.rawValue))"
+        case .entity(let ref):
+            let name = bible?.entity(ref)?.name ?? ref.id
+            return "the Bible \(ref.kind.rawValue) \u{201C}\(name)\u{201D}"
+        case .look:
+            return "the project's Look guide"
+        case .shot(let id):
+            if let shot = shotlist?.shots.first(where: { $0.id == id }) {
+                let summary = shot.summaryText
+                return summary.isEmpty
+                    ? "shot \(id) from the shotlist"
+                    : "shot \(id) from the shotlist (\(String(summary.prefix(80))))"
+            }
+            return "shot \(id) from the shotlist"
+        case .shotUse(let shot, let entity):
+            return "shot \(shot)'s use of \(entity.kind.rawValue) \(entity.id)"
+        }
     }
 
     var pendingSwapClipId: String?
@@ -192,7 +236,8 @@ final class EditorViewModel {
 
     /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
     /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:
-    /// setting it `true` shows the sidebar on the Agent tab; `false` returns to the Media tab.
+    /// setting it `true` shows the sidebar on the Agent tab; `false` restores the tab that was active
+    /// before the Agent took over (a user on Project must not be dumped on Media).
     var agentPanelVisible: Bool {
         get { mediaPanelVisible && leftSidebarTab == .agent }
         set {
@@ -200,10 +245,12 @@ final class EditorViewModel {
                 mediaPanelVisible = true
                 leftSidebarTab = .agent
             } else if leftSidebarTab == .agent {
-                leftSidebarTab = .media
+                leftSidebarTab = lastNonAgentSidebarTab
             }
         }
     }
+
+    @ObservationIgnored private var lastNonAgentSidebarTab: LeftSidebarTab = .media
 
     var mediaPanelVisible: Bool = {
         UserDefaults.standard.object(forKey: "mediaPanelVisible") as? Bool ?? true
@@ -217,36 +264,93 @@ final class EditorViewModel {
         didSet { UserDefaults.standard.set(inspectorPanelVisible, forKey: "inspectorPanelVisible") }
     }
 
-    var workspaceFocus: WorkspaceFocus = {
-        if let raw = UserDefaults.standard.string(forKey: "workspaceFocus"),
-           let focus = WorkspaceFocus(rawValue: raw) { return focus }
-        return .edit
-    }() {
-        didSet { UserDefaults.standard.set(workspaceFocus.rawValue, forKey: "workspaceFocus") }
-    }
+    /// Per-project, session-scoped — not a global preference. The initial value is derived from the
+    /// project's content on open (`applyDefaultWorkspaceFocus`): empty project → Produce, cut → Edit
+    /// (docs/UI_UX_CONCEPT.md §3).
+    var workspaceFocus: WorkspaceFocus = .edit
 
     var leftSidebarTab: LeftSidebarTab = {
         if let raw = UserDefaults.standard.string(forKey: "leftSidebarTab"),
            let tab = LeftSidebarTab(rawValue: raw) { return tab }
         return .media
     }() {
-        didSet { UserDefaults.standard.set(leftSidebarTab.rawValue, forKey: "leftSidebarTab") }
+        didSet {
+            UserDefaults.standard.set(leftSidebarTab.rawValue, forKey: "leftSidebarTab")
+            if leftSidebarTab != .agent { lastNonAgentSidebarTab = leftSidebarTab }
+        }
     }
 
     /// Selected tab of the Project cockpit. Kept on the view model (not local `@State`) so the status
     /// strip can deep-link into a specific panel (e.g. clicking it opens Project → Pipeline).
-    var cockpitTab: CockpitTab = .project
+    var cockpitTab: CockpitTab = .pipeline
 
-    /// Reveal the Project cockpit on a specific panel (used by the status strip / cross-panel links).
+    /// Reveal the Project cockpit on a specific panel (title-bar capsule / cross-panel links). In Edit
+    /// the cockpit lives under the sidebar's Project tab; in Produce it is already the center surface.
     func revealCockpit(_ tab: CockpitTab) {
         cockpitTab = tab
-        leftSidebarTab = .project
+        if workspaceFocus == .edit { leftSidebarTab = .project }
     }
 
-    /// Switch the workspace focus. Entering Produce surfaces the Project cockpit as the sidebar default.
+    /// Switch the workspace focus. In Produce the cockpit is the center work surface, the sidebar
+    /// defaults to the Agent (command *and* watch, concurrently), and the timeline becomes a
+    /// display-only strip — so any edit tool falls back to the pointer.
     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
         workspaceFocus = focus
-        if focus == .produce { leftSidebarTab = .project }
+        if focus == .produce {
+            leftSidebarTab = .agent
+            toolMode = .pointer
+        }
+    }
+
+    /// Derive the focus from the project's content on open: nothing on the timeline yet → Produce
+    /// (the project wants generating), an existing cut → Edit.
+    func applyDefaultWorkspaceFocus() {
+        setWorkspaceFocus(timeline.tracks.allSatisfy(\.clips.isEmpty) ? .produce : .edit)
+    }
+
+    // MARK: - Pipeline health (window chrome + panels)
+
+    /// Latest engine project-state snapshot (phases + budget). Owned by the view model — the single
+    /// source the title-bar capsule reads — so chrome and panels can't drift apart.
+    private(set) var projectState: ProjectStateData?
+    @ObservationIgnored private var projectStateLoadToken = 0
+
+    func refreshProjectState() async {
+        guard let dir = studioProjectDir else {
+            projectState = nil
+            return
+        }
+        projectStateLoadToken += 1
+        let token = projectStateLoadToken
+        let result = await CockpitDataService.projectState(projectDir: dir)
+        guard token == projectStateLoadToken else { return }
+        projectState = (try? result.get()) ?? nil
+    }
+
+    /// Best-effort snapshots of the Bible and shotlist for object inspection and name-resolved
+    /// breadcrumbs. Nil when absent or unreadable — the cockpit panels keep their own richer load
+    /// pipelines (loading/error/retry); these feed the read model only.
+    private(set) var bible: BibleData?
+    private(set) var shotlist: ShotlistData?
+    @ObservationIgnored private var engineArtifactsLoadToken = 0
+
+    /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
+    func refreshEngineState() async {
+        guard let dir = studioProjectDir else {
+            bible = nil
+            shotlist = nil
+            await refreshProjectState()
+            return
+        }
+        engineArtifactsLoadToken += 1
+        let token = engineArtifactsLoadToken
+        async let bibleResult = CockpitDataService.bible(projectDir: dir)
+        async let shotlistResult = CockpitDataService.shotlist(projectDir: dir)
+        async let stateRefresh: Void = refreshProjectState()
+        let (b, s, _) = await (bibleResult, shotlistResult, stateRefresh)
+        guard token == engineArtifactsLoadToken else { return }
+        bible = (try? b.get()) ?? nil
+        shotlist = (try? s.get()) ?? nil
     }
 
     var keyframesPanelVisible: Bool = {
@@ -257,6 +361,16 @@ final class EditorViewModel {
 
     // MARK: - Media panel navigation routing
 
+    /// The Media panel's second-level tabs. On the view model (like `cockpitTab`) so tab state survives
+    /// sidebar switches and other panels can deep-link.
+    enum MediaPanelTab: String, CaseIterable {
+        case assets = "Assets"
+        case captions = "Captions"
+        case music = "Music"
+    }
+
+    var mediaPanelTab: MediaPanelTab = .assets
+
     var mediaPanelOrderedItemIds: [String] = []
     var mediaPanelColumnCount: Int = 1
     var mediaPanelScrollTarget: String?
@@ -264,13 +378,12 @@ final class EditorViewModel {
     var mediaPanelOpenFolderId: String?
     var mediaPanelCurrentFolderId: String?
     var mediaPanelPasteRequestTick: Int = 0
-    var mediaPanelShowMediaTabTick: Int = 0
     var mediaPanelToast: MediaPanelToast?
     @ObservationIgnored var mediaImportTail: Task<MediaImportSummary, Never>?
     @ObservationIgnored var mediaImportSequence: Int = 0
 
     func showMediaPanelMediaTab() {
-        mediaPanelShowMediaTabTick += 1
+        mediaPanelTab = .assets
         // Refresh offline status when the user opens the media tab, so missing
         // files show as offline even for assets not on the timeline.
         refreshMissingMediaCache()

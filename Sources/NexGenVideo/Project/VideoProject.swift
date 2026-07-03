@@ -288,6 +288,7 @@ final class VideoProject: NSDocument {
             editorViewModel.timeline = loaded
             loadedTimeline = nil
         }
+        editorViewModel.applyDefaultWorkspaceFocus()
         editorViewModel.undoManager = undoManager
         editorViewModel.projectURL = fileURL
         editorViewModel.agentService.loadSessions(from: fileURL)
@@ -296,7 +297,7 @@ final class VideoProject: NSDocument {
         }
 
         let editorView = VStack(spacing: 0) {
-            StatusStripView()
+            TitleBarView()
             EditorView()
                 .focusEffectDisabled()
         }
@@ -320,8 +321,12 @@ final class VideoProject: NSDocument {
         window.minSize = AppTheme.Window.projectMin
         window.setFrameAutosaveName("NexGenVideoWindow")
         window.appearance = NSAppearance(named: .darkAqua)
-        window.titleVisibility = .visible
+        // FCP-style chrome: hide the system title, extend content beneath the transparent titlebar —
+        // TitleBarView owns that row (name · Edit|Produce · pipeline health).
+        window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(AppTheme.Background.surfaceColor)
         window.center()
 

@@ -1,18 +1,21 @@
 import SwiftUI
 
-/// The panels of the Project cockpit. `project` is settings; the rest are read-only engine-state views.
+/// Tabs of the Project cockpit. The four production artifacts are visible tabs (Bible first — it is
+/// the primary work surface); budget lives inside Pipeline. `project` is the settings view, reached
+/// via the trailing gear, never a peer tab.
 enum CockpitTab: String, Hashable, CaseIterable {
-    case project = "Project"
     case bible = "Bible"
     case pipeline = "Pipeline"
     case shotlist = "Shotlist"
     case sanity = "Sanity"
-    case cost = "Cost"
+    case project = "Project"
+
+    static let visibleTabs: [CockpitTab] = [.bible, .pipeline, .shotlist, .sanity]
 }
 
-/// The Project cockpit — the canonical home for project-level artifacts (settings + the engine-read
-/// Bible / Pipeline / Shotlist / Sanity / Cost panels). It lives under the left sidebar's Project tab,
-/// reachable in both focuses, and is never crammed into the selection Inspector
+/// The Project cockpit — the canonical home for project-level artifacts (the engine-read Bible /
+/// Pipeline / Shotlist / Sanity panels + settings behind the gear). It lives under the left sidebar's
+/// Project tab, reachable in both focuses, and is never crammed into the selection Inspector
 /// (docs/UI_UX_CONCEPT.md §3). The Bible keeps its board layout and needs surface area here.
 struct ProjectCockpitView: View {
     @Environment(EditorViewModel.self) private var editor
@@ -20,25 +23,44 @@ struct ProjectCockpitView: View {
     var body: some View {
         @Bindable var editor = editor
         VStack(spacing: 0) {
-            SegmentedTabBar(
-                titles: CockpitTab.allCases.map(\.rawValue),
-                selected: editor.cockpitTab.rawValue,
-                raisedBackground: true
-            ) { title in
-                if let tab = CockpitTab(rawValue: title) { editor.cockpitTab = tab }
+            HStack(spacing: 0) {
+                SegmentedTabBar(
+                    titles: CockpitTab.visibleTabs.map(\.rawValue),
+                    selected: editor.cockpitTab.rawValue
+                ) { title in
+                    if let tab = CockpitTab(rawValue: title) { editor.cockpitTab = tab }
+                }
+                settingsButton
             }
             Group {
                 switch editor.cockpitTab {
-                case .project: ProjectSettingsView()
                 case .bible: BiblePanelView()
                 case .pipeline: PipelinePanelView()
                 case .shotlist: ShotlistPanelView()
                 case .sanity: SanityPanelView()
-                case .cost: CostPanelView()
+                case .project: ProjectSettingsView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+    }
+
+    private var settingsButton: some View {
+        let selected = editor.cockpitTab == .project
+        return Button {
+            editor.cockpitTab = .project
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: AppTheme.FontSize.sm, weight: selected ? .semibold : .medium))
+                .foregroundStyle(selected ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
+                .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
+                .contentShape(Rectangle())
+                .hoverHighlight(cornerRadius: AppTheme.Radius.sm, isActive: selected)
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, AppTheme.Spacing.sm)
+        .accessibilityLabel("Project settings")
+        .help("Project settings")
     }
 }
 

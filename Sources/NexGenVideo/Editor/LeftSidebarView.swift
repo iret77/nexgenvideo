@@ -6,11 +6,22 @@ import SwiftUI
 struct LeftSidebarView: View {
     @Environment(EditorViewModel.self) private var editor
 
+    /// In Produce the cockpit is the center work surface, so the Project tab disappears here — a focus
+    /// may hide a canonical element, never duplicate it (docs/UI_UX_CONCEPT.md §2.1).
+    private var visibleTabs: [EditorViewModel.LeftSidebarTab] {
+        editor.workspaceFocus == .produce ? [.media, .agent] : EditorViewModel.LeftSidebarTab.allCases
+    }
+
+    /// Defensive: if the stored tab is hidden in this focus, fall back to Media.
+    private var effectiveTab: EditorViewModel.LeftSidebarTab {
+        visibleTabs.contains(editor.leftSidebarTab) ? editor.leftSidebarTab : .media
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             tabStrip
             Group {
-                switch editor.leftSidebarTab {
+                switch effectiveTab {
                 case .media: MediaPanelView()
                 case .project: ProjectCockpitView()
                 case .agent: AgentPanelView()
@@ -22,7 +33,7 @@ struct LeftSidebarView: View {
 
     private var tabStrip: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
-            ForEach(EditorViewModel.LeftSidebarTab.allCases, id: \.self) { tab in
+            ForEach(visibleTabs, id: \.self) { tab in
                 tabButton(tab)
             }
         }
@@ -36,7 +47,7 @@ struct LeftSidebarView: View {
     }
 
     private func tabButton(_ tab: EditorViewModel.LeftSidebarTab) -> some View {
-        let selected = editor.leftSidebarTab == tab
+        let selected = effectiveTab == tab
         return Button {
             withAnimation(.easeInOut(duration: AppTheme.Anim.transition)) { editor.leftSidebarTab = tab }
         } label: {

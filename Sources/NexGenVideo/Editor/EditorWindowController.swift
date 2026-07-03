@@ -258,6 +258,8 @@ extension EditorWindowController: EditorActions {
     @objc func setLayoutDefault(_ sender: Any?) { editorViewModel.layoutPreset = .default }
     @objc func setLayoutMedia(_ sender: Any?) { editorViewModel.layoutPreset = .media }
     @objc func setLayoutVertical(_ sender: Any?) { editorViewModel.layoutPreset = .vertical }
+    @objc func setFocusEdit(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.edit) }
+    @objc func setFocusProduce(_ sender: Any?) { editorViewModel.setWorkspaceFocus(.produce) }
 
     private func toggleMaximizePanelAction() {
         if editorViewModel.maximizedPanel != nil {
@@ -289,6 +291,12 @@ extension EditorWindowController: EditorActions {
             return true
         case #selector(setLayoutVertical(_:)):
             menuItem.state = editorViewModel.layoutPreset == .vertical ? .on : .off
+            return true
+        case #selector(setFocusEdit(_:)):
+            menuItem.state = editorViewModel.workspaceFocus == .edit ? .on : .off
+            return true
+        case #selector(setFocusProduce(_:)):
+            menuItem.state = editorViewModel.workspaceFocus == .produce ? .on : .off
             return true
         case #selector(copy(_:)), #selector(cut(_:)):
             return canHandleClipboardShortcut() && !editorViewModel.selectedClipIds.isEmpty

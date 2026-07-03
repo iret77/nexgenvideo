@@ -103,7 +103,17 @@ enum MainMenuBuilder {
         let item = NSMenuItem()
         let menu = NSMenu(title: "View")
 
-        let mediaItem = NSMenuItem(title: "Media Panel", action: #selector(EditorActions.toggleMediaPanel(_:)), keyEquivalent: "0")
+        let editFocusItem = NSMenuItem(title: "Edit Focus", action: #selector(EditorActions.setFocusEdit(_:)), keyEquivalent: "e")
+        editFocusItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(editFocusItem)
+
+        let produceFocusItem = NSMenuItem(title: "Produce Focus", action: #selector(EditorActions.setFocusProduce(_:)), keyEquivalent: "p")
+        produceFocusItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(produceFocusItem)
+
+        menu.addItem(.separator())
+
+        let mediaItem = NSMenuItem(title: "Sidebar", action: #selector(EditorActions.toggleMediaPanel(_:)), keyEquivalent: "0")
         mediaItem.keyEquivalentModifierMask = [.command]
         menu.addItem(mediaItem)
 
@@ -185,4 +195,6 @@ enum MainMenuBuilder {
     func setLayoutDefault(_ sender: Any?)
     func setLayoutMedia(_ sender: Any?)
     func setLayoutVertical(_ sender: Any?)
+    func setFocusEdit(_ sender: Any?)
+    func setFocusProduce(_ sender: Any?)
 }

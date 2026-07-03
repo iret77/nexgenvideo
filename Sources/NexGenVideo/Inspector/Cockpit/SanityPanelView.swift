@@ -84,7 +84,10 @@ struct SanityPanelView: View {
     }
 
     private func findingRow(_ finding: SanityFinding) -> some View {
-        HStack(alignment: .top, spacing: AppTheme.Spacing.smMd) {
+        let shotID = finding.shotId?.trimmingCharacters(in: .whitespaces)
+        let targetShot = (shotID?.isEmpty == false) ? shotID : nil
+        let isInspected = targetShot.map { editor.inspectedObject == .shot($0) } ?? false
+        return HStack(alignment: .top, spacing: AppTheme.Spacing.smMd) {
             Image(systemName: icon(for: finding.level))
                 .font(.system(size: AppTheme.FontSize.sm))
                 .foregroundStyle(color(for: finding.level))
@@ -96,12 +99,17 @@ struct SanityPanelView: View {
                         .font(.system(size: AppTheme.FontSize.xs, weight: .semibold).monospaced())
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
-                    if let shot = finding.shotId?.trimmingCharacters(in: .whitespaces), !shot.isEmpty {
+                    if let shot = targetShot {
                         Text(shot)
                             .font(.system(size: AppTheme.FontSize.xxs, weight: .medium).monospaced())
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                     Spacer(minLength: 0)
+                    if targetShot != nil {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
+                            .foregroundStyle(AppTheme.Text.mutedColor)
+                    }
                 }
                 Text(finding.message)
                     .font(.system(size: AppTheme.FontSize.sm))
@@ -118,8 +126,16 @@ struct SanityPanelView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+                .strokeBorder(
+                    isInspected ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium) : AppTheme.Border.subtleColor,
+                    lineWidth: isInspected ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline
+                )
         )
+        .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+        .onTapGesture {
+            // A finding points at a shot — clicking it inspects that shot (docs/UI_UX_CONCEPT.md §4).
+            if let shot = targetShot { editor.inspectedObject = .shot(shot) }
+        }
     }
 
     private func icon(for level: SanityLevel) -> String {

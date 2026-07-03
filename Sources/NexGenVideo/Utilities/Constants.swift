@@ -39,13 +39,20 @@ enum Layout {
     // Headers & toolbars
     static let panelHeaderHeight: CGFloat = 28
     static let toolbarHeight: CGFloat = 38
-    static let statusStripHeight: CGFloat = 30
+    static let titleBarChromeHeight: CGFloat = 36
+    static let trafficLightInset: CGFloat = 70
 
     static let panelGap: CGFloat = 5
 
     // Timeline
     static let timelineMinHeight: CGFloat = 100
     static let timelineMaxHeight: CGFloat = 700
+    /// Produce focus: the timeline as a fixed display strip of accumulating shot blocks.
+    static let produceTimelineStripHeight: CGFloat = 72
+    /// Produce focus: minimum height of the docked preview in the right column.
+    static let producePreviewMinHeight: CGFloat = 180
+    /// Produce focus: default width of the right column (preview over inspector).
+    static let producePreviewDefaultWidth: CGFloat = 360
     static let trackHeight: CGFloat = 50
     static let rulerHeight: CGFloat = 24
     static let trackHeaderWidth: CGFloat = 100

@@ -113,8 +113,16 @@ struct ShotlistPanelView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+                .strokeBorder(
+                    editor.inspectedObject == .shot(shot.id)
+                        ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium)
+                        : AppTheme.Border.subtleColor,
+                    lineWidth: editor.inspectedObject == .shot(shot.id)
+                        ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline
+                )
         )
+        .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+        .onTapGesture { editor.inspectedObject = .shot(shot.id) }
     }
 
     private func centeredProgress() -> some View {

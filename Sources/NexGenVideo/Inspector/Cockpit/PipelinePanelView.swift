@@ -68,10 +68,85 @@ struct PipelinePanelView: View {
                             .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
                     )
                 }
+                if data.budgetEur > 0 || data.budgetSpentEur > 0 {
+                    budgetCard(data)
+                }
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
             .padding(.vertical, AppTheme.Spacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - Budget (merged Cost panel — same snapshot, one pipeline-health surface)
+
+    private func budgetCard(_ data: ProjectStateData) -> some View {
+        let warn = data.budgetWarning
+        let barColor = warn ? AppTheme.Status.errorColor : AppTheme.Status.successColor
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
+            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+                Text("BUDGET")
+                    .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                    .tracking(AppTheme.Tracking.wide)
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                Spacer(minLength: 0)
+                if warn {
+                    Label(data.budgetRemainingEur <= 0 ? "Over budget" : "Low budget",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                        .foregroundStyle(AppTheme.Status.errorColor)
+                }
+            }
+
+            budgetBar(fraction: data.spentFraction, color: barColor)
+
+            VStack(spacing: AppTheme.Spacing.smMd) {
+                amountRow(label: "Budget", amount: data.budgetEur, color: AppTheme.Text.secondaryColor)
+                amountRow(label: "Spent", amount: data.budgetSpentEur, color: AppTheme.Text.secondaryColor)
+                Divider().overlay(AppTheme.Border.subtleColor)
+                amountRow(label: "Remaining", amount: data.budgetRemainingEur,
+                          color: warn ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor,
+                          emphasized: true)
+            }
+        }
+        .padding(AppTheme.Spacing.mdLg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                .fill(AppTheme.Background.raisedColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+        )
+    }
+
+    private func budgetBar(fraction: Double, color: Color) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+                    .fill(Color.white.opacity(AppTheme.Opacity.faint))
+                RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+                    .fill(color)
+                    .frame(width: max(0, min(1, fraction)) * geo.size.width)
+            }
+        }
+        .frame(height: AppTheme.Spacing.smMd)
+    }
+
+    private func amountRow(label: String, amount: Double, color: Color, emphasized: Bool = false) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: AppTheme.FontSize.sm,
+                              weight: emphasized ? .semibold : .regular))
+                .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
+            Spacer()
+            Text(String(format: "€%.2f", amount))
+                .font(.system(size: emphasized ? AppTheme.FontSize.md : AppTheme.FontSize.sm,
+                              weight: emphasized ? .semibold : .medium).monospacedDigit())
+                .foregroundStyle(color)
+                .textSelection(.enabled)
         }
     }
 

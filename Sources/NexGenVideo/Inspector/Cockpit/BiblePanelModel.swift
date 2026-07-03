@@ -253,3 +253,15 @@ struct BibleLocation: Decodable, Sendable, Equatable, Identifiable, BibleEntity 
         sheets = decodeSheets(try c.decodeIfPresent([String: String].self, forKey: .sheets))
     }
 }
+
+extension BibleData {
+    /// Resolve an object-graph entity reference to the concrete Bible entity.
+    func entity(_ ref: BibleEntityRef) -> (any BibleEntity)? {
+        switch ref.kind {
+        case .character: characters.first { $0.id == ref.id }
+        case .ensemble: ensembles.first { $0.id == ref.id }
+        case .prop: props.first { $0.id == ref.id }
+        case .location: locations.first { $0.id == ref.id }
+        }
+    }
+}

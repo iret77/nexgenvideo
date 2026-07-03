@@ -317,9 +317,11 @@ final class AgentService {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let referencedMentions = AgentMentionContext.referencedMentions(mentions, in: trimmed)
-        let contextHint = referencedMentions.isEmpty
+        let mentionHint = referencedMentions.isEmpty
             ? nil
             : AgentMentionContext.hint(referencedMentions, editor: editor)
+        let hints = [mentionHint, Self.selectionHint(editor: editor)].compactMap(\.self)
+        let contextHint = hints.isEmpty ? nil : hints.joined(separator: " ")
 
         resolveOrphanToolUses()
         messages.append(AgentMessage(
@@ -328,6 +330,13 @@ final class AgentService {
         ))
         streamError = nil
         kickOffStream()
+    }
+
+    /// Grounds scoped prose ("make this warmer") in the user's current selection — the app tells the
+    /// agent what "this" is, instead of the agent guessing (docs/UI_UX_CONCEPT.md §4).
+    private static func selectionHint(editor: EditorViewModel?) -> String? {
+        guard let description = editor?.selectionContextHint else { return nil }
+        return "The user is currently inspecting \(description); unscoped references like \u{201C}this\u{201D} refer to it."
     }
 
     func cancel() {
@@ -410,6 +419,7 @@ final class AgentService {
     /// surfaced via `streamError` and the message is not sent. Without a bundled engine
     /// (`.unavailable`) or once `.ready`, sends immediately.
     private func sendViaClaudeRuntime(_ trimmed: String) {
+        let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
         if case .notBootstrapped = EngineRuntime.status() {
             let task = startEngineBootstrap()
             isStreaming = true
@@ -419,11 +429,11 @@ final class AgentService {
                 self.isStreaming = false
                 if case .failed = status { return }  // streamError already set by the bootstrap task
                 guard self.claudeRuntimeEnabled else { return }
-                self.claudeRuntime.send(text: trimmed)
+                self.claudeRuntime.send(text: trimmed, context: context)
             }
             return
         }
-        claudeRuntime.send(text: trimmed)
+        claudeRuntime.send(text: trimmed, context: context)
     }
 
     private static func configuredPermissionMode() -> String {
@@ -705,7 +715,7 @@ final class AgentService {
         var result: [AnthropicMessage] = []
         for msg in messages {
             var content = msg.blocks.compactMap(Self.contentBlockJSON)
-            if msg.role == .user, !msg.mentions.isEmpty {
+            if msg.role == .user, !msg.mentions.isEmpty || msg.contextHint != nil {
                 let inlined = await inlineImageBlocks(for: msg.mentions)
                 var hint = msg.contextHint ?? AgentMentionContext.hint(msg.mentions, editor: editor)
                 if let note = AgentMentionContext.inlineNote(for: inlined) { hint += " " + note }

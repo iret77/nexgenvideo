@@ -59,7 +59,8 @@ struct InspectorView: View {
     @ViewBuilder
     private var inspectorContent: some View {
         if editor.isMarqueeSelecting {
-            marqueeSelectionSummary
+            // The breadcrumb already shows the live count; no body echo.
+            Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if isMultiClipSelection {
             clipInspectorContent()
         } else if let object = editor.inspectedObject {
@@ -80,9 +81,107 @@ struct InspectorView: View {
             } else {
                 emptyInspectorState
             }
-        case .entity, .look, .shot, .shotUse:
-            cockpitObjectPlaceholder
+        case .entity(let ref):
+            if let entity = editor.bible?.entity(ref) {
+                entityInspectorContent(entity)
+            } else {
+                cockpitObjectTeaser(object)
+            }
+        case .look:
+            if let look = editor.bible?.look, !look.isEmpty {
+                lookInspectorContent(look)
+            } else {
+                cockpitObjectTeaser(object)
+            }
+        case .shot(let id):
+            if let shot = editor.shotlist?.shots.first(where: { $0.id == id }) {
+                shotInspectorContent(shot)
+            } else {
+                cockpitObjectTeaser(object)
+            }
+        case .shotUse:
+            cockpitObjectTeaser(object)
         }
+    }
+
+    // MARK: - Entity / Look / Shot inspectors (read-only; editing lives in Phase C)
+
+    private func entityInspectorContent(_ entity: any BibleEntity) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+                BibleEntityCard(entity: entity, projectDir: editor.studioProjectDir)
+                openInProjectLink(.bible)
+            }
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.vertical, AppTheme.Spacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func lookInspectorContent(_ look: BibleLook) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+                metadataSection(title: "Look") {
+                    ForEach(look.fields, id: \.label) { field in
+                        plainMetadataRow(label: field.label, value: field.value)
+                    }
+                }
+                openInProjectLink(.bible)
+            }
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.vertical, AppTheme.Spacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func shotInspectorContent(_ shot: ShotSummary) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+                metadataSection(title: "Shot") {
+                    plainMetadataRow(label: "ID", value: shot.id)
+                    if let section = shot.section?.trimmingCharacters(in: .whitespaces), !section.isEmpty {
+                        plainMetadataRow(label: "Section", value: section)
+                    }
+                    if !shot.type.isEmpty { plainMetadataRow(label: "Type", value: shot.type) }
+                    if let framing = shot.framing, !framing.isEmpty {
+                        plainMetadataRow(label: "Framing", value: framing)
+                    }
+                    if !shot.mood.isEmpty { plainMetadataRow(label: "Mood", value: shot.mood) }
+                    if shot.durationS > 0 {
+                        plainMetadataRow(label: "Duration", value: String(format: "%.1fs", shot.durationS))
+                    }
+                }
+                if !shot.summaryText.isEmpty {
+                    metadataSection(title: "Description") {
+                        Text(shot.summaryText)
+                            .font(.system(size: AppTheme.FontSize.sm))
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                }
+                if !shot.visualPrompt.trimmingCharacters(in: .whitespaces).isEmpty {
+                    metadataSection(title: "Visual Prompt") {
+                        Text(shot.visualPrompt)
+                            .font(.system(size: AppTheme.FontSize.sm))
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                }
+                openInProjectLink(.shotlist)
+            }
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.vertical, AppTheme.Spacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func openInProjectLink(_ tab: CockpitTab) -> some View {
+        Button("Open in Project") {
+            editor.revealCockpit(tab)
+        }
+        .controlSize(.small)
     }
 
     /// Promote the current timeline/media selection to the app-global inspected object. A single clip or
@@ -109,11 +208,17 @@ struct InspectorView: View {
 
     // MARK: - Breadcrumb header
 
-    /// Lightweight graph over the app-owned timeline + media, enough to resolve clip/asset breadcrumbs.
+    /// The read model over everything inspectable: engine snapshots (Bible entities, shots) plus the
+    /// app-owned timeline and media — so breadcrumbs resolve real names (`Character › Mara`).
     private var objectGraph: ObjectGraph {
         var names: [String: String] = [:]
         for asset in editor.mediaAssets { names[asset.id] = asset.name }
-        return ObjectGraph.from(bible: nil, shotlist: nil, timeline: editor.timeline, assetNames: names)
+        return ObjectGraph.from(
+            bible: editor.bible,
+            shotlist: editor.shotlist,
+            timeline: editor.timeline,
+            assetNames: names
+        )
     }
 
     private var currentBreadcrumb: ObjectBreadcrumb {
@@ -129,6 +234,8 @@ struct InspectorView: View {
         return ObjectBreadcrumb(segments: [])
     }
 
+    /// A plain label, not a control bar: the breadcrumb *describes* the inspected object (context),
+    /// it doesn't navigate — so it wears no raised band and no border (docs/UI_UX_CONCEPT.md §3).
     @ViewBuilder
     private var breadcrumbHeader: some View {
         let crumb = currentBreadcrumb
@@ -140,20 +247,25 @@ struct InspectorView: View {
                             .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
-                    Text(segment.label)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: index == crumb.segments.count - 1 ? .medium : .regular))
-                        .foregroundStyle(index == crumb.segments.count - 1 ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
+                    let isLast = index == crumb.segments.count - 1
+                    let label = Text(segment.label)
+                        .font(.system(size: AppTheme.FontSize.xs, weight: isLast ? .semibold : .regular))
+                        .foregroundStyle(isLast ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                         .lineLimit(1)
+                    // Parent segments that resolve to an object navigate to it — the graph's payoff.
+                    if !isLast, let target = segment.object {
+                        Button { editor.inspectedObject = target } label: { label }
+                            .buttonStyle(.plain)
+                    } else {
+                        label
+                    }
                 }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
-            .padding(.vertical, AppTheme.Spacing.sm)
+            .padding(.top, AppTheme.Spacing.smMd)
+            .padding(.bottom, AppTheme.Spacing.xs)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AppTheme.Background.raisedColor)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.hairline)
-            }
         }
     }
 
@@ -173,33 +285,29 @@ struct InspectorView: View {
         .padding(AppTheme.Spacing.lg)
     }
 
-    private var cockpitObjectPlaceholder: some View {
-        VStack(spacing: AppTheme.Spacing.sm) {
+    /// Entity/shot/look objects are worked on in the Project cockpit; the Inspector offers the jump.
+    /// (Dedicated entity/shot inspectors are Phase B.)
+    private func cockpitObjectTeaser(_ object: InspectedObject) -> some View {
+        let target: CockpitTab = switch object {
+        case .shot, .shotUse: .shotlist
+        default: .bible
+        }
+        return VStack(spacing: AppTheme.Spacing.smMd) {
             Spacer()
             Text(currentBreadcrumb.flatText)
                 .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .multilineTextAlignment(.center)
-            Text("Open the Project tab to work with this.")
-                .font(.system(size: AppTheme.FontSize.xs))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .multilineTextAlignment(.center)
+            Button("Open in Project") {
+                editor.revealCockpit(target)
+            }
+            .controlSize(.small)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(AppTheme.Spacing.lg)
     }
 
-    private var marqueeSelectionSummary: some View {
-        VStack {
-            Spacer()
-            Text("\(editor.selectedClipIds.count) selected")
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 
     private func resolvePreferredTab() {
         let isSingleText = selectedVisualClips.count + selectedAudioClips.count == 1
@@ -335,13 +443,13 @@ struct InspectorView: View {
     }
 
     private func tabBar(_ tabs: [ClipTab]) -> some View {
-        genericTabBar(titles: tabs.map(\.rawValue), selected: activeTab?.rawValue, raisedBackground: true) { title in
+        genericTabBar(titles: tabs.map(\.rawValue), selected: activeTab?.rawValue) { title in
             if let tab = tabs.first(where: { $0.rawValue == title }) { preferredTab = tab }
         }
     }
 
     private func assetTabBar(_ tabs: [AssetTab]) -> some View {
-        genericTabBar(titles: tabs.map(\.rawValue), selected: preferredAssetTab.rawValue, raisedBackground: true) { title in
+        genericTabBar(titles: tabs.map(\.rawValue), selected: preferredAssetTab.rawValue) { title in
             if let tab = tabs.first(where: { $0.rawValue == title }) { preferredAssetTab = tab }
         }
     }
@@ -351,7 +459,12 @@ struct InspectorView: View {
         raisedBackground: Bool = false,
         onSelect: @escaping (String) -> Void
     ) -> some View {
-        SegmentedTabBar(titles: titles, selected: selected, raisedBackground: raisedBackground, onSelect: onSelect)
+        SegmentedTabBar(
+            titles: titles, selected: selected,
+            raisedBackground: raisedBackground,
+            accentedTitles: [ClipTab.ai.rawValue],
+            onSelect: onSelect
+        )
     }
 
     @ViewBuilder
@@ -900,17 +1013,14 @@ struct InspectorView: View {
         }
     }
 
+    @ViewBuilder
     private func assetIdentityHeader(_ asset: MediaAsset) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-            Text(asset.name)
-                .font(.system(size: AppTheme.FontSize.lg, weight: .semibold))
-                .foregroundStyle(AppTheme.Text.primaryColor)
-                .lineLimit(2)
-                .textSelection(.enabled)
-            if asset.generationInput != nil {
+        // The breadcrumb header already names the asset; surface only the AI-generated badge here.
+        if asset.generationInput != nil {
+            HStack(spacing: AppTheme.Spacing.sm) {
                 aiBadge
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
         }
     }
 

@@ -111,6 +111,7 @@ final class TourController {
             case .media: editor.mediaPanelVisible = true
             case .agent: editor.agentPanelVisible = true
             case .inspector: editor.inspectorPanelVisible = true
+            case .project: editor.revealCockpit(editor.cockpitTab)
             case .timeline, .preview: break
             }
             editor.showGenerationPanel = (target == .element(.generation))

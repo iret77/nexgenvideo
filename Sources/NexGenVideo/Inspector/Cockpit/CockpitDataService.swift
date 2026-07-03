@@ -9,6 +9,9 @@ import Foundation
 enum CockpitError: Error, Sendable, Equatable {
     /// Engine venv isn't set up yet (EngineRuntime not `.ready`). The UI offers to set it up in Settings.
     case engineNotReady
+    /// The engine ran, but this project has no production pipeline yet (no `project.yaml`). A normal
+    /// state for a plain editing project — not a failure. The UI shows a calm, retry-less state.
+    case notInitialized
     /// No project directory could be resolved (no open project / working dir).
     case noProject
     /// The engine reported a structured `{"error": ...}` document.
@@ -18,9 +21,17 @@ enum CockpitError: Error, Sendable, Equatable {
     /// stdout wasn't the shape we expected.
     case decode(String)
 
+    /// Classify a raw engine `{"error": ...}` string: the "no project.yaml" case is a normal
+    /// not-initialized state; everything else is a genuine engine error. Marker matches
+    /// `engine/nexgen_engine/core/project.py` ("missing — set mode/budget via project init").
+    static func fromEngine(_ message: String) -> CockpitError {
+        message.contains("set mode/budget via project init") ? .notInitialized : .engine(message)
+    }
+
     var message: String {
         switch self {
         case .engineNotReady: return "The engine isn't set up yet."
+        case .notInitialized: return "This project has no production pipeline yet."
         case .noProject: return "No project is open."
         case .engine(let m): return m
         case .process(let m): return m
@@ -52,7 +63,7 @@ enum CockpitDataService {
 
         // A well-formed `{"error": ...}` document from the CLI is surfaced as an engine error.
         if let envelope = try? JSONDecoder().decode(CockpitErrorEnvelope.self, from: raw) {
-            return .failure(.engine(envelope.error))
+            return .failure(CockpitError.fromEngine(envelope.error))
         }
 
         do {
@@ -80,7 +91,7 @@ enum CockpitDataService {
 
         if let envelope = try? JSONDecoder().decode(CockpitErrorEnvelope.self, from: raw) {
             if envelope.error == "no shotlist" { return .success(nil) }
-            return .failure(.engine(envelope.error))
+            return .failure(CockpitError.fromEngine(envelope.error))
         }
 
         do {
@@ -111,7 +122,7 @@ enum CockpitDataService {
         if trimmed == "null" || trimmed.isEmpty { return .success(nil) }
 
         if let envelope = try? JSONDecoder().decode(CockpitErrorEnvelope.self, from: raw) {
-            return .failure(.engine(envelope.error))
+            return .failure(CockpitError.fromEngine(envelope.error))
         }
 
         do {

@@ -13,25 +13,45 @@ enum CockpitStateView {
         subject: String,
         retry: @escaping () -> Void
     ) -> some View {
-        VStack(spacing: AppTheme.Spacing.md) {
-            Image(systemName: error == .engineNotReady ? "gearshape" : "exclamationmark.triangle")
+        // `.engineNotReady` and `.notInitialized` are normal guidance states, not failures — calm copy,
+        // neutral icon. Only genuinely transient errors get "Retry"; retrying a not-initialized project
+        // just re-reads the same absent `project.yaml`, so it offers no Retry.
+        let icon: String
+        let headline: String
+        let detail: String
+        switch error {
+        case .engineNotReady:
+            icon = "gearshape"
+            headline = "Engine not set up"
+            detail = "Set up the engine in Settings to view \(subject)."
+        case .notInitialized:
+            icon = "wand.and.stars"
+            headline = "No production pipeline"
+            detail = "This project isn't set up for AI production yet."
+        default:
+            icon = "exclamationmark.triangle"
+            headline = title
+            detail = error.message
+        }
+        return VStack(spacing: AppTheme.Spacing.md) {
+            Image(systemName: icon)
                 .font(.system(size: AppTheme.FontSize.title1))
                 .foregroundStyle(AppTheme.Text.mutedColor)
-            Text(error == .engineNotReady ? "Engine not set up" : title)
+            Text(headline)
                 .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-            Text(error == .engineNotReady
-                 ? "Set up the engine in Settings to view \(subject)."
-                 : error.message)
+            Text(detail)
                 .font(.system(size: AppTheme.FontSize.sm))
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Retry", action: retry)
-                .buttonStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
-                .foregroundStyle(AppTheme.Accent.primary)
-                .padding(.top, AppTheme.Spacing.xs)
+            if error != .notInitialized {
+                Button("Retry", action: retry)
+                    .buttonStyle(.plain)
+                    .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                    .foregroundStyle(AppTheme.Accent.primary)
+                    .padding(.top, AppTheme.Spacing.xs)
+            }
         }
         .padding(AppTheme.Spacing.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
