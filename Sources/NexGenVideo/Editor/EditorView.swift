@@ -488,9 +488,11 @@ private struct PanelFocusRing: View {
     private var isFocused: Bool { editor.focusedPanel == panel }
 
     var body: some View {
+        // Deliberately faint: a whisper of "this panel gets the keyboard", never a frame around the
+        // workspace — with the full-height sidebar a prominent ring reads as broken chrome.
         RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-            .strokeBorder(AppTheme.Accent.primary, lineWidth: AppTheme.BorderWidth.medium)
-            .opacity(isFocused ? 0.6 : 0)
+            .strokeBorder(AppTheme.Accent.primary, lineWidth: AppTheme.BorderWidth.thin)
+            .opacity(isFocused ? AppTheme.Opacity.muted : 0)
             .animation(.easeOut(duration: AppTheme.Anim.transition), value: isFocused)
     }
 }
