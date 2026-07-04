@@ -46,9 +46,17 @@ struct ReviewPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             content
+            Divider().overlay(AppTheme.Border.subtleColor)
+            // Sanity lives here in EVERY state — findings gate progress before frames even exist
+            // (§3: no panel is ever locked away). Fixed height: predictable galleries above.
+            SanityPanelView()
+                .frame(height: 200)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: editor.projectURL) { await load() }
+        .onChange(of: editor.engineStateRevision) { _, _ in
+            Task { await load() }
+        }
     }
 
     @ViewBuilder
@@ -71,21 +79,15 @@ struct ReviewPanelView: View {
     }
 
     private func loadedBody(_ data: FramesData) -> some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                    ForEach(data.shots) { shot in
-                        shotSection(shot)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+                ForEach(data.shots) { shot in
+                    shotSection(shot)
                 }
-                .padding(.horizontal, AppTheme.Spacing.lg)
-                .padding(.vertical, AppTheme.Spacing.md)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Divider().overlay(AppTheme.Border.subtleColor)
-            // Sanity lives here: findings are review work on the same shots (tab budget stays ≤5).
-            SanityPanelView()
-                .frame(minHeight: 140, idealHeight: 220, maxHeight: 280)
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.vertical, AppTheme.Spacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -109,6 +111,13 @@ struct ReviewPanelView: View {
                         .foregroundStyle(status == "pass" ? AppTheme.Status.successColor : AppTheme.Status.errorColor)
                 }
                 Spacer(minLength: 0)
+                if let picked = remixSelection[shot.shotId], !picked.isEmpty {
+                    Text("\(picked.count) picked")
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    Button("Clear") { remixSelection[shot.shotId] = [] }
+                        .controlSize(.small)
+                }
                 if (remixSelection[shot.shotId]?.count ?? 0) >= 2 {
                     Button("Remix…") {
                         remixTakes = [:]
@@ -276,12 +285,16 @@ struct ReviewPanelView: View {
     }
 
     private func remix(_ shotId: String, picked: [String]) {
-        let takes = picked.compactMap { name -> String? in
+        // Every picked candidate travels — with its "take" when given, as a general reference
+        // otherwise. Dropping a pick silently would lose the combine intent (§4 rung 2).
+        let parts = picked.map { name -> String in
             let take = (remixTakes[name] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return take.isEmpty ? nil : "\u{201C}\(name)\u{201D}: \(take)"
+            return take.isEmpty
+                ? "\u{201C}\(name)\u{201D}: general reference"
+                : "\u{201C}\(name)\u{201D}: \(take)"
         }
         var command = "Remix the keyframe for shot \(shotId), combining these candidates — "
-            + takes.joined(separator: "; ")
+            + parts.joined(separator: "; ")
             + ". Use them as reference images for the stated aspects."
         let note = remixNote.trimmingCharacters(in: .whitespacesAndNewlines)
         if !note.isEmpty { command += " Note: \(note)" }

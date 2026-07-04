@@ -334,7 +334,12 @@ final class EditorViewModel {
     private(set) var shotlist: ShotlistData?
     private(set) var ledger: LedgerData?
     private(set) var brief: BriefData?
+    /// True when a brief exists on disk but cannot be read (e.g. a legacy schema) — the Story
+    /// surface must show "unreadable", never the bootstrap prompt that invites overwriting it.
+    private(set) var briefUnreadable = false
     private(set) var uiContract: ContractData?
+    /// Bumped after every snapshot refresh; panels with their own load pipelines re-read on change.
+    private(set) var engineStateRevision = 0
     @ObservationIgnored private var engineArtifactsLoadToken = 0
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
@@ -344,7 +349,9 @@ final class EditorViewModel {
             shotlist = nil
             ledger = nil
             brief = nil
+            briefUnreadable = false
             uiContract = nil
+            engineStateRevision += 1
             await refreshProjectState()
             return
         }
@@ -361,8 +368,16 @@ final class EditorViewModel {
         bible = (try? b.get()) ?? nil
         shotlist = (try? s.get()) ?? nil
         ledger = (try? l.get()) ?? nil
-        brief = (try? br.get()) ?? nil
+        switch br {
+        case .success(let value):
+            brief = value
+            briefUnreadable = false
+        case .failure:
+            brief = nil
+            briefUnreadable = true
+        }
         uiContract = (try? ct.get()) ?? nil
+        engineStateRevision += 1
     }
 
     var keyframesPanelVisible: Bool = {

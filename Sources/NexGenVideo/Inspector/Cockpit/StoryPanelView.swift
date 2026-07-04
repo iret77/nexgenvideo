@@ -30,6 +30,9 @@ struct StoryPanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: editor.projectURL) { await loadTreatment() }
+        .onChange(of: editor.engineStateRevision) { _, _ in
+            Task { await loadTreatment() }
+        }
     }
 
     // MARK: - Brief
@@ -37,7 +40,19 @@ struct StoryPanelView: View {
     @ViewBuilder
     private var briefSection: some View {
         sectionHeader("Brief")
-        if let brief = editor.brief {
+        if editor.briefUnreadable {
+            // A brief EXISTS but can't be read (e.g. legacy schema). Never show the bootstrap
+            // prompt here — it would invite drafting over the user's existing brief.
+            Label("The brief exists but can't be read (older schema?). Ask the agent to migrate it.",
+                  systemImage: "exclamationmark.triangle")
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+            promptRow(
+                placeholder: "e.g. migrate the brief to the current schema…",
+                draft: $briefDraft,
+                command: { "The project's brief.yaml fails to load. \($0)" }
+            )
+        } else if let brief = editor.brief {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 briefRow("Mission", brief.mission)
                 briefRow("Platform", brief.targetPlatform)

@@ -111,6 +111,8 @@ def set_state(
     `approved` (what the pipeline blocks on) follows: only the two approve states pass."""
     if state not in GATE_STATES:
         raise ValueError(f"state must be one of {', '.join(GATE_STATES)}")
+    if state == "approved" and notes and notes.strip():
+        state = "approved_with_notes"  # notes on an approval ARE the with-notes verdict
     gates = load(project_dir)
     approved = state in ("approved", "approved_with_notes")
     gates.set(

@@ -102,7 +102,7 @@ struct PipelinePanelView: View {
             budgetBar(fraction: data.spentFraction, color: barColor)
 
             if let next = data.nextPhaseName {
-                Text("Next up: \(next.capitalized) — \(String(format: "€%.2f", data.budgetRemainingEur)) available")
+                Text("Next up: \(next) — \(String(format: "€%.2f", data.budgetRemainingEur)) available")
                     .font(.system(size: AppTheme.FontSize.xs))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }

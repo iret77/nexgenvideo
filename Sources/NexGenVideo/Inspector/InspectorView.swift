@@ -352,12 +352,19 @@ struct InspectorView: View {
 
     private func applyEntityEdit(_ entity: any BibleEntity) {
         var changes: [String] = []
-        let name = entityEditName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prompt = entityEditPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trait = entityEditTrait.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !name.isEmpty, name != entity.name { changes.append("name → \u{201C}\(name)\u{201D}") }
-        if !prompt.isEmpty, prompt != entity.visualPrompt { changes.append("visual_prompt → \u{201C}\(prompt)\u{201D}") }
-        if !trait.isEmpty, trait != entity.hardRecognitionTrait { changes.append("hard_recognition_trait → \u{201C}\(trait)\u{201D}") }
+        func diff(_ field: String, new: String, old: String, clearable: Bool) {
+            let trimmed = new.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed != old.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            if trimmed.isEmpty {
+                // An emptied field is an explicit decision, not a no-op (names must stay non-empty).
+                if clearable { changes.append("clear \(field)") }
+            } else {
+                changes.append("\(field) → \u{201C}\(trimmed)\u{201D}")
+            }
+        }
+        diff("name", new: entityEditName, old: entity.name, clearable: false)
+        diff("visual_prompt", new: entityEditPrompt, old: entity.visualPrompt, clearable: true)
+        diff("hard_recognition_trait", new: entityEditTrait, old: entity.hardRecognitionTrait, clearable: true)
         entityEditTarget = nil
         guard !changes.isEmpty else { return }
         let kind = entityKind(of: entity).rawValue
