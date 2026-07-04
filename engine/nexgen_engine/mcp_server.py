@@ -26,6 +26,7 @@ from nexgen_engine.render import costs as costs_mod
 from nexgen_engine.render import manifest as manifest_mod
 from nexgen_engine.sanity.audit import AuditContext, SanityCheck, audit
 from nexgen_engine.sanity.checks import register_core_checks
+from nexgen_engine.ledger import schema as ledger_schema
 from nexgen_engine.shotlist import schema as shotlist_schema
 from nexgen_engine.show.dispatch import show_gate_artifact
 from nexgen_engine.state import build_snapshot
@@ -386,6 +387,60 @@ def get_render_manifest_tool(project_dir: str, phase: str) -> dict[str, Any]:
     (`total` from the latest shotlist's shot count). `project_dir` is the `_studio/`
     data root."""
     return get_render_manifest(project_dir, phase)
+
+
+@mcp.tool(name="get_ledger")
+def get_ledger_tool(project_dir: str) -> dict[str, Any]:
+    """The Intent Ledger: the director's durable creative decisions per object. Read-only.
+
+    Returns `{schema, objects}` where `objects` maps `<kind>:<id>` (or the `look`/`film`
+    singletons) to named attributes `{tag, directive, source, locked, updated}`. Locked
+    attributes are hard facts generation MUST honor. `project_dir` is the `_studio/` data root."""
+    return ledger_schema.load(project_dir).model_dump(by_alias=True, mode="json")
+
+
+@mcp.tool(name="set_ledger_attribute")
+def set_ledger_attribute_tool(
+    project_dir: str,
+    kind: str,
+    key: str,
+    tag: str,
+    object_id: str | None = None,
+    directive: str = "",
+    source: str = "",
+    locked: bool | None = None,
+) -> dict[str, Any]:
+    """Create or update ONE ledger attribute (reconcile — update the existing key rather than
+    inventing near-duplicate keys). WRITES.
+
+    `kind` is one of character/ensemble/prop/location/shot (needs `object_id` = the Bible/shot
+    id) or look/film (singletons, no `object_id`). `tag` is the short visible handle
+    ("Wardrobe: faded red canvas jacket"); `directive` the model-ready phrasing (defaults to
+    the tag); `source` the user's original words. An existing lock survives unless `locked` is
+    passed explicitly. `project_dir` is the `_studio/` data root."""
+    return ledger_schema.set_attribute(
+        project_dir, kind, object_id, key, tag,
+        directive=directive, source=source, locked=locked,
+    )
+
+
+@mcp.tool(name="lock_ledger_attribute")
+def lock_ledger_attribute_tool(
+    project_dir: str, kind: str, key: str, object_id: str | None = None, locked: bool = True
+) -> dict[str, Any]:
+    """Lock (or unlock) an existing ledger attribute. WRITES. A locked attribute is a promise:
+    the prompt generator must include it and reviews check it; it cannot be removed while
+    locked. `project_dir` is the `_studio/` data root."""
+    return ledger_schema.set_locked(project_dir, kind, object_id, key, locked)
+
+
+@mcp.tool(name="remove_ledger_attribute")
+def remove_ledger_attribute_tool(
+    project_dir: str, kind: str, key: str, object_id: str | None = None
+) -> dict[str, Any]:
+    """Remove an UNLOCKED ledger attribute (locked ones must be unlocked first). WRITES.
+    `project_dir` is the `_studio/` data root."""
+    return ledger_schema.remove_attribute(project_dir, kind, object_id, key)
 
 
 def main() -> None:  # pragma: no cover

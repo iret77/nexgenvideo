@@ -113,6 +113,11 @@ enum CockpitDataService {
         await decoded(kind: "frames", projectDir: projectDir, decodeError: "Couldn't read the frames.")
     }
 
+    /// The Intent Ledger (`ledger` read kind). Never null; empty `objects` when nothing is recorded.
+    static func ledger(projectDir: URL) async -> Result<LedgerData?, CockpitError> {
+        await decoded(kind: "ledger", projectDir: projectDir, decodeError: "Couldn't read the ledger.")
+    }
+
     /// Shared run + decode for kinds that follow the Bible idiom: literal `null` → `.success(nil)`,
     /// a `{"error": ...}` envelope → `.failure(.engine)`, otherwise decode `T`.
     private static func decoded<T: Decodable & Sendable>(

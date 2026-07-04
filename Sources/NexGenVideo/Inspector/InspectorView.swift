@@ -111,6 +111,7 @@ struct InspectorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                 BibleEntityCard(entity: entity, projectDir: editor.studioProjectDir)
+                ledgerSection(for: .entity(BibleEntityRef(kind: entityKind(of: entity), id: entity.id)))
                 usageSection(of: entity)
                 contextualPromptField(placeholder: "Change \(entity.name)…")
                 openInProjectLink(.bible)
@@ -129,6 +130,7 @@ struct InspectorView: View {
                         plainMetadataRow(label: field.label, value: field.value)
                     }
                 }
+                ledgerSection(for: .look)
                 openInProjectLink(.bible)
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
@@ -172,6 +174,7 @@ struct InspectorView: View {
                             .textSelection(.enabled)
                     }
                 }
+                ledgerSection(for: .shot(shot.id))
                 shotProvenanceSections(shot.id)
                 contextualPromptField(placeholder: "Change this shot…")
                 openInProjectLink(.shotlist)
@@ -237,6 +240,53 @@ struct InspectorView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    /// The Intent Ledger on the object: tags always visible, locks marked — the object is the unit
+    /// of memory (docs/UI_UX_CONCEPT.md §5). Read-only; the agent writes via its ledger tools.
+    @ViewBuilder
+    private func ledgerSection(for object: InspectedObject) -> some View {
+        let attributes = editor.ledger?.attributes(for: object) ?? []
+        if !attributes.isEmpty {
+            metadataSection(title: "Intent") {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    ForEach(attributes, id: \.key) { entry in
+                        HStack(spacing: AppTheme.Spacing.xs) {
+                            if entry.attribute.locked {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: AppTheme.FontSize.micro))
+                                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                            }
+                            Text(entry.attribute.tag)
+                                .font(.system(size: AppTheme.FontSize.xs, weight: entry.attribute.locked ? .semibold : .medium))
+                                .foregroundStyle(entry.attribute.locked ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
+                                .lineLimit(2)
+                        }
+                        .padding(.horizontal, AppTheme.Spacing.sm)
+                        .padding(.vertical, AppTheme.Spacing.xxs)
+                        .background { Capsule().fill(AppTheme.Background.raisedColor) }
+                        .overlay(Capsule().strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline))
+                        .help(ledgerHelp(entry.key, entry.attribute))
+                    }
+                }
+            }
+        }
+    }
+
+    private func ledgerHelp(_ key: String, _ attribute: LedgerAttribute) -> String {
+        var parts = ["\(key): \(attribute.directive)"]
+        if !attribute.source.isEmpty { parts.append("Source: \u{201C}\(attribute.source)\u{201D}") }
+        if attribute.locked { parts.append("Locked — generation must honor this.") }
+        return parts.joined(separator: "\n")
+    }
+
+    private func entityKind(of entity: any BibleEntity) -> BibleEntityKind {
+        switch entity {
+        case is BibleEnsemble: .ensemble
+        case is BibleProp: .prop
+        case is BibleLocation: .location
+        default: .character
         }
     }
 

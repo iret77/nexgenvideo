@@ -332,6 +332,7 @@ final class EditorViewModel {
     /// pipelines (loading/error/retry); these feed the read model only.
     private(set) var bible: BibleData?
     private(set) var shotlist: ShotlistData?
+    private(set) var ledger: LedgerData?
     @ObservationIgnored private var engineArtifactsLoadToken = 0
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
@@ -339,6 +340,7 @@ final class EditorViewModel {
         guard let dir = studioProjectDir else {
             bible = nil
             shotlist = nil
+            ledger = nil
             await refreshProjectState()
             return
         }
@@ -346,11 +348,13 @@ final class EditorViewModel {
         let token = engineArtifactsLoadToken
         async let bibleResult = CockpitDataService.bible(projectDir: dir)
         async let shotlistResult = CockpitDataService.shotlist(projectDir: dir)
+        async let ledgerResult = CockpitDataService.ledger(projectDir: dir)
         async let stateRefresh: Void = refreshProjectState()
-        let (b, s, _) = await (bibleResult, shotlistResult, stateRefresh)
+        let (b, s, l, _) = await (bibleResult, shotlistResult, ledgerResult, stateRefresh)
         guard token == engineArtifactsLoadToken else { return }
         bible = (try? b.get()) ?? nil
         shotlist = (try? s.get()) ?? nil
+        ledger = (try? l.get()) ?? nil
     }
 
     var keyframesPanelVisible: Bool = {

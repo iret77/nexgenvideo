@@ -50,6 +50,10 @@ SCHEMA_MATRIX: dict[str, dict[str, object]] = {
         "current": "brief/v1",
         "supported": ("brief/v1",),
     },
+    "ledger": {
+        "current": "ledger/v1",
+        "supported": ("ledger/v1",),
+    },
     "frame_audit": {
         "current": "frame_audit/v1",
         "supported": ("frame_audit/v1",),

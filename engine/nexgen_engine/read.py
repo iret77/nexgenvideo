@@ -13,6 +13,7 @@ Kinds:
   phases    → ordered phase list incl. active-pack phases (mcp_server.phases)
   shotlist  → latest shotlist dict or null (shotlist.schema.load(...).model_dump)
   frames    → frame candidates per shot from disk (frames.inventory.inventory)
+  ledger    → the Intent Ledger (ledger.schema.load)
 """
 
 from __future__ import annotations
@@ -24,9 +25,10 @@ from typing import Any
 
 from nexgen_engine import mcp_server
 from nexgen_engine.frames import inventory as frames_inventory
+from nexgen_engine.ledger import schema as ledger_schema
 from nexgen_engine.shotlist import schema as shotlist_schema
 
-KINDS = ("state", "bible", "sanity", "phases", "shotlist", "frames")
+KINDS = ("state", "bible", "sanity", "phases", "shotlist", "frames", "ledger")
 
 
 def _shotlist(project_dir: str) -> dict[str, Any] | None:
@@ -53,6 +55,8 @@ def read(kind: str, project_dir: str | None) -> Any:
         return _shotlist(project_dir)
     if kind == "frames":
         return frames_inventory.inventory(project_dir)
+    if kind == "ledger":
+        return ledger_schema.load(project_dir).model_dump(by_alias=True, mode="json")
     raise ValueError(f"unhandled kind {kind!r}")  # pragma: no cover
 
 
