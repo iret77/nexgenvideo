@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 #: The generic core production pipeline, in order. A pack inserts/extends it
 #: (music adds "analysis" after project_init).
@@ -32,6 +32,9 @@ CORE_PHASES: tuple[str, ...] = (
 )
 
 
+GATE_STATES: tuple[str, ...] = ("pending", "approved", "approved_with_notes", "needs_revision")
+
+
 class Gate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -39,6 +42,22 @@ class Gate(BaseModel):
     approved_at: str | None = None
     approved_by: str | None = None
     notes: str | None = None
+    # Multi-state gate (docs/UI_UX_CONCEPT.md §4): `approved` stays the compatibility bool the
+    # pipeline blocks on; `state` carries the richer verdict. Older gates.yaml files have no
+    # state — the validator derives it.
+    state: str = "pending"
+
+    @model_validator(mode="after")
+    def _derive_state(self) -> "Gate":
+        if self.state not in GATE_STATES:
+            raise ValueError(f"state must be one of {', '.join(GATE_STATES)}")
+        if self.approved and self.state in ("pending", "needs_revision"):
+            self.state = "approved_with_notes" if self.notes else "approved"
+        elif not self.approved and self.state in ("approved", "approved_with_notes"):
+            # Contradictory hand-edited file: the pipeline blocks on `approved`, so the richer
+            # state must not claim otherwise.
+            self.state = "pending"
+        return self
 
 
 class Gates(BaseModel):
@@ -87,6 +106,31 @@ def save(project_dir: Path, gates: Gates) -> Path:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def set_state(
+    project_dir: Path, phase: str, state: str, notes: str | None = None, by: str = "user"
+) -> Gates:
+    """The multi-state verdict: approved / approved_with_notes / needs_revision / pending.
+    `approved` (what the pipeline blocks on) follows: only the two approve states pass."""
+    if state not in GATE_STATES:
+        raise ValueError(f"state must be one of {', '.join(GATE_STATES)}")
+    if state == "approved" and notes and notes.strip():
+        state = "approved_with_notes"  # notes on an approval ARE the with-notes verdict
+    gates = load(project_dir)
+    approved = state in ("approved", "approved_with_notes")
+    gates.set(
+        phase,
+        Gate(
+            approved=approved,
+            approved_at=_now() if approved else None,
+            approved_by=by if approved else None,
+            notes=notes,
+            state=state,
+        ),
+    )
+    save(project_dir, gates)
+    return gates
 
 
 def approve(project_dir: Path, phase: str, notes: str | None = None, by: str = "user") -> Gates:

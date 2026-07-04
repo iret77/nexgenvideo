@@ -101,6 +101,12 @@ struct PipelinePanelView: View {
 
             budgetBar(fraction: data.spentFraction, color: barColor)
 
+            if let next = data.nextPhaseName {
+                Text("Next up: \(next) — \(String(format: "€%.2f", data.budgetRemainingEur)) available")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+            }
+
             VStack(spacing: AppTheme.Spacing.smMd) {
                 amountRow(label: "Budget", amount: data.budgetEur, color: AppTheme.Text.secondaryColor)
                 amountRow(label: "Spent", amount: data.budgetSpentEur, color: AppTheme.Text.secondaryColor)
@@ -168,7 +174,7 @@ struct PipelinePanelView: View {
     private func phaseRow(_ phase: ProjectPhase, isNext: Bool, isLast: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: AppTheme.Spacing.smMd) {
-                statusDot(approved: phase.approved, isNext: isNext)
+                statusDot(approved: phase.approved, isNext: isNext, state: phase.state)
                 Text(phase.phase)
                     .font(.system(size: AppTheme.FontSize.sm,
                                   weight: isNext ? .semibold : (phase.approved ? .regular : .medium)))
@@ -177,6 +183,19 @@ struct PipelinePanelView: View {
                     .lineLimit(1)
                     .textSelection(.enabled)
                 Spacer(minLength: 0)
+                if phase.state == "needs_revision" {
+                    Text("NEEDS REVISION")
+                        .font(.system(size: AppTheme.FontSize.micro, weight: .bold))
+                        .tracking(AppTheme.Tracking.wide)
+                        .foregroundStyle(AppTheme.Status.errorColor)
+                        .help(phase.notes ?? "Sent back for revision")
+                } else if phase.state == "approved_with_notes" {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: AppTheme.FontSize.xxs))
+                        .foregroundStyle(AppTheme.Status.successColor)
+                        .help(phase.notes ?? "Approved with notes")
+                }
+                surfaceIcon(for: phase.phase)
                 if isNext {
                     Text("NEXT")
                         .font(.system(size: AppTheme.FontSize.micro, weight: .bold))
@@ -201,11 +220,38 @@ struct PipelinePanelView: View {
         }
     }
 
-    private func statusDot(approved: Bool, isNext: Bool) -> some View {
+    /// Contract-driven routing (docs/UI_UX_CONCEPT.md §7): the phase's declared surface, clickable —
+    /// review phases open Review, prose phases open Story.
+    @ViewBuilder
+    private func surfaceIcon(for phase: String) -> some View {
+        if let entry = editor.uiContract?.phases[phase] {
+            let (icon, target): (String, CockpitTab?) = switch entry.surface {
+            case "review": ("eye", .review)
+            case "prose": ("text.cursor", .story)
+            case "choice": ("slider.horizontal.3", nil)
+            default: ("questionmark", nil)
+            }
+            Button {
+                if let target { editor.cockpitTab = target }
+            } label: {
+                Image(systemName: icon)
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+            }
+            .buttonStyle(.plain)
+            .disabled(target == nil)
+            .help("Surface: \(entry.surface) · compute: \(entry.taskClass)")
+        }
+    }
+
+    private func statusDot(approved: Bool, isNext: Bool, state: String = "pending") -> some View {
         Group {
             if approved {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(AppTheme.Status.successColor)
+            } else if state == "needs_revision" {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                    .foregroundStyle(AppTheme.Status.errorColor)
             } else if isNext {
                 Image(systemName: "circle.dashed.inset.filled")
                     .foregroundStyle(AppTheme.Accent.timecodeColor)

@@ -118,6 +118,21 @@ enum CockpitDataService {
         await decoded(kind: "ledger", projectDir: projectDir, decodeError: "Couldn't read the ledger.")
     }
 
+    /// The Brief (`brief` read kind); null until the brief phase ran.
+    static func brief(projectDir: URL) async -> Result<BriefData?, CockpitError> {
+        await decoded(kind: "brief", projectDir: projectDir, decodeError: "Couldn't read the brief.")
+    }
+
+    /// The latest treatment (`treatment` read kind); null until the treatment phase ran.
+    static func treatment(projectDir: URL) async -> Result<TreatmentData?, CockpitError> {
+        await decoded(kind: "treatment", projectDir: projectDir, decodeError: "Couldn't read the treatment.")
+    }
+
+    /// The per-phase UI contract (`contract` read kind, projectless but tolerant of a project arg).
+    static func contract(projectDir: URL) async -> Result<ContractData?, CockpitError> {
+        await decoded(kind: "contract", projectDir: projectDir, decodeError: "Couldn't read the contract.")
+    }
+
     /// Shared run + decode for kinds that follow the Bible idiom: literal `null` → `.success(nil)`,
     /// a `{"error": ...}` envelope → `.failure(.engine)`, otherwise decode `T`.
     private static func decoded<T: Decodable & Sendable>(

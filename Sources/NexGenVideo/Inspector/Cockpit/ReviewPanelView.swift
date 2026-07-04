@@ -37,13 +37,27 @@ struct ReviewPanelView: View {
     @State private var redoTarget: RedoTarget?
     @State private var redoReason: ReviewReason = .continuity
     @State private var redoNote = ""
+    /// Remix selection per shot: candidate names marked as sources for a combined regeneration.
+    @State private var remixSelection: [String: Set<String>] = [:]
+    @State private var remixShot: String?
+    @State private var remixTakes: [String: String] = [:]
+    @State private var remixTakesShot: String?
+    @State private var remixNote = ""
 
     var body: some View {
         VStack(spacing: 0) {
             content
+            Divider().overlay(AppTheme.Border.subtleColor)
+            // Sanity lives here in EVERY state — findings gate progress before frames even exist
+            // (§3: no panel is ever locked away). Fixed height: predictable galleries above.
+            SanityPanelView()
+                .frame(height: 200)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: editor.projectURL) { await load() }
+        .onChange(of: editor.engineStateRevision) { _, _ in
+            Task { await load() }
+        }
     }
 
     @ViewBuilder
@@ -98,6 +112,28 @@ struct ReviewPanelView: View {
                         .foregroundStyle(status == "pass" ? AppTheme.Status.successColor : AppTheme.Status.errorColor)
                 }
                 Spacer(minLength: 0)
+                if let picked = remixSelection[shot.shotId], !picked.isEmpty {
+                    Text("\(picked.count) picked")
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    Button("Clear") { remixSelection[shot.shotId] = [] }
+                        .controlSize(.small)
+                }
+                if (remixSelection[shot.shotId]?.count ?? 0) >= 2 {
+                    Button("Remix…") {
+                        // Reset only when switching shots — reopening the popover keeps typed takes.
+                        if remixTakesShot != shot.shotId {
+                            remixTakes = [:]
+                            remixNote = ""
+                            remixTakesShot = shot.shotId
+                        }
+                        remixShot = shot.shotId
+                    }
+                    .controlSize(.small)
+                    .popover(isPresented: remixPopoverBinding(shot.shotId)) {
+                        remixPopover(shot.shotId)
+                    }
+                }
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: AppTheme.Spacing.smMd) {
@@ -120,13 +156,29 @@ struct ReviewPanelView: View {
     }
 
     private func frameTile(_ frame: FrameCandidate, shotId: String) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+        let isPicked = remixSelection[shotId]?.contains(frame.name) == true
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             SheetThumbnailView(
                 label: frame.name,
                 path: frame.path,
                 projectDir: editor.studioProjectDir,
                 tileHeight: 90
             )
+            .overlay(alignment: .topTrailing) {
+                if isPicked {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: AppTheme.FontSize.md))
+                        .foregroundStyle(AppTheme.Accent.primary)
+                        .padding(AppTheme.Spacing.xxs)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                // Tap picks the tile as a remix source ("composition of 2 + lighting of 4").
+                var set = remixSelection[shotId] ?? []
+                if !set.insert(frame.name).inserted { set.remove(frame.name) }
+                remixSelection[shotId] = set
+            }
             HStack(spacing: AppTheme.Spacing.xs) {
                 Button("Use") { accept(frame, shotId: shotId) }
                     .controlSize(.small)
@@ -151,7 +203,14 @@ struct ReviewPanelView: View {
                 guard let t = redoTarget, t.shotId == shotId, t.frameName == frame.name else { return nil }
                 return t
             },
-            set: { redoTarget = $0 }
+            set: { newValue in
+                if let newValue {
+                    redoTarget = newValue
+                } else if redoTarget?.shotId == shotId, redoTarget?.frameName == frame.name {
+                    // A dismissing popover may fire after ANOTHER one opened — only clear our own.
+                    redoTarget = nil
+                }
+            }
         )
     }
 
@@ -195,6 +254,71 @@ struct ReviewPanelView: View {
         .frame(width: 300)
     }
 
+    private func remixPopoverBinding(_ shotId: String) -> Binding<Bool> {
+        Binding(
+            get: { remixShot == shotId },
+            // A dismissing popover may fire after ANOTHER one opened — only clear our own state.
+            set: { if !$0, remixShot == shotId { remixShot = nil } }
+        )
+    }
+
+    private func remixPopover(_ shotId: String) -> some View {
+        let picked = (remixSelection[shotId] ?? []).sorted()
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+            Text("What to take from each")
+                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            ForEach(picked, id: \.self) { name in
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    Text(name)
+                        .font(.system(size: AppTheme.FontSize.xxs).monospaced())
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .lineLimit(1)
+                        .frame(width: 110, alignment: .leading)
+                    TextField("composition, lighting, …", text: Binding(
+                        get: { remixTakes[name] ?? "" },
+                        set: { remixTakes[name] = $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: AppTheme.FontSize.sm))
+                }
+            }
+            TextField("Optional note…", text: $remixNote)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: AppTheme.FontSize.sm))
+            HStack {
+                Spacer()
+                Button("Remix") { remix(shotId, picked: picked) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(picked.allSatisfy { (remixTakes[$0] ?? "").trimmingCharacters(in: .whitespaces).isEmpty })
+            }
+        }
+        .padding(AppTheme.Spacing.mdLg)
+        .frame(width: 340)
+    }
+
+    private func remix(_ shotId: String, picked: [String]) {
+        // Every picked candidate travels — with its "take" when given, as a general reference
+        // otherwise. Dropping a pick silently would lose the combine intent (§4 rung 2).
+        let parts = picked.map { name -> String in
+            let take = (remixTakes[name] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return take.isEmpty
+                ? "\u{201C}\(name)\u{201D}: general reference"
+                : "\u{201C}\(name)\u{201D}: \(take)"
+        }
+        var command = "Remix the keyframe for shot \(shotId), combining these candidates — "
+            + parts.joined(separator: "; ")
+            + ". Use them as reference images for the stated aspects."
+        let note = remixNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !note.isEmpty { command += " Note: \(note)" }
+        remixShot = nil
+        remixSelection[shotId] = []
+        remixTakes = [:]
+        remixTakesShot = nil
+        remixNote = ""
+        send(command)
+    }
+
     private func accept(_ frame: FrameCandidate, shotId: String) {
         send("For shot \(shotId), use the frame candidate \u{201C}\(frame.name)\u{201D} as the selected keyframe.")
     }
@@ -222,7 +346,9 @@ struct ReviewPanelView: View {
         }
         loadToken += 1
         let token = loadToken
-        state = .loading
+        // Silent when already populated: a post-agent-turn refresh must not dismiss open popovers
+        // or drop the remix selection's visual context.
+        if case .loaded = state {} else { state = .loading }
         let result = await CockpitDataService.frames(projectDir: dir)
         guard token == loadToken else { return }
         switch result {

@@ -65,16 +65,20 @@ struct ProjectStateData: Decodable, Sendable, Equatable {
 struct ProjectPhase: Decodable, Sendable, Equatable, Identifiable {
     var phase: String
     var approved: Bool
+    var state: String
+    var notes: String?
 
     var id: String { phase }
 
     enum CodingKeys: String, CodingKey {
-        case phase, approved
+        case phase, approved, state, notes
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         phase = try c.decodeIfPresent(String.self, forKey: .phase) ?? ""
         approved = try c.decodeIfPresent(Bool.self, forKey: .approved) ?? false
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? (approved ? "approved" : "pending")
+        notes = try c.decodeIfPresent(String.self, forKey: .notes)
     }
 }

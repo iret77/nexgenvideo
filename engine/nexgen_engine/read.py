@@ -16,6 +16,9 @@ Kinds:
   ledger    → the Intent Ledger (ledger.schema.load)
   router    → model routing table: tiers manifest + task-class floors (core.router)
   contract  → per-phase UI contract: surface + task class (core.ui_contract)
+  brief     → the Brief or null (brief.schema.load)
+  treatment → the latest treatment or null (treatment.schema.load)
+  cost      → budget picture incl. next open phase (mcp_server.estimate_cost)
 """
 
 from __future__ import annotations
@@ -29,10 +32,13 @@ from nexgen_engine import mcp_server
 from nexgen_engine.frames import inventory as frames_inventory
 from nexgen_engine.core import router as core_router
 from nexgen_engine.core import ui_contract as core_ui_contract
+from nexgen_engine.brief import schema as brief_schema
+from nexgen_engine.core import paths
 from nexgen_engine.ledger import schema as ledger_schema
+from nexgen_engine.treatment import schema as treatment_schema
 from nexgen_engine.shotlist import schema as shotlist_schema
 
-KINDS = ("state", "bible", "sanity", "phases", "shotlist", "frames", "ledger", "router", "contract")
+KINDS = ("state", "bible", "sanity", "phases", "shotlist", "frames", "ledger", "router", "contract", "brief", "treatment", "cost")
 
 # Kinds that answer without a project (router accepts an optional one for the manifest override).
 PROJECTLESS_KINDS = ("phases", "router", "contract")
@@ -56,6 +62,11 @@ def read(kind: str, project_dir: str | None) -> Any:
         raise ValueError(f"unknown kind {kind!r}; expected one of {', '.join(KINDS)}")
     if not project_dir:
         raise ValueError(f"kind {kind!r} requires a project_dir")
+    # Accept the project home OR the data root — the schema loaders expect the data root.
+    resolved = paths.data_root_of(Path(project_dir))
+    if resolved is None:
+        raise ValueError(f"no project at {project_dir}")
+    project_dir = str(resolved)
     if kind == "state":
         return mcp_server.project_state(project_dir)
     if kind == "bible":
@@ -68,6 +79,18 @@ def read(kind: str, project_dir: str | None) -> Any:
         return frames_inventory.inventory(project_dir)
     if kind == "ledger":
         return ledger_schema.load(project_dir).model_dump(by_alias=True, mode="json")
+    if kind == "brief":
+        try:
+            return brief_schema.load(Path(project_dir)).model_dump(by_alias=True, mode="json")
+        except FileNotFoundError:
+            return None
+    if kind == "treatment":
+        # Existence pre-check: the schema helper creates treatment/ as a side effect — a read must not.
+        if not any(Path(project_dir).glob("treatment/v*.md")):
+            return None
+        return treatment_schema.load(Path(project_dir)).model_dump(by_alias=True, mode="json")
+    if kind == "cost":
+        return mcp_server.estimate_cost(project_dir)
     raise ValueError(f"unhandled kind {kind!r}")  # pragma: no cover
 
 

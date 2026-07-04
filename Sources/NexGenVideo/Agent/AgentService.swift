@@ -69,7 +69,15 @@ final class AgentService {
     var sessions: [ChatSession] = []
     var currentSessionId: UUID?
     var messages: [AgentMessage] = []
-    var isStreaming: Bool = false
+    var isStreaming: Bool = false {
+        didSet {
+            // A finished agent turn may have written engine artifacts (brief, treatment, ledger,
+            // gates, frames) — re-read them so the cockpit reflects the work without a window switch.
+            if oldValue, !isStreaming {
+                Task { @MainActor [weak self] in await self?.editor?.refreshEngineState() }
+            }
+        }
+    }
     var streamError: AgentStreamError?
     var onSessionsChanged: (@MainActor () -> Void)?
 
@@ -255,6 +263,8 @@ final class AgentService {
         sessions.insert(session, at: 0)
         currentSessionId = session.id
         messages = []
+        draft = ""
+        mentions = []
         streamError = nil
         toolExecutor?.resetFeedbackState()
         onSessionsChanged?()
@@ -279,6 +289,11 @@ final class AgentService {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[idx].isOpen = false
         if currentSessionId == id {
+            // Closing the active tab mid-stream: stop the stream and keep its partial reply with
+            // THIS session — otherwise the still-running task appends into the next tab's messages.
+            currentTask?.cancel()
+            isStreaming = false
+            syncMessagesIntoCurrentSession()
             if let next = sessions.first(where: { $0.isOpen }) {
                 currentSessionId = next.id
                 messages = next.messages

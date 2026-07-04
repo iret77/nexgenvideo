@@ -1,17 +1,19 @@
 import SwiftUI
 
-/// Tabs of the Project cockpit. The four production artifacts are visible tabs (Bible first — it is
-/// the primary work surface); budget lives inside Pipeline. `project` is the settings view, reached
-/// via the trailing gear, never a peer tab.
+/// Tabs of the Project cockpit: Story (brief + treatment, the pipeline's front), Bible, Pipeline
+/// (incl. budget), Shotlist, Review (frames + sanity findings). `project` is the settings view,
+/// reached via the trailing gear, never a peer tab.
 enum CockpitTab: String, Hashable, CaseIterable {
+    case story = "Story"
     case bible = "Bible"
     case pipeline = "Pipeline"
     case shotlist = "Shotlist"
     case review = "Review"
-    case sanity = "Sanity"
     case project = "Project"
 
-    static let visibleTabs: [CockpitTab] = [.bible, .pipeline, .shotlist, .review, .sanity]
+    // Tab budget stays ≤5 (Fable's width math): sanity findings live inside Review — both are
+    // quality-control surfaces over the same shots.
+    static let visibleTabs: [CockpitTab] = [.story, .bible, .pipeline, .shotlist, .review]
 }
 
 /// The Project cockpit — the canonical home for project-level artifacts (the engine-read Bible /
@@ -35,11 +37,11 @@ struct ProjectCockpitView: View {
             }
             Group {
                 switch editor.cockpitTab {
+                case .story: StoryPanelView()
                 case .bible: BiblePanelView()
                 case .pipeline: PipelinePanelView()
                 case .shotlist: ShotlistPanelView()
                 case .review: ReviewPanelView()
-                case .sanity: SanityPanelView()
                 case .project: ProjectSettingsView()
                 }
             }

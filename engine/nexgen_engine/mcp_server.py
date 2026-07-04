@@ -37,7 +37,8 @@ mcp = FastMCP("engine")
 
 
 def project_state(project_dir: str) -> dict[str, Any]:
-    return build_snapshot(Path(project_dir)).model_dump()
+    # Merged phase order: pack phases (e.g. musicvideo's analysis) appear in the pipeline too.
+    return build_snapshot(Path(project_dir), tuple(phases())).model_dump()
 
 
 def phases() -> list[str]:
@@ -108,6 +109,7 @@ def approve_gate(project_dir: str, phase: str, notes: str | None = None) -> dict
         "project": g.project,
         "phase": phase,
         "approved": gate.approved,
+        "state": gate.state,
         "approved_at": gate.approved_at,
         "approved_by": gate.approved_by,
         "notes": gate.notes,
@@ -123,7 +125,7 @@ def rewind(project_dir: str, target_phase: str) -> dict[str, Any]:
 def estimate_cost(project_dir: str) -> dict[str, Any]:
     """The project's budget picture from the render ledger (no forward estimate)."""
     root = Path(project_dir)
-    snap = build_snapshot(root)
+    snap = build_snapshot(root, tuple(phases()))  # merged order — pack phases count too
     spent = costs_mod.already_spent_in_project(root)
     return {
         "project": snap.project,
@@ -131,6 +133,7 @@ def estimate_cost(project_dir: str) -> dict[str, Any]:
         "spent_eur": spent,
         "remaining_eur": max(0.0, snap.budget_eur - spent),
         "over_budget": spent > snap.budget_eur,
+        "next_phase": snap.next_phase,
     }
 
 
@@ -462,6 +465,26 @@ def get_ui_contract_tool() -> dict[str, Any]:
     """Per-phase UI contract: the default interaction surface (choice/prose/review) and router
     task class for every phase (engine core + installed packs). Read-only."""
     return core_ui_contract.full_contract()
+
+
+@mcp.tool(name="set_gate_state")
+def set_gate_state_tool(
+    project_dir: str, phase: str, state: str, notes: str | None = None
+) -> dict[str, Any]:
+    """Record the multi-state gate verdict (docs/UI_UX_CONCEPT.md §4). WRITES.
+
+    `state` is one of approved / approved_with_notes / needs_revision / pending. Only the two
+    approve states unblock the pipeline; `needs_revision` keeps the phase blocked and carries
+    the reviewer's notes. `project_dir` is the `_studio/` data root."""
+    g = gates_mod.set_state(Path(project_dir), phase, state, notes=notes)
+    gate = g.get(phase)
+    return {
+        "project": g.project,
+        "phase": phase,
+        "state": gate.state,
+        "approved": gate.approved,
+        "notes": gate.notes,
+    }
 
 
 def main() -> None:  # pragma: no cover

@@ -18,6 +18,8 @@ from nexgen_engine.render import costs as costs_mod
 class PhaseStatus(BaseModel):
     phase: str
     approved: bool
+    state: str = "pending"
+    notes: str | None = None
 
 
 class ProjectState(BaseModel):
@@ -33,7 +35,15 @@ class ProjectState(BaseModel):
 def build_snapshot(project_dir: Path, phase_order: tuple[str, ...] = CORE_PHASES) -> ProjectState:
     meta = project_mod.load(project_dir)
     g = gates_mod.load(project_dir)
-    phases = [PhaseStatus(phase=p, approved=g.get(p).approved) for p in phase_order]
+    phases = [
+        PhaseStatus(
+            phase=p,
+            approved=g.get(p).approved,
+            state=g.get(p).state,
+            notes=g.get(p).notes,
+        )
+        for p in phase_order
+    ]
     next_phase = next((p.phase for p in phases if not p.approved), None)
     try:
         spent = costs_mod.already_spent_in_project(project_dir)
