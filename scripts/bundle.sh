@@ -252,12 +252,19 @@ DMG_BG="$ROOT/assets/dmg-background.png"
 # Prefer dmgbuild (headless — writes the .DS_Store directly, no Finder/AppleScript) for a branded
 # window background; fall back to a plain DMG so a release is never blocked on cosmetics.
 DMG_DONE=""
-if python3 -m pip install --quiet --user dmgbuild >/dev/null 2>&1; then
-  export PATH="$(python3 -m site --user-base 2>/dev/null)/bin:$PATH"
+# Install into a venv: macOS's system python is externally-managed (PEP 668) and rejects
+# `pip install --user`, which is exactly why this silently fell back to a plain DMG before. Errors
+# are surfaced now (no `>/dev/null`) so a future regression is visible in the log, not hidden.
+DMG_VENV="$(mktemp -d)/dmgvenv"
+if python3 -m venv "$DMG_VENV" && "$DMG_VENV/bin/pip" install --quiet --disable-pip-version-check dmgbuild; then
   if DMG_APP="$APP" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" \
-       dmgbuild -s "$ROOT/scripts/dmg-settings.py" "$DMG_VOLNAME" "$DMG"; then
+       "$DMG_VENV/bin/dmgbuild" -s "$ROOT/scripts/dmg-settings.py" "$DMG_VOLNAME" "$DMG"; then
     DMG_DONE="branded background"
+  else
+    echo "!! dmgbuild run failed (output above)"
   fi
+else
+  echo "!! dmgbuild venv/install failed (output above)"
 fi
 if [ -z "$DMG_DONE" ]; then
   echo "!! dmgbuild unavailable or failed — building a plain DMG (volume icon only)"
