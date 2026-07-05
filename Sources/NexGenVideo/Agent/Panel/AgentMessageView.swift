@@ -58,13 +58,18 @@ struct AgentMessageView: View {
                     EmptyView()
                 }
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        // Copy floats as an overlay so hovering never reflows the transcript. As an in-flow child it
+        // pushed every row below it down when it appeared, so scrubbing the mouse down the chat made
+        // the whole thing jump.
+        .overlay(alignment: .topTrailing) {
             if !copyableText.isEmpty, isHovering {
                 CopyMessageButton(text: copyableText)
                     .transition(.opacity)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isHovering)
     }
@@ -82,6 +87,16 @@ private struct CopyMessageButton: View {
             }
             .font(.system(size: AppTheme.FontSize.xs))
             .foregroundStyle(AppTheme.Text.tertiaryColor)
+            .padding(.horizontal, AppTheme.Spacing.sm)
+            .padding(.vertical, AppTheme.Spacing.xxs)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                    .fill(AppTheme.Background.raisedColor)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                            .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+                    )
+            )
         }
         .buttonStyle(.plain)
         .help("Copy message")
