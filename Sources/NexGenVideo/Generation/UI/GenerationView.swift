@@ -1547,6 +1547,22 @@ struct GenerationView: View {
     }
 
     private func submitGeneration() {
+        // Panel input is intent, not a model prompt (#100) — compile through the gate first.
+        let raw = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { performSubmitGeneration(compiledPrompt: raw); return }
+        Task { @MainActor in
+            do {
+                let compiled = try await PromptCompiler.compile(intent: raw, modelId: currentModelId, editor: editor)
+                performSubmitGeneration(compiledPrompt: compiled.text)
+            } catch let toolError as ToolError {
+                flashDropError(toolError.message)
+            } catch {
+                flashDropError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func performSubmitGeneration(compiledPrompt: String) {
         let audioDuration: Int = {
             guard selectedType == .audio else { return 0 }
             if audioModel.inputs.contains(.video) { return effectiveAudioVideoSeconds }
@@ -1557,7 +1573,7 @@ struct GenerationView: View {
             return
         }
         var genInput = GenerationInput(
-            prompt: prompt,
+            prompt: compiledPrompt,
             model: currentModelId,
             duration: selectedType == .video ? effectiveVideoSeconds : audioDuration,
             aspectRatio: selectedAspectRatio,

@@ -296,7 +296,25 @@ struct MusicTab: View {
     private func generate() {
         note = nil
         guard let model else { return }
-        let trimmed = trimmedPrompt.isEmpty ? nil : trimmedPrompt
+        // Panel input is intent, not a model prompt (#100): the deterministic gate (locked ledger
+        // directives, model limits) runs before anything reaches a provider.
+        let raw = trimmedPrompt.isEmpty ? nil : trimmedPrompt
+        guard let raw else { performGenerate(compiledPrompt: nil); return }
+        Task { @MainActor in
+            do {
+                let compiled = try await PromptCompiler.compile(intent: raw, modelId: model.id, editor: editor)
+                performGenerate(compiledPrompt: compiled.text)
+            } catch let toolError as ToolError {
+                note = toolError.message
+            } catch {
+                note = error.localizedDescription
+            }
+        }
+    }
+
+    private func performGenerate(compiledPrompt: String?) {
+        guard let model else { return }
+        let trimmed = compiledPrompt
         let submission: MusicGenerationSubmission
         if isTextMode {
             let frameCount = max(1, Int(textDuration * Double(max(1, editor.timeline.fps))))
