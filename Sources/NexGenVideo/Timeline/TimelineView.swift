@@ -121,7 +121,7 @@ final class TimelineView: NSView {
             contentHeight = visibleSize.height
         } else {
             let lastTrack = editor.timeline.tracks.count - 1
-            contentHeight = max(visibleSize.height, geo.trackY(at: lastTrack) + geo.trackHeight(at: lastTrack) + Layout.dropZoneHeight)
+            contentHeight = max(visibleSize.height, geo.trackY(at: lastTrack) + geo.trackHeight(at: lastTrack) + geo.dropZoneHeight)
         }
         let newSize = NSSize(width: max(visibleSize.width, contentWidth), height: contentHeight)
         if frame.size != newSize {
@@ -547,7 +547,7 @@ final class TimelineView: NSView {
             return geo.clipRect(for: probe, trackIndex: idx)
         case .newTrackAt(let idx):
             let trackCount = editor.timeline.tracks.count
-            let top = geo.rulerHeight + Layout.dropZoneHeight
+            let top = geo.rulerHeight + geo.dropZoneHeight
             let y: CGFloat
             if trackCount == 0 {
                 y = top + CGFloat(idx) * height

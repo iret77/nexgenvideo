@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The window chrome row. The project window hides the system title and extends content beneath a
@@ -22,7 +23,14 @@ struct TitleBarView: View {
         .padding(.horizontal, AppTheme.Spacing.lg)
         .frame(maxWidth: .infinity)
         .frame(height: Layout.titleBarChromeHeight)
-        .background(AppTheme.Background.raisedColor)
+        .background(
+            // Double-click the bare titlebar to zoom the window (macOS convention). It's a
+            // background layer, so the buttons on top take their clicks first — only empty
+            // titlebar area double-clicks zoom.
+            Rectangle()
+                .fill(AppTheme.Background.raisedColor)
+                .onTapGesture(count: 2) { NSApp.keyWindow?.zoom(nil) }
+        )
         .overlay(alignment: .bottom) {
             Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.hairline)
         }
