@@ -67,10 +67,15 @@ enum ProviderKeychain {
 }
 
 extension GenerationProvider {
-    /// The provider that actually services a generation model id. The runtime routes Marble models
-    /// to Marble and everything else to fal (the only two wired backends today).
+    /// The provider that actually services a generation model id. Marble models go to Marble;
+    /// ElevenLabs-family models go DIRECTLY to ElevenLabs when the user's key is present (their
+    /// account, no fal middleman) and fall back to fal's hosted endpoints otherwise; the rest is fal.
     static func servicing(modelId: String) -> GenerationProvider {
-        MarbleModelRegistry.isMarbleModel(modelId) ? .marble : .fal
+        if MarbleModelRegistry.isMarbleModel(modelId) { return .marble }
+        if modelId.hasPrefix("fal-ai/elevenlabs"), GenerationProvider.elevenlabs.hasKey {
+            return .elevenlabs
+        }
+        return .fal
     }
     /// Whether a BYO API key is configured for this provider. A model whose provider has no key
     /// is accepted by the generate tools but fails at request time — gate on this first.

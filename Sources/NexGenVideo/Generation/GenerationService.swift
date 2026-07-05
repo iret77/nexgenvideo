@@ -326,6 +326,18 @@ final class GenerationService {
             return
         }
 
+        // ElevenLabs-family models run directly against the user's ElevenLabs key when present
+        // (their account, no fal middleman); without one they fall through to fal's hosted endpoints.
+        if endpoint.hasPrefix("fal-ai/elevenlabs"), ProviderKeychain.load(.elevenlabs) != nil,
+           case .audio(let audioParams) = params {
+            await runElevenLabsJob(
+                endpoint: endpoint, params: audioParams,
+                placeholders: placeholders, editor: editor,
+                onComplete: onComplete, onFailure: onFailure
+            )
+            return
+        }
+
         let falModel = FalModelRegistry.model(for: endpoint)
         let input: [String: Any]
         let shape: CatalogEntry.ResponseShape
@@ -406,6 +418,56 @@ final class GenerationService {
                 editor: editor,
                 onComplete: onComplete,
                 onFailure: onFailure
+            )
+        } catch {
+            failJob(placeholders, error.localizedDescription, onFailure)
+        }
+    }
+
+    private func runElevenLabsJob(
+        endpoint: String,
+        params: AudioGenerationParams,
+        placeholders: [MediaAsset],
+        editor: EditorViewModel,
+        onComplete: (@MainActor (MediaAsset) -> Void)?,
+        onFailure: (@MainActor () -> Void)?
+    ) async {
+        guard let apiKey = ProviderKeychain.load(.elevenlabs) else {
+            return failJob(placeholders, "Add an ElevenLabs API key in Settings to generate.", onFailure)
+        }
+        guard let placeholder = placeholders.first else { return }
+        do {
+            let client = ElevenLabsClient(apiKey: apiKey)
+            let data: Data
+            switch endpoint {
+            case "fal-ai/elevenlabs/tts/multilingual-v2":
+                data = try await client.textToSpeech(text: params.prompt, voiceName: params.voice ?? "Rachel")
+            case "fal-ai/elevenlabs/sound-effects":
+                data = try await client.soundEffect(
+                    text: params.prompt, durationSeconds: params.durationSeconds.map(Double.init))
+            case "fal-ai/elevenlabs/music":
+                data = try await client.music(
+                    prompt: params.prompt,
+                    lengthMs: (params.durationSeconds ?? 90) * 1000,
+                    forceInstrumental: params.instrumental)
+            default:
+                return failJob(placeholders, "Unsupported ElevenLabs model: \(endpoint)", onFailure)
+            }
+            // Bytes arrive directly (no result URL) — write to the placeholder's destination and
+            // run the same finalize steps downloadAndFinalize performs after its move.
+            try? FileManager.default.removeItem(at: placeholder.url)
+            try data.write(to: placeholder.url, options: .atomic)
+            placeholder.generationStatus = .none
+            editor.importMediaAsset(placeholder, skipAppend: true)
+            editor.appendGenerationLog(for: placeholder)
+            await editor.finalizeImportedAsset(placeholder)
+            onComplete?(placeholder)
+            AppNotifications.generationComplete(
+                assetId: placeholder.id,
+                projectURL: editor.projectURL,
+                assetName: placeholder.name,
+                assetType: placeholder.type,
+                count: 1
             )
         } catch {
             failJob(placeholders, error.localizedDescription, onFailure)
