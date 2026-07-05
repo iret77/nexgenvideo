@@ -1,15 +1,18 @@
 import SwiftUI
 
-/// The composer-dock rendering of a pending `AgentDialog` (locked placement architecture, #96):
-/// a native card docked ABOVE the input — the input itself becomes the dialog-scoped free text.
-/// Submit composes ONE structured message back to the agent (the transcript record), Esc/X cancels.
+/// The docked rendering of a pending `AgentDialog` (locked placement architecture, #96): a native
+/// card that shapes a step with clicks instead of prose. Presenter-agnostic — the agent panel hosts
+/// it to compose a chat message, the generation panels host it to compile a prompt — so it takes an
+/// `onSubmit`/`onCancel` pair and owns its own dialog-scoped free-text field. Never a modal, never a
+/// transcript card.
 struct AgentDialogCard: View {
     let dialog: AgentDialog
-    @Environment(EditorViewModel.self) private var editor
+    let onSubmit: (AgentDialogResult) -> Void
+    let onCancel: () -> Void
 
-    /// Selection state per section id. Choices hold selected option ids; toggles hold "on".
     @State private var choiceSelections: [String: Set<String>] = [:]
     @State private var toggleStates: [String: Bool] = [:]
+    @State private var direction: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
@@ -23,6 +26,7 @@ struct AgentDialogCard: View {
             ForEach(dialog.sections) { section in
                 sectionView(section)
             }
+            directionField
             footerRow
         }
         .padding(AppTheme.Spacing.md)
@@ -49,9 +53,7 @@ struct AgentDialogCard: View {
                 .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.sm)
-            Button {
-                editor.agentService.cancelDialog()
-            } label: {
+            Button(action: onCancel) {
                 Image(systemName: "xmark")
                     .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
@@ -94,6 +96,23 @@ struct AgentDialogCard: View {
         }
     }
 
+    private var directionField: some View {
+        TextField(dialog.textPlaceholder ?? "Add direction (optional)…", text: $direction, axis: .vertical)
+            .textFieldStyle(.plain)
+            .lineLimit(1...3)
+            .font(.system(size: AppTheme.FontSize.xs))
+            .foregroundStyle(AppTheme.Text.primaryColor)
+            .padding(AppTheme.Spacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                    .fill(Color.black.opacity(AppTheme.Opacity.muted))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                    .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+            )
+    }
+
     private var footerRow: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             if let cost = dialog.costHint {
@@ -128,22 +147,19 @@ struct AgentDialogCard: View {
         choiceSelections[sectionId] = current
     }
 
-    /// Compose the ONE structured answer message — the compact transcript record the locked
-    /// architecture calls for — and hand it (plus the dialog-scoped free text) back to the agent.
     private func submit() {
-        var parts: [String] = []
+        var selectedLabels: [String: [String]] = [:]
         for section in dialog.sections {
-            switch section.kind {
-            case .choices(let options, _):
+            if case .choices(let options, _) = section.kind {
                 let picked = options.filter { (choiceSelections[section.id] ?? []).contains($0.id) }
-                if !picked.isEmpty {
-                    parts.append("\(section.label): \(picked.map(\.label).joined(separator: ", "))")
-                }
-            case .toggle:
-                parts.append("\(section.label): \((toggleStates[section.id] ?? false) ? "yes" : "no")")
+                if !picked.isEmpty { selectedLabels[section.id] = picked.map(\.label) }
             }
         }
-        editor.agentService.submitDialog(title: dialog.title, answers: parts)
+        onSubmit(AgentDialogResult(
+            selectedLabels: selectedLabels,
+            toggles: toggleStates,
+            direction: direction.trimmingCharacters(in: .whitespacesAndNewlines)
+        ))
     }
 }
 

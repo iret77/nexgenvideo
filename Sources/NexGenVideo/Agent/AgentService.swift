@@ -90,12 +90,18 @@ final class AgentService {
     /// wait for the next user message either way).
     var pendingDialog: AgentDialog?
 
-    func submitDialog(title: String, answers: [String]) {
+    func submitDialog(_ dialog: AgentDialog, result: AgentDialogResult) {
         pendingDialog = nil
-        let direction = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        var line = "Dialog \u{201C}\(title)\u{201D} \u{2014} " + (answers.isEmpty ? "confirmed" : answers.joined(separator: "; "))
-        if !direction.isEmpty { line += ". Direction: \(direction)" }
-        draft = ""
+        var parts: [String] = []
+        for section in dialog.sections {
+            let picked = result.labels(section.id)
+            if !picked.isEmpty { parts.append("\(section.label): \(picked.joined(separator: ", "))") }
+            if case .toggle = section.kind {
+                parts.append("\(section.label): \((result.toggles[section.id] ?? false) ? "yes" : "no")")
+            }
+        }
+        var line = "Dialog \u{201C}\(dialog.title)\u{201D} \u{2014} " + (parts.isEmpty ? "confirmed" : parts.joined(separator: "; "))
+        if !result.direction.isEmpty { line += ". Direction: \(result.direction)" }
         send(text: line, mentions: [])
     }
 

@@ -119,10 +119,7 @@ struct AgentInputBox<LeadingTools: View>: View {
                 }
 
             if draft.isEmpty {
-                Text(editor.agentService.pendingDialog?.textPlaceholder
-                     ?? (editor.agentService.pendingDialog != nil
-                         ? "Add direction for this step\u{2026}"
-                         : "Ask, or type @ to reference media"))
+                Text("Ask, or type @ to reference media")
                     .font(.body)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .padding(.horizontal, AppTheme.Spacing.lgXl)

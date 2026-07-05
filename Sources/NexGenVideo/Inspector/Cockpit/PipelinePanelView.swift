@@ -34,7 +34,8 @@ struct PipelinePanelView: View {
         case .failed(let error):
             CockpitStateView.error(error, title: "Couldn't load the pipeline",
                                    subject: "the pipeline",
-                                   startProduction: { editor.startProduction() }) { Task { await load() } }
+                                   startProduction: { editor.startProduction() },
+                                   isStarting: editor.productionStarting) { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No pipeline yet",
                                    message: "This project has no phase state.")

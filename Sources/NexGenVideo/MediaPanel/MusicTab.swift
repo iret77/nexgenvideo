@@ -9,7 +9,16 @@ struct MusicTab: View {
     @State private var textDuration: Double = 90
     @State private var isGenerating = false
     @State private var generatingLabel = "Generating..."
-    @State private var note: String?
+    /// Runtime feedback distinct from the calm validation guidance below the field: a failed render
+    /// (error) or a finished one (success). Auto-clears; never shown in alarm-red for a mere "not
+    /// ready yet" state.
+    @State private var banner: Banner?
+    /// The generative shaping dialog (#96): opened when the intent is too thin to compile, so the
+    /// user shapes mood/character with clicks — the panel path enters the same generative flow the
+    /// agent uses, never a silent render.
+    @State private var genDialog: AgentDialog?
+
+    private struct Banner: Equatable { let text: String; let kind: Kind; enum Kind { case success, error } }
 
     // Every music model belongs here — filtering on a video input hid text-to-music models
     // entirely and showed "No music models available" although the catalog had them.
@@ -67,7 +76,7 @@ struct MusicTab: View {
     private var validationNote: String? {
         guard let model else { return "No music models available." }
         if isTextMode {
-            if trimmedPrompt.isEmpty { return "Describe the music to generate." }
+            if trimmedPrompt.isEmpty { return "Describe the music — or tap Generate to shape it." }
         } else {
             guard source != nil else {
                 return "Add video to the timeline, then mark a range to score only part of it."
@@ -78,7 +87,11 @@ struct MusicTab: View {
     }
 
     private var canGenerate: Bool {
-        model != nil && validationNote == nil && !isGenerating
+        guard let model, !isGenerating else { return false }
+        // Text mode is always actionable: an empty intent opens the generative shaping dialog
+        // rather than blocking. Video mode still needs a valid source span.
+        if isTextMode { return true }
+        return source != nil && model.validate(spanSeconds: spanSeconds) == nil
     }
 
     private var generateLabel: String {
@@ -105,6 +118,14 @@ struct MusicTab: View {
                     .padding(.top, AppTheme.Spacing.md)
                     .padding(.bottom, AppTheme.Spacing.md)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                if let dialog = genDialog {
+                    AgentDialogCard(
+                        dialog: dialog,
+                        onSubmit: { result in runGeneration(from: result) },
+                        onCancel: { genDialog = nil }
+                    )
+                    .padding(.bottom, AppTheme.Spacing.sm)
                 }
                 generateBar
             }
@@ -191,30 +212,44 @@ struct MusicTab: View {
     }
 
     private var promptSection: some View {
-        InspectorSection(model?.promptLabel ?? "Prompt") {
-            TextField(model?.promptLabel ?? "", text: $prompt, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(2...5)
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.primaryColor)
-                .padding(AppTheme.Spacing.smMd)
-                .background(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                        .fill(AppTheme.Background.raisedColor)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                        .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
-                )
+        InspectorSection("Direction") {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                TextField("Mood, genre, energy, instruments…", text: $prompt, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(2...5)
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                    .padding(AppTheme.Spacing.smMd)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                            .fill(AppTheme.Background.raisedColor)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                            .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+                    )
+                // Names the contract: this is intent, not the literal model prompt — NexGenVideo
+                // compiles it (translate, context, model dialect) before anything is generated.
+                Text("NexGenVideo writes the model prompt from this.")
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+            }
         }
     }
 
     private var generateBar: some View {
         VStack(spacing: AppTheme.Spacing.sm) {
-            if let note = note ?? validationNote {
-                Text(note)
+            if let banner {
+                Text(banner.text)
                     .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
-                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .foregroundStyle(banner.kind == .error ? AppTheme.Status.errorColor : AppTheme.Status.successColor)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let guidance = validationNote {
+                // Calm guidance, not an error — an empty field is "not ready yet", not a failure.
+                Text(guidance)
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -294,22 +329,75 @@ struct MusicTab: View {
     }
 
     private func generate() {
-        note = nil
+        banner = nil
         guard let model else { return }
-        // Panel input is intent, not a model prompt (#100): the deterministic gate (locked ledger
-        // directives, model limits) runs before anything reaches a provider.
-        let raw = trimmedPrompt.isEmpty ? nil : trimmedPrompt
-        guard let raw else { performGenerate(compiledPrompt: nil); return }
+        // Text mode with no direction → enter the generative flow: shape the music with the dialog
+        // instead of firing a silent, under-specified render.
+        if isTextMode, trimmedPrompt.isEmpty {
+            genDialog = Self.makeMusicDialog(model: model)
+            return
+        }
+        compileAndGenerate(intent: trimmedPrompt.isEmpty ? nil : trimmedPrompt, model: model)
+    }
+
+    /// Deterministic prompt gate (#100), then submit. Panel input is intent, never a raw model
+    /// prompt: locked ledger directives fold in and model limits are enforced before any provider.
+    private func compileAndGenerate(intent: String?, model: AudioModelConfig) {
+        guard let intent else { performGenerate(compiledPrompt: nil); return }
         Task { @MainActor in
             do {
-                let compiled = try await PromptCompiler.compile(intent: raw, modelId: model.id, editor: editor)
+                let compiled = try await PromptCompiler.compile(intent: intent, modelId: model.id, editor: editor)
                 performGenerate(compiledPrompt: compiled.text)
             } catch let toolError as ToolError {
-                note = toolError.message
+                banner = .init(text: toolError.message, kind: .error)
             } catch {
-                note = error.localizedDescription
+                banner = .init(text: error.localizedDescription, kind: .error)
             }
         }
+    }
+
+    /// The generative shaping dialog result (chips + free-text direction) becomes the intent, then
+    /// runs the same compile→generate path. This is the panel entering the generative process.
+    private func runGeneration(from result: AgentDialogResult) {
+        guard let model else { return }
+        genDialog = nil
+        var parts = result.labels("mood") + result.labels("character")
+        if !result.direction.isEmpty { parts.append(result.direction) }
+        let intent = parts.joined(separator: ", ")
+        guard !intent.isEmpty else { return }
+        prompt = intent
+        compileAndGenerate(intent: intent, model: model)
+    }
+
+    /// A music-shaping dialog seeded for the current model — mood (single) + character (multi) as
+    /// chips, plus a free-text direction. Length stays a first-class field in the panel above.
+    private static func makeMusicDialog(model: AudioModelConfig) -> AgentDialog {
+        AgentDialog(
+            id: UUID().uuidString,
+            title: "Shape the music",
+            symbol: "music.note",
+            intro: "Pick a direction, or type your own — NexGenVideo writes the model prompt.",
+            costHint: nil,
+            confirmLabel: "Generate",
+            textPlaceholder: "Anything specific (instruments, reference, mood)…",
+            sections: [
+                AgentDialog.Section(id: "mood", label: "Mood", kind: .choices(options: [
+                    .init(id: "cinematic", label: "Cinematic", symbol: "film"),
+                    .init(id: "upbeat", label: "Upbeat", symbol: "bolt.fill"),
+                    .init(id: "ambient", label: "Ambient", symbol: "waveform"),
+                    .init(id: "tense", label: "Tense", symbol: "exclamationmark.triangle"),
+                    .init(id: "lofi", label: "Lo-fi", symbol: "dial.low"),
+                    .init(id: "melancholic", label: "Melancholic", symbol: "cloud.rain"),
+                ], multiSelect: false)),
+                AgentDialog.Section(id: "character", label: "Character", kind: .choices(options: [
+                    .init(id: "driving", label: "Driving", symbol: "gauge.high"),
+                    .init(id: "sparse", label: "Sparse", symbol: "circle.dotted"),
+                    .init(id: "warm", label: "Warm", symbol: "sun.max"),
+                    .init(id: "dark", label: "Dark", symbol: "moon.fill"),
+                    .init(id: "playful", label: "Playful", symbol: "sparkles"),
+                ], multiSelect: true)),
+            ]
+        )
     }
 
     private func performGenerate(compiledPrompt: String?) {
@@ -332,6 +420,7 @@ struct MusicTab: View {
         }
 
         isGenerating = true
+        banner = nil
         generatingLabel = (isTextMode ? MusicGenerationSubmission.Phase.generating : .exporting).label
         Task {
             do {
@@ -340,10 +429,15 @@ struct MusicTab: View {
                     projectURL: editor.projectURL,
                     editor: editor,
                     onPhase: { generatingLabel = $0.label },
-                    onFinished: { isGenerating = false }
+                    onFinished: { isGenerating = false },
+                    onSucceeded: {
+                        // Audio lands on an audio track below the fold — say so, and it's already
+                        // selected on the timeline so the eye can find it.
+                        banner = .init(text: "Music added on an audio track — selected on the timeline.", kind: .success)
+                    }
                 )
             } catch {
-                note = error.localizedDescription
+                banner = .init(text: error.localizedDescription, kind: .error)
                 isGenerating = false
             }
         }

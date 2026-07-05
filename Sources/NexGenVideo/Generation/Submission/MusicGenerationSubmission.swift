@@ -29,7 +29,8 @@ struct MusicGenerationSubmission {
         projectURL: URL?,
         editor: EditorViewModel,
         onPhase: @MainActor (Phase) -> Void = { _ in },
-        onFinished: @escaping @MainActor () -> Void = {}
+        onFinished: @escaping @MainActor () -> Void = {},
+        onSucceeded: @escaping @MainActor () -> Void = {}
     ) async throws {
         let videoURL: String? = nil
         if mode == .videoToMusic {
@@ -76,6 +77,7 @@ struct MusicGenerationSubmission {
             editor: editor,
             onComplete: { asset in
                 editor.finalizeGeneratingClip(placeholderId: asset.id, asset: asset)
+                onSucceeded()
                 onFinished()
             },
             onFailure: { onFinished() }
@@ -84,5 +86,7 @@ struct MusicGenerationSubmission {
             placeholderId: placeholderId, startFrame: startFrame, spanSeconds: spanSeconds,
             actionName: "Add Music"
         )
+        // Reveal where it landed — audio tracks sit below the fold, so the placeholder is easy to miss.
+        editor.selectedClipIds = [placeholderId]
     }
 }

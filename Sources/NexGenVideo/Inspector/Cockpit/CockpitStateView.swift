@@ -12,6 +12,7 @@ enum CockpitStateView {
         title: String,
         subject: String,
         startProduction: (() -> Void)? = nil,
+        isStarting: Bool = false,
         retry: @escaping () -> Void
     ) -> some View {
         // `.engineNotReady` and `.notInitialized` are normal guidance states, not failures — calm copy,
@@ -27,8 +28,10 @@ enum CockpitStateView {
             detail = "Set up the engine in Settings to view \(subject)."
         case .notInitialized:
             icon = "wand.and.stars"
-            headline = "No production pipeline"
-            detail = "This project isn't set up for AI production yet."
+            headline = isStarting ? "Setting up production…" : "No production pipeline"
+            detail = isStarting
+                ? "The agent is scaffolding the pipeline and will ask about your video's direction. Watch the Agent panel."
+                : "This project isn't set up for AI production yet."
         default:
             icon = "exclamationmark.triangle"
             headline = title
@@ -49,9 +52,20 @@ enum CockpitStateView {
             if error == .notInitialized {
                 // The generic workflow is never plugin-gated: production is one action away.
                 if let startProduction {
-                    Button("Start production", action: startProduction)
-                        .buttonStyle(.capsule(.prominent, size: .regular))
+                    if isStarting {
+                        // Visible in-flight state instead of an inert button the user taps repeatedly.
+                        HStack(spacing: AppTheme.Spacing.sm) {
+                            ProgressView().controlSize(.small)
+                            Text("Starting…")
+                                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        }
                         .padding(.top, AppTheme.Spacing.xs)
+                    } else {
+                        Button("Start production", action: startProduction)
+                            .buttonStyle(.capsule(.prominent, size: .regular))
+                            .padding(.top, AppTheme.Spacing.xs)
+                    }
                 }
             } else {
                 Button("Retry", action: retry)

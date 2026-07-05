@@ -5,6 +5,18 @@ import Foundation
 /// would cover the material the user decides on), never an interactive card in the transcript (it
 /// would rot there). Exactly one pending dialog; the user's structured answer flows back as the
 /// next user message; the free-text field is the existing input, scoped to this dialog.
+/// The user's answer to a presented dialog — selected labels per section, toggle states, and the
+/// dialog-scoped free-text direction. Presenter-agnostic: the agent panel turns it into a chat
+/// message; a generation panel turns it into a compiled prompt.
+struct AgentDialogResult: Sendable, Equatable {
+    var selectedLabels: [String: [String]]
+    var toggles: [String: Bool]
+    var direction: String
+
+    func labels(_ sectionId: String) -> [String] { selectedLabels[sectionId] ?? [] }
+    var allLabels: [String] { selectedLabels.values.flatMap { $0 } }
+}
+
 struct AgentDialog: Identifiable, Equatable, Sendable {
 
     struct Choice: Identifiable, Equatable, Sendable {

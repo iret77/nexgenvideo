@@ -232,17 +232,29 @@ final class EditorViewModel {
     /// production — no plugin required. Composes a deterministic agent command (concrete paths, no
     /// guessing) that initializes the engine pipeline inside the project package, then hands off to
     /// assisted brief drafting. Plugins later SPECIALIZE this generic baseline; they never gate it.
+    /// True while a production start is in flight — drives the CTA's "Starting…" state and blocks the
+    /// repeat taps that happened when nothing visibly changed. Cleared when the engine state reloads
+    /// (agent turn finished) in `refreshEngineState()`.
+    private(set) var productionStarting = false
+
     func startProduction() {
-        guard let url = projectURL else { return }
-        let home = url.deletingLastPathComponent().path
-        let name = url.lastPathComponent
+        guard let url = projectURL, !productionStarting else { return }
+        // init_project creates `<home_dir>/_studio` — the cockpit reads `<projectURL>/_studio`, so
+        // home_dir MUST be the package itself (passing the parent put _studio as a sibling and the
+        // cockpit found nothing). name is the display name; it's only recorded in project.yaml.
+        let home = url.path
+        let name = url.deletingPathExtension().lastPathComponent
+        productionStarting = true
+        // Produce focus surfaces the cockpit + agent together, so the work is visible instead of
+        // buried in a chat panel the user has to notice.
+        workspaceFocus = .produce
+        agentPanelVisible = true
         agentService.send(
             text: "Set up AI production for this project: call init_project with home_dir \"\(home)\" and "
-                + "name \"\(name)\" so the pipeline lives inside the project package. Then walk me through "
-                + "drafting the brief \u{2014} ask me about the video's direction first.",
+                + "name \"\(name)\". This creates the pipeline (_studio) inside the project package. Then walk "
+                + "me through drafting the brief \u{2014} ask me about the video's direction first.",
             mentions: []
         )
-        agentPanelVisible = true
     }
 
     /// Directory the studio engine reads/writes for cockpit data (Bible, shotlist, sanity, `_studio/`).
@@ -378,6 +390,9 @@ final class EditorViewModel {
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
     func refreshEngineState() async {
+        // The agent turn that a Start-production tap kicked off has finished; release the CTA lock so
+        // it reflects the (now initialized, or still-empty) reality.
+        productionStarting = false
         guard let dir = studioProjectDir else {
             bible = nil
             shotlist = nil

@@ -56,8 +56,12 @@ struct AgentPanelView: View {
                 floatingTabBar
             }
             if let dialog = service.pendingDialog {
-                AgentDialogCard(dialog: dialog)
-                    .padding(.bottom, AppTheme.Spacing.xs)
+                AgentDialogCard(
+                    dialog: dialog,
+                    onSubmit: { result in service.submitDialog(dialog, result: result) },
+                    onCancel: { service.cancelDialog() }
+                )
+                .padding(.bottom, AppTheme.Spacing.xs)
             }
             footer
         }
