@@ -326,6 +326,15 @@ final class GenerationService {
             return
         }
 
+        if HiggsfieldModelRegistry.isHiggsfieldModel(endpoint) {
+            await runHiggsfieldJob(
+                endpoint: endpoint, params: params,
+                placeholders: placeholders, editor: editor,
+                onComplete: onComplete, onFailure: onFailure
+            )
+            return
+        }
+
         if RunwayModelRegistry.isRunwayModel(endpoint) {
             await runRunwayJob(
                 endpoint: endpoint, params: params,
@@ -428,6 +437,43 @@ final class GenerationService {
                 onComplete: onComplete,
                 onFailure: onFailure
             )
+        } catch {
+            failJob(placeholders, error.localizedDescription, onFailure)
+        }
+    }
+
+    private func runHiggsfieldJob(
+        endpoint: String,
+        params: BackendGenerationParams,
+        placeholders: [MediaAsset],
+        editor: EditorViewModel,
+        onComplete: (@MainActor (MediaAsset) -> Void)?,
+        onFailure: (@MainActor () -> Void)?
+    ) async {
+        guard let apiKey = ProviderKeychain.load(.higgsfield) else {
+            return failJob(placeholders, "Add a Higgsfield API key in Settings to generate.", onFailure)
+        }
+        guard let model = HiggsfieldModelRegistry.model(for: endpoint) else {
+            return failJob(placeholders, "Unknown Higgsfield model: \(endpoint)", onFailure)
+        }
+        guard case .video(let p) = params else {
+            return failJob(placeholders, "Unsupported Higgsfield request: \(endpoint)", onFailure)
+        }
+        guard let image = p.referenceImageURLs.first ?? p.startFrameURL else {
+            return failJob(placeholders,
+                           "\(model.entry.displayName) is image-to-video — add a reference image.",
+                           onFailure)
+        }
+        do {
+            let client = HiggsfieldClient(apiKey: apiKey)
+            let urls = try await client.dopImageToVideo(
+                model: model.apiModel, prompt: p.prompt, imageURL: image)
+            let job = BackendGenerationJob(
+                _id: UUID().uuidString, status: .succeeded, resultUrls: urls,
+                errorMessage: nil, costCredits: nil, completedAt: nil)
+            await finalizeSuccess(
+                job: job, placeholders: placeholders, editor: editor,
+                onComplete: onComplete, onFailure: onFailure)
         } catch {
             failJob(placeholders, error.localizedDescription, onFailure)
         }

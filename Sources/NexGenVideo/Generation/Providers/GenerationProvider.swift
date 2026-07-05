@@ -7,6 +7,7 @@ extension Notification.Name {
 enum GenerationProvider: String, CaseIterable, Identifiable {
     case fal
     case runway
+    case higgsfield
     case elevenlabs
     case marble
 
@@ -16,6 +17,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable {
         switch self {
         case .fal: return "fal.ai"
         case .runway: return "Runway"
+        case .higgsfield: return "Higgsfield"
         case .elevenlabs: return "ElevenLabs"
         case .marble: return "Marble"
         }
@@ -25,6 +27,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable {
         switch self {
         case .fal: return "Video · Image · Audio"
         case .runway: return "Video"
+        case .higgsfield: return "Video \u{00B7} key format: KEY_ID:KEY_SECRET"
         case .elevenlabs: return "Voice · SFX · Music"
         case .marble: return "3D World · Panorama"
         }
@@ -34,6 +37,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable {
         switch self {
         case .fal: return URL(string: "https://fal.ai/dashboard/keys")!
         case .runway: return URL(string: "https://dev.runwayml.com")!
+        case .higgsfield: return URL(string: "https://cloud.higgsfield.ai")!
         case .elevenlabs: return URL(string: "https://elevenlabs.io/app/settings/api-keys")!
         case .marble: return URL(string: "https://platform.worldlabs.ai/")!
         }
@@ -65,6 +69,7 @@ extension GenerationProvider {
     static func servicing(modelId: String) -> GenerationProvider {
         if MarbleModelRegistry.isMarbleModel(modelId) { return .marble }
         if RunwayModelRegistry.isRunwayModel(modelId) { return .runway }
+        if HiggsfieldModelRegistry.isHiggsfieldModel(modelId) { return .higgsfield }
         if modelId.hasPrefix("fal-ai/elevenlabs"), GenerationProvider.elevenlabs.hasKey {
             return .elevenlabs
         }
