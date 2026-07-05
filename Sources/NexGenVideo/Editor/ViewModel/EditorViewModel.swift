@@ -299,6 +299,12 @@ final class EditorViewModel {
         if focus == .produce {
             leftSidebarTab = .agent
             toolMode = .pointer
+            // The timeline is display-only here — a surviving Edit selection would drag the
+            // clip batch inspector onto the Produce stage.
+            selectedClipIds = []
+            selectedGap = nil
+            selectedTimelineRange = nil
+            isMarqueeSelecting = false
         }
     }
 
