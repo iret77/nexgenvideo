@@ -70,8 +70,8 @@ struct ReviewPanelView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let error):
             CockpitStateView.error(error, title: "Couldn't load frames",
-                                   startProduction: { editor.startProduction() },
-                                   subject: "the frames") { Task { await load() } }
+                                   subject: "the frames",
+                                   startProduction: { editor.startProduction() }) { Task { await load() } }
         case .loaded(let data):
             if let data, !data.shots.isEmpty {
                 loadedBody(data)
