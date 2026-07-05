@@ -330,7 +330,9 @@ final class VideoProject: NSDocument {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
-        window.isMovableByWindowBackground = true
+        // Background-drag fought the timeline: dragging a clip also dragged the whole window (both
+        // moved at once). The window still drags by its transparent titlebar row.
+        window.isMovableByWindowBackground = false
         window.backgroundColor = NSColor(AppTheme.Background.surfaceColor)
         window.center()
 
