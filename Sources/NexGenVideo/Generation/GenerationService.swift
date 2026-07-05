@@ -381,7 +381,10 @@ final class GenerationService {
         }
 
         do {
-            let inputBody = try JSONSerialization.data(withJSONObject: ["input": input])
+            // fal's raw HTTP queue API takes the input fields at the top level — NOT wrapped in
+            // an "input" key (that is only the JS/Python SDK convention). Wrapping made fal see no
+            // recognized fields and reject every job, so no fal generation ever produced an asset.
+            let inputBody = try JSONSerialization.data(withJSONObject: input)
             let client = FalClient(apiKey: apiKey)
             let requestId = try await client.submit(endpoint: endpoint, inputBody: inputBody)
             let outputData = try await client.result(endpoint: endpoint, requestId: requestId)

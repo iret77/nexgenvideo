@@ -383,6 +383,19 @@ extension ToolExecutor {
         if filter == nil || filter == "upscale" {
             out += UpscaleModelConfig.allModels.map { Self.upscaleModelInfo($0) }
         }
+        // A model whose backing provider has no API key is accepted but fails at request time.
+        // Surface that here so the agent doesn't pick an unusable model and misread the failure.
+        out = out.map { info in
+            guard let id = info["id"] as? String else { return info }
+            var info = info
+            let provider = GenerationProvider.servicing(modelId: id)
+            let available = provider.hasKey
+            info["available"] = available
+            if !available {
+                info["unavailableReason"] = "No \(provider.displayName) API key — add one in Settings → Providers to use this model."
+            }
+            return info
+        }
         let body: [String: Any] = [
             "models": out,
             "loaded": ModelCatalog.shared.isLoaded,

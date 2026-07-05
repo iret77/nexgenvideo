@@ -65,3 +65,14 @@ enum ProviderKeychain {
         NotificationCenter.default.post(name: .providerKeysChanged, object: nil)
     }
 }
+
+extension GenerationProvider {
+    /// The provider that actually services a generation model id. The runtime routes Marble models
+    /// to Marble and everything else to fal (the only two wired backends today).
+    static func servicing(modelId: String) -> GenerationProvider {
+        MarbleModelRegistry.isMarbleModel(modelId) ? .marble : .fal
+    }
+    /// Whether a BYO API key is configured for this provider. A model whose provider has no key
+    /// is accepted by the generate tools but fails at request time — gate on this first.
+    var hasKey: Bool { ProviderKeychain.load(self) != nil }
+}

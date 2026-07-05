@@ -17,8 +17,8 @@ actor FalClient {
     private static let pollInterval: UInt64 = 1_500_000_000 // 1.5s
     private static let maxWait: TimeInterval = 10 * 60 // 10 min
 
-    /// Submit a job to the queue; `inputBody` is the serialized `{"input": …}`
-    /// payload. Returns the request id.
+    /// Submit a job to the queue; `inputBody` is the serialized input object with its fields at
+    /// the top level (the HTTP queue API's shape — not the SDK's `{"input": …}`). Returns the request id.
     func submit(endpoint: String, inputBody: Data) async throws -> String {
         guard let url = URL(string: "\(Self.queueBase)/\(endpoint)") else {
             throw GenerationBackendError.transport("Invalid fal endpoint: \(endpoint)")

@@ -5,6 +5,8 @@ struct ModelsPane: View {
     private var catalog = ModelCatalog.shared
 
     @State private var query = ""
+    /// Bumped when provider keys change so availability (which reads the keychain) re-renders live.
+    @State private var keyRevision = 0
 
     private struct Row: Identifiable {
         let id: String
@@ -46,6 +48,9 @@ struct ModelsPane: View {
                     sectionView(section)
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
+            keyRevision += 1
         }
     }
 
@@ -100,10 +105,19 @@ struct ModelsPane: View {
     }
 
     private func modelRow(_ row: Row) -> some View {
-        HStack(spacing: AppTheme.Spacing.md) {
-            Text(row.displayName)
-                .font(.system(size: AppTheme.FontSize.md))
-                .foregroundStyle(AppTheme.Text.primaryColor)
+        let provider = GenerationProvider.servicing(modelId: row.id)
+        let available = provider.hasKey
+        return HStack(spacing: AppTheme.Spacing.md) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text(row.displayName)
+                    .font(.system(size: AppTheme.FontSize.md))
+                    .foregroundStyle(available ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
+                if !available {
+                    Text("Needs \(provider.displayName) key")
+                        .font(.system(size: AppTheme.FontSize.xxs))
+                        .foregroundStyle(AppTheme.Text.mutedColor)
+                }
+            }
             Spacer(minLength: AppTheme.Spacing.lg)
             Toggle("", isOn: Binding(
                 get: { prefs.isEnabled(row.id) },
@@ -112,6 +126,7 @@ struct ModelsPane: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(.small)
+            .disabled(!available)
         }
         .padding(.vertical, AppTheme.Spacing.smMd)
     }

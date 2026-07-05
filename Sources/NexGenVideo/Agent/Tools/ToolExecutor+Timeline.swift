@@ -254,9 +254,30 @@ extension ToolExecutor {
     }
 
     func getMedia(_ editor: EditorViewModel) throws -> ToolResult {
-        guard let obj = Self.encodeAsJSONObject(editor.mediaManifest),
-              let json = Self.jsonString(roundJSONFloatingPointNumbers(obj, toPlaces: 3)) else {
-            throw ToolError("Failed to encode media manifest")
+        // Source from the live library (`mediaAssets`), not the persisted manifest: only the
+        // library knows an asset is generating/downloading/failed. A manifest entry appears
+        // only once a generation SUCCEEDS, so reading the manifest here left the agent blind to
+        // anything in-flight or failed (it would poll forever and conclude the job never ran).
+        // Per-entry shape stays identical to the manifest (toManifestEntry) plus generationStatus.
+        let projectURL = editor.projectURL
+        var entries: [Any] = []
+        for asset in editor.mediaAssets {
+            guard var obj = Self.encodeAsJSONObject(asset.toManifestEntry(projectURL: projectURL)) as? [String: Any] else {
+                continue
+            }
+            obj["generationStatus"] = asset.generationStatusToken
+            if case .failed(let message) = asset.generationStatus {
+                obj["error"] = message
+            }
+            entries.append(obj)
+        }
+        let manifest: [String: Any] = [
+            "version": editor.mediaManifest.version,
+            "entries": entries,
+            "folders": Self.encodeAsJSONObject(editor.mediaManifest.folders) ?? [],
+        ]
+        guard let json = Self.jsonString(roundJSONFloatingPointNumbers(manifest, toPlaces: 3)) else {
+            throw ToolError("Failed to encode media")
         }
         return .ok(json)
     }

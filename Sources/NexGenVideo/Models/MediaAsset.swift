@@ -49,6 +49,17 @@ final class MediaAsset: Identifiable {
         default: "Generating..."
         }
     }
+    /// Agent-facing token for get_media. The persisted manifest carries no status, so the
+    /// library (this object) is the only source that knows an asset is mid-flight or failed.
+    var generationStatusToken: String {
+        switch generationStatus {
+        case .none: "none"
+        case .generating: "generating"
+        case .downloading: "downloading"
+        case .rendering: "rendering"
+        case .failed: "failed"
+        }
+    }
 
     init(id: String = UUID().uuidString, url: URL, type: ClipType, name: String, duration: Double = 0, thumbnail: NSImage? = nil, generationInput: GenerationInput? = nil) {
         self.id = id
