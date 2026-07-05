@@ -339,23 +339,20 @@ struct ToolExecutorReadOnlyTests {
             aspectRatio: "16:9"
         )
         input.createdAt = Date(timeIntervalSinceReferenceDate: 123.123456)
-        h.editor.mediaManifest.entries = [
-            MediaManifestEntry(
-                id: "asset-1",
-                name: "Clip",
-                type: .video,
-                source: .external(absolutePath: "/tmp/media.mov"),
-                duration: 12.3456789,
-                generationInput: input,
-                sourceWidth: 1920,
-                sourceHeight: 1080,
-                sourceFPS: 29.97002997,
-                hasAudio: true,
-                folderId: nil,
-                cachedRemoteURL: nil,
-                cachedRemoteURLExpiresAt: nil
-            ),
-        ]
+        // get_media now sources from the live library (mediaAssets), not the persisted manifest.
+        let asset = MediaAsset(
+            id: "asset-1",
+            url: URL(fileURLWithPath: "/tmp/media.mov"),
+            type: .video,
+            name: "Clip",
+            duration: 12.3456789,
+            generationInput: input
+        )
+        asset.sourceWidth = 1920
+        asset.sourceHeight = 1080
+        asset.sourceFPS = 29.97002997
+        asset.hasAudio = true
+        h.editor.mediaAssets = [asset]
 
         let result = await h.runRaw("get_media")
         guard case let .text(raw) = result.content.first else {
@@ -369,6 +366,29 @@ struct ToolExecutorReadOnlyTests {
         let entry = entries?.first
         #expect(entry?["duration"] as? Double == 12.346)
         #expect(entry?["sourceFPS"] as? Double == 29.97)
+    }
+
+    @Test func getMediaSurfacesGenerationStatusForInFlightAndFailedAssets() async throws {
+        let h = ToolHarness()
+        let generating = MediaAsset(id: "gen-1", url: URL(fileURLWithPath: "/tmp/gen1.mp4"), type: .video, name: "Elephant")
+        generating.generationStatus = .generating
+        let failed = MediaAsset(id: "gen-2", url: URL(fileURLWithPath: "/tmp/gen2.mp4"), type: .video, name: "Beach")
+        failed.generationStatus = .failed("fal rejected the request")
+        h.editor.mediaAssets = [generating, failed]
+
+        let result = await h.runRaw("get_media")
+        guard case let .text(raw) = result.content.first else {
+            Issue.record("expected text content for get_media")
+            return
+        }
+        let json = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
+        let entries = (json?["entries"] as? [[String: Any]]) ?? []
+        let byId = Dictionary(uniqueKeysWithValues: entries.compactMap { e -> (String, [String: Any])? in
+            (e["id"] as? String).map { ($0, e) }
+        })
+        #expect(byId["gen-1"]?["generationStatus"] as? String == "generating")
+        #expect(byId["gen-2"]?["generationStatus"] as? String == "failed")
+        #expect(byId["gen-2"]?["error"] as? String == "fal rejected the request")
     }
 
     // MARK: - list_folders
