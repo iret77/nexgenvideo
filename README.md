@@ -16,7 +16,7 @@
 
 </div>
 
-<img src="./assets/palmier-ui.png" alt="NexGenVideo UI" width="900" />
+<img src="./assets/ngv-ui.png" alt="NexGenVideo UI" width="900" />
 
 ---
 

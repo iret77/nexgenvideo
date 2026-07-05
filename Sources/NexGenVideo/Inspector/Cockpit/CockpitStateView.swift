@@ -11,6 +11,7 @@ enum CockpitStateView {
         _ error: CockpitError,
         title: String,
         subject: String,
+        startProduction: (() -> Void)? = nil,
         retry: @escaping () -> Void
     ) -> some View {
         // `.engineNotReady` and `.notInitialized` are normal guidance states, not failures — calm copy,
@@ -45,7 +46,14 @@ enum CockpitStateView {
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            if error != .notInitialized {
+            if error == .notInitialized {
+                // The generic workflow is never plugin-gated: production is one action away.
+                if let startProduction {
+                    Button("Start production", action: startProduction)
+                        .buttonStyle(.capsule(.prominent, size: .regular))
+                        .padding(.top, AppTheme.Spacing.xs)
+                }
+            } else {
                 Button("Retry", action: retry)
                     .buttonStyle(.plain)
                     .font(.system(size: AppTheme.FontSize.sm, weight: .medium))

@@ -11,6 +11,7 @@ struct TimelineGeometry {
     let pixelsPerFrame: Double
     let headerWidth: Double
     let rulerHeight: CGFloat
+    let dropZoneHeight: CGFloat
     let trackCount: Int
     let trackHeights: [CGFloat]
     let bounds: NSRect
@@ -24,21 +25,25 @@ struct TimelineGeometry {
             pixelsPerFrame: editor.zoomScale,
             headerWidth: headerWidth,
             trackHeights: editor.timeline.tracks.map(\.displayHeight),
-            bounds: bounds
+            bounds: bounds,
+            // Produce is a compact display strip — drop the drag-to-create-track padding above
+            // and below so video + audio pack directly under the ruler.
+            dropZoneHeight: editor.workspaceFocus == .produce ? 0 : Layout.dropZoneHeight
         )
     }
 
-    init(pixelsPerFrame: Double, headerWidth: Double = 0, trackHeights: [CGFloat], bounds: NSRect = .zero) {
+    init(pixelsPerFrame: Double, headerWidth: Double = 0, trackHeights: [CGFloat], bounds: NSRect = .zero, dropZoneHeight: CGFloat = Layout.dropZoneHeight) {
         self.pixelsPerFrame = pixelsPerFrame
         self.headerWidth = headerWidth
         self.rulerHeight = Layout.rulerHeight
+        self.dropZoneHeight = dropZoneHeight
         self.trackCount = trackHeights.count
         self.trackHeights = trackHeights
         self.bounds = bounds
 
         var cumY: [CGFloat] = []
         cumY.reserveCapacity(trackHeights.count)
-        var y = rulerHeight + Layout.dropZoneHeight
+        var y = rulerHeight + dropZoneHeight
         for h in trackHeights {
             cumY.append(y)
             y += h
@@ -117,7 +122,7 @@ struct TimelineGeometry {
             return nil
         case .newTrackAt(let index):
             if trackCount == 0 {
-                return rulerHeight + Layout.dropZoneHeight
+                return rulerHeight + dropZoneHeight
             } else if index == 0 {
                 return cumulativeY[0]
             } else if index >= trackCount {

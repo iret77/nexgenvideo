@@ -228,6 +228,23 @@ final class EditorViewModel {
         activePluginName = name
     }
 
+    /// The generic-workflow entry (docs/UI_UX_CONCEPT.md, Epic #98/G): every project can start AI
+    /// production — no plugin required. Composes a deterministic agent command (concrete paths, no
+    /// guessing) that initializes the engine pipeline inside the project package, then hands off to
+    /// assisted brief drafting. Plugins later SPECIALIZE this generic baseline; they never gate it.
+    func startProduction() {
+        guard let url = projectURL else { return }
+        let home = url.deletingLastPathComponent().path
+        let name = url.lastPathComponent
+        agentService.send(
+            text: "Set up AI production for this project: call init_project with home_dir \"\(home)\" and "
+                + "name \"\(name)\" so the pipeline lives inside the project package. Then walk me through "
+                + "drafting the brief \u{2014} ask me about the video's direction first.",
+            mentions: []
+        )
+        agentPanelVisible = true
+    }
+
     /// Directory the studio engine reads/writes for cockpit data (Bible, shotlist, sanity, `_studio/`).
     /// It is the open project package itself — a `.nexgen` bundle is a directory, so engine data lives
     /// inside it next to `media/`: self-contained, per-project, moves with the project. Nil until saved.

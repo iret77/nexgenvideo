@@ -52,6 +52,40 @@ struct ProjectRegistryTests {
         #expect(reg.entries.count == 1)
     }
 
+    @Test func registerTreatsDirectoryFormAndFileFormAsTheSameProject() {
+        // A .ngv package is a directory: NSDocument-style URLs carry the trailing-slash directory
+        // form while save panels return the plain file form. Registering both must yield ONE entry
+        // (this exact mismatch put the same project on the Home screen twice).
+        let reg = makeRegistry()
+        let path = "/tmp/pkg-\(UUID().uuidString).ngv"
+        reg.register(URL(fileURLWithPath: path, isDirectory: false))
+        reg.register(URL(fileURLWithPath: path, isDirectory: true))
+        #expect(reg.entries.count == 1)
+    }
+
+    @Test func loadHealsExistingSameFileDuplicates() throws {
+        // Registries written before the canonical-path dedupe may already carry both spellings.
+        let file = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("heal-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let path = "/tmp/dup-\(UUID().uuidString).ngv"
+        let older = Date(timeIntervalSinceNow: -3600)
+        let newer = Date()
+        let duplicated = [
+            ProjectEntry(id: UUID(), url: URL(fileURLWithPath: path, isDirectory: false),
+                         createdDate: older, lastOpenedDate: older),
+            ProjectEntry(id: UUID(), url: URL(fileURLWithPath: path, isDirectory: true),
+                         createdDate: newer, lastOpenedDate: newer),
+        ]
+        try JSONEncoder().encode(duplicated).write(to: file)
+
+        let reg = ProjectRegistry(fileURL: file)
+        #expect(reg.entries.count == 1)
+        #expect(reg.entries[0].lastOpenedDate == newer, "keeps the most recent open")
+        #expect(reg.entries[0].createdDate == older, "keeps the original creation date")
+    }
+
     // MARK: - remove
 
     @Test func removeDropsMatchingEntry() {

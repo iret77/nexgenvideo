@@ -21,7 +21,7 @@ final class ProjectRegistry {
         entries.sorted { $0.lastOpenedDate > $1.lastOpenedDate }
     }
 
-    private let fileURL: URL
+    private var fileURL: URL
     private let disk = ProjectRegistryDisk()
     private var isLoading = false
     private var pendingMutations: [(inout [ProjectEntry]) -> Void] = []
@@ -33,15 +33,57 @@ final class ProjectRegistry {
 
     init(fileURL: URL) {
         self.fileURL = fileURL
-        entries = Self.loadEntries(from: fileURL)
+        entries = Self.deduped(Self.loadEntries(from: fileURL))
+    }
+
+    // MARK: - Identity
+
+    /// Canonical identity for dedupe. Comparing URLs directly treats `…/Debug.ngv` and
+    /// `…/Debug.ngv/` as different projects — save panels return the file form while package
+    /// documents carry the directory form — so the same project showed up twice on Home.
+    private nonisolated static func canonicalPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    /// Collapse entries that point at the same file under different URL spellings (heals
+    /// registries that already contain such duplicates). Keeps first-seen order, the newest
+    /// lastOpenedDate (and its URL spelling), and the earliest createdDate.
+    private nonisolated static func deduped(_ entries: [ProjectEntry]) -> [ProjectEntry] {
+        var indexByPath: [String: Int] = [:]
+        var result: [ProjectEntry] = []
+        for entry in entries {
+            let key = canonicalPath(entry.url)
+            if let i = indexByPath[key] {
+                result[i].createdDate = min(result[i].createdDate, entry.createdDate)
+                if entry.lastOpenedDate > result[i].lastOpenedDate {
+                    result[i].lastOpenedDate = entry.lastOpenedDate
+                    result[i].url = entry.url
+                }
+            } else {
+                indexByPath[key] = result.count
+                result.append(entry)
+            }
+        }
+        return result
+    }
+
+    /// Re-point at the registry inside the *current* projects folder and reload. The registry lives
+    /// in the projects folder, so when the user changes that folder in Settings the Home overview must
+    /// switch to the new location's project list — otherwise it keeps showing the old folder's projects.
+    func relocateToCurrentStorage() {
+        let newURL = Project.storageDirectory.appendingPathComponent(Project.registryFilename)
+        guard newURL.standardizedFileURL != fileURL.standardizedFileURL else { return }
+        fileURL = newURL
+        load()
     }
 
     // MARK: - Mutations
 
     func register(_ url: URL) {
+        let key = Self.canonicalPath(url)
         let resolved = url.standardizedFileURL
         mutate { entries in
-            if let index = entries.firstIndex(where: { $0.url.standardizedFileURL == resolved }) {
+            if let index = entries.firstIndex(where: { Self.canonicalPath($0.url) == key }) {
                 entries[index].lastOpenedDate = Date()
             } else {
                 entries.append(ProjectEntry(id: UUID(), url: resolved, createdDate: Date(), lastOpenedDate: Date()))
@@ -50,9 +92,9 @@ final class ProjectRegistry {
     }
 
     func remove(_ url: URL) {
-        let resolved = url.standardizedFileURL
+        let key = Self.canonicalPath(url)
         mutate { entries in
-            entries.removeAll { $0.url.standardizedFileURL == resolved }
+            entries.removeAll { Self.canonicalPath($0.url) == key }
         }
     }
 
@@ -64,10 +106,10 @@ final class ProjectRegistry {
     }
 
     func updateURL(from oldURL: URL, to newURL: URL) {
-        let resolvedOld = oldURL.standardizedFileURL
+        let oldKey = Self.canonicalPath(oldURL)
         let resolvedNew = newURL.standardizedFileURL
         mutate { entries in
-            if let index = entries.firstIndex(where: { $0.url.standardizedFileURL == resolvedOld }) {
+            if let index = entries.firstIndex(where: { Self.canonicalPath($0.url) == oldKey }) {
                 entries[index].url = resolvedNew
                 entries[index].lastOpenedDate = Date()
             }
@@ -99,9 +141,14 @@ final class ProjectRegistry {
     }
 
     private func finishLoading(_ loaded: [ProjectEntry]) {
-        entries = loaded
+        let cleaned = Self.deduped(loaded)
+        entries = cleaned
         isLoading = false
-        guard !pendingMutations.isEmpty else { return }
+        guard !pendingMutations.isEmpty else {
+            // Heal a registry that already carried same-file duplicates on disk.
+            if cleaned.count != loaded.count { save() }
+            return
+        }
 
         let mutations = pendingMutations
         pendingMutations.removeAll()

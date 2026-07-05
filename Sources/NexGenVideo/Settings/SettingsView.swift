@@ -50,6 +50,7 @@ struct SettingsView: View {
                 .frame(width: 220)
 
             SettingsDetail(tab: selectedTab)
+                .id(selectedTab)  // fresh view tree per tab — stale layers ghosted through the material
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black.opacity(AppTheme.Opacity.medium))
         }
@@ -74,6 +75,7 @@ private struct SettingsSidebar: View {
             Spacer(minLength: 0)
         }
         .frame(maxHeight: .infinity, alignment: .top)
+        .background(AppTheme.Background.surfaceColor)  // opaque: previous panes ghosted through the material
     }
 
     private var tabList: some View {
