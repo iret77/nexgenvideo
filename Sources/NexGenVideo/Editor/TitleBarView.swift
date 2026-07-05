@@ -14,6 +14,7 @@ struct TitleBarView: View {
             HStack(spacing: AppTheme.Spacing.md) {
                 projectName
                 Spacer(minLength: AppTheme.Spacing.md)
+                pluginChip
                 healthCapsule
             }
             focusToggle
@@ -75,6 +76,40 @@ struct TitleBarView: View {
     // MARK: - Pipeline health capsule (absent when the project has no pipeline)
 
     @ViewBuilder
+    /// The loaded-instrument slot (Epic #98 / #95 C4): shows the project's ACTIVE format plugin —
+    /// always visible so it's never ambiguous which plugin (or the generic workflow) drives this
+    /// project. Click → the gallery in Project settings, the one activation surface.
+    private var pluginChip: some View {
+        Button {
+            editor.revealCockpit(.project)
+        } label: {
+            HStack(spacing: AppTheme.Spacing.xs) {
+                Image(systemName: "puzzlepiece.extension")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                Text(activePluginLabel)
+                    .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(editor.activePluginName == nil
+                             ? AppTheme.Text.tertiaryColor : AppTheme.Accent.primary)
+            .padding(.horizontal, AppTheme.Spacing.sm)
+            .padding(.vertical, AppTheme.Spacing.xxs)
+            .background(
+                Capsule().fill(Color.white.opacity(AppTheme.Opacity.subtle))
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(editor.activePluginName == nil
+              ? "Generic production workflow — click to activate a format plugin"
+              : "Active format plugin — click to manage")
+    }
+
+    private var activePluginLabel: String {
+        guard let active = editor.activePluginName else { return "Generic" }
+        return PluginManager.discoverPlugins().first(where: { $0.name == active })?.displayName ?? active
+    }
+
     private var healthCapsule: some View {
         if let state = editor.projectState {
             Button {

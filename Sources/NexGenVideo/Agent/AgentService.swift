@@ -350,8 +350,14 @@ final class AgentService {
     /// Grounds scoped prose ("make this warmer") in the user's current selection — the app tells the
     /// agent what "this" is, instead of the agent guessing (docs/UI_UX_CONCEPT.md §4).
     private static func selectionHint(editor: EditorViewModel?) -> String? {
-        guard let description = editor?.selectionContextHint else { return nil }
-        return "The user is currently inspecting \(description); unscoped references like \u{201C}this\u{201D} refer to it."
+        let pluginLine: String
+        if let active = editor?.activePluginName {
+            pluginLine = "Active format plugin for this project: \(active)."
+        } else {
+            pluginLine = "No format plugin is active \u{2014} this project uses the generic production workflow."
+        }
+        guard let description = editor?.selectionContextHint else { return pluginLine }
+        return pluginLine + " The user is currently inspecting \(description); unscoped references like \u{201C}this\u{201D} refer to it."
     }
 
     func cancel() {
