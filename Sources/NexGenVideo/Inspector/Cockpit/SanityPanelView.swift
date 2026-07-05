@@ -32,6 +32,7 @@ struct SanityPanelView: View {
             centeredProgress()
         case .failed(let error):
             CockpitStateView.error(error, title: "Couldn't run sanity",
+                                   startProduction: { editor.startProduction() },
                                    subject: "the sanity report") { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "checklist.unchecked", title: "Nothing to check",

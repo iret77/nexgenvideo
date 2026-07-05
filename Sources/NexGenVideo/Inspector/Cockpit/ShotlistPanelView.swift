@@ -32,6 +32,7 @@ struct ShotlistPanelView: View {
             centeredProgress()
         case .failed(let error):
             CockpitStateView.error(error, title: "Couldn't load the shotlist",
+                                   startProduction: { editor.startProduction() },
                                    subject: "the shotlist") { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "film.stack", title: "No shotlist yet",

@@ -33,6 +33,7 @@ struct PipelinePanelView: View {
             centeredProgress()
         case .failed(let error):
             CockpitStateView.error(error, title: "Couldn't load the pipeline",
+                                   startProduction: { editor.startProduction() },
                                    subject: "the pipeline") { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No pipeline yet",
