@@ -25,7 +25,10 @@ enum CockpitError: Error, Sendable, Equatable {
     /// not-initialized state; everything else is a genuine engine error. Marker matches
     /// `engine/nexgen_engine/core/project.py` ("missing — set mode/budget via project init").
     static func fromEngine(_ message: String) -> CockpitError {
-        message.contains("set mode/budget via project init") ? .notInitialized : .engine(message)
+        // Two phrasings of the same normal state: the read CLI's canonicalizer says "no project
+        // at …", the state loader says "… set mode/budget via project init". Neither is a failure.
+        message.contains("set mode/budget via project init") || message.contains("no project at")
+            ? .notInitialized : .engine(message)
     }
 
     var message: String {

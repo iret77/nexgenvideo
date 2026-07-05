@@ -98,7 +98,7 @@ struct AgentInputBox<LeadingTools: View>: View {
                 .padding(.top, AppTheme.Spacing.smMd)
                 .padding(.bottom, AppTheme.Spacing.xs)
                 .focused($focused)
-                .frame(minHeight: 64, maxHeight: 240)
+                .frame(minHeight: 64, maxHeight: 140)
                 .onChange(of: draft) { old, new in
                     updateMentionQuery(from: new)
                     if !old.isEmpty && new.isEmpty {

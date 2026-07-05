@@ -299,6 +299,16 @@ final class EditorViewModel {
         if focus == .produce {
             leftSidebarTab = .agent
             toolMode = .pointer
+            // The timeline is display-only here — surviving Edit-focus state would drag Edit
+            // tooling onto the Produce stage (clip inspector, swap banner, crop overlay).
+            selectedClipIds = []
+            selectedGap = nil
+            selectedTimelineRange = nil
+            isMarqueeSelecting = false
+            if case .clip = inspectedObject { inspectedObject = nil }
+            if case .mediaAsset = inspectedObject { inspectedObject = nil }
+            cancelMediaSwap()
+            cropEditingActive = false
         }
     }
 

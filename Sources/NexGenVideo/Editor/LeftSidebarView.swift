@@ -28,6 +28,7 @@ struct LeftSidebarView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .clipped()  // a panel may never paint over the sidebar tabs
         }
     }
 

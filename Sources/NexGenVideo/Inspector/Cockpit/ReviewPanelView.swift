@@ -47,6 +47,8 @@ struct ReviewPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             content
+                .frame(minHeight: 0)
+                .clipped()
             Divider().overlay(AppTheme.Border.subtleColor)
             // Sanity lives here in EVERY state — findings gate progress before frames even exist
             // (§3: no panel is ever locked away). Fixed height: predictable galleries above.

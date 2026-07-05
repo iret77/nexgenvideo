@@ -233,12 +233,18 @@ struct AgentPanelView: View {
     private var messageList: some View {
         Group {
             if service.messages.isEmpty && !service.isStreaming {
-                VStack(spacing: AppTheme.Spacing.smMd) {
-                    emptyState
-                    errorBanner
+                // Scrollable: in a short pane (Edit-focus sidebar) a fixed empty state would
+                // overflow centered — covering the sidebar tabs above and running out below.
+                ScrollView {
+                    VStack(spacing: AppTheme.Spacing.smMd) {
+                        emptyState
+                        errorBanner
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, AppTheme.Spacing.lgXl)
+                    .padding(.top, Layout.panelHeaderHeight + AppTheme.Spacing.md)
+                    .padding(.bottom, AppTheme.Spacing.md)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .padding(.horizontal, AppTheme.Spacing.lgXl)
             } else {
                 scrollingMessages
             }
