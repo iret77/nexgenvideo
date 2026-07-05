@@ -12,7 +12,7 @@ library_name: coreml
 
 Core ML conversion of [google/siglip2-base-patch16-256](https://huggingface.co/google/siglip2-base-patch16-256),
 split into separate image and text encoders for on-device text→image retrieval.
-Built for [Palmier Pro](https://palmier.io)'s footage search; usable by anything
+Built for NexGenVideo's footage search; usable by anything
 that wants SigLIP 2 on Apple silicon.
 
 ## Files
