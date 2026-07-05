@@ -79,8 +79,11 @@ struct StoragePane: View {
 
             HStack(spacing: AppTheme.Spacing.sm) {
                 if !projectsFolder.isEmpty {
-                    Button("Reset") { projectsFolder = "" }
-                        .controlSize(.small)
+                    Button("Reset") {
+                        projectsFolder = ""
+                        ProjectRegistry.shared.relocateToCurrentStorage()
+                    }
+                    .controlSize(.small)
                 }
                 Button("Choose…") { chooseProjectsFolder() }
                     .controlSize(.small)
@@ -97,6 +100,9 @@ struct StoragePane: View {
         panel.directoryURL = Project.storageDirectory
         if panel.runModal() == .OK, let url = panel.url {
             projectsFolder = url.path
+            // The registry lives in the projects folder — reload it so the Home overview shows the
+            // new location's projects, not the old folder's.
+            ProjectRegistry.shared.relocateToCurrentStorage()
         }
     }
 

@@ -21,7 +21,7 @@ final class ProjectRegistry {
         entries.sorted { $0.lastOpenedDate > $1.lastOpenedDate }
     }
 
-    private let fileURL: URL
+    private var fileURL: URL
     private let disk = ProjectRegistryDisk()
     private var isLoading = false
     private var pendingMutations: [(inout [ProjectEntry]) -> Void] = []
@@ -34,6 +34,16 @@ final class ProjectRegistry {
     init(fileURL: URL) {
         self.fileURL = fileURL
         entries = Self.loadEntries(from: fileURL)
+    }
+
+    /// Re-point at the registry inside the *current* projects folder and reload. The registry lives
+    /// in the projects folder, so when the user changes that folder in Settings the Home overview must
+    /// switch to the new location's project list — otherwise it keeps showing the old folder's projects.
+    func relocateToCurrentStorage() {
+        let newURL = Project.storageDirectory.appendingPathComponent(Project.registryFilename)
+        guard newURL.standardizedFileURL != fileURL.standardizedFileURL else { return }
+        fileURL = newURL
+        load()
     }
 
     // MARK: - Mutations
