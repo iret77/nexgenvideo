@@ -19,8 +19,6 @@
 <p>
   <a href="../../README.md">English</a> ·
   <a href="README.es.md">Español</a> ·
-  <a href="README.zh-CN.md">简体中文</a> ·
-  <a href="README.zh-TW.md">繁體中文</a> ·
   <a href="README.ja.md">日本語</a> ·
   <strong>한국어</strong> ·
   <a href="README.vi.md">Tiếng Việt</a> ·

@@ -17,8 +17,6 @@
 <p>
   <strong>English</strong> ·
   <a href="docs/readme/README.es.md">Español</a> ·
-  <a href="docs/readme/README.zh-CN.md">简体中文</a> ·
-  <a href="docs/readme/README.zh-TW.md">繁體中文</a> ·
   <a href="docs/readme/README.ja.md">日本語</a> ·
   <a href="docs/readme/README.ko.md">한국어</a> ·
   <a href="docs/readme/README.vi.md">Tiếng Việt</a> ·
