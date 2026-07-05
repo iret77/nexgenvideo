@@ -110,6 +110,7 @@ struct TitleBarView: View {
         return PluginManager.discoverPlugins().first(where: { $0.name == active })?.displayName ?? active
     }
 
+    @ViewBuilder
     private var healthCapsule: some View {
         if let state = editor.projectState {
             Button {
