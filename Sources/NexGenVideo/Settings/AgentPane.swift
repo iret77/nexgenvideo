@@ -329,7 +329,7 @@ struct AgentPane: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: AppTheme.FontSize.sm))
                 .frame(width: 140)
-            TextField("MCP command or pasted JSON config", text: $newServerCommand)
+            TextField("MCP command, server URL, or pasted JSON config", text: $newServerCommand)
                 .textFieldStyle(.plain)
                 .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
             Button("Add") { addExternalServer() }
@@ -338,7 +338,7 @@ struct AgentPane: View {
                 .foregroundStyle(AppTheme.Accent.primary)
                 .disabled(newServerCommand.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        Text("External MCP servers for the embedded agent — e.g. ACE Studio 2's built-in MCP server (Settings → MCP → copy command). The agent can then drive that app directly.")
+        Text("External MCP servers for the embedded agent — e.g. ACE Studio 2's MCP command (Settings → MCP → copy command) or OpenArt's hosted server (https://mcp.openart.ai/mcp; OAuth servers need one interactive sign-in via `claude mcp add` first). The agent can then drive those tools directly.")
             .font(.system(size: AppTheme.FontSize.xs))
             .foregroundStyle(AppTheme.Text.mutedColor)
             .fixedSize(horizontal: false, vertical: true)

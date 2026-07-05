@@ -27,8 +27,11 @@ enum ExternalMcpServers {
     /// Human-readable command preview for the list row.
     static func commandPreview(entryJSON: String) -> String {
         guard let data = entryJSON.data(using: .utf8),
-              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let command = obj["command"] as? String else { return entryJSON }
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return entryJSON
+        }
+        if let url = obj["url"] as? String { return url }
+        guard let command = obj["command"] as? String else { return entryJSON }
         let args = (obj["args"] as? [String]) ?? []
         return ([command] + args).joined(separator: " ")
     }
@@ -38,14 +41,20 @@ enum ExternalMcpServers {
     static func entryJSON(fromUserInput input: String) -> String? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        // Hosted HTTP MCP servers (e.g. OpenArt's https://mcp.openart.ai/mcp) — same entry shape
+        // the built-in `nexgen` server uses.
+        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+            return compact(["type": "http", "url": trimmed])
+        }
         if trimmed.hasPrefix("{") {
             guard let data = trimmed.data(using: .utf8),
                   let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
                 return nil
             }
-            if obj["command"] is String { return compact(obj) }
+            if obj["command"] is String || obj["url"] is String { return compact(obj) }
             if let servers = obj["mcpServers"] as? [String: Any],
-               let first = servers.values.first as? [String: Any], first["command"] is String {
+               let first = servers.values.first as? [String: Any],
+               first["command"] is String || first["url"] is String {
                 return compact(first)
             }
             return nil
