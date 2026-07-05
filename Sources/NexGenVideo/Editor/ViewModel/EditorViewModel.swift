@@ -216,15 +216,10 @@ final class EditorViewModel {
     }
     private(set) var projectId: String?
 
-    /// Directory the studio engine reads for cockpit data (Bible, shotlist, sanity). Prefers the
-    /// configured agent working dir; falls back to the folder containing `projectURL`. Nil if neither
-    /// resolves.
-    var studioProjectDir: URL? {
-        if let override = UserDefaults.standard.string(forKey: "claudeRuntimeWorkingDir"), !override.isEmpty {
-            return URL(fileURLWithPath: override)
-        }
-        return projectURL?.deletingLastPathComponent()
-    }
+    /// Directory the studio engine reads/writes for cockpit data (Bible, shotlist, sanity, `_studio/`).
+    /// It is the open project package itself — a `.nexgen` bundle is a directory, so engine data lives
+    /// inside it next to `media/`: self-contained, per-project, moves with the project. Nil until saved.
+    var studioProjectDir: URL? { projectURL }
 
     // Placeholder replaced in init() — @Observable doesn't support lazy var
     private(set) var mediaResolver: MediaResolver = MediaResolver(

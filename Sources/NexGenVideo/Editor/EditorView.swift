@@ -245,8 +245,8 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         centerSplit.addSplitViewItem(cockpitItem)
         cockpitSplitItem = cockpitItem
         let stripItem = makeTimelineItem()
+        // Resizable: a usable min (toolbar + ruler + a track lane), no fixed max — drag it taller.
         stripItem.minimumThickness = Layout.produceTimelineStripHeight
-        stripItem.maximumThickness = Layout.produceTimelineStripHeight
         centerSplit.addSplitViewItem(stripItem)
 
         let rightSplit = makeChildSplit(isVertical: false, autosave: SplitAutosave.produceRight)
@@ -263,8 +263,8 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         rightItem.minimumThickness = Layout.inspectorMin
         target.addSplitViewItem(rightItem)
 
-        applyAfterLayout { [weak self, weak target, weak rightSplit] in
-            guard let self, let target, let rightSplit else { return }
+        applyAfterLayout { [weak self, weak target, weak rightSplit, weak centerSplit] in
+            guard let self, let target, let rightSplit, let centerSplit else { return }
             let targetW = target.view.bounds.width
             let rightH = rightSplit.view.bounds.height
             self.positionIfUnsaved(target) {
@@ -272,6 +272,10 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
                 $0.setPosition(targetW - Layout.producePreviewDefaultWidth, ofDividerAt: 1)
             }
             self.positionIfUnsaved(rightSplit) { $0.setPosition(round(rightH * 0.35), ofDividerAt: 0) }
+            let centerH = centerSplit.view.bounds.height
+            self.positionIfUnsaved(centerSplit) {
+                $0.setPosition(max(0, centerH - Layout.produceTimelineStripDefault), ofDividerAt: 0)
+            }
         }
     }
 
@@ -463,18 +467,15 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 // MARK: - Timeline panel (focus-aware)
 
 /// The one canonical timeline, dressed per focus: in Edit it carries the toolbar and full interaction;
-/// in Produce it is a display strip of accumulating shot blocks — no toolbar, no editing gestures
-/// (docs/UI_UX_CONCEPT.md §3: it never pretends to be an editing surface when collapsed).
+/// A real timeline in both focuses: the toolbar (zoom) and interaction (pinch/scroll/select) are
+/// available in Produce too — the strip is smaller and resizable, not crippled.
 private struct TimelinePanel: View {
     @Environment(EditorViewModel.self) private var editor
 
     var body: some View {
         VStack(spacing: 0) {
-            if editor.workspaceFocus == .edit {
-                ToolbarView().frame(height: Layout.toolbarHeight)
-            }
+            ToolbarView().frame(height: Layout.toolbarHeight)
             TimelineContainerView()
-                .allowsHitTesting(editor.workspaceFocus == .edit)
         }
     }
 }

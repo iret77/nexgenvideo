@@ -11,7 +11,6 @@ struct AgentPane: View {
     @FocusState private var isFocused: Bool
 
     @AppStorage("useClaudeCodeRuntime") private var useClaudeRuntime: Bool = false
-    @AppStorage("claudeRuntimeWorkingDir") private var claudeWorkingDir: String = ""
     @AppStorage("claudeRuntimePluginDir") private var claudePluginDir: String = ""
     @AppStorage("claudeRuntimePermissionMode") private var claudePermissionMode: String = "bypassPermissions"
 
@@ -289,8 +288,9 @@ struct AgentPane: View {
                     .controlSize(.small)
             }
 
-            folderRow(title: "Project folder", path: $claudeWorkingDir)
-            folderRow(title: "Plugin folder", path: $claudePluginDir)
+            // The working dir follows the open project package automatically — no field here. Bundled
+            // and imported plugins are auto-discovered; this is only an extra dir for pack development.
+            folderRow(title: "Extra plugin folder (optional)", path: $claudePluginDir)
             permissionRow
             engineRow
         }

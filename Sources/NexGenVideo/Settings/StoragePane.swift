@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct StoragePane: View {
@@ -6,9 +7,15 @@ struct StoragePane: View {
     @State private var indexBytes: Int64 = 0
     @State private var modelBytes: Int64 = 0
     @State private var searchEnabled = SearchIndexConfig.enabled
+    @AppStorage(Project.projectsFolderKey) private var projectsFolder = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            projectsFolderSection
+
+            Divider()
+                .overlay(AppTheme.Border.subtleColor)
+
             HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                     Text("Cache")
@@ -47,6 +54,50 @@ struct StoragePane: View {
             searchIndexSection
         }
         .task { await refresh() }
+    }
+
+    private var projectsFolderSection: some View {
+        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                Text("Projects folder")
+                    .font(.system(size: AppTheme.FontSize.md))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                Text("Where new projects are created. Existing projects stay wherever they already live.")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(Project.storageDirectory.path)
+                    .font(.system(size: AppTheme.FontSize.xs).monospaced())
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.top, AppTheme.Spacing.xs)
+            }
+
+            Spacer(minLength: AppTheme.Spacing.lg)
+
+            HStack(spacing: AppTheme.Spacing.sm) {
+                if !projectsFolder.isEmpty {
+                    Button("Reset") { projectsFolder = "" }
+                        .controlSize(.small)
+                }
+                Button("Choose…") { chooseProjectsFolder() }
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func chooseProjectsFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.directoryURL = Project.storageDirectory
+        if panel.runModal() == .OK, let url = panel.url {
+            projectsFolder = url.path
+        }
     }
 
     private var searchIndexSection: some View {

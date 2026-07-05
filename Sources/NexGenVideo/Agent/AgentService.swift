@@ -473,10 +473,9 @@ final class AgentService {
     }
 
     private static func configuredWorkingDirectory(projectURL: URL?) -> URL? {
-        if let override = UserDefaults.standard.string(forKey: "claudeRuntimeWorkingDir"), !override.isEmpty {
-            return URL(fileURLWithPath: override)
-        }
-        return projectURL
+        // The embedded runtime's cwd is the open project package — never a global override, which
+        // used to redirect every project's engine data to one shared folder.
+        projectURL
     }
 
     /// In-flight bootstrap, awaited by `send()` so a message can't silently proceed engine-less while
