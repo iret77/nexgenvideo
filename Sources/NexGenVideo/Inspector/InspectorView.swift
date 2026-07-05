@@ -36,6 +36,7 @@ struct InspectorView: View {
             Group {
                 inspectorContent
             }
+            .clipped()  // state views may never paint over the breadcrumb or pane edges
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onChange(of: editor.selectedClipIds) { _, _ in
