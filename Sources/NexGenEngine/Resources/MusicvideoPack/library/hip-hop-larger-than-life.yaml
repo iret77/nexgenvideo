@@ -1,0 +1,104 @@
+id: hip-hop-larger-than-life
+name: "Hip-Hop Larger-Than-Life — Hype Williams / Director X school"
+description: |
+  Performance-getrieben, gesaettigte Farben, starke Kontraste,
+  rhythmische Cuts auf Beat, Kamera-Bewegung als Stilmittel. Vorbild:
+  Hype Williams' Praegung in den 90ern + ihre Nachfolger (Director X,
+  Benny Boom, Cole Bennett). Geeignet fuer Hip-Hop-, R&B- und Pop-
+  Performance-Videos mit Larger-than-life-Geste.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized]
+  moods: [high_energy, euphoric, aggressive, cinematic]
+  tempo_bands: [medium, uptempo, fast]
+  concept_types: [performance, hybrid]
+  figures: [artist_only, artist_plus_others]
+  aspect_ratios: []
+
+references:
+  - name: "Hype Williams"
+    role: director
+    notable_works:
+      - "Missy Elliott — The Rain (Supa Dupa Fly)"
+      - "Busta Rhymes — Put Your Hands Where My Eyes Could See"
+      - "Notorious B.I.G. — Hypnotize"
+      - "Belly (feature)"
+    sources:
+      - label: "DJBooth — An Ode to Legendary Video Director Hype Williams"
+        url: "https://djbooth.net/features/2020-02-04-an-ode-to-hype-williams-rap-video-director/"
+      - label: "Wikipedia — Hype Williams"
+        url: "https://en.wikipedia.org/wiki/Hype_Williams"
+      - label: "Wikipedia — Hype Williams videography"
+        url: "https://en.wikipedia.org/wiki/Hype_Williams_videography"
+      - label: "Hiphophero — How director Hype Williams changed hip-hop visuals forever"
+        url: "https://hiphophero.com/how-director-hype-williams-changed-hip-hop-visuals-forever/"
+      - label: "Billboard — The 20 Best Hype Williams-Directed Music Videos"
+        url: "https://www.billboard.com/music/rb-hip-hop/the-20-best-hype-williams-directed-music-videos-8528219/"
+      - label: "Raptology — Hype Williams: The Man Who Made Hip-Hop Look Larger Than Life (2026)"
+        url: "https://raptology.com/2026/04/23/hype-williams-the-man-who-made-hip-hop-look-larger-than-life/"
+  - name: "Director X (Julien Lutz)"
+    role: director
+    notable_works:
+      - "Drake — Hotline Bling"
+      - "Rihanna — Work"
+    sources:
+      - label: "UPTOWN Magazine — Hype Williams, Benny Boom, and Director X Elevated Music Videos"
+        url: "https://www.uptownmagazine.com/entertainment/these-3-directors-elevated-music-videos"
+  - name: "Cole Bennett (Lyrical Lemonade)"
+    role: director
+    notable_works:
+      - "J. Cole — ATM"
+      - "Baby Keem — Orange Soda"
+    sources:
+      - label: "Raptology — Hype Williams legacy in modern hip-hop visual language"
+        url: "https://raptology.com/2026/04/23/hype-williams-the-man-who-made-hip-hop-look-larger-than-life/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Larger-than-life Establishing-Shot des Artists in der Welt — meist 1 pro Section, nicht mehr."
+  - role: performance
+    framing_hint: [ms, mcu]
+    notes: "Performer auf Beat, kraeftige Profil-/Frontal-Wechsel."
+  - role: reveal
+    framing_hint: [cu, ecu]
+    notes: "Schmuck, Schritte, Schweiss, Lippensynchron-CU."
+  - role: cutaway
+    framing_hint: [insert, ots]
+    notes: "Detail-Inserts auf Symbolen / Crew / Set-Elementen."
+
+framing_mix:
+  wide_pct: 10
+  full_pct: 5
+  ms_pct: 30
+  mcu_pct: 20
+  cu_pct: 20
+  ecu_pct: 5
+  ots_pct: 5
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 0.8
+  max_s: 4.0
+  typical_s: 2.0
+
+camera_vocabulary:
+  - "rapid push-in"
+  - "fisheye lens"
+  - "circle dolly"
+  - "whip pan"
+  - "snorri-cam style"
+  - "slow motion accents"
+
+lighting_signature: |
+  saturated colours, strong key-light contrast, neon and practical
+  light sources, often with one bold accent colour per shot.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, Billboard, DJBooth, Raptology
+  and Hiphophero articles describing Hype Williams' signature
+  techniques and his successors' continued use. Not Cinemetrics-
+  grade — actual ASL and framing distribution per video varies
+  widely.

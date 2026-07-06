@@ -1,0 +1,99 @@
+id: punk-diy-handheld
+name: "Punk / Hardcore DIY — handheld vérité"
+description: |
+  DIY-Hardcore-Punk-Aesthetik: handgehaltene Camera, schnelle
+  Cuts auf den Schlag, niedriges Budget als Stilmittel, Konzert-
+  Vérité plus rohe Live-Performance. Grindcore-/Atmospheric-Metal-
+  Verwandte ergaenzen mit langsam-ominoesem Detail-Insert.
+  Fuer Hardcore-, Punk-, Grindcore- und atmospheric-Metal-Tracks
+  ohne Production-Lack.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized]
+  moods: [aggressive, high_energy, melancholic, narrative, cinematic]
+  tempo_bands: [medium, uptempo, fast]
+  concept_types: [performance, hybrid, documentary]
+  figures: [artist_only, artist_plus_others, others_only]
+  aspect_ratios: []
+
+references:
+  - name: "Hardcore Punk visual tradition (genre)"
+    role: music_video
+    notable_works:
+      - "Hardcore punk live-show videos (DIY tape-trading era 1980s-)"
+      - "Single band member as songwriter + producer + tour manager + T-shirt artist"
+    sources:
+      - label: "Wikipedia — Hardcore punk"
+        url: "https://en.wikipedia.org/wiki/Hardcore_punk"
+      - label: "MasterClass — Hardcore Punk Music Guide: History and Bands of Hardcore"
+        url: "https://www.masterclass.com/articles/hardcore-punk-music-guide"
+      - label: "DIY Conspiracy — Punk & Hardcore Music, Culture & Politics"
+        url: "https://diyconspiracy.net/"
+      - label: "DIY Conspiracy — 7 Must-Listen DIY Hardcore Punk Records from Early 2025"
+        url: "https://diyconspiracy.net/7-hardcore-punk-records-early-2025/"
+      - label: "IDIOTEQ — Indie & Hardcore Punk Music Webzine"
+        url: "https://idioteq.com/"
+  - name: "Grindcore + atmospheric-metal lineage"
+    role: music_video
+    notable_works:
+      - "Grindcore tape-trading DIY tradition (mid-1980s-)"
+      - "Modern DIY releases with relentless thrash riffs + slow atmospheric sections (MEM//BRANE)"
+    sources:
+      - label: "Wikipedia — Grindcore"
+        url: "https://en.wikipedia.org/wiki/Grindcore"
+      - label: "Everything Is Noise — Chaos, or Channeling Artists at the Intersection of Metal and Breakcore"
+        url: "https://everythingisnoise.net/features/chaos-channeling-artists-at-the-intersection-of-metal-and-breakcore/"
+      - label: "Rate Your Music — Hardcore Punk"
+        url: "https://rateyourmusic.com/genre/hardcore-punk/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, ms]
+    notes: "Roher Welt-Anker: Pit, Probenraum, Strasse, Keller."
+  - role: performance
+    framing_hint: [ms, mcu]
+    notes: "Band auf Beat, Schweiss, Bewegung, Mosh-Pit-Energy."
+  - role: reveal
+    framing_hint: [cu, ecu]
+    notes: "Schrei-CU, Faust am Hals, blitzschnelle Hand-Inserts."
+  - role: cutaway
+    framing_hint: [insert, pov]
+    notes: "Crowd-POV, Beton-Wand-Tag, Verschuettete-Bier-Insert; bei atmospheric-metal: lange Landschafts-/Ritus-Insert."
+
+framing_mix:
+  wide_pct: 10
+  full_pct: 10
+  ms_pct: 25
+  mcu_pct: 20
+  cu_pct: 20
+  ecu_pct: 10
+  ots_pct: 0
+  pov_pct: 5
+  insert_pct: 0
+  aerial_pct: 0
+
+asl_range:
+  min_s: 0.3
+  max_s: 3.0
+  typical_s: 1.0
+
+camera_vocabulary:
+  - "handheld punk shake"
+  - "rapid pan into pit"
+  - "snap zoom on scream"
+  - "crash zoom on impact"
+  - "deliberate blur and grain"
+
+lighting_signature: |
+  available stage / venue lighting, single hard key, deep shadow
+  blackout, occasional strobe / red wash, deliberately low-budget
+  exposure (sometimes blown highlights, sometimes underexposed),
+  for atmospheric-metal: cold desaturated daylight or ritual practical.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia Hardcore Punk + Grindcore
+  pages, MasterClass, DIY Conspiracy, IDIOTEQ, Everything Is Noise
+  and Rate Your Music sources describing the DIY ethic and
+  hardcore/grindcore visual tradition. Pattern represents the
+  genre-wide visual approach rather than a single auteur — values
+  are qualitative and reflect the tradition's intentional rawness.

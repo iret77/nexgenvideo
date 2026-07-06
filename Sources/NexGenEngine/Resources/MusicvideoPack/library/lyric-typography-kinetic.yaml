@@ -1,0 +1,89 @@
+id: lyric-typography-kinetic
+name: "Lyric Video — kinetic typography"
+description: |
+  Typografie-getriebenes Lyric-Video: Text-Animation auf Beat,
+  Motion-Graphics statt Performance, Kompositions-Logik aus
+  Schrift-Hierarchie statt Kamera-Bewegung. Genre-spezifische
+  Tonalitaeten: Hip-Hop hard-contrast und bold, EDM neon und
+  geometrisch, Indie/Folk hand-drawn und organisch, Rock distress
+  und gritty. Fuer Releases ohne narrative Performance, mit
+  starkem Songtext und Brand-Voice.
+
+triggers:
+  visual_mediums: [illustration, mixed, 3d_cg, 2d_animation]
+  moods: [euphoric, high_energy, melancholic, dreamy, cinematic, narrative]
+  tempo_bands: [slow, medium, uptempo, fast]
+  concept_types: [abstract, hybrid, narrative]
+  figures: [none, artist_only]
+  aspect_ratios: []
+
+references:
+  - name: "Kinetic Typography / Lyric Video tradition"
+    role: music_video
+    notable_works:
+      - "Bob Dylan — Subterranean Homesick Blues (1965, proto-kinetic-typography precedent)"
+      - "Genre-spanning lyric videos: hip-hop bold-typography, EDM neon-geometry, indie hand-drawn, rock distressed-fonts"
+    sources:
+      - label: "B2W — Top 25 Kinetic Typography Animation Videos: Uses & Examples"
+        url: "https://www.b2w.tv/blog/kinetic-typography-animation-videos"
+      - label: "PremiumBeat — Create Your Own Lyric Videos with These Kinetic Typography Tutorials"
+        url: "https://www.premiumbeat.com/blog/create-lyric-videos-after-effects/"
+      - label: "Adobe — Make words sing with a lyric video"
+        url: "https://www.adobe.com/creativecloud/video/discover/how-to-make-a-lyric-video.html"
+      - label: "Envato Elements — How to Make a Lyric Video in After Effects (Motion Graphics)"
+        url: "https://elements.envato.com/learn/how-to-make-a-lyric-video-in-after-effects-motion-graphics"
+      - label: "Motion for Music — Lyric Videos creative studio"
+        url: "https://www.motionformusic.com/project_category/lyric-videos/"
+      - label: "Opus — Lyric Video Maker workflow"
+        url: "https://www.opus.pro/agent/workflows/lyric-video-maker"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, insert]
+    notes: "Titel- oder Intro-Card mit Track-Title + Artist-Name in dominanter Typografie."
+  - role: reveal
+    framing_hint: [insert, cu]
+    notes: "Erste Lyric-Phrase animated reveal — kinetic-typography auf Beat."
+  - role: performance
+    framing_hint: [insert]
+    notes: "Lyric-Phrasen folgen rhythmisch, Schrift-Hierarchie und Bewegungs-Typ wechseln pro Phrase-Funktion."
+  - role: cutaway
+    framing_hint: [insert]
+    notes: "Genre-Akzent: Beat-Visualizer (EDM), graffiti-Layer (Hip-Hop), Pinsel-Strich (Indie/Folk), Distressed-Texture (Rock)."
+
+framing_mix:
+  wide_pct: 10
+  full_pct: 5
+  ms_pct: 10
+  mcu_pct: 10
+  cu_pct: 15
+  ecu_pct: 10
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 40
+  aerial_pct: 0
+
+asl_range:
+  min_s: 0.3
+  max_s: 4.0
+  typical_s: 1.2
+
+camera_vocabulary:
+  - "static composition with animated type"
+  - "type-driven push-in"
+  - "type-driven whip pan"
+  - "match-cut on word-replacement"
+  - "kinetic letter-reveal"
+
+lighting_signature: |
+  flat motion-graphics background — single solid colour or gradient,
+  occasional textured or photographic plate behind type, genre-
+  specific palette (hip-hop: high-contrast bold; EDM: neon-geometric;
+  indie/folk: muted-organic; rock: distressed-monochrome).
+
+approximation_basis: |
+  Aggregation of the cited B2W, PremiumBeat, Adobe, Envato Elements,
+  Motion for Music and Opus pages describing kinetic typography
+  conventions and genre-specific lyric-video tonalities. The genre
+  has no single auteur — pattern reflects the widely-published
+  conventions of the form.

@@ -1,0 +1,98 @@
+id: anime-shinkai-emotional-landscape
+name: "Anime — Shinkai/Ghibli emotional landscape"
+description: |
+  Cel-Animation in der Schule Makoto Shinkai / Studio Ghibli:
+  fotorealistische Hintergruende, dramatische Lichtstimmungen (Golden
+  Hour, Regen, Schnee, fallende Blueten), kleine Figuren im weiten
+  Frame mit Himmel/Architektur als emotionalem Subjekt. Empfohlen
+  fuer ruhige, bittersuesse Anime-Ballads, J-Pop-Inserts und
+  introspektive 2D-Animation-Konzepte.
+
+triggers:
+  visual_mediums: [2d_animation, illustration, mixed]
+  moods: [melancholic, introspective, dreamy, intimate, cinematic, narrative]
+  tempo_bands: [slow, medium]
+  concept_types: [narrative, hybrid, abstract]
+  figures: [artist_only, artist_plus_others, others_only, none]
+  aspect_ratios: []
+
+references:
+  - name: "Makoto Shinkai"
+    role: director
+    notable_works:
+      - "Your Name (Kimi no Na wa, 2016)"
+      - "Weathering with You (2019)"
+      - "Suzume (2022)"
+      - "5 Centimeters per Second (2007)"
+      - "The Garden of Words (2013)"
+    sources:
+      - label: "ResearchGate — An Analysis of Aesthetics in Makoto Shinkai's Animated Films"
+        url: "https://www.researchgate.net/publication/381230722_An_Analysis_of_Aesthetics_in_Makoto_Shinkai's_Animated_Films"
+      - label: "No Film School — 5 Best Makoto Shinkai Films"
+        url: "https://nofilmschool.com/best-makoto-shinkai-movies"
+      - label: "Foro3D — Makoto Shinkai: the extreme realism that turns landscapes into obsession"
+        url: "https://foro3d.com/en/2026/mayo/makoto-shinkai-el-realismo-extremo-que-convierte-paisajes-en-obsesion.html"
+      - label: "FandomWire — Every Makoto Shinkai Movie, Ranked by Animation"
+        url: "https://fandomwire.com/every-makoto-shinkai-movie-ranked-by-animation/"
+      - label: "Elements of Screen Arts — Intricately Interwoven: The Makoto Shinkai Experience"
+        url: "https://screenarts2019.home.blog/2019/05/24/intricately-interwoven-the-makoto-shinkai-experience/"
+  - name: "Studio Ghibli (Hayao Miyazaki, Isao Takahata)"
+    role: director
+    notable_works:
+      - "Spirited Away (2001)"
+      - "My Neighbor Totoro (1988)"
+      - "Princess Mononoke (1997)"
+      - "Whisper of the Heart (1995)"
+    sources:
+      - label: "Wikipedia — Studio Ghibli"
+        url: "https://en.wikipedia.org/wiki/Studio_Ghibli"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, aerial]
+    notes: "Weiter Landschafts-Anker mit kleinem Subject — Himmel oder Architektur dominieren."
+  - role: reveal
+    framing_hint: [ms, mcu]
+    notes: "Charakter im Setting, gedaempfter Vordergrund."
+  - role: detail
+    framing_hint: [cu, ecu, insert]
+    notes: "Nahaufnahmen von Augen, Haenden, fallenden Blueten, Regentropfen — emotionale Texturen."
+  - role: resolve
+    framing_hint: [wide, ms]
+    notes: "Rueck zur Weite — Subject wieder klein, Welt traegt das Gefuehl."
+
+framing_mix:
+  wide_pct: 25
+  full_pct: 10
+  ms_pct: 20
+  mcu_pct: 15
+  cu_pct: 15
+  ecu_pct: 5
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 10
+  aerial_pct: 0
+
+asl_range:
+  min_s: 3.0
+  max_s: 12.0
+  typical_s: 6.0
+
+camera_vocabulary:
+  - "static hold on landscape"
+  - "slow vertical tilt across sky"
+  - "gentle lateral push across foreground while sky stays"
+  - "parallax-only motion (multi-plane background)"
+
+lighting_signature: |
+  single dominant light source per frame (sun, lantern, window),
+  saturated cinematic colour grading with deep blues in shadows and
+  warm orange highlights, soft cloud volumetrics, occasional rain or
+  petal particles as motion-carrier in otherwise still frames.
+
+approximation_basis: |
+  Aggregation of the cited ResearchGate analysis, No Film School,
+  Foro3D, FandomWire and Screen Arts essays describing Shinkai's
+  landscape-emotion approach and Ghibli's classic compositional
+  reduction. Specific framing_mix derived qualitatively from these
+  analyses, not from per-frame Cinemetrics counts.

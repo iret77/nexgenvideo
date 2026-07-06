@@ -1,0 +1,103 @@
+id: surreal-art-cunningham-glazer
+name: "Surreal Art — Cunningham/Glazer school"
+description: |
+  Surreale, oft duestere oder unheimliche Bildsprache in der Tradition
+  von Chris Cunningham (Aphex Twin, Bjoerk) und Jonathan Glazer
+  (Radiohead, Guinness "Surfer"). Konzept-Bilder ueber Performance,
+  unkonventionelle Bewegungen, ultra-slow-motion, Verfremdung. Fuer
+  experimentelle Tracks mit starkem visuellem Konzept.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized, 3d_cg, mixed]
+  moods: [dreamy, melancholic, aggressive, cinematic, introspective]
+  tempo_bands: [slow, medium, uptempo]
+  concept_types: [abstract, narrative, hybrid]
+  figures: [artist_only, artist_plus_others, others_only, none]
+  aspect_ratios: []
+
+references:
+  - name: "Chris Cunningham"
+    role: director
+    notable_works:
+      - "Aphex Twin — Come to Daddy (1997)"
+      - "Aphex Twin — Windowlicker (1999)"
+      - "Bjoerk — All Is Full of Love (1999)"
+      - "Squarepusher — Come On My Selector"
+      - "Autechre videos"
+    sources:
+      - label: "Wikipedia — Chris Cunningham"
+        url: "https://en.wikipedia.org/wiki/Chris_Cunningham"
+      - label: "Sivasdescalzo — 5 Music Videos to Understand Chris Cunningham"
+        url: "https://www.sivasdescalzo.com/en/blog/5-music-videos-chris-cunningham"
+      - label: "MUBI Notebook — Soundtrack Mix #35: Frozen in Flux: Chris Cunningham"
+        url: "https://mubi.com/en/notebook/posts/soundtrack-mix-35-frozen-in-flux-chris-cunningham"
+      - label: "This Film Should Be Played Loud — Come to Daddy (1997)"
+        url: "https://thisfilmshouldbeplayedloud.com/2014/02/27/come-to-daddy/"
+  - name: "Jonathan Glazer"
+    role: director
+    notable_works:
+      - "Radiohead — Street Spirit (Fade Out) (1996, ultra-slow-motion)"
+      - "Massive Attack — Karmacoma"
+      - "Blur — The Universal"
+      - "Guinness 'Surfer' commercial (1999)"
+      - "Sexy Beast (2000, feature)"
+      - "Under the Skin (2013, feature)"
+    sources:
+      - label: "200 Percent — Under The Skin: Jonathan Glazer"
+        url: "https://200-percent.com/under-the-skin-jonathan-glazer/"
+      - label: "I Love That Film — Surrealist Music Videos"
+        url: "https://ilovethatfilm.blogspot.com/2013/04/surrealist-music-videos.html"
+      - label: "Far Out Magazine — Director Andrew Donoho picks the 10 best music videos ever"
+        url: "https://faroutmagazine.co.uk/director-andrew-donoho-the-10-best-music-videos/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full, aerial]
+    notes: "Konzept-Welt-Anker mit unklarer Raum-Logik — oft surreal komponiert."
+  - role: reveal
+    framing_hint: [ms, mcu]
+    notes: "Performer im Konzept, oft frontal aber verfremdet (Maske, CGI-Modifikation, Distortion)."
+  - role: detail
+    framing_hint: [ecu, cu]
+    notes: "Augen-ECU, Haut-Detail, Material-Texture — oft unangenehm-nah."
+  - role: cutaway
+    framing_hint: [insert]
+    notes: "Symbol-Inserts mit konzeptuellem Subtext."
+
+framing_mix:
+  wide_pct: 15
+  full_pct: 10
+  ms_pct: 20
+  mcu_pct: 15
+  cu_pct: 15
+  ecu_pct: 15
+  ots_pct: 0
+  pov_pct: 0
+  insert_pct: 10
+  aerial_pct: 0
+
+asl_range:
+  min_s: 2.0
+  max_s: 15.0
+  typical_s: 6.0
+
+camera_vocabulary:
+  - "ultra-slow-motion specialty camera"
+  - "static hold on uncanny subject"
+  - "slow lateral track through impossible space"
+  - "extreme push-in to ECU"
+  - "single-take vertical fall"
+
+lighting_signature: |
+  high-contrast single hard key, deep clean shadows, often
+  monochromatic or two-tone grade, clinical/medical/uncanny
+  practicals, occasional desaturated palette interrupted by one
+  symbolic accent colour.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, MUBI, Sivasdescalzo, This Film
+  Should Be Played Loud, 200 Percent, I Love That Film and Far Out
+  Magazine sources describing Cunningham's "gothic, freakish but
+  arrestingly beautiful" approach and Glazer's "hauntingly beautiful"
+  surreal slow-motion work. Specific framing_mix derived
+  qualitatively from these analyses.

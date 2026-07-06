@@ -1,0 +1,86 @@
+id: electronic-dance-gavras
+name: "Electronic Dance — Gavras / Megaforce school"
+description: |
+  Gritty-Realismus trifft auf high-energy Performance, oft mit Crowd-
+  Choreografie und urbaner Welt-Verankerung. Vorbild: Romain Gavras und
+  das Megaforce-Kollektiv. Bevorzugt Tracks mit BPM-Eskalation und
+  klaren Drop-Momenten.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized]
+  moods: [high_energy, aggressive, euphoric, cinematic]
+  tempo_bands: [uptempo, fast]
+  concept_types: [performance, hybrid, narrative]
+  figures: [artist_only, artist_plus_others, others_only]
+  aspect_ratios: []
+
+references:
+  - name: "Romain Gavras"
+    role: director
+    notable_works:
+      - "Justice — Stress"
+      - "M.I.A. — Born Free"
+      - "Jay-Z & Kanye West — No Church in the Wild"
+      - "Gener8ion — Storm"
+    sources:
+      - label: "Wikipedia — Romain Gavras"
+        url: "https://en.wikipedia.org/wiki/Romain_Gavras"
+      - label: "IMVDb — Romain Gavras directorial credits"
+        url: "https://imvdb.com/n/romain-gavras/videography-by-position/dir"
+      - label: "Diggit Magazine — 5 groundbreaking music video directors you should know"
+        url: "https://www.diggitmagazine.com/articles/5-groundbreaking-music-video-directors-you-should-know"
+      - label: "Creative Review — Romain Gavras delivers dramatic new promo, Storm"
+        url: "https://www.creativereview.co.uk/romain-gavras-promo-storm-music-video/"
+      - label: "Guestlist — Romain Gavras: the most controversial or the greatest music video director in the world?"
+        url: "https://guestlist.net/article/8812/romain-gavras-the-most-controversial-or-the-greatest-music-video-director-in-the-world/"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, aerial]
+    notes: "Urbaner Welt-Anker, oft hoch oder weit — 1 Shot pro Section-Kopf."
+  - role: performance
+    framing_hint: [ms, full]
+    notes: "Subject + Crowd-Choreografie auf Beat."
+  - role: detail
+    framing_hint: [cu, ecu]
+    notes: "Schweiss, Augen, Fuesse — physische Textur."
+  - role: cutaway
+    framing_hint: [insert, pov]
+    notes: "Crowd-POV, Strassen-Insert, urbaner Cutaway."
+  - role: resolve
+    framing_hint: [wide, full]
+    notes: "Bei Track-Drop oft Rueck zum Wide — bewusst eingesetzt."
+
+framing_mix:
+  wide_pct: 15
+  full_pct: 10
+  ms_pct: 25
+  mcu_pct: 15
+  cu_pct: 15
+  ecu_pct: 5
+  ots_pct: 0
+  pov_pct: 5
+  insert_pct: 5
+  aerial_pct: 5
+
+asl_range:
+  min_s: 0.5
+  max_s: 5.0
+  typical_s: 2.0
+
+camera_vocabulary:
+  - "steady-cam follow"
+  - "drone aerial"
+  - "lateral crowd track"
+  - "slow motion drop"
+  - "handheld immersion"
+
+lighting_signature: |
+  natural sodium/urban practicals, hard direct sun at golden-hour,
+  high contrast, sometimes monochromatic colour grade.
+
+approximation_basis: |
+  Aggregation of the cited Wikipedia, IMVDb, Creative Review,
+  Diggit Magazine and Guestlist sources describing Gavras' realist-
+  spectacle approach. Pace varies per video — values are
+  approximations.

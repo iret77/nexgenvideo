@@ -1,0 +1,89 @@
+id: narrative-folk-static-long-takes
+name: "Narrative Folk — static long takes, story over performance"
+description: |
+  Geschichten-getrieben, lange Einstellungen, ruhige Kamera, klarer
+  Schauplatz-Wechsel pro Section. Vorbild: das Direktor-Trio aus dem
+  Directors-Label-Kanon (Michel Gondry, Spike Jonze, Chris Cunningham)
+  fuer narrative Musikvideos, in Folk- und Indie-Rock-Anwendungen.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized]
+  moods: [narrative, melancholic, introspective, dreamy, cinematic]
+  tempo_bands: [slow, medium]
+  concept_types: [narrative, hybrid]
+  figures: [artist_only, artist_plus_others, others_only, none]
+  aspect_ratios: []
+
+references:
+  - name: "Michel Gondry"
+    role: director
+    notable_works:
+      - "Daft Punk — Around the World (single-take continuous shot)"
+      - "Björk — Bachelorette (story-within-story)"
+      - "The White Stripes — Fell in Love with a Girl"
+    sources:
+      - label: "BRAEID — Music Video Masterclass: Lessons from Cunningham, Jonze, and Gondry"
+        url: "https://www.braeid.com/article/music-video-masterclass"
+      - label: "Wikipedia — Directors Label"
+        url: "https://en.wikipedia.org/wiki/Directors_Label"
+      - label: "IMDb — The Work of Director Michel Gondry"
+        url: "https://www.imdb.com/title/tt0384700/"
+      - label: "The Tribune — Deep Cuts: Michel Gondry music videos"
+        url: "https://www.thetribune.ca/a-e/deep-cuts-michel-gondry-music-videos-79456/"
+  - name: "Spike Jonze"
+    role: director
+    notable_works:
+      - "Fatboy Slim — Praise You"
+      - "The Pharcyde — Drop"
+      - "Weezer — Buddy Holly"
+    sources:
+      - label: "IMDb — The Work of Director Spike Jonze"
+        url: "https://www.imdb.com/title/tt0386124/"
+      - label: "BRAEID — Music Video Masterclass: Lessons from Cunningham, Jonze, and Gondry"
+        url: "https://www.braeid.com/article/music-video-masterclass"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Klarer Schauplatz-Anker pro Section — 1 Shot."
+  - role: reveal
+    framing_hint: [ms, mcu]
+    notes: "Subject-Reveal, Charakter im Raum verankert."
+  - role: detail
+    framing_hint: [cu, insert]
+    notes: "Story-Beats in Detail-Inserts (Brief, Hand, Objekt)."
+  - role: resolve
+    framing_hint: [ms, full]
+    notes: "Rueck zum Mittel- oder Ganz-Body am Section-Ende."
+
+framing_mix:
+  wide_pct: 10
+  full_pct: 10
+  ms_pct: 30
+  mcu_pct: 20
+  cu_pct: 20
+  ecu_pct: 0
+  ots_pct: 5
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 3.0
+  max_s: 12.0
+  typical_s: 6.0
+
+camera_vocabulary:
+  - "static hold"
+  - "slow lateral track"
+  - "gentle push-in"
+  - "long-take handheld follow"
+
+lighting_signature: |
+  natural daylight where possible, soft motivated practicals indoors,
+  bias toward overcast or golden-hour, low contrast, single key source.
+
+approximation_basis: |
+  Aggregation of the cited Directors-Label, BRAEID, and IMDb pages
+  describing Gondry/Jonze long-take and storyboard-driven approach.
+  Not Cinemetrics-grade; ASL and framing_mix are general indications.

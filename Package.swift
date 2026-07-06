@@ -49,7 +49,10 @@ let package = Package(
             dependencies: [
                 .product(name: "Yams", package: "Yams"),
             ],
-            path: "Sources/NexGenEngine"
+            path: "Sources/NexGenEngine",
+            resources: [
+                .copy("Resources/MusicvideoPack"),
+            ]
         ),
         .testTarget(
             name: "NexGenVideoTests",

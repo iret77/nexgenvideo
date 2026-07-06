@@ -1,0 +1,99 @@
+id: wong-kar-wai-doyle-neon-dream
+name: "Asian Arthouse — Wong Kar-wai / Christopher Doyle neon dream"
+description: |
+  Neon-getraenkte, traumartige Hong-Kong-Aesthetik in der Schule
+  Wong Kar-wai + Christopher Doyle. Step-Printing-Slow-Motion
+  (rhythmisches Frame-Drop), enge Kompositionen mit 50mm+ Lenses,
+  Curve-betonte Linien, melancholische Farbcodierung pro Sequenz.
+  Empfohlen fuer Tracks mit zerdehnter Zeit-Empfindung, Sehnsuchts-
+  Bogen und urbaner Nacht-Stimmung.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
+  moods: [melancholic, introspective, dreamy, intimate, cinematic, narrative]
+  tempo_bands: [slow, medium]
+  concept_types: [narrative, hybrid, abstract]
+  figures: [artist_only, artist_plus_others, others_only]
+  aspect_ratios: []
+
+references:
+  - name: "Wong Kar-wai (Director)"
+    role: director
+    notable_works:
+      - "Chungking Express (1994)"
+      - "Fallen Angels (1995)"
+      - "Happy Together (1997)"
+      - "In the Mood for Love (2000)"
+      - "2046 (2004)"
+    sources:
+      - label: "BAMPFA — In the Mood for Love: The Films of Wong Kar Wai"
+        url: "https://bampfa.org/program/mood-love-films-wong-kar-wai"
+      - label: "The Criterion Collection — World of Wong Kar Wai"
+        url: "https://www.criterion.com/boxsets/4117-world-of-wong-kar-wai"
+      - label: "The Independent Photographer — Wong Kar-Wai's Color Obsession"
+        url: "https://independent-photo.com/news/wong-kar-wai-color-obsession/"
+      - label: "Wikipedia — In the Mood for Love"
+        url: "https://en.wikipedia.org/wiki/In_the_Mood_for_Love"
+  - name: "Christopher Doyle (Cinematographer / DOP)"
+    role: dop
+    notable_works:
+      - "Days of Being Wild (1990, with Wong Kar-wai)"
+      - "Chungking Express (1994)"
+      - "In the Mood for Love (2000, with Mark Lee Ping Bing)"
+    sources:
+      - label: "BFI — Christopher Doyle on shooting Chungking Express for Wong Kar-wai"
+        url: "https://www.bfi.org.uk/interviews/christopher-doyle-shooting-chungking-express"
+      - label: "Wikipedia — Christopher Doyle"
+        url: "https://en.wikipedia.org/wiki/Christopher_Doyle"
+      - label: "SCMP — Wong Kar-wai's go-to man Christopher Doyle recalls Hong Kong's golden era"
+        url: "https://www.scmp.com/magazines/style/people-events/article/2145483/wong-kar-wais-go-man-christopher-doyle-recounts-golden"
+
+section_arc:
+  - role: establishing
+    framing_hint: [ms, mcu]
+    notes: "Atmosphaerischer Anker — mittel-nah, Welt-Architektur an den Raendern angeschnitten."
+  - role: reveal
+    framing_hint: [mcu, cu]
+    notes: "Performer im neon-Praktischen, oft profil oder leicht abgewandt."
+  - role: detail
+    framing_hint: [ecu, cu, insert]
+    notes: "Hand, Lippe, Uhrzeiger, Zigarettenrauch — Step-Printing-Beats."
+  - role: resolve
+    framing_hint: [ms, ots]
+    notes: "Rueck zur Mittel-Distanz, oft OTS durch ein Architektur-Element."
+
+framing_mix:
+  wide_pct: 5
+  full_pct: 5
+  ms_pct: 25
+  mcu_pct: 20
+  cu_pct: 20
+  ecu_pct: 10
+  ots_pct: 10
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 2.0
+  max_s: 10.0
+  typical_s: 4.5
+
+camera_vocabulary:
+  - "step-printing slow motion"
+  - "static hold through architectural frame"
+  - "slow lateral drift"
+  - "rack-focus between near and far"
+
+lighting_signature: |
+  saturated neon practicals, deep cyan-magenta or amber-teal pairings,
+  motivated lamps and signage as key, soft shadow detail preserved,
+  often a single signature colour per sequence (Chungking yellow,
+  Fallen Angels blue).
+
+approximation_basis: |
+  Aggregation of the cited BFI interview, Criterion Collection box set
+  materials, Wikipedia, SCMP and Independent Photographer essays
+  describing the Wong/Doyle partnership. Step-Printing-Technik aus
+  dem BFI-Interview. Values are qualitative, derived from cited
+  analyses, not from per-frame Cinemetrics.

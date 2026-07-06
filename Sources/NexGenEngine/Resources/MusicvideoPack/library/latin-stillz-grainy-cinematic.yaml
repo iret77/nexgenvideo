@@ -1,0 +1,89 @@
+id: latin-stillz-grainy-cinematic
+name: "Latin Pop / Reggaeton — Stillz grainy cinematic"
+description: |
+  Cinematic-Short-Film-Aesthetik aus dem zeitgenoessischen Latin-Pop
+  in der Tradition von Stillz (Matias Vasquez, Bad Bunny + Rosalia
+  + Omar Apollo Stamm-Director). 16mm-Filmkorn fuer raue Beats,
+  ueber-saturierte digitale Sequenzen fuer Traum-/Afterlife-
+  Momente, narrative Mini-Kurzfilme um Songtext-Philosophie. Fuer
+  Reggaeton-, Latin-Pop- und urbanen R&B-Tracks.
+
+triggers:
+  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
+  moods: [intimate, melancholic, narrative, cinematic, euphoric, high_energy]
+  tempo_bands: [medium, uptempo, fast]
+  concept_types: [narrative, hybrid, performance]
+  figures: [artist_only, artist_plus_others]
+  aspect_ratios: []
+
+references:
+  - name: "Stillz (Matias Vasquez)"
+    role: director
+    notable_works:
+      - "Bad Bunny — Moscow Mule"
+      - "Bad Bunny + Rosalia — La Noche de Anoche"
+      - "Rosalia — Candy"
+      - "Omar Apollo — Invincible (16mm + super-clean afterlife sequences)"
+    sources:
+      - label: "Rolling Stone — The Art of Stillz: The Elusive Creative Visionary Talks About His Most Memorable Videos"
+        url: "https://www.rollingstone.com/music/music-features/stillz-music-videos-interview-1378625/"
+      - label: "Remezcla — Bad Bunny & Rosalia Celebrates Valentine's Day With 'La Noche de Anoche' Music Video"
+        url: "https://remezcla.com/music/bad-bunny-rosalia-la-noche-de-anoche-music-video/"
+      - label: "IMVDb — Stillz directorial credits"
+        url: "https://imvdb.com/n/stillz/videography-by-position/dir"
+      - label: "IMDb — Stillz"
+        url: "https://www.imdb.com/name/nm11149796/"
+      - label: "Canada Canada — STILLZ"
+        url: "https://www.canadacanada.com/directors/stillz"
+
+section_arc:
+  - role: establishing
+    framing_hint: [wide, full]
+    notes: "Welt-Anker auf 16mm-Film mit sichtbarem Korn — Strasse, Innenraum, urbane Setpieces."
+  - role: reveal
+    framing_hint: [ms, mcu]
+    notes: "Performer in der Welt verankert, oft mit Partner oder Crowd."
+  - role: detail
+    framing_hint: [cu, ecu]
+    notes: "Augen, Schmuck, Haut-Texture, Schweiss — Identity-Beats."
+  - role: cutaway
+    framing_hint: [insert, ots]
+    notes: "Symbol-Inserts oder narrative Mikro-Story-Beats."
+  - role: resolve
+    framing_hint: [ms, full]
+    notes: "Rueck zum Performer am Section-Ende, oft mit ueber-saturierter Afterlife-Variante."
+
+framing_mix:
+  wide_pct: 15
+  full_pct: 10
+  ms_pct: 25
+  mcu_pct: 20
+  cu_pct: 15
+  ecu_pct: 5
+  ots_pct: 5
+  pov_pct: 0
+  insert_pct: 5
+  aerial_pct: 0
+
+asl_range:
+  min_s: 1.5
+  max_s: 6.0
+  typical_s: 3.0
+
+camera_vocabulary:
+  - "handheld lateral track"
+  - "16mm grain plate"
+  - "saturated push-in on emotional peak"
+  - "rack-focus between performer and crowd"
+  - "static portrait hold"
+
+lighting_signature: |
+  warm sodium-street and tungsten practicals on 16mm grain plates,
+  saturated digital plates for transcendent moments, deep magenta-
+  cyan colour grade on shadows, soft fall-off on faces.
+
+approximation_basis: |
+  Aggregation of the cited Rolling Stone interview, Remezcla,
+  IMVDb, IMDb and Canada Canada pages describing Stillz' 16mm-vs-
+  digital approach and his repeat collaborations with Bad Bunny and
+  Rosalia. Specific framing_mix derived qualitatively.
