@@ -1533,9 +1533,9 @@ struct GenerationView: View {
         }
     }
 
-    private func audioParams(audioDuration: Int, videoURL: String? = nil) -> AudioGenerationParams {
+    private func audioParams(audioDuration: Int, videoURL: String? = nil, compiledPrompt: String? = nil) -> AudioGenerationParams {
         AudioGenerationParams(
-            prompt: prompt,
+            prompt: compiledPrompt ?? prompt,
             voice: audioModel.voices != nil && !selectedVoice.isEmpty ? selectedVoice : nil,
             lyrics: audioModel.supportsLyrics && !lyrics.isEmpty ? lyrics : nil,
             styleInstructions: audioModel.supportsStyleInstructions && !styleInstructions.isEmpty
@@ -1547,33 +1547,70 @@ struct GenerationView: View {
     }
 
     private func submitGeneration() {
-        // Panel input is intent, not a model prompt (#100) — compile through the gate first.
-        let raw = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { performSubmitGeneration(compiledPrompt: raw); return }
-        Task { @MainActor in
-            do {
-                let compiled = try await PromptCompiler.compile(intent: raw, modelId: currentModelId, editor: editor)
-                performSubmitGeneration(compiledPrompt: compiled.text)
-            } catch let toolError as ToolError {
-                flashDropError(toolError.message)
-            } catch {
-                flashDropError(error.localizedDescription)
-            }
-        }
-    }
-
-    private func performSubmitGeneration(compiledPrompt: String) {
+        // The panel builds ONE GenerationRequest and hands it to the shared controller (#114). Panel
+        // input is intent, not a model prompt (#100) — the controller composes it through the engine
+        // and blocks on a lint ERROR, surfaced here via flashDropError.
+        let rawIntent = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let audioDuration: Int = {
             guard selectedType == .audio else { return 0 }
             if audioModel.inputs.contains(.video) { return effectiveAudioVideoSeconds }
             return audioModel.durations != nil ? selectedAudioDuration : 0
         }()
+
+        // Validate BEFORE consuming irreversible pending-edit state, so a failed preflight doesn't
+        // drop the pending replacement/placement. The controller re-runs the same check as its
+        // preflight step for uniformity, but the panel bails here to protect that state.
         if let err = preflightValidation(audioDuration: audioDuration) {
             flashDropError(err)
             return
         }
+
+        // Placement: an active edit replacement wins; otherwise an audio timeline placement; else the
+        // media library. These consume the pending-edit state exactly as before.
+        let replacementClipId = editor.pendingEditReplacementClipId
+        editor.pendingEditReplacementClipId = nil
+        let pendingAudioPlacement = selectedType == .audio ? editor.pendingEditAudioPlacement : nil
+        editor.pendingEditAudioPlacement = nil
+
+        let request: GenerationRequest
+        switch selectedType {
+        case .video:
+            request = buildVideoRequest(intent: rawIntent, replacementClipId: replacementClipId)
+        case .image:
+            request = buildImageRequest(intent: rawIntent, replacementClipId: replacementClipId)
+        case .audio:
+            request = buildAudioRequest(
+                intent: rawIntent, audioDuration: audioDuration,
+                replacementClipId: replacementClipId, pendingAudioPlacement: pendingAudioPlacement)
+        }
+
+        let preflightDuration = audioDuration
+        let outcome = GenerationController.submit(
+            request, editor: editor,
+            preflight: { self.preflightValidation(audioDuration: preflightDuration) })
+        switch outcome {
+        case .failure(let error):
+            // Nothing was submitted — restore the pending-edit state consumed above so a compile
+            // block doesn't cost the user their replace/placement intent.
+            editor.pendingEditReplacementClipId = replacementClipId
+            editor.pendingEditAudioPlacement = pendingAudioPlacement
+            flashDropError(error.errorDescription ?? "Generation failed.")
+        case .success:
+            editor.pendingEditTrimmedSource = nil
+            lyrics = ""
+            styleInstructions = ""
+            prompt = ""
+            editFolderId = nil
+            clearReferences()
+        }
+    }
+
+    /// Base `GenerationInput` shared by the three type builders — carries the compiled prompt plus the
+    /// panel's structured options. `intent` rides along so a later rerun recompiles against the ledger.
+    private func baseGenInput(compiledPrompt: String, audioDuration: Int, imageCount: Int) -> GenerationInput {
         var genInput = GenerationInput(
             prompt: compiledPrompt,
+            intent: prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : prompt,
             model: currentModelId,
             duration: selectedType == .video ? effectiveVideoSeconds : audioDuration,
             aspectRatio: selectedAspectRatio,
@@ -1589,161 +1626,120 @@ struct GenerationView: View {
                 ? instrumental : nil,
             generateAudio: supportsAudioToggle ? generateAudio : nil
         )
-        let imageCount: Int = {
-            guard selectedType == .image, imageModel.maxImages > 1 else { return 1 }
-            return min(imageModel.maxImages, max(1, selectedNumImages))
+        if imageCount > 1 { genInput.numImages = imageCount }
+        return genInput
+    }
+
+    private var currentImageCount: Int {
+        guard selectedType == .image, imageModel.maxImages > 1 else { return 1 }
+        return min(imageModel.maxImages, max(1, selectedNumImages))
+    }
+
+    private func placement(replacementClipId: String?, folderId: String?, resetTrim: Bool = false) -> GenerationRequest.Placement {
+        if let clipId = replacementClipId { return .replaceClip(id: clipId, resetTrim: resetTrim) }
+        return .mediaLibrary(folderId: folderId)
+    }
+
+    private func buildVideoRequest(intent: String, replacementClipId: String?) -> GenerationRequest {
+        let model = videoModel
+        let inputAssets = videoInputAssets(for: model)
+        let trimmedSource: TrimmedSource? = {
+            guard model.requiresSourceVideo,
+                  let trim = editor.pendingEditTrimmedSource,
+                  let sv = sourceVideo,
+                  trim.sourceURL == sv.url else { return nil }
+            return trim
         }()
-        if imageCount > 1 {
-            genInput.numImages = imageCount
-        }
-
-        let replacementClipId = editor.pendingEditReplacementClipId
-        editor.pendingEditReplacementClipId = nil
-        let pendingAudioPlacement = selectedType == .audio ? editor.pendingEditAudioPlacement : nil
-        editor.pendingEditAudioPlacement = nil
-        let editorRef = editor
-        if let clipId = replacementClipId {
-            editor.markPendingReplacement(clipId: clipId)
-        }
-        let makeOnComplete: (Bool) -> (@MainActor (MediaAsset) -> Void)? = { resetTrim in
-            guard let clipId = replacementClipId else { return nil }
-            let firstOnly = FirstOnlyFlag()
-            return { [weak editorRef] newAsset in
-                guard firstOnly.fire() else { return }
-                editorRef?.replaceClipMediaRef(clipId: clipId, newAssetId: newAsset.id, resetTrim: resetTrim)
-                editorRef?.clearPendingReplacement(clipId: clipId)
-            }
-        }
-        let onFailure: (@MainActor () -> Void)? = {
-            guard let clipId = replacementClipId else { return nil }
-            return { [weak editorRef] in
-                editorRef?.clearPendingReplacement(clipId: clipId)
-            }
-        }()
-
-        let autoOpenPreview: (String) -> Void = { newAssetId in
-            guard replacementClipId == nil else { return }
-            editorRef.selectMediaPanelItem(newAssetId)
-        }
-
-        switch selectedType {
-        case .video:
-            let model = videoModel
-            let inputAssets = videoInputAssets(for: model)
-            let trimmedSource: TrimmedSource? = {
-                guard model.requiresSourceVideo,
-                      let trim = editor.pendingEditTrimmedSource,
-                      let sv = sourceVideo,
-                      trim.sourceURL == sv.url else { return nil }
-                return trim
-            }()
-            editor.pendingEditTrimmedSource = nil
-            let placeholderDuration: Double
-            if model.requiresSourceVideo {
-                if let trim = trimmedSource, trim.hasTrim {
-                    placeholderDuration = trim.durationSeconds
-                } else {
-                    placeholderDuration = sourceVideo?.duration ?? 5
-                }
+        let placeholderDuration: Double
+        if model.requiresSourceVideo {
+            if let trim = trimmedSource, trim.hasTrim {
+                placeholderDuration = trim.durationSeconds
             } else {
-                placeholderDuration = Double(selectedDuration)
+                placeholderDuration = sourceVideo?.duration ?? 5
             }
-            let videoFolderId: String? = editFolderId ?? (
-                model.requiresSourceVideo
-                    ? (inputAssets.sourceVideo?.folderId ?? inputAssets.imageRefs.last?.folderId)
-                    : inputAssets.textToVideoReferences.last?.folderId
-            ) ?? editor.mediaPanelCurrentFolderId
-            let videoAssetId = VideoGenerationSubmission.make(
-                genInput: genInput,
-                model: model,
-                inputAssets: inputAssets,
-                placeholderDuration: placeholderDuration,
-                trimmedSourceOverride: trimmedSource,
-                folderId: videoFolderId,
-                generateAudio: effectiveGenerateAudio
-            ).submit(
-                service: editor.generationService,
-                projectURL: editor.projectURL,
-                editor: editor,
-                onComplete: makeOnComplete(trimmedSource?.hasTrim == true),
-                onFailure: onFailure
-            )
-            autoOpenPreview(videoAssetId)
-        case .image:
-            let model = imageModel
-            let imageAssetId = ImageGenerationSubmission.make(
-                genInput: genInput,
-                model: model,
-                references: imageReferences,
-                numImages: imageCount,
-                folderId: editFolderId ?? imageReferences.last?.folderId ?? editor.mediaPanelCurrentFolderId
-            ).submit(
-                service: editor.generationService,
-                projectURL: editor.projectURL,
-                editor: editor,
-                onComplete: makeOnComplete(false),
-                onFailure: onFailure
-            )
-            autoOpenPreview(imageAssetId)
-        case .audio:
-            let model = audioModel
-            let onCompleteAudio = makeOnComplete(false)
-            if model.inputs.contains(.video), let asset = audioVideoSource {
-                let folderId = editFolderId ?? asset.folderId ?? editor.mediaPanelCurrentFolderId
-                let trimmedSource = audioVideoTrimmedSource(for: asset)
-                let params = audioParams(audioDuration: audioDuration)
-                genInput.referenceVideoAssetIds = [asset.id]
-                let audioOnComplete: (@MainActor (MediaAsset) -> Void)? = {
-                    guard pendingAudioPlacement != nil else { return onCompleteAudio }
-                    return { [weak editorRef] asset in
-                        editorRef?.finalizeGeneratingClip(placeholderId: asset.id, asset: asset)
-                        onCompleteAudio?(asset)
-                    }
-                }()
-                let audioAssetId = AudioGenerationSubmission.make(
-                    genInput: genInput,
-                    model: model,
-                    params: params,
-                    folderId: folderId,
-                    references: [asset],
-                    trimmedSourceOverride: trimmedSource
-                ).submit(
-                    service: editor.generationService,
-                    projectURL: editor.projectURL,
-                    editor: editor,
-                    onComplete: audioOnComplete,
-                    onFailure: onFailure
-                )
-                if let placement = pendingAudioPlacement {
-                    editor.placeGeneratingAudioClip(
-                        placeholderId: audioAssetId,
-                        startFrame: placement.startFrame,
-                        spanSeconds: placement.spanSeconds,
-                        actionName: placement.actionName
-                    )
-                }
+        } else {
+            placeholderDuration = Double(selectedDuration)
+        }
+        let folderId = editFolderId ?? (
+            model.requiresSourceVideo
+                ? (inputAssets.sourceVideo?.folderId ?? inputAssets.imageRefs.last?.folderId)
+                : inputAssets.textToVideoReferences.last?.folderId
+        ) ?? editor.mediaPanelCurrentFolderId
+        let generateAudioFlag = effectiveGenerateAudio
+        return GenerationRequest(
+            modality: .video, modelId: currentModelId, intent: intent,
+            aspectRatio: selectedAspectRatio, durationSeconds: Double(effectiveVideoSeconds),
+            placement: placement(
+                replacementClipId: replacementClipId, folderId: folderId,
+                resetTrim: trimmedSource?.hasTrim == true),
+            origin: .panel,
+            submission: .video(make: { compiled in
+                VideoGenerationSubmission.make(
+                    genInput: baseGenInput(compiledPrompt: compiled, audioDuration: 0, imageCount: 1),
+                    model: model, inputAssets: inputAssets,
+                    placeholderDuration: placeholderDuration,
+                    trimmedSourceOverride: trimmedSource,
+                    folderId: folderId, generateAudio: generateAudioFlag)
+            }))
+    }
+
+    private func buildImageRequest(intent: String, replacementClipId: String?) -> GenerationRequest {
+        let model = imageModel
+        let imageCount = currentImageCount
+        let folderId = editFolderId ?? imageReferences.last?.folderId ?? editor.mediaPanelCurrentFolderId
+        return GenerationRequest(
+            modality: .image, modelId: currentModelId, intent: intent,
+            aspectRatio: selectedAspectRatio,
+            placement: placement(replacementClipId: replacementClipId, folderId: folderId),
+            origin: .panel,
+            submission: .image(make: { compiled in
+                ImageGenerationSubmission.make(
+                    genInput: baseGenInput(compiledPrompt: compiled, audioDuration: 0, imageCount: imageCount),
+                    model: model, references: imageReferences, numImages: imageCount, folderId: folderId)
+            }))
+    }
+
+    private func buildAudioRequest(
+        intent: String, audioDuration: Int, replacementClipId: String?,
+        pendingAudioPlacement: PendingAudioPlacement?
+    ) -> GenerationRequest {
+        let model = audioModel
+        if model.inputs.contains(.video), let asset = audioVideoSource {
+            let folderId = editFolderId ?? asset.folderId ?? editor.mediaPanelCurrentFolderId
+            let trimmedSource = audioVideoTrimmedSource(for: asset)
+            let placementValue: GenerationRequest.Placement
+            if let clipId = replacementClipId {
+                placementValue = .replaceClip(id: clipId, resetTrim: false)
+            } else if let p = pendingAudioPlacement {
+                placementValue = .timelineAt(startFrame: p.startFrame, spanSeconds: p.spanSeconds, actionName: p.actionName)
             } else {
-                let params = audioParams(audioDuration: audioDuration)
+                placementValue = .mediaLibrary(folderId: folderId)
+            }
+            return GenerationRequest(
+                modality: .audio, modelId: currentModelId, intent: intent,
+                durationSeconds: Double(audioDuration),
+                placement: placementValue, origin: .panel,
+                submission: .audio(make: { compiled in
+                    var genInput = baseGenInput(compiledPrompt: compiled, audioDuration: audioDuration, imageCount: 1)
+                    genInput.referenceVideoAssetIds = [asset.id]
+                    return AudioGenerationSubmission.make(
+                        genInput: genInput, model: model,
+                        params: audioParams(audioDuration: audioDuration, compiledPrompt: compiled),
+                        folderId: folderId, references: [asset], trimmedSourceOverride: trimmedSource)
+                }))
+        }
+        let folderId = editFolderId ?? editor.mediaPanelCurrentFolderId
+        return GenerationRequest(
+            modality: .audio, modelId: currentModelId, intent: intent,
+            durationSeconds: Double(audioDuration),
+            placement: placement(replacementClipId: replacementClipId, folderId: folderId),
+            origin: .panel,
+            submission: .audio(make: { compiled in
                 AudioGenerationSubmission.make(
-                    genInput: genInput,
-                    model: model,
-                    params: params,
-                    folderId: editFolderId ?? editor.mediaPanelCurrentFolderId
-                ).submit(
-                    service: editor.generationService,
-                    projectURL: editor.projectURL,
-                    editor: editor,
-                    onComplete: onCompleteAudio,
-                    onFailure: onFailure
-                )
-            }
-        }
-        editor.pendingEditTrimmedSource = nil
-        lyrics = ""
-        styleInstructions = ""
-        prompt = ""
-        editFolderId = nil
-        clearReferences()
+                    genInput: baseGenInput(compiledPrompt: compiled, audioDuration: audioDuration, imageCount: 1),
+                    model: model, params: audioParams(audioDuration: audioDuration, compiledPrompt: compiled),
+                    folderId: folderId)
+            }))
     }
 
     private func clearReferences() {

@@ -132,8 +132,32 @@ final class AgentService {
         return nil
     }
 
+    /// The ONE dialog-submit handler (audit #3): every presented `AgentDialog` routes here and is
+    /// dispatched by its `purpose`. `.chatClarification` composes the structured chat message (the
+    /// existing path); `.generationIntent` composes the result into an intent line and hands it to the
+    /// generation handler (the music-shaping dialog is this purpose — its bespoke path collapses into
+    /// this one). Kept on `AgentService` so no surface re-implements dialog submission.
     func submitDialog(_ dialog: AgentDialog, result: AgentDialogResult) {
         pendingDialog = nil
+        switch dialog.purpose {
+        case .chatClarification:
+            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+        case .generationIntent:
+            if let sink = onGenerationDialogIntent {
+                sink(Self.intentLine(from: dialog, result: result))
+            } else {
+                send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+            }
+        }
+    }
+
+    /// Sink for a `.generationIntent` dialog's composed intent, set by the surface that owns the
+    /// generation (e.g. the music tab). When unset the intent is composed into a chat message so the
+    /// answer is never dropped.
+    var onGenerationDialogIntent: (@MainActor (String) -> Void)?
+
+    /// The structured chat-message form of a dialog answer — labeled sections + free-text direction.
+    private static func chatMessage(from dialog: AgentDialog, result: AgentDialogResult) -> String {
         var parts: [String] = []
         for section in dialog.sections {
             let picked = result.labels(section.id)
@@ -144,7 +168,15 @@ final class AgentService {
         }
         var line = "Dialog \u{201C}\(dialog.title)\u{201D} \u{2014} " + (parts.isEmpty ? "confirmed" : parts.joined(separator: "; "))
         if !result.direction.isEmpty { line += ". Direction: \(result.direction)" }
-        send(text: line, mentions: [])
+        return line
+    }
+
+    /// The compact intent line for a generation dialog — picked chip labels then the free-text
+    /// direction, comma-joined (matches the music tab's original composition).
+    private static func intentLine(from dialog: AgentDialog, result: AgentDialogResult) -> String {
+        var parts = result.allLabels
+        if !result.direction.isEmpty { parts.append(result.direction) }
+        return parts.joined(separator: ", ")
     }
 
     func cancelDialog() {

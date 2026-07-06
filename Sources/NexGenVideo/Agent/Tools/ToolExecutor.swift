@@ -98,7 +98,7 @@ final class ToolExecutor {
         case .addCaptions:   return try await addCaptions(editor, args)
         case .exportProject: return try await exportProject(editor, args)
         case .showDialog: return try showDialog(editor, args)
-        case .compilePrompt: return try await compilePrompt(editor, args)
+        case .compilePrompt: return try compilePrompt(editor, args)
         case .generateVideo: return try generate(editor, args, type: .video)
         case .generateImage: return try generate(editor, args, type: .image)
         case .generateAudio: return try await generateAudio(editor, args)

@@ -1,12 +1,15 @@
 import CryptoKit
 import Foundation
 
-/// The mandatory prompt gate (Epic #98 / issue #100): every prompt bound for a content model
-/// passes through here. User chat input — and the agent's own phrasing — is *intent*, never a raw
-/// model prompt; NGV's value is that several cheap LLM turns prepare the input before one
-/// expensive content render. This deterministic stage merges locked ledger directives, applies
-/// per-model limits, and normalizes; translation and gap-resolution happen agent-side (per the
-/// compile_prompt tool contract) BEFORE compiling. Raw sends exist only behind the pro toggle.
+/// The mandatory prompt GATE (Epic #98 / issue #100): every prompt bound for a content model passes
+/// through here. User chat input — and the agent's own phrasing — is *intent*, never a raw model
+/// prompt; NGV's value is that several cheap LLM turns prepare the input before one expensive content
+/// render.
+///
+/// Composition (translate → merge locked ledger directives → build the provider prompt → lint) now
+/// lives in `PromptComposer` (the engine path, concept §5). This file is only the gate: mint a
+/// process-stable token over a compiled prompt, validate it, and enforce that generate_* callers
+/// carry one (or the pro raw-prompt escape). Raw sends exist only behind the pro toggle.
 struct CompiledPrompt: Sendable {
     let text: String
     let token: String
@@ -31,46 +34,42 @@ enum PromptCompiler {
         modelId.hasPrefix("runway/") ? 1000 : 2500
     }
 
-    /// Deterministic compile: normalize, fold in locked ledger directives (non-negotiable,
-    /// concept §5), enforce the model's length cap. The intent must already be English and
-    /// contradiction-free — that is the agent's part of the contract.
+    /// Compile intent → model-ready prompt via the engine composer, then mint the gate token over the
+    /// result. The `compile_prompt` tool contract is unchanged: intent must already be English and
+    /// contradiction-free (the agent's part), composition + lint is the engine's part, the token is
+    /// the gate's. `modality` selects the engine builder; callers that only know a model id resolve it
+    /// via `modalityForModel`.
     @MainActor
     static func compile(
         intent: String,
         modelId: String,
+        modality: PromptComposer.Modality,
+        aspectRatio: String = "",
+        durationSeconds: Double? = nil,
         editor: EditorViewModel?
-    ) async throws -> CompiledPrompt {
-        let trimmed = intent
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw ToolError("Empty intent — describe what to generate.")
-        }
+    ) throws -> CompiledPrompt {
+        let composed = try PromptComposer.compose(
+            intent: intent,
+            modality: modality,
+            modelId: modelId,
+            aspectRatio: aspectRatio,
+            durationSeconds: durationSeconds,
+            projectDir: editor?.studioProjectDir
+        )
+        return CompiledPrompt(
+            text: composed.text,
+            token: token(for: composed.text, modelId: modelId),
+            notes: composed.notes)
+    }
 
-        var notes: [String] = []
-        var text = trimmed
-
-        if let editor, let dir = editor.studioProjectDir {
-            if case .success(.some(let ledger)) = await CockpitDataService.ledger(projectDir: dir) {
-                let locked = ledger.objects.values
-                    .flatMap(\.values)
-                    .filter(\.locked)
-                    .map(\.directive)
-                let missing = locked.filter { !text.localizedCaseInsensitiveContains($0) }
-                if !missing.isEmpty {
-                    let suffix = text.hasSuffix(".") ? " " : ". "
-                    text += suffix + missing.joined(separator: ". ")
-                    notes.append("merged \(missing.count) locked ledger directive(s)")
-                }
-            }
-        }
-
-        let cap = lengthCap(modelId: modelId)
-        guard text.count <= cap else {
-            throw ToolError(
-                "Compiled prompt is \(text.count) characters — \(modelId) accepts at most \(cap). Tighten the intent.")
-        }
-        return CompiledPrompt(text: text, token: token(for: text, modelId: modelId), notes: notes)
+    /// Resolve a model id to its composition modality (the `compile_prompt` tool only receives a model
+    /// id). Video/image use the engine builders; everything audio-shaped composes as merged text.
+    @MainActor
+    static func modalityForModel(_ modelId: String) -> PromptComposer.Modality {
+        if VideoModelConfig.allModels.contains(where: { $0.id == modelId }) { return .video }
+        if ImageModelConfig.allModels.contains(where: { $0.id == modelId }) { return .image }
+        if AudioModelConfig.allModels.contains(where: { $0.id == modelId }) { return .audio }
+        return .video
     }
 
     static func token(for text: String, modelId: String) -> String {

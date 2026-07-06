@@ -1,0 +1,185 @@
+import Foundation
+import NexGenEngine
+
+/// Engine-backed prompt composition (concept §5: "the Prompt Generator composes from the Intent
+/// Ledger"). This is the COMPILE half of the loop; `PromptCompiler` is only the gate (token mint +
+/// enforcement). Free-intent surfaces (panel, music tab, agent, rerun) carry no shot, so the ledger's
+/// project-wide directives are composed in and the whole thing runs the engine's pre-generation
+/// `PromptLinter` — a lint ERROR blocks before money is spent; warnings pass as notes.
+///
+/// Video/image compose through the real engine builders (`PromptGenerator`); audio has no engine
+/// builder (Seedance/image only), so it keeps the deterministic intent + locked-directive merge the
+/// old `PromptCompiler.compile` did — see `composeAudio`.
+enum PromptComposer {
+
+    struct Composition: Sendable {
+        let text: String
+        let notes: [String]
+    }
+
+    enum ComposeError: LocalizedError {
+        case emptyIntent
+        case lintBlocked(code: String, message: String)
+        case tooLong(count: Int, cap: Int, modelId: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .emptyIntent:
+                return "Empty intent — describe what to generate."
+            case .lintBlocked(let code, let message):
+                return "Prompt lint failed (\(code)): \(message)"
+            case .tooLong(let count, let cap, let modelId):
+                return "Compiled prompt is \(count) characters — \(modelId) accepts at most \(cap). Tighten the intent."
+            }
+        }
+    }
+
+    enum Modality: Sendable { case video, image, audio, music }
+
+    /// Compose one model-ready prompt from free intent + the project ledger, running the engine
+    /// linter as the pre-generation gate. `projectDir` is the open project's URL (see
+    /// `EditorViewModel.studioProjectDir`); when it isn't a project yet, composition proceeds with an
+    /// empty ledger.
+    static func compose(
+        intent: String,
+        modality: Modality,
+        modelId: String,
+        aspectRatio: String = "",
+        durationSeconds: Double? = nil,
+        projectDir: URL?
+    ) throws -> Composition {
+        let trimmed = normalize(intent)
+        guard !trimmed.isEmpty else { throw ComposeError.emptyIntent }
+
+        let directives = lockedProjectDirectives(projectDir: projectDir)
+
+        let composed: String
+        var notes: [String] = []
+        switch modality {
+        case .video:
+            let payload = PromptPayload(
+                subject: trimmed,
+                durationS: durationSeconds,
+                aspectRatio: aspectRatio,
+                directives: directives.all
+            )
+            composed = PromptGenerator.buildVideoPrompt(modelID: engineModelID(modelId), payload: payload)
+            notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
+        case .image:
+            let payload = PromptPayload(
+                subject: trimmed,
+                aspectRatio: aspectRatio,
+                directives: directives.all
+            )
+            composed = try PromptGenerator.buildImagePrompt(modelID: engineModelID(modelId), payload: payload)
+            notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
+        case .audio, .music:
+            // No engine audio builder — merge locked directives into the intent (the historical
+            // deterministic path), then run the linter's text checks on the result.
+            composed = composeAudio(intent: trimmed, directives: directives)
+            let mergedCount = directives.locked.filter { !trimmed.localizedCaseInsensitiveContains($0) }.count
+            if mergedCount > 0 {
+                notes.append("merged \(mergedCount) locked ledger directive(s)")
+            }
+            try lintAudio(composed, lockedDirectives: directives.locked)
+        }
+
+        let cap = PromptCompiler.lengthCap(modelId: modelId)
+        guard composed.count <= cap else {
+            throw ComposeError.tooLong(count: composed.count, cap: cap, modelId: modelId)
+        }
+        return Composition(text: composed, notes: notes)
+    }
+
+    // MARK: - Ledger
+
+    private struct ProjectDirectives {
+        let all: [String]
+        let locked: [String]
+    }
+
+    /// Every ledger directive in the project, with the locked subset kept apart — there is no shot to
+    /// scope by here, so the whole ledger applies. Faithful to the old compiler, which merged every
+    /// locked directive. A missing/invalid ledger is a normal empty state, not an error.
+    private static func lockedProjectDirectives(projectDir: URL?) -> ProjectDirectives {
+        guard let projectDir, let root = DataRootResolver.dataRoot(of: projectDir) else {
+            return ProjectDirectives(all: [], locked: [])
+        }
+        let store = YAMLArtifactStore(dataRoot: root)
+        guard let ledger = try? store.load(Ledger.self, at: StudioLayout.ledgerFile) else {
+            return ProjectDirectives(all: [], locked: [])
+        }
+        var all: [String] = []
+        var locked: [String] = []
+        var seen = Set<String>()
+        for objectKey in ledger.objects.keys.sorted() {
+            guard let attributes = ledger.objects[objectKey] else { continue }
+            for attrName in attributes.keys.sorted() {
+                let attribute = attributes[attrName]!
+                let raw = attribute.directive.isEmpty ? attribute.tag : attribute.directive
+                let directive = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if directive.isEmpty || seen.contains(directive.lowercased()) { continue }
+                seen.insert(directive.lowercased())
+                all.append(directive)
+                if attribute.locked { locked.append(directive) }
+            }
+        }
+        return ProjectDirectives(all: all, locked: locked)
+    }
+
+    // MARK: - Audio composition (no engine builder)
+
+    private static func composeAudio(intent: String, directives: ProjectDirectives) -> String {
+        var text = intent
+        let missing = directives.locked.filter { !text.localizedCaseInsensitiveContains($0) }
+        if !missing.isEmpty {
+            let suffix = text.hasSuffix(".") ? " " : ". "
+            text += suffix + missing.joined(separator: ". ")
+        }
+        return text
+    }
+
+    // MARK: - Linting
+
+    /// Run the engine linter over a composed video/image prompt. Returns warning/info notes; a lint
+    /// ERROR throws so the controller blocks before the render. Locked-directive survival is checked
+    /// with the compliance linter (a lock is a promise — its absence is an ERROR).
+    private static func lint(_ prompt: String, lockedDirectives: [String]) throws -> [String] {
+        var findings = PromptLinter.lintPrompt(prompt)
+        // Compliance: every locked directive must have survived into the final prompt.
+        for f in ComplianceLinter.lintLockedDirectives(prompt, lockedDirectives: lockedDirectives) {
+            findings.append(PromptLinter.LintFinding(
+                severity: f.severity == "error" ? .error : .warn, code: f.code, message: f.message))
+        }
+        if let blocking = findings.first(where: { $0.severity == .error }) {
+            throw ComposeError.lintBlocked(code: blocking.code, message: blocking.message)
+        }
+        return findings.filter { $0.severity != .error }.map { "\($0.code): \($0.message)" }
+    }
+
+    /// Audio has no builder-normalized prompt, so the full slop/format checks would over-fire on plain
+    /// speech/music intent. Only the check that matters for a merged text prompt runs: a locked
+    /// directive dropping out (ERROR).
+    private static func lintAudio(_ prompt: String, lockedDirectives: [String]) throws {
+        for f in ComplianceLinter.lintLockedDirectives(prompt, lockedDirectives: lockedDirectives)
+        where f.severity == "error" {
+            throw ComposeError.lintBlocked(code: f.code, message: f.message)
+        }
+    }
+
+    // MARK: - Helpers
+
+    static func normalize(_ intent: String) -> String {
+        intent
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The engine builders split the model id on the first `:` to pick a provider. App model ids use
+    /// `provider/model` (e.g. `runway/gen4.5`, `fal-ai/veo3`); normalize the first `/` to `:` so the
+    /// builder's provider dispatch matches.
+    private static func engineModelID(_ modelId: String) -> String {
+        guard let slash = modelId.firstIndex(of: "/") else { return modelId }
+        return modelId.replacingCharacters(in: slash...slash, with: ":")
+    }
+}

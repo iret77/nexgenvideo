@@ -35,6 +35,11 @@ struct MediaManifestEntry: Codable, Sendable, Equatable, Identifiable {
 
 struct GenerationInput: Codable, Sendable, Equatable {
     var prompt: String
+    /// The original user/agent intent, kept alongside the compiled `prompt` so a rerun can recompile
+    /// against the CURRENT ledger instead of replaying a stale compiled prompt. Optional and
+    /// backward-compatible: manifests written before this field decode with `intent == nil`, and a
+    /// rerun then falls back to the stored `prompt`. (#114)
+    var intent: String? = nil
     var model: String
     var duration: Int
     var aspectRatio: String

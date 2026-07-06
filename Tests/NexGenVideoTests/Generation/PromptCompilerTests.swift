@@ -3,39 +3,48 @@ import Testing
 
 @testable import NexGenVideo
 
-@Suite("PromptCompiler")
+@Suite("PromptCompiler — gate")
 @MainActor
 struct PromptCompilerTests {
 
-    @Test func compileNormalizesWhitespaceAndReturnsValidToken() async throws {
-        let compiled = try await PromptCompiler.compile(
-            intent: "  an elephant\n\n on   a beach  ", modelId: "fal-ai/veo3", editor: nil)
-        #expect(compiled.text == "an elephant on a beach")
+    // MARK: Compile → token (composition now runs the engine; see PromptComposerTests for detail)
+
+    @Test func compileMintsAValidTokenOverTheComposedPrompt() throws {
+        let compiled = try PromptCompiler.compile(
+            intent: "an elephant on a beach", modelId: "fal-ai/veo3", modality: .video, editor: nil)
+        // Composition is the engine's job; the gate's job is that the returned token validates the
+        // returned text for the model. The composed text is longer than the raw intent.
+        #expect(!compiled.text.isEmpty)
         #expect(PromptCompiler.validate(token: compiled.token, text: compiled.text, modelId: "fal-ai/veo3"))
     }
 
-    @Test func emptyIntentThrows() async {
-        await #expect(throws: ToolError.self) {
-            _ = try await PromptCompiler.compile(intent: "   \n ", modelId: "fal-ai/veo3", editor: nil)
+    @Test func emptyIntentThrows() {
+        #expect(throws: (any Error).self) {
+            _ = try PromptCompiler.compile(
+                intent: "   \n ", modelId: "fal-ai/veo3", modality: .video, editor: nil)
         }
     }
 
-    @Test func runwayLengthCapIsEnforced() async {
-        let long = String(repeating: "a very long cinematic description ", count: 40) // > 1000 chars
-        await #expect(throws: ToolError.self) {
-            _ = try await PromptCompiler.compile(intent: long, modelId: "runway/gen4.5", editor: nil)
+    @Test func runwayLengthCapIsEnforced() {
+        // A very long intent composes past Runway's 1000-char cap → compile throws.
+        let long = String(repeating: "a very long lit description of a lantern-lit hall ", count: 40)
+        #expect(throws: (any Error).self) {
+            _ = try PromptCompiler.compile(
+                intent: long, modelId: "runway/gen4.5", modality: .video, editor: nil)
         }
     }
 
-    @Test func tokenIsBoundToModelAndText() async throws {
-        let compiled = try await PromptCompiler.compile(
-            intent: "a red car", modelId: "fal-ai/veo3", editor: nil)
+    @Test func tokenIsBoundToModelAndText() throws {
+        let compiled = try PromptCompiler.compile(
+            intent: "a red car on a wet street at night", modelId: "fal-ai/veo3", modality: .video, editor: nil)
         // Different model → invalid; different text → invalid.
         #expect(!PromptCompiler.validate(token: compiled.token, text: compiled.text, modelId: "runway/gen4.5"))
         #expect(!PromptCompiler.validate(token: compiled.token, text: compiled.text + "!", modelId: "fal-ai/veo3"))
     }
 
-    @Test func gateRejectsUncompiledAndFabricatedTokens() async throws {
+    // MARK: Gate — token mint / validate / enforce (unchanged by the #114 refactor)
+
+    @Test func gateRejectsUncompiledAndFabricatedTokens() throws {
         // No token at all.
         #expect(throws: ToolError.self) {
             try PromptCompiler.enforceGate(args: ["prompt": "raw"], prompt: "raw", modelId: "fal-ai/veo3")
@@ -45,8 +54,9 @@ struct PromptCompilerTests {
             try PromptCompiler.enforceGate(
                 args: ["compileToken": "deadbeefdeadbeef"], prompt: "raw", modelId: "fal-ai/veo3")
         }
-        // A genuine compile passes.
-        let compiled = try await PromptCompiler.compile(intent: "a red car", modelId: "fal-ai/veo3", editor: nil)
+        // A genuine compile passes the gate for its own text.
+        let compiled = try PromptCompiler.compile(
+            intent: "a red car on a wet street at night", modelId: "fal-ai/veo3", modality: .video, editor: nil)
         try PromptCompiler.enforceGate(
             args: ["compileToken": compiled.token], prompt: compiled.text, modelId: "fal-ai/veo3")
     }

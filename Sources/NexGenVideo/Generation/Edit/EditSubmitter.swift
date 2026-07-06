@@ -95,6 +95,11 @@ enum EditSubmitter {
         var gen = stored
         gen.createdAt = nil
         let modelId = gen.model
+        // Recompile the ORIGINAL intent against the CURRENT ledger through the shared controller's
+        // compile stage (origin .rerun) — a lock added or changed since the first render now applies.
+        // Assets generated before the `intent` field existed have none, so they replay the stored
+        // compiled prompt as before (backward-compatible). Empty intent → no recompile. (#114)
+        gen.prompt = recompiledPrompt(gen: gen, editor: editor) ?? gen.prompt
         let preUploaded = gen.imageURLs
 
         if let videoModel = VideoModelConfig.allModels.first(where: { $0.id == modelId }) {
@@ -275,6 +280,23 @@ enum EditSubmitter {
         }
 
         throw RerunError.unknownModel(modelId)
+    }
+
+    /// Recompose a rerun's stored intent against the current ledger, returning the fresh compiled
+    /// prompt — or nil to keep the stored one (no intent recorded, empty intent, or a lint block: a
+    /// rerun must never fail on a compile ERROR, so it falls back to the last-good prompt).
+    private static func recompiledPrompt(gen: GenerationInput, editor: EditorViewModel) -> String? {
+        guard let intent = gen.intent?.trimmingCharacters(in: .whitespacesAndNewlines), !intent.isEmpty
+        else { return nil }
+        let modality: PromptComposer.Modality
+        if VideoModelConfig.allModels.contains(where: { $0.id == gen.model }) { modality = .video }
+        else if ImageModelConfig.allModels.contains(where: { $0.id == gen.model }) { modality = .image }
+        else if AudioModelConfig.allModels.contains(where: { $0.id == gen.model }) { modality = .audio }
+        else { return nil }  // upscale has no prompt
+        return try? PromptComposer.compose(
+            intent: intent, modality: modality, modelId: gen.model,
+            aspectRatio: gen.aspectRatio, durationSeconds: gen.duration > 0 ? Double(gen.duration) : nil,
+            projectDir: editor.studioProjectDir).text
     }
 
     // MARK: - Panel seeds
