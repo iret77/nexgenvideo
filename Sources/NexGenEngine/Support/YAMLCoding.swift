@@ -28,10 +28,12 @@ public enum YAMLCoding {
     }
 
     /// Parse a YAML string into the canonical, comparable value tree. `nil` for
-    /// an empty document (Yams returns no node).
+    /// an empty document. Uses `Yams.load` so scalars arrive RESOLVED (null/bool/
+    /// int/double/string) — representation differences ("null" vs empty, "12.5"
+    /// vs "1.25e+1") disappear before comparison.
     public static func canonical(_ yaml: String) throws -> YAMLValue? {
-        guard let node = try Yams.compose(yaml: yaml) else { return nil }
-        return YAMLValue(node)
+        guard let any = try Yams.load(yaml: yaml) else { return nil }
+        return YAMLValue(any: any)
     }
 
     /// True when two YAML documents describe the same structure regardless of
@@ -42,42 +44,41 @@ public enum YAMLCoding {
     }
 }
 
-/// A YAML document reduced to a comparable, order-normalized value tree.
-/// Mappings compare independent of key order; scalars compare by their string
-/// form so representation differences (quoting, `null` vs empty) don't matter.
+/// A YAML document reduced to a comparable, order-normalized value tree built
+/// from Yams' RESOLVED load output. Mappings compare independent of key order;
+/// Int folds into Double so `50` and `50.0` agree across the Python/Swift seam.
 public enum YAMLValue: Equatable, Sendable {
     case null
-    case scalar(String)
+    case bool(Bool)
+    case number(Double)
+    case string(String)
     case sequence([YAMLValue])
     case mapping([String: YAMLValue])
 
-    init(_ node: Node) {
-        switch node {
-        case .scalar(let scalar):
-            // Yams marks an explicit null with the `!!null` tag; a plain empty
-            // scalar is also null. Everything else compares by its string value.
-            if scalar.string.isEmpty || scalar.tag == Tag(Tag.Name.null) {
-                self = .null
-            } else {
-                self = .scalar(scalar.string)
-            }
-        case .sequence(let sequence):
-            self = .sequence(sequence.map { YAMLValue($0) })
-        case .mapping(let mapping):
+    init(any: Any) {
+        switch any {
+        case is NSNull:
+            self = .null
+        case let value as Bool:
+            self = .bool(value)
+        case let value as Int:
+            self = .number(Double(value))
+        case let value as Double:
+            self = .number(value)
+        case let value as String:
+            self = .string(value)
+        case let value as [Any]:
+            self = .sequence(value.map { YAMLValue(any: $0) })
+        case let value as [String: Any]:
+            self = .mapping(value.mapValues { YAMLValue(any: $0) })
+        case let value as [AnyHashable: Any]:
             var out: [String: YAMLValue] = [:]
-            for (key, value) in mapping {
-                out[Self.keyString(key)] = YAMLValue(value)
-            }
+            for (key, inner) in value { out[String(describing: key)] = YAMLValue(any: inner) }
             self = .mapping(out)
-        case .alias:
-            // Engine YAML never emits anchors/aliases; fold the resolved node
-            // to its string form so the value stays comparable rather than dropped.
-            self = .scalar(node.string ?? "")
+        default:
+            // Rare resolved types (Date from bare timestamps) — both sides pass
+            // through the same parser, so the description form stays comparable.
+            self = .string(String(describing: any))
         }
-    }
-
-    private static func keyString(_ node: Node) -> String {
-        if case .scalar(let scalar) = node { return scalar.string }
-        return node.string ?? ""
     }
 }

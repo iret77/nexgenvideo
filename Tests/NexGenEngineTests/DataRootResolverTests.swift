@@ -23,12 +23,12 @@ struct DataRootResolverTests {
         ))
     }
 
-    @Test("passing the data root itself is not a project home")
-    func dataRootItselfIsNotAHome() throws {
-        // data_root_of(<_studio>) is nil: it looks for `<path>/_studio/project.yaml`
-        // or `<path>/project.yaml`, and `_studio` contains neither at that depth.
-        let studio = try Self.fixtureHome().appendingPathComponent(DataRootResolver.studioDirname)
-        #expect(DataRootResolver.dataRoot(of: studio) == nil)
+    @Test("the data root itself resolves as a legacy flat root")
+    func studioDirResolvesFlat() throws {
+        // Python semantics: _studio/project.yaml is a valid flat marker, so
+        // data_root_of(_studio) returns _studio itself (paths.py flat branch).
+        let studio = try fixtureProjectURL().appendingPathComponent("_studio", isDirectory: true)
+        #expect(DataRootResolver.dataRoot(of: studio) == studio.standardizedFileURL)
     }
 
     @Test("a directory without a marker resolves to nil")
