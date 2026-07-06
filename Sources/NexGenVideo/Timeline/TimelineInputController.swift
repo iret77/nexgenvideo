@@ -52,6 +52,16 @@ final class TimelineInputController {
             editor.selectPreviewTab(id: PreviewTab.timeline.id)
         }
 
+        // A pending dialog projecting candidate ranges (A3, #124) claims clicks in its highlights:
+        // picking a candidate selects the matching choice, which the composer card reflects.
+        if point.y >= scrollOffsetY + geometry.rulerHeight,
+           let rangeId = view.dialogRangeHitRects.first(where: { $0.rect.contains(point) })?.id {
+            editor.agentService.selectDialogRange(rangeId)
+            dragState = .idle
+            view.needsDisplay = true
+            return
+        }
+
         if point.y >= scrollOffsetY && point.y < scrollOffsetY + geometry.rulerHeight {
             let frame = geometry.frameAt(x: point.x)
             if let edge = timelineRangeEdgeHit(at: point, geometry: geometry) {

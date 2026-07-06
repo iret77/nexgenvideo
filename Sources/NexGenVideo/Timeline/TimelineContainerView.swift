@@ -63,7 +63,9 @@ struct TimelineContainerView: NSViewRepresentable {
             selectedClipIds: editor.selectedClipIds,
             selectedTimelineRange: editor.selectedTimelineRange,
             pendingReplacements: editor.pendingReplacements,
-            generatingAssetIds: Set(editor.mediaAssets.lazy.filter(\.isGenerating).map(\.id))
+            generatingAssetIds: Set(editor.mediaAssets.lazy.filter(\.isGenerating).map(\.id)),
+            dialogProjection: editor.agentService.pendingDialogProjection,
+            selectedDialogRangeId: editor.agentService.selectedDialogRangeId
         )
 
         if context.coordinator.needsRender(for: renderState) {
@@ -99,6 +101,8 @@ struct TimelineContainerView: NSViewRepresentable {
         let selectedTimelineRange: TimelineRangeSelection?
         let pendingReplacements: Set<String>
         let generatingAssetIds: Set<String>
+        let dialogProjection: AgentDialog.Projection?
+        let selectedDialogRangeId: String?
     }
 
     final class Coordinator: NSObject {

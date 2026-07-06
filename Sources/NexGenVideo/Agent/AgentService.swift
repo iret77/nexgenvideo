@@ -88,7 +88,49 @@ final class AgentService {
     /// tool; the card renders above the input. Submitting composes a single structured message —
     /// the compact transcript record — and clears; cancel clears silently (the agent was told to
     /// wait for the next user message either way).
-    var pendingDialog: AgentDialog?
+    var pendingDialog: AgentDialog? {
+        didSet {
+            guard oldValue?.id != pendingDialog?.id else { return }
+            dialogChoiceSelections = [:]
+        }
+    }
+
+    /// Choice selection for the pending dialog, shared so the compact card AND the canvas projection
+    /// (A3, #124 — highlighted timeline ranges) read and write the SAME state: a click on a projected
+    /// range selects its choice here, and the card's chip reflects it. Keyed by sectionId → option ids.
+    var dialogChoiceSelections: [String: Set<String>] = [:]
+
+    /// The pending dialog's canvas projection, or nil when there's nothing to project (plain card).
+    var pendingDialogProjection: AgentDialog.Projection? {
+        guard let p = pendingDialog?.projection, !p.isEmpty else { return nil }
+        return p
+    }
+
+    /// Round-trip from the timeline: a click on a projected candidate range selects the choice whose
+    /// `rangeRef` matches it (single-select — one range picked at a time). No-op if no section
+    /// references this range.
+    func selectDialogRange(_ rangeId: String) {
+        guard let dialog = pendingDialog else { return }
+        for section in dialog.sections {
+            guard case .choices(let options, _) = section.kind,
+                  let choice = options.first(where: { $0.rangeRef == rangeId }) else { continue }
+            dialogChoiceSelections[section.id] = [choice.id]
+        }
+    }
+
+    /// The range id currently selected via a projected choice, if any — the timeline draws it as the
+    /// active candidate.
+    var selectedDialogRangeId: String? {
+        guard let dialog = pendingDialog else { return nil }
+        for section in dialog.sections {
+            guard case .choices(let options, _) = section.kind else { continue }
+            let picked = dialogChoiceSelections[section.id] ?? []
+            if let choice = options.first(where: { picked.contains($0.id) && $0.rangeRef != nil }) {
+                return choice.rangeRef
+            }
+        }
+        return nil
+    }
 
     func submitDialog(_ dialog: AgentDialog, result: AgentDialogResult) {
         pendingDialog = nil

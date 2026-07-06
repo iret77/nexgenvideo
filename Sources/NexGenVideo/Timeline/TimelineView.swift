@@ -9,6 +9,9 @@ final class TimelineView: NSView {
     private(set) var snapOverlay: SnapIndicatorOverlay!
     private var generatingClipOverlays: [String: NSHostingView<ClipGeneratingOverlay>] = [:]
     private var clipDisplayRects: [String: NSRect] = [:]
+    /// Clickable candidate-range rects for a pending dialog's canvas projection (A3, #124), in document
+    /// coords. Read by the input controller to route a click to `agentService.selectDialogRange`.
+    private(set) var dialogRangeHitRects: [(id: String, rect: NSRect)] = []
     private let canvas = TimelineCanvasView()
 
     // MARK: - Init
@@ -206,6 +209,7 @@ final class TimelineView: NSView {
         drawTrackBackgrounds(geometry: geo, context: ctx)
         drawTimelineRangeSelectionTrackFill(geometry: geo, context: ctx)
         drawClips(geometry: geo, dirtyRect: dirtyRect, context: ctx)
+        drawDialogRangeProjection(geometry: geo, context: ctx)
         drawGapSelection(geometry: geo, context: ctx)
         syncGeneratingClipOverlays(geometry: geo)
 
@@ -436,6 +440,71 @@ final class TimelineView: NSView {
             ctx.addLine(to: CGPoint(x: x, y: Double(scrollOffset.y + geo.rulerHeight)))
         }
         ctx.strokePath()
+    }
+
+    // MARK: - Dialog range projection (A3, #124)
+
+    /// While a generative dialog projects timeline ranges onto the canvas, draw each as a labeled,
+    /// clickable candidate highlight (faint accent fill + edges + a label chip at range start). The
+    /// choice whose range is selected reads as the active candidate. Hit rects are cached for the
+    /// input controller.
+    private func drawDialogRangeProjection(geometry geo: TimelineGeometry, context ctx: CGContext) {
+        dialogRangeHitRects.removeAll(keepingCapacity: true)
+        guard let projection = editor.agentService.pendingDialogProjection,
+              !projection.timelineRanges.isEmpty else { return }
+        let selectedId = editor.agentService.selectedDialogRangeId
+        let top = Double(geo.rulerHeight)
+        let bottom = max(top, Double(bounds.height))
+        let accent = AppTheme.Accent.timecodeNSColor
+
+        for candidate in projection.timelineRanges {
+            let minX = geo.xForFrame(candidate.startFrame)
+            let maxX = geo.xForFrame(candidate.endFrame)
+            let rect = NSRect(x: minX, y: top, width: max(0, maxX - minX), height: bottom - top)
+            dialogRangeHitRects.append((candidate.id, rect))
+
+            let isSelected = candidate.id == selectedId
+            ctx.setFillColor(accent.withAlphaComponent(
+                isSelected ? AppTheme.Opacity.moderate : AppTheme.Opacity.faint).cgColor)
+            ctx.fill(rect)
+
+            ctx.setStrokeColor(accent.withAlphaComponent(
+                isSelected ? AppTheme.Opacity.prominent : AppTheme.Opacity.medium).cgColor)
+            ctx.setLineWidth(isSelected ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.thin)
+            ctx.stroke(rect.insetBy(dx: AppTheme.BorderWidth.medium / 2, dy: AppTheme.BorderWidth.medium / 2))
+
+            drawDialogRangeLabel(candidate.label, at: NSPoint(x: minX, y: top), accent: accent,
+                                 isSelected: isSelected, context: ctx)
+        }
+    }
+
+    private func drawDialogRangeLabel(_ text: String, at origin: NSPoint, accent: NSColor,
+                                      isSelected: Bool, context ctx: CGContext) {
+        let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xxs, weight: .semibold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+        ]
+        let string = NSAttributedString(string: text, attributes: attrs)
+        let textSize = string.size()
+        let padX = AppTheme.Spacing.xs
+        let padY = AppTheme.Spacing.xxs
+        let chip = NSRect(
+            x: origin.x + AppTheme.Spacing.xxs,
+            y: origin.y + AppTheme.Spacing.xxs,
+            width: textSize.width + padX * 2,
+            height: textSize.height + padY * 2
+        )
+        // Text draws through the ambient NSGraphicsContext (the flipped canvas), same as ClipRenderer.
+        ctx.saveGState()
+        let chipPath = CGPath(roundedRect: chip, cornerWidth: AppTheme.Radius.xs,
+                              cornerHeight: AppTheme.Radius.xs, transform: nil)
+        ctx.addPath(chipPath)
+        ctx.setFillColor(accent.withAlphaComponent(
+            isSelected ? AppTheme.Opacity.prominent : AppTheme.Opacity.strong).cgColor)
+        ctx.fillPath()
+        string.draw(at: NSPoint(x: chip.minX + padX, y: chip.minY + padY))
+        ctx.restoreGState()
     }
 
     private func drawGapSelection(geometry geo: TimelineGeometry, context ctx: CGContext) {

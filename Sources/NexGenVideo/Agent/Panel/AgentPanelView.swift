@@ -56,8 +56,10 @@ struct AgentPanelView: View {
                 floatingTabBar
             }
             if let dialog = service.pendingDialog {
+                @Bindable var service = service
                 AgentDialogCard(
                     dialog: dialog,
+                    externalSelections: $service.dialogChoiceSelections,
                     onSubmit: { result in service.submitDialog(dialog, result: result) },
                     onCancel: { service.cancelDialog() }
                 )
