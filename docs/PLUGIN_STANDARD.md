@@ -19,6 +19,11 @@ A pack **registers behavior into the engine**. It does **not** re-implement the
 Bible/consistency/sanity/render core, and it does **not** call generators itself —
 generation and timeline edits go through NexGen's own `nexgen` MCP tools, driven by Claude.
 
+A pack **MUST support all three shot source modes** — `generated`, `live_action`, and
+`ai_enhanced` (`SourceMode`) — and never assume every shot is AI-generated: its phase docs
+must direct the assistant to emit directorial shooting specs for live shots and route
+enhanced shots through the video-to-video edit path.
+
 ## The `Pack` protocol
 
 A pack is a Swift value conforming to `Pack` (`Sources/NexGenEngine/Packs/EngineRegistry.swift`):

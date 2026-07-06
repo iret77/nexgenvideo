@@ -270,7 +270,10 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil
-        let ordered = shotlist?.shots.map(\.id) ?? []
+        // live_action shots are never provider-rendered — the user shoots and cuts them, so they're
+        // excluded from the render queue. ai_enhanced shots ARE returned: they need a provider pass
+        // (video-to-video) over the imported footage.
+        let ordered = shotlist?.shots.filter { $0.sourceMode != .liveAction }.map(\.id) ?? []
         let manifest = (try? loadRenderManifest(dataRoot: root, phase: phase)) ?? RenderManifest(project: shotlist?.project ?? "", phase: phase)
         guard let shotId = nextUnrendered(orderedShotIds: ordered, manifest: manifest) else {
             return try jsonResult(["phase": phase, "shot_id": NSNull(), "done": true])
@@ -280,6 +283,7 @@ extension ToolExecutor {
             "phase": phase,
             "shot_id": shotId,
             "done": false,
+            "source_mode": shot.map { $0.sourceMode.rawValue as Any } ?? (NSNull() as Any),
             "visual_prompt": shot.map { $0.visualPrompt as Any } ?? (NSNull() as Any),
             "framing": shot?.framing.map { $0.rawValue as Any } ?? (NSNull() as Any),
         ])

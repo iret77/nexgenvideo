@@ -159,6 +159,53 @@ struct CostsTests {
         ])
     }
 
+    // MARK: - Source modes (hybrid production, issue #129)
+
+    /// live_action shots cost 0 with note "live action"; ai_enhanced shots are billed identically to
+    /// generated (a provider video-to-video pass). A section shotlist so pricing hits the stitch branch.
+    @Test("estimate — live_action bills 0, ai_enhanced bills like generated")
+    func estimateSourceModes() throws {
+        let song = try Song(
+            title: "s", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 60.0
+        )
+        // Two shots with identical timing/provider, differing only in source_mode.
+        let generatedShot = try makeShot(
+            id: "s001", provider: .fal, suggestion: nil, section: "verse",
+            timeStart: 0.0, timeEnd: 8.0, sourceMode: .generated
+        )
+        let enhancedShot = try makeShot(
+            id: "s002", provider: .fal, suggestion: nil, section: "chorus",
+            timeStart: 8.0, timeEnd: 16.0, sourceMode: .aiEnhanced
+        )
+        let liveShot = try makeShot(
+            id: "s003", provider: .fal, suggestion: nil, section: "bridge",
+            timeStart: 16.0, timeEnd: 24.0, sourceMode: .liveAction
+        )
+        let shotlist = try Shotlist(
+            schema_: "shotlist/v3", mode: .section, project: "p", song: song,
+            generated: "2026-01-01", generator: "test", shots: [generatedShot, enhancedShot, liveShot]
+        )
+        let est = estimate(
+            shotlist: shotlist, costs: .bundledDefault, phase: .final, finalResolution: "1080p"
+        )
+
+        // s002 (ai_enhanced) is billed identically to s001 (generated) — same duration, provider, price.
+        #expect(est.shotEstimates[1].eur == est.shotEstimates[0].eur)
+        #expect(est.shotEstimates[1].eur > 0)
+        #expect(est.shotEstimates[1].runwayModel == est.shotEstimates[0].runwayModel)
+
+        // s003 (live_action) contributes 0 with the "live action" note and empty model.
+        #expect(est.shotEstimates[2].eur == 0.0)
+        #expect(est.shotEstimates[2].notes == "live action")
+        #expect(est.shotEstimates[2].runwayModel == "")
+        #expect(est.shotEstimates[2].truncated == false)
+        // The live shot's declared duration is preserved (rounded), not zeroed.
+        #expect(est.shotEstimates[2].durationS == 8.0)
+
+        // Project total excludes the live shot but includes the enhanced one.
+        #expect(est.totalEur == pyRound(est.shotEstimates[0].eur + est.shotEstimates[1].eur, 2))
+    }
+
     // MARK: - Branch coverage the BEAT golden doesn't exercise
 
     /// Bug-24: a FAL shot must never pick up the Runway-legacy `seedance2`
@@ -349,12 +396,14 @@ struct CostsTests {
 
     private func makeShot(
         id: String, provider: SceneVideoProvider, suggestion: ModelSuggestion?,
-        section: String? = "verse", timeStart: Double = 0.0, timeEnd: Double = 8.0
+        section: String? = "verse", timeStart: Double = 0.0, timeEnd: Double = 8.0,
+        sourceMode: SourceMode = .generated
     ) throws -> Shot {
         try Shot(
             id: id, section: section, timeStart: timeStart, timeEnd: timeEnd,
-            durationS: timeEnd - timeStart, type: .performance, description: "d", visualPrompt: "v",
-            mood: "calm", modelSuggestion: suggestion, sceneVideoProvider: provider
+            durationS: timeEnd - timeStart, type: .performance, sourceMode: sourceMode,
+            description: "d", visualPrompt: "v", mood: "calm", modelSuggestion: suggestion,
+            sceneVideoProvider: provider
         )
     }
 

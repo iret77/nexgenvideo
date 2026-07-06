@@ -37,6 +37,29 @@ struct StoryboardTests {
         #expect(decoded == storyboard)
     }
 
+    // MARK: - Step.source_mode (hybrid production, issue #129)
+
+    @Test("Step.sourceMode defaults to .generated and round-trips per mode",
+          arguments: [SourceMode.generated, .liveAction, .aiEnhanced])
+    func stepSourceModeRoundTrips(_ mode: SourceMode) throws {
+        let step = try Step(id: "verse1.01", function: .story, sourceMode: mode, subject: "s", camera: "c")
+        #expect(step.sourceMode == mode)
+        let decoded = try YAMLCoding.decode(Step.self, from: try YAMLCoding.encode(step))
+        #expect(decoded.sourceMode == mode)
+    }
+
+    @Test("a step YAML without source_mode decodes as .generated (default)")
+    func stepSourceModeAbsentDefaultsToGenerated() throws {
+        let yaml = """
+            id: verse1.01
+            function: story
+            subject: s
+            camera: c
+            """
+        let step = try YAMLCoding.decode(Step.self, from: yaml)
+        #expect(step.sourceMode == .generated)
+    }
+
     // MARK: - Step.id pattern validator
 
     @Test(

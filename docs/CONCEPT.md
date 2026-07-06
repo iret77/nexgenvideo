@@ -40,6 +40,15 @@ NexGen.
   MCP-Server**. NexGen baut keinen eigenen Agent-Loop für die eingebettete Runtime nach.
 - **BYO-Keys, lokal, kein Login.** Keine Accounts, keine serverseitige Generierung, keine
   Telemetrie-Pflicht. Du bringst deine eigenen Provider- und Claude-Keys mit.
+- **Hybride Produktion ist erstklassig.** NexGenVideo ist ein vollwertiges NLE. Der generische
+  Workflow **und jeder Pack** (musicvideo, später weitere) sind ohne KI-Generierung, mit ihr, oder
+  gemischt nutzbar — **kein Workflow setzt Generierung voraus.** Jeder Shot trägt einen `source_mode`
+  aus drei Werten: `generated` (Provider rendert), `live_action` (der User dreht selbst) und
+  `ai_enhanced` (importiertes Realmaterial läuft durch einen Video-to-Video-Pass, der bestehende
+  „AI-Edit"-Pfad). Für `live_action`-Shots liefert der Assistent klare Regie-Specs (Framing, Kamera,
+  Licht, Blocking, Stil-Referenzen), die der User dreht und professionell schneidet; die Render-Phase
+  überspringt sie und sie kosten 0. `ai_enhanced`-Shots werden wie generierte abgerechnet und über
+  den Edit-Pfad geführt.
 
 ## 3. Abgrenzung zum Upstream (Autonomie)
 

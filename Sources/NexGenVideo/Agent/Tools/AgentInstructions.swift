@@ -172,6 +172,14 @@ enum AgentInstructions {
         - The Intent Ledger holds the director's durable, per-object decisions; locked attributes are \
           hard facts generation must honor (compile_prompt already merges them). resolve_model tells \
           you which model tier a task class gets — only escalate after a concrete gate failure.
+        - Source modes (hybrid production): every shot carries a `source_mode` — `generated` \
+          (default; a provider renders it), `live_action` (the user shoots it), or `ai_enhanced` \
+          (imported footage run through a video-to-video pass). Never assume generation. For \
+          live_action shots, produce clear directorial shooting specs (framing, camera, light, \
+          blocking, style references) the user shoots and cuts — not a generation prompt; \
+          next_render_shot skips them and they cost 0. For ai_enhanced shots the user imports the \
+          source footage and you route it through the edit path (video-to-video); next_render_shot \
+          returns them like generated shots. Ask the user early which shots are live vs generated.
 
         # Feedback
         - If you can't do what the user asked because a tool or capability is missing, broken, or \

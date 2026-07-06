@@ -24,6 +24,9 @@ public enum StepFunction: String, Codable, Sendable, CaseIterable {
 public struct Step: Codable, Sendable, Equatable {
     public var id: String
     public var function: StepFunction
+    /// A step's source intent flows into its shots (hybrid production, issue #129).
+    /// Defaults to `.generated` so every existing storyboard decodes unchanged.
+    public var sourceMode: SourceMode
     public var subject: String
     public var camera: String
     public var settingHint: String
@@ -40,6 +43,7 @@ public struct Step: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id
         case function
+        case sourceMode = "source_mode"
         case subject
         case camera
         case settingHint = "setting_hint"
@@ -57,6 +61,7 @@ public struct Step: Codable, Sendable, Equatable {
     public init(
         id: String,
         function: StepFunction,
+        sourceMode: SourceMode = .generated,
         subject: String,
         camera: String,
         settingHint: String = "",
@@ -72,6 +77,7 @@ public struct Step: Codable, Sendable, Equatable {
     ) throws {
         self.id = id
         self.function = function
+        self.sourceMode = sourceMode
         self.subject = subject
         self.camera = camera
         self.settingHint = settingHint
@@ -91,6 +97,7 @@ public struct Step: Codable, Sendable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         function = try container.decode(StepFunction.self, forKey: .function)
+        sourceMode = try container.decodeIfPresent(SourceMode.self, forKey: .sourceMode) ?? .generated
         subject = try container.decode(String.self, forKey: .subject)
         camera = try container.decode(String.self, forKey: .camera)
         settingHint = try container.decodeIfPresent(String.self, forKey: .settingHint) ?? ""

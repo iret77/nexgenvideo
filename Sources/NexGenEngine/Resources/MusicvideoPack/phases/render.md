@@ -63,6 +63,25 @@ render, that is not an error — the new shots count as "missing" and get
 rendered (`next_render_shot` finds them). If the shotlist has fewer
 shots or changed shot IDs: warn the user before rendering.
 
+### 1a. Source modes (hybrid production)
+
+Not every shot is provider-rendered. Each shot carries a `source_mode`:
+
+- `generated` (default) — rendered here, the normal loop below.
+- `live_action` — the user shoots it. `next_render_shot` **skips** these
+  automatically (they never appear in the loop) and they cost 0 in
+  `estimate_cost`. Do not `generate_video` for them; they are shot to the
+  directorial spec in `shotlist/current.yaml` and cut in on the timeline.
+- `ai_enhanced` — imported footage carried through a **video-to-video**
+  pass. `next_render_shot` **does** return these (its response includes
+  `source_mode`); route them through the edit path — the source clip is
+  the input, `shot.visual_prompt` is the enhancement direction — rather
+  than a from-scratch text/keyframe generation. Bill them like generated
+  shots.
+
+Check the `source_mode` field on the returned shot (and in
+`shotlist/current.yaml`) before building the call.
+
 ### 2. Provider routing
 
 Per shot, the video model derives from `shot.model_suggestion`
@@ -154,8 +173,11 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
 `done: true`:
 
 1. **Get the next shot:** `next_render_shot(project_dir, "<phase>")`
-   returns `{shot_id, visual_prompt, framing, done}`. Read the full shot
-   from `shotlist/current.yaml` for the remaining fields.
+   returns `{shot_id, source_mode, visual_prompt, framing, done}`
+   (`live_action` shots are already filtered out). Read the full shot
+   from `shotlist/current.yaml` for the remaining fields. If
+   `source_mode` is `ai_enhanced`, route it through the video-to-video
+   edit path (step 1a), not a from-scratch generation.
 2. **Determine the model** (step 2) and confirm it via `list_models`.
 3. **Build the clip prompt** from `shot.visual_prompt` + `shot.motion`
    (Subject → Action → Environment → Camera → Style → Constraints, kept

@@ -248,4 +248,55 @@ struct SanityChecksTests {
         // Trimmed length is 50 (< 60) -> PROMPT_TOO_SHORT, not PROMPT_THIN.
         #expect(findings.contains { $0.code == "PROMPT_TOO_SHORT" })
     }
+
+    // MARK: - source_mode_coverage (hybrid production, issue #129)
+
+    static func shotWithMode(idx: Int, mode: SourceMode) throws -> Shot {
+        let end = Double(idx) * 4.0
+        return try Shot(
+            id: String(format: "s%03d", idx), section: "verse", timeStart: end - 4.0, timeEnd: end,
+            durationS: 4.0, type: .performance, sourceMode: mode, description: "d",
+            visualPrompt: goodPrompt, mood: "m"
+        )
+    }
+
+    @Test("source_mode_coverage is silent for an all-generated shotlist")
+    func sourceModeCoverageSilentWhenAllGenerated() throws {
+        let shotlist = try Self.shotlist(
+            [try Self.shot(idx: 1, start: 0.0, end: 4.0), try Self.shot(idx: 2, start: 4.0, end: 8.0)],
+            durationS: 8.0
+        )
+        let findings = try sourceModeCoverageCheck(AuditContext(shotlist: shotlist))
+        #expect(findings.isEmpty)
+    }
+
+    @Test("source_mode_coverage reports counts and flags live/enhanced shots as info")
+    func sourceModeCoverageReportsHybrid() throws {
+        let shotlist = try Self.shotlist(
+            [
+                try Self.shotWithMode(idx: 1, mode: .generated),
+                try Self.shotWithMode(idx: 2, mode: .liveAction),
+                try Self.shotWithMode(idx: 3, mode: .aiEnhanced),
+            ],
+            durationS: 12.0
+        )
+        let findings = try sourceModeCoverageCheck(AuditContext(shotlist: shotlist))
+
+        let coverage = try #require(findings.first { $0.code == "SOURCE_MODE_COVERAGE" })
+        #expect(coverage.level == .info)
+        #expect(coverage.shotId == nil)
+        #expect(coverage.message.contains("generated: 1"))
+        #expect(coverage.message.contains("live_action: 1"))
+        #expect(coverage.message.contains("ai_enhanced: 1"))
+
+        // Exactly the live + enhanced shots are flagged as needing footage; the generated one isn't.
+        let needsFootage = findings.filter { $0.code == "SOURCE_MODE_NEEDS_FOOTAGE" }
+        #expect(needsFootage.map(\.shotId) == ["s002", "s003"])
+        #expect(needsFootage.allSatisfy { $0.level == .info })
+    }
+
+    @Test("source_mode_coverage is registered as a core check")
+    func sourceModeCoverageIsCore() {
+        #expect(coreChecks["source_mode_coverage"] != nil)
+    }
 }

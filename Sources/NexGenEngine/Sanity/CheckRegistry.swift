@@ -25,6 +25,7 @@ public let coreChecks: [String: SanityCheck] = [
     "coverage": coverageCheck,
     "mode_match": modeMatchCheck,
     "prompt_quality": promptQualityCheck,
+    "source_mode_coverage": sourceModeCoverageCheck,
 ]
 
 /// Installs the engine's built-in generic checks onto `registry`. Idempotent

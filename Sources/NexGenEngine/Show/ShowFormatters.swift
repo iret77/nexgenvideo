@@ -269,6 +269,11 @@ enum ShowFormatters {
                 let kf = shot.keyframeStrategy.rawValue
                 let kfBadge = ["none": "–", "start": "▶︎", "start_end": "▶︎▶︎"][kf] ?? kf
                 var flags: [String] = []
+                switch shot.sourceMode {
+                case .generated: break
+                case .liveAction: flags.append("🎬 live")
+                case .aiEnhanced: flags.append("✨ enhanced")
+                }
                 if shot.redo { flags.append("⟳ redo") }
                 if shot.chainWithPreviousEnd { flags.append("⛓ chain") }
                 let notesStr = shot.notes ?? ""

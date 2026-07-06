@@ -16,6 +16,8 @@ struct ShotlistPanelView: View {
 
     @State private var state: LoadState = .idle
     @State private var loadToken = 0
+    /// nil = All; else filter shot cards to one source mode.
+    @State private var modeFilter: SourceModeTag?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,24 +51,53 @@ struct ShotlistPanelView: View {
             CockpitStateView.empty(icon: "film.stack", title: "No shots",
                                    message: "This shotlist has no shots yet.")
         } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-                    Text("\(data.shots.count) \(data.shots.count == 1 ? "shot" : "shots")")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
-                        .tracking(AppTheme.Tracking.wide)
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                    ForEach(data.shots) { shot in
-                        shotCard(shot)
+            let hybrid = isHybrid(data)
+            let shots = filtered(data.shots)
+            VStack(spacing: 0) {
+                if hybrid {
+                    SegmentedTabBar(titles: filterTitles, selected: currentFilterTitle) { title in
+                        modeFilter = filterTag(for: title)
                     }
                 }
-                .padding(.horizontal, AppTheme.Spacing.lg)
-                .padding(.vertical, AppTheme.Spacing.md)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+                        Text("\(shots.count) \(shots.count == 1 ? "shot" : "shots")")
+                            .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                            .tracking(AppTheme.Tracking.wide)
+                            .foregroundStyle(AppTheme.Text.mutedColor)
+                        ForEach(shots) { shot in
+                            shotCard(shot, showBadge: hybrid)
+                        }
+                    }
+                    .padding(.horizontal, AppTheme.Spacing.lg)
+                    .padding(.vertical, AppTheme.Spacing.md)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
     }
 
-    private func shotCard(_ shot: ShotSummary) -> some View {
+    // MARK: - Source-mode filter
+
+    /// The shotlist is hybrid when at least one shot is live/enhanced — only then is the filter shown.
+    private func isHybrid(_ data: ShotlistData) -> Bool {
+        data.shots.contains { $0.sourceModeTag != .generated }
+    }
+
+    private func filtered(_ shots: [ShotSummary]) -> [ShotSummary] {
+        guard let modeFilter else { return shots }
+        return shots.filter { $0.sourceModeTag == modeFilter }
+    }
+
+    private let filterTitles = ["All"] + SourceModeTag.allCases.map(\.label)
+
+    private var currentFilterTitle: String { modeFilter?.label ?? "All" }
+
+    private func filterTag(for title: String) -> SourceModeTag? {
+        SourceModeTag.allCases.first { $0.label == title }
+    }
+
+    private func shotCard(_ shot: ShotSummary, showBadge: Bool) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                 Text(shot.id)
@@ -79,6 +110,7 @@ struct ShotlistPanelView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                if showBadge { sourceModeBadge(shot.sourceModeTag) }
             }
 
             let summary = shot.summaryText
@@ -125,6 +157,23 @@ struct ShotlistPanelView: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
         .onTapGesture { editor.inspectedObject = .shot(shot.id) }
+    }
+
+    /// Compact per-row source-mode tag: SF Symbol + short label, AppTheme-styled.
+    private func sourceModeBadge(_ tag: SourceModeTag) -> some View {
+        HStack(spacing: AppTheme.Spacing.xxs) {
+            Image(systemName: tag.symbol)
+                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+            Text(tag.label)
+                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+        }
+        .foregroundStyle(AppTheme.Text.tertiaryColor)
+        .padding(.horizontal, AppTheme.Spacing.sm)
+        .padding(.vertical, AppTheme.Spacing.xxs)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+                .fill(Color.white.opacity(AppTheme.Opacity.subtle))
+        )
     }
 
     private func centeredProgress() -> some View {

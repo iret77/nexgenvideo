@@ -95,6 +95,17 @@ public func estimate(
 ) -> ProjectEstimate {
     var estimates: [ShotEstimate] = []
     for shot in shotlist.shots {
+        // live_action shots are shot by the user, never provider-rendered → 0 cost. ai_enhanced
+        // shots run a provider video-to-video pass, so they're billed like generated (below).
+        if shot.sourceMode == .liveAction {
+            estimates.append(
+                ShotEstimate(
+                    shotId: shot.id, runwayModel: "", durationS: pyRound(shot.durationS, 3), eur: 0.0,
+                    truncated: false, notes: "live action"
+                )
+            )
+            continue
+        }
         let runwayModel = costs.runwayModel(for: shot, phase: phase)
         // `estimate` calls `costs.price(...)`, which raises for an unknown
         // model. The Python here lets that KeyError propagate; the Swift

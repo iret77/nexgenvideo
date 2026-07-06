@@ -102,6 +102,22 @@ public enum LensHint: String, Codable, Sendable, CaseIterable {
     case long
 }
 
+/// How a shot's footage is sourced. NexGenVideo is a full NLE: any shot may be
+/// AI-generated, shot live, or imported-then-AI-post-processed. The default is
+/// `.generated` so every pre-existing shotlist decodes unchanged.
+///
+/// - `generated`: rendered by a provider (the classic image/video pipeline).
+/// - `liveAction`: shot by the user; the assistant emits directorial specs
+///   (framing/camera/light/blocking/style refs), never a generation prompt.
+///   Never provider-rendered.
+/// - `aiEnhanced`: imported live footage carried through a provider
+///   video-to-video pass (the existing "AI Edit" path). Provider-billed.
+public enum SourceMode: String, Codable, Sendable, CaseIterable {
+    case generated
+    case liveAction = "live_action"
+    case aiEnhanced = "ai_enhanced"
+}
+
 // MARK: - Structs
 
 /// Camera triplet per shot. Port of `shotlist/schema.py::CameraSetup`.
@@ -261,6 +277,7 @@ public struct Shot: Codable, Sendable, Equatable {
     public var timeEnd: Double
     public var durationS: Double
     public var type: ShotType
+    public var sourceMode: SourceMode
     public var description: String
     public var visualPrompt: String
     public var motion: String?
@@ -295,6 +312,7 @@ public struct Shot: Codable, Sendable, Equatable {
         case timeEnd = "time_end"
         case durationS = "duration_s"
         case type
+        case sourceMode = "source_mode"
         case description
         case visualPrompt = "visual_prompt"
         case motion
@@ -325,7 +343,8 @@ public struct Shot: Codable, Sendable, Equatable {
 
     public init(
         id: String, section: String? = nil, timeStart: Double, timeEnd: Double, durationS: Double,
-        type: ShotType, description: String, visualPrompt: String, motion: String? = nil, mood: String,
+        type: ShotType, sourceMode: SourceMode = .generated, description: String, visualPrompt: String,
+        motion: String? = nil, mood: String,
         lyricsExcerpt: String? = nil, characterRefs: [String] = [], characterViews: [String: String] = [:],
         locationRef: String? = nil, locationView: String? = nil, modelSuggestion: ModelSuggestion? = nil,
         keyframeStrategy: KeyframeStrategy = .start, framing: Framing? = nil, visibleZones: [String] = [],
@@ -342,6 +361,7 @@ public struct Shot: Codable, Sendable, Equatable {
         self.timeEnd = timeEnd
         self.durationS = durationS
         self.type = type
+        self.sourceMode = sourceMode
         self.description = description
         self.visualPrompt = visualPrompt
         self.motion = motion
@@ -379,6 +399,7 @@ public struct Shot: Codable, Sendable, Equatable {
         timeEnd = try container.decode(Double.self, forKey: .timeEnd)
         durationS = try container.decode(Double.self, forKey: .durationS)
         type = try container.decode(ShotType.self, forKey: .type)
+        sourceMode = try container.decodeIfPresent(SourceMode.self, forKey: .sourceMode) ?? .generated
         description = try container.decode(String.self, forKey: .description)
         visualPrompt = try container.decode(String.self, forKey: .visualPrompt)
         motion = try container.decodeIfPresent(String.self, forKey: .motion)

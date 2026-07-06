@@ -54,6 +54,58 @@ struct ShotlistTests {
         #expect(again.mode == .section)
     }
 
+    // MARK: - source_mode (hybrid production, issue #129)
+
+    @Test("sourceMode defaults to .generated and round-trips per mode",
+          arguments: [SourceMode.generated, .liveAction, .aiEnhanced])
+    func sourceModeRoundTrips(_ mode: SourceMode) throws {
+        let shot = try Shot(
+            id: "s001", section: "verse", timeStart: 0.0, timeEnd: 4.0, durationS: 4.0,
+            type: .performance, sourceMode: mode, description: "d", visualPrompt: "p", mood: "m"
+        )
+        #expect(shot.sourceMode == mode)
+        let sl = try Self.shotlist(shots: [shot])
+        let again = try YAMLCoding.decode(Shotlist.self, from: try YAMLCoding.encode(sl))
+        #expect(again.shots[0].sourceMode == mode)
+    }
+
+    @Test("sourceMode raw values are snake_case")
+    func sourceModeRawValues() {
+        #expect(SourceMode.generated.rawValue == "generated")
+        #expect(SourceMode.liveAction.rawValue == "live_action")
+        #expect(SourceMode.aiEnhanced.rawValue == "ai_enhanced")
+    }
+
+    @Test("a shotlist YAML without source_mode decodes shots as .generated (default)")
+    func sourceModeAbsentDefaultsToGenerated() throws {
+        // A pre-#129 shotlist: no `source_mode` key anywhere. Every shot must default to generated.
+        let yaml = """
+            schema: shotlist/v3
+            mode: section
+            project: proj
+            song:
+              title: t
+              audio_path: a.wav
+              analysis_path: an.json
+              bpm: 120.0
+              duration_s: 4.0
+            generated: "2026-01-01"
+            generator: test
+            shots:
+              - id: s001
+                section: verse
+                time_start: 0.0
+                time_end: 4.0
+                duration_s: 4.0
+                type: performance
+                description: d
+                visual_prompt: p
+                mood: m
+            """
+        let sl = try YAMLCoding.decode(Shotlist.self, from: yaml)
+        #expect(sl.shots[0].sourceMode == .generated)
+    }
+
     // MARK: - schema_ constant / no-default
 
     @Test("shotlistSchemaVersion constant")

@@ -186,6 +186,28 @@ shot construction (Step 6).
     reference). Such shots must then carry NO bible refs. For a
     justified exception: `text_to_video_ok: <reason>` in `notes`.
 
+### 6a. Source modes — ask early (hybrid production)
+
+NexGenVideo is a full NLE: a music video may be fully AI-generated, shot
+live, or mixed. Each shot carries a `source_mode`:
+
+- `generated` (default) — a provider renders the shot. Everything above
+  (visual_prompt, keyframe_strategy, references) applies.
+- `live_action` — the user shoots the footage. Do **not** write a
+  provider `visual_prompt`; instead give a clear **directorial shooting
+  spec** — framing, camera (position + move), lighting, blocking, and
+  style references — that the user shoots and cuts in on the timeline.
+  The render phase skips these shots; they cost 0.
+- `ai_enhanced` — the user imports live footage and it goes through a
+  **video-to-video** pass (the editor's AI-enhance path). Write the
+  prompt as the enhancement direction over the imported clip, not as a
+  from-scratch generation.
+
+**Ask the user early** which shots are live vs generated — before you
+write prompts, so live shots get shooting specs and enhanced shots route
+to the edit path. Set `source_mode` per shot accordingly. When unstated,
+the shot is `generated`.
+
 ### 7. Shot IDs gapless: `s001, s002, …`
 
 ### 8. For multicam: `camera_id` unique (`cam01, cam02, …`)
