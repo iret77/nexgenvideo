@@ -93,21 +93,19 @@ public enum Spectral {
             return Spectrogram(magnitude: [], nBins: nBins, nFrames: 0, hopLength: hop, sampleRate: sampleRate)
         }
 
-        // Modern vDSP.FFT (Swift-native, avoids manual fftsetup lifetime). The
-        // real-to-complex forward transform packs the n/2 real+imag halves; we
-        // split the interleaved frame into even/odd via `convert`, matching the
-        // classic ctoz split. Available since macOS 10.15 → safe on macOS 26.
-        //
-        // The ctoz packing feeds the FFT split-complex buffers of length nFFT/2,
-        // so the transform is configured for nFFT/2 complex points → log2(nFFT/2).
-        // Using log2(nFFT) here makes `forward` read past the halfN-sized buffers
-        // (out-of-bounds → trap). Guard non-power-of-two / degenerate nFFT.
+        // Modern vDSP.FFT (Swift-native, avoids manual fftsetup lifetime).
+        // `forward(input:output:)` on DSPSplitComplex is the PACKED REAL FFT
+        // (zrop convention): log2n = log2(nFFT) with nFFT/2-element split-complex
+        // buffers holding the ctoz even/odd split — Apple's documented real-FFT
+        // usage. It reads/writes exactly nFFT/2 packed elements, so the halfN
+        // buffers below are in bounds. Do NOT change log2n to log2(nFFT/2): the
+        // packed real transform then covers only the first half-frame, halving
+        // every peak's bin (~505 Hz error on a 1 kHz tone @ 22050/2048).
+        // Guard degenerate / non-power-of-two nFFT before configuring.
         let halfN = nFFT / 2
-        guard halfN >= 2, nFFT == 1 << Int(log2(Double(nFFT)).rounded()) else {
-            return Spectrogram(magnitude: [], nBins: nBins, nFrames: 0, hopLength: hop, sampleRate: sampleRate)
-        }
-        let log2n = vDSP_Length(log2(Double(halfN)).rounded())
-        guard let fft = vDSP.FFT(log2n: log2n, radix: .radix2, ofType: DSPSplitComplex.self) else {
+        let log2n = vDSP_Length(log2(Double(nFFT)).rounded())
+        guard nFFT >= 4, nFFT == 1 << Int(log2n),
+              let fft = vDSP.FFT(log2n: log2n, radix: .radix2, ofType: DSPSplitComplex.self) else {
             return Spectrogram(magnitude: [], nBins: nBins, nFrames: 0, hopLength: hop, sampleRate: sampleRate)
         }
         var magnitude = [[Float]](repeating: [Float](repeating: 0, count: nBins), count: nFrames)
