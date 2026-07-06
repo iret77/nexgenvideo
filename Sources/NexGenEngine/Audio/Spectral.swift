@@ -93,28 +93,29 @@ public enum Spectral {
             return Spectrogram(magnitude: [], nBins: nBins, nFrames: 0, hopLength: hop, sampleRate: sampleRate)
         }
 
-        // Modern vDSP.FFT (Swift-native, avoids manual fftsetup lifetime).
-        // `forward(input:output:)` on DSPSplitComplex is the PACKED REAL FFT
-        // (zrop convention): log2n = log2(nFFT) with nFFT/2-element split-complex
-        // buffers holding the ctoz even/odd split — Apple's documented real-FFT
-        // usage. It reads/writes exactly nFFT/2 packed elements, so the halfN
-        // buffers below are in bounds. Do NOT change log2n to log2(nFFT/2): the
-        // packed real transform then covers only the first half-frame, halving
-        // every peak's bin (~505 Hz error on a 1 kHz tone @ 22050/2048).
-        // Guard degenerate / non-power-of-two nFFT before configuring.
+        // Legacy vDSP real FFT (vDSP_create_fftsetup + vDSP_fft_zrip). The modern
+        // vDSP.FFT<DSPSplitComplex>.forward wrapper's WRITE bound is not
+        // documented tightly enough to rule out writes past packed halfN output
+        // buffers (CI showed wandering heap-corruption crashes with it while the
+        // first-halfN math stayed correct). zrip's contract is explicit and
+        // in-place: N = 2^log2n real points, realp/imagp each hold and receive
+        // EXACTLY N/2 elements. log2n = log2(nFFT) with the even/odd ctoz split;
+        // forward output is scaled ×2 vs the math DFT (hence the 0.5 below).
+        // Setup is created per call and destroyed on exit — negligible next to
+        // the frame loop, and no shared mutable state.
         let halfN = nFFT / 2
         let log2n = vDSP_Length(log2(Double(nFFT)).rounded())
         guard nFFT >= 4, nFFT == 1 << Int(log2n),
-              let fft = vDSP.FFT(log2n: log2n, radix: .radix2, ofType: DSPSplitComplex.self) else {
+              let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
             return Spectrogram(magnitude: [], nBins: nBins, nFrames: 0, hopLength: hop, sampleRate: sampleRate)
         }
+        defer { vDSP_destroy_fftsetup(fftSetup) }
+
         var magnitude = [[Float]](repeating: [Float](repeating: 0, count: nBins), count: nFrames)
 
         var windowed = [Float](repeating: 0, count: nFFT)
-        var evenReal = [Float](repeating: 0, count: halfN)
-        var oddImag = [Float](repeating: 0, count: halfN)
-        var outReal = [Float](repeating: 0, count: halfN)
-        var outImag = [Float](repeating: 0, count: halfN)
+        var splitReal = [Float](repeating: 0, count: halfN)
+        var splitImag = [Float](repeating: 0, count: halfN)
 
         for frame in 0..<nFrames {
             let start = frame * hop
@@ -122,33 +123,28 @@ public enum Spectral {
                 let si = start + i
                 windowed[i] = si < signal.count ? signal[si] * window[i] : 0
             }
-            // Deinterleave the real frame into even/odd lanes (ctoz-equivalent).
+            // ctoz pack: even samples → realp, odd samples → imagp.
             for i in 0..<halfN {
-                evenReal[i] = windowed[2 * i]
-                oddImag[i] = windowed[2 * i + 1]
+                splitReal[i] = windowed[2 * i]
+                splitImag[i] = windowed[2 * i + 1]
             }
 
-            evenReal.withUnsafeMutableBufferPointer { erp in
-                oddImag.withUnsafeMutableBufferPointer { oip in
-                    outReal.withUnsafeMutableBufferPointer { orp in
-                        outImag.withUnsafeMutableBufferPointer { oimp in
-                            let input = DSPSplitComplex(realp: erp.baseAddress!, imagp: oip.baseAddress!)
-                            var output = DSPSplitComplex(realp: orp.baseAddress!, imagp: oimp.baseAddress!)
-                            fft.forward(input: input, output: &output)
-                        }
-                    }
+            splitReal.withUnsafeMutableBufferPointer { rp in
+                splitImag.withUnsafeMutableBufferPointer { ip in
+                    var packed = DSPSplitComplex(realp: rp.baseAddress!, imagp: ip.baseAddress!)
+                    vDSP_fft_zrip(fftSetup, &packed, 1, log2n, FFTDirection(kFFTDirection_Forward))
                 }
             }
 
-            // vDSP real FFT packs: outReal[0]=DC, outImag[0]=Nyquist; it scales
-            // the forward transform by 2 vs the math DFT, so multiply by 0.5 to
-            // match librosa's unscaled `stft` magnitudes.
+            // Packed output in place: splitReal[0]=DC, splitImag[0]=Nyquist,
+            // bin k in splitReal[k]/splitImag[k]; ×0.5 undoes zrip's forward
+            // scaling to match librosa's unscaled `stft` magnitudes.
             var mags = [Float](repeating: 0, count: nBins)
-            mags[0] = abs(outReal[0]) * 0.5
-            mags[nBins - 1] = abs(outImag[0]) * 0.5
+            mags[0] = abs(splitReal[0]) * 0.5
+            mags[nBins - 1] = abs(splitImag[0]) * 0.5
             for bin in 1..<halfN {
-                let re = outReal[bin] * 0.5
-                let im = outImag[bin] * 0.5
+                let re = splitReal[bin] * 0.5
+                let im = splitImag[bin] * 0.5
                 mags[bin] = (re * re + im * im).squareRoot()
             }
             magnitude[frame] = mags
@@ -254,7 +250,14 @@ public enum Spectral {
         power: Float = 2.0
     ) -> [[Float]] {
         let nMels = filterbank.count
-        guard nMels > 0, spec.nFrames > 0 else { return [] }
+        // Length agreement is a hard precondition for the vDSP reads below:
+        // vDSP_vsq/vDSP_dotpr take nBins on faith and would read past shorter
+        // rows (e.g. a filterbank built for a different nFFT).
+        guard nMels > 0, spec.nFrames > 0,
+              spec.magnitude.count == spec.nFrames,
+              spec.magnitude.allSatisfy({ $0.count == spec.nBins }),
+              filterbank.allSatisfy({ $0.count == spec.nBins })
+        else { return [] }
         let nBins = spec.nBins
         var out = [[Float]](repeating: [Float](repeating: 0, count: nMels), count: spec.nFrames)
 
