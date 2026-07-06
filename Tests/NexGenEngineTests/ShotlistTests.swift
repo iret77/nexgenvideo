@@ -70,7 +70,7 @@ struct ShotlistTests {
     }
 
     @Test("sourceMode raw values are snake_case")
-    func sourceModeRawValues() {
+    func sourceModeRawValues() throws {
         #expect(SourceMode.generated.rawValue == "generated")
         #expect(SourceMode.imported.rawValue == "imported")
         // 0.7.0 wrote "live_action"; the alias keeps those shotlists decoding.

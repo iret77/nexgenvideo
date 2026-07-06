@@ -53,7 +53,7 @@ struct ShowFormattersTests {
             aspectRatio: .landscape16x9,
             projectMode: "beat",
             conceptType: .narrative,
-            visualMedium: .importedRealistic,
+            visualMedium: .liveActionRealistic,
             figures: .artistOnly,
             lyricsIntegration: .literal
         )
