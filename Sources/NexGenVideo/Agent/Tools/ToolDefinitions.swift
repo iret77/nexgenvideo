@@ -1071,10 +1071,10 @@ enum ToolDefinitions {
 
     /// Shared `project_dir` property schema for the pipeline tools (optional — defaults to the open
     /// project's studio dir when omitted).
-    private static let projectDirProperty: [String: Any] = [
+    private static var projectDirProperty: [String: Any] { [
         "type": "string",
         "description": "The project's `_studio/` data root. Omit to use the open project.",
-    ]
+    ] }
 
     /// An object schema whose only (optional) property is `project_dir`.
     private static func projectDirSchema() -> [String: Any] {

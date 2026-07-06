@@ -137,7 +137,7 @@ enum NativeCockpitReader {
     /// The engine Bible's CodingKeys carry the Python snake_case names, so a standard encoder emits
     /// the by-alias shape the BibleData decoder expects.
     static func bibleJSON(dataRoot: URL) throws -> Data {
-        guard let bible = try? loadBible(dataRoot: dataRoot), let bible else {
+        guard let bible = try? loadBible(dataRoot: dataRoot) else {
             return Data("null".utf8)
         }
         let encoder = JSONEncoder()
@@ -148,7 +148,7 @@ enum NativeCockpitReader {
     /// `read.py` "shotlist": the latest shotlist `model_dump(by_alias=True, mode="json")`, or literal
     /// `null` when none exists yet.
     static func shotlistJSON(dataRoot: URL) throws -> Data {
-        guard let shotlist = try? loadShotlist(dataRoot: dataRoot), let shotlist else {
+        guard let shotlist = try? loadShotlist(dataRoot: dataRoot) else {
             return Data("null".utf8)
         }
         let encoder = JSONEncoder()
@@ -182,7 +182,7 @@ enum NativeCockpitReader {
     /// `read.py` "sanity": `mcp_server.run_sanity` → `{project, findings:[{level, code, shot_id,
     /// message}]}`, or `{error:"no shotlist", project_dir}` when there's no shotlist yet.
     static func sanityJSON(dataRoot: URL) throws -> Data {
-        guard let shotlist = try? loadShotlist(dataRoot: dataRoot), let shotlist else {
+        guard let shotlist = try? loadShotlist(dataRoot: dataRoot) else {
             return try serialize(["error": "no shotlist", "project_dir": dataRoot.path])
         }
         let store = YAMLArtifactStore(dataRoot: dataRoot)

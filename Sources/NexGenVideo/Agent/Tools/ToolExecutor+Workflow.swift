@@ -278,8 +278,8 @@ extension ToolExecutor {
             "phase": phase,
             "shot_id": shotId,
             "done": false,
-            "visual_prompt": shot?.visualPrompt.map { $0 as Any } ?? NSNull(),
-            "framing": shot?.framing?.rawValue.map { $0 as Any } ?? NSNull(),
+            "visual_prompt": shot.map { $0.visualPrompt as Any } ?? (NSNull() as Any),
+            "framing": shot?.framing.map { $0.rawValue as Any } ?? (NSNull() as Any),
         ])
     }
 
