@@ -47,8 +47,10 @@ jobs:
           attempts=3
           for i in $(seq 1 "$attempts"); do
             echo "::group::swift test (attempt $i/$attempts)"
-            # DIAG (temporary): ASan run scoped to the corruption suite — revert after bisect
-            swift test --filter AudioAnalysisTests -Xswiftc -sanitize=address 2>&1 | tee "test-attempt-$i.log"
+            # DIAG (temporary): ASan run scoped to the corruption suite — revert after bisect.
+            # The testing helper dlopens the bundle, so the ASan runtime must be preloaded.
+            ASAN_DYLIB=$(ls "$(dirname "$(xcrun --find clang)")"/../lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib | head -1)
+            DYLD_INSERT_LIBRARIES="$ASAN_DYLIB" swift test --filter AudioAnalysisTests -Xswiftc -sanitize=address 2>&1 | tee "test-attempt-$i.log"
             code=${PIPESTATUS[0]}
             echo "::endgroup::"
             if [ "$code" -eq 0 ]; then
