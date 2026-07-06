@@ -43,35 +43,10 @@ public struct AudioSection: Codable, Sendable, Equatable {
     }
 }
 
-/// Port of `analysis_schema.py::EnergyPoint`. `rms` is normalized 0..1.
-public struct EnergyPoint: Codable, Sendable, Equatable {
-    public var t: Double
-    public var rms: Double
-
-    public init(t: Double, rms: Double) {
-        self.t = t
-        self.rms = rms
-    }
-
-    private enum CodingKeys: String, CodingKey { case t, rms }
-}
-
-/// Port of `analysis_schema.py::TempoPoint`.
-public struct TempoPoint: Codable, Sendable, Equatable {
-    public var t: Double
-    public var bpm: Double
-
-    public init(t: Double, bpm: Double) {
-        self.t = t
-        self.bpm = bpm
-    }
-
-    private enum CodingKeys: String, CodingKey { case t, bpm }
-}
-
 /// The DSP-producible subset of `analysis_schema.py::Analysis` — the fields the
 /// native engine computes in v1 scope. Stems/alignment/key/chords/interpretation
 /// stay out (deferred; those schema fields remain optional in the canonical type).
+// EnergyPoint/TempoPoint come from Packs/Musicvideo/AnalysisSchema.swift (canonical).
 public struct AudioAnalysis: Codable, Sendable, Equatable {
     public var sampleRate: Int
     public var durationS: Double
