@@ -2,9 +2,8 @@ import Foundation
 
 // MARK: - Generation parameter / job types
 //
-// Provider-agnostic generation types. The Convex-backed transport that used
-// these was removed; a BYO-provider-key layer (fal.ai / Runway / …) will slot
-// in later. Until then, generation is stubbed and fails with `.notConfigured`.
+// Provider-agnostic generation types, submitted through the BYO-provider-key layer
+// (fal.ai / Runway / …) in Generation/Providers.
 
 enum BackendGenerationParams: Encodable, Sendable {
     case video(VideoGenerationParams)

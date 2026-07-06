@@ -32,7 +32,7 @@ struct MusicGenerationSubmission {
         onFinished: @escaping @MainActor () -> Void = {},
         onSucceeded: @escaping @MainActor () -> Void = {}
     ) async throws {
-        let videoURL: String? = nil
+        var videoReference: MediaAsset?
         if mode == .videoToMusic {
             onPhase(.exporting)
             let mp4 = try await TimelineRenderer.render(
@@ -43,10 +43,12 @@ struct MusicGenerationSubmission {
                 shortSide: 360,
                 includeAudio: false
             )
-            try? FileManager.default.removeItem(at: mp4)
-            onPhase(.uploading)
-            throw GenerationBackendError.notConfigured
+            videoReference = MediaAsset(url: mp4, type: .video, name: "timeline-span")
         }
+        // The rendered span is a throwaway temp file — hand it back via preprocessRef so
+        // GenerationService's own upload pipeline deletes it once uploaded, same as video refs do.
+        let preprocessRef: (@Sendable (Int, MediaAsset) async throws -> URL?)? =
+            videoReference == nil ? nil : { @Sendable _, asset in await MainActor.run { asset.url } }
 
         let durationSeconds = max(1, Int(spanSeconds.rounded()))
         let params = AudioGenerationParams(
@@ -56,7 +58,7 @@ struct MusicGenerationSubmission {
             styleInstructions: nil,
             instrumental: false,
             durationSeconds: durationSeconds,
-            videoURL: videoURL
+            videoURL: nil
         )
 
         var genInput = GenerationInput(
@@ -67,10 +69,12 @@ struct MusicGenerationSubmission {
         )
         genInput.createdAt = Date()
 
-        onPhase(.generating)
+        if mode == .videoToMusic { onPhase(.uploading) } else { onPhase(.generating) }
         let startFrame = source.startFrame
         let placeholderId = AudioGenerationSubmission.make(
-            genInput: genInput, model: model, params: params, name: name ?? model.displayName
+            genInput: genInput, model: model, params: params, name: name ?? model.displayName,
+            references: videoReference.map { [$0] } ?? [],
+            preprocessRef: preprocessRef
         ).submit(
             service: service,
             projectURL: projectURL,

@@ -305,6 +305,10 @@ final class EditorViewModel {
     /// (docs/UI_UX_CONCEPT.md §3).
     var workspaceFocus: WorkspaceFocus = .edit
 
+    /// Single gate for all timeline edit chrome/interaction (trim handles, waveforms, razor): the one
+    /// canonical timeline shows rendered status in Produce, never trim tooling (docs/UI_UX_CONCEPT.md §3).
+    var allowsTimelineEditChrome: Bool { workspaceFocus != .produce }
+
     var leftSidebarTab: LeftSidebarTab = {
         if let raw = UserDefaults.standard.string(forKey: "leftSidebarTab"),
            let tab = LeftSidebarTab(rawValue: raw) { return tab }

@@ -85,7 +85,7 @@ final class EditorWindowController: NSWindowController {
             return true
 
         case 8: // C key
-            if !cmd {
+            if !cmd, editorViewModel.allowsTimelineEditChrome {
                 editorViewModel.toolMode = .razor
                 return true
             }
@@ -113,10 +113,12 @@ final class EditorWindowController: NSWindowController {
             return false
 
         case 33: // [ key
+            guard editorViewModel.allowsTimelineEditChrome else { return false }
             editorViewModel.trimStartToPlayhead()
             return true
 
         case 30: // ] key
+            guard editorViewModel.allowsTimelineEditChrome else { return false }
             editorViewModel.trimEndToPlayhead()
             return true
 
@@ -298,6 +300,8 @@ extension EditorWindowController: EditorActions {
         case #selector(setFocusProduce(_:)):
             menuItem.state = editorViewModel.workspaceFocus == .produce ? .on : .off
             return true
+        case #selector(trimStartToPlayhead(_:)), #selector(trimEndToPlayhead(_:)):
+            return editorViewModel.allowsTimelineEditChrome
         case #selector(copy(_:)), #selector(cut(_:)):
             return canHandleClipboardShortcut() && !editorViewModel.selectedClipIds.isEmpty
         case #selector(paste(_:)):

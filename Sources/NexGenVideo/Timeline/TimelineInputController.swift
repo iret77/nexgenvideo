@@ -67,7 +67,7 @@ final class TimelineInputController {
         let trackIndex = geometry.trackAt(y: point.y)
         editor.selectedGap = nil // re-selected below if this lands in a gap
 
-        if editor.toolMode == .razor {
+        if editor.toolMode == .razor, editor.allowsTimelineEditChrome {
             if let hit = hitTestClip(at: point, trackIndex: trackIndex, geometry: geometry) {
                 let clickFrame = razorPreviewFrame ?? geometry.frameAt(x: point.x)
                 let clip = editor.timeline.tracks[hit.trackIndex].clips[hit.clipIndex]
@@ -105,8 +105,9 @@ final class TimelineInputController {
 
             let localX = point.x - rect.minX
             let isCommand = event.modifierFlags.contains(.command)
+            let allowsEditChrome = editor.allowsTimelineEditChrome
 
-            if let edge = fadeKneeHit(at: point, clip: clip, clipRect: rect) {
+            if allowsEditChrome, let edge = fadeKneeHit(at: point, clip: clip, clipRect: rect) {
                 let originalFrames = clip.fadeFrames(edge)
                 dragState = .fadeKnee(DragState.FadeKneeDrag(
                     clipId: clip.id,
@@ -116,7 +117,7 @@ final class TimelineInputController {
                     grabFrame: geometry.frameAt(x: point.x),
                     currentFrames: originalFrames
                 ))
-            } else if clip.mediaType == .audio,
+            } else if allowsEditChrome, clip.mediaType == .audio,
                let kfFrame = audioVolumeKfHit(at: point, clip: clip, clipRect: rect) {
                 let kfOffset = kfFrame - clip.startFrame
                 let dB = clip.volumeTrack?.keyframes.first(where: { $0.frame == kfOffset })?.value ?? 0
@@ -129,10 +130,10 @@ final class TimelineInputController {
                     currentFrame: kfFrame,
                     currentDb: dB
                 ))
-            } else if isCommand, clip.mediaType == .audio,
+            } else if allowsEditChrome, isCommand, clip.mediaType == .audio,
                       addVolumeKeyframeOnClick(at: point, clip: clip, clipRect: rect) {
                 dragState = .idle
-            } else if !isOption, localX <= Trim.handleWidth {
+            } else if allowsEditChrome, !isOption, localX <= Trim.handleWidth {
                 dragState = .trimLeft(DragState.TrimDrag(
                     clipId: clip.id,
                     trackIndex: hit.trackIndex,
@@ -143,7 +144,7 @@ final class TimelineInputController {
                     hasNoSourceMedia: clip.mediaType == .image || clip.mediaType == .text,
                     propagateToLinked: linkedOn
                 ))
-            } else if !isOption, localX >= rect.width - Trim.handleWidth {
+            } else if allowsEditChrome, !isOption, localX >= rect.width - Trim.handleWidth {
                 dragState = .trimRight(DragState.TrimDrag(
                     clipId: clip.id,
                     trackIndex: hit.trackIndex,
@@ -508,7 +509,7 @@ final class TimelineInputController {
             return
         }
 
-        if editor.toolMode == .razor && point.y >= scrollOffsetY + geometry.rulerHeight {
+        if editor.toolMode == .razor, editor.allowsTimelineEditChrome, point.y >= scrollOffsetY + geometry.rulerHeight {
             let candidate = geometry.frameAt(x: point.x)
             let targets = SnapEngine.collectTargets(
                 tracks: editor.timeline.tracks,
@@ -535,7 +536,7 @@ final class TimelineInputController {
 
         let trackIndex = geometry.trackAt(y: point.y)
 
-        if let hit = hitTestClip(at: point, trackIndex: trackIndex, geometry: geometry) {
+        if editor.allowsTimelineEditChrome, let hit = hitTestClip(at: point, trackIndex: trackIndex, geometry: geometry) {
             let clip = editor.timeline.tracks[hit.trackIndex].clips[hit.clipIndex]
             let rect = geometry.clipRect(for: clip, trackIndex: hit.trackIndex)
             let localX = point.x - rect.minX

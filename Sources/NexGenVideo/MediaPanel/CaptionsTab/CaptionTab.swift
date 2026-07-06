@@ -223,18 +223,18 @@ struct CaptionTab: View {
     private var agentMenu: some View {
         Menu {
             Button {
-                captionTask("remove filler words (um, uh, er, like, you know) from the captions, keeping each caption's timing unchanged.")
+                removeFillerWords()
             } label: { Label("Remove filler words", systemImage: "text.badge.minus") }
             Button {
-                captionTask("fix any misspelled names, brand names, or technical jargon in the captions using the surrounding context, keeping timing unchanged.")
+                prefillCaptionTask("fix any misspelled names, brand names, or technical jargon in the captions using the surrounding context, keeping timing unchanged.")
             } label: { Label("Fix names & jargon", systemImage: "checkmark.bubble") }
             Button {
-                captionTask("add relevant emoji to the captions, keeping the text and timing otherwise unchanged.")
+                prefillCaptionTask("add relevant emoji to the captions, keeping the text and timing otherwise unchanged.")
             } label: { Label("Add emoji", systemImage: "face.smiling") }
             Menu {
                 ForEach(Self.translateLanguages, id: \.self) { language in
                     Button(language) {
-                        captionTask("translate the captions to \(language), keeping each caption's timing unchanged.")
+                        prefillCaptionTask("translate the captions to \(language), keeping each caption's timing unchanged.")
                     }
                 }
             } label: { Label("Translate", systemImage: "globe") }
@@ -256,15 +256,17 @@ struct CaptionTab: View {
         .help("Let Agent create captions for you. Choose a predefined task, or ask Agent in the chat.")
     }
 
-    private func captionTask(_ task: String) {
-        handoff("If the timeline has no captions yet, transcribe the spoken audio and add captions on word boundaries first. Then \(task)")
+    private func removeFillerWords() {
+        note = nil
+        let count = editor.removeFillerWordsFromCaptions()
+        if count == 0 { note = "No filler words found." }
     }
 
-    private func handoff(_ prompt: String) {
-        let service = editor.agentService
-        service.newChat()
-        service.draft = prompt
-        editor.agentPanelVisible = true
+    /// Visible, user-confirms-send: fills the agent input rather than sending — the scope prefix
+    /// makes it explicit this touches captions, not the whole project.
+    private func prefillCaptionTask(_ task: String) {
+        let prompt = "Captions: If the timeline has no captions yet, transcribe the spoken audio and add captions on word boundaries first. Then \(task)"
+        editor.agentService.prefillInput(prompt)
     }
 
     private func menuValueLabel(_ text: String) -> some View {

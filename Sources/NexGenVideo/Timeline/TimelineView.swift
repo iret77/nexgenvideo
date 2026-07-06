@@ -296,6 +296,7 @@ final class TimelineView: NSView {
         }()
 
         let linkOffsets = editor.linkGroupOffsets()
+        let allowsEditChrome = editor.allowsTimelineEditChrome
 
         clipDisplayRects.removeAll(keepingCapacity: true)
         for (ti, track) in editor.timeline.tracks.enumerated() {
@@ -313,7 +314,8 @@ final class TimelineView: NSView {
                                           isSelected: drag.isDuplicate && isSelected, opacity: originalOpacity, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
-                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
+                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
+                                          allowsEditChrome: allowsEditChrome)
                     }
 
                     let frameDelta = drag.deltaFrames
@@ -338,7 +340,8 @@ final class TimelineView: NSView {
                                           isSelected: true, opacity: 0.7, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
-                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
+                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
+                                          allowsEditChrome: allowsEditChrome)
                     }
                     continue
                 }
@@ -362,7 +365,8 @@ final class TimelineView: NSView {
                                           isSelected: isSelected, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
-                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
+                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
+                                          allowsEditChrome: allowsEditChrome)
                     }
                     continue
                 }
@@ -375,7 +379,8 @@ final class TimelineView: NSView {
                                   cache: editor.mediaVisualCache,
                                   displayName: editor.clipDisplayLabel(for: clip),
                                   linkOffset: linkOffsets[clip.id],
-                                  fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
+                                  fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
+                                  allowsEditChrome: allowsEditChrome)
             }
         }
     }
@@ -534,7 +539,8 @@ final class TimelineView: NSView {
                               cache: editor.mediaVisualCache,
                               fps: editor.timeline.fps,
                               isMissing: editor.isClipMediaOffline(ghost.clip),
-                              isGenerating: editor.isClipMediaGenerating(ghost.clip))
+                              isGenerating: editor.isClipMediaGenerating(ghost.clip),
+                              allowsEditChrome: editor.allowsTimelineEditChrome)
         }
     }
 
@@ -648,8 +654,9 @@ final class TimelineView: NSView {
         }
         let clip = editor.timeline.tracks[hit.trackIndex].clips[hit.clipIndex]
         let clipRect = geometry.clipRect(for: clip, trackIndex: hit.trackIndex)
+        let allowsEditChrome = editor.allowsTimelineEditChrome
 
-        if let edge = inputController.fadeKneeHit(at: point, clip: clip, clipRect: clipRect) {
+        if allowsEditChrome, let edge = inputController.fadeKneeHit(at: point, clip: clip, clipRect: clipRect) {
             let menu = NSMenu()
             let current = clip.fadeInterpolation(edge)
             let mk: (String, Interpolation) -> NSMenuItem = { title, interp in
@@ -669,7 +676,7 @@ final class TimelineView: NSView {
         }
 
         // kf menu before clip menu.
-        if clip.mediaType == .audio,
+        if allowsEditChrome, clip.mediaType == .audio,
            let kfFrame = inputController.audioVolumeKfHit(at: point, clip: clip, clipRect: clipRect) {
             let menu = NSMenu()
             let current = editor.interpolation(clipId: clip.id, property: .volume, atFrame: kfFrame) ?? .smooth

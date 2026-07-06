@@ -7,6 +7,8 @@ import SwiftUI
 /// transcript card.
 struct AgentDialogCard: View {
     let dialog: AgentDialog
+    /// Seeds a section's initial selection (e.g. a mood chosen from a menu before the dialog opens).
+    var preselected: [String: Set<String>] = [:]
     let onSubmit: (AgentDialogResult) -> Void
     let onCancel: () -> Void
 
@@ -134,6 +136,9 @@ struct AgentDialogCard: View {
             if case .toggle(let defaultOn) = section.kind, toggleStates[section.id] == nil {
                 toggleStates[section.id] = defaultOn
             }
+        }
+        for (sectionId, selection) in preselected where choiceSelections[sectionId] == nil {
+            choiceSelections[sectionId] = selection
         }
     }
 

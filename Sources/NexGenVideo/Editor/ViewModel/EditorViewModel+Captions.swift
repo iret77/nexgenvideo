@@ -240,4 +240,41 @@ extension EditorViewModel {
         notifyTimelineChanged()
         return ids
     }
+
+    private static let fillerWords = ["um", "uh", "er", "like", "you know"]
+
+    private static let fillerWordPattern: NSRegularExpression = {
+        let alternation = fillerWords.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
+        return try! NSRegularExpression(pattern: "\\b(\(alternation))\\b", options: .caseInsensitive)
+    }()
+
+    private static func stripFillerWords(_ text: String) -> String {
+        let range = NSRange(text.startIndex..., in: text)
+        let stripped = fillerWordPattern.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        return stripped
+            .replacingOccurrences(of: " {2,}", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Strips a fixed filler-word list from every caption on the timeline. Deterministic —
+    /// no model call — so this runs natively instead of round-tripping through the agent.
+    /// Timing is untouched; one undo step for the whole pass.
+    @discardableResult
+    func removeFillerWordsFromCaptions() -> Int {
+        let captionClips = timeline.tracks.flatMap(\.clips).filter { $0.mediaType == .text && $0.captionGroupId != nil }
+        let edits: [(id: String, text: String)] = captionClips.compactMap { clip in
+            guard let original = clip.textContent else { return nil }
+            let stripped = Self.stripFillerWords(original)
+            return stripped != original ? (clip.id, stripped) : nil
+        }
+        guard !edits.isEmpty else { return 0 }
+
+        undoManager?.beginUndoGrouping()
+        for edit in edits {
+            commitClipProperty(clipId: edit.id) { $0.textContent = edit.text }
+        }
+        undoManager?.endUndoGrouping()
+        undoManager?.setActionName("Remove Filler Words")
+        return edits.count
+    }
 }
