@@ -220,6 +220,8 @@ payload = {
 }
 out_path.write_text(json.dumps(payload, indent=4, sort_keys=True) + "\n", encoding="utf-8")
 print(f"  wrote {out_path}")
+PY
+
 echo "==> Emitting prompt-builder golden vectors"
 # The prompt layer (render/prompt/builder.py) has no filesystem fixture — its
 # product is the emitted prompt string itself. This block imports the real

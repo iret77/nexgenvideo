@@ -445,7 +445,7 @@
         "multiRefHints": [],
         "directives": []
       },
-      "expectedPrompt": "a hero shot, normal lens feel shallow depth of field. an vista. camera move, very dolly. golden hour light. Style: style."
+      "expectedPrompt": "a hero shot, normal lens feel shallow depth of field. an vista. camera move, dolly. golden hour light. Style: style."
     },
     {
       "caseName": "image_sloplaeden_gpt_image_2",
@@ -468,7 +468,7 @@
         "multiRefHints": [],
         "directives": []
       },
-      "expectedPrompt": "Scene:\nan vista\n\nSubject:\na hero shot, normal lens feel shallow depth of field\n\nImportant details:\ncamera move, very dolly golden hour light Style: style\n\nUse case:\nvideo keyframe (end-position anchor frame)"
+      "expectedPrompt": "Scene:\nan vista\n\nSubject:\na hero shot, normal lens feel shallow depth of field\n\nImportant details:\ncamera move, dolly golden hour light Style: style\n\nUse case:\nvideo keyframe (end-position anchor frame)"
     },
     {
       "caseName": "image_negation_nano_banana",
