@@ -5,7 +5,7 @@ import Testing
 /// Acceptance tests for the native audio analysis (M8c). All signals are
 /// synthesized deterministically — no fixture files. Ground truth is known by
 /// construction, so tolerances are exact.
-@Suite("AudioAnalysis", .serialized, .disabled("diag: SIGTRAP bisect"))
+@Suite("AudioAnalysis", .serialized)
 struct AudioAnalysisTests {
     static let sr: Double = 22050
 
