@@ -110,7 +110,7 @@ struct CostsTests {
         #expect(alreadySpentInProject(dataRoot: tmp.appendingPathComponent("nope")) == 0.0)
     }
 
-    // MARK: - Golden parity (Python oracle via scripts/regen-goldens.sh)
+    // MARK: - Golden parity (frozen Python-oracle fixtures; see Goldens/README.md)
 
     /// Reproduces the exact `ShotEstimate`/`ProjectEstimate` numbers the Python
     /// `estimate()` produced from the same fixture shotlist, priced from the

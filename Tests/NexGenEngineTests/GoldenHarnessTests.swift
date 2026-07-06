@@ -2,9 +2,9 @@ import Foundation
 import Testing
 @testable import NexGenEngine
 
-/// Proves the golden plumbing: the Python-oracle JSON produced by
-/// `scripts/regen-goldens.sh` is bundled and decodable. M1 turns these into
-/// full parity assertions against the Swift artifact types.
+/// Proves the golden plumbing: the frozen Python-oracle JSON fixtures (see
+/// `Goldens/README.md`) are bundled and decodable, and back the Swift parity
+/// assertions against the artifact types.
 @Suite("GoldenHarness")
 struct GoldenHarnessTests {
     /// Load a bundled golden as a JSON object.

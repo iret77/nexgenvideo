@@ -244,6 +244,7 @@ final class EditorViewModel {
         // reads `<projectURL>/_studio` — finds it. name is the display name, recorded in project.yaml.
         let home = url
         let name = url.deletingPathExtension().lastPathComponent
+        let extraDirs = PackCatalog.projectDirs(activePack: activePluginName)
         productionStarting = true
         // Produce focus surfaces the cockpit + agent together, so the work is visible instead of
         // buried in a chat panel the user has to notice.
@@ -254,7 +255,7 @@ final class EditorViewModel {
             // An already-initialized project is benign (the pipeline exists), so drafting the brief is
             // still the right next step — the error is swallowed rather than surfaced.
             await Task.detached {
-                try? ProjectScaffold.initProject(home: home, name: name)
+                try? ProjectScaffold.initProject(home: home, name: name, extraDirs: extraDirs)
             }.value
             guard let self else { return }
             await self.refreshEngineState()
@@ -485,7 +486,6 @@ final class EditorViewModel {
             projectURL: { [weak self] in self?.projectURL }
         )
         agentService.editor = self
-        agentService.prepareEngineIfRuntimeEnabled()
         searchIndex.assetsProvider = { [weak self] in self?.mediaAssets ?? [] }
 
         // Re-check media presence when the app regains focus: a user may have

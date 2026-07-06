@@ -1,47 +1,81 @@
-# Plugin Standard
+# Format Pack Standard
 
-How a format pack plugs into NexGenVideo. Companion to [CONCEPT.md](CONCEPT.md)
-§4.1 and [ENGINE_MIGRATION.md](ENGINE_MIGRATION.md). Status: **v0 contract**
-(`engine/nexgen_engine/pack.py`); refined as the engine extraction lands.
+How a format pack plugs into NexGenVideo. Companion to [CONCEPT.md](CONCEPT.md) §4.1.
+Status: **native Swift** (`Sources/NexGenEngine/Packs/`). The former Python plugin
+contract (`ngv-plugin.json` + `pyproject.toml` + `--plugin-dir`) was removed in M9
+(issue #119) — packs are now Swift modules, not on-disk plugins.
 
 ## Layering
 
-- **Core** — nexgen-video (Swift: editor, timeline, **generation** via the local fal
-  catalog, MCP server, embedded `claude -p` runtime) **+ the Generic Engine** (Python,
-  bundled with the app and always loaded): **Bible, consistency/reference, sanity
-  framework, render-dispatch + cost-guard, frame-compliance**. The quality motor.
-- **Pack** (thin, e.g. `musicvideo`) — only domain specifics: audio DSP/analysis,
-  genre/mood/tempo patterns, lyrics/cover, music-specific checks, the workflow phases.
+- **Core** — NexGenVideo (Swift: editor, timeline, **generation** via the fal/Marble
+  catalogs, MCP server, embedded `claude -p` runtime) **+ `NexGenEngine`** (Swift
+  library, always linked): Bible, consistency/reference, sanity framework, prompt
+  compile, render manifest + cost-guard, frame-compliance. The quality motor.
+- **Pack** (thin, e.g. `musicvideo`) — only domain specifics: genre/mood/tempo
+  patterns, music-specific checks, duration policy, the pack's phase docs. No Python,
+  no venv, no separate process — a Swift type conforming to `Pack`.
 
 A pack **registers behavior into the engine**. It does **not** re-implement the
 Bible/consistency/sanity/render core, and it does **not** call generators itself —
-generation and timeline edits go through nexgen's own tools, **driven by Claude**.
+generation and timeline edits go through NexGen's own `nexgen` MCP tools, driven by Claude.
 
-## What a pack registers (`Pack.register(EngineRegistry)`)
+## The `Pack` protocol
 
-- `register_phase(name, runner)` — workflow phases it contributes.
-- `register_sanity_check(name, check)` — domain checks plugged into the engine's
-  sanity framework (e.g. tempo / pacing / pattern-drift).
-- `register_duration_policy(policy)` — seam 1: mode → duration band (music makes it
-  BPM-aware); the engine's Shot/sanity logic stays generic.
-- `register_library(name, data)` — domain reference data (e.g. pattern libraries).
+A pack is a Swift value conforming to `Pack` (`Sources/NexGenEngine/Packs/EngineRegistry.swift`):
 
-## Standard MCP surface (the "function calls" Claude uses)
+```swift
+public protocol Pack: Sendable {
+    var name: String { get }           // activation id, persisted per project in ngv.json
+    var version: String { get }
+    var manifest: PackManifest { get }  // gallery/chip identity (displayName, tagline, header image)
+    var starters: [PackStarter] { get } // agent-panel one-tap starters (plain-language prompts)
+    func register(_ registry: EngineRegistry)
+}
+```
 
-Two always-available MCP servers, registered with the embedded claude (the merge is
-wired — see `ClaudeCodeLaunch.mcpConfigJSON`):
+`register(_:)` folds the pack's contributions into the engine via `EngineRegistry`:
 
-- **`nexgen`** (Swift, 127.0.0.1) — `import_media`, `add_clips`, `generate_video`/
-  `generate_image`/…, `get_timeline`, `export_project`. Generation + timeline.
-- **`engine`** (Python core, bundled) — the workflow control surface over the Bible/
-  consistency/sanity/render core: `get_project_state`, `list_phases`, `run_phase`,
-  `list_checks`, `run_sanity`, … Pack-registered phases/checks appear here; the tool
-  surface stays standard so packs are swappable.
+- `registerSanityCheck(_ name:_ check:)` — domain checks in the engine's sanity
+  framework (e.g. music tempo / pacing). Last-write-wins by name.
+- `registerDurationPolicy(_:)` — seam 1: mode → duration band (music makes it
+  BPM-aware); the engine's Shot/sanity logic stays format-neutral.
+- `registerProjectDirs(_:)` — extra project-layout subdirs (music: `audio`,
+  `lyrics`, `analysis`), added on `init_project`.
+- `registerUIContract(phase:surface:taskClass:)` — override a phase's default
+  interaction surface / router task class.
+- `registerPhase(_ name:runner:)` — workflow phase runners the pack contributes.
+- `registerLibrary(_ name:_ library:)` — domain reference data.
 
-## Runtime (decided)
+## Registration + activation
 
-A core feature can't depend on a remote host, so the engine (and packs) run **locally,
-bundled with nexgen-video, auto-bootstrapped** — the plugin manager sets up the Python
-runtime invisibly (via `uv`); the user never touches Python/venv. fal's GPU compute is
-remote in every case (it's a cloud API); only the API call leaves the machine, with the
-key staying in the Keychain. Remote-hosted / bundled-binary models are out for the core.
+- **Catalog** — `PackCatalog.all` (NexGenEngine) lists the first-party packs; there is
+  no dynamic on-disk discovery. The app's gallery/chip/launcher read packs via
+  `InstalledPack` / `PluginCommandCatalog`, which wrap `PackCatalog`.
+- **Activation** — exactly one active pack per project (or none = the generic
+  workflow), persisted as `activePlugin` in `<project>/ngv.json` (unchanged from the
+  plugin era). The active pack's `name` is threaded into the engine paths that consume
+  it: `run_sanity` adds its checks, `get_ui_contract` overlays its entries,
+  `init_project` creates its extra dirs, and the agent context line names it.
+
+## Knowledge resources
+
+A pack's knowledge (pattern libraries, phase docs) ships as bundled `NexGenEngine`
+resources under `Sources/NexGenEngine/Resources/<Pack>Pack/` and is read via
+`Bundle.module` (see `PackKnowledge` for the musicvideo accessors). No files are read
+from disk at runtime beyond the app bundle.
+
+## MCP surface
+
+One always-available MCP server, registered with the embedded claude (see
+`ClaudeCodeLaunch.mcpConfigJSON`):
+
+- **`nexgen`** (Swift, `127.0.0.1`) — the whole surface: generation + timeline
+  (`import_media`, `add_clips`, `generate_video`/`generate_image`/…, `get_timeline`,
+  `export_project`) **and** the production-pipeline tools backed by `NexGenEngine`
+  (`get_project_state`, `list_phases`, `run_sanity`, `get_ui_contract`, `init_project`,
+  gates, ledger, render manifest, …). Pack-registered checks/contract entries surface
+  through these; the tool surface stays standard so packs are swappable.
+
+External Claude-Code plugins can still contribute their own MCP servers via a
+`--plugin-dir`'s `.mcp.json` (the dev "extra plugin folder"); first-party format packs
+are native and need none.

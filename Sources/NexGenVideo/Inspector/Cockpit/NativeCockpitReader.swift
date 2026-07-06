@@ -1,16 +1,16 @@
 import Foundation
 import NexGenEngine
 
-// In-process replacement for the `nexgen_engine.read` subprocess, for the kinds the pure Swift
-// engine can serve natively (no venv, no Python). Each function returns raw JSON bytes in the SAME
-// shape the read CLI emits (engine/nexgen_engine/read.py), so the existing Cockpit panel decoders
-// consume it unchanged. The remaining kinds keep the legacy subprocess path.
+// In-process native reader for every cockpit read kind — no venv, no Python, no subprocess. Each
+// function returns raw JSON bytes in the SAME shape the former Python read CLI emitted, so the Cockpit
+// panel decoders consume it unchanged.
 //
-// Parity is proven in NexGenEngineTests: the `state` bytes here match the committed state.json golden.
+// Parity is proven in NexGenEngineTests: the `state` bytes here match the committed state.json golden
+// (a frozen fixture from the Python oracle; see Tests/NexGenEngineTests/Goldens/README.md).
 enum NativeCockpitReader {
 
-    /// True for the kinds served natively below. After M7 every read kind is native; the Python
-    /// read CLI path in CockpitDataService is dead (M9 removes it).
+    /// True for the kinds served natively — which, after M7, is every cockpit read kind. Retained as
+    /// the CockpitDataService entry gate; there is no non-native path.
     static func servesNatively(_ kind: String) -> Bool {
         [
             "state", "phases", "contract", "router", "brief", "treatment",
@@ -33,14 +33,15 @@ enum NativeCockpitReader {
     // MARK: - Projectless kinds
 
     /// `read.py` "phases": the ordered core pipeline (JSON array of strings). Pack phases would append
-    /// here; the pure engine has no pack discovery, so it's the core order.
-    static func phasesJSON() throws -> Data {
+    /// here; the current packs contribute no gate phases, so it's the core order regardless.
+    static func phasesJSON(activePack: String? = nil) throws -> Data {
         try serialize(coreGatePhases)
     }
 
     /// `read.py` "contract": `{surfaces:[...], phases:{phase:{surface, task_class}}}`.
-    /// `core.ui_contract.full_contract()`.
-    static func contractJSON(packEntries: [String: UIContract.Entry] = [:]) throws -> Data {
+    /// `core.ui_contract.full_contract()` overlaid with the active pack's entries.
+    static func contractJSON(activePack: String? = nil) throws -> Data {
+        let packEntries = PackCatalog.registry(activePack: activePack).uiContracts
         let contract = UIContract.fullContract(packEntries: packEntries)
         var phases: [String: Any] = [:]
         for (phase, entry) in contract {
@@ -181,18 +182,19 @@ enum NativeCockpitReader {
 
     /// `read.py` "sanity": `mcp_server.run_sanity` → `{project, findings:[{level, code, shot_id,
     /// message}]}`, or `{error:"no shotlist", project_dir}` when there's no shotlist yet.
-    static func sanityJSON(dataRoot: URL) throws -> Data {
+    static func sanityJSON(dataRoot: URL, activePack: String? = nil) throws -> Data {
         guard let shotlist = try? loadShotlist(dataRoot: dataRoot) else {
             return try serialize(["error": "no shotlist", "project_dir": dataRoot.path])
         }
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         let brief = try? store.load(Brief.self, at: StudioLayout.briefFile)
         let bible = (try? loadBible(dataRoot: dataRoot)) ?? nil
-        let registry = CheckRegistry()
-        registerCoreChecks(registry)
+        // Core checks plus the active pack's checks (e.g. music tempo/pacing), mirroring the Python
+        // core-checks + discover_packs() gather.
+        let checks = PackCatalog.registry(activePack: activePack).sanityChecks
         let report = audit(
             AuditContext(shotlist: shotlist, brief: brief, bible: bible),
-            checks: registry.checks
+            checks: checks
         )
         let findings: [[String: Any]] = report.findings.map { f in
             [

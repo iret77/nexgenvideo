@@ -14,9 +14,9 @@ enum SlopStripper {
     /// PYTHONHASHSEED-dependent — and the set contains OVERLAPPING tokens
     /// ("fast" vs "very fast"/"super fast"/"lightning fast"), so deletion order
     /// changes the output ("very fast dolly" → "very dolly" when "fast" deletes
-    /// first, "dolly" when "very fast" does). The golden generator
-    /// (scripts/regen-goldens.sh) pins the oracle to `sorted()` order; this list
-    /// MUST stay lexicographically sorted to match it. Canonical consequence:
+    /// first, "dolly" when "very fast" does). The frozen goldens were emitted with
+    /// the oracle pinned to `sorted()` order; this list MUST stay lexicographically
+    /// sorted to match them. Canonical consequence:
     /// "fast" sorts before its multi-word variants, so the qualifier survives.
     static let universalSlopTokens: [String] = [
         "4k", "8k", "amazing", "award-winning", "awesome", "beautiful",

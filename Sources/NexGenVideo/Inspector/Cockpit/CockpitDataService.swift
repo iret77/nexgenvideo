@@ -1,15 +1,11 @@
 import Foundation
 import NexGenEngine
 
-// Read-only bridge from the native cockpit UI to the engine. Every read kind is now served IN-PROCESS
-// via NativeCockpitReader (M7) — no venv, no subprocess, and NO EngineRuntime.ready requirement. The
-// Python read-CLI subprocess path below is dead (no kind reaches it) and is removed in M9; it's kept
-// for now so nothing else has to move in this package. All emitted JSON matches the shapes the panel
-// decoders expect (engine/nexgen_engine/read.py). Everything here is read-only; never mutates state.
+// Read-only bridge from the native cockpit UI to the engine. Every read kind is served IN-PROCESS via
+// NativeCockpitReader — no venv, no subprocess. All emitted JSON matches the shapes the panel decoders
+// expect (the frozen shapes ported from the former Python read CLI). Read-only; never mutates state.
 
 enum CockpitError: Error, Sendable, Equatable {
-    /// Engine venv isn't set up yet (EngineRuntime not `.ready`). The UI offers to set it up in Settings.
-    case engineNotReady
     /// The engine ran, but this project has no production pipeline yet (no `project.yaml`). A normal
     /// state for a plain editing project — not a failure. The UI shows a calm, retry-less state.
     case notInitialized
@@ -34,7 +30,6 @@ enum CockpitError: Error, Sendable, Equatable {
 
     var message: String {
         switch self {
-        case .engineNotReady: return "The engine isn't set up yet."
         case .notInitialized: return "This project has no production pipeline yet."
         case .noProject: return "No project is open."
         case .engine(let m): return m
@@ -162,69 +157,25 @@ enum CockpitDataService {
         }
     }
 
-    // MARK: - Subprocess
+    // MARK: - Native read
 
-    /// Run `<enginePython> -m nexgen_engine.read <kind> <projectDir>` and return raw stdout bytes.
-    /// Fails early when the engine isn't ready or the python path is missing/unusable. A non-zero exit
-    /// whose stdout is still a parseable `{"error": ...}` document is treated as success at this layer
-    /// (the caller decodes the envelope); only an unparseable non-zero exit becomes `.process`.
+    /// Serve a cockpit read entirely in-process via NativeCockpitReader — no venv, no subprocess.
+    /// Every cockpit kind is native (M7+); an unknown kind reports a process error.
     private static func run(kind: String, projectDir: URL) async -> Result<Data, CockpitError> {
-        // Native in-process path — no venv, no subprocess, independent of EngineRuntime status.
-        if NativeCockpitReader.servesNatively(kind) {
-            return nativeRun(kind: kind, projectDir: projectDir)
-        }
-        guard case .ready(let pythonPath) = EngineRuntime.status() else {
-            return .failure(.engineNotReady)
-        }
-        let python = URL(fileURLWithPath: pythonPath)
-        guard FileManager.default.isExecutableFile(atPath: python.path) else {
-            return .failure(.engineNotReady)
-        }
-        let args = ["-m", "nexgen_engine.read", kind, projectDir.path]
-        let env = augmentedEnvironment()
-
-        // Process/Pipe live entirely inside the detached task; only Sendable values cross the boundary.
-        return await Task.detached { () -> Result<Data, CockpitError> in
-            let process = Process()
-            process.executableURL = python
-            process.arguments = args
-            process.environment = env
-            let outPipe = Pipe()
-            let errPipe = Pipe()
-            process.standardOutput = outPipe
-            process.standardError = errPipe
-            do {
-                try process.run()
-            } catch {
-                return .failure(.process("Couldn't run the engine: \(error.localizedDescription)"))
-            }
-            // Drain both pipes before waitUntilExit so a large stdout can't deadlock on a full buffer.
-            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-
-            if process.terminationStatus != 0 {
-                // read.py prints `{"error": ...}` to stdout even on non-zero exit; keep stdout so the
-                // caller can decode it. Fall back to stderr only when stdout is empty.
-                if !outData.isEmpty { return .success(outData) }
-                let msg = String(decoding: errData, as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                return .failure(.process(msg.isEmpty ? "The engine exited with an error." : msg))
-            }
-            return .success(outData)
-        }.value
+        nativeRun(kind: kind, projectDir: projectDir)
     }
 
     /// In-process native read for a kind NativeCockpitReader serves. Projectless kinds (contract,
     /// router, phases) answer without a data root; state/brief/treatment resolve `<projectDir>/_studio`
     /// first and report `.notInitialized` (the calm "no pipeline yet" state) when it isn't a project.
     private static func nativeRun(kind: String, projectDir: URL) -> Result<Data, CockpitError> {
+        let activePack = ProjectPluginSettings.activePlugin(projectURL: projectDir)
         do {
             switch kind {
             case "phases":
-                return .success(try NativeCockpitReader.phasesJSON())
+                return .success(try NativeCockpitReader.phasesJSON(activePack: activePack))
             case "contract":
-                return .success(try NativeCockpitReader.contractJSON())
+                return .success(try NativeCockpitReader.contractJSON(activePack: activePack))
             case "router":
                 return .success(try NativeCockpitReader.routerJSON(dataRoot: NativeCockpitReader.dataRoot(of: projectDir)))
             default:
@@ -237,7 +188,7 @@ enum CockpitDataService {
                 case "treatment": return .success(try NativeCockpitReader.treatmentJSON(dataRoot: root))
                 case "bible": return .success(try NativeCockpitReader.bibleJSON(dataRoot: root))
                 case "shotlist": return .success(try NativeCockpitReader.shotlistJSON(dataRoot: root))
-                case "sanity": return .success(try NativeCockpitReader.sanityJSON(dataRoot: root))
+                case "sanity": return .success(try NativeCockpitReader.sanityJSON(dataRoot: root, activePack: activePack))
                 case "frames": return .success(try NativeCockpitReader.framesJSON(dataRoot: root))
                 case "ledger": return .success(try NativeCockpitReader.ledgerJSON(dataRoot: root))
                 case "cost": return .success(try NativeCockpitReader.costJSON(dataRoot: root))
@@ -249,21 +200,5 @@ enum CockpitDataService {
         } catch {
             return .failure(.decode("Couldn't read \(kind)."))
         }
-    }
-
-    /// PATH-augmented environment mirroring EngineRuntime, so a python that shells out to sibling tools
-    /// still finds them. The venv python is invoked by absolute path, so PATH is only a safety net.
-    private static func augmentedEnvironment() -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
-        let extra = ["/opt/homebrew/bin", "/usr/local/bin",
-                     (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin")]
-        var seen = Set<String>()
-        var ordered: [String] = []
-        for path in (env["PATH"] ?? "").split(separator: ":").map(String.init) + extra
-        where !path.isEmpty && seen.insert(path).inserted {
-            ordered.append(path)
-        }
-        env["PATH"] = ordered.joined(separator: ":")
-        return env
     }
 }

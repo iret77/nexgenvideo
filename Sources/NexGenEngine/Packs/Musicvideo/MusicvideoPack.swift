@@ -43,6 +43,25 @@ public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
     public let version = "0.0.1"
 
+    /// Values mirror the retired `plugins/musicvideo/ngv-plugin.json`; the
+    /// header image now ships as an app resource (`Resources/Images/musicvideo-header`).
+    public let manifest = PackManifest(
+        id: "musicvideo",
+        displayName: "Music Video Studio",
+        tagline: "Structured AI music-video production — analysis → treatment → storyboard → shotlist → render, with engine-enforced consistency.",
+        headerImageName: "musicvideo-header"
+    )
+
+    /// One honest starter: kick off the production pipeline via the same direct
+    /// path the "Start production" CTA uses (scaffold, then draft the brief).
+    public let starters = [
+        PackStarter(
+            id: "start",
+            title: "Start the music-video pipeline",
+            prompt: "Start the music-video production pipeline for this project. Initialize the pipeline if needed with init_project, then orient with get_project_state and walk me through drafting the brief — ask about the video's direction first."
+        )
+    ]
+
     public init() {}
 
     public func register(_ registry: EngineRegistry) {

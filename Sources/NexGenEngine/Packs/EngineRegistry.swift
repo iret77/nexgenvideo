@@ -82,11 +82,47 @@ public final class EngineRegistry: @unchecked Sendable {
     }
 }
 
+/// A pack's presentation identity for the app's gallery/chip — the native
+/// replacement for the disk `ngv-plugin.json` (displayName/tagline/headerImage).
+/// `headerImageName` is a bundled app-resource base name, not a file path.
+public struct PackManifest: Sendable, Equatable {
+    public let id: String
+    public let displayName: String
+    public let tagline: String
+    public let headerImageName: String?
+
+    public init(id: String, displayName: String, tagline: String, headerImageName: String? = nil) {
+        self.id = id
+        self.displayName = displayName
+        self.tagline = tagline
+        self.headerImageName = headerImageName
+    }
+}
+
+/// One agent-panel starter for a pack — a plain-language instruction the pack
+/// wants to offer as a one-tap chip. Not a slash-command: `prompt` is sent to
+/// the agent as ordinary text so it works under either backend.
+public struct PackStarter: Sendable, Equatable, Identifiable {
+    public let id: String
+    public let title: String
+    public let prompt: String
+
+    public init(id: String, title: String, prompt: String) {
+        self.id = id
+        self.title = title
+        self.prompt = prompt
+    }
+}
+
 /// A format pack (e.g. musicvideo). Thin by contract: it registers only
 /// domain-specific behavior into the engine. Port of `pack.py::Pack`.
 public protocol Pack: Sendable {
     var name: String { get }
     var version: String { get }
+    /// Gallery/chip identity — the native successor to `ngv-plugin.json`.
+    var manifest: PackManifest { get }
+    /// Agent-panel starter chips for the active pack (may be empty).
+    var starters: [PackStarter] { get }
 
     func register(_ registry: EngineRegistry) -> Void
 }

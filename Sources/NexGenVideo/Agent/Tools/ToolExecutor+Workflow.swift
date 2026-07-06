@@ -56,7 +56,7 @@ extension ToolExecutor {
 
     func runSanityTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
-        let data = try NativeCockpitReader.sanityJSON(dataRoot: root)
+        let data = try NativeCockpitReader.sanityJSON(dataRoot: root, activePack: editor.activePluginName)
         return .ok(String(decoding: data, as: UTF8.self))
     }
 
@@ -71,8 +71,9 @@ extension ToolExecutor {
         return .ok(String(decoding: data, as: UTF8.self))
     }
 
-    func getUIContractTool() throws -> ToolResult {
-        let contract = UIContract.fullContract()
+    func getUIContractTool(_ editor: EditorViewModel) throws -> ToolResult {
+        let packEntries = PackCatalog.registry(activePack: editor.activePluginName).uiContracts
+        let contract = UIContract.fullContract(packEntries: packEntries)
         var phases: [String: Any] = [:]
         for (phase, entry) in contract {
             phases[phase] = ["surface": entry.surface, "task_class": entry.taskClass]
@@ -89,7 +90,7 @@ extension ToolExecutor {
 
     // MARK: - Scaffold (WRITES)
 
-    func initProjectTool(_ args: [String: Any]) throws -> ToolResult {
+    func initProjectTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let home = URL(fileURLWithPath: try args.requireString("home_dir"))
         let name = try args.requireString("name")
         let modeRaw = args.string("mode") ?? "beat"
@@ -97,9 +98,10 @@ extension ToolExecutor {
             throw ToolError("Unknown mode '\(modeRaw)'. Expected beat/phrase/section/multicam.")
         }
         let budget = args.double("budget_eur") ?? 50.0
+        let extraDirs = PackCatalog.projectDirs(activePack: editor.activePluginName)
         do {
             let dataRoot = try ProjectScaffold.initProject(
-                home: home, name: name, mode: mode, budgetEur: budget
+                home: home, name: name, mode: mode, budgetEur: budget, extraDirs: extraDirs
             )
             return try jsonResult(["data_root": dataRoot.path, "project": name, "created": true])
         } catch let e as ProjectScaffold.ScaffoldError {

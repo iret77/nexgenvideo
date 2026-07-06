@@ -139,9 +139,10 @@ final class ClaudeCodeRuntime {
 
     // MARK: - Launch resolution (I/O)
 
-    /// Read each plugin dir's `.mcp.json` and return its servers (name → serialized JSON entry),
-    /// expanding `${CLAUDE_PLUGIN_ROOT}` to the plugin dir. Lets the plugin's MCP server (e.g.
-    /// musicvideo's stdio server) coexist with `nexgen` under `--strict-mcp-config`.
+    /// Read each external plugin dir's `.mcp.json` and return its servers (name → serialized JSON
+    /// entry), expanding `${CLAUDE_PLUGIN_ROOT}` to the plugin dir. Lets an external Claude-Code
+    /// plugin's MCP server coexist with `nexgen` under `--strict-mcp-config`. First-party format packs
+    /// are native and contribute no plugin dir, so `dirs` is only the dev "extra plugin folder".
     private static func loadPluginMcpServers(_ dirs: [URL]) -> [String: String] {
         var result: [String: String] = [:]
         for dir in dirs {

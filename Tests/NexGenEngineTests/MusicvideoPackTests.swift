@@ -47,6 +47,16 @@ struct MusicvideoPackTests {
         #expect(pack.version == "0.0.1")
     }
 
+    @Test("pack exposes gallery manifest and a starter")
+    func packExposesManifestAndStarters() {
+        let pack: Pack = MusicvideoPack()
+        // Mirrors the retired plugins/musicvideo/ngv-plugin.json.
+        #expect(pack.manifest.displayName == "Music Video Studio")
+        #expect(pack.manifest.tagline.isEmpty == false)
+        #expect(pack.manifest.headerImageName == "musicvideo-header")
+        #expect(pack.starters.isEmpty == false)
+    }
+
     @Test("pack registers the analysis UI contract entry")
     func packRegistersUIContract() {
         let reg = PackRegistry()

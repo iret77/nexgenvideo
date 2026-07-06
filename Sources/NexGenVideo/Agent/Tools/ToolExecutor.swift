@@ -117,7 +117,7 @@ final class ToolExecutor {
         case .listPhases:           return try listPhasesTool(args)
         case .getBible:             return try getBible(editor, args)
         case .runSanity:            return try runSanityTool(editor, args)
-        case .initProject:          return try initProjectTool(args)
+        case .initProject:          return try initProjectTool(editor, args)
         case .approveGate:          return try approveGateTool(editor, args)
         case .rewind:               return try rewindTool(editor, args)
         case .estimateCost:         return try estimateCostTool(editor, args)
@@ -131,7 +131,7 @@ final class ToolExecutor {
         case .lockLedgerAttribute:  return try lockLedgerAttributeTool(editor, args)
         case .removeLedgerAttribute: return try removeLedgerAttributeTool(editor, args)
         case .resolveModel:         return try resolveModelTool(editor, args)
-        case .getUIContract:        return try getUIContractTool()
+        case .getUIContract:        return try getUIContractTool(editor)
         case .setGateState:         return try setGateStateTool(editor, args)
         }
     }

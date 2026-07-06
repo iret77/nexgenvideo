@@ -43,7 +43,7 @@ struct LedgerTests {
         #expect(palette.directive == "warm amber/teal grade")
         #expect(palette.source == "director note")
         #expect(palette.locked == true)
-        // regen-goldens.sh restamps `updated` on every run — assert the ledger
+        // The frozen golden's `updated` was a wall-clock stamp — assert the ledger
         // `_now()` format (literal-Z, second precision), not the volatile value.
         #expect(
             palette.updated.range(

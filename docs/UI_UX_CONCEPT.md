@@ -128,8 +128,8 @@ destination up front; the workflow must actively support that, not treat it as a
   the prompt generator *must* honor and the compliance linter *checks* — not something buried in chat
   memory. Feedback resolves to either **a rule** (a locked attribute, forever) or **a one-off**
   (a throwaway regenerate reason); the user/distiller chooses.
-- **The Prompt Generator already exists in the Core** (`engine/nexgen_engine/render/prompt/`: builder +
-  linter + compliance_linter + content_block_linter; extracted in #56; format-neutral). Its evolution:
+- **The Prompt Generator already exists in the Core** (`Sources/NexGenEngine/Prompt/`: builder +
+  linter + compliance linter + content-block linter; native Swift; format-neutral). Its evolution:
   it moves from reading ad-hoc Bible fields to **composing from the Intent Ledger and enforcing its
   locks.** Distiller (prose → ledger) and Prompt Generator (ledger → model prompt) are two halves of one
   loop and must stay tightly coupled.
