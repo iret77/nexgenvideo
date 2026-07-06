@@ -9,6 +9,7 @@ struct AudioGenerationSubmission {
     let folderId: String?
     let references: [MediaAsset]
     let trimmedSourceOverride: TrimmedSource?
+    let preprocessRef: (@Sendable (Int, MediaAsset) async throws -> URL?)?
 
     @MainActor
     @discardableResult
@@ -34,6 +35,7 @@ struct AudioGenerationSubmission {
                 }
                 return .audio(resolvedParams)
             },
+            preprocessRef: preprocessRef,
             fileExtension: "mp3",
             projectURL: projectURL,
             editor: editor,
@@ -56,7 +58,8 @@ struct AudioGenerationSubmission {
         name: String? = nil,
         folderId: String? = nil,
         references: [MediaAsset] = [],
-        trimmedSourceOverride: TrimmedSource? = nil
+        trimmedSourceOverride: TrimmedSource? = nil,
+        preprocessRef: (@Sendable (Int, MediaAsset) async throws -> URL?)? = nil
     ) -> AudioGenerationSubmission {
         AudioGenerationSubmission(
             genInput: genInput,
@@ -66,7 +69,8 @@ struct AudioGenerationSubmission {
             name: name,
             folderId: folderId,
             references: references,
-            trimmedSourceOverride: trimmedSourceOverride
+            trimmedSourceOverride: trimmedSourceOverride,
+            preprocessRef: preprocessRef
         )
     }
 }

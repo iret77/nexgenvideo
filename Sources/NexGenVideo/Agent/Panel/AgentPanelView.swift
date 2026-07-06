@@ -17,7 +17,7 @@ struct AgentPanelView: View {
         AgentStarterPrompt(
             title: "Create a letterbox opening",
             systemImage: "camera.aperture",
-            prompt: "Create a cinematic opening for my timeline. Use the first visual clip, animate a subtle letterbox matte with top and bottom crop keyframes, starting from crop to uncrop,and keep the motion restrained and polished."
+            prompt: "Create a cinematic opening for my timeline. Use the first visual clip, animate a subtle letterbox matte with top and bottom crop keyframes, starting from crop to uncrop, and keep the motion restrained and polished."
         ),
         AgentStarterPrompt(
             title: "Add captions to my timeline",
@@ -56,8 +56,10 @@ struct AgentPanelView: View {
                 floatingTabBar
             }
             if let dialog = service.pendingDialog {
+                @Bindable var service = service
                 AgentDialogCard(
                     dialog: dialog,
+                    externalSelections: $service.dialogChoiceSelections,
                     onSubmit: { result in service.submitDialog(dialog, result: result) },
                     onCancel: { service.cancelDialog() }
                 )
@@ -438,6 +440,13 @@ struct AgentPanelView: View {
         return VStack(spacing: AppTheme.Spacing.sm) {
             if !service.canStream && !service.messages.isEmpty {
                 missingKeyState
+            }
+            // The agent input always shows what "this" resolves to before sending (docs/UI_UX_CONCEPT.md §2.2).
+            if let hint = editor.selectionContextHint {
+                HStack {
+                    ScopeChip(text: hint)
+                    Spacer(minLength: 0)
+                }
             }
             AgentInputBox(
                 draft: $service.draft,

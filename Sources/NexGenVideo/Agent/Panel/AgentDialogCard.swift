@@ -7,12 +7,26 @@ import SwiftUI
 /// transcript card.
 struct AgentDialogCard: View {
     let dialog: AgentDialog
+    /// Seeds a section's initial selection (e.g. a mood chosen from a menu before the dialog opens).
+    var preselected: [String: Set<String>] = [:]
+    /// When bound (agent panel with canvas projection, #124), choice selection lives OUTSIDE the card
+    /// so a click on a projected timeline range and a chip tap stay in sync. Nil ⇒ the card owns its
+    /// own selection (Music-tab and any non-projected use — unchanged behavior).
+    var externalSelections: Binding<[String: Set<String>]>? = nil
     let onSubmit: (AgentDialogResult) -> Void
     let onCancel: () -> Void
 
-    @State private var choiceSelections: [String: Set<String>] = [:]
+    @State private var localChoiceSelections: [String: Set<String>] = [:]
     @State private var toggleStates: [String: Bool] = [:]
     @State private var direction: String = ""
+
+    private var choiceSelections: [String: Set<String>] {
+        get { externalSelections?.wrappedValue ?? localChoiceSelections }
+        nonmutating set {
+            if let externalSelections { externalSelections.wrappedValue = newValue }
+            else { localChoiceSelections = newValue }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
@@ -134,6 +148,9 @@ struct AgentDialogCard: View {
             if case .toggle(let defaultOn) = section.kind, toggleStates[section.id] == nil {
                 toggleStates[section.id] = defaultOn
             }
+        }
+        for (sectionId, selection) in preselected where choiceSelections[sectionId] == nil {
+            choiceSelections[sectionId] = selection
         }
     }
 

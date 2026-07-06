@@ -24,6 +24,35 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         let label: String
         /// SF Symbol name (Workstream B folds in here — every element carries a semantic icon).
         let symbol: String?
+        /// When the choice IS a projected timeline range, its `TimelineRangeCandidate.id` — the card
+        /// stays compact and the range is picked on the canvas instead (A3).
+        let rangeRef: String?
+
+        init(id: String, label: String, symbol: String? = nil, rangeRef: String? = nil) {
+            self.id = id
+            self.label = label
+            self.symbol = symbol
+            self.rangeRef = rangeRef
+        }
+    }
+
+    /// A candidate that projects onto the canonical timeline (A3): while the dialog is pending it is
+    /// drawn as a labeled, clickable highlight; the click selects the matching choice.
+    struct TimelineRangeCandidate: Identifiable, Equatable, Sendable {
+        let id: String
+        let label: String
+        let startFrame: Int
+        let endFrame: Int
+    }
+
+    /// Where a pending dialog's visual candidates live on the canonical surfaces (A3). Empty means a
+    /// plain compact card with no projection.
+    struct Projection: Equatable, Sendable {
+        var timelineRanges: [TimelineRangeCandidate] = []
+        /// A shot id to reveal in the Review gallery (cockpit) while the dialog is pending.
+        var reviewShot: String?
+
+        var isEmpty: Bool { timelineRanges.isEmpty && reviewShot == nil }
     }
 
     struct Section: Identifiable, Equatable, Sendable {
@@ -47,6 +76,22 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
     /// Placeholder for the dialog-scoped free-text input ("Freitext, der nur diesen Dialog voranbringt").
     let textPlaceholder: String?
     let sections: [Section]
+    /// Visual candidates projected onto the canvas (timeline ranges / Review shot) instead of the card.
+    let projection: Projection
+
+    init(id: String, title: String, symbol: String, intro: String?, costHint: String?,
+         confirmLabel: String, textPlaceholder: String?, sections: [Section],
+         projection: Projection = Projection()) {
+        self.id = id
+        self.title = title
+        self.symbol = symbol
+        self.intro = intro
+        self.costHint = costHint
+        self.confirmLabel = confirmLabel
+        self.textPlaceholder = textPlaceholder
+        self.sections = sections
+        self.projection = projection
+    }
 
     /// Parse the `show_dialog` tool args. Throws with actionable messages so the agent can repair.
     static func parse(_ args: [String: Any]) throws -> AgentDialog {
@@ -66,7 +111,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
                     guard let optLabel = opt["label"] as? String else { return nil }
                     return Choice(id: (opt["id"] as? String) ?? "option\(i)",
                                   label: optLabel,
-                                  symbol: opt["symbol"] as? String)
+                                  symbol: opt["symbol"] as? String,
+                                  rangeRef: opt["rangeRef"] as? String)
                 }
                 guard !options.isEmpty else {
                     throw ToolError("show_dialog: choices section '\(id)' needs a non-empty 'options' array.")
@@ -81,6 +127,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         guard !sections.isEmpty else {
             throw ToolError("show_dialog: at least one section is required — a dialog without structure is just a question; ask in prose instead.")
         }
+        let projection = try parseProjection(args["projection"] as? [String: Any])
         return AgentDialog(
             id: UUID().uuidString,
             title: title,
@@ -89,7 +136,36 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             costHint: args["costHint"] as? String,
             confirmLabel: (args["confirmLabel"] as? String) ?? "Continue",
             textPlaceholder: args["textPlaceholder"] as? String,
-            sections: sections
+            sections: sections,
+            projection: projection
         )
+    }
+
+    private static func parseProjection(_ raw: [String: Any]?) throws -> Projection {
+        guard let raw else { return Projection() }
+        var ranges: [TimelineRangeCandidate] = []
+        for (i, r) in ((raw["timelineRanges"] as? [[String: Any]]) ?? []).enumerated() {
+            guard let start = intValue(r["startFrame"]), let end = intValue(r["endFrame"]) else {
+                throw ToolError("show_dialog: projection.timelineRanges[\(i)] needs integer 'startFrame' and 'endFrame'.")
+            }
+            guard end > start else {
+                throw ToolError("show_dialog: projection.timelineRanges[\(i)] needs endFrame > startFrame.")
+            }
+            ranges.append(TimelineRangeCandidate(
+                id: (r["id"] as? String) ?? "range\(i)",
+                label: (r["label"] as? String) ?? "Range \(i + 1)",
+                startFrame: start,
+                endFrame: end
+            ))
+        }
+        let reviewShot = (raw["reviewShot"] as? String)?.trimmingCharacters(in: .whitespaces)
+        return Projection(timelineRanges: ranges,
+                          reviewShot: (reviewShot?.isEmpty == false) ? reviewShot : nil)
+    }
+
+    private static func intValue(_ any: Any?) -> Int? {
+        if let i = any as? Int { return i }
+        if let d = any as? Double { return Int(d) }
+        return nil
     }
 }

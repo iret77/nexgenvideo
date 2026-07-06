@@ -213,6 +213,13 @@ extension ToolExecutor {
         let dialog = try AgentDialog.parse(args)
         editor.agentService.pendingDialog = dialog
         editor.agentPanelVisible = true
+        // Canvas projection (A3, #124): reveal the Review gallery at the shot so its candidates are
+        // where the user decides. Timeline-range projection needs no reveal — the timeline is always
+        // on. v1: picking a frame candidate in Review while the dialog is pending is the follow-up.
+        if let shot = dialog.projection.reviewShot {
+            editor.revealCockpit(.review)
+            editor.inspectedObject = .shot(shot)
+        }
         return .ok("Dialog \u{201C}\(dialog.title)\u{201D} is presented in the composer. STOP \u{2014} the user's structured answer arrives as the next user message; do not act on this step until then.")
     }
 

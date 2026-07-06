@@ -43,7 +43,10 @@ struct BiblePanelView: View {
         case .idle, .loading:
             centered { ProgressView().controlSize(.small) }
         case .failed(let error):
-            errorState(error)
+            CockpitStateView.error(error, title: "Couldn't load the Bible",
+                                   subject: "the Bible",
+                                   startProduction: { editor.startProduction() },
+                                   isStarting: editor.productionStarting) { Task { await load() } }
         case .loaded(nil):
             emptyState(
                 icon: "book.closed",
@@ -165,31 +168,6 @@ struct BiblePanelView: View {
     }
 
     // MARK: - States
-
-    private func errorState(_ error: CockpitError) -> some View {
-        VStack(spacing: AppTheme.Spacing.md) {
-            Image(systemName: error == .engineNotReady ? "gearshape" : "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.title1))
-                .foregroundStyle(AppTheme.Text.mutedColor)
-            Text(error == .engineNotReady ? "Engine not set up" : "Couldn't load the Bible")
-                .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-            Text(error == .engineNotReady
-                 ? "Set up the engine in Settings to view the Bible."
-                 : error.message)
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.mutedColor)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Retry") { Task { await load() } }
-                .buttonStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
-                .foregroundStyle(AppTheme.Accent.primary)
-                .padding(.top, AppTheme.Spacing.xs)
-        }
-        .padding(AppTheme.Spacing.xl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 
     private func emptyState(icon: String, title: String, message: String) -> some View {
         VStack(spacing: AppTheme.Spacing.sm) {

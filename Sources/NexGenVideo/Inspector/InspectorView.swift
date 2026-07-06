@@ -387,23 +387,29 @@ struct InspectorView: View {
 
     // MARK: - Contextual one-shot prose (ladder rung 3 — docs/UI_UX_CONCEPT.md §4)
 
-    /// A one-shot prompt bound to the inspected object: the prose goes to the agent as typed, the
-    /// scope travels invisibly via the selection context. Not a mini-chat — the field clears on send
-    /// and the Agent tab opens to show the work.
+    /// A one-shot prompt bound to the inspected object: the prose goes to the agent as typed, and the
+    /// scope chip above it shows what "this" resolves to — the inspected object IS the scope, so it's
+    /// always visible whenever this field is (docs/UI_UX_CONCEPT.md §2.2). Not a mini-chat — the field
+    /// clears on send and the Agent tab opens to show the work.
     private func contextualPromptField(placeholder: String) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            TextField(placeholder, text: $contextualPromptDraft)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: AppTheme.FontSize.sm))
-                .onSubmit(sendContextualPrompt)
-            Button {
-                sendContextualPrompt()
-            } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: AppTheme.FontSize.lg))
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            if let hint = editor.selectionContextHint {
+                ScopeChip(text: hint)
             }
-            .buttonStyle(.plain)
-            .disabled(contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            HStack(spacing: AppTheme.Spacing.sm) {
+                TextField(placeholder, text: $contextualPromptDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .onSubmit(sendContextualPrompt)
+                Button {
+                    sendContextualPrompt()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: AppTheme.FontSize.lg))
+                }
+                .buttonStyle(.plain)
+                .disabled(contextualPromptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
     }
 

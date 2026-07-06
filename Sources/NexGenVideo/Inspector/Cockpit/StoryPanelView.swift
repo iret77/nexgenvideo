@@ -19,6 +19,19 @@ struct StoryPanelView: View {
     @State private var briefDraft = ""
     @State private var treatmentDraft = ""
 
+    // Inline-editable structured Brief fields — seeded from `editor.brief` and diffed against it
+    // to compose the Apply command (briefEditsCommand), so only changed fields are sent.
+    @State private var editedMission = ""
+    @State private var editedPlatform = ""
+    @State private var editedAspect = ""
+    @State private var editedMode = ""
+
+    private static let aspectRatioOptions = [
+        "16:9", "9:16", "1:1", "4:5", "5:4", "4:3", "3:4", "21:9", "9:21", "other",
+    ]
+    // Matches engine/nexgen_engine/brief/schema.py Brief.project_mode (shotlist.Mode).
+    private static let projectModeOptions = ["beat", "phrase", "section", "multicam"]
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
@@ -33,6 +46,7 @@ struct StoryPanelView: View {
         .onChange(of: editor.engineStateRevision) { _, _ in
             Task { await loadTreatment() }
         }
+        .onChange(of: editor.brief, initial: true) { _, brief in seedBriefEdits(brief) }
     }
 
     // MARK: - Brief
@@ -54,14 +68,14 @@ struct StoryPanelView: View {
             )
         } else if let brief = editor.brief {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                briefRow("Mission", brief.mission)
-                briefRow("Platform", brief.targetPlatform)
+                editableTextRow("Mission", text: $editedMission)
+                editableTextRow("Platform", text: $editedPlatform)
                 if let audience = brief.targetAudience, !audience.isEmpty {
                     briefRow("Audience", audience)
                 }
-                briefRow("Aspect", brief.aspectRatio)
+                editableMenuRow("Aspect", selection: $editedAspect, options: Self.aspectRatioOptions)
                 briefRow("Length", brief.lengthMode)
-                briefRow("Mode", brief.projectMode)
+                editableMenuRow("Mode", selection: $editedMode, options: Self.projectModeOptions)
                 briefRow("Budget", String(format: "€%.0f", brief.budgetEur))
                 briefRow("Medium", brief.visualMedium)
                 if let notes = brief.visualMediumNotes, !notes.isEmpty {
@@ -69,6 +83,9 @@ struct StoryPanelView: View {
                 }
                 if let notes = brief.notes, !notes.isEmpty {
                     proseBlock("Notes", notes)
+                }
+                if let apply = briefEditsCommand(against: brief) {
+                    applyBriefEditsRow(apply)
                 }
             }
             .padding(AppTheme.Spacing.mdLg)
@@ -79,7 +96,7 @@ struct StoryPanelView: View {
                     .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
             )
             promptRow(
-                placeholder: "Change the brief…",
+                placeholder: "Open-ended direction for the brief…",
                 draft: $briefDraft,
                 command: { "Update the project brief: \($0). Apply it via the brief phase and show the diff." }
             )
@@ -107,6 +124,78 @@ struct StoryPanelView: View {
                 .textSelection(.enabled)
             Spacer(minLength: 0)
         }
+    }
+
+    private func editableTextRow(_ label: String, text: Binding<String>) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Text(label)
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .frame(width: 70, alignment: .leading)
+            TextField(label, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .labelsHidden()
+        }
+    }
+
+    private func editableMenuRow(_ label: String, selection: Binding<String>, options: [String]) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Text(label)
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .frame(width: 70, alignment: .leading)
+            Menu {
+                ForEach(options, id: \.self) { option in
+                    Button(option) { selection.wrappedValue = option }
+                }
+            } label: {
+                HStack(spacing: AppTheme.Spacing.xxs) {
+                    Text(selection.wrappedValue.isEmpty ? "—" : selection.wrappedValue)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: AppTheme.FontSize.xxs))
+                }
+                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func applyBriefEditsRow(_ command: String) -> some View {
+        HStack {
+            Spacer(minLength: 0)
+            Button("Apply changes") {
+                editor.agentService.send(text: command, mentions: [])
+                editor.agentPanelVisible = true
+            }
+            .buttonStyle(.capsule(.prominent, size: .regular))
+            .controlSize(.small)
+        }
+    }
+
+    private func seedBriefEdits(_ brief: BriefData?) {
+        guard let brief else {
+            editedMission = ""; editedPlatform = ""; editedAspect = ""; editedMode = ""
+            return
+        }
+        editedMission = brief.mission
+        editedPlatform = brief.targetPlatform
+        editedAspect = brief.aspectRatio
+        editedMode = brief.projectMode
+    }
+
+    /// One structured command per changed field, folded into a single agent message — the visible,
+    /// reviewable diff that replaces free-prose guessing. `nil` when nothing changed.
+    private func briefEditsCommand(against brief: BriefData) -> String? {
+        var clauses: [String] = []
+        if editedMission != brief.mission { clauses.append("mission → \"\(editedMission)\"") }
+        if editedPlatform != brief.targetPlatform { clauses.append("target_platform → \"\(editedPlatform)\"") }
+        if editedAspect != brief.aspectRatio { clauses.append("aspect_ratio → \"\(editedAspect)\"") }
+        if editedMode != brief.projectMode { clauses.append("project_mode → \"\(editedMode)\"") }
+        guard !clauses.isEmpty else { return nil }
+        return "Update the project brief: \(clauses.joined(separator: "; ")). Apply it via the brief phase and show the diff."
     }
 
     private func proseBlock(_ label: String, _ text: String) -> some View {

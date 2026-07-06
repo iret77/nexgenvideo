@@ -9,6 +9,9 @@ final class TimelineView: NSView {
     private(set) var snapOverlay: SnapIndicatorOverlay!
     private var generatingClipOverlays: [String: NSHostingView<ClipGeneratingOverlay>] = [:]
     private var clipDisplayRects: [String: NSRect] = [:]
+    /// Clickable candidate-range rects for a pending dialog's canvas projection (A3, #124), in document
+    /// coords. Read by the input controller to route a click to `agentService.selectDialogRange`.
+    private(set) var dialogRangeHitRects: [(id: String, rect: NSRect)] = []
     private let canvas = TimelineCanvasView()
 
     // MARK: - Init
@@ -206,6 +209,7 @@ final class TimelineView: NSView {
         drawTrackBackgrounds(geometry: geo, context: ctx)
         drawTimelineRangeSelectionTrackFill(geometry: geo, context: ctx)
         drawClips(geometry: geo, dirtyRect: dirtyRect, context: ctx)
+        drawDialogRangeProjection(geometry: geo, context: ctx)
         drawGapSelection(geometry: geo, context: ctx)
         syncGeneratingClipOverlays(geometry: geo)
 
@@ -296,6 +300,7 @@ final class TimelineView: NSView {
         }()
 
         let linkOffsets = editor.linkGroupOffsets()
+        let allowsEditChrome = editor.allowsTimelineEditChrome
 
         clipDisplayRects.removeAll(keepingCapacity: true)
         for (ti, track) in editor.timeline.tracks.enumerated() {
@@ -313,7 +318,8 @@ final class TimelineView: NSView {
                                           isSelected: drag.isDuplicate && isSelected, opacity: originalOpacity, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
-                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
+                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
+                                          allowsEditChrome: allowsEditChrome)
                     }
 
                     let frameDelta = drag.deltaFrames
@@ -338,7 +344,8 @@ final class TimelineView: NSView {
                                           isSelected: true, opacity: 0.7, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
-                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
+                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
+                                          allowsEditChrome: allowsEditChrome)
                     }
                     continue
                 }
@@ -362,7 +369,8 @@ final class TimelineView: NSView {
                                           isSelected: isSelected, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
-                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
+                                          fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
+                                          allowsEditChrome: allowsEditChrome)
                     }
                     continue
                 }
@@ -375,7 +383,8 @@ final class TimelineView: NSView {
                                   cache: editor.mediaVisualCache,
                                   displayName: editor.clipDisplayLabel(for: clip),
                                   linkOffset: linkOffsets[clip.id],
-                                  fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating)
+                                  fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
+                                  allowsEditChrome: allowsEditChrome)
             }
         }
     }
@@ -431,6 +440,71 @@ final class TimelineView: NSView {
             ctx.addLine(to: CGPoint(x: x, y: Double(scrollOffset.y + geo.rulerHeight)))
         }
         ctx.strokePath()
+    }
+
+    // MARK: - Dialog range projection (A3, #124)
+
+    /// While a generative dialog projects timeline ranges onto the canvas, draw each as a labeled,
+    /// clickable candidate highlight (faint accent fill + edges + a label chip at range start). The
+    /// choice whose range is selected reads as the active candidate. Hit rects are cached for the
+    /// input controller.
+    private func drawDialogRangeProjection(geometry geo: TimelineGeometry, context ctx: CGContext) {
+        dialogRangeHitRects.removeAll(keepingCapacity: true)
+        guard let projection = editor.agentService.pendingDialogProjection,
+              !projection.timelineRanges.isEmpty else { return }
+        let selectedId = editor.agentService.selectedDialogRangeId
+        let top = Double(geo.rulerHeight)
+        let bottom = max(top, Double(bounds.height))
+        let accent = AppTheme.Accent.timecodeNSColor
+
+        for candidate in projection.timelineRanges {
+            let minX = geo.xForFrame(candidate.startFrame)
+            let maxX = geo.xForFrame(candidate.endFrame)
+            let rect = NSRect(x: minX, y: top, width: max(0, maxX - minX), height: bottom - top)
+            dialogRangeHitRects.append((candidate.id, rect))
+
+            let isSelected = candidate.id == selectedId
+            ctx.setFillColor(accent.withAlphaComponent(
+                isSelected ? AppTheme.Opacity.moderate : AppTheme.Opacity.faint).cgColor)
+            ctx.fill(rect)
+
+            ctx.setStrokeColor(accent.withAlphaComponent(
+                isSelected ? AppTheme.Opacity.prominent : AppTheme.Opacity.medium).cgColor)
+            ctx.setLineWidth(isSelected ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.thin)
+            ctx.stroke(rect.insetBy(dx: AppTheme.BorderWidth.medium / 2, dy: AppTheme.BorderWidth.medium / 2))
+
+            drawDialogRangeLabel(candidate.label, at: NSPoint(x: minX, y: top), accent: accent,
+                                 isSelected: isSelected, context: ctx)
+        }
+    }
+
+    private func drawDialogRangeLabel(_ text: String, at origin: NSPoint, accent: NSColor,
+                                      isSelected: Bool, context ctx: CGContext) {
+        let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xxs, weight: .semibold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+        ]
+        let string = NSAttributedString(string: text, attributes: attrs)
+        let textSize = string.size()
+        let padX = AppTheme.Spacing.xs
+        let padY = AppTheme.Spacing.xxs
+        let chip = NSRect(
+            x: origin.x + AppTheme.Spacing.xxs,
+            y: origin.y + AppTheme.Spacing.xxs,
+            width: textSize.width + padX * 2,
+            height: textSize.height + padY * 2
+        )
+        // Text draws through the ambient NSGraphicsContext (the flipped canvas), same as ClipRenderer.
+        ctx.saveGState()
+        let chipPath = CGPath(roundedRect: chip, cornerWidth: AppTheme.Radius.xs,
+                              cornerHeight: AppTheme.Radius.xs, transform: nil)
+        ctx.addPath(chipPath)
+        ctx.setFillColor(accent.withAlphaComponent(
+            isSelected ? AppTheme.Opacity.prominent : AppTheme.Opacity.strong).cgColor)
+        ctx.fillPath()
+        string.draw(at: NSPoint(x: chip.minX + padX, y: chip.minY + padY))
+        ctx.restoreGState()
     }
 
     private func drawGapSelection(geometry geo: TimelineGeometry, context ctx: CGContext) {
@@ -534,7 +608,8 @@ final class TimelineView: NSView {
                               cache: editor.mediaVisualCache,
                               fps: editor.timeline.fps,
                               isMissing: editor.isClipMediaOffline(ghost.clip),
-                              isGenerating: editor.isClipMediaGenerating(ghost.clip))
+                              isGenerating: editor.isClipMediaGenerating(ghost.clip),
+                              allowsEditChrome: editor.allowsTimelineEditChrome)
         }
     }
 
@@ -648,8 +723,9 @@ final class TimelineView: NSView {
         }
         let clip = editor.timeline.tracks[hit.trackIndex].clips[hit.clipIndex]
         let clipRect = geometry.clipRect(for: clip, trackIndex: hit.trackIndex)
+        let allowsEditChrome = editor.allowsTimelineEditChrome
 
-        if let edge = inputController.fadeKneeHit(at: point, clip: clip, clipRect: clipRect) {
+        if allowsEditChrome, let edge = inputController.fadeKneeHit(at: point, clip: clip, clipRect: clipRect) {
             let menu = NSMenu()
             let current = clip.fadeInterpolation(edge)
             let mk: (String, Interpolation) -> NSMenuItem = { title, interp in
@@ -669,7 +745,7 @@ final class TimelineView: NSView {
         }
 
         // kf menu before clip menu.
-        if clip.mediaType == .audio,
+        if allowsEditChrome, clip.mediaType == .audio,
            let kfFrame = inputController.audioVolumeKfHit(at: point, clip: clip, clipRect: clipRect) {
             let menu = NSMenu()
             let current = editor.interpolation(clipId: clip.id, property: .volume, atFrame: kfFrame) ?? .smooth

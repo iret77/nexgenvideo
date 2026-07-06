@@ -64,7 +64,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showDialog,
-            description: "Present a native structured dialog in the chat composer so the user shapes a step with clicks instead of prose — USE THIS instead of asking multi-option questions in text whenever a step has enumerable choices (styles, sections, modes, candidates). It renders as a card docked above the input (never a modal, never in the transcript); the input field becomes the dialog's free-text direction. After calling: STOP. The user's structured answer arrives as the next user message (\u{201C}Dialog \u{2026}\u{201D}); do not proceed with the step until then. Give every option a fitting SF Symbol; include costHint when the confirmed step will spend money.",
+            description: "Present a native structured dialog in the chat composer so the user shapes a step with clicks instead of prose — USE THIS instead of asking multi-option questions in text whenever a step has enumerable choices (styles, sections, modes, candidates). It renders as a card docked above the input (never a modal, never in the transcript); the input field becomes the dialog's free-text direction. After calling: STOP. The user's structured answer arrives as the next user message (\u{201C}Dialog \u{2026}\u{201D}); do not proceed with the step until then. Give every option a fitting SF Symbol; include costHint when the confirmed step will spend money.\n\nPROJECTION (when the choices ARE visual objects, show them where they live instead of describing them in prose): pass 'projection'. For choices that are TIMELINE RANGES (a section to trim, a moment to cut, a candidate span), put the spans in projection.timelineRanges (project frames, from get_timeline) and reference each from a choices option via 'rangeRef' \u{2014} the card stays compact and the ranges highlight on the timeline as labeled, clickable candidates; the user's click selects that choice. For choices about a SHOT's generated frames, set projection.reviewShot to the shot id \u{2014} the Review gallery opens focused on that shot. Only project real objects the user can see; keep prose options for abstract choices.",
             inputSchema: objectSchema(
                 properties: [
                     "title": ["type": "string", "description": "Short imperative title, e.g. 'Shape the B-roll'."],
@@ -92,10 +92,32 @@ enum ToolDefinitions {
                                             "id": ["type": "string"],
                                             "label": ["type": "string"],
                                             "symbol": ["type": "string", "description": "SF Symbol per option"],
+                                            "rangeRef": ["type": "string", "description": "Id of a projection.timelineRanges entry this option represents. The option is then picked by clicking its highlighted range on the timeline; keep the label short (it becomes the range's chip)."],
                                         ],
                                     ],
                                 ],
                             ],
+                        ],
+                    ],
+                    "projection": [
+                        "type": "object",
+                        "description": "Canvas projection for choices that are visual objects (A3). Optional.",
+                        "properties": [
+                            "timelineRanges": [
+                                "type": "array",
+                                "description": "Candidate spans highlighted on the timeline; reference each from a choices option via rangeRef.",
+                                "items": [
+                                    "type": "object",
+                                    "properties": [
+                                        "id": ["type": "string", "description": "Stable id; a choices option points at it via rangeRef."],
+                                        "label": ["type": "string", "description": "Short label drawn as a chip at the range start."],
+                                        "startFrame": ["type": "integer", "description": "Range start (project frames, inclusive)."],
+                                        "endFrame": ["type": "integer", "description": "Range end (project frames, exclusive; must be > startFrame)."],
+                                    ],
+                                    "required": ["startFrame", "endFrame"],
+                                ],
+                            ],
+                            "reviewShot": ["type": "string", "description": "Shot id (e.g. 's012') to open in the Review gallery while this dialog is pending."],
                         ],
                     ],
                 ],

@@ -60,7 +60,8 @@ enum ClipRenderer {
         linkOffset: Int? = nil,
         fps: Int,
         isMissing: Bool = false,
-        isGenerating: Bool = false
+        isGenerating: Bool = false,
+        allowsEditChrome: Bool = true
     ) {
         if opacity < 1.0 {
             context.saveGState()
@@ -100,15 +101,17 @@ enum ClipRenderer {
         } else if type == .image, let image = cache?.imageThumbnail(for: clip.mediaRef), mainHeight > 4 {
             let thumbRect = CGRect(x: contentX, y: contentY, width: contentWidth, height: mainHeight)
             drawTiledImage(image: image, in: thumbRect, clipRect: rect, cornerRadius: cornerRadius, context: context)
-        } else if type == .audio, let samples = cache?.samples(for: clip.mediaRef), !samples.isEmpty {
+        } else if type == .audio, allowsEditChrome, let samples = cache?.samples(for: clip.mediaRef), !samples.isEmpty {
             let audioRect = CGRect(x: contentX, y: contentY, width: contentWidth, height: mainHeight)
             drawWaveform(samples: samples, clip: clip, type: colorType, in: audioRect, context: context)
         }
 
-        if type == .audio {
-            drawVolumeRubberBand(clip: clip, in: rect, isSelected: isSelected, context: context)
-        } else {
-            drawOpacityFades(clip: clip, in: rect, isSelected: isSelected, context: context)
+        if allowsEditChrome {
+            if type == .audio {
+                drawVolumeRubberBand(clip: clip, in: rect, isSelected: isSelected, context: context)
+            } else {
+                drawOpacityFades(clip: clip, in: rect, isSelected: isSelected, context: context)
+            }
         }
 
         // Color-coded left edge strip (uses the same source-type as the fill).
@@ -150,7 +153,9 @@ enum ClipRenderer {
 
         drawKeyframeMarkers(clip: clip, in: rect, context: context)
 
-        drawTrimHandles(in: rect, context: context)
+        if allowsEditChrome {
+            drawTrimHandles(in: rect, context: context)
+        }
 
         if opacity < 1.0 {
             context.restoreGState()

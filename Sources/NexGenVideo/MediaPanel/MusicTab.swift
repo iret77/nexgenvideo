@@ -17,6 +17,8 @@ struct MusicTab: View {
     /// user shapes mood/character with clicks — the panel path enters the same generative flow the
     /// agent uses, never a silent render.
     @State private var genDialog: AgentDialog?
+    /// Seeds genDialog's mood section when opened from the Mood submenu.
+    @State private var dialogPreselected: [String: Set<String>] = [:]
 
     private struct Banner: Equatable { let text: String; let kind: Kind; enum Kind { case success, error } }
 
@@ -122,8 +124,9 @@ struct MusicTab: View {
                 if let dialog = genDialog {
                     AgentDialogCard(
                         dialog: dialog,
+                        preselected: dialogPreselected,
                         onSubmit: { result in runGeneration(from: result) },
-                        onCancel: { genDialog = nil }
+                        onCancel: { genDialog = nil; dialogPreselected = [:] }
                     )
                     .padding(.bottom, AppTheme.Spacing.sm)
                 }
@@ -294,15 +297,17 @@ struct MusicTab: View {
     private var agentMenu: some View {
         Menu {
             Button {
-                musicTask("Score my timeline with music that matches the visuals. Use a video-to-music model on the full timeline span so the music follows the edit, and place it on an audio track.")
+                mode = .videoToMusic
             } label: { Label("Generate music for the timeline", systemImage: "music.note") }
             Menu {
-                ForEach(["Cinematic", "Upbeat", "Ambient", "Tense", "Lo-fi"], id: \.self) { mood in
-                    Button(mood) {
-                        musicTask("Generate \(mood.lowercased()) music for my timeline and place it on an audio track aligned to the edit.")
-                    }
+                ForEach(Self.moodMenuOptions, id: \.id) { option in
+                    Button(option.label) { openMoodDialog(preselecting: option.id) }
                 }
             } label: { Label("Mood", systemImage: "slider.horizontal.3") }
+            Divider()
+            Button {
+                editor.agentService.prefillInput("")
+            } label: { Label("Ask the agent…", systemImage: "bubble.left.and.text.bubble.right") }
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Text("Agent Mode")
@@ -321,11 +326,18 @@ struct MusicTab: View {
         .help("Let Agent generate music for you. Choose a starter, or ask Agent in the chat.")
     }
 
-    private func musicTask(_ prompt: String) {
-        let service = editor.agentService
-        service.newChat()
-        service.draft = prompt
-        editor.agentPanelVisible = true
+    // Mirrors the mood chip ids in makeMusicDialog's "mood" section.
+    private static let moodMenuOptions: [(id: String, label: String)] = [
+        ("cinematic", "Cinematic"), ("upbeat", "Upbeat"), ("ambient", "Ambient"),
+        ("tense", "Tense"), ("lofi", "Lo-fi"),
+    ]
+
+    /// Opens the existing shaping dialog with a mood preselected — clicks compose the intent,
+    /// never canned prose handed to the agent.
+    private func openMoodDialog(preselecting moodId: String) {
+        guard let model else { return }
+        genDialog = Self.makeMusicDialog(model: model)
+        dialogPreselected = ["mood": [moodId]]
     }
 
     private func generate() {
@@ -335,6 +347,7 @@ struct MusicTab: View {
         // instead of firing a silent, under-specified render.
         if isTextMode, trimmedPrompt.isEmpty {
             genDialog = Self.makeMusicDialog(model: model)
+            dialogPreselected = [:]
             return
         }
         compileAndGenerate(intent: trimmedPrompt.isEmpty ? nil : trimmedPrompt, model: model)
@@ -361,6 +374,7 @@ struct MusicTab: View {
     private func runGeneration(from result: AgentDialogResult) {
         guard let model else { return }
         genDialog = nil
+        dialogPreselected = [:]
         var parts = result.labels("mood") + result.labels("character")
         if !result.direction.isEmpty { parts.append(result.direction) }
         let intent = parts.joined(separator: ", ")
