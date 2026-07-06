@@ -52,7 +52,7 @@ public enum Structure {
         // Beat-synchronous features: mel-dB spectrogram → per-beat mean of
         // [chroma(12) + MFCC(13)] columns (librosa.util.sync with np.mean).
         let spec = Spectral.spectrogram(y, sampleRate: sampleRate, hop: hop)
-        let bank = Spectral.melFilterbank(sampleRate: sampleRate, hop: hop)
+        let bank = Spectral.melFilterbank(sampleRate: sampleRate)
         let mel = Spectral.melSpectrogram(spec, filterbank: bank)
         let melDB = Spectral.powerToDB(mel)
         guard !melDB.isEmpty else {
