@@ -47,8 +47,8 @@ enum PromptCompiler {
         aspectRatio: String = "",
         durationSeconds: Double? = nil,
         editor: EditorViewModel?
-    ) throws -> CompiledPrompt {
-        let composed = try PromptComposer.compose(
+    ) async throws -> CompiledPrompt {
+        let composed = try await PromptComposer.compose(
             intent: intent,
             modality: modality,
             modelId: modelId,

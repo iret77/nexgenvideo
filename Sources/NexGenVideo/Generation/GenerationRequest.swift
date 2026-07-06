@@ -8,7 +8,9 @@ import Foundation
 /// sequence for all of them. The provider stack (Video/Image/Audio/MusicGenerationSubmission) is
 /// untouched; this is the funnel above it.
 struct GenerationRequest {
-    enum Modality { case video, image, audio, music }
+    /// `.upscale` is promptless — its controller path skips the compile stage but shares the same
+    /// preflight → submit → feedback sequence as the rest.
+    enum Modality { case video, image, audio, music, upscale }
 
     /// Where the result lands once generation finishes.
     enum Placement {
@@ -29,6 +31,13 @@ struct GenerationRequest {
         case image(make: @MainActor (_ compiledPrompt: String) -> ImageGenerationSubmission)
         case audio(make: @MainActor (_ compiledPrompt: String) -> AudioGenerationSubmission)
         case music(make: @MainActor (_ compiledPrompt: String) -> MusicGenerationSubmission)
+        /// Upscale is promptless — no submission struct to compose a prompt into. The thunk performs
+        /// the `service.generate` (source asset uploaded as its reference) and returns the placeholder
+        /// id, so the controller's compile stage is skipped while placement/feedback stay shared.
+        case upscale(run: @MainActor (
+            _ service: GenerationService, _ projectURL: URL?, _ editor: EditorViewModel,
+            _ onComplete: (@MainActor (MediaAsset) -> Void)?, _ onFailure: (@MainActor () -> Void)?
+        ) -> String)
     }
 
     let modality: Modality
@@ -75,12 +84,15 @@ struct GenerationRequest {
         self.submission = submission
     }
 
+    /// Only meaningful for compiled modalities. Upscale never composes (the controller skips its
+    /// compile stage), so it maps arbitrarily to `.video` and is never consulted.
     var composerModality: PromptComposer.Modality {
         switch modality {
         case .video: return .video
         case .image: return .image
         case .audio: return .audio
         case .music: return .music
+        case .upscale: return .video
         }
     }
 }
@@ -141,7 +153,7 @@ enum GenerationController {
         musicProgress: MusicProgress? = nil,
         onSuccess: (@MainActor (MediaAsset?) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
-    ) -> Result<GenerationOutcome, GenerationRequestError> {
+    ) async -> Result<GenerationOutcome, GenerationRequestError> {
         // (a) PREFLIGHT — model exists + options validate (adapter's model.validate lives here).
         if let message = preflight?() {
             return .failure(.optionsInvalid(message))
@@ -149,11 +161,12 @@ enum GenerationController {
 
         // (b) COMPILE — engine-composed prompt; a lint ERROR blocks with a clear message. An empty
         // intent skips compilation (nothing to compose); the raw escape and precompiled token are the
-        // agent's two ways past the composer, mirroring PromptCompiler.enforceGate.
+        // agent's two ways past the composer, mirroring PromptCompiler.enforceGate. Upscale is
+        // promptless and skips this stage entirely.
         let compiled: String
         let notes: [String]
         do {
-            let result = try compilePrompt(request, editor: editor)
+            let result = try await compilePrompt(request, editor: editor)
             compiled = result.text
             notes = result.notes
         } catch let error as GenerationRequestError {
@@ -174,7 +187,10 @@ enum GenerationController {
 
     private static func compilePrompt(
         _ request: GenerationRequest, editor: EditorViewModel
-    ) throws -> (text: String, notes: [String]) {
+    ) async throws -> (text: String, notes: [String]) {
+        // Upscale carries no prompt — nothing to compose or gate.
+        if request.modality == .upscale { return ("", []) }
+
         let intent = request.intent.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Raw escape (agent pro toggle) or an agent-precompiled token: validate through the gate
@@ -207,7 +223,7 @@ enum GenerationController {
         guard !intent.isEmpty else { return ("", []) }
 
         do {
-            let composition = try PromptComposer.compose(
+            let composition = try await PromptComposer.compose(
                 intent: intent,
                 modality: request.composerModality,
                 modelId: request.modelId,
@@ -263,6 +279,13 @@ enum GenerationController {
                 make(compiledPrompt), editor: editor,
                 progress: musicProgress, onSuccess: onSuccess, onFailure: onFailure)
             return ""
+        case .upscale(let run):
+            let onComplete = replacementOnComplete(request, editor: editor, then: onSuccess)
+            let id = run(
+                service, projectURL, editor,
+                onComplete, failureHandler(request, editor: editor, then: onFailure))
+            place(request, placeholderId: id, editor: editor)
+            return id
         }
     }
 
@@ -370,6 +393,7 @@ enum GenerationController {
         case .audio: return "Audio"
         case .video: return "Video"
         case .image: return "Image"
+        case .upscale: return "Upscale"
         }
     }
 }

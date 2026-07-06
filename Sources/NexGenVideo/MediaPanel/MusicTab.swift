@@ -437,21 +437,23 @@ struct MusicTab: View {
                     mode: mode, model: model, prompt: compiled.isEmpty ? nil : compiled,
                     intent: intent, source: source, spanSeconds: span, name: nil)
             }))
-        let outcome = GenerationController.submit(
-            request, editor: editor,
-            musicProgress: .init(
-                onPhase: { generatingLabel = $0.label },
-                onFinished: { isGenerating = false }),
-            onSuccess: { _ in
-                // Audio lands on an audio track below the fold — say so, and it's already selected on
-                // the timeline so the eye can find it.
-                banner = .init(text: "Music added on an audio track — selected on the timeline.", kind: .success)
-            })
-        // A compile/preflight failure returns synchronously (nothing was submitted) — clear the
-        // spinner and surface the message as the error Banner.
-        if case .failure(let error) = outcome {
-            isGenerating = false
-            banner = .init(text: error.errorDescription ?? "Generation failed.", kind: .error)
+        // Composition reads the ledger off the main thread (async); await the outcome and surface a
+        // compile/preflight failure (nothing was submitted) as the error Banner.
+        Task { @MainActor in
+            let outcome = await GenerationController.submit(
+                request, editor: editor,
+                musicProgress: .init(
+                    onPhase: { generatingLabel = $0.label },
+                    onFinished: { isGenerating = false }),
+                onSuccess: { _ in
+                    // Audio lands on an audio track below the fold — say so, and it's already selected
+                    // on the timeline so the eye can find it.
+                    banner = .init(text: "Music added on an audio track — selected on the timeline.", kind: .success)
+                })
+            if case .failure(let error) = outcome {
+                isGenerating = false
+                banner = .init(text: error.errorDescription ?? "Generation failed.", kind: .error)
+            }
         }
     }
 }

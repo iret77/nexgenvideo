@@ -1,7 +1,7 @@
 import Foundation
 
 extension ToolExecutor {
-    func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) throws -> ToolResult {
+    func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) async throws -> ToolResult {
         let prompt = try args.requireString("prompt")
         switch type {
         case .video:
@@ -12,10 +12,10 @@ extension ToolExecutor {
                 throw ToolError("Unknown model '\(modelId)'. Available: \(VideoModelConfig.allModels.map(\.id).joined(separator: ", "))")
             }
             return model.requiresSourceVideo
-                ? try generateVideoEdit(editor, args, prompt: prompt, model: model)
-                : try generateVideoText(editor, args, prompt: prompt, model: model)
+                ? try await generateVideoEdit(editor, args, prompt: prompt, model: model)
+                : try await generateVideoText(editor, args, prompt: prompt, model: model)
         case .image:
-            return try generateImage(editor, args, prompt: prompt)
+            return try await generateImage(editor, args, prompt: prompt)
         case .audio:
             throw ToolError("internal: audio generation is dispatched via the async path")
         case .text:
@@ -31,8 +31,8 @@ extension ToolExecutor {
         _ request: GenerationRequest, editor: EditorViewModel,
         preflight: GenerationController.Preflight? = nil,
         success: (String) -> String
-    ) throws -> ToolResult {
-        switch GenerationController.submit(request, editor: editor, preflight: preflight) {
+    ) async throws -> ToolResult {
+        switch await GenerationController.submit(request, editor: editor, preflight: preflight) {
         case .success(let outcome):
             return .ok(success(outcome.placeholderId))
         case .failure(let error):
@@ -49,7 +49,7 @@ extension ToolExecutor {
     private func generateVideoEdit(
         _ editor: EditorViewModel, _ args: [String: Any],
         prompt: String, model: VideoModelConfig
-    ) throws -> ToolResult {
+    ) async throws -> ToolResult {
         guard let sourceRef = args.string("sourceVideoMediaRef") else {
             throw ToolError("Model '\(model.id)' requires 'sourceVideoMediaRef' pointing to a video asset.")
         }
@@ -80,7 +80,7 @@ extension ToolExecutor {
                     placeholderDuration: placeholderDuration, trimmedSourceOverride: trimmed,
                     name: name, folderId: folderId, generateAudio: true)
             }))
-        return try routeThroughController(
+        return try await routeThroughController(
             request, editor: editor,
             preflight: {
                 if let err = model.validate(duration: 0, aspectRatio: "", resolution: nil) { return err }
@@ -92,7 +92,7 @@ extension ToolExecutor {
     private func generateVideoText(
         _ editor: EditorViewModel, _ args: [String: Any],
         prompt: String, model: VideoModelConfig
-    ) throws -> ToolResult {
+    ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
 
         let duration = args.int("duration") ?? model.durations.first ?? 0
@@ -149,7 +149,7 @@ extension ToolExecutor {
         let refSummary = totalRefs > 0
             ? ", refs: \(imageRefCount)img/\(videoRefCount)vid/\(audioRefCount)aud"
             : ""
-        return try routeThroughController(
+        return try await routeThroughController(
             request, editor: editor,
             preflight: {
                 if let err = model.validate(duration: duration, aspectRatio: aspectRatio, resolution: resolution) { return err }
@@ -160,7 +160,7 @@ extension ToolExecutor {
 
     private func generateImage(
         _ editor: EditorViewModel, _ args: [String: Any], prompt: String
-    ) throws -> ToolResult {
+    ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
         guard let modelId = args.string("model") ?? ImageModelConfig.allModels.first?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
@@ -207,7 +207,7 @@ extension ToolExecutor {
                         genInput: genInput(compiled), model: model, reference: reference,
                         name: name, folderId: folderId)
                 }))
-            return try routeThroughController(
+            return try await routeThroughController(
                 request, editor: editor, preflight: preflight,
                 success: { "Marble world generation started (this can take several minutes). Placeholder asset ID: \($0). Model: \(model.displayName). Result: equirectangular panorama image." })
         }
@@ -221,7 +221,7 @@ extension ToolExecutor {
                     genInput: genInput(compiled), model: model, references: refs,
                     name: name, folderId: folderId)
             }))
-        return try routeThroughController(
+        return try await routeThroughController(
             request, editor: editor, preflight: preflight,
             success: { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), aspect: \(aspectRatio)" })
     }
@@ -240,13 +240,13 @@ extension ToolExecutor {
         return .ok("Dialog \u{201C}\(dialog.title)\u{201D} is presented in the composer. STOP \u{2014} the user's structured answer arrives as the next user message; do not act on this step until then.")
     }
 
-    func compilePrompt(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func compilePrompt(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let intent = try args.requireString("intent")
         let modelId = try args.requireString("model")
         // Same contract as before ({ compiledPrompt, compileToken, notes }); composition now runs the
         // ENGINE path (PromptComposer: ledger directives + provider builder + PromptLinter) instead of
         // the old local ledger text-append, then the gate mints the token over the result.
-        let compiled = try PromptCompiler.compile(
+        let compiled = try await PromptCompiler.compile(
             intent: intent, modelId: modelId,
             modality: PromptCompiler.modalityForModel(modelId), editor: editor)
         let body: [String: Any] = [
@@ -352,11 +352,11 @@ extension ToolExecutor {
             placement: placement, origin: .agentTool,
             precompiled: precompiled, rawPrompt: raw,
             submission: .audio(make: { makeSubmission($0) }))
-        return try routeThroughController(
+        return try await routeThroughController(
             request, editor: editor, preflight: preflight, success: successCopy)
     }
 
-    func upscaleMedia(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func upscaleMedia(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let mediaRef = try args.requireString("mediaRef")
         let asset = try asset(mediaRef, editor: editor)
         guard asset.type == .video || asset.type == .image else {
@@ -379,8 +379,8 @@ extension ToolExecutor {
         }
 
         let trimmed = try trimmedSource(args, editor: editor, source: asset)
-        guard let placeholderId = EditSubmitter.submitUpscale(
-            asset: asset, model: model, editor: editor, trimmedSource: trimmed
+        guard let placeholderId = await EditSubmitter.submitUpscale(
+            asset: asset, model: model, editor: editor, trimmedSource: trimmed, origin: .agentTool
         ) else {
             throw ToolError("Failed to start upscale")
         }

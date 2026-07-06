@@ -34,12 +34,14 @@ extension EditorViewModel {
         guard let (clip, asset) = aiEditClipAsset(clipId) else { return }
         let trim = aiEditTrimmedSource(clip: clip, asset: asset)
         let handlers = clipReplacementHandlers(clipId: clipId, resetTrim: trim != nil)
-        _ = EditSubmitter.submitUpscale(
-            asset: asset, model: model, editor: self,
-            trimmedSource: trim,
-            onComplete: handlers.onComplete,
-            onFailure: handlers.onFailure
-        )
+        Task { @MainActor in
+            _ = await EditSubmitter.submitUpscale(
+                asset: asset, model: model, editor: self,
+                trimmedSource: trim,
+                onComplete: handlers.onComplete,
+                onFailure: handlers.onFailure
+            )
+        }
     }
 
     /// Music/SFX: output is new audio, so no source replacement — place it on the timeline at the clip.
@@ -62,10 +64,17 @@ extension EditorViewModel {
         let modelId = asset.generationInput?.model ?? ""
         if UpscaleModelConfig.allIds.contains(modelId) {
             let handlers = clipReplacementHandlers(clipId: clipId, resetTrim: false)
-            _ = try? EditSubmitter.rerun(
-                asset: asset, editor: self,
-                onComplete: handlers.onComplete, onFailure: handlers.onFailure
-            )
+            Task { @MainActor in
+                do {
+                    _ = try await EditSubmitter.rerun(
+                        asset: asset, editor: self,
+                        onComplete: handlers.onComplete, onFailure: handlers.onFailure
+                    )
+                } catch {
+                    handlers.onFailure?()
+                    mediaPanelToast = error.localizedDescription
+                }
+            }
         } else if let stored = asset.generationInput {
             seedGenerationPanel(asset: asset, stored: stored, replacementClipId: clipId)
         }

@@ -1585,23 +1585,27 @@ struct GenerationView: View {
         }
 
         let preflightDuration = audioDuration
-        let outcome = GenerationController.submit(
-            request, editor: editor,
-            preflight: { self.preflightValidation(audioDuration: preflightDuration) })
-        switch outcome {
-        case .failure(let error):
-            // Nothing was submitted — restore the pending-edit state consumed above so a compile
-            // block doesn't cost the user their replace/placement intent.
-            editor.pendingEditReplacementClipId = replacementClipId
-            editor.pendingEditAudioPlacement = pendingAudioPlacement
-            flashDropError(error.errorDescription ?? "Generation failed.")
-        case .success:
-            editor.pendingEditTrimmedSource = nil
-            lyrics = ""
-            styleInstructions = ""
-            prompt = ""
-            editFolderId = nil
-            clearReferences()
+        // Composition now reads the ledger off the main thread (async); await the outcome, then apply
+        // the same success/failure state transitions on the main actor.
+        Task { @MainActor in
+            let outcome = await GenerationController.submit(
+                request, editor: editor,
+                preflight: { self.preflightValidation(audioDuration: preflightDuration) })
+            switch outcome {
+            case .failure(let error):
+                // Nothing was submitted — restore the pending-edit state consumed above so a compile
+                // block doesn't cost the user their replace/placement intent.
+                editor.pendingEditReplacementClipId = replacementClipId
+                editor.pendingEditAudioPlacement = pendingAudioPlacement
+                flashDropError(error.errorDescription ?? "Generation failed.")
+            case .success:
+                editor.pendingEditTrimmedSource = nil
+                lyrics = ""
+                styleInstructions = ""
+                prompt = ""
+                editFolderId = nil
+                clearReferences()
+            }
         }
     }
 

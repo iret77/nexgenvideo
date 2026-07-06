@@ -75,10 +75,10 @@ struct GenerationControllerTests {
 
     // MARK: (a) PREFLIGHT
 
-    @Test func preflightMessageBlocksBeforeCompileOrSubmit() {
+    @Test func preflightMessageBlocksBeforeCompileOrSubmit() async {
         let editor = stubEditor(projectURL: nil)
         let before = editor.mediaAssets.count
-        let result = GenerationController.submit(
+        let result = await GenerationController.submit(
             videoRequest(intent: "a red car on a wet street", editor: editor),
             editor: editor,
             preflight: { "duration invalid" })
@@ -93,13 +93,13 @@ struct GenerationControllerTests {
 
     // MARK: (b) COMPILE
 
-    @Test func compileBlocksOnLintError() throws {
+    @Test func compileBlocksOnLintError() async throws {
         let project = try Self.makeProject(ledgerYAML: Self.metaInstructionLedger)
         defer { try? FileManager.default.removeItem(at: project) }
         let editor = stubEditor(projectURL: project)
         let before = editor.mediaAssets.count
 
-        let result = GenerationController.submit(
+        let result = await GenerationController.submit(
             videoRequest(intent: "a red car on a wet street", editor: editor), editor: editor)
         guard case .failure(.compile(let message)) = result else {
             Issue.record("expected .compile failure, got \(result)")
@@ -109,13 +109,13 @@ struct GenerationControllerTests {
         #expect(editor.mediaAssets.count == before)
     }
 
-    @Test func compilePassesWithACleanLockedDirectiveAndSubmits() throws {
+    @Test func compilePassesWithACleanLockedDirectiveAndSubmits() async throws {
         let project = try Self.makeProject(ledgerYAML: Self.cleanLockedLedger)
         defer { try? FileManager.default.removeItem(at: project) }
         let editor = stubEditor(projectURL: project)
         let before = editor.mediaAssets.count
 
-        let result = GenerationController.submit(
+        let result = await GenerationController.submit(
             videoRequest(intent: "a red car on a wet street at dusk", editor: editor), editor: editor)
         guard case .success(let outcome) = result else {
             Issue.record("expected .success, got \(result)")
@@ -126,7 +126,7 @@ struct GenerationControllerTests {
         #expect(editor.mediaAssets.count == before + 1)
     }
 
-    @Test func compileSkippedForEmptyIntentStillSubmits() {
+    @Test func compileSkippedForEmptyIntentStillSubmits() async {
         let editor = stubEditor(projectURL: nil)
         let before = editor.mediaAssets.count
         // Empty intent (e.g. audio scored from video) → nothing to compose; the request still submits.
@@ -145,7 +145,7 @@ struct GenerationControllerTests {
                         referenceImageURLs: [], generateAudio: true)) },
                     snapshotRefs: nil, preprocessRef: nil)
             }))
-        let result = GenerationController.submit(request, editor: editor)
+        let result = await GenerationController.submit(request, editor: editor)
         guard case .success = result else {
             Issue.record("expected .success, got \(result)")
             return
@@ -155,7 +155,7 @@ struct GenerationControllerTests {
 
     // MARK: Gate (agentTool origin)
 
-    @Test func agentToolWithoutTokenIsGateBlocked() {
+    @Test func agentToolWithoutTokenIsGateBlocked() async {
         let editor = stubEditor(projectURL: nil)
         // origin .agentTool with a non-empty intent but no valid compileToken → gate rejects.
         let request = GenerationRequest(
@@ -173,7 +173,7 @@ struct GenerationControllerTests {
                         referenceImageURLs: [], generateAudio: true)) },
                     snapshotRefs: nil, preprocessRef: nil)
             }))
-        let result = GenerationController.submit(request, editor: editor)
+        let result = await GenerationController.submit(request, editor: editor)
         guard case .failure(.gate) = result else {
             Issue.record("expected .gate failure, got \(result)")
             return

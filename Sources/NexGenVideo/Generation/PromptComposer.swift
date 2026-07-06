@@ -47,11 +47,11 @@ enum PromptComposer {
         aspectRatio: String = "",
         durationSeconds: Double? = nil,
         projectDir: URL?
-    ) throws -> Composition {
+    ) async throws -> Composition {
         let trimmed = normalize(intent)
         guard !trimmed.isEmpty else { throw ComposeError.emptyIntent }
 
-        let directives = lockedProjectDirectives(projectDir: projectDir)
+        let directives = await lockedProjectDirectives(projectDir: projectDir)
 
         let composed: String
         var notes: [String] = []
@@ -93,18 +93,25 @@ enum PromptComposer {
 
     // MARK: - Ledger
 
-    private struct ProjectDirectives {
+    private struct ProjectDirectives: Sendable {
         let all: [String]
         let locked: [String]
     }
 
     /// Every ledger directive in the project, with the locked subset kept apart — there is no shot to
     /// scope by here, so the whole ledger applies. Faithful to the old compiler, which merged every
-    /// locked directive. A missing/invalid ledger is a normal empty state, not an error.
-    private static func lockedProjectDirectives(projectDir: URL?) -> ProjectDirectives {
+    /// locked directive. A missing/invalid ledger is a normal empty state, not an error. The ledger
+    /// YAML is read off the main thread — composition can run on a `submit` that started on `@MainActor`.
+    private static func lockedProjectDirectives(projectDir: URL?) async -> ProjectDirectives {
         guard let projectDir, let root = DataRootResolver.dataRoot(of: projectDir) else {
             return ProjectDirectives(all: [], locked: [])
         }
+        return await Task.detached {
+            loadDirectives(dataRoot: root)
+        }.value
+    }
+
+    private static func loadDirectives(dataRoot root: URL) -> ProjectDirectives {
         let store = YAMLArtifactStore(dataRoot: root)
         guard let ledger = try? store.load(Ledger.self, at: StudioLayout.ledgerFile) else {
             return ProjectDirectives(all: [], locked: [])

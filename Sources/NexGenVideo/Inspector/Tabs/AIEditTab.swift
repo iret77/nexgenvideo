@@ -326,16 +326,18 @@ struct AIEditTab: View {
         case .rerun:
             let modelId = asset.generationInput?.model ?? ""
             if UpscaleModelConfig.allIds.contains(modelId) {
-                do {
-                    markReplacementPendingIfNeeded()
-                    _ = try EditSubmitter.rerun(
-                        asset: asset, editor: editor,
-                        onComplete: replacementCompletion(),
-                        onFailure: replacementFailure()
-                    )
-                } catch {
-                    unmarkReplacementPendingIfNeeded()
-                    rerunError = error.localizedDescription
+                markReplacementPendingIfNeeded()
+                Task { @MainActor in
+                    do {
+                        _ = try await EditSubmitter.rerun(
+                            asset: asset, editor: editor,
+                            onComplete: replacementCompletion(),
+                            onFailure: replacementFailure()
+                        )
+                    } catch {
+                        unmarkReplacementPendingIfNeeded()
+                        rerunError = error.localizedDescription
+                    }
                 }
             } else if let stored = asset.generationInput {
                 seedPanel(stored: stored, trimmed: nil)
@@ -390,12 +392,14 @@ struct AIEditTab: View {
     private func runUpscale(_ model: UpscaleModelConfig) {
         markReplacementPendingIfNeeded()
         let trim = trimmedSourceIfEnabled()
-        _ = EditSubmitter.submitUpscale(
-            asset: asset, model: model, editor: editor,
-            trimmedSource: trim,
-            onComplete: replacementCompletion(resetTrim: trim != nil),
-            onFailure: replacementFailure()
-        )
+        Task { @MainActor in
+            _ = await EditSubmitter.submitUpscale(
+                asset: asset, model: model, editor: editor,
+                trimmedSource: trim,
+                onComplete: replacementCompletion(resetTrim: trim != nil),
+                onFailure: replacementFailure()
+            )
+        }
     }
 
     private var shouldReplace: Bool { replaceClipSource && clipId != nil }
