@@ -1,0 +1,70 @@
+{
+    "project": "basic-project",
+    "mode": "beat",
+    "budget_eur": 50.0,
+    "budget_spent_eur": 0.0,
+    "budget_remaining_eur": 50.0,
+    "phases": [
+        {
+            "phase": "project_init",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        },
+        {
+            "phase": "brief",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        },
+        {
+            "phase": "production_design",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        },
+        {
+            "phase": "treatment",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        },
+        {
+            "phase": "storyboard",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        },
+        {
+            "phase": "bible",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        },
+        {
+            "phase": "shotlist",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        },
+        {
+            "phase": "sanity",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        },
+        {
+            "phase": "frames",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        },
+        {
+            "phase": "render",
+            "approved": false,
+            "state": "pending",
+            "notes": null
+        }
+    ],
+    "next_phase": "project_init"
+}

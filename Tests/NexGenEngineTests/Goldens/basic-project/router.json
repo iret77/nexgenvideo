@@ -1,0 +1,33 @@
+{
+    "tiers": {
+        "fast": "claude-haiku-4-5",
+        "medium": "claude-sonnet-5",
+        "deep": "claude-opus-4-8"
+    },
+    "task_classes": {
+        "distill": {
+            "tier": "fast",
+            "effort": "low"
+        },
+        "classification": {
+            "tier": "fast",
+            "effort": "low"
+        },
+        "assembly": {
+            "tier": "medium",
+            "effort": "low"
+        },
+        "review": {
+            "tier": "medium",
+            "effort": "low"
+        },
+        "planning": {
+            "tier": "deep",
+            "effort": "high"
+        },
+        "interpretation": {
+            "tier": "deep",
+            "effort": "high"
+        }
+    }
+}
