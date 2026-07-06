@@ -64,7 +64,7 @@ struct AIEditMenu: View {
         if UpscaleModelConfig.allIds.contains(modelId) {
             Task { @MainActor in
                 do { _ = try await EditSubmitter.rerun(asset: asset, editor: editor) }
-                catch { editor.mediaPanelToast = error.localizedDescription }
+                catch { editor.mediaPanelToast = MediaPanelToast(message: error.localizedDescription) }
             }
         } else if let stored = asset.generationInput {
             editor.seedGenerationPanel(asset: asset, stored: stored)

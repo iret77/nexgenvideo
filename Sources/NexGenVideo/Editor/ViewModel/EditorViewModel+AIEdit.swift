@@ -72,7 +72,7 @@ extension EditorViewModel {
                     )
                 } catch {
                     handlers.onFailure?()
-                    mediaPanelToast = error.localizedDescription
+                    mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
                 }
             }
         } else if let stored = asset.generationInput {
