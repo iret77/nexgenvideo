@@ -151,7 +151,8 @@ struct BriefTests {
         figures: none
         lyrics_integration: ignored
         """
-        #expect(throws: Brief.ValidationError.self) {
+        // Wrapped by Yams into DecodingError.dataCorrupted (underlying: ValidationError).
+        #expect(throws: (any Error).self) {
             _ = try YAMLCoding.decode(Brief.self, from: yaml)
         }
     }

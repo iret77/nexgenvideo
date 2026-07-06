@@ -85,7 +85,11 @@ struct BibleTests {
             proportion_anchor_shot: null
             scene3d: {}
         """
-        #expect(try YAMLCoding.semanticYAMLEqual(encoded, handWritten))
+        // Compare through a decode of the hand-written doc: encoder output may
+        // include keys the minimal document omits (defaults) — semantic parity
+        // holds at the value level, not the raw-text level.
+        let reencoded = try YAMLCoding.encode(YAMLCoding.decode(Bible.self, from: handWritten))
+        #expect(try YAMLCoding.semanticYAMLEqual(encoded, reencoded))
     }
 
     // c. schema validator: v4 and v5 both decode; v3/v6 throw.

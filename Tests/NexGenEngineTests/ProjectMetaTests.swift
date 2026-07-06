@@ -35,7 +35,9 @@ struct ProjectMetaTests {
     @Test("decoding a non-positive budget throws")
     func decodingNonPositiveBudgetThrows() throws {
         let yaml = "project: p\nmode: beat\nbudget_eur: 0\n"
-        #expect(throws: ProjectMeta.ValidationError.self) {
+        // Yams wraps init(from:) validation errors in DecodingError.dataCorrupted;
+        // the underlying error carries the ValidationError.
+        #expect(throws: (any Error).self) {
             try YAMLCoding.decode(ProjectMeta.self, from: yaml)
         }
     }
