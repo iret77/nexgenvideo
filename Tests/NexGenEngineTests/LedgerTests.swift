@@ -43,7 +43,14 @@ struct LedgerTests {
         #expect(palette.directive == "warm amber/teal grade")
         #expect(palette.source == "director note")
         #expect(palette.locked == true)
-        #expect(palette.updated == "2026-07-06T00:38:55Z")
+        // regen-goldens.sh restamps `updated` on every run — assert the ledger
+        // `_now()` format (literal-Z, second precision), not the volatile value.
+        #expect(
+            palette.updated.range(
+                of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"#, options: .regularExpression
+            ) != nil,
+            "updated \(palette.updated) is not a ledger _now() timestamp"
+        )
     }
 
     // MARK: - objectKey()

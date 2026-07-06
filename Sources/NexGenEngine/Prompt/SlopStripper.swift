@@ -9,15 +9,22 @@ enum SlopStripper {
     static let atTagRE = Rx.compile(#"@(?:Image|Video|Audio)\d+"#, caseInsensitive: true)
 
     /// Vague praise + hard-block tokens. Port of `builder._UNIVERSAL_SLOP_TOKENS`.
-    /// Order is irrelevant — each is an independent `\bTOKEN\b` → "" deletion.
-    /// Sorted for a deterministic Swift iteration (Python iterates a frozenset).
+    ///
+    /// ORDER CONTRACT: Python iterates a frozenset, whose order is
+    /// PYTHONHASHSEED-dependent — and the set contains OVERLAPPING tokens
+    /// ("fast" vs "very fast"/"super fast"/"lightning fast"), so deletion order
+    /// changes the output ("very fast dolly" → "very dolly" when "fast" deletes
+    /// first, "dolly" when "very fast" does). The golden generator
+    /// (scripts/regen-goldens.sh) pins the oracle to `sorted()` order; this list
+    /// MUST stay lexicographically sorted to match it. Canonical consequence:
+    /// "fast" sorts before its multi-word variants, so the qualifier survives.
     static let universalSlopTokens: [String] = [
-        "cinematic", "epic", "stunning", "amazing", "breathtaking", "masterpiece",
-        "beautiful", "gorgeous", "magnificent", "spectacular", "incredible",
-        "awesome", "perfect", "ultra-detailed", "highly detailed",
-        "award-winning", "professional", "high-quality", "best-quality",
-        "8k", "4k",
-        "fast", "very fast", "super fast", "lightning fast",
+        "4k", "8k", "amazing", "award-winning", "awesome", "beautiful",
+        "best-quality", "breathtaking", "cinematic", "epic", "fast",
+        "gorgeous", "high-quality", "highly detailed", "incredible",
+        "lightning fast", "magnificent", "masterpiece", "perfect",
+        "professional", "spectacular", "stunning", "super fast",
+        "ultra-detailed", "very fast",
     ]
 
     /// Meta-instruction sentence patterns. Port of

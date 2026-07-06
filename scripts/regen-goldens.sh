@@ -250,6 +250,18 @@ from nexgen_engine.render.prompt.builder import (
     build_for_seedance_2,
 )
 
+# Canonicalize the slop-token iteration order. `_UNIVERSAL_SLOP_TOKENS` is a
+# frozenset whose iteration order depends on PYTHONHASHSEED, and it contains
+# OVERLAPPING tokens ("fast" vs "very fast"/"super fast"/"lightning fast") —
+# so the engine's own strip output is nondeterministic across processes for
+# inputs like "very fast dolly" ("very dolly" when "fast" iterates first,
+# "dolly" when "very fast" does). Goldens must be reproducible, so we pin the
+# order to sorted() here; the Swift SlopStripper iterates the same sorted
+# order. Non-overlapping tokens are order-independent, so this changes nothing
+# else.
+from nexgen_engine.render.prompt import builder as _builder_mod
+_builder_mod._UNIVERSAL_SLOP_TOKENS = tuple(sorted(_builder_mod._UNIVERSAL_SLOP_TOKENS))
+
 # --- Reusable payload fragments (mirrors the Python test cases) -------------
 
 # From test_prompt.py::test_build_image_prompt_strips_slop_and_frames_positively
