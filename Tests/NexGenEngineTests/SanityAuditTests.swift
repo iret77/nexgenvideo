@@ -93,7 +93,7 @@ struct SanityAuditTests {
         let brief = try Brief(
             project: "proj", generated: "2026-01-01", mission: .demo, targetPlatform: "web",
             aspectRatio: .landscape16x9, projectMode: "beat", conceptType: .abstract,
-            visualMedium: .importedRealistic, figures: .none, lyricsIntegration: .ignored
+            visualMedium: .liveActionRealistic, figures: .none, lyricsIntegration: .ignored
         )
         let registry = Self.registryWithCore()
         let report = audit(AuditContext(shotlist: shotlist, brief: brief), checks: registry.checks)
