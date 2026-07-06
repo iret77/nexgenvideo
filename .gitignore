@@ -35,9 +35,8 @@ models/*/build*/
 models/*/checkpoint*
 models/*/convert*.log
 
-# Python (engine/ + plugins/)
+# Python cruft (transient dmgbuild venv, tooling caches)
 __pycache__/
 *.py[cod]
 .venv/
-*.egg-info/
-.pytest_cache/
+.claude/worktrees/

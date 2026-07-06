@@ -6,8 +6,6 @@ struct AgentPane: View {
     @State private var hasKey: Bool = false
     @State private var maskedKey: String = ""
     @State private var draft: String = ""
-    @State private var engineStatus: EngineRuntime.Status = .unavailable
-    @State private var isBootstrapping: Bool = false
     @FocusState private var isFocused: Bool
 
     @AppStorage("useClaudeCodeRuntime") private var useClaudeRuntime: Bool = false
@@ -153,7 +151,6 @@ struct AgentPane: View {
         let key = AnthropicKeychain.load() ?? ""
         hasKey = !key.isEmpty
         maskedKey = mask(key)
-        engineStatus = EngineRuntime.status()
     }
 
     private func save() {
@@ -271,7 +268,7 @@ struct AgentPane: View {
                 Text("Claude Code")
                     .font(.system(size: AppTheme.FontSize.md, weight: .medium))
                     .foregroundStyle(AppTheme.Text.primaryColor)
-                Text("Option B — run the in-app agent as an embedded Claude Code session on your Claude subscription via the claude CLI. It drives the timeline over MCP and loads the plugin from the folder below.")
+                Text("Option B — run the in-app agent as an embedded Claude Code session on your Claude subscription via the claude CLI. It drives the timeline over MCP.")
                     .font(.system(size: AppTheme.FontSize.sm))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
@@ -291,11 +288,11 @@ struct AgentPane: View {
                     .controlSize(.small)
             }
 
-            // The working dir follows the open project package automatically — no field here. Bundled
-            // and imported plugins are auto-discovered; this is only an extra dir for pack development.
+            // The working dir follows the open project package automatically — no field here. Format
+            // packs are native (built in); this is only an extra dir for developing an external
+            // Claude-Code plugin.
             folderRow(title: "Extra plugin folder (optional)", path: $claudePluginDir)
             permissionRow
-            engineRow
             externalServersSection
         }
     }
@@ -373,83 +370,6 @@ struct AgentPane: View {
             .pickerStyle(.menu)
             .controlSize(.small)
             .fixedSize()
-        }
-    }
-
-    @ViewBuilder
-    private var engineRow: some View {
-        runtimeRow {
-            Text("Engine")
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-
-            switch engineStatus {
-            case .unavailable:
-                Text("Engine not bundled (dev build)")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-                Spacer()
-
-            case .notBootstrapped:
-                Text(isBootstrapping ? "Setting up…" : "Not set up")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                Spacer()
-                if isBootstrapping {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Button("Set up engine", action: setUpEngine)
-                        .buttonStyle(.capsule(.prominent, size: .regular))
-                        .controlSize(.small)
-                }
-
-            case .ready(let python):
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 8, height: 8)
-                Text("Engine ready")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                Text(python)
-                    .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-                Button("Reset", action: resetEngine)
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
-                    .help("Remove the engine. You'll need to set it up again to use it.")
-
-            case .failed(let msg):
-                Circle()
-                    .fill(AppTheme.Status.errorColor)
-                    .frame(width: 8, height: 8)
-                Text(msg)
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-            }
-        }
-    }
-
-    private func setUpEngine() {
-        guard !isBootstrapping else { return }
-        isBootstrapping = true
-        Task {
-            let result = await EngineRuntime.bootstrap()
-            isBootstrapping = false
-            engineStatus = result
-        }
-    }
-
-    private func resetEngine() {
-        Task {
-            EngineRuntime.reset()
-            engineStatus = EngineRuntime.status()
         }
     }
 

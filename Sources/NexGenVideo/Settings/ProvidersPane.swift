@@ -18,8 +18,7 @@ struct ProvidersPane: View {
                 }
                 providerSection(provider)
             }
-        }
-        .onAppear(perform: refresh)
+
             Divider().overlay(AppTheme.Border.subtleColor)
 
             HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
@@ -38,7 +37,8 @@ struct ProvidersPane: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
             }
-
+        }
+        .onAppear(perform: refresh)
     }
 
     private var header: some View {

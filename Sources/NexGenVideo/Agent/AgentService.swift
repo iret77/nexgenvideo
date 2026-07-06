@@ -132,8 +132,32 @@ final class AgentService {
         return nil
     }
 
+    /// The ONE dialog-submit handler (audit #3): every presented `AgentDialog` routes here and is
+    /// dispatched by its `purpose`. `.chatClarification` composes the structured chat message (the
+    /// existing path); `.generationIntent` composes the result into an intent line and hands it to the
+    /// generation handler (the music-shaping dialog is this purpose — its bespoke path collapses into
+    /// this one). Kept on `AgentService` so no surface re-implements dialog submission.
     func submitDialog(_ dialog: AgentDialog, result: AgentDialogResult) {
         pendingDialog = nil
+        switch dialog.purpose {
+        case .chatClarification:
+            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+        case .generationIntent:
+            if let sink = onGenerationDialogIntent {
+                sink(Self.intentLine(from: dialog, result: result))
+            } else {
+                send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+            }
+        }
+    }
+
+    /// Sink for a `.generationIntent` dialog's composed intent, set by the surface that owns the
+    /// generation (e.g. the music tab). When unset the intent is composed into a chat message so the
+    /// answer is never dropped.
+    var onGenerationDialogIntent: (@MainActor (String) -> Void)?
+
+    /// The structured chat-message form of a dialog answer — labeled sections + free-text direction.
+    private static func chatMessage(from dialog: AgentDialog, result: AgentDialogResult) -> String {
         var parts: [String] = []
         for section in dialog.sections {
             let picked = result.labels(section.id)
@@ -144,7 +168,15 @@ final class AgentService {
         }
         var line = "Dialog \u{201C}\(dialog.title)\u{201D} \u{2014} " + (parts.isEmpty ? "confirmed" : parts.joined(separator: "; "))
         if !result.direction.isEmpty { line += ". Direction: \(result.direction)" }
-        send(text: line, mentions: [])
+        return line
+    }
+
+    /// The compact intent line for a generation dialog — picked chip labels then the free-text
+    /// direction, comma-joined (matches the music tab's original composition).
+    private static func intentLine(from dialog: AgentDialog, result: AgentDialogResult) -> String {
+        var parts = result.allLabels
+        if !result.direction.isEmpty { parts.append(result.direction) }
+        return parts.joined(separator: ", ")
     }
 
     func cancelDialog() {
@@ -444,50 +476,30 @@ final class AgentService {
         UserDefaults.standard.bool(forKey: "useClaudeCodeRuntime")
     }
 
-    /// Whether the embedded Claude Code runtime is on — the only runtime where plugin slash-commands
-    /// actually load. The plugin launcher gates its affordance on this (in the BYO-key agent a
-    /// `/plugin:cmd` string is just literal text).
-    var useClaudeCodeRuntime: Bool { claudeRuntimeEnabled }
-
     @ObservationIgnored
     private var _claudeRuntime: ClaudeCodeRuntime?
-    /// Whether the cached `_claudeRuntime` was built while the engine MCP was available. When the
-    /// engine becomes available *after* the runtime was first built engine-less (the post-bootstrap
-    /// case this fix addresses), the cached runtime is stale and must be rebuilt so the next session
-    /// includes the `engine` MCP — without an app restart. See the `claudeRuntime` accessor.
-    @ObservationIgnored
-    private var claudeRuntimeBuiltWithEngine = false
-    /// The active plugin the cached runtime was built with — a change rebuilds on the next send.
+    /// The active pack the cached runtime was built with — a change rebuilds on the next send so the
+    /// session's context line names the current pack.
     @ObservationIgnored
     private var claudeRuntimeBuiltWithPlugin: String?
 
     /// The embedded Claude Code runtime, lazily built and cached. Rebuilt (only when safe — never
-    /// mid-stream) once the engine becomes available after the cached runtime was created engine-less,
-    /// so the engine MCP attaches to the next session. Rebuilding stops the old runtime's process; the
-    /// fresh one starts a new process (with the engine MCP) on the next `send`.
+    /// mid-stream) when the active pack changes, so the next session picks up the current context.
+    /// Rebuilding stops the old runtime's process; the fresh one starts on the next `send`.
     private var claudeRuntime: ClaudeCodeRuntime {
-        let engineAvailable = Self.engineAvailable
         if let runtime = _claudeRuntime {
             let pluginChanged = claudeRuntimeBuiltWithPlugin != editor?.activePluginName
-            if (engineAvailable && !claudeRuntimeBuiltWithEngine || pluginChanged), !isStreaming {
+            if pluginChanged, !isStreaming {
                 runtime.stop()
-                return makeClaudeRuntime(engineAvailable: engineAvailable)
+                return makeClaudeRuntime()
             }
             return runtime
         }
-        return makeClaudeRuntime(engineAvailable: engineAvailable)
-    }
-
-    /// True when the engine venv is bootstrapped and its python key resolves — i.e. exactly when
-    /// `ClaudeCodeRuntime.engineMcpServers()` would register the `engine` MCP server.
-    private static var engineAvailable: Bool {
-        if case .ready = EngineRuntime.status() { return true }
-        return false
+        return makeClaudeRuntime()
     }
 
     @discardableResult
-    private func makeClaudeRuntime(engineAvailable: Bool) -> ClaudeCodeRuntime {
-        ensureEngineBootstrapped()
+    private func makeClaudeRuntime() -> ClaudeCodeRuntime {
         let runtime = ClaudeCodeRuntime(
             pluginDirectories: configuredPluginDirectories(),
             mcpPort: Int(MCPService.port),
@@ -502,30 +514,13 @@ final class AgentService {
         )
         claudeRuntimeBuiltWithPlugin = editor?.activePluginName
         _claudeRuntime = runtime
-        claudeRuntimeBuiltWithEngine = engineAvailable
         return runtime
     }
 
-    /// Route a message to the embedded Claude Code runtime. If the bundled engine is still
-    /// bootstrapping (or not yet started), await it first so the session starts WITH the engine MCP
-    /// rather than racing the bootstrap and silently coming up engine-less. A `.failed` bootstrap is
-    /// surfaced via `streamError` and the message is not sent. Without a bundled engine
-    /// (`.unavailable`) or once `.ready`, sends immediately.
+    /// Route a message to the embedded Claude Code runtime. The engine is native and in-process, so
+    /// there's nothing to bootstrap — the session starts immediately with NexGenVideo's MCP.
     private func sendViaClaudeRuntime(_ trimmed: String) {
         let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
-        if case .notBootstrapped = EngineRuntime.status() {
-            let task = startEngineBootstrap()
-            isStreaming = true
-            Task { @MainActor [weak self] in
-                let status = await task?.value ?? EngineRuntime.status()
-                guard let self else { return }
-                self.isStreaming = false
-                if case .failed = status { return }  // streamError already set by the bootstrap task
-                guard self.claudeRuntimeEnabled else { return }
-                self.claudeRuntime.send(text: trimmed, context: context)
-            }
-            return
-        }
         claudeRuntime.send(text: trimmed, context: context)
     }
 
@@ -534,91 +529,20 @@ final class AgentService {
         return (value?.isEmpty == false) ? value! : "bypassPermissions"
     }
 
-    /// Auto-discovered plugin dirs (bundled + user import dir) unioned with the optional manual
-    /// Installed ≠ active: only the project's ACTIVE plugin loads (exactly one, chosen in Project
-    /// settings; none → the generic workflow). The dev "extra plugin folder" override always loads —
-    /// that's for pack development, not activation.
+    /// External `--plugin-dir` overrides for the embedded runtime. First-party packs are native (no
+    /// on-disk plugin layer), so this is only the dev "extra plugin folder" for developing an external
+    /// Claude-Code plugin — not pack activation, which is native and needs no dir.
     private func configuredPluginDirectories() -> [URL] {
-        var ordered: [URL] = []
-        var seen = Set<String>()
-        func add(_ url: URL) {
-            if seen.insert(url.standardizedFileURL.path).inserted { ordered.append(url) }
+        guard let path = UserDefaults.standard.string(forKey: "claudeRuntimePluginDir"), !path.isEmpty else {
+            return []
         }
-        if let path = UserDefaults.standard.string(forKey: "claudeRuntimePluginDir"), !path.isEmpty {
-            add(URL(fileURLWithPath: path))
-        }
-        if let active = editor?.activePluginName,
-           let plugin = PluginManager.discoverPlugins().first(where: { $0.name == active }) {
-            add(plugin.pluginDir)
-        }
-        return ordered
+        return [URL(fileURLWithPath: path)]
     }
 
     private static func configuredWorkingDirectory(projectURL: URL?) -> URL? {
         // The embedded runtime's cwd is the open project package — never a global override, which
         // used to redirect every project's engine data to one shared folder.
         projectURL
-    }
-
-    /// In-flight bootstrap, awaited by `send()` so a message can't silently proceed engine-less while
-    /// the engine is still being set up. Holds the bootstrap's resulting `Status`. Its presence is the
-    /// idempotency guard — at most one bootstrap runs per service.
-    @ObservationIgnored
-    private var engineBootstrapTask: Task<EngineRuntime.Status, Never>?
-
-    /// True while the engine venv is being bootstrapped — the panel shows a "Setting up engine…"
-    /// note via `send()` instead of starting a session without the engine MCP.
-    private(set) var isBootstrappingEngine = false
-
-    /// Kick off the engine venv bootstrap (uv) without blocking. Idempotent; on success it sets
-    /// `claudeRuntimeEnginePython`, which `ClaudeCodeRuntime` registers as the `engine` MCP server.
-    /// No-op without a bundled engine (dev builds).
-    ///
-    /// When the engine is already bootstrapped, re-check the discovered plugin packs instead — a
-    /// plugin imported into the user dir after first setup still gets its pack installed (idempotent).
-    private func ensureEngineBootstrapped() {
-        switch EngineRuntime.status() {
-        case .notBootstrapped:
-            startEngineBootstrap()
-        case .ready:
-            Task.detached { await EngineRuntime.installDiscoveredPacks() }
-        case .unavailable, .failed:
-            break
-        }
-    }
-
-    /// Begin the engine bootstrap if one isn't already running, exposing it as an awaitable task so a
-    /// concurrent `send()` can wait for readiness. Drives `isBootstrappingEngine` and surfaces a
-    /// `.failed` result through `streamError`.
-    @discardableResult
-    private func startEngineBootstrap() -> Task<EngineRuntime.Status, Never>? {
-        if let existing = engineBootstrapTask { return existing }
-        guard case .notBootstrapped = EngineRuntime.status() else { return nil }
-        isBootstrappingEngine = true
-        let task = Task { @MainActor [weak self] in
-            let status = await EngineRuntime.bootstrap()
-            if let self {
-                self.isBootstrappingEngine = false
-                self.engineBootstrapTask = nil
-                if case .failed(let msg) = status {
-                    self.streamError = .upstream("Engine setup failed: \(msg)")
-                }
-            }
-            return status
-        }
-        engineBootstrapTask = task
-        return task
-    }
-
-    /// Proactively bootstrap the engine when the Claude Code runtime is enabled, so the `engine` MCP
-    /// is ready before the first message (rather than racing it). Called on app launch.
-    func prepareEngineIfRuntimeEnabled() {
-        guard claudeRuntimeEnabled else { return }
-        if case .notBootstrapped = EngineRuntime.status() {
-            startEngineBootstrap()
-        } else {
-            ensureEngineBootstrapped()
-        }
     }
 
     private func kickOffStream() {

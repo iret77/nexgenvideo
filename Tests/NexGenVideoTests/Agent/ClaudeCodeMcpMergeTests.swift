@@ -2,8 +2,9 @@ import Testing
 import Foundation
 @testable import NexGenVideo
 
-// Gap A: a plugin's own MCP server (e.g. musicvideo's stdio server) must be merged into the inline
-// --mcp-config so it survives --strict-mcp-config alongside `nexgen`. These lock in that merge.
+// Gap A: an external plugin's own MCP server must be merged into the inline --mcp-config so it
+// survives --strict-mcp-config alongside `nexgen`. These lock in that merge. (The server name here is
+// just a fixture — first-party format packs are native and contribute no plugin-dir MCP server.)
 
 @Suite("ClaudeCodeLaunch — MCP config merge")
 struct ClaudeCodeMcpMergeTests {

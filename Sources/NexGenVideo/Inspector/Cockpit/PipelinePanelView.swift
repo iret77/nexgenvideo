@@ -1,4 +1,5 @@
 import SwiftUI
+import NexGenEngine
 
 // Read-only Pipeline cockpit panel: the project's phase gates as a vertical checklist, with the next
 // open phase highlighted — "where does the project stand". Loaded via CockpitDataService.projectState.
@@ -17,6 +18,8 @@ struct PipelinePanelView: View {
     @State private var state: LoadState = .idle
     /// Guards against a stale reload result overwriting a newer one when the project changes mid-flight.
     @State private var loadToken = 0
+    /// True while a gate mutation (approve / needs-revision / rewind) is being written + reloaded.
+    @State private var gateWriting = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -214,11 +217,54 @@ struct PipelinePanelView: View {
                         .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
                         .foregroundStyle(AppTheme.Status.successColor)
                 }
+                gateMenu(phase)
             }
             .frame(height: AppTheme.IconSize.md)
             if !isLast {
                 Divider().overlay(AppTheme.Border.subtleColor)
             }
+        }
+    }
+
+    /// Direct gate controls (docs/UI_UX_CONCEPT.md §4) — approve / send back / rewind, wired to the
+    /// in-process engine (NativeGateWriter), no agent round-trip. Disabled while a write is in flight.
+    @ViewBuilder
+    private func gateMenu(_ phase: ProjectPhase) -> some View {
+        Menu {
+            Button("Approve") { apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase) } }
+                .disabled(phase.approved && phase.state != "needs_revision")
+            Button("Needs revision") {
+                apply { try NativeGateWriter.setState(projectDir: $0, phase: phase.phase, state: .needsRevision) }
+            }
+            Divider()
+            Button("Rewind to here", role: .destructive) {
+                apply { try NativeGateWriter.rewind(projectDir: $0, targetPhase: phase.phase) }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.mutedColor)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(gateWriting)
+        .help("Gate: approve, send back for revision, or rewind the pipeline to this phase")
+    }
+
+    /// Run a gate mutation against the project dir, then reload both this panel and the shared engine
+    /// snapshot (title-bar capsule + other panels) so every surface reflects the new gate state. The
+    /// write is fast local YAML I/O — kept inline (the reloads are the async part).
+    private func apply(_ write: (URL) throws -> Void) {
+        guard let dir = editor.studioProjectDir, !gateWriting else { return }
+        gateWriting = true
+        do { try write(dir) } catch {
+            editor.mediaPanelToast = MediaPanelToast(message: "Gate update failed: \(error.localizedDescription)")
+        }
+        Task {
+            await editor.refreshEngineState()
+            await load()
+            gateWriting = false
         }
     }
 

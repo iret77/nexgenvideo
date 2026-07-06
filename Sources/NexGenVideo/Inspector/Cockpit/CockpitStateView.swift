@@ -5,8 +5,8 @@ import SwiftUI
 
 enum CockpitStateView {
 
-    /// Error / engine-not-ready state. `subject` fills the "Set up the engine to view the <subject>."
-    /// copy when the engine isn't ready.
+    /// Error / not-initialized state. `subject` is retained for call-site symmetry across the panels;
+    /// the copy is driven by `title` and the error case.
     static func error(
         _ error: CockpitError,
         title: String,
@@ -15,17 +15,13 @@ enum CockpitStateView {
         isStarting: Bool = false,
         retry: @escaping () -> Void
     ) -> some View {
-        // `.engineNotReady` and `.notInitialized` are normal guidance states, not failures — calm copy,
-        // neutral icon. Only genuinely transient errors get "Retry"; retrying a not-initialized project
-        // just re-reads the same absent `project.yaml`, so it offers no Retry.
+        // `.notInitialized` is a normal guidance state, not a failure — calm copy, neutral icon. Only
+        // genuinely transient errors get "Retry"; retrying a not-initialized project just re-reads the
+        // same absent `project.yaml`, so it offers no Retry.
         let icon: String
         let headline: String
         let detail: String
         switch error {
-        case .engineNotReady:
-            icon = "gearshape"
-            headline = "Engine not set up"
-            detail = "Set up the engine in Settings to view \(subject)."
         case .notInitialized:
             icon = "wand.and.stars"
             headline = isStarting ? "Setting up production…" : "No production pipeline"

@@ -6,11 +6,12 @@ import Foundation
 
 struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     var workingDirectory: URL
-    /// Generic core first, then any active format pack(s) (e.g. musicvideo).
+    /// External Claude-Code plugin dirs (the dev "extra plugin folder"). First-party format packs are
+    /// native — they contribute no `--plugin-dir`.
     var pluginDirectories: [URL]
     /// Plugin-contributed MCP servers (name → serialized JSON entry, already
     /// `${CLAUDE_PLUGIN_ROOT}`-expanded). Merged alongside `nexgen` so they survive
-    /// `--strict-mcp-config`. Read from each plugin dir's `.mcp.json` at launch.
+    /// `--strict-mcp-config`. Read from each external plugin dir's `.mcp.json` at launch.
     var pluginMcpServers: [String: String]
     /// NexGenVideo's local MCP server port.
     var mcpPort: Int
@@ -57,8 +58,8 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
 enum ClaudeCodeLaunch {
 
     /// Inline MCP config (passed via --mcp-config). Always registers the local `nexgen` HTTP server;
-    /// merges in any plugin-contributed servers (e.g. musicvideo's stdio server) so both survive
-    /// `--strict-mcp-config`. `pluginServers` values are already-serialized JSON objects.
+    /// merges in any external plugin-contributed servers so both survive `--strict-mcp-config`.
+    /// `pluginServers` values are already-serialized JSON objects.
     static func mcpConfigJSON(port: Int, pluginServers: [String: String] = [:]) -> String {
         var entries = ["\"nexgen\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:\(port)/mcp\"}"]
         for name in pluginServers.keys.sorted() where name != "nexgen" {

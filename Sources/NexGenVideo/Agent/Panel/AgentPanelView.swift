@@ -72,12 +72,8 @@ struct AgentPanelView: View {
     }
 
     private func refreshDiscoveredPlugins() {
-        guard service.useClaudeCodeRuntime else {
-            discoveredPlugins = []
-            return
-        }
-        // Installed ≠ active: chips and launcher surface only the project's ACTIVE plugin — a
-        // command of an inactive plugin couldn't run anyway (its dir isn't loaded).
+        // Installed ≠ active: chips and launcher surface only the project's ACTIVE pack. Native pack
+        // starters are plain-text prompts, so they work under either backend (no runtime gate).
         discoveredPlugins = PluginCommandCatalog.discover().filter { $0.name == editor.activePluginName }
     }
 
@@ -136,10 +132,9 @@ struct AgentPanelView: View {
     @State private var showPluginLauncher = false
     @State private var discoveredPlugins: [PluginCommandCatalog.PluginInfo] = []
 
-    /// The launcher only makes sense under the Claude Code runtime (the only place slash-commands load)
-    /// and only when at least one plugin exposes a command.
+    /// The launcher shows when the active pack exposes at least one starter.
     private var pluginLauncherAvailable: Bool {
-        service.useClaudeCodeRuntime && discoveredPlugins.contains { !$0.commands.isEmpty }
+        discoveredPlugins.contains { !$0.commands.isEmpty }
     }
 
     @ViewBuilder
@@ -272,12 +267,7 @@ struct AgentPanelView: View {
                         AgentMessageView(message: msg, toolResults: results)
                             .id(msg.id)
                     }
-                    if service.isBootstrappingEngine {
-                        Text("Setting up engine…")
-                            .font(.system(size: AppTheme.FontSize.xs))
-                            .foregroundStyle(AppTheme.Text.tertiaryColor)
-                            .id("engine-bootstrap-indicator")
-                    } else if service.isStreaming {
+                    if service.isStreaming {
                         ThinkingDots().id("streaming-indicator")
                     }
                     errorBanner

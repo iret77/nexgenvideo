@@ -1,0 +1,49 @@
+{
+    "surfaces": [
+        "choice",
+        "prose",
+        "review"
+    ],
+    "phases": {
+        "project_init": {
+            "surface": "choice",
+            "task_class": "assembly"
+        },
+        "brief": {
+            "surface": "prose",
+            "task_class": "interpretation"
+        },
+        "production_design": {
+            "surface": "review",
+            "task_class": "planning"
+        },
+        "treatment": {
+            "surface": "prose",
+            "task_class": "interpretation"
+        },
+        "storyboard": {
+            "surface": "review",
+            "task_class": "planning"
+        },
+        "bible": {
+            "surface": "review",
+            "task_class": "planning"
+        },
+        "shotlist": {
+            "surface": "review",
+            "task_class": "planning"
+        },
+        "sanity": {
+            "surface": "review",
+            "task_class": "classification"
+        },
+        "frames": {
+            "surface": "review",
+            "task_class": "review"
+        },
+        "render": {
+            "surface": "choice",
+            "task_class": "assembly"
+        }
+    }
+}

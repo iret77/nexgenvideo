@@ -19,6 +19,17 @@ struct AgentDialogResult: Sendable, Equatable {
 
 struct AgentDialog: Identifiable, Equatable, Sendable {
 
+    /// What submitting the dialog does (audit #3). A single dialog type, two purposes, routed by ONE
+    /// handler so no surface re-implements dialog submission:
+    /// - `.chatClarification` composes a structured chat message (the agent's `show_dialog` default).
+    /// - `.generationIntent` builds a generation and runs it through `GenerationController` — the
+    ///   music-shaping dialog is this purpose. Presenter-agnostic: the panel that owns a generation
+    ///   dialog supplies the builder; the agent panel only ever composes a message.
+    enum Purpose: Equatable, Sendable {
+        case chatClarification
+        case generationIntent
+    }
+
     struct Choice: Identifiable, Equatable, Sendable {
         let id: String
         let label: String
@@ -78,10 +89,12 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
     let sections: [Section]
     /// Visual candidates projected onto the canvas (timeline ranges / Review shot) instead of the card.
     let projection: Projection
+    /// What submitting does — defaults to chat clarification (the agent's `show_dialog` path).
+    let purpose: Purpose
 
     init(id: String, title: String, symbol: String, intro: String?, costHint: String?,
          confirmLabel: String, textPlaceholder: String?, sections: [Section],
-         projection: Projection = Projection()) {
+         projection: Projection = Projection(), purpose: Purpose = .chatClarification) {
         self.id = id
         self.title = title
         self.symbol = symbol
@@ -91,6 +104,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         self.textPlaceholder = textPlaceholder
         self.sections = sections
         self.projection = projection
+        self.purpose = purpose
     }
 
     /// Parse the `show_dialog` tool args. Throws with actionable messages so the agent can repair.

@@ -78,7 +78,6 @@ final class ClaudeCodeRuntime {
             workingDirectory: workingDirectory,
             pluginDirectories: pluginDirectories,
             pluginMcpServers: Self.loadPluginMcpServers(pluginDirectories)
-                .merging(Self.engineMcpServers()) { existing, _ in existing }
                 .merging(ExternalMcpServers.all()) { existing, _ in existing },
             mcpPort: mcpPort,
             permissionMode: permissionMode
@@ -140,9 +139,10 @@ final class ClaudeCodeRuntime {
 
     // MARK: - Launch resolution (I/O)
 
-    /// Read each plugin dir's `.mcp.json` and return its servers (name → serialized JSON entry),
-    /// expanding `${CLAUDE_PLUGIN_ROOT}` to the plugin dir. Lets the plugin's MCP server (e.g.
-    /// musicvideo's stdio server) coexist with `nexgen` under `--strict-mcp-config`.
+    /// Read each external plugin dir's `.mcp.json` and return its servers (name → serialized JSON
+    /// entry), expanding `${CLAUDE_PLUGIN_ROOT}` to the plugin dir. Lets an external Claude-Code
+    /// plugin's MCP server coexist with `nexgen` under `--strict-mcp-config`. First-party format packs
+    /// are native and contribute no plugin dir, so `dirs` is only the dev "extra plugin folder".
     private static func loadPluginMcpServers(_ dirs: [URL]) -> [String: String] {
         var result: [String: String] = [:]
         for dir in dirs {
@@ -159,23 +159,6 @@ final class ClaudeCodeRuntime {
             }
         }
         return result
-    }
-
-    /// The bundled Generic Engine's MCP server — `<engine python> -m nexgen_engine.mcp_server`
-    /// — registered alongside `nexgen` and the active pack (the standard surface from
-    /// docs/PLUGIN_STANDARD.md). The python path is the engine's auto-bootstrapped venv, set
-    /// once the engine is bundled + bootstrapped on the Mac. Absent → omitted, so the runtime
-    /// still works without the engine.
-    private static func engineMcpServers() -> [String: String] {
-        guard let python = UserDefaults.standard.string(forKey: "claudeRuntimeEnginePython"),
-              !python.isEmpty,
-              let data = try? JSONSerialization.data(withJSONObject: [
-                  "command": python,
-                  "args": ["-m", "nexgen_engine.mcp_server"],
-              ]),
-              let entry = String(data: data, encoding: .utf8)
-        else { return [:] }
-        return ["engine": entry]
     }
 
     private static let providerEnvNames: [(GenerationProvider, String)] = [

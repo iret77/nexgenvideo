@@ -115,7 +115,7 @@ struct TitleBarView: View {
 
     private var activePluginLabel: String {
         guard let active = editor.activePluginName else { return "Generic" }
-        return PluginManager.discoverPlugins().first(where: { $0.name == active })?.displayName ?? active
+        return InstalledPack.named(active)?.displayName ?? active
     }
 
     @ViewBuilder

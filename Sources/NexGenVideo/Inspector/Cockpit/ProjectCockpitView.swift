@@ -74,7 +74,7 @@ struct ProjectCockpitView: View {
 /// contained so it does not depend on the Inspector's private row helpers.
 struct ProjectSettingsView: View {
     @Environment(EditorViewModel.self) private var editor
-    @State private var plugins: [PluginManager.Plugin] = []
+    private let plugins: [InstalledPack] = InstalledPack.all
 
     var body: some View {
         ScrollView {
@@ -125,10 +125,9 @@ struct ProjectSettingsView: View {
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
         }
-        .onAppear { plugins = PluginManager.discoverPlugins() }
     }
 
-    private func pluginCard(_ plugin: PluginManager.Plugin) -> some View {
+    private func pluginCard(_ plugin: InstalledPack) -> some View {
         let isActive = editor.activePluginName == plugin.name
         return ZStack(alignment: .bottomLeading) {
             headerImage(for: plugin)
@@ -182,8 +181,8 @@ struct ProjectSettingsView: View {
     }
 
     @ViewBuilder
-    private func headerImage(for plugin: PluginManager.Plugin) -> some View {
-        if let url = plugin.headerImageURL, let image = NSImage(contentsOf: url) {
+    private func headerImage(for plugin: InstalledPack) -> some View {
+        if let image = plugin.headerImage() {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)

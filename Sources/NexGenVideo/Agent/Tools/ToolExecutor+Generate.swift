@@ -1,7 +1,7 @@
 import Foundation
 
 extension ToolExecutor {
-    func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) throws -> ToolResult {
+    func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) async throws -> ToolResult {
         let prompt = try args.requireString("prompt")
         switch type {
         case .video:
@@ -11,12 +11,11 @@ extension ToolExecutor {
             guard let model = VideoModelConfig.allModels.first(where: { $0.id == modelId }) else {
                 throw ToolError("Unknown model '\(modelId)'. Available: \(VideoModelConfig.allModels.map(\.id).joined(separator: ", "))")
             }
-            try PromptCompiler.enforceGate(args: args, prompt: prompt, modelId: model.id)
             return model.requiresSourceVideo
-                ? try generateVideoEdit(editor, args, prompt: prompt, model: model)
-                : try generateVideoText(editor, args, prompt: prompt, model: model)
+                ? try await generateVideoEdit(editor, args, prompt: prompt, model: model)
+                : try await generateVideoText(editor, args, prompt: prompt, model: model)
         case .image:
-            return try generateImage(editor, args, prompt: prompt)
+            return try await generateImage(editor, args, prompt: prompt)
         case .audio:
             throw ToolError("internal: audio generation is dispatched via the async path")
         case .text:
@@ -26,10 +25,31 @@ extension ToolExecutor {
         }
     }
 
+    /// Turn a `GenerationController` result into the tool's `.ok`/error surface, reusing the same
+    /// error copy the surfaces used before (the gate/compile messages come straight through).
+    private func routeThroughController(
+        _ request: GenerationRequest, editor: EditorViewModel,
+        preflight: GenerationController.Preflight? = nil,
+        success: (String) -> String
+    ) async throws -> ToolResult {
+        switch await GenerationController.submit(request, editor: editor, preflight: preflight) {
+        case .success(let outcome):
+            return .ok(success(outcome.placeholderId))
+        case .failure(let error):
+            throw ToolError(error.errorDescription ?? "Generation failed.")
+        }
+    }
+
+    /// The agent's precompiled prompt (from compile_prompt) + token, or nil for the raw-prompt escape.
+    private static func agentPrompt(_ args: [String: Any], prompt: String) -> (precompiled: (text: String, token: String)?, raw: Bool) {
+        if args.bool("rawPrompt") == true { return (nil, true) }
+        return ((text: prompt, token: args.string("compileToken") ?? ""), false)
+    }
+
     private func generateVideoEdit(
         _ editor: EditorViewModel, _ args: [String: Any],
         prompt: String, model: VideoModelConfig
-    ) throws -> ToolResult {
+    ) async throws -> ToolResult {
         guard let sourceRef = args.string("sourceVideoMediaRef") else {
             throw ToolError("Model '\(model.id)' requires 'sourceVideoMediaRef' pointing to a video asset.")
         }
@@ -41,48 +61,43 @@ extension ToolExecutor {
             imageRefs.append(try asset(id, editor: editor, label: "Reference image"))
         }
 
-        if let err = model.validate(duration: 0, aspectRatio: "", resolution: nil) {
-            throw ToolError(err)
-        }
         let inputAssets = VideoGenerationSubmission.InputAssets(sourceVideo: sourceAsset, imageRefs: imageRefs)
-        if let err = inputAssets.validate(for: model) {
-            throw ToolError(err)
-        }
+        let name = args.string("name")
+        let folderId = sourceAsset.folderId
+        let placeholderDuration = trimmed?.durationSeconds ?? (sourceAsset.duration > 0 ? sourceAsset.duration : 5)
+        let (precompiled, raw) = Self.agentPrompt(args, prompt: prompt)
 
-        let genInput = GenerationInput(
-            prompt: prompt, model: model.id, duration: Int(sourceAsset.duration.rounded()),
-            aspectRatio: "", resolution: nil
-        )
-        let placeholderId = VideoGenerationSubmission.make(
-            genInput: genInput,
-            model: model,
-            inputAssets: inputAssets,
-            placeholderDuration: trimmed?.durationSeconds ?? (sourceAsset.duration > 0 ? sourceAsset.duration : 5),
-            trimmedSourceOverride: trimmed,
-            name: args.string("name"),
-            folderId: sourceAsset.folderId,
-            generateAudio: true
-        ).submit(
-            service: editor.generationService,
-            projectURL: editor.projectURL,
-            editor: editor
-        )
-        return .ok("Edit started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), source: \(sourceAsset.name)")
+        let request = GenerationRequest(
+            modality: .video, modelId: model.id, intent: prompt,
+            placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
+            precompiled: precompiled, rawPrompt: raw,
+            submission: .video(make: { compiled in
+                let genInput = GenerationInput(
+                    prompt: compiled, model: model.id, duration: Int(sourceAsset.duration.rounded()),
+                    aspectRatio: "", resolution: nil)
+                return VideoGenerationSubmission.make(
+                    genInput: genInput, model: model, inputAssets: inputAssets,
+                    placeholderDuration: placeholderDuration, trimmedSourceOverride: trimmed,
+                    name: name, folderId: folderId, generateAudio: true)
+            }))
+        return try await routeThroughController(
+            request, editor: editor,
+            preflight: {
+                if let err = model.validate(duration: 0, aspectRatio: "", resolution: nil) { return err }
+                return inputAssets.validate(for: model)
+            },
+            success: { "Edit started. Placeholder asset ID: \($0). Model: \(model.displayName), source: \(sourceAsset.name)" })
     }
 
     private func generateVideoText(
         _ editor: EditorViewModel, _ args: [String: Any],
         prompt: String, model: VideoModelConfig
-    ) throws -> ToolResult {
+    ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
 
         let duration = args.int("duration") ?? model.durations.first ?? 0
         let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
         let resolution = args.string("resolution") ?? model.resolutions?.first
-
-        if let err = model.validate(duration: duration, aspectRatio: aspectRatio, resolution: resolution) {
-            throw ToolError(err)
-        }
 
         var frameSlots: [MediaAsset] = []
         if let startRef = args.string("startFrameMediaRef") {
@@ -106,45 +121,46 @@ extension ToolExecutor {
             videoRefs: videoRefs,
             audioRefs: audioRefs
         )
-        if let err = inputAssets.validate(for: model) {
-            throw ToolError(err)
-        }
-
         let imageRefCount = imageRefs.count
         let videoRefCount = videoRefs.count
         let audioRefCount = audioRefs.count
         let totalRefs = inputAssets.totalRefCount
 
-        let genInput = GenerationInput(
-            prompt: prompt, model: model.id, duration: duration,
-            aspectRatio: aspectRatio, resolution: resolution
-        )
-
         let folderId = try resolveFolderId(
             args, editor: editor, fallbackReferences: inputAssets.textToVideoReferences
         )
-        let placeholderId = VideoGenerationSubmission.make(
-            genInput: genInput,
-            model: model,
-            inputAssets: inputAssets,
-            placeholderDuration: Double(max(1, duration)),
-            name: args.string("name"),
-            folderId: folderId,
-            generateAudio: true
-        ).submit(
-            service: editor.generationService,
-            projectURL: editor.projectURL,
-            editor: editor
-        )
+        let name = args.string("name")
+        let (precompiled, raw) = Self.agentPrompt(args, prompt: prompt)
+
+        let request = GenerationRequest(
+            modality: .video, modelId: model.id, intent: prompt,
+            aspectRatio: aspectRatio, durationSeconds: Double(duration),
+            placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
+            precompiled: precompiled, rawPrompt: raw,
+            submission: .video(make: { compiled in
+                let genInput = GenerationInput(
+                    prompt: compiled, model: model.id, duration: duration,
+                    aspectRatio: aspectRatio, resolution: resolution)
+                return VideoGenerationSubmission.make(
+                    genInput: genInput, model: model, inputAssets: inputAssets,
+                    placeholderDuration: Double(max(1, duration)),
+                    name: name, folderId: folderId, generateAudio: true)
+            }))
         let refSummary = totalRefs > 0
             ? ", refs: \(imageRefCount)img/\(videoRefCount)vid/\(audioRefCount)aud"
             : ""
-        return .ok("Generation started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), duration: \(duration)s, aspect: \(aspectRatio)\(refSummary)")
+        return try await routeThroughController(
+            request, editor: editor,
+            preflight: {
+                if let err = model.validate(duration: duration, aspectRatio: aspectRatio, resolution: resolution) { return err }
+                return inputAssets.validate(for: model)
+            },
+            success: { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), duration: \(duration)s, aspect: \(aspectRatio)\(refSummary)" })
     }
 
     private func generateImage(
         _ editor: EditorViewModel, _ args: [String: Any], prompt: String
-    ) throws -> ToolResult {
+    ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
         guard let modelId = args.string("model") ?? ImageModelConfig.allModels.first?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
@@ -152,17 +168,10 @@ extension ToolExecutor {
         guard let model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
             throw ToolError("Unknown model '\(modelId)'. Available: \(ImageModelConfig.allModels.map(\.id).joined(separator: ", "))")
         }
-        try PromptCompiler.enforceGate(args: args, prompt: prompt, modelId: model.id)
         let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
         let resolution = args.string("resolution") ?? model.resolutions?.first
         let quality = args.string("quality") ?? model.qualities?.last
         let refIds = args.stringArray("referenceMediaRefs")
-        if let err = model.validate(
-            aspectRatio: aspectRatio, resolution: resolution, quality: quality,
-            imageRefCount: refIds.count, numImages: 1
-        ) {
-            throw ToolError(err)
-        }
         let refs: [MediaAsset] = try refIds.map { id in
             let a = try asset(id, editor: editor, label: "Reference image")
             guard a.type == .image else {
@@ -170,43 +179,51 @@ extension ToolExecutor {
             }
             return a
         }
-
-        let genInput = GenerationInput(
-            prompt: prompt, model: modelId, duration: 0,
-            aspectRatio: aspectRatio, resolution: resolution, quality: quality
-        )
         let folderId = try resolveFolderId(args, editor: editor, fallbackReferences: refs)
+        let name = args.string("name")
+        let (precompiled, raw) = Self.agentPrompt(args, prompt: prompt)
+
+        func genInput(_ compiled: String) -> GenerationInput {
+            GenerationInput(
+                prompt: compiled, model: modelId, duration: 0,
+                aspectRatio: aspectRatio, resolution: resolution, quality: quality)
+        }
+        let preflight: GenerationController.Preflight = {
+            model.validate(
+                aspectRatio: aspectRatio, resolution: resolution, quality: quality,
+                imageRefCount: refIds.count, numImages: 1)
+        }
 
         if MarbleModelRegistry.isMarbleModel(modelId) {
             guard let reference = refs.first else {
                 throw ToolError("\(model.displayName) requires a reference image via 'referenceMediaRefs' (the world is generated from it).")
             }
-            let placeholderId = ImageGenerationSubmission.makeMarble(
-                genInput: genInput,
-                model: model,
-                reference: reference,
-                name: args.string("name"),
-                folderId: folderId
-            ).submit(
-                service: editor.generationService,
-                projectURL: editor.projectURL,
-                editor: editor
-            )
-            return .ok("Marble world generation started (this can take several minutes). Placeholder asset ID: \(placeholderId). Model: \(model.displayName). Result: equirectangular panorama image.")
+            let request = GenerationRequest(
+                modality: .image, modelId: modelId, intent: prompt, aspectRatio: aspectRatio,
+                placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
+                precompiled: precompiled, rawPrompt: raw,
+                submission: .image(make: { compiled in
+                    ImageGenerationSubmission.makeMarble(
+                        genInput: genInput(compiled), model: model, reference: reference,
+                        name: name, folderId: folderId)
+                }))
+            return try await routeThroughController(
+                request, editor: editor, preflight: preflight,
+                success: { "Marble world generation started (this can take several minutes). Placeholder asset ID: \($0). Model: \(model.displayName). Result: equirectangular panorama image." })
         }
 
-        let placeholderId = ImageGenerationSubmission.make(
-            genInput: genInput,
-            model: model,
-            references: refs,
-            name: args.string("name"),
-            folderId: folderId
-        ).submit(
-            service: editor.generationService,
-            projectURL: editor.projectURL,
-            editor: editor
-        )
-        return .ok("Generation started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), aspect: \(aspectRatio)")
+        let request = GenerationRequest(
+            modality: .image, modelId: modelId, intent: prompt, aspectRatio: aspectRatio,
+            placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
+            precompiled: precompiled, rawPrompt: raw,
+            submission: .image(make: { compiled in
+                ImageGenerationSubmission.make(
+                    genInput: genInput(compiled), model: model, references: refs,
+                    name: name, folderId: folderId)
+            }))
+        return try await routeThroughController(
+            request, editor: editor, preflight: preflight,
+            success: { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), aspect: \(aspectRatio)" })
     }
 
     func showDialog(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
@@ -226,7 +243,12 @@ extension ToolExecutor {
     func compilePrompt(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let intent = try args.requireString("intent")
         let modelId = try args.requireString("model")
-        let compiled = try await PromptCompiler.compile(intent: intent, modelId: modelId, editor: editor)
+        // Same contract as before ({ compiledPrompt, compileToken, notes }); composition now runs the
+        // ENGINE path (PromptComposer: ledger directives + provider builder + PromptLinter) instead of
+        // the old local ledger text-append, then the gate mints the token over the result.
+        let compiled = try await PromptCompiler.compile(
+            intent: intent, modelId: modelId,
+            modality: PromptCompiler.modalityForModel(modelId), editor: editor)
         let body: [String: Any] = [
             "compiledPrompt": compiled.text,
             "compileToken": compiled.token,
@@ -245,9 +267,6 @@ extension ToolExecutor {
         }
 
         let prompt = (args.string("prompt") ?? "").trimmingCharacters(in: .whitespaces)
-        if !prompt.isEmpty {
-            try PromptCompiler.enforceGate(args: args, prompt: prompt, modelId: model.id)
-        }
         let acceptsVideo = model.inputs.contains(.video)
         var videoURL: String?
         var spanSeconds: Double?
@@ -287,66 +306,57 @@ extension ToolExecutor {
 
         let instrumental = args.bool("instrumental") ?? false
         let durationSeconds = args.int("duration") ?? spanSeconds.map { max(1, Int($0.rounded())) }
-        let params = AudioGenerationParams(
-            prompt: prompt,
-            voice: model.voices != nil ? (args.string("voice") ?? model.defaultVoice) : nil,
-            lyrics: model.supportsLyrics ? args.string("lyrics") : nil,
-            styleInstructions: model.supportsStyleInstructions ? args.string("styleInstructions") : nil,
-            instrumental: model.supportsInstrumental ? instrumental : false,
-            durationSeconds: durationSeconds,
-            videoURL: videoURL
-        )
-        if let err = model.validate(params: params) {
-            throw ToolError(err)
-        }
-
-        let genInput = GenerationInput(
-            prompt: prompt,
-            model: model.id,
-            duration: durationSeconds ?? 0,
-            aspectRatio: "",
-            resolution: nil,
-            voice: params.voice,
-            lyrics: params.lyrics,
-            styleInstructions: params.styleInstructions,
-            instrumental: model.supportsInstrumental ? instrumental : nil
-        )
-
+        let voice = model.voices != nil ? (args.string("voice") ?? model.defaultVoice) : nil
+        let lyrics = model.supportsLyrics ? args.string("lyrics") : nil
+        let styleInstructions = model.supportsStyleInstructions ? args.string("styleInstructions") : nil
+        let name = args.string("name")
         let folderId = try resolveFolderId(args, editor: editor)
-        let submission = AudioGenerationSubmission.make(
-            genInput: genInput,
-            model: model,
-            params: params,
-            name: args.string("name"),
-            folderId: folderId
-        )
+        let (precompiled, raw) = Self.agentPrompt(args, prompt: prompt)
 
-        if let startFrame = placementStartFrame, let span = spanSeconds {
-            let placeholderId = submission.submit(
-                service: editor.generationService,
-                projectURL: editor.projectURL,
-                editor: editor,
-                onComplete: { asset in
-                    editor.finalizeGeneratingClip(placeholderId: asset.id, asset: asset)
-                }
-            )
-            editor.placeGeneratingAudioClip(
-                placeholderId: placeholderId, startFrame: startFrame,
-                spanSeconds: span, actionName: "Add \(model.category.label)"
-            )
-            return .ok("Generation started and placed on the timeline at frame \(startFrame). Placeholder asset ID: \(placeholderId). Model: \(model.displayName), \(model.category.label) (scored from video).")
+        // Build the submission from the CONTROLLER-compiled prompt so the audio params + genInput
+        // carry the same text the gate validated.
+        func makeSubmission(_ compiled: String) -> AudioGenerationSubmission {
+            let params = AudioGenerationParams(
+                prompt: compiled, voice: voice, lyrics: lyrics,
+                styleInstructions: styleInstructions,
+                instrumental: model.supportsInstrumental ? instrumental : false,
+                durationSeconds: durationSeconds, videoURL: videoURL)
+            let genInput = GenerationInput(
+                prompt: compiled, model: model.id, duration: durationSeconds ?? 0,
+                aspectRatio: "", resolution: nil, voice: params.voice, lyrics: params.lyrics,
+                styleInstructions: params.styleInstructions,
+                instrumental: model.supportsInstrumental ? instrumental : nil)
+            return AudioGenerationSubmission.make(
+                genInput: genInput, model: model, params: params, name: name, folderId: folderId)
+        }
+        // Preflight validates the params; build them once with the raw prompt for validation (the
+        // compiled text only differs by ledger merge and never invalidates model.validate).
+        let preflight: GenerationController.Preflight = {
+            model.validate(params: makeSubmission(prompt).params)
         }
 
-        let placeholderId = submission.submit(
-            service: editor.generationService,
-            projectURL: editor.projectURL,
-            editor: editor
-        )
-        let scored = videoURL != nil ? " (scored from video)" : ""
-        return .ok("Generation started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), \(model.category.label)\(scored). Place it with add_clips.")
+        let placement: GenerationRequest.Placement
+        let successCopy: (String) -> String
+        if let startFrame = placementStartFrame, let span = spanSeconds {
+            placement = .timelineAt(startFrame: startFrame, spanSeconds: span, actionName: "Add \(model.category.label)")
+            successCopy = { "Generation started and placed on the timeline at frame \(startFrame). Placeholder asset ID: \($0). Model: \(model.displayName), \(model.category.label) (scored from video)." }
+        } else {
+            placement = .mediaLibrary(folderId: folderId)
+            let scored = videoURL != nil ? " (scored from video)" : ""
+            successCopy = { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), \(model.category.label)\(scored). Place it with add_clips." }
+        }
+
+        let request = GenerationRequest(
+            modality: .audio, modelId: model.id, intent: prompt,
+            durationSeconds: durationSeconds.map(Double.init),
+            placement: placement, origin: .agentTool,
+            precompiled: precompiled, rawPrompt: raw,
+            submission: .audio(make: { makeSubmission($0) }))
+        return try await routeThroughController(
+            request, editor: editor, preflight: preflight, success: successCopy)
     }
 
-    func upscaleMedia(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func upscaleMedia(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let mediaRef = try args.requireString("mediaRef")
         let asset = try asset(mediaRef, editor: editor)
         guard asset.type == .video || asset.type == .image else {
@@ -369,8 +379,8 @@ extension ToolExecutor {
         }
 
         let trimmed = try trimmedSource(args, editor: editor, source: asset)
-        guard let placeholderId = EditSubmitter.submitUpscale(
-            asset: asset, model: model, editor: editor, trimmedSource: trimmed
+        guard let placeholderId = await EditSubmitter.submitUpscale(
+            asset: asset, model: model, editor: editor, trimmedSource: trimmed, origin: .agentTool
         ) else {
             throw ToolError("Failed to start upscale")
         }

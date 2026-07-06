@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 // Mirrors the engine's `Shotlist.model_dump(by_alias=True, mode="json")` JSON
 // (engine/nexgen_engine/shotlist/schema.py, via read.py "shotlist"). Only `schema` is aliased
@@ -34,6 +35,7 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
     var section: String?
     var durationS: Double
     var type: String
+    var sourceMode: String
     var description: String
     var visualPrompt: String
     var framing: String?
@@ -45,6 +47,7 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, section, type, description, framing, mood
+        case sourceMode = "source_mode"
         case durationS = "duration_s"
         case visualPrompt = "visual_prompt"
         case characterRefs = "character_refs"
@@ -58,6 +61,7 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
         section = try c.decodeIfPresent(String.self, forKey: .section)
         durationS = try c.decodeIfPresent(Double.self, forKey: .durationS) ?? 0
         type = try c.decodeIfPresent(String.self, forKey: .type) ?? ""
+        sourceMode = try c.decodeIfPresent(String.self, forKey: .sourceMode) ?? "generated"
         description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
         visualPrompt = try c.decodeIfPresent(String.self, forKey: .visualPrompt) ?? ""
         framing = try c.decodeIfPresent(String.self, forKey: .framing)
@@ -83,4 +87,41 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
         if durationS > 0 { out.append(String(format: "%.1fs", durationS)) }
         return out
     }
+
+    /// The parsed source mode, defaulting to generated for any unknown/absent raw value.
+    var sourceModeTag: SourceModeTag { SourceModeTag(raw: sourceMode) }
+}
+
+/// App-side descriptor for a shot's source mode (hybrid production, issue #129): the SF Symbol,
+/// short label, and the raw engine value shared by the shotlist panel badge, the mode filter, and
+/// the shot inspector menu. Mirrors NexGenEngine's `SourceMode` snake_case raw values.
+enum SourceModeTag: String, CaseIterable, Identifiable {
+    case generated
+    case liveAction = "live_action"
+    case aiEnhanced = "ai_enhanced"
+
+    var id: String { rawValue }
+
+    init(raw: String) { self = SourceModeTag(rawValue: raw) ?? .generated }
+
+    /// SF Symbol per mode: generated = sparkles, live = video, enhanced = wand.and.rays.
+    var symbol: String {
+        switch self {
+        case .generated: "sparkles"
+        case .liveAction: "video"
+        case .aiEnhanced: "wand.and.rays"
+        }
+    }
+
+    /// Compact tag label for the per-row badge.
+    var label: String {
+        switch self {
+        case .generated: "Generated"
+        case .liveAction: "Live"
+        case .aiEnhanced: "Enhanced"
+        }
+    }
+
+    /// The engine `SourceMode` this tag writes back (shared snake_case raw value).
+    var engineMode: SourceMode { SourceMode(rawValue: rawValue) ?? .generated }
 }

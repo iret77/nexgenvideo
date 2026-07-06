@@ -7,6 +7,9 @@ struct MusicGenerationSubmission {
     let mode: Mode
     let model: AudioModelConfig
     let prompt: String?
+    /// Original pre-compile intent, stored on the asset so a rerun recompiles against the current
+    /// ledger (#114).
+    var intent: String? = nil
     let source: EditorViewModel.TimelineSpan
     let spanSeconds: Double
     let name: String?
@@ -63,6 +66,7 @@ struct MusicGenerationSubmission {
 
         var genInput = GenerationInput(
             prompt: prompt ?? "",
+            intent: intent,
             model: model.id,
             duration: durationSeconds,
             aspectRatio: ""

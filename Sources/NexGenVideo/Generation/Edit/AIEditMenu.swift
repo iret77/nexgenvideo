@@ -44,7 +44,9 @@ struct AIEditMenu: View {
     }
 
     private func runUpscale(_ model: UpscaleModelConfig) {
-        _ = EditSubmitter.submitUpscale(asset: asset, model: model, editor: editor)
+        Task { @MainActor in
+            _ = await EditSubmitter.submitUpscale(asset: asset, model: model, editor: editor)
+        }
     }
 
     private func edit() {
@@ -60,7 +62,10 @@ struct AIEditMenu: View {
     private func rerun() {
         let modelId = asset.generationInput?.model ?? ""
         if UpscaleModelConfig.allIds.contains(modelId) {
-            _ = try? EditSubmitter.rerun(asset: asset, editor: editor)
+            Task { @MainActor in
+                do { _ = try await EditSubmitter.rerun(asset: asset, editor: editor) }
+                catch { editor.mediaPanelToast = MediaPanelToast(message: error.localizedDescription) }
+            }
         } else if let stored = asset.generationInput {
             editor.seedGenerationPanel(asset: asset, stored: stored)
         }

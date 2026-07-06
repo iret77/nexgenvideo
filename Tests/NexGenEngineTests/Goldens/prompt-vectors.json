@@ -1,0 +1,922 @@
+{
+  "vectors": [
+    {
+      "caseName": "image_minimal_nano_banana",
+      "builder": "image",
+      "modelId": "google:nano-banana",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "a lone lighthouse on a cliff at dawn",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a lone lighthouse on a cliff at dawn."
+    },
+    {
+      "caseName": "image_minimal_gpt_image_2",
+      "builder": "image",
+      "modelId": "openai:gpt-image-2",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "a lone lighthouse on a cliff at dawn",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Subject:\na lone lighthouse on a cliff at dawn\n\nUse case:\nvideo keyframe (end-position anchor frame)"
+    },
+    {
+      "caseName": "image_minimal_imagen",
+      "builder": "image",
+      "modelId": "google:imagen-4-ultra",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "a lone lighthouse on a cliff at dawn",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a lone lighthouse on a cliff at dawn. Output a single full-frame image filling the entire frame edge-to-edge as one unified continuous picture."
+    },
+    {
+      "caseName": "image_minimal_runway",
+      "builder": "image",
+      "modelId": "runway:gen4-image",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "a lone lighthouse on a cliff at dawn",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Subject:\na lone lighthouse on a cliff at dawn\n\nUse case:\nvideo keyframe (end-position anchor frame)"
+    },
+    {
+      "caseName": "image_minimal_fallback_unknown_provider",
+      "builder": "image",
+      "modelId": "flux:dev",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "a lone lighthouse on a cliff at dawn",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Subject:\na lone lighthouse on a cliff at dawn\n\nUse case:\nvideo keyframe (end-position anchor frame)"
+    },
+    {
+      "caseName": "image_full_nano_banana",
+      "builder": "image",
+      "modelId": "google:nano-banana",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "a weathered detective standing in a doorway, arrested mid-step",
+        "setting": "a dim office, blinds half-drawn",
+        "composition": "",
+        "camera": "static eye-level camera",
+        "style": "muted noir illustration",
+        "light": "warm morning light from the left, long soft shadow",
+        "negatives": [
+          "no text"
+        ],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a weathered detective standing in a doorway, arrested mid-step. a dim office, blinds half-drawn. static eye-level camera. warm morning light from the left, long soft shadow. Style: muted noir illustration. Composition rules: clean untyped surfaces."
+    },
+    {
+      "caseName": "image_full_gpt_image_2",
+      "builder": "image",
+      "modelId": "openai:gpt-image-2",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "a weathered detective standing in a doorway, arrested mid-step",
+        "setting": "a dim office, blinds half-drawn",
+        "composition": "",
+        "camera": "static eye-level camera",
+        "style": "muted noir illustration",
+        "light": "warm morning light from the left, long soft shadow",
+        "negatives": [
+          "no text"
+        ],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Scene:\na dim office, blinds half-drawn\n\nSubject:\na weathered detective standing in a doorway, arrested mid-step\n\nImportant details:\nstatic eye-level camera warm morning light from the left, long soft shadow Style: muted noir illustration\n\nUse case:\nvideo keyframe (end-position anchor frame)\n\nConstraints:\nclean untyped surfaces"
+    },
+    {
+      "caseName": "image_full_imagen",
+      "builder": "image",
+      "modelId": "google:imagen-4-ultra",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "a weathered detective standing in a doorway, arrested mid-step",
+        "setting": "a dim office, blinds half-drawn",
+        "composition": "",
+        "camera": "static eye-level camera",
+        "style": "muted noir illustration",
+        "light": "warm morning light from the left, long soft shadow",
+        "negatives": [
+          "no text"
+        ],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a weathered detective standing in a doorway, arrested mid-step. a dim office, blinds half-drawn. static eye-level camera. warm morning light from the left, long soft shadow. muted noir illustration. clean untyped surfaces. Output a single full-frame image filling the entire frame edge-to-edge as one unified continuous picture."
+    },
+    {
+      "caseName": "image_full_runway",
+      "builder": "image",
+      "modelId": "runway:gen4-image",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "a weathered detective standing in a doorway, arrested mid-step",
+        "setting": "a dim office, blinds half-drawn",
+        "composition": "",
+        "camera": "static eye-level camera",
+        "style": "muted noir illustration",
+        "light": "warm morning light from the left, long soft shadow",
+        "negatives": [
+          "no text"
+        ],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Scene:\na dim office, blinds half-drawn\n\nSubject:\na weathered detective standing in a doorway, arrested mid-step\n\nImportant details:\nstatic eye-level camera warm morning light from the left, long soft shadow Style: muted noir illustration\n\nUse case:\nvideo keyframe (end-position anchor frame)\n\nConstraints:\nclean untyped surfaces"
+    },
+    {
+      "caseName": "image_sheet_front_nano_banana",
+      "builder": "image",
+      "modelId": "google:nano-banana",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "Alex, a young teacher",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "front",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Alex, a young teacher, captured as a front reference sheet. front view, full character visible from head to toe, neutral standing pose facing camera, seamless plain white studio backdrop, even diffuse studio lighting, full body framing."
+    },
+    {
+      "caseName": "image_sheet_side_gpt_image_2",
+      "builder": "image",
+      "modelId": "openai:gpt-image-2",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "Alex, a young teacher",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "side",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Scene:\nstrict 90 degree side profile of the same character, full body, neutral standing pose, seamless plain white studio backdrop, even diffuse studio lighting.\n\nSubject:\nAlex, a young teacher\n\nUse case:\ncharacter reference sheet for downstream image-to-video"
+    },
+    {
+      "caseName": "image_sheet_expression_gpt_image_2",
+      "builder": "image",
+      "modelId": "openai:gpt-image-2",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "Alex, a young teacher",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "expression_worried",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Scene:\nfront portrait of the same character with a worried facial expression, bust-up framing, seamless plain white studio backdrop, even diffuse studio lighting.\n\nSubject:\nAlex, a young teacher\n\nUse case:\ncharacter reference sheet for downstream image-to-video"
+    },
+    {
+      "caseName": "image_sheet_location_wide_nano_banana",
+      "builder": "nano_banana",
+      "sheetKind": "location",
+      "payload": {
+        "subject": "the empty classroom",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "wide",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "the empty classroom, captured as a wide reference sheet. wide architectural reference of the empty location, capturing the defining structural elements (walls, windows, doors, fixtures, furniture in original position). Adult eye-level camera, slight wide-angle to capture the full space, even neutral lighting."
+    },
+    {
+      "caseName": "image_sheet_location_dotted_variant_imagen",
+      "builder": "imagen",
+      "sheetKind": "location",
+      "payload": {
+        "subject": "the empty classroom",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "wide.morning",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "wide architectural reference of the empty location, capturing the defining structural elements (walls, windows, doors, fixtures, furniture in original position). Adult eye-level camera, slight wide-angle to capture the full space, even neutral lighting. Variant: morning. the empty classroom."
+    },
+    {
+      "caseName": "image_sheet_prop_open_gpt_image_2",
+      "builder": "gpt_image_2",
+      "sheetKind": "prop",
+      "payload": {
+        "subject": "a leather satchel",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "open",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Scene:\nthe same prop in its open/unfolded/active state, isolated on a seamless plain white studio backdrop, neutral diffuse lighting.\n\nSubject:\na leather satchel\n\nUse case:\nprop reference plate"
+    },
+    {
+      "caseName": "image_sheet_prop_freeform_runway",
+      "builder": "runway_image",
+      "sheetKind": "prop",
+      "payload": {
+        "subject": "a leather satchel",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "half_zipped",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Scene:\nprop reference shot showing the half zipped state, isolated on a seamless plain white studio backdrop, neutral diffuse lighting.\n\nSubject:\na leather satchel\n\nUse case:\nprop reference plate"
+    },
+    {
+      "caseName": "image_multiref_nano_banana",
+      "builder": "image",
+      "modelId": "google:nano-banana",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "@Image1 stands where @Image2 opens onto the courtyard",
+        "setting": "school courtyard at midday",
+        "composition": "",
+        "camera": "",
+        "style": "flat 2D illustration",
+        "light": "",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [
+          "location entrance angle",
+          "wide courtyard reference"
+        ],
+        "directives": []
+      },
+      "expectedPrompt": "@Image1 stands where @Image2 opens onto the courtyard. school courtyard at midday. Style: flat 2D illustration. References — Image 1: location entrance angle; Image 2: wide courtyard reference. Use these as style and composition anchors: match the flat illustration style, palette, line treatment, camera angle, and figure-to-set scale of the references. Stay strictly within the architectural depth and perspective already shown in the references. Output ONE single full-frame image filling the entire frame edge-to-edge as one unified continuous picture."
+    },
+    {
+      "caseName": "image_multiref_gpt_image_2",
+      "builder": "image",
+      "modelId": "openai:gpt-image-2",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "@Image1 stands where @Image2 opens onto the courtyard",
+        "setting": "school courtyard at midday",
+        "composition": "",
+        "camera": "",
+        "style": "flat 2D illustration",
+        "light": "",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [
+          "location entrance angle",
+          "wide courtyard reference"
+        ],
+        "directives": []
+      },
+      "expectedPrompt": "Scene:\nschool courtyard at midday\n\nSubject:\n@Image1 stands where @Image2 opens onto the courtyard\n\nImportant details:\nStyle: flat 2D illustration\n\nUse case:\nvideo keyframe (end-position anchor frame)\n\nReferences:\nImage 1: location entrance angle\nImage 2: wide courtyard reference\nUse these as style and composition anchors: match the illustration style, palette, line treatment, camera angle, figure-to-set scale, and architectural depth of the references. Preserve face identity, body proportions, outfit, brand colors, lighting setup, framing. Treat the references as style guides only; stay strictly within the architectural depth and perspective already shown there. Output ONE single full-frame image filling the entire frame edge-to-edge as one unified continuous picture."
+    },
+    {
+      "caseName": "image_sloplaeden_nano_banana",
+      "builder": "image",
+      "modelId": "google:nano-banana",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "1. MOTIV: a stunning cinematic 8k breathtaking hero shot, 50mm f/2.8 ISO 800 24fps. THIS IS THE FIRST FRAME of the action.",
+        "setting": "an epic gorgeous vista",
+        "composition": "",
+        "camera": "professional award-winning camera move, very fast dolly",
+        "style": "ultra-detailed masterpiece style",
+        "light": "beautiful golden hour light",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a hero shot, normal lens feel shallow depth of field. an vista. camera move, very dolly. golden hour light. Style: style."
+    },
+    {
+      "caseName": "image_sloplaeden_gpt_image_2",
+      "builder": "image",
+      "modelId": "openai:gpt-image-2",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "1. MOTIV: a stunning cinematic 8k breathtaking hero shot, 50mm f/2.8 ISO 800 24fps. THIS IS THE FIRST FRAME of the action.",
+        "setting": "an epic gorgeous vista",
+        "composition": "",
+        "camera": "professional award-winning camera move, very fast dolly",
+        "style": "ultra-detailed masterpiece style",
+        "light": "beautiful golden hour light",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "Scene:\nan vista\n\nSubject:\na hero shot, normal lens feel shallow depth of field\n\nImportant details:\ncamera move, very dolly golden hour light Style: style\n\nUse case:\nvideo keyframe (end-position anchor frame)"
+    },
+    {
+      "caseName": "image_negation_nano_banana",
+      "builder": "image",
+      "modelId": "google:nano-banana",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "an empty roadside diner",
+        "setting": "dusty highway, no cars, no people",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [
+          "no text",
+          "no watermarks",
+          "no logos",
+          "no text"
+        ],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "an empty roadside diner. dusty highway, empty road surface, empty environment, only architecture visible. Composition rules: clean untyped surfaces, clean unmarked image, unbranded surfaces."
+    },
+    {
+      "caseName": "image_negation_imagen",
+      "builder": "image",
+      "modelId": "google:imagen-4-ultra",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "an empty roadside diner",
+        "setting": "dusty highway, no cars, no people",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [
+          "no text",
+          "no watermarks",
+          "no logos",
+          "no text"
+        ],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "an empty roadside diner. dusty highway, empty road surface, empty environment, only architecture visible. clean untyped surfaces, clean unmarked image, unbranded surfaces, clean untyped surfaces. Output a single full-frame image filling the entire frame edge-to-edge as one unified continuous picture."
+    },
+    {
+      "caseName": "image_directives_nano_banana",
+      "builder": "image",
+      "modelId": "google:nano-banana",
+      "sheetKind": "character",
+      "payload": {
+        "subject": "Mara stands at the rooftop edge",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": null,
+        "aspectRatio": "",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": [
+          "Muted teal-and-rust palette",
+          "Heavy 16mm grain",
+          "Mara wears her faded red canvas jacket",
+          "The dagger stays sheathed",
+          "Slow, deliberate movement"
+        ]
+      },
+      "expectedPrompt": "Mara stands at the rooftop edge. Muted teal-and-rust palette. Heavy 16mm grain. Mara wears her faded red canvas jacket. The dagger stays sheathed. Slow, deliberate movement."
+    },
+    {
+      "caseName": "video_t2v_seedance",
+      "builder": "video",
+      "modelId": "runway:seedance-2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": null,
+      "payload": {
+        "subject": "a woman in a red coat walks briskly across a plaza",
+        "setting": "a rain-slicked city plaza at dusk",
+        "composition": "medium-wide shot, subject slightly left of center",
+        "camera": "slow dolly-back following the subject",
+        "style": "grounded live-action look",
+        "light": "soft overcast daylight with wet reflections",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 6.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a woman in a red coat walks briskly across a plaza. medium-wide shot, subject slightly left of center. a rain-slicked city plaza at dusk. slow dolly-back following the subject. soft overcast daylight with wet reflections. grounded live-action look. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout; the character's facial features remain identical to the references; body proportions stay identical to the references. Natural lifelike tempo throughout, with subtle living motion across the whole clip. Single continuous shot as one continuous take. Total: 6s / 16:9."
+    },
+    {
+      "caseName": "video_t2v_seedance_direct",
+      "builder": "seedance_2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": null,
+      "payload": {
+        "subject": "a woman in a red coat walks briskly across a plaza",
+        "setting": "a rain-slicked city plaza at dusk",
+        "composition": "medium-wide shot, subject slightly left of center",
+        "camera": "slow dolly-back following the subject",
+        "style": "grounded live-action look",
+        "light": "soft overcast daylight with wet reflections",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 6.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a woman in a red coat walks briskly across a plaza. medium-wide shot, subject slightly left of center. a rain-slicked city plaza at dusk. slow dolly-back following the subject. soft overcast daylight with wet reflections. grounded live-action look. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout; the character's facial features remain identical to the references; body proportions stay identical to the references. Natural lifelike tempo throughout, with subtle living motion across the whole clip. Single continuous shot as one continuous take. Total: 6s / 16:9."
+    },
+    {
+      "caseName": "video_t2v_multishot_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": null,
+      "payload": {
+        "subject": "a cyclist coasts down a hill then brakes at the corner",
+        "setting": "a quiet suburban street",
+        "composition": "",
+        "camera": "locked-off wide, then a short push-in",
+        "style": "",
+        "light": "late afternoon sun",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 8.0,
+        "aspectRatio": "9:16",
+        "nShots": 2,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a cyclist coasts down a hill then brakes at the corner. a quiet suburban street. locked-off wide, then a short push-in. late afternoon sun. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout. Natural lifelike tempo throughout, with subtle living motion across the whole clip. 2-shot sequence as one continuous take. Total: 8s / 9:16."
+    },
+    {
+      "caseName": "video_i2v_start_only_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": true,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": null,
+      "payload": {
+        "subject": "the figure turns to look over their shoulder",
+        "setting": "",
+        "composition": "",
+        "camera": "slow push-in",
+        "style": "",
+        "light": "warm practical lamplight",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 5.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "@Image1 is the first frame at t=0. the figure turns to look over their shoulder. slow push-in. warm practical lamplight. Preserve composition, colors, identity, and lighting from the anchor frame(s). Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout; the character's facial features remain identical to the references; body proportions stay identical to the references. Natural lifelike tempo throughout, with subtle living motion across the whole clip. Total: 5s, 16:9."
+    },
+    {
+      "caseName": "video_i2v_start_end_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": true,
+      "hasEndImage": true,
+      "isPacingArm": false,
+      "referenceTags": null,
+      "payload": {
+        "subject": "the door swings from closed to fully open",
+        "setting": "",
+        "composition": "",
+        "camera": "static locked-off",
+        "style": "",
+        "light": "cool morning daylight",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 4.0,
+        "aspectRatio": "1:1",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "@Image1 is the first frame at t=0, @Image2 is the final frame at t=duration. the door swings from closed to fully open. static locked-off. cool morning daylight. Preserve composition, colors, identity, and lighting from the anchor frame(s). Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout. Total: 4s, 1:1."
+    },
+    {
+      "caseName": "video_reference_tagged_subject_seedance",
+      "builder": "video",
+      "modelId": "runway:seedance-2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": [
+        {
+          "role": "character",
+          "bibleId": "hero",
+          "hint": "the hero"
+        }
+      ],
+      "payload": {
+        "subject": "@Image1 waves while the camera holds",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "soft overcast daylight",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 6.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "@Image1 is the hero. @Image1 waves while the camera holds. soft overcast daylight. Preserve identity, design, colors, and proportions from the referenced images throughout the shot. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout. Natural lifelike tempo throughout, with subtle living motion across the whole clip. Total: 6s, 16:9."
+    },
+    {
+      "caseName": "video_reference_untagged_multiref_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": [
+        {
+          "role": "character",
+          "bibleId": "ai_cat",
+          "hint": "AI Cat"
+        },
+        {
+          "role": "character",
+          "bibleId": "claude_mouse",
+          "hint": "Claude Mouse"
+        },
+        {
+          "role": "location",
+          "bibleId": "kitchen",
+          "hint": "the studio kitchen"
+        }
+      ],
+      "payload": {
+        "subject": "the mouse waves while the cat watches from the doorway",
+        "setting": "a cozy studio kitchen",
+        "composition": "",
+        "camera": "",
+        "style": "Studio Ghibli soft illustration",
+        "light": "warm morning light",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 6.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "@Image1 is AI Cat. @Image2 is Claude Mouse. @Image3 shows the studio kitchen. @Image1 the mouse waves while the cat watches from the doorway. a cozy studio kitchen. warm morning light. Studio Ghibli soft illustration. @Image1, @Image2, @Image3 stay on-model and visually consistent with their reference images throughout the shot. Preserve identity, design, colors, and proportions from the referenced images throughout the shot. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout; flat even cartoon lighting; each character casts only a small short soft shadow pooled at their feet; background shadows stay subtle and consistent with the flat cel style. Natural lifelike tempo throughout, with subtle living motion across the whole clip. Total: 6s, 16:9."
+    },
+    {
+      "caseName": "video_reference_no_character_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": [
+        {
+          "role": "location",
+          "bibleId": "office",
+          "hint": "the empty office"
+        },
+        {
+          "role": "prop",
+          "bibleId": "desk",
+          "hint": "the oak desk"
+        }
+      ],
+      "payload": {
+        "subject": "wind stirs the curtains and papers scatter",
+        "setting": "",
+        "composition": "",
+        "camera": "",
+        "style": "",
+        "light": "",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 5.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "@Image1 shows the empty office. @Image2 is the oak desk. wind stirs the curtains and papers scatter. @Image1, @Image2 stay on-model and visually consistent with their reference images throughout the shot. Preserve identity, design, colors, and proportions from the referenced images throughout the shot. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout. Natural lifelike tempo throughout, with subtle living motion across the whole clip. Total: 5s, 16:9."
+    },
+    {
+      "caseName": "video_cartoon_shadow_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": null,
+      "payload": {
+        "subject": "two characters stand side by side in the desert",
+        "setting": "a wide desert at sunset",
+        "composition": "",
+        "camera": "slow pan across the dunes",
+        "style": "flat 2D Hanna-Barbera animation style",
+        "light": "warm low sun",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 6.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "two characters stand side by side in the desert. a wide desert at sunset. slow pan across the dunes. warm low sun. flat 2D Hanna-Barbera animation style. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout; the character's facial features remain identical to the references; body proportions stay identical to the references; flat even cartoon lighting; each character casts only a small short soft shadow pooled at their feet; background shadows stay subtle and consistent with the flat cel style. Natural lifelike tempo throughout, with subtle living motion across the whole clip. Single continuous shot as one continuous take. Total: 6s / 16:9."
+    },
+    {
+      "caseName": "video_character_constraints_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": null,
+      "payload": {
+        "subject": "a dancer spins across the stage",
+        "setting": "",
+        "composition": "",
+        "camera": "orbiting move around the dancer",
+        "style": "",
+        "light": "a single hard key light",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 5.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a dancer spins across the stage. orbiting move around the dancer. a single hard key light. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout; the character's facial features remain identical to the references; body proportions stay identical to the references. Natural lifelike tempo throughout, with subtle living motion across the whole clip. Single continuous shot as one continuous take. Total: 5s / 16:9."
+    },
+    {
+      "caseName": "video_pacing_arm_idle_bracketing_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": true,
+      "referenceTags": null,
+      "payload": {
+        "subject": "a barista slides a cup across the counter",
+        "setting": "a small cafe",
+        "composition": "",
+        "camera": "static medium shot",
+        "style": "",
+        "light": "warm interior light",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 7.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a barista slides a cup across the counter. a small cafe. static medium shot. warm interior light. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout. Pace this ~7s shot naturally. Open with ~1s of settled idle (subtle breathing, small weight shift), perform the described action at a natural lifelike tempo, then hold a relaxed idle pose until the end. Use the idle holds before and after as the time-fill so the action itself stays at natural lifelike speed throughout. Keep subtle living motion across the whole clip. Single continuous shot as one continuous take. Total: 7s / 16:9."
+    },
+    {
+      "caseName": "video_short_no_pacing_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": null,
+      "payload": {
+        "subject": "a hand flicks a light switch",
+        "setting": "",
+        "composition": "",
+        "camera": "tight static shot",
+        "style": "",
+        "light": "fluorescent overhead light",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 3.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": []
+      },
+      "expectedPrompt": "a hand flicks a light switch. tight static shot. fluorescent overhead light. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout. Single continuous shot as one continuous take. Total: 3s / 16:9."
+    },
+    {
+      "caseName": "video_directives_seedance",
+      "builder": "seedance_2",
+      "hasStartImage": false,
+      "hasEndImage": false,
+      "isPacingArm": false,
+      "referenceTags": null,
+      "payload": {
+        "subject": "Mara scans the horizon from the rooftop",
+        "setting": "",
+        "composition": "",
+        "camera": "slow pan",
+        "style": "",
+        "light": "overcast daylight",
+        "negatives": [],
+        "sheetView": "",
+        "isStartFrame": false,
+        "durationS": 6.0,
+        "aspectRatio": "16:9",
+        "nShots": 1,
+        "multiRefHints": [],
+        "directives": [
+          "Heavy 16mm grain",
+          "Mara wears her faded red canvas jacket"
+        ]
+      },
+      "expectedPrompt": "Mara scans the horizon from the rooftop. slow pan. overcast daylight. Constraints: smooth stable framing with consistent motion; clean correct anatomy, naturally articulated limbs, exactly the right number of limbs; consistent lighting and color across all frames; the character's design stays identical to the references throughout. Natural lifelike tempo throughout, with subtle living motion across the whole clip. Single continuous shot as one continuous take. Total: 6s / 16:9. Heavy 16mm grain. Mara wears her faded red canvas jacket."
+    }
+  ]
+}

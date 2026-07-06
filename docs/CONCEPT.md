@@ -30,15 +30,25 @@ NexGen.
   die Generierung ist. Diese Maschinerie ist **CORE** (siehe §4.1), kein Plugin-Detail.
 - **Cockpit + Quality-Engine getrennt.** NexGen ist Cockpit, Schnitt-/Render-Surface und
   Orchestrierungs-Host. Die wiederverwendbare Produktions-Substanz (Konsistenz-Disziplin,
-  Render-Dispatch, Cost-Guard, Frame-Audit) lebt in der **Generic Production Engine** (Python).
-- **MCP = Transport, Plugin = Distribution.** Deterministische CLIs → MCP-`tools`; Disziplin →
-  MCP-`resources`; Phasen/Commands → MCP-`prompts`. Ein Plugin (`plugin.json` + Skills + MCP) ist
-  die installier-/aktivierbare Einheit **pro Videoformat**.
+  Prompt-Compile, Render-Manifest, Cost-Guard, Frame-Audit) lebt in der **Generic Production Engine**
+  (`NexGenEngine`, Swift-Library, in den App-Binary kompiliert).
+- **MCP = Transport, Pack = Spezialisierung.** Deterministische Engine-Operationen → `nexgen`-MCP-
+  `tools`; Disziplin/Wissen → gebündelte Ressourcen der Engine. Ein **nativer Format-Pack** (Swift-
+  Modul, konform zum `Pack`-Protokoll) ist die aktivierbare Einheit **pro Videoformat**.
 - **Claude besitzt den Agent-Loop.** Egal ob über API-Key (in-app) oder `claude -p` (CLI):
   Claude führt seine Tool-Calls selbst aus und treibt die Timeline über NexGens **lokalen
   MCP-Server**. NexGen baut keinen eigenen Agent-Loop für die eingebettete Runtime nach.
 - **BYO-Keys, lokal, kein Login.** Keine Accounts, keine serverseitige Generierung, keine
   Telemetrie-Pflicht. Du bringst deine eigenen Provider- und Claude-Keys mit.
+- **Hybride Produktion ist erstklassig.** NexGenVideo ist ein vollwertiges NLE. Der generische
+  Workflow **und jeder Pack** (musicvideo, später weitere) sind ohne KI-Generierung, mit ihr, oder
+  gemischt nutzbar — **kein Workflow setzt Generierung voraus.** Jeder Shot trägt einen `source_mode`
+  aus drei Werten: `generated` (Provider rendert), `live_action` (der User dreht selbst) und
+  `ai_enhanced` (importiertes Realmaterial läuft durch einen Video-to-Video-Pass, der bestehende
+  „AI-Edit"-Pfad). Für `live_action`-Shots liefert der Assistent klare Regie-Specs (Framing, Kamera,
+  Licht, Blocking, Stil-Referenzen), die der User dreht und professionell schneidet; die Render-Phase
+  überspringt sie und sie kosten 0. `ai_enhanced`-Shots werden wie generierte abgerechnet und über
+  den Edit-Pfad geführt.
 
 ## 3. Abgrenzung zum Upstream (Autonomie)
 
@@ -62,34 +72,36 @@ gehostete Generierung will, nutzt das Original-Produkt — nicht diesen Fork.
 
 1. **NexGen Host (Swift)** — Editor, Timeline, UI, **lokaler MCP-Server**, eingebettete
    `claude -p`-Runtime *und/oder* In-App-Agent (Anthropic-Key). Verwaltet **Provider-API-Keys**
-   (macOS-Keychain). Lädt **immer** den Generic Core + **optional aktivierte** Format-Packs.
-   Liefert die **bidirektionale Review-UI**.
-2. **Generic Production Engine (Python, ex-`musicvideo`)** — die wiederverwendbare Substanz:
-   Asset-Graph-Bible, Konsistenz/Reference-Engine, Sanity/Linter-Framework,
-   **Render-Dispatch + Cost-Guard + Provider-Driver**, State-Aggregator, MCP-Spine,
-   Projekt-Layout/Paths, scene3d/Pano, Frame-Compliance. **Ruft die Provider** (mit den vom Host
-   verwalteten Keys). Lebt im **Monorepo** (Unterordner `engine/`), wird mit der App gebündelt und vom
-   eingebetteten Claude per `--plugin-dir` geladen.
-3. **Format-Packs (dünn)** — die **einzige** Daseinsberechtigung eines Packs ist
-   **kategoriespezifisches Wissen**, das *nicht* jedes Videoformat braucht. Ein Pack begleitet den
-   User in NexGen durch den Prozess seiner Kategorie (Konzept → final geschnittenes Video), nutzt für
-   Konsistenz/Bible/Kamera/Render/Effekte aber **den Core**. Erstes Pack: `musicvideo`; geplant:
-   `explainer`, `fiction`/`shortmovie`, `trailer`, `vacation`, …
+   (macOS-Keychain). Führt die Provider-Calls aus. Lädt **immer** den Generic Core + **optional
+   aktivierte** Format-Packs. Liefert die **bidirektionale Review-UI**.
+2. **Generic Production Engine (`NexGenEngine`, Swift-Library)** — die wiederverwendbare Substanz:
+   Asset-Graph-Bible, Konsistenz/Reference-Engine, Sanity/Linter-Framework, Prompt-Compile-Pipeline,
+   **Render-Manifest + Cost-Guard**, State-Aggregator, Projekt-Layout/Paths, Frame-Compliance. In den
+   App-Binary **hineinkompiliert** — kein Python, kein venv, kein Subprozess. Die Engine **komponiert
+   Prompts + erzwingt die Disziplin**; der Host führt die Provider-Calls aus (mit den Keychain-Keys).
+   Ihre Tools sind erstklassige `nexgen`-MCP-Tools (M7).
+3. **Format-Packs (dünn, nativ)** — die **einzige** Daseinsberechtigung eines Packs ist
+   **kategoriespezifisches Wissen**, das *nicht* jedes Videoformat braucht. Ein Pack ist ein
+   **Swift-Modul** in `NexGenEngine` (konform zum `Pack`-Protokoll), das seine Checks/Duration-Policy/
+   UI-Contract/Projekt-Dirs in die Engine **registriert** und sein Wissen (Pattern-Libraries,
+   Phasen-Dokus) als gebündelte Ressourcen mitbringt. Für Konsistenz/Bible/Kamera/Render/Effekte nutzt
+   es **den Core**. Erstes Pack: `musicvideo`; geplant: `explainer`, `fiction`/`shortmovie`, `trailer`,
+   `vacation`, …
 
-**Ein Repo, ein Produkt (Monorepo).** Alle drei Schichten leben in `nexgen-video` — *kein* eigenes
-Core-Repo, *kein* Submodul:
+**Ein Repo, ein Produkt, eine Sprache (Monorepo).** Alle drei Schichten leben in `nexgen-video` als
+Swift — *kein* eigenes Core-Repo, *kein* Submodul, **kein Python mehr**:
 
 ```
 nexgen-video/
-  Sources/NexGenVideo/   ← Swift-Host (App)
-  engine/               ← Generic Production Engine (Python, generisch)
-  plugins/musicvideo/   ← erstes Format-Plugin (dünn, enthält einen Pack); weitere daneben
+  Sources/NexGenVideo/            ← Swift-Host (App)
+  Sources/NexGenEngine/           ← Generic Production Engine (Swift-Library)
+  Sources/NexGenEngine/Packs/     ← native Format-Packs (musicvideo; weitere daneben)
 ```
 
-Das heutige separate `musicvideo`-Repo „geht auf" in `engine/` (generische Teile) + `plugins/musicvideo/`
-(Musik-Spezifika). Begründung: ein autonomes Produkt = ein Repo, eine Versionierung, kein
-Submodul-Schmerz. Ein eigenes `nexgen-core`-Repo bräuchte es nur, wenn die Engine von *Fremd-Hosts*
-mitgenutzt würde — bei „NexGen ist *der* Host" trifft das nicht zu.
+Der ehemalige `engine/`+`plugins/`-Python-Baum ist in `NexGenEngine` (+ `Packs/`) portiert und in M9
+(Issue #119) entfernt. Begründung: ein autonomes Produkt = ein Repo, eine Sprache, eine Versionierung,
+keine Runtime-Bootstrap-Reibung. Ein eigenes `nexgen-core`-Repo bräuchte es nur, wenn die Engine von
+*Fremd-Hosts* mitgenutzt würde — bei „NexGen ist *der* Host" trifft das nicht zu.
 
 ### 4.1 Core ↔ Plugin — die verbindliche Grenze
 
@@ -129,10 +141,11 @@ NexGen bindet **Generator-Plattformen direkt ein** — der User bringt die Zugä
 **(a) REST/API-Provider** — z. B. **Runway, fal.ai, OpenArt, Higgsfield, ElevenLabs**.
 - **API-Keys** pro Provider in den Settings (Sektion „Providers"), in der **Keychain** gespeichert,
   nie im Repo/Klartext. Der Host reicht sie an die Engine.
-- **Modell-Katalog** kommt aus der **Provider-Registry der Engine** (nicht aus Convex), in der UI
+- **Modell-Katalog** kommt aus der **Provider-Registry des Hosts** (nicht aus Convex), in der UI
   pro Modalität auswählbar/aktivierbar.
-- Die Engine ruft die Provider (Render-Dispatch, Cost-Guard) und exponiert Generate-/Render-Ops als
-  **MCP-Tools** → sowohl `claude -p` als auch der In-App-Agent rufen sie auf.
+- Der **Host** ruft die Provider (`FalModelRegistry`/`MarbleClient` etc., Cost-Guard) und exponiert
+  Generate-/Render-Ops als **`nexgen`-MCP-Tools** → sowohl `claude -p` als auch der In-App-Agent rufen
+  sie auf. Die Engine komponiert dazu die Prompts und erzwingt die Sanity-/Cost-Disziplin.
 
 **(b) MCP-native Tools** — Apps, die selbst einen MCP-Server mitbringen. Hier braucht es **keinen
 Key/Driver**: NexGens eingebettete Claude-Runtime hängt sie als **zusätzlichen MCP-Server** in die
@@ -209,10 +222,12 @@ Claude steuert die eingebundenen Modelle und orchestriert das Projekt — **nach
 Die beiden sind **sich gegenseitig ausschließende** Backends desselben In-App-Agenten (ist die
 Runtime an, wird der API-Key-Pfad übersprungen). **Keine Claude-Desktop-App nötig.** Die
 eingebettete Runtime liegt unter `Sources/NexGenVideo/Agent/Runtime/` (Process, Event-Mapper,
-Locator, Launch); sie lädt Generic Core + aktiviertes Pack via `--plugin-dir`, spricht NexGens
-MCP (`127.0.0.1:19789/mcp`) hermetisch (`--strict-mcp-config`), Auth über Abo (`--setting-sources
-project,local`, `--permission-mode bypassPermissions` headless). Verifizierter CLI-Vertrag:
-`claude` v2.1.191.
+Locator, Launch). Sie **lädt kein Python** — Engine + Format-Packs sind nativ in den App-Binary
+kompiliert und über die `nexgen`-MCP-Tools erreichbar. Sie spricht NexGens MCP
+(`127.0.0.1:19789/mcp`) hermetisch (`--strict-mcp-config`), Auth über Abo (`--setting-sources
+project,local`, `--permission-mode bypassPermissions` headless). `--plugin-dir` bleibt nur für
+**externe** Claude-Code-Plugins (Dev-Override); erstklassige Format-Packs brauchen es nicht.
+Verifizierter CLI-Vertrag: `claude` v2.1.191.
 
 ## 7. Zusammenarbeitsmodell (bidirektional, Human-in-the-loop)
 
@@ -233,9 +248,11 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 
 ## 9. Offene Entscheidungen
 
-- ✅ **Entschieden 2026-06-28 — Monorepo:** Generic Core + erste Packs leben in `nexgen-video`
-  (`engine/`, `plugins/<plugin>/`), *kein* eigenes Repo, *kein* Submodul. Die alte „eigenes
-  `nexgen-core`-Repo"-Tendenz war Über-Strukturierung und ist verworfen (ein autonomes Produkt = ein Repo).
+- ✅ **Entschieden 2026-06-28 — Monorepo:** Generic Core + erste Packs leben in `nexgen-video`,
+  *kein* eigenes Repo, *kein* Submodul. Die alte „eigenes `nexgen-core`-Repo"-Tendenz war
+  Über-Strukturierung und ist verworfen (ein autonomes Produkt = ein Repo).
+- ✅ **Umgesetzt (M0–M9) — nativ statt Python:** die Engine + Packs sind Swift (`Sources/NexGenEngine/`,
+  `…/Packs/`) statt Python (`engine/`+`plugins/`). Ein Produkt = eine Sprache; kein Runtime-Bootstrap.
 - Mapping `.palmier`-Projektort ↔ Engine-Projektordner (Layout v2 `_studio/`) — Detaildesign.
 - `io.palmier.project`-UTI behalten oder migrieren.
 
@@ -246,14 +263,11 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
    `io.palmier.*`-Reste schrittweise).
 2. **Provider-Layer:** API-Key-Verwaltung (Keychain) für REST-Provider **+ Anbindung MCP-nativer
    Tools (z. B. ACE Studio 2)** + Generate-Tools über MCP + provider-gespeister Modell-Katalog in der UI.
-3. **Generic-Core-Extraktion** aus `musicvideo` (MOVE-Tier 1:1 verschieben, dann MIXED hinter
-   Interfaces; bestehende Tests als Regressionsnetz) → `engine/` im Monorepo; Multi-Pack-Wiring (Core immer
-   + aktiviertes Pack) + Packs-UI.
+3. **Generic-Core als native Swift-Library** (`NexGenEngine`): die Substanz aus `musicvideo` erst nach
+   Python `engine/`+`plugins/` extrahiert, dann (M0–M8) 1:1 nach Swift portiert und in M9 vom Python
+   befreit; Multi-Pack-Wiring (Core immer + aktiviertes Pack) über die native Pack-Registry + Packs-UI.
 4. **`musicvideo` als In-App-Workflow-Pack** (Konzept → final geschnittenes Video).
 5. **Bidirektionale Review-UX** (Preview/Approve/Comment/Trim, Frame-Gates).
-
-Disziplin: erst die Stufe-B-Runtime an einem echten Projekt beweisen, dann die große
-Python-Extraktion — nicht umgekehrt.
 
 ## 11. Build-/CI-Realität (verbindlich)
 
@@ -282,13 +296,20 @@ rollendes signiertes Prerelease als öffentlicher Direktlink. PRs immer `--repo 
   equirektanguläre Panorama (PNG)**, gemappt auf den `.image`-Asset-Typ. Mesh (GLB), Splats (SPZ) und die
   POV/Restyle-Pipeline (numpy/py360convert aus dem alten `scene3d`-Modul) bewusst **out of scope**.
 
+- **Native Generic Engine (`NexGenEngine`, Swift):** die Python-Engine ist vollständig nach Swift
+  portiert (M0–M8) und in den App-Binary kompiliert — alle 12 Cockpit-Reads nativ, 20 Workflow-Tools
+  als erstklassige `nexgen`-MCP-Tools, `musicvideo` als natives `Pack`-Modul (Checks/Duration-Policy/
+  UI-Contract + gebündelte Pattern-/Phasen-Ressourcen). **M9 (Issue #119): der gesamte Python-Baum
+  (`engine/`, `plugins/`), venv/uv-Bootstrap und das On-Disk-Plugin-Laden sind entfernt** — die App
+  ist einsprachig, mit nativer Pack-Registry. Golden-Parität gegen die eingefrorenen Python-Oracle-
+  Fixtures (Tests/NexGenEngineTests/Goldens).
+
 **Offen / nächste Schritte:**
 - **Laufzeit gegen die echte fal-API noch ungetestet** — bisher nur CI-Compile. Erst-Test nötig (txt2img → txt2video → TTS → i2v).
-- **Marble blind implementiert** (kein Test-Key) — Request/Response nach `scene3d/marble.py`. Erst-Test nötig.
+- **Marble blind implementiert** (kein Test-Key) — Erst-Test nötig.
 - Mesh-/Splat-Import + POV-Extraction/Restyle für Marble (3D-Konsistenz-Workflow) als Folge-Arbeit.
 - Weitere Provider (Runway, OpenArt, Higgsfield, ElevenLabs-direkt) als eigene Clients.
-- Generic Engine + Format-Plugins (Monorepo `engine/` + `plugins/`, §4/§9/§10) — noch nicht angelegt.
-- Interner Modulname/Target auf `NexGenVideo` umbenannt; Projekt-Extension `.ngv` + UTI `de.h5ventures.nexgenvideo.project`.
+- Weitere native Format-Packs (`explainer`, `fiction`, …) auf der `Pack`-Schnittstelle.
 
 ---
 

@@ -176,6 +176,7 @@ struct InspectorView: View {
                     if shot.durationS > 0 {
                         plainMetadataRow(label: "Duration", value: String(format: "%.1fs", shot.durationS))
                     }
+                    shotSourceModeRow(shot)
                 }
                 if !shot.summaryText.isEmpty {
                     metadataSection(title: "Description") {
@@ -205,6 +206,46 @@ struct InspectorView: View {
             .padding(.vertical, AppTheme.Spacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// The shot's source mode, changed via a direct menu — a structured native write (load, mutate,
+    /// save, refresh) through `setShotSourceMode`, the direct-manipulation default
+    /// (docs/UI_UX_CONCEPT.md §2). Generated shots are provider-rendered; live shots are shot to a
+    /// directorial spec; enhanced shots run the video-to-video edit path.
+    private func shotSourceModeRow(_ shot: ShotSummary) -> some View {
+        let current = shot.sourceModeTag
+        return HStack(spacing: AppTheme.Spacing.sm) {
+            Text("Source")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .fixedSize()
+            Spacer()
+            Menu {
+                ForEach(SourceModeTag.allCases) { tag in
+                    Button {
+                        Task { await editor.setShotSourceMode(shotId: shot.id, to: tag.engineMode) }
+                    } label: {
+                        if tag == current {
+                            Label(tag.label, systemImage: "checkmark")
+                        } else {
+                            Label(tag.label, systemImage: tag.symbol)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: AppTheme.Spacing.xxs) {
+                    Image(systemName: current.symbol)
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                    Text(current.label)
+                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: AppTheme.FontSize.micro))
+                }
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+        }
+        .frame(height: AppTheme.IconSize.md)
     }
 
     /// Shot↔entity provenance: which shots use this entity (click → inspect the shot).

@@ -153,6 +153,34 @@ enum AgentInstructions {
           title cards, text overlays, or screen recordings. Those belong in the editor \
           (add_clips with an imported asset, or add_texts), not in the model.
 
+        # Production pipeline (format-pack workflows)
+        - Format packs (e.g. musicvideo) run as a gated production pipeline. Its tools are first-class \
+          tools on THIS server — get_project_state, list_phases, get_ui_contract, show_artifact, \
+          approve_gate / set_gate_state / rewind, run_sanity, get_bible, the Intent Ledger \
+          (get_ledger / set_ledger_attribute / lock_ledger_attribute / remove_ledger_attribute), \
+          resolve_model, estimate_cost, and the render manifest (next_render_shot / record_render / \
+          get_render_manifest). There is no separate engine server — call them like any other tool.
+        - Every pipeline tool takes an optional project_dir (the project's _studio data root). Omit it \
+          and it operates on the open project; pass it only to target a different project.
+        - Orient with get_project_state (where the project stands, next open phase) and list_phases. \
+          Before asking the user to approve a phase, call show_artifact to surface that gate's Markdown \
+          artifact for review, then approve_gate (or set_gate_state for a multi-state verdict). \
+          rewind resets a phase and everything after it when the user wants to redo earlier work.
+        - The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; \
+          run_phase returns runner: null with a note for those. It runs only pack-registered compute \
+          phases, which aren't wired in yet — don't rely on it for planning work.
+        - The Intent Ledger holds the director's durable, per-object decisions; locked attributes are \
+          hard facts generation must honor (compile_prompt already merges them). resolve_model tells \
+          you which model tier a task class gets — only escalate after a concrete gate failure.
+        - Source modes (hybrid production): every shot carries a `source_mode` — `generated` \
+          (default; a provider renders it), `live_action` (the user shoots it), or `ai_enhanced` \
+          (imported footage run through a video-to-video pass). Never assume generation. For \
+          live_action shots, produce clear directorial shooting specs (framing, camera, light, \
+          blocking, style references) the user shoots and cuts — not a generation prompt; \
+          next_render_shot skips them and they cost 0. For ai_enhanced shots the user imports the \
+          source footage and you route it through the edit path (video-to-video); next_render_shot \
+          returns them like generated shots. Ask the user early which shots are live vs generated.
+
         # Feedback
         - If you can't do what the user asked because a tool or capability is missing, broken, or \
           returns a clearly wrong result — or the user is plainly hitting a limitation — call \

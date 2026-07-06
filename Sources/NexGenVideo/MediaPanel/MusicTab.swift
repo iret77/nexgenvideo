@@ -125,7 +125,13 @@ struct MusicTab: View {
                     AgentDialogCard(
                         dialog: dialog,
                         preselected: dialogPreselected,
-                        onSubmit: { result in runGeneration(from: result) },
+                        // Route through the ONE shared handler (audit #3). It dispatches on the
+                        // dialog's `.generationIntent` purpose to the intent sink installed below.
+                        onSubmit: { result in
+                            genDialog = nil
+                            dialogPreselected = [:]
+                            editor.agentService.submitDialog(dialog, result: result)
+                        },
                         onCancel: { genDialog = nil; dialogPreselected = [:] }
                     )
                     .padding(.bottom, AppTheme.Spacing.sm)
@@ -336,6 +342,7 @@ struct MusicTab: View {
     /// never canned prose handed to the agent.
     private func openMoodDialog(preselecting moodId: String) {
         guard let model else { return }
+        installGenerationSink(model: model)
         genDialog = Self.makeMusicDialog(model: model)
         dialogPreselected = ["mood": [moodId]]
     }
@@ -346,41 +353,24 @@ struct MusicTab: View {
         // Text mode with no direction → enter the generative flow: shape the music with the dialog
         // instead of firing a silent, under-specified render.
         if isTextMode, trimmedPrompt.isEmpty {
+            installGenerationSink(model: model)
             genDialog = Self.makeMusicDialog(model: model)
             dialogPreselected = [:]
             return
         }
-        compileAndGenerate(intent: trimmedPrompt.isEmpty ? nil : trimmedPrompt, model: model)
+        performGenerate(intent: trimmedPrompt.isEmpty ? nil : trimmedPrompt, model: model)
     }
 
-    /// Deterministic prompt gate (#100), then submit. Panel input is intent, never a raw model
-    /// prompt: locked ledger directives fold in and model limits are enforced before any provider.
-    private func compileAndGenerate(intent: String?, model: AudioModelConfig) {
-        guard let intent else { performGenerate(compiledPrompt: nil); return }
-        Task { @MainActor in
-            do {
-                let compiled = try await PromptCompiler.compile(intent: intent, modelId: model.id, editor: editor)
-                performGenerate(compiledPrompt: compiled.text)
-            } catch let toolError as ToolError {
-                banner = .init(text: toolError.message, kind: .error)
-            } catch {
-                banner = .init(text: error.localizedDescription, kind: .error)
-            }
+    /// Install the shared generation-dialog sink for the current model: the ONE handler on
+    /// AgentService composes the dialog answer into an intent and calls back here, which runs the
+    /// unified controller. Set when a shaping dialog opens so it captures the current model.
+    private func installGenerationSink(model: AudioModelConfig) {
+        editor.agentService.onGenerationDialogIntent = { intent in
+            let trimmed = intent.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            prompt = trimmed
+            performGenerate(intent: trimmed, model: model)
         }
-    }
-
-    /// The generative shaping dialog result (chips + free-text direction) becomes the intent, then
-    /// runs the same compile→generate path. This is the panel entering the generative process.
-    private func runGeneration(from result: AgentDialogResult) {
-        guard let model else { return }
-        genDialog = nil
-        dialogPreselected = [:]
-        var parts = result.labels("mood") + result.labels("character")
-        if !result.direction.isEmpty { parts.append(result.direction) }
-        let intent = parts.joined(separator: ", ")
-        guard !intent.isEmpty else { return }
-        prompt = intent
-        compileAndGenerate(intent: intent, model: model)
     }
 
     /// A music-shaping dialog seeded for the current model — mood (single) + character (multi) as
@@ -410,49 +400,59 @@ struct MusicTab: View {
                     .init(id: "dark", label: "Dark", symbol: "moon.fill"),
                     .init(id: "playful", label: "Playful", symbol: "sparkles"),
                 ], multiSelect: true)),
-            ]
+            ],
+            purpose: .generationIntent
         )
     }
 
-    private func performGenerate(compiledPrompt: String?) {
-        guard let model else { return }
-        let trimmed = compiledPrompt
-        let submission: MusicGenerationSubmission
+    /// Build a `GenerationRequest` and hand it to the shared controller (#114). Panel input is intent,
+    /// never a raw model prompt: the controller composes it (locked ledger directives merged, engine
+    /// linter gated) and drives `MusicGenerationSubmission` — which places the clip on the timeline.
+    /// Success/failure/phase flow back through the callbacks and render as the Banner + spinner.
+    private func performGenerate(intent: String?, model: AudioModelConfig) {
+        let source: EditorViewModel.TimelineSpan
+        let span: Double
         if isTextMode {
             let frameCount = max(1, Int(textDuration * Double(max(1, editor.timeline.fps))))
-            submission = MusicGenerationSubmission(
-                mode: .textToMusic, model: model, prompt: trimmed,
-                source: .init(startFrame: textPlacementFrame, frameCount: frameCount),
-                spanSeconds: textDuration, name: nil
-            )
+            source = .init(startFrame: textPlacementFrame, frameCount: frameCount)
+            span = textDuration
         } else {
-            guard let source else { return }
-            submission = MusicGenerationSubmission(
-                mode: .videoToMusic, model: model, prompt: trimmed,
-                source: source, spanSeconds: spanSeconds, name: nil
-            )
+            guard let videoSource = self.source else { return }
+            source = videoSource
+            span = spanSeconds
         }
+        let mode: MusicGenerationSubmission.Mode = isTextMode ? .textToMusic : .videoToMusic
 
         isGenerating = true
         banner = nil
         generatingLabel = (isTextMode ? MusicGenerationSubmission.Phase.generating : .exporting).label
-        Task {
-            do {
-                try await submission.run(
-                    service: editor.generationService,
-                    projectURL: editor.projectURL,
-                    editor: editor,
+
+        let request = GenerationRequest(
+            modality: .music, modelId: model.id, intent: intent ?? "",
+            durationSeconds: span,
+            placement: .timelineAt(startFrame: source.startFrame, spanSeconds: span, actionName: "Add Music"),
+            origin: .panel,
+            submission: .music(make: { compiled in
+                MusicGenerationSubmission(
+                    mode: mode, model: model, prompt: compiled.isEmpty ? nil : compiled,
+                    intent: intent, source: source, spanSeconds: span, name: nil)
+            }))
+        // Composition reads the ledger off the main thread (async); await the outcome and surface a
+        // compile/preflight failure (nothing was submitted) as the error Banner.
+        Task { @MainActor in
+            let outcome = await GenerationController.submit(
+                request, editor: editor,
+                musicProgress: .init(
                     onPhase: { generatingLabel = $0.label },
-                    onFinished: { isGenerating = false },
-                    onSucceeded: {
-                        // Audio lands on an audio track below the fold — say so, and it's already
-                        // selected on the timeline so the eye can find it.
-                        banner = .init(text: "Music added on an audio track — selected on the timeline.", kind: .success)
-                    }
-                )
-            } catch {
-                banner = .init(text: error.localizedDescription, kind: .error)
+                    onFinished: { isGenerating = false }),
+                onSuccess: { _ in
+                    // Audio lands on an audio track below the fold — say so, and it's already selected
+                    // on the timeline so the eye can find it.
+                    banner = .init(text: "Music added on an audio track — selected on the timeline.", kind: .success)
+                })
+            if case .failure(let error) = outcome {
                 isGenerating = false
+                banner = .init(text: error.errorDescription ?? "Generation failed.", kind: .error)
             }
         }
     }

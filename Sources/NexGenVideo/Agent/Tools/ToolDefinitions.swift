@@ -42,6 +42,27 @@ enum ToolName: String, CaseIterable, Sendable {
     case deleteMedia = "delete_media"
     case deleteFolder = "delete_folder"
     case sendFeedback = "send_feedback"
+    // Production-pipeline (engine) tools — native as of M7, formerly the Python `engine` MCP.
+    case getProjectState = "get_project_state"
+    case listPhases = "list_phases"
+    case getBible = "get_bible"
+    case runSanity = "run_sanity"
+    case initProject = "init_project"
+    case approveGate = "approve_gate"
+    case rewind = "rewind"
+    case estimateCost = "estimate_cost"
+    case showArtifact = "show_artifact"
+    case runPhase = "run_phase"
+    case nextRenderShot = "next_render_shot"
+    case recordRender = "record_render"
+    case getRenderManifest = "get_render_manifest"
+    case getLedger = "get_ledger"
+    case setLedgerAttribute = "set_ledger_attribute"
+    case lockLedgerAttribute = "lock_ledger_attribute"
+    case removeLedgerAttribute = "remove_ledger_attribute"
+    case resolveModel = "resolve_model"
+    case getUIContract = "get_ui_contract"
+    case setGateState = "set_gate_state"
 }
 
 struct AgentTool: @unchecked Sendable {
@@ -842,7 +863,223 @@ enum ToolDefinitions {
                 required: ["category", "summary"]
             )
         ),
+
+        // MARK: - Production pipeline (engine) tools
+        // Native as of M7. `project_dir` is the project's `_studio/` data root; omit it and the tool
+        // uses the open project. Arg names + return shapes match the former Python `engine` MCP.
+
+        AgentTool(
+            name: .getProjectState,
+            description: "Where a project stands: meta, gate/phase status, next open phase. Read-only. `project_dir` is the project's data root (the `_studio/` folder); omit to use the open project.",
+            inputSchema: projectDirSchema()
+        ),
+        AgentTool(
+            name: .listPhases,
+            description: "The production pipeline phases, in order (engine core + active pack).",
+            inputSchema: objectSchema()
+        ),
+        AgentTool(
+            name: .getBible,
+            description: "The asset-graph Bible (characters, ensembles, props, locations, look) — the consistency reference for generation — or null if none yet. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: projectDirSchema()
+        ),
+        AgentTool(
+            name: .runSanity,
+            description: "Run the full consistency audit for the project and return its findings.\n\nLoads the latest shotlist plus any brief/bible, runs every engine-core check AND every active-pack check, and returns `{project, findings:[{level, code, shot_id, message}]}`. If the project has no shotlist yet, returns `{\"error\": \"no shotlist\", ...}` instead of raising. Read-only. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: projectDirSchema()
+        ),
+        AgentTool(
+            name: .initProject,
+            description: "Scaffold a fresh project under `home_dir` and return `{data_root, project, created}`. WRITES.\n\nCreates the `_studio/` data root with the engine's format-neutral core subdirs PLUS the active pack's own subdirs (e.g. musicvideo adds audio/lyrics/analysis), and writes `project.yaml` (mode, budget) and `gates.yaml`. `mode` is one of beat/phrase/section/multicam. Fails if `home_dir` already holds a project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "home_dir": ["type": "string", "description": "Directory to scaffold the project under."],
+                    "name": ["type": "string", "description": "Project name."],
+                    "mode": ["type": "string", "description": "Cut mode: beat/phrase/section/multicam (default beat)."],
+                    "budget_eur": ["type": "number", "description": "Project budget in EUR (default 50)."],
+                ],
+                required: ["home_dir", "name"]
+            )
+        ),
+        AgentTool(
+            name: .approveGate,
+            description: "Approve a production gate so the next phase may run. WRITES.\n\nStamps `phase`'s gate approved (with optional `notes`) and returns the updated `{project, phase, approved, approved_at, approved_by, notes}`. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "phase": ["type": "string", "description": "The phase whose gate to approve."],
+                    "notes": ["type": "string", "description": "Optional approval notes."],
+                ],
+                required: ["phase"]
+            )
+        ),
+        AgentTool(
+            name: .rewind,
+            description: "Rewind the pipeline to `target_phase`. WRITES.\n\nResets `target_phase` and every following phase (in the merged core+pack phase order, so pack phases like `analysis` sit in the right place) to unapproved; artifacts are kept. Returns `{target, reset_phases}`. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "target_phase": ["type": "string", "description": "The phase to rewind to; it and all following phases reset."],
+                ],
+                required: ["target_phase"]
+            )
+        ),
+        AgentTool(
+            name: .estimateCost,
+            description: "The project's budget picture. Read-only.\n\nSums EUR already spent across the render ledger and compares against the project budget, returning `{project, budget_eur, spent_eur, remaining_eur, over_budget, next_phase}`. This is the spent/remaining view (not a forward per-shot estimate). `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: projectDirSchema()
+        ),
+        AgentTool(
+            name: .showArtifact,
+            description: "The Markdown for a gate's artifact, for user review before approval. Read-only.\n\nDispatches `gate` (brief/production_design/treatment/storyboard/bible/shotlist/analysis/render) to its formatter and returns `{gate, markdown}`. A gate with no formatter, or one whose artifact isn't written yet, yields a clear \"nothing yet\" string instead of raising. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "gate": ["type": "string", "description": "Gate name to render (brief/production_design/treatment/storyboard/bible/shotlist/analysis/render)."],
+                ],
+                required: ["gate"]
+            )
+        ),
+        AgentTool(
+            name: .runPhase,
+            description: "Run a registered pipeline phase for the project. WRITES.\n\nDispatches to whatever phase runner the active pack registered under `phase` and runs it. The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; for those this returns `{phase, runner: null, note: ...}` rather than raising. If a runner exists but its optional dependencies are absent, returns `{phase, error: \"missing_dependencies\", detail, hint}`; any other failure returns `{phase, error: \"phase_failed\", detail}`. On success returns `{phase, ok: true, result}`. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "phase": ["type": "string", "description": "The phase to run."],
+                ],
+                required: ["phase"]
+            )
+        ),
+        AgentTool(
+            name: .nextRenderShot,
+            description: "The next shot to render for `phase`, in shotlist order. Read-only.\n\nLoads the latest shotlist (for ordered shot IDs) and the phase's render manifest, then returns the first shot whose entry is missing or not yet `rendered`, with its `visual_prompt` and `framing` so the agent can drive nexgen's own generate_image/generate_video. Returns `{phase, shot_id: null, done: true}` once every shot is rendered (or when there's no shotlist). `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "phase": ["type": "string", "description": "The render phase (e.g. preview/final)."],
+                ],
+                required: ["phase"]
+            )
+        ),
+        AgentTool(
+            name: .recordRender,
+            description: "Record a shot's render result into the phase manifest. WRITES.\n\nUpserts `shot_id`'s entry (status, `output` path-or-URL, `cost_eur`) into `renders/manifest-<phase>.json`, stamps `updated_at`, and returns the saved entry plus the manifest's running `spent_eur`. `status` is one of rendered/pending/failed. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "phase": ["type": "string", "description": "The render phase."],
+                    "shot_id": ["type": "string", "description": "The shot id to record."],
+                    "output": ["type": "string", "description": "Path or URL of the rendered artifact (null if not done)."],
+                    "cost_eur": ["type": "number", "description": "EUR spent on this render (default 0)."],
+                    "status": ["type": "string", "description": "rendered/pending/failed (default rendered)."],
+                ],
+                required: ["phase", "shot_id"]
+            )
+        ),
+        AgentTool(
+            name: .getRenderManifest,
+            description: "The phase's render manifest and its progress summary. Read-only.\n\nReturns `{project, phase, entries, summary}` where `entries` maps shot_id → its render record and `summary` is `{total, rendered, pending, failed, spent_eur}` (`total` from the latest shotlist's shot count). `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "phase": ["type": "string", "description": "The render phase."],
+                ],
+                required: ["phase"]
+            )
+        ),
+        AgentTool(
+            name: .getLedger,
+            description: "The Intent Ledger: the director's durable creative decisions per object. Read-only.\n\nReturns `{schema, objects}` where `objects` maps `<kind>:<id>` (or the `look`/`film` singletons) to named attributes `{tag, directive, source, locked, updated}`. Locked attributes are hard facts generation MUST honor. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: projectDirSchema()
+        ),
+        AgentTool(
+            name: .setLedgerAttribute,
+            description: "Create or update ONE ledger attribute (reconcile — update the existing key rather than inventing near-duplicate keys). WRITES.\n\n`kind` is one of character/ensemble/prop/location/shot (needs `object_id` = the Bible/shot id) or look/film (singletons, no `object_id`). `tag` is the short visible handle (\"Wardrobe: faded red canvas jacket\"); `directive` the model-ready phrasing (defaults to the tag); `source` the user's original words. An existing lock survives unless `locked` is passed explicitly. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "kind": ["type": "string", "description": "character/ensemble/prop/location/shot (needs object_id) or look/film (singletons)."],
+                    "key": ["type": "string", "description": "Attribute name (e.g. 'wardrobe')."],
+                    "tag": ["type": "string", "description": "Short visible handle."],
+                    "object_id": ["type": "string", "description": "Bible/shot id — required for non-singleton kinds."],
+                    "directive": ["type": "string", "description": "Model-ready phrasing (defaults to the tag)."],
+                    "source": ["type": "string", "description": "The user's original words."],
+                    "locked": ["type": "boolean", "description": "Lock state; omit to preserve an existing lock."],
+                ],
+                required: ["kind", "key", "tag"]
+            )
+        ),
+        AgentTool(
+            name: .lockLedgerAttribute,
+            description: "Lock (or unlock) an existing ledger attribute. WRITES. A locked attribute is a promise: the prompt generator must include it and reviews check it; it cannot be removed while locked. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "kind": ["type": "string", "description": "The object kind."],
+                    "key": ["type": "string", "description": "Attribute name."],
+                    "object_id": ["type": "string", "description": "Bible/shot id — required for non-singleton kinds."],
+                    "locked": ["type": "boolean", "description": "true to lock (default), false to unlock."],
+                ],
+                required: ["kind", "key"]
+            )
+        ),
+        AgentTool(
+            name: .removeLedgerAttribute,
+            description: "Remove an UNLOCKED ledger attribute (locked ones must be unlocked first). WRITES. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "kind": ["type": "string", "description": "The object kind."],
+                    "key": ["type": "string", "description": "Attribute name."],
+                    "object_id": ["type": "string", "description": "Bible/shot id — required for non-singleton kinds."],
+                ],
+                required: ["kind", "key"]
+            )
+        ),
+        AgentTool(
+            name: .resolveModel,
+            description: "Which model + effort a task gets. Read-only.\n\n`task_class` is one of distill/classification/assembly/review/planning/interpretation. Returns `{task_class, tier, model, effort, escalated}` — the fixed floor, or with `escalate=true` exactly ONE tier up (use only after a concrete gate failure: lint error, schema violation, user reject; never speculatively). Optional `project_dir` (the `_studio/` data root) applies the project's models.yaml manifest override; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "task_class": ["type": "string", "description": "distill/classification/assembly/review/planning/interpretation."],
+                    "escalate": ["type": "boolean", "description": "Bump exactly one tier up (default false)."],
+                    "project_dir": projectDirProperty,
+                ],
+                required: ["task_class"]
+            )
+        ),
+        AgentTool(
+            name: .getUIContract,
+            description: "Per-phase UI contract: the default interaction surface (choice/prose/review) and router task class for every phase (engine core + installed packs). Read-only.",
+            inputSchema: objectSchema()
+        ),
+        AgentTool(
+            name: .setGateState,
+            description: "Record the multi-state gate verdict. WRITES.\n\n`state` is one of approved / approved_with_notes / needs_revision / pending. Only the two approve states unblock the pipeline; `needs_revision` keeps the phase blocked and carries the reviewer's notes. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "phase": ["type": "string", "description": "The phase whose gate verdict to record."],
+                    "state": ["type": "string", "description": "approved / approved_with_notes / needs_revision / pending."],
+                    "notes": ["type": "string", "description": "Optional reviewer notes."],
+                ],
+                required: ["phase", "state"]
+            )
+        ),
     ]
+
+    /// Shared `project_dir` property schema for the pipeline tools (optional — defaults to the open
+    /// project's studio dir when omitted).
+    private static var projectDirProperty: [String: Any] { [
+        "type": "string",
+        "description": "The project's `_studio/` data root. Omit to use the open project.",
+    ] }
+
+    /// An object schema whose only (optional) property is `project_dir`.
+    private static func projectDirSchema() -> [String: Any] {
+        objectSchema(properties: ["project_dir": projectDirProperty])
+    }
 
     /// One line per non-color effect for apply_effect's description, generated from the registry.
     private static func effectCatalog() -> String {

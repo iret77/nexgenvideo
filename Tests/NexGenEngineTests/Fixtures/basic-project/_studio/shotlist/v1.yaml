@@ -1,0 +1,145 @@
+schema: shotlist/v3
+mode: beat
+project: basic-project
+song:
+  title: Fixture Song
+  artist: Fixture Artist
+  audio_path: inbox/song.wav
+  lyrics_path: null
+  analysis_path: inbox/analysis.json
+  bpm: 120.0
+  tempo_multiplier: 1.0
+  duration_s: 30.0
+generated: '2026-01-01'
+generator: regen-goldens
+budget_eur: 50.0
+shots:
+- id: s001
+  section: verse
+  time_start: 0.0
+  time_end: 12.0
+  duration_s: 12.0
+  type: performance
+  description: shot 1
+  visual_prompt: visual 1
+  motion: null
+  mood: calm
+  lyrics_excerpt: null
+  character_refs: []
+  character_views: {}
+  location_ref: null
+  location_view: null
+  model_suggestion: null
+  keyframe_strategy: start
+  framing: null
+  visible_zones: []
+  zone_introduces: []
+  camera_setup: null
+  character_blocking: []
+  prop_refs: []
+  prop_views: {}
+  camera_id: null
+  camera_label: null
+  redo: false
+  scene_video_provider: fal
+  seedance_input_mode: keyframe
+  reference_image_refs: []
+  chain_with_previous_end: false
+  notes: null
+- id: s002
+  section: verse
+  time_start: 12.0
+  time_end: 15.0
+  duration_s: 3.0
+  type: performance
+  description: shot 2
+  visual_prompt: visual 2
+  motion: null
+  mood: calm
+  lyrics_excerpt: null
+  character_refs: []
+  character_views: {}
+  location_ref: null
+  location_view: null
+  model_suggestion: null
+  keyframe_strategy: start
+  framing: null
+  visible_zones: []
+  zone_introduces: []
+  camera_setup: null
+  character_blocking: []
+  prop_refs: []
+  prop_views: {}
+  camera_id: null
+  camera_label: null
+  redo: false
+  scene_video_provider: fal
+  seedance_input_mode: keyframe
+  reference_image_refs: []
+  chain_with_previous_end: false
+  notes: null
+- id: s003
+  section: verse
+  time_start: 15.0
+  time_end: 22.0
+  duration_s: 7.0
+  type: performance
+  description: shot 3
+  visual_prompt: visual 3
+  motion: null
+  mood: calm
+  lyrics_excerpt: null
+  character_refs: []
+  character_views: {}
+  location_ref: null
+  location_view: null
+  model_suggestion: null
+  keyframe_strategy: start
+  framing: null
+  visible_zones: []
+  zone_introduces: []
+  camera_setup: null
+  character_blocking: []
+  prop_refs: []
+  prop_views: {}
+  camera_id: null
+  camera_label: null
+  redo: false
+  scene_video_provider: fal
+  seedance_input_mode: keyframe
+  reference_image_refs: []
+  chain_with_previous_end: false
+  notes: null
+- id: s004
+  section: verse
+  time_start: 22.0
+  time_end: 30.0
+  duration_s: 8.0
+  type: performance
+  description: shot 4
+  visual_prompt: visual 4
+  motion: null
+  mood: calm
+  lyrics_excerpt: null
+  character_refs: []
+  character_views: {}
+  location_ref: null
+  location_view: null
+  model_suggestion: seedance-2.0
+  keyframe_strategy: start
+  framing: null
+  visible_zones: []
+  zone_introduces: []
+  camera_setup: null
+  character_blocking: []
+  prop_refs: []
+  prop_views: {}
+  camera_id: null
+  camera_label: null
+  redo: false
+  scene_video_provider: runway
+  seedance_input_mode: keyframe
+  reference_image_refs: []
+  chain_with_previous_end: false
+  notes: null
+notes: null

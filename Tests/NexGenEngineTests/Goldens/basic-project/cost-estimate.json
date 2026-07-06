@@ -1,0 +1,41 @@
+{
+    "budget_eur": 50.0,
+    "mode": "beat",
+    "over_budget": false,
+    "phase": "final",
+    "shot_estimates": [
+        {
+            "duration_s": 10.0,
+            "eur": 6.82,
+            "notes": "truncated to 10.0s; @1080p",
+            "runway_model": "fal:bytedance/seedance-2.0/pro",
+            "shot_id": "s001",
+            "truncated": true
+        },
+        {
+            "duration_s": 5.0,
+            "eur": 3.41,
+            "notes": "padded to provider-min 5.0s (actual shot 3.0s); @1080p",
+            "runway_model": "fal:bytedance/seedance-2.0/pro",
+            "shot_id": "s002",
+            "truncated": false
+        },
+        {
+            "duration_s": 7.0,
+            "eur": 4.774,
+            "notes": "@1080p",
+            "runway_model": "fal:bytedance/seedance-2.0/pro",
+            "shot_id": "s003",
+            "truncated": false
+        },
+        {
+            "duration_s": 8.0,
+            "eur": 0.8,
+            "notes": "",
+            "runway_model": "seedance2",
+            "shot_id": "s004",
+            "truncated": false
+        }
+    ],
+    "total_eur": 15.8
+}

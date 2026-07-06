@@ -15,7 +15,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .models: return "Models"
         case .agent: return "Agent"
-        case .plugins: return "Plugins"
+        case .plugins: return "Format Packs"
         case .providers: return "Providers"
         case .storage: return "Storage"
         }

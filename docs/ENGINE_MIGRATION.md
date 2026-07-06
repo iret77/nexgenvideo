@@ -1,5 +1,12 @@
 # Engine Migration — `musicvideo` → `engine/` + `plugins/`
 
+> **Superseded / historical.** This document describes the *Python* extraction stage.
+> The engine was subsequently ported to native Swift (`Sources/NexGenEngine/`, packs in
+> `…/Packs/`), and **the Python tree (`engine/`, `plugins/`) was removed in M9 (issue
+> #119)** — no Python, no venv, no on-disk plugins. Current architecture:
+> [CONCEPT.md](CONCEPT.md) §4 and [PLUGIN_STANDARD.md](PLUGIN_STANDARD.md). The notes
+> below are kept for lineage only.
+
 Staged extraction of the **Generic Production Engine** out of the `musicvideo`
 Python repo into this monorepo (`engine/` + `plugins/`), leaving `musicvideo` as a
 thin format-pack. Realizes [CONCEPT.md](CONCEPT.md) §2 (consistency is core),

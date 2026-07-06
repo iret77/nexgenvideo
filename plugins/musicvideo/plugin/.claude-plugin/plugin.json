@@ -1,9 +1,0 @@
-{
-  "name": "musicvideo",
-  "description": "Music video studio: structured AI music video production (analysis → brief → treatment → storyboard → bible → shotlist → sanity → frames → render) with engine-enforced consistency discipline, cost guard, and cockpit. Drives NexGenVideo's engine + nexgen MCP surface; the host provides both MCP servers. Dialog adapts to the user's language.",
-  "version": "1.0.0",
-  "author": {
-    "name": "Christian Wendler"
-  },
-  "license": "UNLICENSED"
-}
