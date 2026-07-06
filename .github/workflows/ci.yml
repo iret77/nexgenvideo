@@ -47,9 +47,9 @@ jobs:
           attempts=3
           for i in $(seq 1 "$attempts"); do
             echo "::group::swift test (attempt $i/$attempts)"
-            # DIAG (temporary): only the serialized audio suite in-process — the last
-            # started test before the crash IS the culprit. Revert after bisect.
-            swift test --filter AudioAnalysisTests 2>&1 | tee "test-attempt-$i.log"
+            # DIAG (temporary): statically-linked ASan (no DYLD/SIP issue) on the
+            # corruption repro. Revert after bisect.
+            swift test --filter AudioAnalysisTests --sanitize=address 2>&1 | tee "test-attempt-$i.log"
             code=${PIPESTATUS[0]}
             echo "::endgroup::"
             if [ "$code" -eq 0 ]; then
