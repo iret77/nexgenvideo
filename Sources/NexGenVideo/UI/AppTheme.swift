@@ -264,6 +264,11 @@ enum AppTheme {
         static let projectCardWidth: CGFloat = 150
         static let projectCardHeight: CGFloat = 120
         static let updateOverlayWidth: CGFloat = 640
+        // Badge masters are 498×257 (~1.94) — 224pt keeps them ≤ native @2x, so they stay crisp.
+        static let pluginBadgeWidth: CGFloat = 224
+        static let pluginBadgeAspect: CGFloat = 498.0 / 257.0
+        static let pluginPickerWidth: CGFloat = 480
+        static let pluginPickerHeight: CGFloat = 420
     }
 
     enum Window {

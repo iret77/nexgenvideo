@@ -74,7 +74,7 @@ struct ProjectCockpitView: View {
 /// contained so it does not depend on the Inspector's private row helpers.
 struct ProjectSettingsView: View {
     @Environment(EditorViewModel.self) private var editor
-    private let plugins: [InstalledPack] = InstalledPack.all
+    @State private var showsPluginPicker = false
 
     var body: some View {
         ScrollView {
@@ -103,124 +103,79 @@ struct ProjectSettingsView: View {
     // MARK: - Format plugin (the activation surface — Epic #98 / #95 C3)
 
     /// Exactly one plugin is active per project ("installed ≠ active"); none = the generic
-    /// workflow. This gallery is the ONLY activation surface — never the prompt suggestions.
+    /// workflow. The pane shows ONLY the project's state — the active pack with its global
+    /// actions, or the choose entry. Browsing/activating lives in `PluginPickerView`.
     private var pluginSection: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("FORMAT PLUGIN")
                 .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
-            Text(editor.activePluginName == nil
-                 ? "Generic production workflow. Activate a plugin to specialize this project."
-                 : "The active plugin drives this project's production workflow. One plugin per project.")
+            if let active = InstalledPack.named(editor.activePluginName) {
+                activePluginCard(active)
+            } else {
+                noPluginRow
+            }
+        }
+        .sheet(isPresented: $showsPluginPicker) {
+            PluginPickerView(editor: editor)
+        }
+    }
+
+    private var noPluginRow: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+            Text("Generic production workflow. Choose a format plugin to specialize this project.")
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
-            ForEach(plugins, id: \.name) { plugin in
-                pluginCard(plugin)
-            }
-            if plugins.isEmpty {
-                Text("No format plugins installed.")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
+            Button("Choose Plugin…") { showsPluginPicker = true }
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .controlSize(.small)
         }
     }
 
-    private func pluginCard(_ plugin: InstalledPack) -> some View {
-        let isActive = editor.activePluginName == plugin.name
-        return VStack(spacing: 0) {
-            ZStack(alignment: .bottomLeading) {
-                headerImage(for: plugin)
-                    .frame(height: 96)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                LinearGradient(colors: [.clear, Color.black.opacity(AppTheme.Opacity.strong)],
-                               startPoint: .top, endPoint: .bottom)
-                HStack(alignment: .bottom) {
-                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                        Text(plugin.displayName)
-                            .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
-                            .foregroundStyle(.white)
-                        if let tagline = plugin.tagline {
-                            Text(tagline)
-                                .font(.system(size: AppTheme.FontSize.xs))
-                                .foregroundStyle(.white.opacity(AppTheme.Opacity.prominent))
-                                .lineLimit(2)
-                        }
-                    }
-                    Spacer(minLength: AppTheme.Spacing.md)
-                    if isActive {
-                        Button("Deactivate") { withAnimation { editor.setActivePlugin(nil) } }
-                            .buttonStyle(.capsule(.secondary, size: .regular))
+    /// The active pack: its badge, the state + entry point, and the pack-global actions
+    /// (switch / remove). Activating installs nothing — it binds the project's workflow.
+    private func activePluginCard(_ plugin: InstalledPack) -> some View {
+        let initialized = editor.projectState != nil
+        return HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+            PluginBadgeView(plugin: plugin)
+                .frame(width: AppTheme.ComponentSize.pluginBadgeWidth)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                Text(initialized
+                     ? "Active — production runs the \(plugin.displayName) workflow. Continue in Pipeline."
+                     : "Active — ready when you are. Start production and the agent guides each phase.")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    if initialized {
+                        Button("Open Pipeline") { editor.revealCockpit(.pipeline) }
+                            .buttonStyle(.capsule(.prominent, size: .regular))
                             .controlSize(.small)
+                    } else if editor.productionStarting {
+                        ProgressView().controlSize(.small)
+                        Text("Starting…")
+                            .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
                     } else {
-                        Button("Activate") { withAnimation { editor.setActivePlugin(plugin.name) } }
+                        Button("Start production") { editor.startProduction() }
                             .buttonStyle(.capsule(.prominent, size: .regular))
                             .controlSize(.small)
                     }
+                    Button("Switch…") { showsPluginPicker = true }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .controlSize(.small)
+                    Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .controlSize(.small)
+                        .help("Back to the generic workflow — pipeline data stays in the project.")
                 }
-                .padding(AppTheme.Spacing.md)
             }
-            if isActive {
-                pluginNextStep(plugin)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(isActive ? AppTheme.Accent.primary : AppTheme.Border.subtleColor,
-                              lineWidth: isActive ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline)
-        )
-    }
-
-    /// Activation feedback + the concrete entry point. Activating a pack installs nothing and runs
-    /// nothing — it binds the project's workflow. This row says so and hands the user the next move,
-    /// which is the part the bare state pill never did.
-    private func pluginNextStep(_ plugin: InstalledPack) -> some View {
-        let initialized = editor.projectState != nil
-        return HStack(spacing: AppTheme.Spacing.sm) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Accent.primary)
-            Text(initialized
-                 ? "Active — this project's production runs the \(plugin.displayName) workflow. Continue in Pipeline."
-                 : "Active — ready when you are. Start production and the agent guides each phase.")
-                .font(.system(size: AppTheme.FontSize.xs))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: AppTheme.Spacing.sm)
-            if initialized {
-                Button("Open Pipeline") { editor.revealCockpit(.pipeline) }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
-            } else if editor.productionStarting {
-                HStack(spacing: AppTheme.Spacing.xs) {
-                    ProgressView().controlSize(.small)
-                    Text("Starting…")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                }
-            } else {
-                Button("Start production") { editor.startProduction() }
-                    .buttonStyle(.capsule(.prominent, size: .regular))
-                    .controlSize(.small)
-            }
-        }
-        .padding(AppTheme.Spacing.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.Background.raisedColor)
-    }
-
-    @ViewBuilder
-    private func headerImage(for plugin: InstalledPack) -> some View {
-        if let image = plugin.headerImage() {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-        } else {
-            AppTheme.aiGradient
-        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Rows

@@ -53,7 +53,7 @@ struct MusicvideoPackTests {
         // Mirrors the retired plugins/musicvideo/ngv-plugin.json.
         #expect(pack.manifest.displayName == "Music Video Studio")
         #expect(pack.manifest.tagline.isEmpty == false)
-        #expect(pack.manifest.headerImageName == "musicvideo-header")
+        #expect(pack.manifest.headerImageName == "musicvideo-badge")
         #expect(pack.starters.isEmpty == false)
     }
 
