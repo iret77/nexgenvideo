@@ -271,6 +271,7 @@ enum AppTheme {
         static let homeMin = NSSize(width: 760, height: 480)
         static let projectDefault = NSSize(width: 1600, height: 1000)
         static let projectMin = NSSize(width: 960, height: 600)
+        static let splash = NSSize(width: 600, height: 400)
     }
 
     enum Caption {
@@ -318,6 +319,8 @@ enum AppTheme {
     enum Anim {
         static let hover: Double = 0.15
         static let transition: Double = 0.2
+        static let splashHold: Double = 2.4
+        static let splashFade: Double = 0.35
     }
 }
 

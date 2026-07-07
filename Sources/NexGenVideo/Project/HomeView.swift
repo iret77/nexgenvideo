@@ -12,7 +12,6 @@ struct HomeView: View {
         )
     ]
 
-    @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
     @Bindable private var changelog = ChangelogStore.shared
 
     var body: some View {
@@ -35,9 +34,7 @@ struct HomeView: View {
                 .padding(.bottom, AppTheme.Spacing.smMd)
         }
         .overlay {
-            if !hasSeenWelcome {
-                WelcomeOverlay { withAnimation { hasSeenWelcome = true } }
-            } else if let entry = changelog.pending {
+            if let entry = changelog.pending {
                 UpdateOverlay(entry: entry, changelogURL: changelog.changelogURL) {
                     withAnimation { changelog.dismiss() }
                 }
@@ -151,15 +148,12 @@ private struct NewProjectCard: View {
 /// Discreet corner version on the Home window. Hidden in bare `swift run` builds
 /// (no Info.plist version); the packaged app always carries one.
 private struct VersionTag: View {
-    private static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-    private static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-
     var body: some View {
-        if let version = Self.version {
+        if let version = AppVersion.marketing {
             Text("Version \(version)")
                 .font(.system(size: AppTheme.FontSize.xxs))
                 .foregroundStyle(AppTheme.Text.mutedColor)
-                .help(Self.build.map { "Version \(version) (\($0))" } ?? "Version \(version)")
+                .help(AppVersion.build.map { "Version \(version) (\($0))" } ?? "Version \(version)")
         }
     }
 }

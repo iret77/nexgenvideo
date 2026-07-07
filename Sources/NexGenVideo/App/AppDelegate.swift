@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = Updater.shared
 
         HomeWindowController.shared.showWindow(nil)
+        SplashScreenController.shared.showAtLaunch()
         Task.detached(priority: .utility) {
             Project.ensureStorageDirectory()
         }
