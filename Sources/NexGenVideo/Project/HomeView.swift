@@ -202,7 +202,7 @@ private struct HomeSidebar: View {
 // MARK: - Home window controller
 
 @MainActor
-final class HomeWindowController: NSWindowController {
+final class HomeWindowController: NSWindowController, NSWindowDelegate {
     static let shared = HomeWindowController()
 
     private init() {
@@ -223,8 +223,16 @@ final class HomeWindowController: NSWindowController {
         window.center()
 
         super.init(window: window)
+        window.delegate = self
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Closing the launch window ends the session — the app doesn't linger headless in the Dock.
+    /// Opening a project HIDES this window with `orderOut` (not a close), so that path is unaffected.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        NSApp.terminate(nil)
+        return false
+    }
 }

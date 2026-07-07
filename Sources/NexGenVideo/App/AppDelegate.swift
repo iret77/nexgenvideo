@@ -9,8 +9,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start Sparkle updater
         _ = Updater.shared
 
-        HomeWindowController.shared.showWindow(nil)
-        SplashScreenController.shared.showAtLaunch()
+        // Splash first (Photoshop pattern), then reveal Home — unless a project already opened
+        // (e.g. a document launch), in which case the editor owns the screen.
+        SplashScreenController.shared.showAtLaunch {
+            if AppState.shared.activeProject == nil {
+                HomeWindowController.shared.showWindow(nil)
+            }
+        }
         Task.detached(priority: .utility) {
             Project.ensureStorageDirectory()
         }

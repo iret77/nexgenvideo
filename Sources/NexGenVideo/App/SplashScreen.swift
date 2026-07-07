@@ -1,21 +1,25 @@
 import AppKit
 import SwiftUI
 
-/// Launch splash: a borderless panel over the Home window on every app start —
-/// artwork plus the version in the corner. Fades out on its own; a click
-/// dismisses it early. Shown once per process, never on window reopen.
+/// Launch splash: a borderless panel shown alone on every app start — artwork plus the version
+/// in the corner. Fades out on its own; a click dismisses it early. Shown once per process, never
+/// on window reopen. `onDismiss` fires exactly once when it starts fading — that's when the Home
+/// window is revealed, so the splash dissolves TO reveal Home rather than floating over it.
 @MainActor
 final class SplashScreenController {
     static let shared = SplashScreenController()
 
     private var window: NSWindow?
     private var didShow = false
+    private var onDismiss: (() -> Void)?
+    private var didDismiss = false
 
     private init() {}
 
-    func showAtLaunch() {
+    func showAtLaunch(onDismiss: @escaping () -> Void) {
         guard !didShow else { return }
         didShow = true
+        self.onDismiss = onDismiss
 
         let hosting = NSHostingController(rootView: SplashView())
         let window = SplashWindow(contentViewController: hosting)
@@ -39,6 +43,11 @@ final class SplashScreenController {
     }
 
     private func dismiss() {
+        guard !didDismiss else { return }
+        didDismiss = true
+        // Reveal Home as the splash begins to fade — no black gap between the two.
+        onDismiss?()
+        onDismiss = nil
         guard let window else { return }
         self.window = nil
         NSAnimationContext.runAnimationGroup { context in
