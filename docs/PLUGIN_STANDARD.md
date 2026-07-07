@@ -1,28 +1,132 @@
 # Format Pack Standard
 
 How a format pack plugs into NexGenVideo. Companion to [CONCEPT.md](CONCEPT.md) §4.1.
-Status: **native Swift** (`Sources/NexGenEngine/Packs/`). The former Python plugin
-contract (`ngv-plugin.json` + `pyproject.toml` + `--plugin-dir`) was removed in M9
-(issue #119) — packs are now Swift modules, not on-disk plugins.
+
+Status: **loadable `.ngvpack` bundles**. A pack is a signed macOS bundle carrying a
+compiled Swift dynamic library plus its resources, shipped OUTSIDE the app and
+fetched on demand. It is no longer compiled into the app binary (the earlier
+compiled-in `PackCatalog.all` list is now empty — every pack comes from the
+plugin library). The still-earlier Python plugin contract (`ngv-plugin.json` +
+`pyproject.toml` + `--plugin-dir`) was removed in M9.
 
 ## Layering
 
-- **Core** — NexGenVideo (Swift: editor, timeline, **generation** via the fal/Marble
-  catalogs, MCP server, embedded `claude -p` runtime) **+ `NexGenEngine`** (Swift
-  library, always linked): Bible, consistency/reference, sanity framework, prompt
-  compile, render manifest + cost-guard, frame-compliance. The quality motor.
+- **Core** — NexGenVideo (Swift: editor, timeline, generation via the fal/Marble
+  catalogs, MCP server, embedded `claude -p` runtime) **+ `NexGenEngine`**: Bible,
+  consistency/reference, sanity framework, prompt compile, render manifest +
+  cost-guard, frame-compliance. The quality motor. `NexGenEngine` is built as a
+  **shared dynamic library** (`libNexGenEngine.dylib`, embedded in the app's
+  `Contents/Frameworks`).
 - **Pack** (thin, e.g. `musicvideo`) — only domain specifics: genre/mood/tempo
-  patterns, music-specific checks, duration policy, the pack's phase docs. No Python,
-  no venv, no separate process — a Swift type conforming to `Pack`.
+  patterns, music-specific checks, duration policy, the pack's phase docs. A Swift
+  type conforming to `Pack`, built as its own dynamic library that **links the
+  shared `NexGenEngine`** — so host and pack share one copy of the `Pack`/
+  `PackEntry` protocol metadata and casts across the bundle boundary are sound.
 
 A pack **registers behavior into the engine**. It does **not** re-implement the
 Bible/consistency/sanity/render core, and it does **not** call generators itself —
 generation and timeline edits go through NexGen's own `nexgen` MCP tools, driven by Claude.
 
-A pack **MUST support all three shot source modes** — `generated`, `live_action`, and
-`ai_enhanced` (`SourceMode`) — and never assume every shot is AI-generated: its phase docs
-must direct the assistant to emit directorial shooting specs for live shots and route
-enhanced shots through the video-to-video edit path.
+A pack **MUST support all three shot source modes** — `generated`, `imported`, and
+`aiEnhanced` (`SourceMode`) — and never assume every shot is AI-generated: its phase
+docs must direct the assistant to emit directorial shooting specs for imported (live)
+shots and route enhanced shots through the video-to-video edit path.
+
+## The `.ngvpack` bundle format
+
+A pack ships as a macOS bundle named `<id>.ngvpack`:
+
+```
+musicvideo.ngvpack/
+  Contents/
+    Info.plist                                  ← gate metadata (below)
+    MacOS/
+      musicvideo                                ← the plugin dynamic library (dylib)
+    Resources/
+      NexGenVideo_MusicvideoPlugin.bundle       ← SwiftPM resource bundle
+        MusicvideoPack/{library/*.yaml, phases/*.md, badge.png}
+```
+
+`Info.plist` keys the load gate reads BEFORE any code is loaded:
+
+| Key | Meaning |
+|---|---|
+| `NGVPackID` | activation id (also the filename stem, persisted per project in `ngv.json`) |
+| `NGVPackDisplayName` | gallery title |
+| `NGVPackTagline` | gallery subtitle |
+| `CFBundleShortVersionString` | the pack's own version |
+| `NGVMinAppVersion` | minimum NexGenVideo marketing version required |
+| `NSPrincipalClass` | the `PackEntry` subclass' ObjC runtime name (entry point) |
+| `CFBundleExecutable` | the dylib filename in `Contents/MacOS/` |
+
+The bundle is assembled and signed by `scripts/assemble_ngvpack.sh` from
+`plugins/<id>.json` (the pack's shipping metadata) and the SwiftPM build products
+(`lib<Target>.dylib` + `NexGenVideo_<Target>.bundle`).
+
+## Entry point — boxed factory via `NSPrincipalClass`
+
+No Swift-existential-over-ObjC bridging. `NexGenEngine` defines:
+
+```swift
+@objc(NGVPackEntry) open class PackEntry: NSObject {
+    public required override init() { super.init() }
+    open func makePack() -> PackBox   // subclasses override
+}
+public final class PackBox: NSObject { public let pack: any Pack }
+```
+
+The pack ships an `@objc` subclass and names it in `NSPrincipalClass`:
+
+```swift
+@objc(MusicvideoPackEntry)
+public final class MusicvideoPackEntry: PackEntry {
+    public override func makePack() -> PackBox { PackBox(MusicvideoPack()) }
+}
+```
+
+The host, after the gate passes: `Bundle(url:).load()` → `bundle.principalClass as?
+PackEntry.Type` → `.init().makePack().pack` → `PackCatalog.register(pack)`. Because
+host and pack link the SAME `libNexGenEngine.dylib` (dyld dedups it by the shared
+install name `@rpath/libNexGenEngine.dylib`), `PackEntry`'s metadata is identical on
+both sides and the cross-bundle cast is sound. `NSPrincipalClass` is per-bundle, so
+multiple packs never collide on a global symbol (as a `@_cdecl`/`dlsym` factory would).
+
+## Load gate (hard order)
+
+`PluginLoader` enforces, in order, refusing to load past any failure:
+
+1. **Read `Info.plist`** — missing/unreadable → damaged.
+2. **Metadata well-formed** — `NGVPackID` valid, `CFBundleShortVersionString` and
+   `NGVMinAppVersion` parse as semver, `NSPrincipalClass` present.
+3. **Version** — `NGVMinAppVersion ≤` the app's `CFBundleShortVersionString`
+   (semantic compare). A dev/CI build without a marketing version is treated as
+   always-compatible, logged.
+4. **Code signature** — `SecStaticCodeCheckValidity` (integrity) + the pack's Team
+   ID must equal the host app's own (the same-developer requirement derived from the
+   host's signing, not a hard-coded team). When the host itself is unsigned/ad-hoc
+   (dev, CI), a validly ad-hoc pack is allowed and logged.
+5. **Load** — `Bundle.load()`, resolve the principal class, instantiate, register.
+
+Incompatible / unsigned packs become a picker row with a calm reason (e.g.
+"Requires NexGenVideo 0.5.0 or newer") — never a crash, never a silent skip.
+
+## Catalog, install, activation
+
+- **Catalog** — `plugins.json`, an asset on the rolling `dev-latest` release, lists
+  packs `{id, displayName, tagline, version, minAppVersion, url, sha256}`. The picker
+  (`PluginPickerView`) fetches it; a fetch failure is a calm offline state (installed
+  packs keep working).
+- **Install** — download the `.ngvpack` zip, verify `sha256` + code signature, install
+  to `~/Library/Application Support/NexGenVideo/Plugins/<id>.ngvpack`, then load it
+  through the same gate. Update = install a newer catalog version in place.
+- **Startup** — `PluginLoader.loadInstalled()` (in `main.swift`, before the UI) loads
+  every installed pack from disk.
+- **Activation** — exactly one active pack per project (or none = the generic
+  workflow), persisted as `activePlugin` in `<project>/ngv.json`. The active pack's
+  `name` threads into the engine paths that consume it: `run_sanity` adds its checks,
+  `get_ui_contract` overlays its entries, `init_project` creates its extra dirs, and
+  the agent context line names it. A project whose active pack isn't installed shows
+  an install hint instead of pretending.
 
 ## The `Pack` protocol
 
@@ -32,7 +136,7 @@ A pack is a Swift value conforming to `Pack` (`Sources/NexGenEngine/Packs/Engine
 public protocol Pack: Sendable {
     var name: String { get }           // activation id, persisted per project in ngv.json
     var version: String { get }
-    var manifest: PackManifest { get }  // gallery/chip identity (displayName, tagline, header image)
+    var manifest: PackManifest { get }  // gallery/chip identity + minAppVersion + badge
     var starters: [PackStarter] { get } // agent-panel one-tap starters (plain-language prompts)
     func register(_ registry: EngineRegistry)
 }
@@ -40,34 +144,20 @@ public protocol Pack: Sendable {
 
 `register(_:)` folds the pack's contributions into the engine via `EngineRegistry`:
 
-- `registerSanityCheck(_ name:_ check:)` — domain checks in the engine's sanity
-  framework (e.g. music tempo / pacing). Last-write-wins by name.
-- `registerDurationPolicy(_:)` — seam 1: mode → duration band (music makes it
-  BPM-aware); the engine's Shot/sanity logic stays format-neutral.
-- `registerProjectDirs(_:)` — extra project-layout subdirs (music: `audio`,
-  `lyrics`, `analysis`), added on `init_project`.
-- `registerUIContract(phase:surface:taskClass:)` — override a phase's default
-  interaction surface / router task class.
+- `registerSanityCheck(_ name:_ check:)` — domain checks (e.g. music tempo/pacing). Last-write-wins by name.
+- `registerDurationPolicy(_:)` — mode → duration band (music makes it BPM-aware); the engine's Shot/sanity logic stays format-neutral.
+- `registerProjectDirs(_:)` — extra project-layout subdirs (music: `audio`, `lyrics`, `analysis`).
+- `registerUIContract(phase:surface:taskClass:)` — override a phase's default interaction surface / router task class.
 - `registerPhase(_ name:runner:)` — workflow phase runners the pack contributes.
 - `registerLibrary(_ name:_ library:)` — domain reference data.
 
-## Registration + activation
-
-- **Catalog** — `PackCatalog.all` (NexGenEngine) lists the first-party packs; there is
-  no dynamic on-disk discovery. The app's gallery/chip/launcher read packs via
-  `InstalledPack` / `PluginCommandCatalog`, which wrap `PackCatalog`.
-- **Activation** — exactly one active pack per project (or none = the generic
-  workflow), persisted as `activePlugin` in `<project>/ngv.json` (unchanged from the
-  plugin era). The active pack's `name` is threaded into the engine paths that consume
-  it: `run_sanity` adds its checks, `get_ui_contract` overlays its entries,
-  `init_project` creates its extra dirs, and the agent context line names it.
-
 ## Knowledge resources
 
-A pack's knowledge (pattern libraries, phase docs) ships as bundled `NexGenEngine`
-resources under `Sources/NexGenEngine/Resources/<Pack>Pack/` and is read via
-`Bundle.module` (see `PackKnowledge` for the musicvideo accessors). No files are read
-from disk at runtime beyond the app bundle.
+A pack's knowledge (pattern libraries, phase docs, badge) ships as `MusicvideoPlugin`
+target resources under `Sources/MusicvideoPlugin/Resources/<Pack>Pack/`, assembled into
+the `.ngvpack`. `PackKnowledge` resolves them either from the SwiftPM-generated resource
+bundle (dev/test/CI) or from the installed `.ngvpack` this dylib was loaded out of —
+never from an absolute disk path.
 
 ## MCP surface
 
@@ -82,5 +172,5 @@ One always-available MCP server, registered with the embedded claude (see
   through these; the tool surface stays standard so packs are swappable.
 
 External Claude-Code plugins can still contribute their own MCP servers via a
-`--plugin-dir`'s `.mcp.json` (the dev "extra plugin folder"); first-party format packs
-are native and need none.
+`--plugin-dir`'s `.mcp.json` (the dev "extra plugin folder"); format packs are native
+`.ngvpack`s and need none.

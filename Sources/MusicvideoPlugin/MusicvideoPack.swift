@@ -1,9 +1,10 @@
 import Foundation
 import NexGenEngine
 
-/// The minimum NexGenVideo marketing version this pack build needs. Mirrors the
-/// `.ngvpack`'s `NGVMinAppVersion` (the value the load gate checks BEFORE loading
-/// this code); keep the two in lockstep.
+/// The minimum NexGenVideo marketing version this pack build needs. This manifest
+/// (id/version/minAppVersion/displayName/tagline) mirrors `plugins/musicvideo.json`,
+/// which the release assembles into the `.ngvpack`'s Info.plist `NGVMinAppVersion` —
+/// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
 let musicvideoMinAppVersion = "0.1.0"
 
 /// The musicvideo pack — registers music-specific behavior into the generic

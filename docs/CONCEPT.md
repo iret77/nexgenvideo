@@ -105,6 +105,17 @@ keine Runtime-Bootstrap-Reibung. Ein eigenes `nexgen-core`-Repo bräuchte es nur
 
 ### 4.1 Core ↔ Plugin — die verbindliche Grenze
 
+> **Verbindliche Bindungsentscheidung (Owner):** Packs sind **echte, ladbare `.ngvpack`-Bundles** —
+> signierter Swift-Dynlib + Ressourcen + Info.plist-Metadaten (Pack-ID, Version, `NGVMinAppVersion`,
+> Entry-Class), außerhalb des DMG ausgeliefert und auf Anfrage geladen. Der frühere Zustand „Pack =
+> in den App-Binary hineinkompiliertes Swift-Modul" war ein nicht freigegebenes Interim: `NexGenEngine`
+> ist jetzt eine **geteilte dynamische Bibliothek**, die Host und Pack gemeinsam linken; ein
+> `plugins.json`-Katalog auf dem `dev-latest`-Release speist den In-App-Picker (Install/Update/Activate,
+> mit hartem Lade-Gate: Version → Signatur → Load). Maßgeblich für das ladbare Format ist
+> **[PLUGIN_STANDARD.md](PLUGIN_STANDARD.md)**; die „Swift-Modul in NexGenEngine"-Formulierungen unten
+> und in §3 beschreiben weiterhin korrekt die *inhaltliche* Grenze (welches Wissen Core vs. Pack ist),
+> nur die *Auslieferungsform* ist nun das `.ngvpack`.
+
 **Faustregel:** *Braucht es jedes Videoformat? → Core. Nur diese Kategorie? → Plugin.* Früher war
 `musicvideo` ein All-in-One-Tool **nur** für Musikvideos. Künftig ist die All-in-One-**Konsistenz-/
 Produktions-Maschinerie der Core**, und ein Pack ist eine **dünne Kategorie-Schicht** darauf.
