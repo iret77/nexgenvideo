@@ -123,8 +123,8 @@ struct AgentBlocksView: View {
     private func toneColor(_ tone: AgentBlock.CalloutTone) -> Color {
         switch tone {
         case .info: return AppTheme.Accent.primary
-        case .warn: return .orange
-        case .success: return .green
+        case .warn: return AppTheme.Status.warningColor
+        case .success: return AppTheme.Status.successColor
         }
     }
 }

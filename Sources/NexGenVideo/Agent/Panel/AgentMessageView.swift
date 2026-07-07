@@ -149,9 +149,11 @@ private struct ToolRunRow: View {
     }
     private var statusTint: Color {
         guard let result else { return AppTheme.Text.mutedColor }
-        // Orange, not red: a failed probe is routine for the agent (it reads the error and
-        // adjusts) — alarm color belongs to failures the USER must act on.
-        return result.isError ? .orange.opacity(AppTheme.Opacity.prominent) : AppTheme.Text.tertiaryColor
+        // Warning, not error red: a failed probe is routine for the agent (it reads the error
+        // and adjusts) — alarm color belongs to failures the USER must act on.
+        return result.isError
+            ? AppTheme.Status.warningColor.opacity(AppTheme.Opacity.prominent)
+            : AppTheme.Text.tertiaryColor
     }
 
     var body: some View {

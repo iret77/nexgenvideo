@@ -74,7 +74,7 @@ extension ToolExecutor {
 
     func runSanityTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
-        let data = try NativeCockpitReader.sanityJSON(dataRoot: root, activePack: editor.activePluginName)
+        let data = try NativeCockpitReader.sanityJSON(dataRoot: root, activePack: activePluginFor(dataRoot: root))
         return .ok(String(decoding: data, as: UTF8.self))
     }
 
