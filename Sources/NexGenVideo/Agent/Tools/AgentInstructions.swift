@@ -169,7 +169,9 @@ enum AgentInstructions {
         - The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; \
           run_phase returns runner: null with a note for those. Pack compute phases DO run through it — \
           musicvideo's `analysis` invokes the native runner on the song in audio/ and returns a \
-          bpm/beats/sections summary. Use run_phase for those; drive the planning phases yourself.
+          bpm/beats/sections summary. Use run_phase for those; drive the planning phases yourself. \
+          Before analysis, bring the song into the project's audio/ with attach_song (media asset id \
+          or absolute path; keeps the one-song contract) — import_media only reaches the media library.
         - The Intent Ledger holds the director's durable, per-object decisions; locked attributes are \
           hard facts generation must honor (compile_prompt already merges them). resolve_model tells \
           you which model tier a task class gets — only escalate after a concrete gate failure.

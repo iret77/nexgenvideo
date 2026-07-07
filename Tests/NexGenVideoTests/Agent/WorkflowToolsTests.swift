@@ -405,6 +405,110 @@ struct WorkflowToolsTests {
         #expect((result["detail"] as? String)?.contains("audio/") == true)
     }
 
+    // MARK: - attach_song
+
+    /// Write a tiny non-empty stub file at `url` (content is irrelevant — attach_song only copies).
+    private func writeStub(_ url: URL, bytes: String = "stub-audio") throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(bytes.utf8).write(to: url)
+    }
+
+    @Test("attach_song copies an absolute-path song into audio/ and returns filename + audio_dir")
+    func attachSongFromPath() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let song = cleanup.appendingPathComponent("song.wav")
+        try writeStub(song)
+
+        let out = try #require(try await h.runOK("attach_song", args: [
+            "project_dir": dataRoot.path, "path": song.path,
+        ]) as? [String: Any])
+        #expect(out["filename"] as? String == "song.wav")
+        let audioDir = try #require(out["audio_dir"] as? String)
+        let copied = URL(fileURLWithPath: audioDir).appendingPathComponent("song.wav")
+        #expect(FileManager.default.fileExists(atPath: copied.path))
+        // The original is untouched (a copy, not a move).
+        #expect(FileManager.default.fileExists(atPath: song.path))
+
+        // The runner now locates exactly this song — the no-song blocker is gone.
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        let phase = try #require(try await h.runOK("run_phase", args: [
+            "project_dir": dataRoot.path, "phase": "analysis",
+        ]) as? [String: Any])
+        // A song is present, so it's no longer the "add the song" blocker; whatever the decode does,
+        // the detail (if any) must not be the missing-audio message.
+        if let detail = phase["detail"] as? String {
+            #expect(detail.contains("Add the song") == false)
+        }
+    }
+
+    @Test("attach_song copies a media-library asset's file into audio/")
+    func attachSongFromMedia() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let song = cleanup.appendingPathComponent("track.mp3")
+        try writeStub(song)
+        let asset = MediaAsset(id: UUID().uuidString, url: song, type: .audio, name: "track")
+        h.editor.mediaAssets.append(asset)
+
+        // Pass an id prefix — expandingIdPrefixes must resolve it, then the file is copied in.
+        let ref = String(asset.id.prefix(8))
+        let out = try #require(try await h.runOK("attach_song", args: [
+            "project_dir": dataRoot.path, "media": ref,
+        ]) as? [String: Any])
+        #expect(out["filename"] as? String == "track.mp3")
+        let audioDir = try #require(out["audio_dir"] as? String)
+        #expect(FileManager.default.fileExists(atPath: URL(fileURLWithPath: audioDir).appendingPathComponent("track.mp3").path))
+    }
+
+    @Test("attach_song rejects a non-audio source")
+    func attachSongRejectsNonAudio() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let notAudio = cleanup.appendingPathComponent("frame.png")
+        try writeStub(notAudio)
+        let result = await h.runRaw("attach_song", args: ["project_dir": dataRoot.path, "path": notAudio.path])
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("audio type"))
+    }
+
+    @Test("attach_song refuses a different existing song without replace, then swaps it with replace")
+    func attachSongReplace() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let first = cleanup.appendingPathComponent("first.wav")
+        let second = cleanup.appendingPathComponent("second.wav")
+        try writeStub(first)
+        try writeStub(second)
+
+        _ = try await h.runOK("attach_song", args: ["project_dir": dataRoot.path, "path": first.path])
+
+        // A different song without replace → actionable error naming the existing one.
+        let refused = await h.runRaw("attach_song", args: ["project_dir": dataRoot.path, "path": second.path])
+        #expect(refused.isError)
+        #expect(ToolHarness.textOf(refused).contains("first.wav"))
+
+        // replace: true swaps — first.wav is gone, second.wav is the only song.
+        let swapped = try #require(try await h.runOK("attach_song", args: [
+            "project_dir": dataRoot.path, "path": second.path, "replace": true,
+        ]) as? [String: Any])
+        let audioDir = URL(fileURLWithPath: try #require(swapped["audio_dir"] as? String))
+        #expect(FileManager.default.fileExists(atPath: audioDir.appendingPathComponent("second.wav").path))
+        #expect(FileManager.default.fileExists(atPath: audioDir.appendingPathComponent("first.wav").path) == false)
+    }
+
+    @Test("attach_song requires exactly one of media or path")
+    func attachSongExclusiveSource() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        // Neither → error.
+        #expect(await h.runRaw("attach_song", args: ["project_dir": dataRoot.path]).isError)
+        // Both → error.
+        #expect(await h.runRaw("attach_song", args: [
+            "project_dir": dataRoot.path, "media": "x", "path": "/tmp/y.wav",
+        ]).isError)
+    }
+
     @Test("show_artifact yields a markdown envelope; nothing-yet for a fresh brief")
     func showArtifact() async throws {
         let (h, dataRoot, cleanup) = try scaffold()

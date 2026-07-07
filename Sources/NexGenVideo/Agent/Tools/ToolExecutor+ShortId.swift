@@ -12,6 +12,7 @@ extension ToolExecutor {
         "mediaRef", "startFrameMediaRef", "endFrameMediaRef",
         "sourceVideoMediaRef", "videoSourceMediaRef",
         "folderId", "parentFolderId",
+        "media",
     ]
     private static let arrayIdKeys: Set<String> = [
         "clipIds", "targetClipIds", "assetIds", "folderIds",

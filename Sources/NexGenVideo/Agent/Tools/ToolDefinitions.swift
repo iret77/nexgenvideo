@@ -54,6 +54,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case estimateCost = "estimate_cost"
     case showArtifact = "show_artifact"
     case runPhase = "run_phase"
+    case attachSong = "attach_song"
     case nextRenderShot = "next_render_shot"
     case recordRender = "record_render"
     case getRenderManifest = "get_render_manifest"
@@ -969,6 +970,18 @@ enum ToolDefinitions {
                     "phase": ["type": "string", "description": "The phase to run."],
                 ],
                 required: ["phase"]
+            )
+        ),
+        AgentTool(
+            name: .attachSong,
+            description: "Place the song into the project's audio/ folder so run_phase(\"analysis\") can decode it. WRITES.\n\nThe musicvideo pipeline keeps exactly ONE song in audio/, and the analysis runner reads it from there — import_media only reaches the media library, not audio/, so use this to bring the song in. Pass exactly one of `media` (a media-library asset id from get_media/search_media) or `path` (an absolute file path). The source must be an audio type the analysis runner accepts (.wav/.mp3/.m4a/.aiff/.flac/.aac); it's copied (the original is untouched). If a DIFFERENT audio file is already in audio/, this errors and names it — pass `replace: true` to first remove the existing audio and honor the one-song contract. Returns `{filename, audio_dir}`. Run run_phase(\"analysis\") next.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "media": ["type": "string", "description": "A media-library asset id (from get_media/search_media) whose file is copied into audio/. Mutually exclusive with `path`."],
+                    "path": ["type": "string", "description": "An absolute path to the audio file to copy into audio/. Mutually exclusive with `media`."],
+                    "replace": ["type": "boolean", "description": "Remove any existing audio in audio/ first (the one-song contract). Default false — a different existing song is an error otherwise."],
+                ]
             )
         ),
         AgentTool(

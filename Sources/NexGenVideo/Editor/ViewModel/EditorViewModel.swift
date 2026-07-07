@@ -267,13 +267,15 @@ final class EditorViewModel {
                     message: "Couldn't set up the production pipeline: \(scaffoldError.localizedDescription)")
                 return
             }
-            // Genuine dialogue handoff — the pipeline is up; open the brief conversation with a question.
-            self.agentService.send(
-                text: "The production pipeline is initialized. Walk me through drafting the brief — "
+            // Genuine dialogue handoff — the pipeline is up. A pack whose workflow starts differently
+            // (musicvideo: song → analysis gate → brief) supplies its own starter; the generic
+            // brief-drafting kickoff is only right for no-pack projects. The pack starter already
+            // appends AgentPresentationRules.text itself, so don't double-append it here.
+            let kickoff = PackCatalog.pack(named: self.activePluginName)?.starters.first?.prompt
+                ?? ("The production pipeline is initialized. Walk me through drafting the brief — "
                     + "ask me about the video's direction first. "
-                    + AgentPresentationRules.text,
-                mentions: []
-            )
+                    + AgentPresentationRules.text)
+            self.agentService.send(text: kickoff, mentions: [])
         }
     }
 

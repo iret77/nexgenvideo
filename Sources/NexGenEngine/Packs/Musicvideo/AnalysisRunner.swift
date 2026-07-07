@@ -11,7 +11,9 @@ import Foundation
 /// audio lives at `<dataRoot>/audio/`, the artifact lands at
 /// `<dataRoot>/analysis/<stem>.json`.
 public enum MusicvideoAnalysisRunner {
-    static let audioExtensions: Set<String> = ["wav", "mp3", "flac", "m4a", "aiff", "aac"]
+    /// Audio extensions this analysis runner accepts — the single source of truth reused by the
+    /// host's `attach_song` tool so what it lets in is exactly what `run_phase("analysis")` decodes.
+    public static let audioExtensions: Set<String> = ["wav", "mp3", "flac", "m4a", "aiff", "aac"]
 
     public enum RunError: Swift.Error, Sendable, Equatable, CustomStringConvertible {
         case noDecoder

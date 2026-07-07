@@ -124,6 +124,7 @@ final class ToolExecutor {
         case .estimateCost:         return try estimateCostTool(editor, args)
         case .showArtifact:         return try showArtifactTool(editor, args)
         case .runPhase:             return try await runPhaseTool(editor, args)
+        case .attachSong:           return try attachSongTool(editor, args)
         case .nextRenderShot:       return try nextRenderShotTool(editor, args)
         case .recordRender:         return try recordRenderTool(editor, args)
         case .getRenderManifest:    return try getRenderManifestTool(editor, args)

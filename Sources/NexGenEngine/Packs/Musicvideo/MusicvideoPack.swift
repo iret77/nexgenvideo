@@ -53,7 +53,7 @@ public struct MusicvideoPack: Pack {
         PackStarter(
             id: "start",
             title: "Start the music-video pipeline",
-            prompt: "Start the music-video production pipeline for this project. Initialize the pipeline if needed with init_project, then orient with get_project_state. Next, ask me for the song and import exactly one audio file into the project's audio/ folder. Then run the analysis phase (run_phase analysis) on it, present the result briefly with show_blocks (bpm, sections, key beats), and get the analysis gate approved. Only once analysis is approved, walk me through drafting the brief — ask about the video's direction first. "
+            prompt: "Start the music-video production pipeline for this project. Initialize the pipeline if needed with init_project, then orient with get_project_state. Next, ask me for the song and bring exactly one audio file into the project's audio/ folder with attach_song (it keeps the one-song contract; import_media only reaches the media library, not audio/). Then run the analysis phase (run_phase analysis) on it, present the result briefly with show_blocks (bpm, sections, key beats), and get the analysis gate approved. Only once analysis is approved, walk me through drafting the brief — ask about the video's direction first. "
                 + AgentPresentationRules.text
         )
     ]

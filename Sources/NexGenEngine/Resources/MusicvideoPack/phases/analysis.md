@@ -52,9 +52,12 @@ input artifacts (e.g. a forgotten lyrics file).
 Inspect the project yourself: is there an audio file in `audio/`? Are
 there lyrics in `lyrics/lyrics.txt`? Are there reference images?
 
-- **Audio missing** → **HARD STOP**. No analysis run. Tell the user
-  clearly: "No audio file in `audio/` — without the song there is no
-  analysis. Please place it into `audio/`." Then wait.
+- **Audio missing** → ask the user for the song, then bring exactly one
+  audio file into `audio/` with `attach_song` (pass the media-library
+  asset `media` or an absolute `path`; `import_media` only reaches the
+  media library, not `audio/`). If you can't obtain a song, **HARD STOP**:
+  "No audio file in `audio/` — without the song there is no analysis."
+  Then wait.
 - **Lyrics or reference images missing** → **show_dialog** before the
   analysis starts. Show the concrete gap. Options:
   - `start anyway` — the user knows that lyrics/refs are (still) missing

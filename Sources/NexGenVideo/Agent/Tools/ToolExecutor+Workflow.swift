@@ -433,4 +433,92 @@ extension ToolExecutor {
         if let project = obj["project"] as? String { summary["project"] = project }
         return summary
     }
+
+    // MARK: - Attach song (WRITES)
+
+    /// Copy the song into the project's `audio/` folder — the one place the musicvideo `analysis`
+    /// runner reads from (import_media only reaches the media library). Source is either a
+    /// media-library asset (`media`, resolved to its backing file like the other media tools) or an
+    /// absolute `path`; exactly one. Enforces the runner's one-song contract: a different existing
+    /// audio file is an error unless `replace` is set, in which case the existing audio is cleared
+    /// first. Returns `{filename, audio_dir}`.
+    func attachSongTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+
+        let mediaRef = args.string("media")
+        let path = args.string("path")
+        let sourceCount = [mediaRef, path].compactMap { $0 }.count
+        guard sourceCount == 1 else {
+            throw ToolError("Provide exactly one of 'media' (a media-library asset id) or 'path' (an absolute file path) — got \(sourceCount).")
+        }
+
+        let sourceURL: URL
+        if let mediaRef {
+            // Resolve the asset's backing file the way the other media tools do (id prefixes were
+            // already expanded on input). A downloading/generating asset has no file on disk yet.
+            let asset = try asset(mediaRef, editor: editor, label: "Song asset")
+            guard asset.type == .audio else {
+                throw ToolError("Asset \(asset.id) is \(asset.type.rawValue), not audio. The analysis runner needs an audio file.")
+            }
+            guard let url = editor.mediaResolver.resolveURL(for: asset.id) ?? (FileManager.default.fileExists(atPath: asset.url.path) ? asset.url : nil) else {
+                throw ToolError("Asset \(asset.id) has no file on disk yet (still importing/generating?). Poll get_media and retry once its generationStatus is 'none'.")
+            }
+            sourceURL = url
+        } else {
+            sourceURL = URL(fileURLWithPath: path!)
+            guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+                throw ToolError("File not found: \(sourceURL.path)")
+            }
+        }
+
+        let ext = sourceURL.pathExtension.lowercased()
+        guard MusicvideoAnalysisRunner.audioExtensions.contains(ext) else {
+            let accepted = MusicvideoAnalysisRunner.audioExtensions.sorted().map { ".\($0)" }.joined(separator: "/")
+            throw ToolError("'\(sourceURL.lastPathComponent)' isn't an audio type the analysis runner accepts (\(accepted)).")
+        }
+
+        let audioDir = root.appendingPathComponent("audio", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+        } catch {
+            throw ToolError("Couldn't prepare audio/: \(error.localizedDescription)")
+        }
+
+        let destURL = audioDir.appendingPathComponent(sourceURL.lastPathComponent)
+        let replace = args.bool("replace") ?? false
+
+        // The runner keeps exactly one song in audio/. A different existing audio file blocks unless
+        // `replace` is set; a same-named copy is idempotently overwritten either way.
+        let existing = existingAudioFiles(in: audioDir)
+        let others = existing.filter { $0.lastPathComponent != destURL.lastPathComponent }
+        if !others.isEmpty {
+            guard replace else {
+                let names = others.map(\.lastPathComponent).sorted().joined(separator: ", ")
+                throw ToolError("audio/ already holds a different song (\(names)). Pass replace: true to swap it — the analysis runner keeps exactly one song.")
+            }
+            for url in others { try? FileManager.default.removeItem(at: url) }
+        }
+
+        do {
+            if FileManager.default.fileExists(atPath: destURL.path) {
+                try FileManager.default.removeItem(at: destURL)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: destURL)
+        } catch {
+            throw ToolError("Couldn't copy the song into audio/: \(error.localizedDescription)")
+        }
+
+        return try jsonResult(["filename": destURL.lastPathComponent, "audio_dir": audioDir.path])
+    }
+
+    /// Audio files already sitting in `audioDir` (by the runner's accepted extensions).
+    private func existingAudioFiles(in audioDir: URL) -> [URL] {
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: audioDir, includingPropertiesForKeys: [.isRegularFileKey]
+        )) ?? []
+        return entries.filter {
+            let isFile = (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile ?? false
+            return isFile && MusicvideoAnalysisRunner.audioExtensions.contains($0.pathExtension.lowercased())
+        }
+    }
 }
