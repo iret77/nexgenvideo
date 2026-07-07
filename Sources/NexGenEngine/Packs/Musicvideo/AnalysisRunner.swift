@@ -60,6 +60,15 @@ public enum MusicvideoAnalysisRunner {
         }
     }
 
+    /// Where a run for the project at `dataRoot` writes its artifact — derived from the same
+    /// single-song discovery the runner uses, so callers can read back EXACTLY the artifact a
+    /// just-finished run produced (never "some analysis json", which could be stale).
+    public static func expectedArtifactURL(dataRoot: URL) throws -> URL {
+        let song = try locateSong(dataRoot: dataRoot)
+        return dataRoot.appendingPathComponent("analysis")
+            .appendingPathComponent("\(song.deletingPathExtension().lastPathComponent).json")
+    }
+
     /// Run the analysis phase for the project at `dataRoot`, decoding via
     /// `decoder`, and persist the artifact. Returns the outcome.
     @discardableResult

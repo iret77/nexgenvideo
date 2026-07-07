@@ -361,7 +361,9 @@ extension ToolExecutor {
         let phase = try args.requireString("phase")
         let root = try resolveDataRoot(args, editor: editor)
 
-        let registry = PackCatalog.registry(activePack: editor.activePluginName)
+        // The pack follows the TARGET project (an explicit project_dir may point elsewhere);
+        // ngv.json is the write-through source the editor property mirrors anyway.
+        let registry = PackCatalog.registry(activePack: ProjectPluginSettings.activePlugin(projectURL: root))
         registry.registerAudioDecoder(AVFoundationAudioDecoder())
         guard let runner = registry.phases[phase] else {
             return try jsonResult([
@@ -390,15 +392,11 @@ extension ToolExecutor {
         return try jsonResult(["phase": phase, "ok": true, "result": analysisSummary(dataRoot: root, phase: phase)])
     }
 
-    /// Read back the persisted `analysis/<song>.json` into a compact summary for the agent. Falls
-    /// back to a minimal shape if the artifact can't be parsed (the write still succeeded).
+    /// Read back the artifact the run just wrote (derived via the runner's own song discovery —
+    /// never "first json in the folder", which could be a stale sibling). Falls back to a minimal
+    /// shape if it can't be parsed (the write still succeeded).
     private func analysisSummary(dataRoot: URL, phase: String) -> [String: Any] {
-        let anaDir = dataRoot.appendingPathComponent("analysis")
-        let entries = (try? FileManager.default.contentsOfDirectory(at: anaDir, includingPropertiesForKeys: nil)) ?? []
-        guard let artifact = entries
-            .filter({ $0.pathExtension == "json" && !$0.lastPathComponent.hasPrefix("_") })
-            .sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
-            .first,
+        guard let artifact = try? MusicvideoAnalysisRunner.expectedArtifactURL(dataRoot: dataRoot),
             let data = try? Data(contentsOf: artifact),
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
