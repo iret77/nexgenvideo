@@ -31,6 +31,7 @@ public protocol DurationPolicy: Sendable {
 public final class EngineRegistry: @unchecked Sendable {
     public let checkRegistry = CheckRegistry()
     public private(set) var phases: [String: PhaseRunner] = [:]
+    public private(set) var phasePlacements: [PhasePlacement] = []
     public private(set) var durationPolicy: DurationPolicy?
     public private(set) var libraries: [String: Any] = [:]
     public private(set) var projectDirs: [String] = []
@@ -54,8 +55,24 @@ public final class EngineRegistry: @unchecked Sendable {
     /// the Python `EngineRegistry.sanity_checks` dict is inspected.
     public var sanityChecks: [String: SanityCheck] { checkRegistry.checks }
 
-    public func registerPhase(_ name: String, runner: @escaping PhaseRunner) {
+    /// Register a pack gate phase and declare where it sits relative to the core
+    /// order. `after` names the phase this one follows (a core phase or an
+    /// earlier pack phase); nil places it after everything. Unlike the Python
+    /// engine, which appended pack phases sorted after all core phases, the Swift
+    /// engine honors declared placement so a pack whose gate must precede a core
+    /// gate (musicvideo `analysis` before `brief`) reads coherently in the plan,
+    /// next_phase, cost, and rewind. See `PhaseOrder.merged`.
+    public func registerPhase(_ name: String, after: String? = nil, runner: @escaping PhaseRunner) {
         phases[name] = runner
+        registerPhasePlacement(name, after: after)
+    }
+
+    /// Declare a gate phase's placement without a code runner (agent-driven pack
+    /// phase). The phase still appears in the merged plan/gates at the requested
+    /// position; `run_phase` reports the no-runner shape for it.
+    public func registerPhasePlacement(_ name: String, after: String? = nil) {
+        phasePlacements.removeAll { $0.phase == name }
+        phasePlacements.append(PhasePlacement(phase: name, after: after))
     }
 
     /// Extra project-layout subdirs the pack needs (e.g. music:
@@ -91,6 +108,45 @@ public final class EngineRegistry: @unchecked Sendable {
         let entry = try UIContract.validateEntry(phase: phase, surface: surface, taskClass: taskClass)
         uiContracts[phase] = entry
         return entry
+    }
+}
+
+/// A pack gate phase and where it sits relative to the pipeline: right after
+/// `after` (a core phase or an earlier pack phase), or after everything when
+/// `after` is nil.
+public struct PhasePlacement: Sendable, Equatable {
+    public let phase: String
+    public let after: String?
+
+    public init(phase: String, after: String? = nil) {
+        self.phase = phase
+        self.after = after
+    }
+}
+
+/// The single source of truth for the merged pipeline order (core phases plus a
+/// pack's declared phases). EVERY site that needs the ordered plan — project
+/// state, list_phases, cost/next_phase, rewind — goes through here so the order
+/// can never diverge between surfaces.
+///
+/// Placement rules, applied in the order the pack registered them:
+/// - a phase already present in `core` is skipped (a pack must not shadow a core
+///   gate; matches the old dedup);
+/// - `after` naming a phase already in the working order inserts right after it;
+/// - `after == nil`, or naming an unknown/not-yet-present phase, appends to the
+///   end (safe fallback — never drops the phase).
+public enum PhaseOrder {
+    public static func merged(core: [String] = coreGatePhases, packPlacements: [PhasePlacement]) -> [String] {
+        var order = core
+        for placement in packPlacements {
+            guard !order.contains(placement.phase) else { continue }
+            if let after = placement.after, let idx = order.firstIndex(of: after) {
+                order.insert(placement.phase, at: idx + 1)
+            } else {
+                order.append(placement.phase)
+            }
+        }
+        return order
     }
 }
 

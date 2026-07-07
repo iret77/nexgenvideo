@@ -167,8 +167,9 @@ enum AgentInstructions {
           artifact for review, then approve_gate (or set_gate_state for a multi-state verdict). \
           rewind resets a phase and everything after it when the user wants to redo earlier work.
         - The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; \
-          run_phase returns runner: null with a note for those. It runs only pack-registered compute \
-          phases, which aren't wired in yet — don't rely on it for planning work.
+          run_phase returns runner: null with a note for those. Pack compute phases DO run through it — \
+          musicvideo's `analysis` invokes the native runner on the song in audio/ and returns a \
+          bpm/beats/sections summary. Use run_phase for those; drive the planning phases yourself.
         - The Intent Ledger holds the director's durable, per-object decisions; locked attributes are \
           hard facts generation must honor (compile_prompt already merges them). resolve_model tells \
           you which model tier a task class gets — only escalate after a concrete gate failure.

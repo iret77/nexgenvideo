@@ -80,32 +80,54 @@ struct ProjectStateTests {
         #expect(snap.phases.contains { $0.phase == "bible" })
     }
 
-    // MARK: - pack phases append after core (mirrors Python mcp_server.phases())
+    // MARK: - pack phases merge at their declared placement (deliberate deviation from Python append-order)
 
-    @Test("pack phases append after the core order, deduped and in order given")
-    func packPhasesAppendAfterCore() throws {
+    @Test("a pack phase is merged in at its declared placement, deduped")
+    func packPhaseAtDeclaredPlacement() throws {
         let dataRoot = try scaffold(mode: .beat)
         defer { cleanup(dataRoot) }
-        let snap = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, packPhases: ["analysis"])
+        // musicvideo declares `analysis` right after `project_init` (it gates before `brief`).
+        let snap = try ProjectStateBuilder.buildSnapshot(
+            dataRoot: dataRoot, packPlacements: [PhasePlacement(phase: "analysis", after: "project_init")]
+        )
         let order = snap.phases.map(\.phase)
-        #expect(order == coreGatePhases + ["analysis"])  // appended, not inserted mid-list
-        #expect(order.last == "analysis")
-        // A pack phase equal to a core name is not duplicated.
-        let deduped = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, packPhases: ["render"])
+        #expect(order == ["project_init", "analysis"] + coreGatePhases.dropFirst())  // inserted, not appended
+        // A pack phase equal to a core name is not duplicated (position is left to the core order).
+        let deduped = try ProjectStateBuilder.buildSnapshot(
+            dataRoot: dataRoot, packPlacements: [PhasePlacement(phase: "render", after: "project_init")]
+        )
         #expect(deduped.phases.map(\.phase) == coreGatePhases)
     }
 
-    @Test("an unapproved pack phase is the next_phase only once every core gate is approved")
-    func packPhaseIsNextAfterCoreApproved() throws {
+    @Test("nil placement appends the pack phase after the core order")
+    func packPhaseNilPlacementAppends() throws {
         let dataRoot = try scaffold(mode: .beat)
         defer { cleanup(dataRoot) }
+        let snap = try ProjectStateBuilder.buildSnapshot(
+            dataRoot: dataRoot, packPlacements: [PhasePlacement(phase: "extra", after: nil)]
+        )
+        #expect(snap.phases.map(\.phase) == coreGatePhases + ["extra"])
+        #expect(snap.phases.last?.phase == "extra")
+    }
+
+    @Test("an analysis gate placed after project_init is the next_phase once project_init is approved")
+    func packPhaseIsNextAfterItsPredecessor() throws {
+        let dataRoot = try scaffold(mode: .beat)
+        defer { cleanup(dataRoot) }
+        let placements = [PhasePlacement(phase: "analysis", after: "project_init")]
+
+        // Nothing approved → the very first phase is still project_init.
+        var snap = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, packPlacements: placements)
+        #expect(snap.nextPhase == "project_init")
+
+        // Approve project_init → analysis (its declared successor) is next, BEFORE brief.
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try store.load(Gates.self, at: StudioLayout.gatesFile)
-        for phase in coreGatePhases { GatesOperations.approve(&gates, phase: phase) }
+        GatesOperations.approve(&gates, phase: "project_init")
         try store.save(gates, to: StudioLayout.gatesFile)
 
-        let snap = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, packPhases: ["analysis"])
-        #expect(snap.nextPhase == "analysis")  // the appended gate is honored, not hidden
+        snap = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, packPlacements: placements)
+        #expect(snap.nextPhase == "analysis")  // gated before brief, honored not hidden
     }
 
     // MARK: - golden parity: native `state` JSON == committed state.json oracle

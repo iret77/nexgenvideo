@@ -91,7 +91,7 @@ struct WorkflowToolsTests {
         #expect(phases?.count == coreGatePhases.count)
     }
 
-    @Test("list_phases folds in the active pack's phases, appended after core")
+    @Test("list_phases folds in the active pack's phases at their declared placement")
     func listPhasesWithPack() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
@@ -100,11 +100,13 @@ struct WorkflowToolsTests {
         let phases = try await h.runOK("list_phases", args: ["project_dir": dataRoot.path]) as? [String]
         #expect(phases?.first == "project_init")
         #expect(phases?.contains("analysis") == true)  // the pack gate is present…
-        #expect(phases?.last == "analysis")             // …appended after the core order
+        // musicvideo declares `analysis` right after project_init (it gates before brief).
+        #expect(phases?[1] == "analysis")
+        #expect(phases?.dropFirst(2).first == "brief")  // analysis precedes brief
         #expect(phases?.count == coreGatePhases.count + 1)
     }
 
-    @Test("get_project_state includes the active pack's analysis gate")
+    @Test("get_project_state places the active pack's analysis gate before brief")
     func stateWithPack() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
@@ -114,7 +116,11 @@ struct WorkflowToolsTests {
         let phases = try #require(state?["phases"] as? [[String: Any]])
         let names = phases.compactMap { $0["phase"] as? String }
         #expect(names.contains("analysis"))
-        #expect(names.last == "analysis")  // appended, not inserted mid-list
+        // analysis is inserted right after project_init, ahead of brief — not appended at the end.
+        let analysisIdx = try #require(names.firstIndex(of: "analysis"))
+        let briefIdx = try #require(names.firstIndex(of: "brief"))
+        #expect(names[analysisIdx - 1] == "project_init")
+        #expect(analysisIdx < briefIdx)
     }
 
     @Test("get_ui_contract exposes surfaces and a per-phase entry")

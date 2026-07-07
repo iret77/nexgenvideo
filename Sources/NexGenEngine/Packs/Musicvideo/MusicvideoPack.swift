@@ -45,13 +45,15 @@ public struct MusicvideoPack: Pack {
         badgeURL: PackKnowledge.badgeURL()
     )
 
-    /// One honest starter: kick off the production pipeline via the same direct
-    /// path the "Start production" CTA uses (scaffold, then draft the brief).
+    /// One honest starter: kick off the production pipeline in gate order. The
+    /// brief interview builds on the song's tempo/structure, and the `analysis`
+    /// gate must be approved before `brief`, so the starter runs analysis first
+    /// rather than jumping straight to the brief (a dead end — brief would block).
     public let starters = [
         PackStarter(
             id: "start",
             title: "Start the music-video pipeline",
-            prompt: "Start the music-video production pipeline for this project. Initialize the pipeline if needed with init_project, then orient with get_project_state and walk me through drafting the brief — ask about the video's direction first. "
+            prompt: "Start the music-video production pipeline for this project. Initialize the pipeline if needed with init_project, then orient with get_project_state. Next, ask me for the song and import exactly one audio file into the project's audio/ folder. Then run the analysis phase (run_phase analysis) on it, present the result briefly with show_blocks (bpm, sections, key beats), and get the analysis gate approved. Only once analysis is approved, walk me through drafting the brief — ask about the video's direction first. "
                 + AgentPresentationRules.text
         )
     ]
@@ -66,7 +68,11 @@ public struct MusicvideoPack: Pack {
         // The runner resolves the audio decoder from the registry at run time
         // (weak capture — the registry outlives the call; no retain cycle). A
         // missing decoder surfaces as an actionable error, not a crash.
-        registry.registerPhase("analysis") { [weak registry] dataRoot in
+        // analysis gates BEFORE brief: the brief interview builds on the song's
+        // bpm/beats/sections, so it must sit right after project_init — not
+        // appended after render (the Python append-order would be an impossible
+        // workflow here).
+        registry.registerPhase("analysis", after: "project_init") { [weak registry] dataRoot in
             guard let decoder = registry?.audioDecoder else {
                 throw MusicvideoAnalysisRunner.RunError.noDecoder
             }

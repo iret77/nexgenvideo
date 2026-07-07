@@ -24,13 +24,15 @@ public enum ProjectStateBuilder {
     }
 
     /// Aggregate ProjectMeta + Gates + render-manifest spend into a snapshot.
-    /// `phaseOrder` = CORE_PHASES plus any injected pack phases. Spent is summed
-    /// across every `renders/manifest-*.json` and rounded once to 2 dp, matching
-    /// `costs.already_spent_in_project`. Port of `state.py::build_snapshot`.
+    /// The phase order is the core order with the active pack's declared phases
+    /// merged in via `PhaseOrder.merged` (the single ordering helper used at
+    /// every surface). Spent is summed across every `renders/manifest-*.json` and
+    /// rounded once to 2 dp, matching `costs.already_spent_in_project`.
+    /// Port of `state.py::build_snapshot`.
     public static func buildSnapshot(
-        dataRoot: URL, phaseOrder: [String] = coreGatePhases, packPhases: [String] = []
+        dataRoot: URL, core: [String] = coreGatePhases, packPlacements: [PhasePlacement] = []
     ) throws -> ProjectState {
-        let order = phaseOrder + packPhases.filter { !phaseOrder.contains($0) }
+        let order = PhaseOrder.merged(core: core, packPlacements: packPlacements)
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         let meta = try store.load(ProjectMeta.self, at: StudioLayout.projectFile)
         let gates = try store.load(Gates.self, at: StudioLayout.gatesFile)

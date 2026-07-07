@@ -28,15 +28,14 @@ enum NativeGateWriter {
     }
 
     /// Reset `phase` and every following phase to unapproved. Port of `gates.rewind_to` /
-    /// MCP `rewind`. The order includes the active pack's phases (appended sorted, Python
-    /// semantics) so a pack gate like `analysis` is rewindable and gets reset with the rest.
+    /// MCP `rewind`. The order is the merged pipeline (core + the active pack's phases at their
+    /// declared placement, via `PhaseOrder.merged`) so a pack gate like `analysis` is rewindable and
+    /// resets the correct downstream span.
     static func rewind(projectDir: URL, targetPhase: String) throws {
         let pack = ProjectPluginSettings.activePlugin(projectURL: projectDir)
-        let packPhases = PackCatalog.registry(activePack: pack).phases.keys
-            .filter { !coreGatePhases.contains($0) }
-            .sorted()
+        let order = PhaseOrder.merged(packPlacements: PackCatalog.registry(activePack: pack).phasePlacements)
         try mutate(projectDir: projectDir) { gates in
-            _ = try GatesOperations.rewindTo(&gates, target: targetPhase, order: coreGatePhases + packPhases)
+            _ = try GatesOperations.rewindTo(&gates, target: targetPhase, order: order)
         }
     }
 

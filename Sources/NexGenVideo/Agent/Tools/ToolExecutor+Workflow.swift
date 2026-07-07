@@ -37,13 +37,12 @@ extension ToolExecutor {
         ProjectPluginSettings.activePlugin(projectURL: FrameInventory.projectHome(of: dataRoot))
     }
 
-    /// The active pack's registered gate phases (e.g. musicvideo's `analysis`), sorted — the set the
-    /// pipeline plan must include alongside the core phases. Mirrors the retired Python
-    /// `mcp_server.phases()` gather (`sorted(pack phases not in CORE_PHASES)`).
-    private func packPhasesFor(dataRoot: URL) -> [String] {
-        PackCatalog.registry(activePack: activePluginFor(dataRoot: dataRoot)).phases.keys
-            .filter { !coreGatePhases.contains($0) }
-            .sorted()
+    /// The merged pipeline order for a project — core phases with the active pack's declared gate
+    /// phases (e.g. musicvideo's `analysis` right after `project_init`) merged in at their placement.
+    /// Routes through `PhaseOrder.merged`, the single ordering helper every surface shares.
+    private func mergedPhaseOrder(dataRoot: URL) -> [String] {
+        let placements = PackCatalog.registry(activePack: activePluginFor(dataRoot: dataRoot)).phasePlacements
+        return PhaseOrder.merged(packPlacements: placements)
     }
 
     /// JSON `.ok` result from a Foundation object graph.
@@ -62,8 +61,8 @@ extension ToolExecutor {
 
     func listPhasesTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         // Projectless when no project_dir/open project — then the core order alone (no pack context).
-        let packPhases = (try? resolveDataRoot(args, editor: editor)).map { packPhasesFor(dataRoot: $0) } ?? []
-        return try jsonResult(coreGatePhases + packPhases)
+        let order = (try? resolveDataRoot(args, editor: editor)).map { mergedPhaseOrder(dataRoot: $0) } ?? coreGatePhases
+        return try jsonResult(order)
     }
 
     func getBible(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
@@ -168,9 +167,9 @@ extension ToolExecutor {
     func rewindTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let target = try args.requireString("target_phase")
-        // Rewind over the merged order (core + pack) so a pack phase like `analysis` is a valid
-        // target and resets its correct downstream span.
-        let order = coreGatePhases + packPhasesFor(dataRoot: root)
+        // Rewind over the merged order (core + pack, at declared placement) so a pack phase like
+        // `analysis` is a valid target and resets its correct downstream span.
+        let order = mergedPhaseOrder(dataRoot: root)
         var reset: [String] = []
         _ = try mutateGates(dataRoot: root) { reset = try GatesOperations.rewindTo(&$0, target: target, order: order) }
         return try jsonResult(["target": target, "reset_phases": reset])

@@ -10,8 +10,11 @@ public enum GateState: String, Codable, Sendable, CaseIterable {
 }
 
 /// The generic core production pipeline, in order. A pack's own gate phases are
-/// appended after these, sorted (music adds "analysis") — mirroring the retired
-/// Python `mcp_server.phases()` merge. Port of `gates.py::CORE_PHASES`.
+/// merged in at the position the pack declares (see `PhaseOrder.merged` /
+/// `EngineRegistry.registerPhase(_:after:)`) — a deliberate deviation from the
+/// retired Python `mcp_server.phases()`, which appended pack phases sorted after
+/// all core phases. musicvideo's `analysis` gates BEFORE `brief`, so append-order
+/// would describe an impossible workflow. Port of `gates.py::CORE_PHASES`.
 public let coreGatePhases: [String] = [
     "project_init",
     "brief",

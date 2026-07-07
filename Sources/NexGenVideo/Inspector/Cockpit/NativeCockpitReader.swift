@@ -32,19 +32,23 @@ enum NativeCockpitReader {
 
     // MARK: - Projectless kinds
 
-    /// `read.py` "phases": the ordered pipeline (JSON array of strings) — the core order plus the
-    /// active pack's registered gate phases (e.g. musicvideo's `analysis`), appended sorted. Mirrors
-    /// the retired Python `mcp_server.phases()` (`list(CORE_PHASES) + sorted(pack phases)`).
+    /// `read.py` "phases": the ordered pipeline (JSON array of strings) — the core order with the
+    /// active pack's declared gate phases merged in at their placement (e.g. musicvideo's `analysis`
+    /// right after `project_init`). Deliberately deviates from the retired Python `mcp_server.phases()`
+    /// append-order; see `PhaseOrder.merged`.
     static func phasesJSON(activePack: String? = nil) throws -> Data {
-        try serialize(coreGatePhases + packPhases(activePack: activePack))
+        try serialize(mergedPhaseOrder(activePack: activePack))
     }
 
-    /// The active pack's gate phases not already in the core set, sorted — the append the Python
-    /// `phases()` gather did (`sorted(p for p in ...phases if p not in CORE_PHASES)`).
-    static func packPhases(activePack: String?) -> [String] {
-        PackCatalog.registry(activePack: activePack).phases.keys
-            .filter { !coreGatePhases.contains($0) }
-            .sorted()
+    /// The merged pipeline order for a project's active pack — the single ordering helper every
+    /// cockpit surface (phases, state, cost, rewind) routes through.
+    static func mergedPhaseOrder(activePack: String?) -> [String] {
+        PhaseOrder.merged(packPlacements: packPlacements(activePack: activePack))
+    }
+
+    /// The active pack's declared phase placements (position included), for the merged order.
+    static func packPlacements(activePack: String?) -> [PhasePlacement] {
+        PackCatalog.registry(activePack: activePack).phasePlacements
     }
 
     /// `read.py` "contract": `{surfaces:[...], phases:{phase:{surface, task_class}}}`.
@@ -71,13 +75,13 @@ enum NativeCockpitReader {
     // MARK: - Project kinds
 
     /// `read.py` "state": `mcp_server.project_state()` → `ProjectState.model_dump()` (snake_case, no
-    /// aliasing). Phase order is the core order plus the active pack's phases, appended sorted —
-    /// mirroring the Python `project_state` which built its snapshot over the merged `phases()`.
+    /// aliasing). Phase order is the core order with the active pack's phases merged in at their
+    /// declared placement (see `PhaseOrder.merged`).
     static func stateJSON(dataRoot: URL, activePack: String? = nil) throws -> Data {
         let snapshot: ProjectStateBuilder.ProjectState
         do {
             snapshot = try ProjectStateBuilder.buildSnapshot(
-                dataRoot: dataRoot, packPhases: packPhases(activePack: activePack)
+                dataRoot: dataRoot, packPlacements: packPlacements(activePack: activePack)
             )
         } catch {
             throw NativeError.notInitialized
@@ -233,7 +237,7 @@ enum NativeCockpitReader {
         let snapshot: ProjectStateBuilder.ProjectState
         do {
             snapshot = try ProjectStateBuilder.buildSnapshot(
-                dataRoot: dataRoot, packPhases: packPhases(activePack: activePack)
+                dataRoot: dataRoot, packPlacements: packPlacements(activePack: activePack)
             )
         } catch {
             throw NativeError.notInitialized
