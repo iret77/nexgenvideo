@@ -45,7 +45,8 @@ enum PluginSignature {
 
     private static func teamIdentifier(of code: SecStaticCode) -> String? {
         var infoRef: CFDictionary?
-        guard SecCodeCopySigningInformation(code, kSecCSSigningInformation, &infoRef) == errSecSuccess,
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+        guard SecCodeCopySigningInformation(code, flags, &infoRef) == errSecSuccess,
               let info = infoRef as? [String: Any] else { return nil }
         return info[kSecCodeInfoTeamIdentifier as String] as? String
     }
