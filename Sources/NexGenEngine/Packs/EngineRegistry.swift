@@ -168,17 +168,6 @@ public struct PackManifest: Sendable, Equatable {
     }
 }
 
-/// The presentation contract appended to production entry prompts (CTA path and pack
-/// starters alike — one string so they can't drift). The embedded runtime gets no system
-/// prompt, so these rules ride on the kickoff message itself.
-public enum AgentPresentationRules {
-    public static let text = "Presentation: I'm a filmmaker, not a developer — ask every question "
-        + "that has enumerable options via the show_dialog tool (add a free-text section for open "
-        + "input) instead of prose option lists; keep chat prose to a few short sentences; never "
-        + "print tool names, phase ids, or pipeline chains (the app's Pipeline panel visualizes "
-        + "them); no code blocks."
-}
-
 /// One agent-panel starter for a pack — a plain-language instruction the pack
 /// wants to offer as a one-tap chip. Not a slash-command: `prompt` is sent to
 /// the agent as ordinary text so it works under either backend.

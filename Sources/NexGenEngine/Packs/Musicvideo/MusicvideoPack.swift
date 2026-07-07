@@ -45,16 +45,15 @@ public struct MusicvideoPack: Pack {
         badgeURL: PackKnowledge.badgeURL()
     )
 
-    /// One honest starter: kick off the production pipeline in gate order. The
-    /// brief interview builds on the song's tempo/structure, and the `analysis`
-    /// gate must be approved before `brief`, so the starter runs analysis first
-    /// rather than jumping straight to the brief (a dead end — brief would block).
+    /// One honest starter: kick off the production pipeline in gate order (song → analysis →
+    /// brief; the brief interview builds on the song's tempo/structure). The prompt is USER-VISIBLE
+    /// in the transcript, so it stays in the user's language — the tool choreography (attach_song,
+    /// run_phase, show_blocks) lives in the agent manual, tool descriptions, and phase docs.
     public let starters = [
         PackStarter(
             id: "start",
             title: "Start the music-video pipeline",
-            prompt: "Start the music-video production pipeline for this project. Initialize the pipeline if needed with init_project, then orient with get_project_state. Next, ask me for the song and bring exactly one audio file into the project's audio/ folder with attach_song (it keeps the one-song contract; import_media only reaches the media library, not audio/). Then run the analysis phase (run_phase analysis) on it, present the result briefly with show_blocks (bpm, sections, key beats), and get the analysis gate approved. Only once analysis is approved, walk me through drafting the brief — ask about the video's direction first. "
-                + AgentPresentationRules.text
+            prompt: "Start the music-video production pipeline for this project. Ask me for the song first, analyze it and walk me through the result, then guide me through drafting the brief — direction before technicalities."
         )
     ]
 

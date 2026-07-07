@@ -269,12 +269,11 @@ final class EditorViewModel {
             }
             // Genuine dialogue handoff — the pipeline is up. A pack whose workflow starts differently
             // (musicvideo: song → analysis gate → brief) supplies its own starter; the generic
-            // brief-drafting kickoff is only right for no-pack projects. The pack starter already
-            // appends AgentPresentationRules.text itself, so don't double-append it here.
+            // brief-drafting kickoff is only right for no-pack projects. Kickoffs are USER-VISIBLE
+            // transcript messages — presentation rules reach the agent via the system-prompt paths
+            // (in-app manual / --append-system-prompt), never as visible meta-text.
             let kickoff = PackCatalog.pack(named: self.activePluginName)?.starters.first?.prompt
-                ?? ("The production pipeline is initialized. Walk me through drafting the brief — "
-                    + "ask me about the video's direction first. "
-                    + AgentPresentationRules.text)
+                ?? "The production pipeline is initialized. Walk me through drafting the brief — ask me about the video's direction first."
             self.agentService.send(text: kickoff, mentions: [])
         }
     }
