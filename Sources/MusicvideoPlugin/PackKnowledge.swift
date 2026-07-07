@@ -2,55 +2,66 @@ import Foundation
 import NexGenEngine
 
 /// Accessor over the musicvideo pack's bundled knowledge — the pattern YAMLs
-/// (`Resources/MusicvideoPack/library/`) and the neutralized phase docs
-/// (`Resources/MusicvideoPack/phases/`).
+/// (`MusicvideoPack/library/`), the neutralized phase docs (`MusicvideoPack/phases/`),
+/// and the badge (`MusicvideoPack/badge.png`).
 ///
-/// The pack ships these as `MusicvideoPlugin` target resources. At runtime they
-/// resolve either from SwiftPM's generated `NexGenVideo_MusicvideoPlugin.bundle`
-/// (dev/test/CI), or from the installed `.ngvpack` this dylib was loaded out of —
-/// where assembly copies that same generated bundle into `Contents/Resources/`.
-/// Both are found below; nothing is read from an absolute disk path.
+/// The pack ships these as `MusicvideoPlugin` target resources. At runtime the
+/// directory that contains `MusicvideoPack/` is discovered robustly across every
+/// layout we ship in: SwiftPM's generated `NexGenVideo_MusicvideoPlugin.bundle`
+/// (dev/test/CI — whether next to the dylib, the test binary, or the app), and the
+/// installed `.ngvpack` this dylib was loaded out of (the same generated bundle is
+/// copied into `Contents/Resources`, or the resources are flattened there). File
+/// paths are built directly and existence-checked — nothing relies on a specific
+/// `Bundle.resourceURL` shape, and nothing reads from an absolute disk path.
 public enum PackKnowledge {
     private final class BundleFinder {}
 
-    /// A bundle actually contains the pack's resources iff `MusicvideoPack/` sits
-    /// under its resource dir.
-    private static func carriesPack(_ bundle: Bundle) -> Bool {
-        guard let root = bundle.resourceURL else { return false }
-        return FileManager.default.fileExists(
-            atPath: root.appendingPathComponent("MusicvideoPack").path)
-    }
+    private static let nestedBundleName = "NexGenVideo_MusicvideoPlugin.bundle"
 
-    /// SwiftPM's generated `Bundle.module` accessor fatalErrors when the resource
-    /// bundle isn't where it expects — a hard SIGTRAP. This resolver searches the
-    /// known locations and returns nil instead of trapping.
-    static let resourceBundle: Bundle? = {
-        let name = "NexGenVideo_MusicvideoPlugin"
+    /// The directory that directly contains `MusicvideoPack/`, or nil if the pack's
+    /// resources can't be located (callers then degrade gracefully — empty lists /
+    /// thrown notFound, never a crash).
+    static let packRoot: URL? = {
+        let fm = FileManager.default
+        func hasPack(_ dir: URL) -> Bool {
+            fm.fileExists(atPath: dir.appendingPathComponent("MusicvideoPack").path)
+        }
+
         let selfBundle = Bundle(for: BundleFinder.self)
-        // The plugin bundle itself, when its resources are flattened in place
-        // (a `.ngvpack` whose Contents/Resources holds MusicvideoPack/ directly).
-        if carriesPack(selfBundle) { return selfBundle }
-        // Otherwise the generated resource bundle sits next to the dylib / test
-        // bundle (SwiftPM) or inside the `.ngvpack`'s Contents/Resources.
-        let bases: [URL?] = [
+        // Directories that might directly hold MusicvideoPack/ (flattened) or the
+        // nested SwiftPM resource bundle.
+        var containers: [URL] = [
             selfBundle.resourceURL,
+            selfBundle.bundleURL,
             selfBundle.bundleURL.deletingLastPathComponent(),
             Bundle.main.resourceURL,
             Bundle.main.bundleURL,
-        ]
-        for base in bases {
-            guard let url = base?.appendingPathComponent("\(name).bundle"),
-                  let bundle = Bundle(url: url) else { continue }
-            return bundle
+        ].compactMap { $0 }
+        containers += Bundle.allBundles.compactMap { $0.resourceURL }
+        containers += Bundle.allBundles.map { $0.bundleURL }
+        containers += Bundle.allFrameworks.compactMap { $0.resourceURL }
+
+        for container in containers {
+            // Flattened: <container>/MusicvideoPack/…
+            if hasPack(container) { return container }
+            // Nested generated bundle: <container>/NexGenVideo_MusicvideoPlugin.bundle/…
+            let nested = container.appendingPathComponent(nestedBundleName)
+            guard fm.fileExists(atPath: nested.path) else { continue }
+            if hasPack(nested) { return nested }
+            let nestedResources = nested.appendingPathComponent("Contents/Resources")
+            if hasPack(nestedResources) { return nestedResources }
+            if let bundle = Bundle(url: nested), let res = bundle.resourceURL, hasPack(res) { return res }
         }
         return nil
     }()
-    /// URLs of every pattern-library YAML bundled with the pack. Port of
-    /// `patterns_schema.py::patterns_dir` + the `*.yaml` glob in
-    /// `load_all_patterns` — Swift has no on-disk package directory to list,
-    /// so this enumerates `Bundle.module`'s resource URLs instead.
+
+    private static func packDir(_ subpath: String) -> URL? {
+        packRoot?.appendingPathComponent("MusicvideoPack").appendingPathComponent(subpath)
+    }
+
+    /// URLs of every pattern-library YAML bundled with the pack.
     public static func patternLibraryURLs() -> [URL] {
-        guard let dir = Self.resourceBundle?.resourceURL?.appendingPathComponent("MusicvideoPack/library") else { return [] }
+        guard let dir = packDir("library") else { return [] }
         let entries = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
         return entries.filter { $0.pathExtension == "yaml" }
     }
@@ -62,8 +73,8 @@ public enum PackKnowledge {
     /// Loads a neutralized phase doc's markdown text by base name (e.g.
     /// `"analysis"` -> `phases/analysis.md`).
     public static func phaseDoc(name: String) throws -> String {
-        guard let url = Self.resourceBundle?.url(forResource: name, withExtension: "md", subdirectory: "MusicvideoPack/phases")
-        else {
+        guard let url = packDir("phases/\(name).md"),
+              FileManager.default.fileExists(atPath: url.path) else {
             throw PhaseDocError.notFound(name)
         }
         return try String(contentsOf: url, encoding: .utf8)
@@ -71,12 +82,13 @@ public enum PackKnowledge {
 
     /// The pack's badge art (`MusicvideoPack/badge.png`) — the self-contained gallery visual.
     public static func badgeURL() -> URL? {
-        Self.resourceBundle?.url(forResource: "badge", withExtension: "png", subdirectory: "MusicvideoPack")
+        guard let url = packDir("badge.png"), FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
     }
 
     /// Base names of every bundled phase doc, sorted.
     public static func phaseDocNames() -> [String] {
-        guard let dir = Self.resourceBundle?.resourceURL?.appendingPathComponent("MusicvideoPack/phases") else { return [] }
+        guard let dir = packDir("phases") else { return [] }
         let entries = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
         return entries.filter { $0.pathExtension == "md" }.map { $0.deletingPathExtension().lastPathComponent }.sorted()
     }
