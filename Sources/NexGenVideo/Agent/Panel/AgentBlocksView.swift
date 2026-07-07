@@ -130,15 +130,16 @@ struct AgentBlocksView: View {
 }
 
 /// Minimal wrapping row: subviews flow left-to-right and break onto new lines at the
-/// proposed width (badge rows in narrow panels).
-private struct WrapLayout: Layout {
+/// proposed width (badge rows in narrow panels). Conformance and subview types are
+/// SwiftUI-qualified — the app's own `Layout` constants enum shadows the protocol name.
+private struct WrapLayout: SwiftUI.Layout {
     var spacing: CGFloat
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: LayoutSubviews, cache: inout ()) -> CGSize {
         layout(proposal: proposal, subviews: subviews).size
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: LayoutSubviews, cache: inout ()) {
         for (index, origin) in layout(proposal: proposal, subviews: subviews).origins.enumerated() {
             subviews[index].place(
                 at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y),
@@ -147,7 +148,7 @@ private struct WrapLayout: Layout {
         }
     }
 
-    private func layout(proposal: ProposedViewSize, subviews: Subviews) -> (origins: [CGPoint], size: CGSize) {
+    private func layout(proposal: ProposedViewSize, subviews: LayoutSubviews) -> (origins: [CGPoint], size: CGSize) {
         let maxWidth = proposal.width ?? .infinity
         var origins: [CGPoint] = []
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, width: CGFloat = 0
