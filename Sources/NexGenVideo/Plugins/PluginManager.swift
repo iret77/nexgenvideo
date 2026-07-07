@@ -17,6 +17,9 @@ struct PluginRow: Identifiable {
         /// Installed and loaded → Activate/Active; `update` set when the catalog
         /// offers a newer, installable version.
         case installed(active: Bool, update: PluginCatalog.Entry?)
+        /// A newer build was installed to disk, but the previously-loaded code is
+        /// still live this session → the pack needs a relaunch to take effect.
+        case updatePendingRestart
         /// Installed but blocked by the gate → show `reason`; `reinstall` set when
         /// the catalog offers a build that would clear the gate.
         case incompatible(reason: String, reinstall: PluginCatalog.Entry?)
@@ -86,6 +89,11 @@ final class PluginManager {
                     id: record.id, displayName: record.displayName,
                     tagline: record.tagline.isEmpty ? nil : record.tagline, badgeURL: badge,
                     status: .incompatible(reason: reason.reason, reinstall: reinstall)))
+            } else if record.isUpdatePendingRestart {
+                rows.append(PluginRow(
+                    id: record.id, displayName: record.displayName,
+                    tagline: record.tagline.isEmpty ? nil : record.tagline, badgeURL: badge,
+                    status: .updatePendingRestart))
             } else {
                 let update = entry.flatMap { newer($0, thanInstalled: record.version) }
                 rows.append(PluginRow(

@@ -18,19 +18,29 @@ struct InstalledPluginRecord: Identifiable, Equatable {
         if case .incompatible(let reason) = state { return reason }
         return nil
     }
+    /// A newer bundle is on disk but the previously-loaded dylib is still resident
+    /// this session — the picker shows a restart hint, not a false "live" state.
+    var isUpdatePendingRestart: Bool {
+        if case .updatePendingRestart = state { return true }
+        return false
+    }
 
     enum State: Equatable {
         case loaded
         case incompatible(PluginIncompatibility)
+        /// Installed to disk, gates passed, but an older build of this pack id is
+        /// already loaded in-process (dylibs can't be safely unloaded). Live code is
+        /// still the OLD one; using the new version needs a relaunch.
+        case updatePendingRestart
     }
 }
 
 /// Loads installed format packs at startup, enforcing the hard gate order:
 /// read Info.plist → id/version/entry well-formed → NGVMinAppVersion ≤ app
-/// version → code signature (host Team ID, or ad-hoc when the host is unsigned)
-/// → `Bundle.load()` → instantiate the principal `PackEntry` → register the pack.
-/// An incompatible or unsigned pack yields a record with a reason — never a crash,
-/// never a silent skip.
+/// version → code signature (same-developer trust chain, or ad-hoc only when the
+/// host is itself ad-hoc; indeterminate host fails closed) → `Bundle.load()` →
+/// instantiate the principal `PackEntry` → register the pack. An incompatible or
+/// unsigned pack yields a record with a reason — never a crash, never a silent skip.
 @MainActor
 enum PluginLoader {
     /// The most recent scan, for the picker. Empty until `loadInstalled()` runs.
@@ -39,9 +49,9 @@ enum PluginLoader {
     /// Scan the install directory and load every pack. Idempotent.
     @discardableResult
     static func loadInstalled(appVersion: String? = AppVersion.marketing) -> [InstalledPluginRecord] {
-        let hostTeam = PluginSignature.hostTeamIdentifier()
+        let host = PluginSignature.hostSigningState()
         let records = PluginPaths.installedBundles().map {
-            load(at: $0, appVersion: appVersion, hostTeam: hostTeam)
+            load(at: $0, appVersion: appVersion, host: host)
         }
         installed = records
         return records
@@ -54,7 +64,7 @@ enum PluginLoader {
     static func load(
         at bundleURL: URL,
         appVersion: String? = AppVersion.marketing,
-        hostTeam: String? = PluginSignature.hostTeamIdentifier()
+        host: PluginSignature.HostSigningState = PluginSignature.hostSigningState()
     ) -> InstalledPluginRecord {
         let fallbackID = bundleURL.deletingPathExtension().lastPathComponent
 
@@ -70,7 +80,7 @@ enum PluginLoader {
             return record(info, bundleURL: bundleURL, state: .incompatible(reason))
         }
 
-        if let reason = PluginSignature.verify(bundleURL: bundleURL, hostTeam: hostTeam) {
+        if let reason = PluginSignature.verify(bundleURL: bundleURL, host: host) {
             return record(info, bundleURL: bundleURL, state: .incompatible(reason))
         }
 
@@ -90,6 +100,19 @@ enum PluginLoader {
         PackCatalog.register(pack)
         Log.plugins.notice("loaded pack \(pack.name) v\(info.version) from \(bundleURL.lastPathComponent)")
         return record(info, bundleURL: bundleURL, state: .loaded)
+    }
+
+    /// Record a freshly-installed-but-not-loadable-this-session update: the new
+    /// bundle is on disk and passed every non-executing gate, but an older build of
+    /// this id is already resident, so we must NOT re-instantiate (that would run the
+    /// OLD code under the NEW version's metadata). The live pack in `PackCatalog`
+    /// stays untouched; the picker inventory is refreshed to show the restart hint.
+    @discardableResult
+    static func markUpdatePendingRestart(_ info: PluginBundleInfo, bundleURL: URL) -> InstalledPluginRecord {
+        let updated = record(info, bundleURL: bundleURL, state: .updatePendingRestart)
+        installed = installed.filter { $0.id != info.id } + [updated]
+        Log.plugins.notice("update for \(info.id) v\(info.version) installed to disk — restart required to activate")
+        return updated
     }
 
     private static func record(

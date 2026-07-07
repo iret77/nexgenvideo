@@ -26,11 +26,16 @@ enum PluginCatalogService {
     static let catalogURL = URL(
         string: "https://github.com/iret77/nexgen-video/releases/download/dev-latest/plugins.json")!
 
-    enum FetchError: Error { case http(Int); case empty }
+    enum FetchError: Error { case http(Int); case empty; case insecureURL(String) }
 
     /// Fetch + decode the catalog. Errors (offline, 404 before the first release,
-    /// malformed) are returned so the caller can fall back to installed-only.
+    /// malformed, or a non-https URL) are returned so the caller can fall back to
+    /// installed-only.
     static func fetch(from url: URL = catalogURL) async -> Result<PluginCatalog, Error> {
+        // Finding 5: the catalog itself is only ever fetched over https.
+        guard url.scheme?.lowercased() == "https" else {
+            return .failure(FetchError.insecureURL(url.absoluteString))
+        }
         do {
             var request = URLRequest(url: url)
             request.cachePolicy = .reloadIgnoringLocalCacheData

@@ -98,13 +98,28 @@ multiple packs never collide on a global symbol (as a `@_cdecl`/`dlsym` factory 
 1. **Read `Info.plist`** — missing/unreadable → damaged.
 2. **Metadata well-formed** — `NGVPackID` valid, `CFBundleShortVersionString` and
    `NGVMinAppVersion` parse as semver, `NSPrincipalClass` present.
-3. **Version** — `NGVMinAppVersion ≤` the app's `CFBundleShortVersionString`
-   (semantic compare). A dev/CI build without a marketing version is treated as
-   always-compatible, logged.
-4. **Code signature** — `SecStaticCodeCheckValidity` (integrity) + the pack's Team
-   ID must equal the host app's own (the same-developer requirement derived from the
-   host's signing, not a hard-coded team). When the host itself is unsigned/ad-hoc
-   (dev, CI), a validly ad-hoc pack is allowed and logged.
+3. **Version** — `NGVMinAppVersion ≤` the app's `CFBundleShortVersionString`.
+   Version fields are parsed **strictly**: exactly `MAJOR.MINOR.PATCH`, each an ASCII
+   digit run — trailing garbage (`1.2.3xyz`), wrong arity (`1.2`), and pre-release /
+   build metadata (`1.2.3-rc1`, `1.2.3+build`) are all rejected. A malformed
+   `NGVMinAppVersion` reads as **incompatible**, never silently as compatible. Only a
+   dev/CI *host* with no marketing version at all is treated as always-compatible
+   (logged) — that leniency never extends to a malformed pack version.
+4. **Code signature — trust-chain, not self-DR.** The pack is validated against a real
+   `SecRequirement`, not merely `SecStaticCodeCheckValidity(code, [], nil)` (a
+   self-signed bundle satisfies its OWN designated requirement, so a bare validity
+   check plus a Team-ID string compare is **not** a trust check). The host's own signing
+   state is read once and modelled explicitly:
+   - **Developer ID host** → the pack must satisfy the **same-developer requirement**
+     `anchor apple generic and certificate leaf[subject.OU] = "<hostTeamID>"`, passed
+     to `SecStaticCodeCheckValidity`. This requires the pack to chain to an Apple root
+     **and** carry the host's leaf Team ID — a self-signed pack fails `anchor apple
+     generic`.
+   - **Ad-hoc / unsigned host** (dev, CI) → a bundle whose own seal validates is
+     accepted (ad-hoc counts), logged. Ad-hoc packs are permitted **only** here.
+   - **Indeterminate** (any Security.framework error reading the host's state) → the
+     pack is **rejected (fail closed)**. A transient failure in a signed production
+     build can never fall through to the ad-hoc path. Every branch is logged.
 5. **Load** — `Bundle.load()`, resolve the principal class, instantiate, register.
 
 Incompatible / unsigned packs become a picker row with a calm reason (e.g.
@@ -116,9 +131,20 @@ Incompatible / unsigned packs become a picker row with a calm reason (e.g.
   packs `{id, displayName, tagline, version, minAppVersion, url, sha256}`. The picker
   (`PluginPickerView`) fetches it; a fetch failure is a calm offline state (installed
   packs keep working).
-- **Install** — download the `.ngvpack` zip, verify `sha256` + code signature, install
-  to `~/Library/Application Support/NexGenVideo/Plugins/<id>.ngvpack`, then load it
-  through the same gate. Update = install a newer catalog version in place.
+- **Install (staged + atomic)** — the pack `url` (and the catalog URL) **must be
+  https**; a non-https or malformed URL is refused with an actionable error and no
+  download. The download is checksum-verified (`sha256`), unpacked into a temp dir, and
+  run through **every non-executing gate there** (metadata, `NGVMinAppVersion`, code
+  signature). Only once all pass is the validated bundle **atomically swapped** into
+  `~/Library/Application Support/NexGenVideo/Plugins/<id>.ngvpack`; the prior install is
+  kept until then, so a bad bundle can never overwrite a working one. Any failure leaves
+  the previous install intact.
+- **Update needs a restart.** A dylib already loaded this session can't be safely
+  unloaded — its bundle path + principal class keep resolving to the resident (old)
+  code. So updating an already-loaded pack installs the new bundle to disk but does
+  **not** claim it's live: the record is marked *update-pending-restart* and the picker
+  shows "Update installed — restart NexGenVideo to use it" rather than a false "active
+  new version". First-time installs of a not-yet-loaded id load live immediately.
 - **Startup** — `PluginLoader.loadInstalled()` (in `main.swift`, before the UI) loads
   every installed pack from disk.
 - **Activation** — exactly one active pack per project (or none = the generic

@@ -8,20 +8,29 @@ struct PluginGateTests {
 
     // MARK: - SemanticVersion
 
-    @Test func parsesArities() {
+    @Test func parsesStrictTriples() {
         #expect(SemanticVersion("1.2.3") == SemanticVersion(major: 1, minor: 2, patch: 3))
-        #expect(SemanticVersion("1.2") == SemanticVersion(major: 1, minor: 2, patch: 0))
-        #expect(SemanticVersion("4") == SemanticVersion(major: 4, minor: 0, patch: 0))
-        // Pre-release / build suffix after the numeric core is ignored.
-        #expect(SemanticVersion("1.2.3-beta.4") == SemanticVersion(major: 1, minor: 2, patch: 3))
+        #expect(SemanticVersion("0.4.1") == SemanticVersion(major: 0, minor: 4, patch: 1))
+        #expect(SemanticVersion("10.20.30") == SemanticVersion(major: 10, minor: 20, patch: 30))
+        // Surrounding whitespace is tolerated; leading zeros parse numerically.
         #expect(SemanticVersion(" 0.4.1 ") == SemanticVersion(major: 0, minor: 4, patch: 1))
+        #expect(SemanticVersion("01.02.03") == SemanticVersion(major: 1, minor: 2, patch: 3))
     }
 
-    @Test func rejectsMalformed() {
-        #expect(SemanticVersion("") == nil)
-        #expect(SemanticVersion("v1.2") == nil)       // no leading number
+    @Test func rejectsNonStrict() {
+        #expect(SemanticVersion("") == nil)                // empty
+        #expect(SemanticVersion("1.2") == nil)             // wrong arity (too few)
+        #expect(SemanticVersion("4") == nil)               // wrong arity (too few)
+        #expect(SemanticVersion("1.2.3.4") == nil)         // wrong arity (too many)
+        #expect(SemanticVersion("1.2.3garbage") == nil)    // trailing garbage
+        #expect(SemanticVersion("1.2.3-rc1") == nil)       // pre-release metadata
+        #expect(SemanticVersion("1.2.3-beta.4") == nil)    // pre-release metadata
+        #expect(SemanticVersion("1.2.3+build") == nil)     // build metadata
+        #expect(SemanticVersion("v1.2.3") == nil)          // leading non-digit
+        #expect(SemanticVersion("1.x.3") == nil)           // non-numeric component
+        #expect(SemanticVersion("1..3") == nil)            // empty middle component
+        #expect(SemanticVersion("-1.2.3") == nil)          // sign
         #expect(SemanticVersion("abc") == nil)
-        #expect(SemanticVersion("1.x.3") == nil)      // non-numeric middle component
     }
 
     @Test func ordersCorrectly() {
@@ -57,6 +66,20 @@ struct PluginGateTests {
 
     @Test func devBuildWithoutVersionIsAlwaysCompatible() {
         #expect(PluginGate.evaluate(info: info(minApp: "9.9.9"), appVersion: nil) == nil)
+    }
+
+    /// The host-missing-version leniency applies ONLY to a well-formed pack: a
+    /// malformed `NGVMinAppVersion` is incompatible even on a dev host — it must
+    /// never be silently treated as compatible.
+    @Test func malformedMinAppVersionIsIncompatibleEvenOnDevHost() {
+        for bad in ["1.2", "1.2.3garbage", "1.2.3-rc1", ""] {
+            if case .malformedMetadata = PluginGate.versionCheck(minAppVersion: bad, appVersion: nil) {} else {
+                Issue.record("malformed minAppVersion \"\(bad)\" must block on a dev host")
+            }
+            if case .malformedMetadata = PluginGate.versionCheck(minAppVersion: bad, appVersion: "0.4.1") {} else {
+                Issue.record("malformed minAppVersion \"\(bad)\" must block on a versioned host")
+            }
+        }
     }
 
     @Test func malformedMetadataBlocks() {

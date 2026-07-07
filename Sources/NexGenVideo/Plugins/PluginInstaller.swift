@@ -1,13 +1,19 @@
 import CryptoKit
 import Foundation
+import NexGenEngine
 
 /// Downloads, verifies, and installs a catalog pack, then loads it through the
-/// same gate as a startup pack. Verification is defense in depth: SHA-256 of the
-/// download must match the catalog, and the unpacked bundle's code signature is
-/// checked by `PluginLoader` before any code runs.
+/// same gate as a startup pack.
+///
+/// The install is staged and atomic: the download is checksum-verified, unpacked
+/// into a temp dir, and run through ALL non-executing gates (metadata, minAppVersion,
+/// code signature) THERE — the working install on disk is only swapped once every
+/// gate has passed. A bad bundle therefore can never overwrite a good one. Pack
+/// URLs must be https (defense against a tampered catalog pointing at plaintext).
 @MainActor
 enum PluginInstaller {
     enum InstallError: LocalizedError {
+        case insecureURL(String)
         case download(String)
         case checksumMismatch(expected: String, actual: String)
         case unpack(String)
@@ -16,6 +22,8 @@ enum PluginInstaller {
 
         var errorDescription: String? {
             switch self {
+            case .insecureURL(let url):
+                return "Refused an insecure pack URL — \(url). Packs must be served over HTTPS."
             case .download(let detail): return "Download failed — \(detail)."
             case .checksumMismatch:
                 return "The download didn't match its checksum and was discarded."
@@ -27,19 +35,36 @@ enum PluginInstaller {
         }
     }
 
-    /// Install (or update) `entry`: download → checksum → unpack → move into the
-    /// plugins directory (replacing any prior version) → load through the gate.
-    /// Returns the loaded record. Throws `InstallError` with a user-facing reason.
+    /// Install (or update) `entry` over the network. Thin wrapper over the staged
+    /// pipeline with the real downloader injected.
     @discardableResult
     static func install(
         _ entry: PluginCatalog.Entry,
         appVersion: String? = AppVersion.marketing
     ) async throws -> InstalledPluginRecord {
+        try await install(entry, appVersion: appVersion, fetch: { try await download($0) })
+    }
+
+    /// The staged install pipeline: https-guard → fetch → checksum → unpack → gate the
+    /// STAGED copy → atomically swap into place → load (only when this id isn't already
+    /// resident). `fetch` is injected so the checksum/gate/swap ordering is testable
+    /// offline. Throws `InstallError` with a user-facing reason; on any failure the
+    /// prior install is left intact.
+    @discardableResult
+    static func install(
+        _ entry: PluginCatalog.Entry,
+        appVersion: String?,
+        fetch: @MainActor (URL) async throws -> Data
+    ) async throws -> InstalledPluginRecord {
         guard PluginPaths.isValidID(entry.id) else {
             throw InstallError.unpack("the catalog id \"\(entry.id)\" is invalid")
         }
+        // Finding 5: reject non-https pack URLs before any network access.
+        guard isHTTPS(entry.url) else {
+            throw InstallError.insecureURL(entry.url.absoluteString)
+        }
 
-        let data = try await download(entry.url)
+        let data = try await fetch(entry.url)
 
         let actual = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard actual.caseInsensitiveCompare(entry.sha256) == .orderedSame else {
@@ -60,20 +85,48 @@ enum PluginInstaller {
         guard let unpacked = firstBundle(in: extractDir) else {
             throw InstallError.unpack("no .ngvpack inside the archive")
         }
-        if let info = PluginBundleInfo(bundleURL: unpacked), info.id != entry.id {
+        guard let info = PluginBundleInfo(bundleURL: unpacked) else {
+            throw InstallError.gate(.malformedMetadata("its Info.plist is missing or unreadable"))
+        }
+        guard info.id == entry.id else {
             throw InstallError.idMismatch(expected: entry.id, found: info.id)
         }
 
-        try moveIntoPlace(unpacked, id: entry.id)
+        // Finding 3: run every non-executing gate on the STAGED copy in temp, before
+        // touching the installed pack. A failure here throws and leaves disk untouched.
+        if let reason = PluginGate.evaluate(info: info, appVersion: appVersion) {
+            throw InstallError.gate(reason)
+        }
+        if let reason = PluginSignature.verify(bundleURL: unpacked, host: PluginSignature.hostSigningState()) {
+            throw InstallError.gate(reason)
+        }
 
-        // Re-scan: loads + registers the new/updated pack, refreshes the picker
-        // inventory, and preserves any other installed packs' states.
+        // Finding 4: capture "already loaded this process" BEFORE the swap. A dylib
+        // for this id already resident can't be unloaded, so the new code can't go
+        // live until relaunch — we install it but don't pretend it's running.
+        let alreadyLoaded = PackCatalog.pack(named: entry.id) != nil
+
+        // All gates passed — now atomically swap the validated bundle into place.
+        try moveIntoPlace(unpacked, id: entry.id)
+        let dest = PluginPaths.installURL(id: entry.id)
+
+        if alreadyLoaded {
+            return PluginLoader.markUpdatePendingRestart(info, bundleURL: dest)
+        }
+
+        // First activation of this id this session — load + register it live.
         let records = PluginLoader.loadInstalled(appVersion: appVersion)
         guard let record = records.first(where: { $0.id == entry.id }) else {
             throw InstallError.unpack("the installed pack didn't reappear in the library")
         }
         if let reason = record.incompatibility { throw InstallError.gate(reason) }
         return record
+    }
+
+    /// Whether `url`'s scheme is https (case-insensitive) — the only scheme a pack
+    /// (or badge) may be fetched over. Pure, so it's unit-testable.
+    static func isHTTPS(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https"
     }
 
     /// Remove an installed pack from disk. The already-loaded code stays live

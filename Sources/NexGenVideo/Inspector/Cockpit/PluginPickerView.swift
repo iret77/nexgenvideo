@@ -102,6 +102,11 @@ struct PluginPickerView: View {
                 .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
                 .foregroundStyle(AppTheme.Status.warningColor)
                 .fixedSize(horizontal: false, vertical: true)
+        case .updatePendingRestart:
+            Label("Update installed — restart NexGenVideo to use it.", systemImage: "arrow.clockwise.circle")
+                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .foregroundStyle(AppTheme.Status.warningColor)
+                .fixedSize(horizontal: false, vertical: true)
         default:
             EmptyView()
         }
@@ -137,6 +142,11 @@ struct PluginPickerView: View {
                             .controlSize(.small)
                     }
                 }
+
+            case .updatePendingRestart:
+                Label("Restart to update", systemImage: "arrow.clockwise")
+                    .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
 
             case .incompatible(_, let reinstall):
                 if let reinstall {
