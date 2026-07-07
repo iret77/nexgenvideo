@@ -46,6 +46,23 @@ enum PluginLoader {
     /// The most recent scan, for the picker. Empty until `loadInstalled()` runs.
     private(set) static var installed: [InstalledPluginRecord] = []
 
+    /// Pack id → the version that actually went LIVE (registered) this process. A dylib
+    /// can't be unloaded, so once an id is resident this mapping is the source of truth for
+    /// a rescan: it lets `load()` tell "same pack, still loaded" from "a newer bundle is on
+    /// disk but the old code is still resident" WITHOUT re-instantiating the resident dylib.
+    /// Process-lifetime (reset on relaunch, which is exactly when a pending update goes live).
+    private static var loadedVersions: [String: String] = [:]
+
+    /// Decision for an id that is already resident this process (pure + testable). `nil` = not
+    /// resident, proceed to load. `.loaded` = same version still live. `.updatePendingRestart` =
+    /// a different (newer) version is on disk; using it needs a relaunch.
+    static func residentDecision(
+        diskVersion: String, loadedVersion: String?
+    ) -> InstalledPluginRecord.State? {
+        guard let loadedVersion else { return nil }
+        return loadedVersion == diskVersion ? .loaded : .updatePendingRestart
+    }
+
     /// Scan the install directory and load every pack. Idempotent.
     @discardableResult
     static func loadInstalled(appVersion: String? = AppVersion.marketing) -> [InstalledPluginRecord] {
@@ -84,6 +101,14 @@ enum PluginLoader {
             return record(info, bundleURL: bundleURL, state: .incompatible(reason))
         }
 
+        // Already resident this process? Never re-instantiate — `bundle.load()` on an
+        // already-loaded path resolves the principal class to the OLD code, so reporting
+        // `.loaded` from the NEW disk metadata would be a false-live update. Same version →
+        // still loaded; a newer on-disk version → the update needs a relaunch.
+        if let state = residentDecision(diskVersion: info.version, loadedVersion: loadedVersions[info.id]) {
+            return record(info, bundleURL: bundleURL, state: state)
+        }
+
         guard let bundle = Bundle(url: bundleURL), bundle.load() else {
             return record(info, bundleURL: bundleURL,
                           state: .incompatible(.malformedMetadata("the pack's code failed to load")))
@@ -98,6 +123,7 @@ enum PluginLoader {
             Log.plugins.warning("pack id \"\(info.id)\" ≠ loaded pack name \"\(pack.name)\" — activating by \"\(pack.name)\"")
         }
         PackCatalog.register(pack)
+        loadedVersions[info.id] = info.version
         Log.plugins.notice("loaded pack \(pack.name) v\(info.version) from \(bundleURL.lastPathComponent)")
         return record(info, bundleURL: bundleURL, state: .loaded)
     }
