@@ -60,8 +60,15 @@ extension ToolExecutor {
     }
 
     func listPhasesTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
-        // Projectless when no project_dir/open project — then the core order alone (no pack context).
-        let order = (try? resolveDataRoot(args, editor: editor)).map { mergedPhaseOrder(dataRoot: $0) } ?? coreGatePhases
+        // An EXPLICIT project_dir must resolve or the error surfaces — silently answering with
+        // the core order would hide the pack (and its analysis gate) behind a typo. Only the
+        // truly projectless case (no arg, no open project) falls back to the bare core order.
+        let order: [String]
+        if args["project_dir"] != nil {
+            order = mergedPhaseOrder(dataRoot: try resolveDataRoot(args, editor: editor))
+        } else {
+            order = (try? resolveDataRoot(args, editor: editor)).map { mergedPhaseOrder(dataRoot: $0) } ?? coreGatePhases
+        }
         return try jsonResult(order)
     }
 
@@ -487,8 +494,13 @@ extension ToolExecutor {
         let destURL = audioDir.appendingPathComponent(sourceURL.lastPathComponent)
         let replace = args.bool("replace") ?? false
 
+        // The song may ALREADY be the file in audio/ — never delete-then-copy onto the source.
+        let alreadyInPlace = sourceURL.standardizedFileURL.resolvingSymlinksInPath()
+            == destURL.standardizedFileURL.resolvingSymlinksInPath()
+
         // The runner keeps exactly one song in audio/. A different existing audio file blocks unless
-        // `replace` is set; a same-named copy is idempotently overwritten either way.
+        // `replace` is set; removal failures are real errors (a leftover would block analysis later
+        // while this call reported success).
         let existing = existingAudioFiles(in: audioDir)
         let others = existing.filter { $0.lastPathComponent != destURL.lastPathComponent }
         if !others.isEmpty {
@@ -496,16 +508,23 @@ extension ToolExecutor {
                 let names = others.map(\.lastPathComponent).sorted().joined(separator: ", ")
                 throw ToolError("audio/ already holds a different song (\(names)). Pass replace: true to swap it — the analysis runner keeps exactly one song.")
             }
-            for url in others { try? FileManager.default.removeItem(at: url) }
+            for url in others {
+                do { try FileManager.default.removeItem(at: url) }
+                catch { throw ToolError("Couldn't remove \(url.lastPathComponent) from audio/: \(error.localizedDescription)") }
+            }
         }
 
-        do {
-            if FileManager.default.fileExists(atPath: destURL.path) {
-                try FileManager.default.removeItem(at: destURL)
+        if !alreadyInPlace {
+            // Stage next to the destination, then atomically swap — a failed copy never
+            // destroys an existing same-named song.
+            let staging = audioDir.appendingPathComponent(".attach-\(UUID().uuidString).\(sourceURL.pathExtension)")
+            do {
+                try FileManager.default.copyItem(at: sourceURL, to: staging)
+                _ = try FileManager.default.replaceItemAt(destURL, withItemAt: staging)
+            } catch {
+                try? FileManager.default.removeItem(at: staging)
+                throw ToolError("Couldn't copy the song into audio/: \(error.localizedDescription)")
             }
-            try FileManager.default.copyItem(at: sourceURL, to: destURL)
-        } catch {
-            throw ToolError("Couldn't copy the song into audio/: \(error.localizedDescription)")
         }
 
         return try jsonResult(["filename": destURL.lastPathComponent, "audio_dir": audioDir.path])
