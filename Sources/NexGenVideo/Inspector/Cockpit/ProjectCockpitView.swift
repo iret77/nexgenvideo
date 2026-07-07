@@ -136,50 +136,49 @@ struct ProjectSettingsView: View {
 
     /// The active pack: its badge, the state + entry point, and the pack-global actions
     /// (switch / remove). Activating installs nothing — it binds the project's workflow.
+    /// Vertical, with a wrapping action row: this section also lives in the ~280pt Edit
+    /// sidebar, where a badge-beside-buttons row would crush.
     private func activePluginCard(_ plugin: InstalledPack) -> some View {
         let initialized = editor.projectState != nil
-        return HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             PluginBadgeView(plugin: plugin)
-                .frame(width: AppTheme.ComponentSize.pluginBadgeWidth)
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                Text(initialized
-                     ? "Active — production runs the \(plugin.displayName) workflow. Continue in Pipeline."
-                     : "Active — ready when you are. Start production and the agent guides each phase.")
-                    .font(.system(size: AppTheme.FontSize.xs))
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                HStack(spacing: AppTheme.Spacing.sm) {
-                    if initialized {
-                        // Working the pipeline is Produce's job — land there, not in a sidebar tab.
-                        Button("Open Pipeline") {
-                            editor.cockpitTab = .pipeline
-                            editor.setWorkspaceFocus(.produce)
-                        }
-                        .buttonStyle(.capsule(.prominent, size: .regular))
-                        .controlSize(.small)
-                    } else if editor.productionStarting {
+                .frame(maxWidth: AppTheme.ComponentSize.pluginBadgeWidth, alignment: .leading)
+            Text(initialized
+                 ? "Active — production runs the \(plugin.displayName) workflow. Continue in Pipeline."
+                 : "Active — ready when you are. Start production and the agent guides each phase.")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+            WrapLayout(spacing: AppTheme.Spacing.sm) {
+                if initialized {
+                    // Working the pipeline is Produce's job — land there, not in a sidebar tab.
+                    Button("Open Pipeline") {
+                        editor.cockpitTab = .pipeline
+                        editor.setWorkspaceFocus(.produce)
+                    }
+                    .buttonStyle(.capsule(.prominent, size: .regular))
+                    .controlSize(.small)
+                } else if editor.productionStarting {
+                    HStack(spacing: AppTheme.Spacing.xs) {
                         ProgressView().controlSize(.small)
                         Text("Starting…")
                             .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    } else {
-                        Button("Start production") { editor.startProduction() }
-                            .buttonStyle(.capsule(.prominent, size: .regular))
-                            .controlSize(.small)
                     }
-                    Button("Switch…") { showsPluginPicker = true }
-                        .buttonStyle(.capsule(.secondary, size: .regular))
+                } else {
+                    Button("Start production") { editor.startProduction() }
+                        .buttonStyle(.capsule(.prominent, size: .regular))
                         .controlSize(.small)
-                    Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
-                        .buttonStyle(.capsule(.secondary, size: .regular))
-                        .controlSize(.small)
-                        .help("Back to the generic workflow — pipeline data stays in the project.")
                 }
+                Button("Switch…") { showsPluginPicker = true }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+                Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+                    .help("Back to the generic workflow — pipeline data stays in the project.")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Rows

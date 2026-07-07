@@ -323,6 +323,20 @@ enum AppTheme {
         static let lg = ShadowStyle(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
     }
 
+    // MARK: - Custom cursors
+
+    /// Timeline fade-knee cursor glyph. macOS cursor idiom: black glyph with a white
+    /// outline, readable on any clip color — deliberately NOT theme-tinted.
+    enum Cursor {
+        static let size: CGFloat = 18
+        static let strokeWidth: CGFloat = 3
+        static let rampInsetX: CGFloat = 2
+        static let rampBottomY: CGFloat = 4
+        static let rampTopY: CGFloat = 14
+        static let glyphColor = NSColor.black
+        static let outlineColor = NSColor.white
+    }
+
     // MARK: - Animation durations
 
     enum Anim {

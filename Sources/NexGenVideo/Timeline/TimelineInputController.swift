@@ -584,29 +584,31 @@ final class TimelineInputController {
     }
 
     private static func makeFadeCursor(rising: Bool) -> NSCursor {
-        let size = NSSize(width: 18, height: 18)
+        let c = AppTheme.Cursor.self
+        let size = NSSize(width: c.size, height: c.size)
+        let left = c.rampInsetX
+        let right = c.size - c.rampInsetX
         let image = NSImage(size: size, flipped: false) { _ in
             let ramp = NSBezierPath()
             if rising {
-                ramp.move(to: NSPoint(x: 2, y: 4))
-                ramp.line(to: NSPoint(x: 16, y: 4))
-                ramp.line(to: NSPoint(x: 16, y: 14))
+                ramp.move(to: NSPoint(x: left, y: c.rampBottomY))
+                ramp.line(to: NSPoint(x: right, y: c.rampBottomY))
+                ramp.line(to: NSPoint(x: right, y: c.rampTopY))
             } else {
-                ramp.move(to: NSPoint(x: 2, y: 14))
-                ramp.line(to: NSPoint(x: 2, y: 4))
-                ramp.line(to: NSPoint(x: 16, y: 4))
+                ramp.move(to: NSPoint(x: left, y: c.rampTopY))
+                ramp.line(to: NSPoint(x: left, y: c.rampBottomY))
+                ramp.line(to: NSPoint(x: right, y: c.rampBottomY))
             }
             ramp.close()
-            // macOS cursor idiom: black glyph, white outline — readable on any clip color.
-            NSColor.white.setStroke()
-            ramp.lineWidth = 3
+            c.outlineColor.setStroke()
+            ramp.lineWidth = c.strokeWidth
             ramp.lineJoinStyle = .round
             ramp.stroke()
-            NSColor.black.setFill()
+            c.glyphColor.setFill()
             ramp.fill()
             return true
         }
-        return NSCursor(image: image, hotSpot: NSPoint(x: 9, y: 9))
+        return NSCursor(image: image, hotSpot: NSPoint(x: c.size / 2, y: c.size / 2))
     }
 
     func audioVolumeKfHit(at point: NSPoint, clip: Clip, clipRect: NSRect) -> Int? {
