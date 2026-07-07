@@ -80,7 +80,8 @@ final class ClaudeCodeRuntime {
             pluginMcpServers: Self.loadPluginMcpServers(pluginDirectories)
                 .merging(ExternalMcpServers.all()) { existing, _ in existing },
             mcpPort: mcpPort,
-            permissionMode: permissionMode
+            permissionMode: permissionMode,
+            appendSystemPrompt: AgentInstructions.presentationContract
         )
         let newProcess = ClaudeCodeProcess()
         do {

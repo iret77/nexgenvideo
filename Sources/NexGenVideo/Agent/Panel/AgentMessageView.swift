@@ -53,7 +53,15 @@ struct AgentMessageView: View {
                     MarkdownText(text: text)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .toolUse(let id, let name, let inputJSON):
-                    ToolRunRow(name: name, inputJSON: inputJSON, result: toolResults[id])
+                    // show_blocks renders as native UI, not as a tool row (#135). A call the
+                    // strict parser rejects falls back to the row — its expanded detail carries
+                    // the violation the model was told about.
+                    if ToolRunPresentation.baseName(for: name) == ToolName.showBlocks.rawValue,
+                       let blocks = Self.parsedBlocks(inputJSON) {
+                        AgentBlocksView(blocks: blocks)
+                    } else {
+                        ToolRunRow(name: name, inputJSON: inputJSON, result: toolResults[id])
+                    }
                 case .toolResult:
                     EmptyView()
                 }
@@ -72,6 +80,15 @@ struct AgentMessageView: View {
         }
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isHovering)
+    }
+
+    /// Blocks from a show_blocks tool-use payload, nil when the JSON or the strict
+    /// block schema doesn't hold (→ tool-row fallback).
+    private static func parsedBlocks(_ inputJSON: String) -> [AgentBlock]? {
+        guard let data = inputJSON.data(using: .utf8),
+              let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return nil }
+        return try? AgentBlocks.parse(args)
     }
 }
 

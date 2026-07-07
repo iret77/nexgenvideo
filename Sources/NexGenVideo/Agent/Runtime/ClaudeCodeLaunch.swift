@@ -25,6 +25,9 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     var allowedTools: [String]
     /// Model alias or full id; nil = user default.
     var model: String?
+    /// Appended to the runtime's system prompt (--append-system-prompt) — the presentation
+    /// contract reaches the embedded session even though it loads no in-app manual.
+    var appendSystemPrompt: String?
     /// Pre-assigned UUID for a new session (lets us --resume it later).
     var sessionId: String?
     /// Resume an existing session id (takes precedence over sessionId).
@@ -39,6 +42,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         settingSources: String = "project,local",
         allowedTools: [String] = [],
         model: String? = nil,
+        appendSystemPrompt: String? = nil,
         sessionId: String? = nil,
         resumeSessionId: String? = nil
     ) {
@@ -50,6 +54,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         self.settingSources = settingSources
         self.allowedTools = allowedTools
         self.model = model
+        self.appendSystemPrompt = appendSystemPrompt
         self.sessionId = sessionId
         self.resumeSessionId = resumeSessionId
     }
@@ -98,6 +103,10 @@ enum ClaudeCodeLaunch {
         if let model = cfg.model {
             args.append("--model")
             args.append(model)
+        }
+        if let append = cfg.appendSystemPrompt, !append.isEmpty {
+            args.append("--append-system-prompt")
+            args.append(append)
         }
         if let resume = cfg.resumeSessionId {
             args.append("--resume")

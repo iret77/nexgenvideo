@@ -272,6 +272,7 @@ enum AppTheme {
         static let agentComposerMinHeight: CGFloat = 64
         static let agentComposerMaxHeight: CGFloat = 280
         static let agentComposerGrabHeight: CGFloat = 10
+        static let agentBlockLabelWidth: CGFloat = 96
     }
 
     enum Window {

@@ -20,6 +20,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case addCaptions = "add_captions"
     case exportProject = "export_project"
     case showDialog = "show_dialog"
+    case showBlocks = "show_blocks"
     case compilePrompt = "compile_prompt"
     case generateVideo = "generate_video"
     case generateImage = "generate_image"
@@ -143,6 +144,25 @@ enum ToolDefinitions {
                     ],
                 ],
                 required: ["title", "sections"]
+            )
+        ),
+        AgentTool(
+            name: .showBlocks,
+            description: "Present status, reports, and summaries as NATIVE UI in the transcript — headlines, badge rows, key-value boxes, callouts — instead of markdown walls. USE THIS whenever you report state (project status, brief fields, cost, phase results); plain chat text is for genuine conversation only and never gets rich rendering. Interaction stays with show_dialog — show_blocks displays, it never asks. Strictly validated: unknown block types, unknown keys, or empty required fields are rejected with the exact violation; fix and re-call.",
+            inputSchema: objectSchema(
+                properties: [
+                    "blocks": [
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": AgentBlocks.maxBlocks,
+                        "description": "1–\(AgentBlocks.maxBlocks) blocks, rendered top to bottom.",
+                        "items": [
+                            "type": "object",
+                            "description": "Exactly one of: {type:'headline', text, symbol?} — section header, optional SF Symbol. {type:'text', body} — short prose/caption (markdown ok). {type:'status', badges:[{label, value, symbol?}]} — 1–\(AgentBlocks.maxBadges) compact badges (Mode, Budget, …). {type:'keyvalue', title?, rows:[[label, value], …]} — 1–\(AgentBlocks.maxRows) labeled rows in a box (brief fields etc.). {type:'callout', tone:'info'|'warn'|'success', text} — one emphasized note. No other keys.",
+                        ],
+                    ],
+                ],
+                required: ["blocks"]
             )
         ),
         AgentTool(

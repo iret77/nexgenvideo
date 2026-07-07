@@ -12,6 +12,12 @@ enum ToolRunPresentation {
         return name.replacingOccurrences(of: "_", with: " ").capitalizedFirst
     }
 
+    /// The tool's base name regardless of transport (`mcp__nexgen__show_blocks` and
+    /// `show_blocks` are the same tool to the transcript).
+    static func baseName(for rawName: String) -> String {
+        stripped(rawName)
+    }
+
     /// `mcp__<server>__<tool>` → `<tool>`
     private static func stripped(_ raw: String) -> String {
         guard raw.hasPrefix("mcp__") else { return raw }
@@ -57,6 +63,7 @@ enum ToolRunPresentation {
         "delete_folder": "Deleting a folder",
         // Dialog & generation
         "show_dialog": "Asking for your direction",
+        "show_blocks": "Preparing a report",
         "compile_prompt": "Compiling the prompt",
         "generate_video": "Generating video",
         "generate_image": "Generating an image",
