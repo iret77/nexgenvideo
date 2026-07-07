@@ -16,6 +16,10 @@ struct PluginCatalog: Decodable, Equatable {
         let url: URL
         /// Lowercase hex SHA-256 of the zip, verified before install.
         let sha256: String
+        /// Optional https URL of the pack's badge art, published as its own release
+        /// asset so the gallery can show the real badge BEFORE install. Absent → the
+        /// gallery paints its gradient fallback.
+        let badge: URL?
     }
 }
 

@@ -172,6 +172,7 @@ jobs:
           gh release create dev-latest \
             .build/NexGenVideo.dmg \
             .build/plugins/*.ngvpack.zip \
+            .build/plugins/*.badge.png \
             .build/plugins/plugins.json \
             --prerelease \
             --title "NexGenVideo — latest dev build" \
@@ -199,6 +200,7 @@ jobs:
           gh release create "$TAG" \
             .build/NexGenVideo.dmg \
             .build/plugins/*.ngvpack.zip \
+            .build/plugins/*.badge.png \
             .build/plugins/plugins.json \
             --title "NexGenVideo $TAG" \
             --notes "NexGenVideo $REL_VERSION (build ${BUILD_NUMBER})." \

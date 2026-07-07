@@ -163,11 +163,13 @@ struct PluginPickerView: View {
 }
 
 /// A pack's badge at its native aspect — the owner's uniform badge art when
-/// available, otherwise a gradient carrying the display name so packs without
-/// loaded art still render a proper card.
+/// available (local for installed packs, a remote catalog badge before install),
+/// otherwise a gradient carrying the display name. Art loads asynchronously off the
+/// main thread through `BadgeImageStore`; the gradient is the placeholder meanwhile.
 struct PluginBadgeView: View {
     let displayName: String
     let badgeURL: URL?
+    @State private var image: NSImage?
 
     /// Convenience for an installed/loaded pack.
     init(plugin: InstalledPack) {
@@ -182,7 +184,7 @@ struct PluginBadgeView: View {
 
     var body: some View {
         Group {
-            if let url = badgeURL, let image = NSImage(contentsOf: url) {
+            if let image {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -202,5 +204,14 @@ struct PluginBadgeView: View {
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
                 .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
         )
+        .task(id: badgeURL) {
+            guard let badgeURL else { image = nil; return }
+            if let hit = BadgeImageStore.shared.cached(badgeURL) {
+                image = hit
+                return
+            }
+            image = nil  // gradient placeholder while the art loads
+            image = await BadgeImageStore.shared.image(for: badgeURL)
+        }
     }
 }

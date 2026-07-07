@@ -28,6 +28,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Read fields from the manifest (python3 ships on the macOS runner).
 read_field() { python3 -c "import json,sys;print(json.load(open('$MANIFEST'))['$1'])"; }
+# Optional field — empty string when absent (no KeyError).
+read_optional() { python3 -c "import json,sys;print(json.load(open('$MANIFEST')).get('$1',''))"; }
 ID="$(read_field id)"
 TARGET="$(read_field target)"
 PRINCIPAL="$(read_field principalClass)"
@@ -35,6 +37,8 @@ DISPLAY="$(read_field displayName)"
 TAGLINE="$(read_field tagline)"
 VERSION="$(read_field version)"
 MINAPP="$(read_field minAppVersion)"
+# Badge source, relative to the SwiftPM resource bundle (e.g. MusicvideoPack/badge.png).
+BADGE_SRC="$(read_optional badge)"
 
 BINDIR="$(swift build -c "$CONFIG" --show-bin-path)"
 DYLIB="$BINDIR/lib${TARGET}.dylib"
@@ -90,9 +94,24 @@ codesign --verify --strict --verbose=2 "$PACK"
 /usr/bin/ditto -c -k --keepParent "$PACK" "$ZIP"
 SHA="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
 
-# Catalog entry (url filled by release.yml for the release it publishes to).
+# Badge: publish the pack's badge art as its own release asset so the catalog can
+# show it BEFORE install (the .ngvpack itself isn't downloaded until then). Optional
+# — a pack without a `badge` field just gets the gallery's gradient fallback.
+BADGE_ASSET=""
+if [ -n "$BADGE_SRC" ]; then
+  BADGE_FILE="$RES_BUNDLE/$BADGE_SRC"
+  if [ -f "$BADGE_FILE" ]; then
+    BADGE_ASSET="${ID}.badge.png"
+    cp "$BADGE_FILE" "$OUT/$BADGE_ASSET"
+    echo "    badge:  $OUT/$BADGE_ASSET"
+  else
+    echo "!! declared badge not found: $BADGE_FILE — shipping without a catalog badge" >&2
+  fi
+fi
+
+# Catalog entry (url + badge filled by release.yml/gen_plugins_json for the release).
 NGV_ID="$ID" NGV_DISPLAY="$DISPLAY" NGV_TAGLINE="$TAGLINE" NGV_VERSION="$VERSION" \
-NGV_MINAPP="$MINAPP" NGV_SHA="$SHA" NGV_ZIP="$(basename "$ZIP")" \
+NGV_MINAPP="$MINAPP" NGV_SHA="$SHA" NGV_ZIP="$(basename "$ZIP")" NGV_BADGE="$BADGE_ASSET" \
 python3 - "$OUT/${ID}.entry.json" <<'PY'
 import json, os, sys
 entry = {
@@ -104,6 +123,9 @@ entry = {
     "sha256": os.environ["NGV_SHA"],
     "zip": os.environ["NGV_ZIP"],
 }
+badge = os.environ.get("NGV_BADGE", "")
+if badge:
+    entry["badge"] = badge  # filename → gen_plugins_json turns it into a URL
 with open(sys.argv[1], "w") as f:
     json.dump(entry, f, indent=2)
 PY

@@ -40,6 +40,23 @@ struct PluginCatalogDecodeTests {
         #expect(catalog.plugins.isEmpty)
     }
 
+    /// The optional `badge` URL decodes when present and is nil when absent — the
+    /// catalog can carry a pre-install badge, but older entries without one still load.
+    @Test func badgeIsOptional() throws {
+        let withBadge = try PluginCatalogService.decode("""
+        {"plugins":[{"id":"musicvideo","displayName":"MV","tagline":"t","version":"0.0.1",
+          "minAppVersion":"0.1.0","url":"https://ex.com/mv.ngvpack.zip","sha256":"abc",
+          "badge":"https://ex.com/musicvideo.badge.png"}]}
+        """.data(using: .utf8)!)
+        #expect(withBadge.plugins.first?.badge == URL(string: "https://ex.com/musicvideo.badge.png"))
+
+        let withoutBadge = try PluginCatalogService.decode("""
+        {"plugins":[{"id":"musicvideo","displayName":"MV","tagline":"t","version":"0.0.1",
+          "minAppVersion":"0.1.0","url":"https://ex.com/mv.ngvpack.zip","sha256":"abc"}]}
+        """.data(using: .utf8)!)
+        #expect(withoutBadge.plugins.first?.badge == nil)
+    }
+
     @Test func malformedCatalogThrows() {
         #expect(throws: (any Error).self) {
             _ = try PluginCatalogService.decode(#"{"plugins":[{"id":"x"}]}"#.data(using: .utf8)!)

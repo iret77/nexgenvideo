@@ -82,7 +82,9 @@ final class PluginManager {
         for record in installed {
             seen.insert(record.id)
             let entry = catalogByID[record.id]
-            let badge = InstalledPack.named(record.id)?.badgeURL
+            // Loaded packs carry their local badge; fall back to the catalog badge so
+            // a not-yet-loaded (incompatible) row still shows real art.
+            let badge = InstalledPack.named(record.id)?.badgeURL ?? entry?.badge
             if let reason = record.incompatibility {
                 let reinstall = entry.flatMap { installableEntry($0) }
                 rows.append(PluginRow(
@@ -107,12 +109,12 @@ final class PluginManager {
             if let blocked = PluginGate.versionCheck(minAppVersion: entry.minAppVersion, appVersion: appVersion) {
                 rows.append(PluginRow(
                     id: entry.id, displayName: entry.displayName,
-                    tagline: entry.tagline.isEmpty ? nil : entry.tagline, badgeURL: nil,
+                    tagline: entry.tagline.isEmpty ? nil : entry.tagline, badgeURL: entry.badge,
                     status: .unavailable(reason: blocked.reason)))
             } else {
                 rows.append(PluginRow(
                     id: entry.id, displayName: entry.displayName,
-                    tagline: entry.tagline.isEmpty ? nil : entry.tagline, badgeURL: nil,
+                    tagline: entry.tagline.isEmpty ? nil : entry.tagline, badgeURL: entry.badge,
                     status: .available(entry)))
             }
         }
