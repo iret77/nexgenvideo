@@ -95,8 +95,9 @@ public enum FrameInventory {
     }
 
     /// Port of `paths.project_home`: the user-facing project folder for a
-    /// data root (parent of `_studio/`).
-    static func projectHome(of dataRoot: URL) -> URL {
+    /// data root (parent of `_studio/`). Public so the app can lift a resolved
+    /// data root back to the package where `ngv.json` lives.
+    public static func projectHome(of dataRoot: URL) -> URL {
         dataRoot.lastPathComponent == DataRootResolver.studioDirname
             ? dataRoot.deletingLastPathComponent() : dataRoot
     }
