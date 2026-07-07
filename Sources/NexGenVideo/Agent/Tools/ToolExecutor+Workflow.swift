@@ -515,6 +515,12 @@ extension ToolExecutor {
         }
 
         if !alreadyInPlace {
+            // A same-NAMED file in audio/ is still a DIFFERENT song when the source is another
+            // file — overwriting it without consent breaks the tool contract just like the
+            // different-name case above.
+            if !replace, FileManager.default.fileExists(atPath: destURL.path) {
+                throw ToolError("audio/ already holds \(destURL.lastPathComponent). Pass replace: true to overwrite it — the analysis runner keeps exactly one song.")
+            }
             // Stage next to the destination, then atomically swap — a failed copy never
             // destroys an existing same-named song.
             let staging = audioDir.appendingPathComponent(".attach-\(UUID().uuidString).\(sourceURL.pathExtension)")
