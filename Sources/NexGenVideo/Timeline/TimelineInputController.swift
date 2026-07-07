@@ -550,11 +550,13 @@ final class TimelineInputController {
             let clip = editor.timeline.tracks[hit.trackIndex].clips[hit.clipIndex]
             let rect = geometry.clipRect(for: clip, trackIndex: hit.trackIndex)
             let localX = point.x - rect.minX
-            if Self.isOnTrimZone(localX: localX, clipWidth: rect.width) {
-                NSCursor.resizeLeftRight.set()
+            // Fade knees sit inside the trim zones — check them first so the hover cursor matches
+            // what a click actually grabs (mouseDown resolves the knee before the trim edge).
+            if let edge = fadeKneeHit(at: point, clip: clip, clipRect: rect) {
+                Self.fadeCursor(edge).set()
                 return
             }
-            if fadeKneeHit(at: point, clip: clip, clipRect: rect) != nil {
+            if Self.isOnTrimZone(localX: localX, clipWidth: rect.width) {
                 NSCursor.resizeLeftRight.set()
                 return
             }
@@ -569,6 +571,42 @@ final class TimelineInputController {
 
     private static func isOnTrimZone(localX: CGFloat, clipWidth: CGFloat) -> Bool {
         localX <= Trim.handleWidth || localX >= clipWidth - Trim.handleWidth
+    }
+
+    // MARK: - Fade cursor
+
+    /// Distinct from the trim arrows: a ramp glyph — rising for the fade-in knee, falling for fade-out.
+    private static let fadeInCursor = makeFadeCursor(rising: true)
+    private static let fadeOutCursor = makeFadeCursor(rising: false)
+
+    static func fadeCursor(_ edge: FadeEdge) -> NSCursor {
+        edge == .left ? fadeInCursor : fadeOutCursor
+    }
+
+    private static func makeFadeCursor(rising: Bool) -> NSCursor {
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: false) { _ in
+            let ramp = NSBezierPath()
+            if rising {
+                ramp.move(to: NSPoint(x: 2, y: 4))
+                ramp.line(to: NSPoint(x: 16, y: 4))
+                ramp.line(to: NSPoint(x: 16, y: 14))
+            } else {
+                ramp.move(to: NSPoint(x: 2, y: 14))
+                ramp.line(to: NSPoint(x: 2, y: 4))
+                ramp.line(to: NSPoint(x: 16, y: 4))
+            }
+            ramp.close()
+            // macOS cursor idiom: black glyph, white outline — readable on any clip color.
+            NSColor.white.setStroke()
+            ramp.lineWidth = 3
+            ramp.lineJoinStyle = .round
+            ramp.stroke()
+            NSColor.black.setFill()
+            ramp.fill()
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: 9, y: 9))
     }
 
     func audioVolumeKfHit(at point: NSPoint, clip: Clip, clipRect: NSRect) -> Int? {

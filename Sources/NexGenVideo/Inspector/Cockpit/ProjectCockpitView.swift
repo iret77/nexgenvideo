@@ -129,37 +129,42 @@ struct ProjectSettingsView: View {
 
     private func pluginCard(_ plugin: InstalledPack) -> some View {
         let isActive = editor.activePluginName == plugin.name
-        return ZStack(alignment: .bottomLeading) {
-            headerImage(for: plugin)
-                .frame(height: 96)
-                .frame(maxWidth: .infinity)
-                .clipped()
-            LinearGradient(colors: [.clear, Color.black.opacity(AppTheme.Opacity.strong)],
-                           startPoint: .top, endPoint: .bottom)
-            HStack(alignment: .bottom) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                    Text(plugin.displayName)
-                        .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
-                        .foregroundStyle(.white)
-                    if let tagline = plugin.tagline {
-                        Text(tagline)
-                            .font(.system(size: AppTheme.FontSize.xs))
-                            .foregroundStyle(.white.opacity(AppTheme.Opacity.prominent))
-                            .lineLimit(2)
+        return VStack(spacing: 0) {
+            ZStack(alignment: .bottomLeading) {
+                headerImage(for: plugin)
+                    .frame(height: 96)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                LinearGradient(colors: [.clear, Color.black.opacity(AppTheme.Opacity.strong)],
+                               startPoint: .top, endPoint: .bottom)
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                        Text(plugin.displayName)
+                            .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
+                            .foregroundStyle(.white)
+                        if let tagline = plugin.tagline {
+                            Text(tagline)
+                                .font(.system(size: AppTheme.FontSize.xs))
+                                .foregroundStyle(.white.opacity(AppTheme.Opacity.prominent))
+                                .lineLimit(2)
+                        }
+                    }
+                    Spacer(minLength: AppTheme.Spacing.md)
+                    if isActive {
+                        Button("Deactivate") { withAnimation { editor.setActivePlugin(nil) } }
+                            .buttonStyle(.capsule(.secondary, size: .regular))
+                            .controlSize(.small)
+                    } else {
+                        Button("Activate") { withAnimation { editor.setActivePlugin(plugin.name) } }
+                            .buttonStyle(.capsule(.prominent, size: .regular))
+                            .controlSize(.small)
                     }
                 }
-                Spacer(minLength: AppTheme.Spacing.md)
-                if isActive {
-                    Button("Deactivate") { editor.setActivePlugin(nil) }
-                        .buttonStyle(.capsule(.secondary, size: .regular))
-                        .controlSize(.small)
-                } else {
-                    Button("Activate") { editor.setActivePlugin(plugin.name) }
-                        .buttonStyle(.capsule(.prominent, size: .regular))
-                        .controlSize(.small)
-                }
+                .padding(AppTheme.Spacing.md)
             }
-            .padding(AppTheme.Spacing.md)
+            if isActive {
+                pluginNextStep(plugin)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
         .overlay(
@@ -167,17 +172,44 @@ struct ProjectSettingsView: View {
                 .strokeBorder(isActive ? AppTheme.Accent.primary : AppTheme.Border.subtleColor,
                               lineWidth: isActive ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline)
         )
-        .overlay(alignment: .topTrailing) {
-            if isActive {
-                Label("Active", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, AppTheme.Spacing.sm)
-                    .padding(.vertical, AppTheme.Spacing.xxs)
-                    .background(Capsule().fill(AppTheme.Accent.primary))
-                    .padding(AppTheme.Spacing.sm)
+    }
+
+    /// Activation feedback + the concrete entry point. Activating a pack installs nothing and runs
+    /// nothing — it binds the project's workflow. This row says so and hands the user the next move,
+    /// which is the part the bare state pill never did.
+    private func pluginNextStep(_ plugin: InstalledPack) -> some View {
+        let initialized = editor.projectState != nil
+        return HStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Accent.primary)
+            Text(initialized
+                 ? "Active — this project's production runs the \(plugin.displayName) workflow. Continue in Pipeline."
+                 : "Active — ready when you are. Start production and the agent guides each phase.")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: AppTheme.Spacing.sm)
+            if initialized {
+                Button("Open Pipeline") { editor.revealCockpit(.pipeline) }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+            } else if editor.productionStarting {
+                HStack(spacing: AppTheme.Spacing.xs) {
+                    ProgressView().controlSize(.small)
+                    Text("Starting…")
+                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                }
+            } else {
+                Button("Start production") { editor.startProduction() }
+                    .buttonStyle(.capsule(.prominent, size: .regular))
+                    .controlSize(.small)
             }
         }
+        .padding(AppTheme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.Background.raisedColor)
     }
 
     @ViewBuilder
