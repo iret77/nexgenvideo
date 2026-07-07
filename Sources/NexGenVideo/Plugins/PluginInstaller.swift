@@ -124,8 +124,9 @@ enum PluginInstaller {
     }
 
     /// Whether `url`'s scheme is https (case-insensitive) — the only scheme a pack
-    /// (or badge) may be fetched over. Pure, so it's unit-testable.
-    static func isHTTPS(_ url: URL) -> Bool {
+    /// (or badge) may be fetched over. Pure (no actor state) → `nonisolated` so the
+    /// synchronous unit tests can call it without a MainActor hop.
+    nonisolated static func isHTTPS(_ url: URL) -> Bool {
         url.scheme?.lowercased() == "https"
     }
 
