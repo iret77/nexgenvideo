@@ -47,11 +47,18 @@ final class EditorViewModel {
     }
 
     /// The top-level workspace focus (docs/UI_UX_CONCEPT.md §3). A focus rearranges the *same*
-    /// canonical panels — it never forks a variant. Edit = cutting (Inspector + expanded timeline);
-    /// Produce = generating (cockpit prominent, timeline collapsed).
+    /// canonical panels — it never forks a variant. Ordered left-to-right as the AI-native creative
+    /// order (mirroring Resolve's pages): Produce = generating (cockpit + agent prominent), Edit =
+    /// cutting (Inspector + expanded timeline), Finish = QC + deliver (large player, review, export).
     enum WorkspaceFocus: String, CaseIterable, Sendable {
-        case edit, produce
-        var label: String { self == .edit ? "Edit" : "Produce" }
+        case produce, edit, finish
+        var label: String {
+            switch self {
+            case .produce: "Produce"
+            case .edit: "Edit"
+            case .finish: "Finish"
+            }
+        }
     }
 
     /// The three canonical left-sidebar surfaces, presented as tabs of one sidebar (not separate columns).
@@ -75,6 +82,13 @@ final class EditorViewModel {
 
     var focusedPanel: FocusedPanel?
     var maximizedPanel: FocusedPanel?
+
+    /// Theater is a VIEW toggle orthogonal to the stage (docs/UI_UX_CONCEPT.md §3): the player fills
+    /// the window with floating transport, panels hidden; you stay in your current stage. Transient,
+    /// never persisted. Esc exits.
+    var theaterActive: Bool = false
+
+    func toggleTheater() { theaterActive.toggle() }
 
     // MARK: - Tutorial tour
 
@@ -321,14 +335,14 @@ final class EditorViewModel {
         didSet { UserDefaults.standard.set(inspectorPanelVisible, forKey: "inspectorPanelVisible") }
     }
 
-    /// Per-project, session-scoped — not a global preference. The initial value is derived from the
-    /// project's content on open (`applyDefaultWorkspaceFocus`): empty project → Produce, cut → Edit
-    /// (docs/UI_UX_CONCEPT.md §3).
-    var workspaceFocus: WorkspaceFocus = .edit
+    /// Per-project, session-scoped — not a global preference. NGV is AI-first: every project lands in
+    /// Produce (`applyDefaultWorkspaceFocus`); the user switches stages any time (docs/UI_UX_CONCEPT.md §3).
+    var workspaceFocus: WorkspaceFocus = .produce
 
-    /// Single gate for all timeline edit chrome/interaction (trim handles, waveforms, razor): the one
-    /// canonical timeline shows rendered status in Produce, never trim tooling (docs/UI_UX_CONCEPT.md §3).
-    var allowsTimelineEditChrome: Bool { workspaceFocus != .produce }
+    /// Single gate for all timeline edit chrome/interaction (trim handles, waveforms, razor): only Edit
+    /// cuts. Produce shows rendered status; Finish is QC + deliver — neither carries trim tooling
+    /// (docs/UI_UX_CONCEPT.md §3).
+    var allowsTimelineEditChrome: Bool { workspaceFocus == .edit }
 
     var leftSidebarTab: LeftSidebarTab = {
         if let raw = UserDefaults.standard.string(forKey: "leftSidebarTab"),
@@ -352,31 +366,29 @@ final class EditorViewModel {
         if workspaceFocus == .edit { leftSidebarTab = .project }
     }
 
-    /// Switch the workspace focus. In Produce the cockpit is the center work surface, the sidebar
-    /// defaults to the Agent (command *and* watch, concurrently), and the timeline becomes a
-    /// display-only strip — so any edit tool falls back to the pointer.
+    /// Switch the workspace focus. Produce and Finish are non-editing stages: the timeline is
+    /// display-only, so any surviving Edit state (selection, swap banner, crop overlay, active tool)
+    /// is dropped so it can't leak onto the stage. Produce also lands the sidebar on the Agent
+    /// (command *and* watch, concurrently).
     func setWorkspaceFocus(_ focus: WorkspaceFocus) {
         workspaceFocus = focus
-        if focus == .produce {
-            leftSidebarTab = .agent
-            toolMode = .pointer
-            // The timeline is display-only here — surviving Edit-focus state would drag Edit
-            // tooling onto the Produce stage (clip inspector, swap banner, crop overlay).
-            selectedClipIds = []
-            selectedGap = nil
-            selectedTimelineRange = nil
-            isMarqueeSelecting = false
-            if case .clip = inspectedObject { inspectedObject = nil }
-            if case .mediaAsset = inspectedObject { inspectedObject = nil }
-            cancelMediaSwap()
-            cropEditingActive = false
-        }
+        guard focus != .edit else { return }
+        toolMode = .pointer
+        selectedClipIds = []
+        selectedGap = nil
+        selectedTimelineRange = nil
+        isMarqueeSelecting = false
+        if case .clip = inspectedObject { inspectedObject = nil }
+        if case .mediaAsset = inspectedObject { inspectedObject = nil }
+        cancelMediaSwap()
+        cropEditingActive = false
+        if focus == .produce { leftSidebarTab = .agent }
     }
 
-    /// Derive the focus from the project's content on open: nothing on the timeline yet → Produce
-    /// (the project wants generating), an existing cut → Edit.
+    /// NGV is AI-first: every project opens in Produce (the AI production cockpit). Non-AI users are
+    /// served by other editors, so imported-media projects are not special-cased.
     func applyDefaultWorkspaceFocus() {
-        setWorkspaceFocus(timeline.tracks.allSatisfy(\.clips.isEmpty) ? .produce : .edit)
+        setWorkspaceFocus(.produce)
     }
 
     // MARK: - Pipeline health (window chrome + panels)

@@ -66,6 +66,13 @@ enum Layout {
     // Preview
     static let previewMinWidth: CGFloat = 400
     static let previewMinHeight: CGFloat = 320
+
+    // Finish focus: a large, dominant player stacked over the review gallery. The player takes the
+    // bulk of the window so QC detail is visible; the review strip stays comfortably usable.
+    static let finishPreviewMinHeight: CGFloat = 280
+    static let finishReviewMinHeight: CGFloat = 200
+    /// Finish focus: the player's share of the vertical split by default (drag to taste; persists).
+    static let finishPreviewFraction: CGFloat = 0.68
 }
 
 enum Defaults {

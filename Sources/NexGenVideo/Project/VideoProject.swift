@@ -256,6 +256,13 @@ final class VideoProject: NSDocument {
         set { super.displayName = newValue }
     }
 
+    /// The visible titlebar is hidden (custom chrome), but the OS window title still feeds the window
+    /// switcher, Mission Control, and screenshots — brand it. AppKit refreshes this whenever the
+    /// document name changes. The em dash is fine in the OS title string (not visible-row copy).
+    override func windowTitle(forDocumentDisplayName displayName: String) -> String {
+        "NexGenVideo — \(displayName)"
+    }
+
     override var fileURL: URL? {
         get { super.fileURL }
         set {
@@ -317,24 +324,8 @@ final class VideoProject: NSDocument {
             self?.updateChangeCount(.changeDone)
         }
 
-        let editorView = VStack(spacing: 0) {
-            TitleBarView()
-            EditorView()
-                .focusEffectDisabled()
-        }
+        let editorView = EditorWindowContentView()
             .environment(editorViewModel)
-            .sheet(isPresented: Bindable(editorViewModel).showExportDialog) { [editorViewModel] in
-                ExportView()
-                    .environment(editorViewModel)
-            }
-            .sheet(item: Bindable(editorViewModel).pendingSettingsMismatch) { [editorViewModel] mismatch in
-                ProjectSettingsMismatchView(mismatch: mismatch)
-                    .environment(editorViewModel)
-            }
-            .overlay {
-                TourOverlay()
-                    .environment(editorViewModel)
-            }
         let hostingController = NSHostingController(rootView: editorView.tint(AppTheme.Accent.primary))
         // fullSizeContentView adds a titlebar-height safe-area inset; without dropping it the layout
         // slides down a full row (an empty strip above TitleBarView, panel headers hidden behind it).

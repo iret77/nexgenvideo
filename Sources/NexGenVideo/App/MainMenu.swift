@@ -103,13 +103,18 @@ enum MainMenuBuilder {
         let item = NSMenuItem()
         let menu = NSMenu(title: "View")
 
+        // Stage order, left-to-right: Produce · Edit · Finish.
+        let produceFocusItem = NSMenuItem(title: "Produce Focus", action: #selector(EditorActions.setFocusProduce(_:)), keyEquivalent: "p")
+        produceFocusItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(produceFocusItem)
+
         let editFocusItem = NSMenuItem(title: "Edit Focus", action: #selector(EditorActions.setFocusEdit(_:)), keyEquivalent: "e")
         editFocusItem.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(editFocusItem)
 
-        let produceFocusItem = NSMenuItem(title: "Produce Focus", action: #selector(EditorActions.setFocusProduce(_:)), keyEquivalent: "p")
-        produceFocusItem.keyEquivalentModifierMask = [.command, .option]
-        menu.addItem(produceFocusItem)
+        let finishFocusItem = NSMenuItem(title: "Finish Focus", action: #selector(EditorActions.setFocusFinish(_:)), keyEquivalent: "f")
+        finishFocusItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(finishFocusItem)
 
         menu.addItem(.separator())
 
@@ -130,6 +135,11 @@ enum MainMenuBuilder {
         let maximizeItem = NSMenuItem(title: "Maximize Focused Panel", action: #selector(EditorActions.toggleMaximizePanel(_:)), keyEquivalent: "`")
         maximizeItem.keyEquivalentModifierMask = []
         menu.addItem(maximizeItem)
+
+        // Theater: a view toggle in any stage — the player fills the window; Esc exits.
+        let theaterItem = NSMenuItem(title: "Theater", action: #selector(EditorActions.toggleTheater(_:)), keyEquivalent: "`")
+        theaterItem.keyEquivalentModifierMask = [.shift]
+        menu.addItem(theaterItem)
 
         menu.addItem(.separator())
         menu.addItem(layoutSubmenuItem())
@@ -197,4 +207,6 @@ enum MainMenuBuilder {
     func setLayoutVertical(_ sender: Any?)
     func setFocusEdit(_ sender: Any?)
     func setFocusProduce(_ sender: Any?)
+    func setFocusFinish(_ sender: Any?)
+    func toggleTheater(_ sender: Any?)
 }

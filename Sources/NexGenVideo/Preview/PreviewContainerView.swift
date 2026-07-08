@@ -11,9 +11,12 @@ struct PreviewContainerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            tabBar
-                .padding(.horizontal, AppTheme.Spacing.sm)
-                .panelHeaderBar()
+            // Theater hides the panel's own chrome — the floating theater transport takes over.
+            if !editor.theaterActive {
+                tabBar
+                    .padding(.horizontal, AppTheme.Spacing.sm)
+                    .panelHeaderBar()
+            }
 
             GeometryReader { geo in
                 let aspect = generatingAspect ?? CGFloat(editor.timeline.width) / CGFloat(editor.timeline.height)
@@ -49,11 +52,13 @@ struct PreviewContainerView: View {
                 .offset(x: editor.canvasOffset.width, y: editor.canvasOffset.height)
             }
             .clipped()
-            if !isImage {
-                scrubBar
-                transportBar
-            } else {
-                imageSettingsBar
+            if !editor.theaterActive {
+                if !isImage {
+                    scrubBar
+                    transportBar
+                } else {
+                    imageSettingsBar
+                }
             }
         }
         .background(AppTheme.Background.surfaceColor)

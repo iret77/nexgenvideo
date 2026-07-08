@@ -17,7 +17,9 @@ struct EditorView: NSViewControllerRepresentable {
             ? editor.inspectorPanelVisible
             : (editor.inspectedObject != nil)
         controller.applyInspectorVisibility(inspectorVisible)
-        controller.applyMaximize(editor.maximizedPanel)
+        // Theater collapses everything to the single player, in any stage — reusing the maximize
+        // path so the one video engine stays put. Exiting restores the user's real maximize state.
+        controller.applyMaximize(editor.theaterActive ? .preview : editor.maximizedPanel)
         controller.updateTourFrame(stepIndex: editor.tour.stepIndex, anchorRevision: editor.tour.anchorRevision)
     }
 }
@@ -50,6 +52,7 @@ private enum SplitAutosave {
     static let produceRoot   = "editor.produce.root"
     static let produceCenter = "editor.produce.center"
     static let produceRight  = "editor.produce.right"
+    static let finishRoot    = "editor.finish.root"
     static func preset(_ p: LayoutPreset) -> String { "editor.\(p.rawValue).preset" }
 
     /// AppKit persists divider frames under this key; no public API queries it.
@@ -77,6 +80,8 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private lazy var inspectorHC: NSViewController = makeHosting(InspectorView(), panel: .inspector)
     private lazy var cockpitHC: NSViewController   = makeHosting(ProjectCockpitView(), panel: .project)
     private lazy var timelineHC: NSViewController  = makeHosting(TimelinePanel(), panel: .timeline)
+    // Finish reuses the canonical Review gallery + Sanity (via FinishReviewPane), never a rebuild.
+    private lazy var reviewHC: NSViewController     = makeHosting(FinishReviewPane(), panel: .project)
 
     init(editor: EditorViewModel) {
         self.editor = editor
@@ -209,15 +214,20 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         currentFocus = editor.workspaceFocus
         splitView.isVertical = true
 
-        // Produce is one opinionated arrangement; the layout presets are Edit arrangements.
-        let isProduce = editor.workspaceFocus == .produce
-        let presetRoot = makeChildSplit(
-            isVertical: false,
-            autosave: isProduce ? SplitAutosave.produceRoot : SplitAutosave.preset(preset)
-        )
-        if isProduce {
+        // Produce and Finish are each one opinionated arrangement; the layout presets are Edit-only.
+        let autosave: String
+        switch editor.workspaceFocus {
+        case .produce: autosave = SplitAutosave.produceRoot
+        case .finish:  autosave = SplitAutosave.finishRoot
+        case .edit:    autosave = SplitAutosave.preset(preset)
+        }
+        let presetRoot = makeChildSplit(isVertical: false, autosave: autosave)
+        switch editor.workspaceFocus {
+        case .produce:
             buildProduceLayout(into: presetRoot)
-        } else {
+        case .finish:
+            buildFinishLayout(into: presetRoot)
+        case .edit:
             switch preset {
             case .default:  buildDefaultLayout(into: presetRoot)
             case .media:    buildMediaLayout(into: presetRoot)
@@ -275,6 +285,35 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
             let centerH = centerSplit.view.bounds.height
             self.positionIfUnsaved(centerSplit) {
                 $0.setPosition(max(0, centerH - Layout.produceTimelineStripDefault), ofDividerAt: 0)
+            }
+        }
+    }
+
+    // MARK: - Finish layout
+    // [ Large player (dominant, centered) ] / [ Review gallery + Sanity + Export ]
+    // The QC + deliver stage: a big player so detail is visible, the canonical Review gallery
+    // beneath, and Export reachable from the pane header (docs/UI_UX_CONCEPT.md §3).
+
+    private func buildFinishLayout(into target: NSSplitViewController) {
+        target.splitView.isVertical = false
+
+        let previewItem = NSSplitViewItem(viewController: previewHC)
+        previewItem.minimumThickness = Layout.finishPreviewMinHeight
+        previewSplitItem = previewItem
+        target.addSplitViewItem(previewItem)
+
+        // The Review gallery reuses `.project` identity: only one of cockpit/review is ever mounted,
+        // so maximize (backtick) and focus routing keep working through cockpitSplitItem.
+        let reviewItem = NSSplitViewItem(viewController: reviewHC)
+        reviewItem.minimumThickness = Layout.finishReviewMinHeight
+        cockpitSplitItem = reviewItem
+        target.addSplitViewItem(reviewItem)
+
+        applyAfterLayout { [weak self, weak target] in
+            guard let self, let target else { return }
+            let targetH = target.view.bounds.height
+            self.positionIfUnsaved(target) {
+                $0.setPosition(round(targetH * Layout.finishPreviewFraction), ofDividerAt: 0)
             }
         }
     }

@@ -3,12 +3,13 @@ import SwiftUI
 
 /// The window chrome row. The project window hides the system title and extends content beneath a
 /// transparent titlebar (the FCP dark-room pattern — no standard toolbar chrome), and this view owns
-/// that row: project identity leading, the `Edit ↔ Produce` focus centered, pipeline health as a
-/// compact capsule trailing (click → Project → Pipeline). Window-level facts live here; panel
-/// navigation stays in the sidebar; object context stays in the Inspector breadcrumb — three roles,
-/// three kinds of chrome (docs/UI_UX_CONCEPT.md §3).
+/// that row: brand + project identity leading, the `Produce · Edit · Finish` stage toggle centered,
+/// the active-plugin chip (click → plugin picker) and pipeline health trailing. Window-level facts
+/// live here; panel navigation stays in the sidebar; object context stays in the Inspector
+/// breadcrumb — three roles, three kinds of chrome (docs/UI_UX_CONCEPT.md §3).
 struct TitleBarView: View {
     @Environment(EditorViewModel.self) private var editor
+    @State private var showsPluginPicker = false
 
     var body: some View {
         ZStack {
@@ -19,6 +20,9 @@ struct TitleBarView: View {
                 healthCapsule
             }
             focusToggle
+        }
+        .sheet(isPresented: $showsPluginPicker) {
+            PluginPickerView(editor: editor)
         }
         .padding(.leading, Layout.trafficLightInset)
         .padding(.horizontal, AppTheme.Spacing.lg)
@@ -42,12 +46,20 @@ struct TitleBarView: View {
         }
     }
 
+    /// Quiet brand lockup: the wordmark muted and regular, the project name emphasized. Mac-tasteful
+    /// (name is the loud element), never the Windows "App - Doc" style. Wordmark is one word.
     private var projectName: some View {
-        Text(editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled")
-            .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-            .foregroundStyle(AppTheme.Text.tertiaryColor)
-            .lineLimit(1)
-            .truncationMode(.middle)
+        HStack(spacing: AppTheme.Spacing.xs) {
+            Text("NexGenVideo")
+                .font(.system(size: AppTheme.FontSize.xs, weight: .regular))
+                .foregroundStyle(AppTheme.Text.mutedColor)
+                .fixedSize()
+            Text(editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled")
+                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
     }
 
     // MARK: - Focus toggle (centered — the window-level mode switch)
@@ -89,7 +101,7 @@ struct TitleBarView: View {
     /// project. Click → the gallery in Project settings, the one activation surface.
     private var pluginChip: some View {
         Button {
-            editor.revealCockpit(.project)
+            showsPluginPicker = true
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Image(systemName: "puzzlepiece.extension")
@@ -97,6 +109,9 @@ struct TitleBarView: View {
                 Text(activePluginLabel)
                     .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
                     .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
             }
             .foregroundStyle(editor.activePluginName == nil
                              ? AppTheme.Text.tertiaryColor : AppTheme.Accent.primary)
@@ -109,8 +124,8 @@ struct TitleBarView: View {
         }
         .buttonStyle(.plain)
         .help(editor.activePluginName == nil
-              ? "Generic production workflow — click to activate a format plugin"
-              : "Active format plugin — click to manage")
+              ? "Generic production workflow. Click to choose a format plugin."
+              : "Active format plugin. Click to manage.")
     }
 
     private var activePluginLabel: String {

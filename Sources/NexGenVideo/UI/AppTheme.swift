@@ -277,6 +277,9 @@ enum AppTheme {
         static let agentComposerMaxHeight: CGFloat = 280
         static let agentComposerGrabHeight: CGFloat = 10
         static let agentBlockLabelWidth: CGFloat = 96
+        /// Theater's floating transport cluster — wide enough for a comfortable scrub without
+        /// spanning the whole window.
+        static let theaterTransportWidth: CGFloat = 460
     }
 
     enum Window {
