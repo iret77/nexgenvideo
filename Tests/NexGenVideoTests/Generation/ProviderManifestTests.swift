@@ -3,6 +3,7 @@ import Testing
 @testable import NexGenVideo
 
 @Suite("ProviderManifest — model id → bindings")
+@MainActor
 struct ProviderManifestTests {
 
     @Test func singleSourceModelsMapToOneApiBinding() {

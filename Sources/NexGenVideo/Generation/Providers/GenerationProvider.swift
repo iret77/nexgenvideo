@@ -4,7 +4,7 @@ extension Notification.Name {
     static let providerKeysChanged = Notification.Name("providerKeysChanged")
 }
 
-enum GenerationProvider: String, CaseIterable, Identifiable {
+enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     case fal
     case runway
     case higgsfield
@@ -68,6 +68,7 @@ extension GenerationProvider {
     /// models (marble/runway/higgsfield/fal) return their one provider directly. The one
     /// multi-source case, the ElevenLabs family, is now general resolution: direct-to-ElevenLabs
     /// when its key is present (their account, no fal middleman), fal-hosted otherwise.
+    @MainActor
     static func servicing(modelId: String) -> GenerationProvider {
         let bindings = ProviderManifest.bindings(forModelId: modelId)
         if bindings.count == 1 { return bindings[0].provider }
@@ -84,6 +85,7 @@ extension GenerationProvider {
     /// the availability signal for the catalog/UI. `servicing` only says WHICH provider wins; it can
     /// resolve to a keyless provider (e.g. MCP), so `servicing(_).hasKey` is NOT a valid availability
     /// check — a model runnable via another activated binding would be wrongly hidden.
+    @MainActor
     static func canRun(modelId: String) -> Bool {
         ProviderResolver.resolve(
             bindings: ProviderManifest.bindings(forModelId: modelId),

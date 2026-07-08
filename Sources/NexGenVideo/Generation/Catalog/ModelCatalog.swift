@@ -48,6 +48,7 @@ final class ModelCatalog {
     private(set) var upscale: [UpscaleModelConfig] = []
     private(set) var byId: [String: ModelKind] = [:]
     private(set) var cardsById: [String: ModelCard] = [:]
+    private(set) var offersById: [String: [ProviderOffer]] = [:]
     private(set) var isLoaded: Bool = false
     private(set) var lastError: String?
 
@@ -73,6 +74,7 @@ final class ModelCatalog {
         var newUpscale: [UpscaleModelConfig] = []
         var newById: [String: ModelKind] = [:]
         var newCardsById: [String: ModelCard] = [:]
+        var newOffersById: [String: [ProviderOffer]] = [:]
         newVideo.reserveCapacity(entries.count)
         newImage.reserveCapacity(entries.count)
         newAudio.reserveCapacity(entries.count)
@@ -81,6 +83,7 @@ final class ModelCatalog {
 
         for entry in entries {
             if let card = entry.card { newCardsById[entry.id] = card }
+            if let offers = entry.offers, !offers.isEmpty { newOffersById[entry.id] = offers }
             switch entry.uiCapabilities {
             case .video(let caps):
                 let m = VideoModelConfig(entry: entry, caps: caps)
@@ -107,6 +110,7 @@ final class ModelCatalog {
         self.upscale = newUpscale
         self.byId = newById
         self.cardsById = newCardsById
+        self.offersById = newOffersById
         self.isLoaded = true
         self.lastError = nil
     }
@@ -126,6 +130,11 @@ struct CatalogEntry: Decodable, Sendable {
     let audioPricing: AudioPricing?
     let creditsPerSecondUpscale: Double?
     let card: ModelCard?
+    /// Which providers serve this model, over which transport, at what per-call cost — the DATA the
+    /// resolver routes on (replaces id-prefix inference). Registries declare their own; the hosted
+    /// catalog may declare several (one logical model, multiple providers). `var` so a registry can
+    /// stamp it onto the entry it builds.
+    var offers: [ProviderOffer]?
 
     enum Kind: String, Decodable, Sendable { case video, image, audio, upscale }
     enum ResponseShape: String, Decodable, Sendable {
@@ -167,7 +176,7 @@ struct CatalogEntry: Decodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, kind, displayName, allowedEndpoints, responseShape, uiCapabilities
         case creditsPerSecond, audioDiscountRate, creditsPerImage, qualities
-        case audioPricing, creditsPerSecondUpscale, card
+        case audioPricing, creditsPerSecondUpscale, card, offers
     }
 
     init(
@@ -183,7 +192,8 @@ struct CatalogEntry: Decodable, Sendable {
         qualities: [String]? = nil,
         audioPricing: AudioPricing? = nil,
         creditsPerSecondUpscale: Double? = nil,
-        card: ModelCard? = nil
+        card: ModelCard? = nil,
+        offers: [ProviderOffer]? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -198,6 +208,7 @@ struct CatalogEntry: Decodable, Sendable {
         self.audioPricing = audioPricing
         self.creditsPerSecondUpscale = creditsPerSecondUpscale
         self.card = card
+        self.offers = offers
     }
 
     init(from decoder: Decoder) throws {
@@ -214,6 +225,7 @@ struct CatalogEntry: Decodable, Sendable {
         self.audioPricing = try c.decodeIfPresent(AudioPricing.self, forKey: .audioPricing)
         self.creditsPerSecondUpscale = try c.decodeIfPresent(Double.self, forKey: .creditsPerSecondUpscale)
         self.card = try c.decodeIfPresent(ModelCard.self, forKey: .card)
+        self.offers = try c.decodeIfPresent([ProviderOffer].self, forKey: .offers)
         switch self.kind {
         case .video:
             self.uiCapabilities = .video(try c.decode(VideoCaps.self, forKey: .uiCapabilities))

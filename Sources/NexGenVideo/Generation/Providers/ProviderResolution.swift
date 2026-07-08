@@ -46,6 +46,40 @@ struct ProviderBinding: Sendable, Hashable {
     /// The provider's own reference: a model/endpoint id for `.generation`, a tool name for `.tool`.
     let providerRef: String
     let billing: BillingMode
+    /// Declared per-call cost from the catalog offer, when known; nil → resolver uses the
+    /// billing-aware heuristic.
+    var costPerCall: Double? = nil
+}
+
+/// One provider's declared way to serve a model — the DATA that replaces id-prefix inference.
+/// A model's `CatalogEntry` carries a list of these (registries declare their own; the hosted
+/// catalog can declare several so one logical model is served by multiple providers). The manifest
+/// turns each into a `ProviderBinding`; a provider that also has a configured MCP additionally gets
+/// an `.mcp` binding. `providerRef` is the provider's own endpoint/model id; `costPerCall` (when
+/// known) drives the resolver's cheapest pick.
+struct ProviderOffer: Codable, Sendable, Hashable {
+    let provider: GenerationProvider
+    var transport: ProviderTransport = .api
+    var providerRef: String? = nil
+    var costPerCall: Double? = nil
+
+    private enum CodingKeys: String, CodingKey { case provider, transport, providerRef, costPerCall }
+
+    init(provider: GenerationProvider, transport: ProviderTransport = .api,
+         providerRef: String? = nil, costPerCall: Double? = nil) {
+        self.provider = provider
+        self.transport = transport
+        self.providerRef = providerRef
+        self.costPerCall = costPerCall
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try c.decode(GenerationProvider.self, forKey: .provider)
+        transport = try c.decodeIfPresent(ProviderTransport.self, forKey: .transport) ?? .api
+        providerRef = try c.decodeIfPresent(String.self, forKey: .providerRef)
+        costPerCall = try c.decodeIfPresent(Double.self, forKey: .costPerCall)
+    }
 }
 
 /// What the user has actually turned on — per (provider, transport). A provider can be

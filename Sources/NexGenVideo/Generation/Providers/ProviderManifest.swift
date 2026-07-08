@@ -8,30 +8,43 @@ import Foundation
 /// (direct-to-ElevenLabs vs fal-hosted) — is two bindings resolved by activation, replacing
 /// the hardcoded `if elevenlabs.hasKey` in the old prefix ladder.
 enum ProviderManifest {
-    /// The candidate providers that can service a model — the ElevenLabs family has two (direct +
-    /// fal-hosted), everything else one.
-    static func candidateProviders(forModelId id: String) -> [GenerationProvider] {
-        id.hasPrefix("fal-ai/elevenlabs") ? [.elevenlabs, .fal] : [nominalProvider(forModelId: id)]
+    /// All bindings for a model, built from the catalog's DECLARED provider offers (data, not
+    /// id-prefix inference): each offer becomes a binding, and an `.api` offer whose provider also
+    /// has a configured MCP additionally gets an `.mcp` (subscription) binding. The resolver then
+    /// picks the cheapest activated one. When the catalog hasn't declared offers for a model
+    /// (legacy registry entry, or catalog not yet loaded) `defaultOffers` bootstraps them.
+    @MainActor
+    static func bindings(forModelId id: String) -> [ProviderBinding] {
+        let offers = ModelCatalog.shared.offersById[id] ?? defaultOffers(forModelId: id)
+        var out: [ProviderBinding] = []
+        for offer in offers {
+            let ref = offer.providerRef ?? id
+            out.append(ProviderBinding(
+                provider: offer.provider, transport: offer.transport, kind: .generation,
+                providerRef: ref, billing: offer.transport == .mcp ? .subscription : .perCall,
+                costPerCall: offer.costPerCall))
+            if offer.transport == .api, ProviderMCP.hasConfig(offer.provider) {
+                out.append(ProviderBinding(
+                    provider: offer.provider, transport: .mcp, kind: .generation,
+                    providerRef: ref, billing: .subscription))
+            }
+        }
+        return out
     }
 
-    /// All bindings for a model: each candidate provider over `.api` (its key) and, when the user has
-    /// configured that provider's MCP, ALSO over `.mcp` (subscription). The resolver then picks the
-    /// cheapest activated one. The `.mcp` binding's `providerRef` stays the logical model id here; the
-    /// dispatch layer maps it to the provider's discovered MCP tool (`tools/list`) at call time.
-    static func bindings(forModelId id: String) -> [ProviderBinding] {
-        candidateProviders(forModelId: id).flatMap { provider -> [ProviderBinding] in
-            var out = [ProviderBinding(provider: provider, transport: .api, kind: .generation,
-                                       providerRef: id, billing: .perCall)]
-            if ProviderMCP.hasConfig(provider) {
-                out.append(ProviderBinding(provider: provider, transport: .mcp, kind: .generation,
-                                           providerRef: id, billing: .subscription))
-            }
-            return out
+    /// Bootstrap offers for a model the catalog hasn't declared — the provider from registry
+    /// membership; the ElevenLabs family is direct-to-ElevenLabs + fal-hosted. The hosted catalog's
+    /// declared `offers` override this (that's the path to provider-neutral, multi-provider models).
+    static func defaultOffers(forModelId id: String) -> [ProviderOffer] {
+        if id.hasPrefix("fal-ai/elevenlabs") {
+            return [ProviderOffer(provider: .elevenlabs, providerRef: id),
+                    ProviderOffer(provider: .fal, providerRef: id)]
         }
+        return [ProviderOffer(provider: nominalProvider(forModelId: id), providerRef: id)]
     }
 
     /// The single provider a non-multi-source model belongs to (registry membership) — the
-    /// hot path used for display/availability, no activation lookup needed.
+    /// bootstrap default when the catalog hasn't declared offers.
     static func nominalProvider(forModelId id: String) -> GenerationProvider {
         if MarbleModelRegistry.isMarbleModel(id) { return .marble }
         if RunwayModelRegistry.isRunwayModel(id) { return .runway }
@@ -44,6 +57,7 @@ enum ProviderManifest {
     /// than a pay-per-call API, and a provider's own endpoint beats the fal-hosted middleman
     /// (ElevenLabs direct over fal). Real prices replace this.
     static func effectiveCost(_ b: ProviderBinding) -> Double {
+        if let declared = b.costPerCall { return declared }
         var cost = b.billing == .subscription ? 0.0 : 1.0
         if b.provider == .fal { cost += 0.5 }
         return cost
