@@ -40,10 +40,13 @@ enum ProviderManifest {
     }
 
     /// Billing-aware cost of THIS call for a binding. Placeholder until the catalog's
-    /// per-(model, provider, transport) price feeds in: prefers a provider's own direct
-    /// endpoint over the fal-hosted fallback (ElevenLabs direct beats the fal middleman).
+    /// per-(model, provider, transport) price feeds in: a subscription MCP is cheaper per call
+    /// than a pay-per-call API, and a provider's own endpoint beats the fal-hosted middleman
+    /// (ElevenLabs direct over fal). Real prices replace this.
     static func effectiveCost(_ b: ProviderBinding) -> Double {
-        b.provider == .fal ? 1.0 : 0.0
+        var cost = b.billing == .subscription ? 0.0 : 1.0
+        if b.provider == .fal { cost += 0.5 }
+        return cost
     }
 }
 

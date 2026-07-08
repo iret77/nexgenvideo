@@ -20,7 +20,7 @@ enum RemoteCatalog {
     /// registries) stays — the app is never left without a catalog.
     @MainActor
     static func refresh() async {
-        if let entries = decode(cachedData()) { ModelCatalog.shared.load(entries: entries) }
+        if let entries = decode(cachedData()), !entries.isEmpty { ModelCatalog.shared.load(entries: entries) }
         guard let data = await fetchData(), let entries = decode(data), !entries.isEmpty else { return }
         cache(data)
         ModelCatalog.shared.load(entries: entries)
