@@ -5,7 +5,7 @@ extension ToolExecutor {
         let prompt = try args.requireString("prompt")
         switch type {
         case .video:
-            guard let modelId = args.string("model") ?? VideoModelConfig.allModels.first?.id else {
+            guard let modelId = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) } ?? VideoModelConfig.allModels.first?.id else {
                 throw ToolError("Model catalog not loaded yet. Try again in a moment.")
             }
             guard let model = VideoModelConfig.allModels.first(where: { $0.id == modelId }) else {
@@ -162,7 +162,7 @@ extension ToolExecutor {
         _ editor: EditorViewModel, _ args: [String: Any], prompt: String
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
-        guard let modelId = args.string("model") ?? ImageModelConfig.allModels.first?.id else {
+        guard let modelId = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) } ?? ImageModelConfig.allModels.first?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
         guard let model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
@@ -250,7 +250,7 @@ extension ToolExecutor {
 
     func compilePrompt(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let intent = try args.requireString("intent")
-        let modelId = try args.requireString("model")
+        let modelId = ModelCatalog.shared.internalId(forLogical: try args.requireString("model"))
         // Same contract as before ({ compiledPrompt, compileToken, notes }); composition now runs the
         // ENGINE path (PromptComposer: ledger directives + provider builder + PromptLinter) instead of
         // the old local ledger text-append, then the gate mints the token over the result.
@@ -267,7 +267,7 @@ extension ToolExecutor {
     }
 
     func generateAudio(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
-        guard let modelId = args.string("model") ?? AudioModelConfig.allModels.first?.id else {
+        guard let modelId = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) } ?? AudioModelConfig.allModels.first?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
         guard let model = AudioModelConfig.allModels.first(where: { $0.id == modelId }) else {
@@ -373,7 +373,7 @@ extension ToolExecutor {
 
         let available = UpscaleModelConfig.models(for: asset.type)
         let model: UpscaleModelConfig
-        if let requested = args.string("model") {
+        if let requested = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) } {
             guard let match = available.first(where: { $0.id == requested }) else {
                 let ids = available.map(\.id).joined(separator: ", ")
                 throw ToolError("Model '\(requested)' does not support \(asset.type.rawValue). Available: \(ids)")
@@ -457,6 +457,14 @@ extension ToolExecutor {
             if let v = card.rank { c["rank"] = v }
             if let v = card.tags { c["tags"] = v }
             if !c.isEmpty { info["card"] = c }
+            return info
+        }
+        // Present provider-neutral LOGICAL ids to the agent (NGV maps back to the internal id +
+        // resolves the provider on generate). The agent names a model, never a provider.
+        out = out.map { info in
+            guard let id = info["id"] as? String else { return info }
+            var info = info
+            info["id"] = ModelCatalog.deriveLogicalId(id)
             return info
         }
         var body: [String: Any] = [

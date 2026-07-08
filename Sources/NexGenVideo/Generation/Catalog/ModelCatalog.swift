@@ -49,6 +49,9 @@ final class ModelCatalog {
     private(set) var byId: [String: ModelKind] = [:]
     private(set) var cardsById: [String: ModelCard] = [:]
     private(set) var offersById: [String: [ProviderOffer]] = [:]
+    /// Provider-neutral LOGICAL id → internal catalog id. The LLM sees/requests logical ids
+    /// (`kling`, `gen4.5`); NGV maps back to the internal id for resolution + dispatch. Built at load.
+    private(set) var internalByLogical: [String: String] = [:]
     private(set) var isLoaded: Bool = false
     private(set) var lastError: String?
 
@@ -67,6 +70,19 @@ final class ModelCatalog {
         apply(entries)
     }
 
+    /// The provider-neutral LOGICAL id the LLM sees — a known provider prefix stripped off.
+    /// (Internal ids stay as-is for registry lookup + dispatch; this is only the consumer surface.)
+    nonisolated static func deriveLogicalId(_ internalId: String) -> String {
+        for prefix in ["fal-ai/", "runway/", "higgsfield/", "marble/"] where internalId.hasPrefix(prefix) {
+            return String(internalId.dropFirst(prefix.count))
+        }
+        return internalId
+    }
+
+    /// Map an LLM-supplied logical id back to the internal catalog id. Falls back to the input, so a
+    /// caller that already passes an internal id still resolves.
+    func internalId(forLogical logical: String) -> String { internalByLogical[logical] ?? logical }
+
     private func apply(_ entries: [CatalogEntry]) {
         var newVideo: [VideoModelConfig] = []
         var newImage: [ImageModelConfig] = []
@@ -75,6 +91,7 @@ final class ModelCatalog {
         var newById: [String: ModelKind] = [:]
         var newCardsById: [String: ModelCard] = [:]
         var newOffersById: [String: [ProviderOffer]] = [:]
+        var newInternalByLogical: [String: String] = [:]
         newVideo.reserveCapacity(entries.count)
         newImage.reserveCapacity(entries.count)
         newAudio.reserveCapacity(entries.count)
@@ -84,6 +101,7 @@ final class ModelCatalog {
         for entry in entries {
             if let card = entry.card { newCardsById[entry.id] = card }
             if let offers = entry.offers, !offers.isEmpty { newOffersById[entry.id] = offers }
+            newInternalByLogical[Self.deriveLogicalId(entry.id)] = entry.id
             switch entry.uiCapabilities {
             case .video(let caps):
                 let m = VideoModelConfig(entry: entry, caps: caps)
@@ -111,6 +129,7 @@ final class ModelCatalog {
         self.byId = newById
         self.cardsById = newCardsById
         self.offersById = newOffersById
+        self.internalByLogical = newInternalByLogical
         self.isLoaded = true
         self.lastError = nil
     }
