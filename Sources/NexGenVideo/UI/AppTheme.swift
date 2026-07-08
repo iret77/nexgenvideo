@@ -275,6 +275,8 @@ enum AppTheme {
         static let pluginPickerHeight: CGFloat = 460
         /// Min width of a pack card in the responsive picker grid (~2 columns at picker width).
         static let pluginCardMinWidth: CGFloat = 220
+        /// Fixed height of the Sanity strip pinned under the Review gallery (predictable galleries above).
+        static let reviewSanityStripHeight: CGFloat = 200
         static let agentComposerMinHeight: CGFloat = 64
         static let agentComposerMaxHeight: CGFloat = 280
         static let agentComposerGrabHeight: CGFloat = 10

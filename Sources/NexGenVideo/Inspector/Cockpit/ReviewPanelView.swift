@@ -45,20 +45,32 @@ struct ReviewPanelView: View {
     @State private var remixNote = ""
 
     var body: some View {
-        VStack(spacing: 0) {
+        layout
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .task(id: editor.projectURL) { await load() }
+            .onChange(of: editor.engineStateRevision) { _, _ in
+                Task { await load() }
+            }
+    }
+
+    @ViewBuilder
+    private var layout: some View {
+        if case .failed(.notInitialized) = state {
+            // No pipeline yet: the whole pane is one "Start production" call to action. Stacking the
+            // Sanity strip below would render a second, identical "No production pipeline" block —
+            // Sanity has nothing to gate before a shotlist exists — a doubled, half-clipped message.
             content
-                .frame(minHeight: 0)
-                .clipped()
-            Divider().overlay(AppTheme.Border.subtleColor)
-            // Sanity lives here in EVERY state — findings gate progress before frames even exist
-            // (§3: no panel is ever locked away). Fixed height: predictable galleries above.
-            SanityPanelView()
-                .frame(height: 200)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .task(id: editor.projectURL) { await load() }
-        .onChange(of: editor.engineStateRevision) { _, _ in
-            Task { await load() }
+        } else {
+            VStack(spacing: 0) {
+                content
+                    .frame(minHeight: 0)
+                    .clipped()
+                Divider().overlay(AppTheme.Border.subtleColor)
+                // Sanity lives here in EVERY pipeline state — findings gate progress before frames
+                // even exist (§3: no panel is ever locked away). Fixed height: predictable galleries.
+                SanityPanelView()
+                    .frame(height: AppTheme.ComponentSize.reviewSanityStripHeight)
+            }
         }
     }
 
