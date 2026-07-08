@@ -174,6 +174,11 @@ struct PluginPickerView: View {
                         Label("Active", systemImage: "checkmark.circle.fill")
                             .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
                             .foregroundStyle(AppTheme.Accent.primary)
+                        if let update {
+                            Button("Update") { Task { await manager.install(update) } }
+                                .buttonStyle(.capsule(.secondary, size: .regular))
+                                .controlSize(.small)
+                        }
                         Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
                             .buttonStyle(.capsule(.secondary, size: .regular))
                             .controlSize(.small)

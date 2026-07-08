@@ -58,6 +58,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case nextRenderShot = "next_render_shot"
     case recordRender = "record_render"
     case getRenderManifest = "get_render_manifest"
+    case assembleTimeline = "assemble_timeline"
     case getLedger = "get_ledger"
     case setLedgerAttribute = "set_ledger_attribute"
     case lockLedgerAttribute = "lock_ledger_attribute"
@@ -1019,6 +1020,16 @@ enum ToolDefinitions {
                     "phase": ["type": "string", "description": "The render phase."],
                 ],
                 required: ["phase"]
+            )
+        ),
+        AgentTool(
+            name: .assembleTimeline,
+            description: "Lay the rendered shots onto the timeline cut to the beat. WRITES.\n\nBuilds the final cut for the render `phase`: reads the analysis (beats, downbeats, sections), the shotlist (ordered shots + planned spans), and the render manifest (each shot's rendered file), then places every rendered shot in shotlist order on a dedicated assembly video track, each cut snapped to a beat: a downbeat at a section boundary, a regular beat otherwise. The song is laid on an audio track at frame 0 as the sync anchor if it isn't already there. Frame-exact at the project fps. Re-runnable: a second call rebuilds the assembly track in place rather than duplicating clips. Shots with no rendered output yet are skipped and named, not fatal; a shot's source_mode (generated / imported / ai_enhanced) doesn't matter, only that its output is recorded. Needs analysis (run_phase \"analysis\") and at least one recorded render first, or it returns an actionable error. Returns `{shots_placed, total_frames, video_track_index, song_track, placements, skipped}`. `project_dir` is the `_studio/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "phase": ["type": "string", "description": "The render phase to assemble (default \"final\")."],
+                ]
             )
         ),
         AgentTool(

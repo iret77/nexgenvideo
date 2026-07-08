@@ -128,8 +128,15 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         guard panel != currentMaximized else { return }
         currentMaximized = panel
         if let panel, let leaf = leafItem(for: panel) {
-            for sibling in ancestorChainSiblings(of: leaf) {
-                applyCollapsed(item: sibling, collapsed: true)
+            // Give every item its FINAL state in a single pass: the leaf's ancestor-chain
+            // siblings collapse, everything else (the leaf and its ancestors) stays visible.
+            // One decision per item is essential — applyCollapsed reads isCollapsed
+            // synchronously but applies it async, so a two-pass restore-then-collapse would
+            // let a stale read skip the re-collapse when switching directly from one
+            // maximized panel to another (e.g. timeline maximized, then Theater).
+            let toCollapse = Set(ancestorChainSiblings(of: leaf).map { ObjectIdentifier($0) })
+            walkSplitItems(self) { item in
+                applyCollapsed(item: item, collapsed: toCollapse.contains(ObjectIdentifier(item)))
             }
         } else {
             walkSplitItems(self) { item in

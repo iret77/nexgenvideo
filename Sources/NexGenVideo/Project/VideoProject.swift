@@ -289,8 +289,10 @@ final class VideoProject: NSDocument {
     nonisolated static func defaultProjectContentSize(visible: NSRect) -> NSSize {
         let cap = AppTheme.Window.projectDefault
         let floor = AppTheme.Window.projectMin
-        let w = min(max(visible.width * 0.88, floor.width), cap.width)
-        let h = min(max(visible.height * 0.90, floor.height), cap.height)
+        // The visible frame is a hard ceiling: on a desktop smaller than `projectMin`
+        // the floor would otherwise push the window past the screen edge.
+        let w = min(max(visible.width * 0.88, floor.width), cap.width, visible.width)
+        let h = min(max(visible.height * 0.90, floor.height), cap.height, visible.height)
         return NSSize(width: w, height: h)
     }
 
@@ -326,12 +328,17 @@ final class VideoProject: NSDocument {
         hostingController.safeAreaRegions = []
 
         let window = NSWindow(contentViewController: hostingController)
-        window.minSize = AppTheme.Window.projectMin
         // Autosave "-v2": bumping the key resets stale frames saved before screen-aware sizing.
         let restored = window.setFrameUsingName("NexGenVideoWindow-v2")
         window.setFrameAutosaveName("NexGenVideoWindow-v2")
+        // Compute the visible frame AFTER restore so a frame saved on a different or
+        // since-changed display clamps against the screen it actually lands on, not the
+        // window's initial screen.
         let visible = (window.screen ?? NSScreen.main)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        // Screen-aware minimum: never force the window larger than the desktop it opens on.
+        window.minSize = NSSize(width: min(AppTheme.Window.projectMin.width, visible.width),
+                                height: min(AppTheme.Window.projectMin.height, visible.height))
         if restored {
             // A frame from a since-changed (larger) display must never exceed this desktop.
             window.setFrame(Self.clampToScreen(window.frame, visible: visible), display: false)

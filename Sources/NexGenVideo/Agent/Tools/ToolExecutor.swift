@@ -128,6 +128,7 @@ final class ToolExecutor {
         case .nextRenderShot:       return try nextRenderShotTool(editor, args)
         case .recordRender:         return try recordRenderTool(editor, args)
         case .getRenderManifest:    return try getRenderManifestTool(editor, args)
+        case .assembleTimeline:     return try assembleTimelineTool(editor, args)
         case .getLedger:            return try getLedgerTool(editor, args)
         case .setLedgerAttribute:   return try setLedgerAttributeTool(editor, args)
         case .lockLedgerAttribute:  return try lockLedgerAttributeTool(editor, args)

@@ -18,6 +18,15 @@ struct WindowSizingTests {
         #expect(size.height > 700)  // enough height for a usable editor
     }
 
+    // A desktop smaller than projectMin (a small external display or a scaled "more space"
+    // mode): the "never exceed the visible desktop" invariant wins over the projectMin floor.
+    @Test func defaultNeverExceedsATinyScreen() {
+        let visible = NSRect(x: 0, y: 0, width: 800, height: 500)  // below projectMin 960×600
+        let size = VideoProject.defaultProjectContentSize(visible: visible)
+        #expect(size.width <= visible.width)
+        #expect(size.height <= visible.height)
+    }
+
     // A large display: the default is capped at projectDefault, not the full screen.
     @Test func defaultCapsOnBigScreen() {
         let visible = NSRect(x: 0, y: 0, width: 3840, height: 2160)

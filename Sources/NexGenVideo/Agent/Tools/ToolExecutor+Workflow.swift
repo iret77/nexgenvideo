@@ -377,6 +377,233 @@ extension ToolExecutor {
         ])
     }
 
+    // MARK: - Beat-synced assembly
+
+    /// Lay the phase's rendered shots onto a dedicated assembly video track, each cut snapped to a
+    /// beat (a downbeat at a section boundary, a regular beat otherwise), and put the song on an
+    /// audio track at frame 0 as the sync anchor. Re-runnable: rebuilds the assembly track in place
+    /// rather than duplicating. The beat math is the engine's pure `BeatAssembly.plan`; this handler
+    /// resolves each shot's rendered file, drives the timeline, and reports what landed and what was
+    /// skipped.
+    func assembleTimelineTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let phase = args.string("phase") ?? "final"
+
+        guard let grid = BeatAssembly.loadBeatGrid(dataRoot: root), !grid.beats.isEmpty else {
+            throw ToolError("Run analysis first: no beat analysis found (expected analysis/<song>.json with beats). Run run_phase(\"analysis\").")
+        }
+        guard let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil else {
+            throw ToolError("No shotlist yet. Plan the shots before assembling.")
+        }
+        let manifest = (try? loadRenderManifest(dataRoot: root, phase: phase))
+            ?? RenderManifest(project: shotlist.project, phase: phase)
+
+        let fps = editor.timeline.fps
+        let tolerance = grid.bpm > 0 ? (60.0 / grid.bpm) / 2.0 : 0.25
+
+        // Filter to shots with a placeable rendered output; carry section flags from the full shotlist.
+        let shots = shotlist.shots
+        var planInputs: [BeatAssembly.ShotInput] = []
+        var assetForShot: [String: MediaAsset] = [:]
+        var skipped: [(id: String, reason: String)] = []
+        for (i, shot) in shots.enumerated() {
+            let startsSection = i == 0
+                || shot.section != shots[i - 1].section
+                || BeatAssembly.nearSectionBoundary(shot.timeStart, sectionStarts: grid.sectionStarts, tolerance: tolerance)
+            let endsSection = i == shots.count - 1
+                || shots[i + 1].section != shot.section
+                || BeatAssembly.nearSectionBoundary(shot.timeEnd, sectionStarts: grid.sectionStarts, tolerance: tolerance)
+
+            guard let entry = manifest.entries[shot.id], entry.status == .rendered,
+                  let output = entry.output, !output.isEmpty else {
+                skipped.append((shot.id, "not rendered yet"))
+                continue
+            }
+            guard let asset = resolveRenderedAsset(output, editor: editor, dataRoot: root) else {
+                skipped.append((shot.id, "rendered output not found on disk: \(output)"))
+                continue
+            }
+            assetForShot[shot.id] = asset
+            planInputs.append(.init(
+                id: shot.id, timeStart: shot.timeStart, timeEnd: shot.timeEnd,
+                startsSection: startsSection, endsSection: endsSection
+            ))
+        }
+        guard !planInputs.isEmpty else {
+            throw ToolError("No rendered shots yet for phase \"\(phase)\". Render shots and record_render them first, then assemble.")
+        }
+
+        let placements = BeatAssembly.plan(beats: grid.beats, downbeats: grid.downbeats, fps: fps, shots: planInputs)
+        let song = resolveSongAsset(dataRoot: root, editor: editor)
+        var sidecar = loadAssemblySidecar(dataRoot: root)
+
+        var placedCount = 0
+        var songPlacedNow = false
+        var songAlreadyPresent = false
+        editor.withTimelineSwap(actionName: "Assemble Timeline (Agent)") {
+            // Dedicated assembly video track — reused across runs, cleared before each rebuild.
+            let videoTrackId = ensureAssemblyTrack(editor, existingId: sidecar.videoTrackId, type: .video)
+            sidecar.videoTrackId = videoTrackId
+            if let vi = editor.timeline.tracks.firstIndex(where: { $0.id == videoTrackId }) {
+                editor.timeline.tracks[vi].clips = []
+            }
+            for placement in placements {
+                guard let asset = assetForShot[placement.shotId],
+                      let vi = editor.timeline.tracks.firstIndex(where: { $0.id == videoTrackId }) else { continue }
+                _ = editor.placeClip(
+                    asset: asset, trackIndex: vi, startFrame: placement.startFrame,
+                    durationFrames: placement.durationFrames, addLinkedAudio: false
+                )
+                placedCount += 1
+            }
+
+            // Song is the sync anchor at frame 0 — placed only when not already on an audio track.
+            if let song {
+                songAlreadyPresent = editor.timeline.tracks.contains { track in
+                    track.type == .audio && track.clips.contains { $0.mediaRef == song.id && $0.startFrame == 0 }
+                }
+                if !songAlreadyPresent {
+                    let audioTrackId = ensureAssemblyTrack(editor, existingId: sidecar.audioTrackId, type: .audio)
+                    sidecar.audioTrackId = audioTrackId
+                    if let ai = editor.timeline.tracks.firstIndex(where: { $0.id == audioTrackId }) {
+                        let songFrames = max(1, BeatAssembly.frame(seconds: grid.durationS, fps: fps))
+                        _ = editor.placeClip(
+                            asset: song, trackIndex: ai, startFrame: 0,
+                            durationFrames: songFrames, addLinkedAudio: false
+                        )
+                        songPlacedNow = true
+                    }
+                }
+            }
+        }
+        saveAssemblySidecar(sidecar, dataRoot: root)
+
+        let videoTrackIndex = sidecar.videoTrackId.flatMap { id in
+            editor.timeline.tracks.firstIndex(where: { $0.id == id })
+        }
+        let totalFrames = placements.map { $0.startFrame + $0.durationFrames }.max() ?? 0
+
+        var songSummary: Any = NSNull()
+        if song != nil {
+            let audioIndex = sidecar.audioTrackId.flatMap { id in
+                editor.timeline.tracks.firstIndex(where: { $0.id == id })
+            }
+            songSummary = [
+                "track_index": audioIndex.map { $0 as Any } ?? NSNull(),
+                "placed": songPlacedNow,
+                "already_present": songAlreadyPresent,
+            ] as [String: Any]
+        }
+
+        let placementRows: [[String: Any]] = placements.map {
+            [
+                "shot_id": $0.shotId,
+                "start_frame": $0.startFrame,
+                "duration_frames": $0.durationFrames,
+                "on_downbeat": $0.onDownbeat,
+                "at_section_boundary": $0.atSectionBoundary,
+            ]
+        }
+        let skippedRows: [[String: String]] = skipped.map { ["shot_id": $0.id, "reason": $0.reason] }
+
+        return try jsonResult([
+            "phase": phase,
+            "fps": fps,
+            "bpm": grid.bpm,
+            "shots_placed": placedCount,
+            "total_frames": totalFrames,
+            "video_track_index": videoTrackIndex.map { $0 as Any } ?? NSNull(),
+            "song_track": songSummary,
+            "song_missing": song == nil,
+            "placements": placementRows,
+            "skipped": skippedRows,
+        ])
+    }
+
+    /// Find the dedicated assembly track by its stored id (reused across runs) or create a fresh one
+    /// — video at the top, audio appended. Returns the track's id.
+    private func ensureAssemblyTrack(_ editor: EditorViewModel, existingId: String?, type: ClipType) -> String {
+        if let id = existingId, editor.timeline.tracks.contains(where: { $0.id == id && $0.type == type }) {
+            return id
+        }
+        let index = type == .audio
+            ? editor.insertTrack(at: editor.timeline.tracks.count, type: .audio)
+            : editor.insertTrack(at: 0, type: .video)
+        return editor.timeline.tracks[index].id
+    }
+
+    /// Resolve a render-manifest output into a placeable media asset. Accepts an in-library asset id,
+    /// an absolute path, or a path relative to the project home / data root / media dir. Reuses an
+    /// existing asset for the same file so re-runs don't pile up duplicate library entries. Returns
+    /// nil for a remote URL or a file that isn't on disk (the caller skips that shot).
+    private func resolveRenderedAsset(_ output: String, editor: EditorViewModel, dataRoot: URL) -> MediaAsset? {
+        if let asset = editor.mediaAssets.first(where: { $0.id == output }) { return asset }
+        let home = FrameInventory.projectHome(of: dataRoot)
+        let candidates: [URL]
+        if output.hasPrefix("/") {
+            candidates = [URL(fileURLWithPath: output)]
+        } else {
+            candidates = [
+                home.appendingPathComponent(output),
+                dataRoot.appendingPathComponent(output),
+                home.appendingPathComponent(Project.mediaDirectoryName).appendingPathComponent(output),
+            ]
+        }
+        guard let fileURL = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            return nil
+        }
+        return existingOrImportedAsset(fileURL, editor: editor)
+    }
+
+    /// The single song in `audio/` as a media asset (imported once, reused after), or nil when there
+    /// isn't exactly one song to anchor to.
+    private func resolveSongAsset(dataRoot: URL, editor: EditorViewModel) -> MediaAsset? {
+        let songs = AudioProjectLayout.songFiles(dataRoot: dataRoot)
+        guard songs.count == 1, let songURL = songs.first else { return nil }
+        return existingOrImportedAsset(songURL, editor: editor)
+    }
+
+    /// Reuse the library asset already backed by `fileURL`, else import it.
+    private func existingOrImportedAsset(_ fileURL: URL, editor: EditorViewModel) -> MediaAsset? {
+        let target = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+        if let existing = editor.mediaAssets.first(where: {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath() == target
+        }) {
+            return existing
+        }
+        return editor.addMediaAsset(from: fileURL)
+    }
+
+    /// Re-run state: the ids of the assembly video/audio tracks, persisted next to the other studio
+    /// artifacts so a later session rebuilds the same tracks instead of appending new ones.
+    private struct AssemblySidecar {
+        var videoTrackId: String? = nil
+        var audioTrackId: String? = nil
+    }
+
+    private func assemblySidecarURL(dataRoot: URL) -> URL {
+        dataRoot.appendingPathComponent("assembly.json")
+    }
+
+    private func loadAssemblySidecar(dataRoot: URL) -> AssemblySidecar {
+        guard let data = try? Data(contentsOf: assemblySidecarURL(dataRoot: dataRoot)),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return AssemblySidecar()
+        }
+        return AssemblySidecar(
+            videoTrackId: obj["video_track_id"] as? String,
+            audioTrackId: obj["audio_track_id"] as? String
+        )
+    }
+
+    private func saveAssemblySidecar(_ sidecar: AssemblySidecar, dataRoot: URL) {
+        var obj: [String: Any] = [:]
+        if let v = sidecar.videoTrackId { obj["video_track_id"] = v }
+        if let a = sidecar.audioTrackId { obj["audio_track_id"] = a }
+        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else { return }
+        try? data.write(to: assemblySidecarURL(dataRoot: dataRoot), options: .atomic)
+    }
+
     // MARK: - Phase runner
 
     /// Dispatch a pack-registered phase runner for the active pack. Planning phases have no code

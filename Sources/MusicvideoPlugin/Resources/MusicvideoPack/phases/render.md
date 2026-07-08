@@ -303,14 +303,24 @@ call-out the path just floats in the answer and the user never views it.
 
 ### 10. Timeline placement (optional)
 
-Once clips exist, you may lay them onto the host timeline so the user can
-review the cut and drop the song over it:
+Once clips exist, lay them onto the host timeline so the user can review
+the cut with the song over it.
 
-- Each rendered clip is already a host media asset (from `generate_video`).
-  External clips can be brought in via `import_media`.
-- Place them in shotlist order on a video track via `add_clips` — one
-  entry per shot, `startFrame`/`durationFrames` derived from the shot's
-  `time_start`/`duration_s` × the project fps (`get_timeline` reports
+- Preferred: call `assemble_timeline(project_dir, "<phase>")`. It reads the
+  analysis, the shotlist, and this phase's render manifest, then places
+  every rendered shot in shotlist order on a dedicated assembly video
+  track, each cut snapped to a beat (a downbeat at a section boundary, a
+  regular beat otherwise), and lays the song on an audio track at frame 0
+  as the sync anchor. It is re-runnable (a second call rebuilds the
+  assembly track in place, no duplicates) and skips shots that are not
+  rendered yet, naming them. This is the beat-synced cut; prefer it over
+  hand-placing clips.
+- Manual fallback (a custom layout `assemble_timeline` does not cover):
+  each rendered clip is already a host media asset (from
+  `generate_video`); external clips come in via `import_media`. Place them
+  in shotlist order on a video track via `add_clips`, one entry per shot,
+  `startFrame`/`durationFrames` derived from the shot's
+  `time_start`/`duration_s` times the project fps (`get_timeline` reports
   fps). The user lays the song audio over it and does the final cut.
 - Cut handles (freeze-frame head/tail for J-cuts / L-cuts / crossfades,
   per `brief.cut_handles_mode`) are a post-processing follow-up — there
