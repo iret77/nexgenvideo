@@ -5,10 +5,11 @@ import Foundation
 // its result. `entries` feeds the shared ModelCatalog (and thus the UI + agent);
 // `model(for:)` gives the runtime the encoding recipe.
 //
-// Scope: the text-driven path (text-to-image / text-to-video / text-to-speech /
-// music). Reference-driven variants (image-to-video, image-to-image, edit) are
-// intentionally absent until the fal storage upload is wired — their caps below
-// advertise no reference inputs so the UI never offers an input that can't run.
+// Scope: text-driven generation plus the reference-driven variants that the fal
+// storage upload now feeds — image-to-video (`image_url`), image edit
+// (`image_urls`), and Seedance 2.0 reference-to-video (`image_urls` /
+// `video_urls` / `audio_urls`). Each model's caps advertise exactly the
+// reference inputs it accepts so the UI never offers an input that can't run.
 
 enum FalImageSizeMode: Sendable {
     case imageSizeEnum   // `image_size`: square_hd / landscape_16_9 / …
@@ -48,6 +49,7 @@ struct FalModel: Sendable {
     var videoSendsResolution: Bool = false
     var videoGeneratesAudio: Bool = false
     var videoImageRef: Bool = false   // image-to-video: emit `image_url` from the reference image
+    var videoReferenceArrays: Bool = false   // reference-to-video: emit image_urls/video_urls/audio_urls
     var audioMode: FalAudioMode = .tts
     var upscaleKind: FalUpscaleKind? = nil
 }
@@ -115,12 +117,29 @@ enum FalModelRegistry {
 
     // MARK: - Video (text-to-video)
 
+    // Seedance 2.0 aspect set (verified: fal-ai/seedance-2.0-api). Adds 21:9
+    // ultrawide over the 1.0 set; "auto" is a provider default we don't surface.
+    private static let seedance2Aspects = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
+
     private static let videoModels: [FalModel] = [
         video("fal-ai/kling-video/v2.5-turbo/pro/text-to-video", "Kling 2.5 Turbo Pro",
               durations: [5, 10], aspects: ["16:9", "9:16", "1:1"]),
         video("fal-ai/bytedance/seedance/v1/pro/text-to-video", "Seedance 1.0 Pro",
               durations: [5, 10], aspects: ["16:9", "9:16", "1:1", "4:3", "3:4"],
               resolutions: ["480p", "720p", "1080p"], sendsResolution: true),
+        // Seedance 2.0 — ByteDance's namespace on fal (no `fal-ai/` prefix; the
+        // queue path IS the id, verified against the official examples + fal.run
+        // cURL). Native audio (`generate_audio`, default true), up to 15s. GA
+        // endpoints cap at 720p.
+        video("bytedance/seedance-2.0/text-to-video", "Seedance 2.0",
+              durations: [5, 10, 15], aspects: seedance2Aspects,
+              resolutions: ["480p", "720p"], sendsResolution: true, generatesAudio: true),
+        // Reference-to-video: up to 9 image + 3 video + 3 audio refs (≤12 total),
+        // bound in the prompt as @Image1/@Video1/@Audio1. This is the multi-ref
+        // consistency path the musicvideo pack drives via seedance_input_mode=reference.
+        videoRef("bytedance/seedance-2.0/reference-to-video", "Seedance 2.0 (reference)",
+                 durations: [5, 10, 15], aspects: seedance2Aspects, resolutions: ["480p", "720p"],
+                 maxImages: 9, maxVideos: 3, maxAudios: 3, maxTotal: 12),
         video("fal-ai/veo3", "Veo 3",
               durations: [4, 6, 8], aspects: ["16:9", "9:16"], resolutions: ["720p", "1080p"],
               duration: .secondsSuffix, sendsResolution: true, generatesAudio: true),
@@ -132,6 +151,9 @@ enum FalModelRegistry {
         video("fal-ai/bytedance/seedance/v1/pro/image-to-video", "Seedance 1.0 Pro (image)",
               durations: [5, 10], aspects: ["16:9", "9:16"], resolutions: ["480p", "720p", "1080p"],
               sendsAspect: false, sendsResolution: true, i2v: true),
+        video("bytedance/seedance-2.0/image-to-video", "Seedance 2.0 (image)",
+              durations: [5, 10, 15], aspects: ["16:9", "9:16"], resolutions: ["480p", "720p"],
+              sendsAspect: false, sendsResolution: true, generatesAudio: true, i2v: true),
     ]
 
     private static func video(
@@ -163,6 +185,34 @@ enum FalModelRegistry {
             maxTotalReferences: requiresImage ? 1 : 0, maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil,
             framesAndReferencesExclusive: false, referenceTagNoun: "reference",
             requiresSourceVideo: false, requiresReferenceImage: requiresImage
+        )
+    }
+
+    // Reference-to-video: multi-modal reference arrays (image_urls/video_urls/
+    // audio_urls), aspect + resolution still sent. References are optional (the
+    // prompt can stand alone), so `requiresReferenceImage` stays false.
+    private static func videoRef(
+        _ id: String, _ name: String,
+        durations: [Int], aspects: [String], resolutions: [String]?,
+        maxImages: Int, maxVideos: Int, maxAudios: Int, maxTotal: Int
+    ) -> FalModel {
+        FalModel(
+            entry: CatalogEntry(
+                id: id, kind: .video, displayName: name,
+                allowedEndpoints: [id], responseShape: .video,
+                uiCapabilities: .video(VideoCaps(
+                    durations: durations, resolutions: resolutions, aspectRatios: aspects,
+                    supportsFirstFrame: false, supportsLastFrame: false,
+                    maxReferenceImages: maxImages, maxReferenceVideos: maxVideos,
+                    maxReferenceAudios: maxAudios, maxTotalReferences: maxTotal,
+                    maxCombinedVideoRefSeconds: 15, maxCombinedAudioRefSeconds: 15,
+                    framesAndReferencesExclusive: false, referenceTagNoun: "reference",
+                    requiresSourceVideo: false, requiresReferenceImage: false
+                ))
+            ),
+            videoSendsResolution: true,
+            videoGeneratesAudio: true,
+            videoReferenceArrays: true
         )
     }
 

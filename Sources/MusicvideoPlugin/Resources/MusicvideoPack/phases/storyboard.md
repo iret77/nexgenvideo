@@ -353,6 +353,10 @@ transition or the shot is composition-driven (POV pan, insert,
 establishing) → `keyframe`. If **character consistency** over the shot
 duration is the main problem (long, CU, performance) → `reference`.
 
+> On **Seedance 2.0** the `reference` strategy runs through the
+> `reference-to-video` endpoint (up to 9 image refs, plus optional video/audio
+> refs, native synchronized audio, clips up to 15s).
+
 Sanity check `REFERENCE_MODE_REQUIRES_FAL` (error) blocks reference mode
 on a keyframe-only provider pre-render. `REFERENCE_MODE_NEEDS_REFS`
 (error) blocks reference-mode shots without bible refs.

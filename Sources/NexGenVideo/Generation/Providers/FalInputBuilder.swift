@@ -29,6 +29,12 @@ enum FalInputBuilder {
         case .secondsSuffix: input["duration"] = "\(p.duration)s"
         }
         if model.videoImageRef, let image = p.referenceImageURLs.first { input["image_url"] = image }
+        if model.videoReferenceArrays {
+            // Seedance 2.0 reference-to-video: @Image1/@Video1/@Audio1 refs (≤9/3/3).
+            if !p.referenceImageURLs.isEmpty { input["image_urls"] = p.referenceImageURLs }
+            if !p.referenceVideoURLs.isEmpty { input["video_urls"] = p.referenceVideoURLs }
+            if !p.referenceAudioURLs.isEmpty { input["audio_urls"] = p.referenceAudioURLs }
+        }
         if model.videoSendsAspectRatio { input["aspect_ratio"] = p.aspectRatio }
         if model.videoSendsResolution, let resolution = p.resolution { input["resolution"] = resolution }
         if model.videoGeneratesAudio { input["generate_audio"] = p.generateAudio }

@@ -99,6 +99,11 @@ Per shot, also evaluate `Shot.seedance_input_mode`:
   `@Image1`, `@Image2`, …. Identity is strongly anchored; composition
   becomes the model's choice. Requires a reference-capable model.
 
+> **Seedance 2.0** serves reference mode via its `reference-to-video` endpoint:
+> up to 9 image references (the bible sheets) plus optional video/audio refs,
+> native synchronized audio (`generate_audio`, on by default), and clips up to
+> 15s. It is the default reference-capable target.
+
 Reference-mode shots without bible refs are blocked pre-render by sanity
 (`REFERENCE_MODE_NEEDS_REFS`). Confirm reference support against
 `list_models` (`maxReferenceImages`) before routing a shot to reference

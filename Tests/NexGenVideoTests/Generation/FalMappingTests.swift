@@ -93,6 +93,47 @@ struct FalVideoInputTests {
         #expect(input["image_url"] as? String == "https://x/ref.png")
         #expect(input["aspect_ratio"] == nil)
     }
+
+    @Test func seedance2TextToVideoSendsResolutionAudioAspect() throws {
+        let m = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.0/text-to-video"))
+        let p = VideoGenerationParams(prompt: "p", duration: 10, aspectRatio: "21:9", resolution: "720p")
+        let input = FalInputBuilder.videoInput(p, model: m)
+        #expect(input["duration"] as? String == "10")
+        #expect(input["resolution"] as? String == "720p")
+        #expect(input["aspect_ratio"] as? String == "21:9")
+        #expect(input["generate_audio"] as? Bool == true)
+        #expect(input["image_urls"] == nil)
+    }
+
+    @Test func seedance2ImageToVideoEmitsImageUrlAndAudio() throws {
+        let m = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.0/image-to-video"))
+        let p = VideoGenerationParams(
+            prompt: "p", duration: 5, aspectRatio: "16:9", resolution: "720p",
+            referenceImageURLs: ["https://x/first.png"]
+        )
+        let input = FalInputBuilder.videoInput(p, model: m)
+        #expect(input["image_url"] as? String == "https://x/first.png")
+        #expect(input["aspect_ratio"] == nil)   // i2v: aspect follows the image
+        #expect(input["resolution"] as? String == "720p")
+        #expect(input["generate_audio"] as? Bool == true)
+    }
+
+    @Test func seedance2ReferenceToVideoEmitsRefArrays() throws {
+        let m = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.0/reference-to-video"))
+        let p = VideoGenerationParams(
+            prompt: "@Image1 dances", duration: 15, aspectRatio: "16:9", resolution: "720p",
+            referenceImageURLs: ["https://x/a.png", "https://x/b.png"],
+            referenceVideoURLs: ["https://x/m.mp4"],
+            referenceAudioURLs: ["https://x/s.mp3"]
+        )
+        let input = FalInputBuilder.videoInput(p, model: m)
+        #expect(input["image_urls"] as? [String] == ["https://x/a.png", "https://x/b.png"])
+        #expect(input["video_urls"] as? [String] == ["https://x/m.mp4"])
+        #expect(input["audio_urls"] as? [String] == ["https://x/s.mp3"])
+        #expect(input["image_url"] == nil)   // arrays, not a single ref
+        #expect(input["aspect_ratio"] as? String == "16:9")
+        #expect(input["generate_audio"] as? Bool == true)
+    }
 }
 
 @Suite("FalInputBuilder — audio / upscale")
@@ -174,5 +215,22 @@ struct FalRegistryTests {
     @Test func imageToVideoModelsCarryRefDialect() throws {
         #expect(try #require(FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video")).videoImageRef == true)
         #expect(try #require(FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video")).videoImageRef == false)
+    }
+
+    @Test func seedance2FamilyPresentWithCorrectCaps() throws {
+        let t2v = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.0/text-to-video"))
+        #expect(t2v.videoGeneratesAudio == true)
+        #expect(t2v.videoSendsResolution == true)
+        guard case .video(let t2vCaps) = t2v.entry.uiCapabilities else { return #expect(Bool(false)) }
+        #expect(t2vCaps.resolutions == ["480p", "720p"])
+
+        let ref = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.0/reference-to-video"))
+        #expect(ref.videoReferenceArrays == true)
+        #expect(ref.videoImageRef == false)
+        guard case .video(let refCaps) = ref.entry.uiCapabilities else { return #expect(Bool(false)) }
+        #expect(refCaps.maxReferenceImages == 9)
+        #expect(refCaps.maxReferenceVideos == 3)
+        #expect(refCaps.maxReferenceAudios == 3)
+        #expect(refCaps.maxTotalReferences == 12)
     }
 }
