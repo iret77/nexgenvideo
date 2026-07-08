@@ -352,15 +352,29 @@ struct AgentPanelView: View {
     private var emptyState: some View {
         if service.canStream {
             VStack(spacing: AppTheme.Spacing.smMd) {
-                pluginSuggestions
                 Text("Ask anything, or start with:")
                     .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.medium))
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .multilineTextAlignment(.center)
                 VStack(spacing: AppTheme.Spacing.xs) {
-                    ForEach(Self.starterPrompts) { starterPrompt in
-                        AgentStarterPromptButton(starterPrompt: starterPrompt) {
-                            populatePrompt(starterPrompt.prompt)
+                    if showPackStarters {
+                        // A pack is active → its own starters replace the generic chips.
+                        ForEach(entryCommands) { command in
+                            AgentStarterPromptButton(
+                                starterPrompt: AgentStarterPrompt(
+                                    title: command.description ?? command.title,
+                                    systemImage: "puzzlepiece.extension",
+                                    prompt: command.command
+                                )
+                            ) {
+                                runPluginCommand(command)
+                            }
+                        }
+                    } else {
+                        ForEach(Self.starterPrompts) { starterPrompt in
+                            AgentStarterPromptButton(starterPrompt: starterPrompt) {
+                                populatePrompt(starterPrompt.prompt)
+                            }
                         }
                     }
                 }
@@ -371,29 +385,15 @@ struct AgentPanelView: View {
         }
     }
 
-    /// Entry-point plugin commands (argument-free, e.g. `/musicvideo:start`) surfaced as one-tap chips
-    /// in a fresh chat. Only under the Claude Code runtime, and only when plugins are installed.
+    /// Entry-point plugin commands (argument-free) surfaced as one-tap chips in a fresh chat —
+    /// the active pack's own starters.
     private var entryCommands: [PluginCommandCatalog.PluginCommand] {
         discoveredPlugins.flatMap { $0.commands }.filter { !$0.requiresArgument }
     }
 
-    @ViewBuilder
-    private var pluginSuggestions: some View {
-        if pluginLauncherAvailable, !entryCommands.isEmpty {
-            VStack(spacing: AppTheme.Spacing.xs) {
-                ForEach(entryCommands) { command in
-                    AgentStarterPromptButton(
-                        starterPrompt: AgentStarterPrompt(
-                            title: command.description ?? command.title,
-                            systemImage: "puzzlepiece.extension",
-                            prompt: command.command
-                        )
-                    ) {
-                        runPluginCommand(command)
-                    }
-                }
-            }
-        }
+    /// The active pack offers starters → show them instead of the generic chips.
+    private var showPackStarters: Bool {
+        editor.activePluginName != nil && !entryCommands.isEmpty
     }
 
     @ViewBuilder

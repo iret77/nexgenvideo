@@ -8,6 +8,8 @@ struct InstalledPluginRecord: Identifiable, Equatable {
     let id: String
     let displayName: String
     let tagline: String
+    let headline: String
+    let benefit: String
     let version: String
     let minAppVersion: String
     let bundleURL: URL
@@ -149,7 +151,8 @@ enum PluginLoader {
         }
         return InstalledPluginRecord(
             id: info.id, displayName: info.displayName.isEmpty ? info.id : info.displayName,
-            tagline: info.tagline, version: info.version, minAppVersion: info.minAppVersion,
+            tagline: info.tagline, headline: info.headline, benefit: info.benefit,
+            version: info.version, minAppVersion: info.minAppVersion,
             bundleURL: bundleURL, state: state)
     }
 
@@ -158,7 +161,7 @@ enum PluginLoader {
     ) -> InstalledPluginRecord {
         Log.plugins.warning("pack \(id) not loaded: \(reason.reason)")
         return InstalledPluginRecord(
-            id: id, displayName: id, tagline: "", version: "", minAppVersion: "",
-            bundleURL: bundleURL, state: .incompatible(reason))
+            id: id, displayName: id, tagline: "", headline: "", benefit: "",
+            version: "", minAppVersion: "", bundleURL: bundleURL, state: .incompatible(reason))
     }
 }

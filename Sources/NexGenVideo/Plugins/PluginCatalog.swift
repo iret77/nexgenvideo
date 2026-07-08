@@ -10,6 +10,10 @@ struct PluginCatalog: Decodable, Equatable {
         let id: String
         let displayName: String
         let tagline: String
+        /// A bold one-line card pitch (optional; card falls back to `tagline`).
+        let headline: String?
+        /// A short benefit line under the headline (optional).
+        let benefit: String?
         let version: String
         let minAppVersion: String
         /// Download URL of the pack's zipped `.ngvpack`.

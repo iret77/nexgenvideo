@@ -9,6 +9,10 @@ struct PluginBundleInfo: Equatable {
     let displayName: String
     /// `NGVPackTagline` — gallery subtitle (may be empty).
     let tagline: String
+    /// `NGVPackHeadline` — a bold one-line card pitch (may be empty → card uses tagline).
+    let headline: String
+    /// `NGVPackBenefit` — a short benefit line under the headline (may be empty).
+    let benefit: String
     /// `CFBundleShortVersionString` — the pack's own version.
     let version: String
     /// `NGVMinAppVersion` — minimum NexGenVideo marketing version required.
@@ -21,6 +25,8 @@ struct PluginBundleInfo: Equatable {
         static let id = "NGVPackID"
         static let displayName = "NGVPackDisplayName"
         static let tagline = "NGVPackTagline"
+        static let headline = "NGVPackHeadline"
+        static let benefit = "NGVPackBenefit"
         static let version = "CFBundleShortVersionString"
         static let minAppVersion = "NGVMinAppVersion"
         static let principalClass = "NSPrincipalClass"
@@ -31,6 +37,8 @@ struct PluginBundleInfo: Equatable {
         id = (plist[Key.id] as? String) ?? ""
         displayName = (plist[Key.displayName] as? String) ?? ""
         tagline = (plist[Key.tagline] as? String) ?? ""
+        headline = (plist[Key.headline] as? String) ?? ""
+        benefit = (plist[Key.benefit] as? String) ?? ""
         version = (plist[Key.version] as? String) ?? ""
         minAppVersion = (plist[Key.minAppVersion] as? String) ?? ""
         principalClass = (plist[Key.principalClass] as? String) ?? ""

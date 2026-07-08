@@ -158,6 +158,11 @@ public struct PackManifest: Sendable, Equatable {
     public let id: String
     public let displayName: String
     public let tagline: String
+    /// A bold one-line pitch the card shows in place of the technical `tagline`.
+    /// Empty → the card falls back to `tagline`.
+    public let headline: String
+    /// A short benefit line under the headline (what the pack does for the user).
+    public let benefit: String
     /// Minimum NexGenVideo marketing version (`CFBundleShortVersionString`) this
     /// pack needs. The loadable-pack gate compares the `.ngvpack`'s
     /// `NGVMinAppVersion` against the running app BEFORE loading any code; this
@@ -169,12 +174,16 @@ public struct PackManifest: Sendable, Equatable {
         id: String,
         displayName: String,
         tagline: String,
+        headline: String = "",
+        benefit: String = "",
         minAppVersion: String = "0.0.0",
         badgeURL: URL? = nil
     ) {
         self.id = id
         self.displayName = displayName
         self.tagline = tagline
+        self.headline = headline
+        self.benefit = benefit
         self.minAppVersion = minAppVersion
         self.badgeURL = badgeURL
     }

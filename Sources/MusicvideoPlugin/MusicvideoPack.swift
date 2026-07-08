@@ -48,7 +48,9 @@ public struct MusicvideoPack: Pack {
     public let manifest = PackManifest(
         id: "musicvideo",
         displayName: "Music Video Studio",
-        tagline: "Structured AI music-video production — analysis → treatment → storyboard → shotlist → render, with engine-enforced consistency.",
+        tagline: "Structured AI music video production with engine-enforced consistency.",
+        headline: "Turn a song into a finished video.",
+        benefit: "Reads your track and plans shots to the beat.",
         minAppVersion: musicvideoMinAppVersion,
         badgeURL: PackKnowledge.badgeURL()
     )
@@ -61,7 +63,7 @@ public struct MusicvideoPack: Pack {
         PackStarter(
             id: "start",
             title: "Start the music-video pipeline",
-            prompt: "Start the music-video production pipeline for this project. Ask me for the song first, analyze it and walk me through the result, then guide me through drafting the brief — direction before technicalities."
+            prompt: "Start the music-video production pipeline for this project. Ask me for the song first, analyze it and walk me through the result, then guide me through drafting the brief, keeping direction ahead of technicalities."
         )
     ]
 

@@ -10,6 +10,10 @@ struct InstalledPack: Identifiable, Equatable {
     let name: String
     let displayName: String
     let tagline: String?
+    /// A bold one-line pitch for the card (nil → fall back to `tagline`).
+    let headline: String?
+    /// A short benefit line under the headline.
+    let benefit: String?
     /// Minimum app version the pack declares (satisfied — it's loaded).
     let minAppVersion: String
     /// Badge art inside the pack's own resource bundle (nil → gradient fallback).
@@ -21,6 +25,8 @@ struct InstalledPack: Identifiable, Equatable {
         self.name = pack.name
         self.displayName = pack.manifest.displayName
         self.tagline = pack.manifest.tagline.isEmpty ? nil : pack.manifest.tagline
+        self.headline = pack.manifest.headline.isEmpty ? nil : pack.manifest.headline
+        self.benefit = pack.manifest.benefit.isEmpty ? nil : pack.manifest.benefit
         self.minAppVersion = pack.manifest.minAppVersion
         self.badgeURL = pack.manifest.badgeURL
     }

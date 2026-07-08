@@ -53,7 +53,9 @@ musicvideo.ngvpack/
 |---|---|
 | `NGVPackID` | activation id (also the filename stem, persisted per project in `ngv.json`) |
 | `NGVPackDisplayName` | gallery title |
-| `NGVPackTagline` | gallery subtitle |
+| `NGVPackTagline` | gallery subtitle (back-compat; the card prefers headline + benefit) |
+| `NGVPackHeadline` | bold one-line card pitch (optional; card falls back to tagline) |
+| `NGVPackBenefit` | short benefit line under the headline (optional) |
 | `CFBundleShortVersionString` | the pack's own version |
 | `NGVMinAppVersion` | minimum NexGenVideo marketing version required |
 | `NSPrincipalClass` | the `PackEntry` subclass' ObjC runtime name (entry point) |
@@ -128,9 +130,11 @@ Incompatible / unsigned packs become a picker row with a calm reason (e.g.
 ## Catalog, install, activation
 
 - **Catalog** — `plugins.json`, an asset on the rolling `dev-latest` release, lists
-  packs `{id, displayName, tagline, version, minAppVersion, url, sha256}`. The picker
-  (`PluginPickerView`) fetches it; a fetch failure is a calm offline state (installed
-  packs keep working).
+  packs `{id, displayName, tagline, headline?, benefit?, version, minAppVersion, url,
+  sha256, badge?}`. The picker (`PluginPickerView`) fetches it; a fetch failure is a
+  calm offline state (installed packs keep working). One primary action, `Activate`:
+  for a catalog pack it downloads (a hidden step) then binds; there is no separate
+  "Install" action.
 - **Install (staged + atomic)** — the pack `url` (and the catalog URL) **must be
   https**; a non-https or malformed URL is refused with an actionable error and no
   download. The download is checksum-verified (`sha256`), unpacked into a temp dir, and

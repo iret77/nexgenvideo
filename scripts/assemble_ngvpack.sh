@@ -35,6 +35,8 @@ TARGET="$(read_field target)"
 PRINCIPAL="$(read_field principalClass)"
 DISPLAY="$(read_field displayName)"
 TAGLINE="$(read_field tagline)"
+HEADLINE="$(read_optional headline)"
+BENEFIT="$(read_optional benefit)"
 VERSION="$(read_field version)"
 MINAPP="$(read_field minAppVersion)"
 # Badge source, relative to the SwiftPM resource bundle (e.g. MusicvideoPack/badge.png).
@@ -55,9 +57,9 @@ mkdir -p "$PACK/Contents/MacOS" "$PACK/Contents/Resources"
 cp "$DYLIB" "$PACK/Contents/MacOS/${ID}"
 cp -R "$RES_BUNDLE" "$PACK/Contents/Resources/"
 
-# Info.plist via plistlib — no shell-escaping hazards with the tagline.
-NGV_ID="$ID" NGV_DISPLAY="$DISPLAY" NGV_TAGLINE="$TAGLINE" NGV_VERSION="$VERSION" \
-NGV_MINAPP="$MINAPP" NGV_PRINCIPAL="$PRINCIPAL" \
+# Info.plist via plistlib — no shell-escaping hazards with the copy strings.
+NGV_ID="$ID" NGV_DISPLAY="$DISPLAY" NGV_TAGLINE="$TAGLINE" NGV_HEADLINE="$HEADLINE" \
+NGV_BENEFIT="$BENEFIT" NGV_VERSION="$VERSION" NGV_MINAPP="$MINAPP" NGV_PRINCIPAL="$PRINCIPAL" \
 python3 - "$PACK/Contents/Info.plist" <<'PY'
 import os, plistlib, sys
 info = {
@@ -71,6 +73,8 @@ info = {
     "NGVPackID": os.environ["NGV_ID"],
     "NGVPackDisplayName": os.environ["NGV_DISPLAY"],
     "NGVPackTagline": os.environ["NGV_TAGLINE"],
+    "NGVPackHeadline": os.environ["NGV_HEADLINE"],
+    "NGVPackBenefit": os.environ["NGV_BENEFIT"],
     "NGVMinAppVersion": os.environ["NGV_MINAPP"],
 }
 with open(sys.argv[1], "wb") as f:
@@ -110,8 +114,9 @@ if [ -n "$BADGE_SRC" ]; then
 fi
 
 # Catalog entry (url + badge filled by release.yml/gen_plugins_json for the release).
-NGV_ID="$ID" NGV_DISPLAY="$DISPLAY" NGV_TAGLINE="$TAGLINE" NGV_VERSION="$VERSION" \
-NGV_MINAPP="$MINAPP" NGV_SHA="$SHA" NGV_ZIP="$(basename "$ZIP")" NGV_BADGE="$BADGE_ASSET" \
+NGV_ID="$ID" NGV_DISPLAY="$DISPLAY" NGV_TAGLINE="$TAGLINE" NGV_HEADLINE="$HEADLINE" \
+NGV_BENEFIT="$BENEFIT" NGV_VERSION="$VERSION" NGV_MINAPP="$MINAPP" NGV_SHA="$SHA" \
+NGV_ZIP="$(basename "$ZIP")" NGV_BADGE="$BADGE_ASSET" \
 python3 - "$OUT/${ID}.entry.json" <<'PY'
 import json, os, sys
 entry = {
@@ -123,6 +128,10 @@ entry = {
     "sha256": os.environ["NGV_SHA"],
     "zip": os.environ["NGV_ZIP"],
 }
+for key, env in (("headline", "NGV_HEADLINE"), ("benefit", "NGV_BENEFIT")):
+    value = os.environ.get(env, "")
+    if value:
+        entry[key] = value
 badge = os.environ.get("NGV_BADGE", "")
 if badge:
     entry["badge"] = badge  # filename → gen_plugins_json turns it into a URL

@@ -132,7 +132,7 @@ struct ProjectSettingsView: View {
                 .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
                 .foregroundStyle(AppTheme.Status.warningColor)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("This project was built with it. Install it to run the specialized workflow, or remove it to continue generically.")
+            Text("This project was built with it. Open the plugin library to add it, or remove it to continue generically.")
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -143,7 +143,7 @@ struct ProjectSettingsView: View {
                 Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
                     .buttonStyle(.capsule(.secondary, size: .regular))
                     .controlSize(.small)
-                    .help("Back to the generic workflow — pipeline data stays in the project.")
+                    .help("Back to the generic workflow. Pipeline data stays in the project.")
             }
         }
     }
@@ -170,8 +170,8 @@ struct ProjectSettingsView: View {
             PluginBadgeView(plugin: plugin)
                 .frame(maxWidth: AppTheme.ComponentSize.pluginBadgeWidth, alignment: .leading)
             Text(initialized
-                 ? "Active — production runs the \(plugin.displayName) workflow. Continue in Pipeline."
-                 : "Active — ready when you are. Start production and the agent guides each phase.")
+                 ? "Active. Production runs the \(plugin.displayName) workflow. Continue in Pipeline."
+                 : "Active and ready. Start production and the agent guides each phase.")
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -202,7 +202,7 @@ struct ProjectSettingsView: View {
                 Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
                     .buttonStyle(.capsule(.secondary, size: .regular))
                     .controlSize(.small)
-                    .help("Back to the generic workflow — pipeline data stays in the project.")
+                    .help("Back to the generic workflow. Pipeline data stays in the project.")
             }
         }
     }

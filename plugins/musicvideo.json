@@ -3,7 +3,9 @@
   "target": "MusicvideoPlugin",
   "principalClass": "MusicvideoPackEntry",
   "displayName": "Music Video Studio",
-  "tagline": "Structured AI music-video production — analysis → treatment → storyboard → shotlist → render, with engine-enforced consistency.",
+  "tagline": "Structured AI music video production with engine-enforced consistency.",
+  "headline": "Turn a song into a finished video.",
+  "benefit": "Reads your track and plans shots to the beat.",
   "version": "0.0.1",
   "minAppVersion": "0.1.0",
   "badge": "MusicvideoPack/badge.png"

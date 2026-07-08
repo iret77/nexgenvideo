@@ -268,11 +268,13 @@ enum AppTheme {
         static let projectCardWidth: CGFloat = 150
         static let projectCardHeight: CGFloat = 120
         static let updateOverlayWidth: CGFloat = 640
-        // Badge masters are 498×257 (~1.94) — 224pt keeps them ≤ native @2x, so they stay crisp.
+        // Badge masters are 728×193 (~3.77) — a wide header band. 224pt keeps them ≤ native @2x.
         static let pluginBadgeWidth: CGFloat = 224
-        static let pluginBadgeAspect: CGFloat = 498.0 / 257.0
-        static let pluginPickerWidth: CGFloat = 480
-        static let pluginPickerHeight: CGFloat = 420
+        static let pluginBadgeAspect: CGFloat = 728.0 / 193.0
+        static let pluginPickerWidth: CGFloat = 520
+        static let pluginPickerHeight: CGFloat = 460
+        /// Min width of a pack card in the responsive picker grid (~2 columns at picker width).
+        static let pluginCardMinWidth: CGFloat = 220
         static let agentComposerMinHeight: CGFloat = 64
         static let agentComposerMaxHeight: CGFloat = 280
         static let agentComposerGrabHeight: CGFloat = 10
