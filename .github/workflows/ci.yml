@@ -93,6 +93,33 @@ jobs:
           python3 scripts/gen_plugins_json.py .build/plugins "https://example.com/dev-latest" .build/plugins/plugins.json
           cat .build/plugins/plugins.json
 
+      - name: Verify pack links the SHARED engine (guards the PackEntry-cast regression)
+        run: |
+          set -euo pipefail
+          # A `.ngvpack` must link NexGenEngine as ONE shared dynamic image with the app —
+          # not statically absorb it. If it absorbs the engine, the pack carries its own
+          # `PackEntry` (ObjC `NGVPackEntry`) class, so the host's load-time
+          # `bundle.principalClass as? PackEntry.Type` cast fails ("entry point not found")
+          # and the pack silently never activates. No test inside the package graph can
+          # catch this (they link the pack statically → one class), so we assert the
+          # Mach-O invariant on the assembled bundle here.
+          PACK_BIN="$(ls .build/plugins/*.ngvpack/Contents/MacOS/* | head -1)"
+          APP_BIN=".build/NexGenVideo.app/Contents/MacOS/NexGenVideo"
+          echo "pack binary: $PACK_BIN"
+          # 1) pack references the shared engine dylib dynamically
+          otool -L "$PACK_BIN" | grep -q '@rpath/libNexGenEngine.dylib' \
+            || { echo "::error::pack does not dynamically link libNexGenEngine.dylib (engine statically absorbed)"; exit 1; }
+          # 2) pack IMPORTS the engine's PackEntry class (undefined U); a DEFINED copy means absorption
+          if nm "$PACK_BIN" | grep -E ' [SDTtbd] _OBJC_CLASS_\$_NGVPackEntry$'; then
+            echo "::error::NexGenEngine is statically absorbed — pack defines its own NGVPackEntry class"; exit 1
+          fi
+          nm "$PACK_BIN" | grep -qE ' U _OBJC_CLASS_\$_NGVPackEntry$' \
+            || { echo "::error::pack does not import NGVPackEntry from the shared engine"; exit 1; }
+          # 3) the app links the engine dynamically too (else the shared image never loads)
+          otool -L "$APP_BIN" | grep -q '@rpath/libNexGenEngine.dylib' \
+            || { echo "::error::app does not dynamically link libNexGenEngine.dylib"; exit 1; }
+          echo "OK: NexGenEngine is one shared dynamic image across app + pack"
+
       - name: Zip .app
         run: ditto -c -k --keepParent .build/NexGenVideo.app .build/NexGenVideo.zip
 

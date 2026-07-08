@@ -7,23 +7,23 @@ let package = Package(
     platforms: [.macOS(.v26)],
     products: [
         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),
-        // Shared across the app AND every loadable format pack: one dynamic
-        // library so host and plugin link ONE copy of the `Pack`/`PackEntry`
-        // protocol metadata (bundle.sh embeds it in Contents/Frameworks).
-        .library(name: "NexGenEngine", type: .dynamic, targets: ["NexGenEngine"]),
         // The first loadable pack — built as a dynamic library, then assembled +
         // signed into `musicvideo.ngvpack` by the release workflow. NOT a
         // dependency of the app: it ships OUTSIDE the DMG and loads at runtime.
         .library(name: "MusicvideoPlugin", type: .dynamic, targets: ["MusicvideoPlugin"]),
     ],
     dependencies: [
+        // NexGenEngine is its OWN package (Engine/) so the app AND the pack link its
+        // DYNAMIC product — one shared `Pack`/`PackEntry` class, embedded once in
+        // Contents/Frameworks. A same-package target dependency would statically absorb
+        // the engine into both binaries and break the cross-bundle PackEntry cast.
+        .package(path: "Engine"),
         .package(url: "https://github.com/dmrschmidt/DSWaveformImage", from: "14.2.2"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.11.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         .package(url: "https://github.com/getsentry/sentry-cocoa", from: "8.40.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
         .package(url: "https://github.com/airbnb/lottie-ios", from: "4.6.1"),
-        .package(url: "https://github.com/jpsim/Yams", from: "5.0.0"),
     ],
     targets: [
         .executableTarget(
@@ -35,7 +35,7 @@ let package = Package(
                 .product(name: "Sentry", package: "sentry-cocoa"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "Lottie", package: "lottie-ios"),
-                "NexGenEngine",
+                .product(name: "NexGenEngine", package: "Engine"),
             ],
             path: "Sources/NexGenVideo",
             exclude: [
@@ -52,20 +52,13 @@ let package = Package(
             plugins: ["MetalCIKernelPlugin"]
         ),
         .plugin(name: "MetalCIKernelPlugin", capability: .buildTool()),
-        .target(
-            name: "NexGenEngine",
-            dependencies: [
-                .product(name: "Yams", package: "Yams"),
-            ],
-            path: "Sources/NexGenEngine"
-        ),
-        // The musicvideo format pack. Links NexGenEngine (the shared dynamic
-        // library) so its `Pack`/`PackEntry` metadata is identical to the host's.
-        // Its knowledge (pattern library, phase docs, badge) ships as target
+        // The musicvideo format pack. Links the shared NexGenEngine dynamic product
+        // (from the Engine package) so its `Pack`/`PackEntry` metadata is IDENTICAL to
+        // the host's. Its knowledge (pattern library, phase docs, badge) ships as target
         // resources, assembled into the `.ngvpack` alongside the signed dylib.
         .target(
             name: "MusicvideoPlugin",
-            dependencies: ["NexGenEngine"],
+            dependencies: [.product(name: "NexGenEngine", package: "Engine")],
             path: "Sources/MusicvideoPlugin",
             resources: [
                 .copy("Resources/MusicvideoPack"),
@@ -73,14 +66,21 @@ let package = Package(
         ),
         .testTarget(
             name: "NexGenVideoTests",
-            dependencies: ["NexGenVideo", "NexGenEngine", "MusicvideoPlugin"],
+            dependencies: [
+                "NexGenVideo",
+                .product(name: "NexGenEngine", package: "Engine"),
+                "MusicvideoPlugin",
+            ],
             path: "Tests/NexGenVideoTests"
         ),
         // Depends on MusicvideoPlugin too: the pack is no longer compiled into the
         // engine, so the pack-specific tests link it and register it explicitly.
         .testTarget(
             name: "NexGenEngineTests",
-            dependencies: ["NexGenEngine", "MusicvideoPlugin"],
+            dependencies: [
+                .product(name: "NexGenEngine", package: "Engine"),
+                "MusicvideoPlugin",
+            ],
             path: "Tests/NexGenEngineTests",
             resources: [
                 .copy("Fixtures"),
