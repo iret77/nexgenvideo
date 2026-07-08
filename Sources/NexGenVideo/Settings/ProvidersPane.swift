@@ -5,6 +5,7 @@ struct ProvidersPane: View {
     @State private var hasKey: [String: Bool] = [:]
     @State private var maskedKey: [String: String] = [:]
     @State private var draft: [String: String] = [:]
+    @State private var mcpDraft: [String: String] = [:]
     @FocusState private var focusedProvider: String?
 
     @AppStorage(PromptCompiler.rawPromptsDefaultsKey) private var allowRawPrompts = false
@@ -58,7 +59,46 @@ struct ProvidersPane: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             providerHeader(provider)
             keyField(provider)
+            mcpField(provider)
         }
+    }
+
+    /// Optional MCP transport for the provider: NGV reaches it through the provider's own MCP
+    /// server (subscription/OAuth) instead of the pay-per-call API. A provider may have both — NGV
+    /// picks the cheaper per call. The agent never calls it raw; NGV drives it behind the gate.
+    private func mcpField(_ provider: GenerationProvider) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            TextField("MCP server URL (optional — use the provider's subscription instead of the API)",
+                      text: mcpBinding(provider))
+                .textFieldStyle(.plain)
+                .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .onSubmit { saveMCP(provider) }
+                .padding(.horizontal, AppTheme.Spacing.md)
+                .padding(.vertical, AppTheme.Spacing.smMd)
+                .background(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                        .fill(Color.black.opacity(AppTheme.Opacity.muted))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                        .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
+                )
+            if !(mcpDraft[provider.id] ?? "").trimmingCharacters(in: .whitespaces).isEmpty {
+                Button("Save") { saveMCP(provider) }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.large)
+            }
+        }
+    }
+
+    private func mcpBinding(_ provider: GenerationProvider) -> Binding<String> {
+        Binding(get: { mcpDraft[provider.id] ?? "" }, set: { mcpDraft[provider.id] = $0 })
+    }
+
+    private func saveMCP(_ provider: GenerationProvider) {
+        ProviderMCP.setEndpoint(mcpDraft[provider.id], for: provider)
+        refresh()
     }
 
     private func providerHeader(_ provider: GenerationProvider) -> some View {
@@ -157,6 +197,7 @@ struct ProvidersPane: View {
             let key = ProviderKeychain.load(provider) ?? ""
             hasKey[provider.id] = !key.isEmpty
             maskedKey[provider.id] = mask(key)
+            mcpDraft[provider.id] = ProviderMCP.endpoint(provider)?.absoluteString ?? ""
         }
     }
 
