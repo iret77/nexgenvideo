@@ -433,23 +433,24 @@ extension ToolExecutor {
         if filter == nil || filter == "upscale" {
             out += UpscaleModelConfig.allModels.map { Self.upscaleModelInfo($0) }
         }
-        // A model whose backing provider has no API key is accepted but fails at request time.
-        // Surface that here so the agent doesn't pick an unusable model and misread the failure.
-        out = out.map { info in
-            guard let id = info["id"] as? String else { return info }
-            var info = info
-            let provider = GenerationProvider.servicing(modelId: id)
-            let available = provider.hasKey
-            info["available"] = available
-            if !available {
-                info["unavailableReason"] = "No \(provider.displayName) API key — add one in Settings → Providers to use this model."
-            }
-            return info
+        // Usable-only (LLM → NGV → Provider; docs concept #159 + the user's final say): the agent
+        // sees ONLY models it can actually run — an activated provider services the model AND the
+        // user hasn't disabled it in Settings → Models. Never surface a model that would fail at
+        // request time (no key) or one the user turned off; the resolver, not the LLM, owns which
+        // provider runs it.
+        let prefs = ModelPreferences.shared
+        out = out.filter { info in
+            guard let id = info["id"] as? String else { return false }
+            return prefs.isEnabled(id) && GenerationProvider.servicing(modelId: id).hasKey
         }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "models": out,
             "loaded": ModelCatalog.shared.isLoaded,
         ]
+        if out.isEmpty {
+            body["note"] = "No usable models yet — activate a provider in Settings → Providers "
+                + "(or re-enable models in Settings → Models). Recommend the user do this rather than guessing."
+        }
         guard let json = Self.jsonString(roundJSONFloatingPointNumbers(body, toPlaces: 3)) else {
             return .error("Failed to encode model list")
         }
