@@ -84,6 +84,29 @@ final class AgentService {
     var draft: String = ""
     var mentions: [AgentMention] = []
 
+    /// A starter or pack function staged in the composer as a colored pill: its full prompt is hidden
+    /// from the text field, keeping the composer clean. On send the prompt is composed with any typed
+    /// note into the outgoing message. Only one may be pending; staging another replaces it.
+    var pendingFunction: PendingFunction?
+
+    struct PendingFunction: Equatable {
+        let title: String
+        let systemImage: String
+        let prompt: String
+    }
+
+    /// Builds the outgoing message from a staged function's full prompt and the free-typed note. A
+    /// completion-style prompt (trailing space, e.g. "Generate an AI video of ") absorbs the note
+    /// inline to finish the sentence; a full-instruction prompt takes the note as a trailing line.
+    nonisolated static func composedFunctionMessage(prompt: String, note: String) -> String {
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        if prompt.hasSuffix(" ") {
+            return (prompt + trimmedNote).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !trimmedNote.isEmpty else { return prompt }
+        return prompt + "\n\n" + trimmedNote
+    }
+
     /// The ONE pending generative dialog (#96, composer-dock architecture). Set by the show_dialog
     /// tool; the card renders above the input. Submitting composes a single structured message —
     /// the compact transcript record — and clears; cancel clears silently (the agent was told to
@@ -195,6 +218,7 @@ final class AgentService {
         editor?.agentPanelVisible = true
         draft = text
         mentions.removeAll()
+        pendingFunction = nil
         focusInputRequestTick &+= 1
     }
 
@@ -346,6 +370,7 @@ final class AgentService {
         messages = []
         draft = ""
         mentions.removeAll()
+        pendingFunction = nil
         streamError = nil
         toolExecutor?.resetFeedbackState()
     }
@@ -364,6 +389,7 @@ final class AgentService {
         messages = []
         draft = ""
         mentions = []
+        pendingFunction = nil
         streamError = nil
         toolExecutor?.resetFeedbackState()
         onSessionsChanged?()

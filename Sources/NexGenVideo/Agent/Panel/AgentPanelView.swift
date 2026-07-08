@@ -46,7 +46,8 @@ struct AgentPanelView: View {
     private var canSend: Bool {
         !service.isStreaming &&
         service.canStream &&
-        !service.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        (service.pendingFunction != nil ||
+         !service.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     var body: some View {
@@ -360,20 +361,19 @@ struct AgentPanelView: View {
                     if showPackStarters {
                         // A pack is active → its own starters replace the generic chips.
                         ForEach(entryCommands) { command in
-                            AgentStarterPromptButton(
-                                starterPrompt: AgentStarterPrompt(
-                                    title: command.description ?? command.title,
-                                    systemImage: "puzzlepiece.extension",
-                                    prompt: command.command
-                                )
-                            ) {
-                                runPluginCommand(command)
+                            let starter = AgentStarterPrompt(
+                                title: command.description ?? command.title,
+                                systemImage: "puzzlepiece.extension",
+                                prompt: command.command
+                            )
+                            AgentStarterPromptButton(starterPrompt: starter) {
+                                stageFunction(starter)
                             }
                         }
                     } else {
                         ForEach(Self.starterPrompts) { starterPrompt in
                             AgentStarterPromptButton(starterPrompt: starterPrompt) {
-                                populatePrompt(starterPrompt.prompt)
+                                stageFunction(starterPrompt)
                             }
                         }
                     }
@@ -431,10 +431,18 @@ struct AgentPanelView: View {
             if !service.canStream && !service.messages.isEmpty {
                 missingKeyState
             }
-            // The agent input always shows what "this" resolves to before sending (docs/UI_UX_CONCEPT.md §2.2).
-            if let hint = editor.selectionContextHint {
-                HStack {
-                    ScopeChip(text: hint)
+            // Composer chips: a staged function pill (hides its prose prompt) and the scope the prose
+            // resolves against ("this" = what, docs/UI_UX_CONCEPT.md §2.2). Both sit above the input.
+            if service.pendingFunction != nil || editor.selectionContextHint != nil {
+                HStack(spacing: AppTheme.Spacing.xs) {
+                    if let fn = service.pendingFunction {
+                        FunctionPill(title: fn.title, systemImage: fn.systemImage) {
+                            service.pendingFunction = nil
+                        }
+                    }
+                    if let hint = editor.selectionContextHint {
+                        ScopeChip(text: hint)
+                    }
                     Spacer(minLength: 0)
                 }
             }
@@ -459,14 +467,25 @@ struct AgentPanelView: View {
 
     private func submit() {
         guard canSend else { return }
-        service.send(text: service.draft, mentions: service.mentions)
+        if let fn = service.pendingFunction {
+            service.send(
+                text: AgentService.composedFunctionMessage(prompt: fn.prompt, note: service.draft),
+                mentions: service.mentions
+            )
+        } else {
+            service.send(text: service.draft, mentions: service.mentions)
+        }
+        service.pendingFunction = nil
         service.draft = ""
         service.mentions.removeAll()
     }
 
-    private func populatePrompt(_ prompt: String) {
-        service.draft = prompt
-        service.mentions.removeAll()
+    private func stageFunction(_ starter: AgentStarterPrompt) {
+        service.pendingFunction = AgentService.PendingFunction(
+            title: starter.title,
+            systemImage: starter.systemImage,
+            prompt: starter.prompt
+        )
     }
 }
 
@@ -509,7 +528,38 @@ private struct AgentStarterPromptButton: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-        .help("Fill prompt")
+        .help("Add function")
+    }
+}
+
+/// A staged starter/pack function in the composer dock: an accent-tinted pill that hides the
+/// underlying prose prompt and signals a pre-made function is armed. Removable via the trailing ✕.
+private struct FunctionPill: View {
+    let title: String
+    let systemImage: String
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.xs) {
+            Image(systemName: systemImage)
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+            Text(title)
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.bold))
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .help("Remove function")
+        }
+        .foregroundStyle(AppTheme.Accent.primary)
+        .padding(.horizontal, AppTheme.Spacing.sm)
+        .padding(.vertical, AppTheme.Spacing.xxs)
+        .background(Capsule(style: .continuous).fill(AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted)))
+        .overlay(Capsule(style: .continuous).strokeBorder(AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin))
     }
 }
 
