@@ -25,6 +25,15 @@ actor MCPProviderClient {
         case toolFailed(String)
     }
 
+    /// A tool the provider's MCP server advertises via `tools/list` — discovered at runtime, never
+    /// hardcoded, so a provider changing its MCP tools needs no NGV update. Feeds the manifest/catalog
+    /// (which capabilities this provider offers over `.mcp`) and the resolver.
+    struct DiscoveredTool: Sendable, Equatable {
+        let name: String
+        let description: String?
+        let inputSchema: Value
+    }
+
     private let config: Config
     private var client: Client?
 
@@ -58,6 +67,14 @@ actor MCPProviderClient {
             throw ClientError.toolFailed(Self.joinedText(result.content))
         }
         return Self.textContents(result.content)
+    }
+
+    /// Enumerate the provider's tools (`tools/list`). This is how NGV learns what a provider offers
+    /// over `.mcp` without a per-provider hardcoded table — the self-describing MCP handshake.
+    func discoverTools() async throws -> [DiscoveredTool] {
+        let client = try await connectedClient()
+        let (tools, _) = try await client.listTools()
+        return tools.map { DiscoveredTool(name: $0.name, description: $0.description, inputSchema: $0.inputSchema) }
     }
 
     func disconnect() async {
