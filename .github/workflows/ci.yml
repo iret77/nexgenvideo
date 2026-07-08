@@ -109,12 +109,14 @@ jobs:
           # 1) pack references the shared engine dylib dynamically
           otool -L "$PACK_BIN" | grep -q '@rpath/libNexGenEngine.dylib' \
             || { echo "::error::pack does not dynamically link libNexGenEngine.dylib (engine statically absorbed)"; exit 1; }
-          # 2) pack IMPORTS the engine's PackEntry class (undefined U); a DEFINED copy means absorption
+          # 2) pack must NOT carry its own copy of the engine's PackEntry class — a DEFINED
+          #    _OBJC_CLASS_$_NGVPackEntry means NexGenEngine was statically absorbed. (We don't
+          #    assert the undefined *import* symbol: under macOS chained fixups the cross-dylib
+          #    superclass bind lives in the fixup chains, not as a classic nm 'U' entry. Step 1's
+          #    dependent-dylib link already proves the class resolves from the shared engine.)
           if nm "$PACK_BIN" | grep -E ' [SDTtbd] _OBJC_CLASS_\$_NGVPackEntry$'; then
             echo "::error::NexGenEngine is statically absorbed — pack defines its own NGVPackEntry class"; exit 1
           fi
-          nm "$PACK_BIN" | grep -qE ' U _OBJC_CLASS_\$_NGVPackEntry$' \
-            || { echo "::error::pack does not import NGVPackEntry from the shared engine"; exit 1; }
           # 3) the app links the engine dynamically too (else the shared image never loads)
           otool -L "$APP_BIN" | grep -q '@rpath/libNexGenEngine.dylib' \
             || { echo "::error::app does not dynamically link libNexGenEngine.dylib"; exit 1; }
