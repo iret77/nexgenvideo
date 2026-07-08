@@ -21,7 +21,11 @@ enum HiggsfieldModelRegistry {
         dop("higgsfield/dop-standard", "Higgsfield DoP (image)", apiModel: "dop-standard"),
     ]
 
-    static let entries: [CatalogEntry] = models.map(\.entry)
+    static let entries: [CatalogEntry] = models.map { model in
+        var e = model.entry
+        e.offers = [ProviderOffer(provider: .higgsfield, providerRef: e.id)]
+        return e
+    }
 
     private static let byId: [String: HiggsfieldModel] =
         Dictionary(models.map { ($0.entry.id, $0) }, uniquingKeysWith: { a, _ in a })

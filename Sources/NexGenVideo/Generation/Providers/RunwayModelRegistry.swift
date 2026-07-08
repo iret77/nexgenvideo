@@ -22,7 +22,11 @@ enum RunwayModelRegistry {
         image("runway/gen4_image", "Runway Gen-4 Image", apiModel: "gen4_image"),
     ]
 
-    static let entries: [CatalogEntry] = models.map(\.entry)
+    static let entries: [CatalogEntry] = models.map { model in
+        var e = model.entry
+        e.offers = [ProviderOffer(provider: .runway, providerRef: e.id)]
+        return e
+    }
 
     private static let byId: [String: RunwayModel] =
         Dictionary(models.map { ($0.entry.id, $0) }, uniquingKeysWith: { a, _ in a })

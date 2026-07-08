@@ -26,7 +26,11 @@ enum MarbleModelRegistry {
         world("marble/marble-1.1", "Marble 1.1 (3D World)", model: "marble-1.1"),
     ]
 
-    static let entries: [CatalogEntry] = models.map(\.entry)
+    static let entries: [CatalogEntry] = models.map { model in
+        var e = model.entry
+        e.offers = [ProviderOffer(provider: .marble, providerRef: e.id)]
+        return e
+    }
 
     private static let byId: [String: MarbleModel] =
         Dictionary(models.map { ($0.entry.id, $0) }, uniquingKeysWith: { a, _ in a })

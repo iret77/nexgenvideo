@@ -56,7 +56,15 @@ struct FalModel: Sendable {
 
 enum FalModelRegistry {
     static let models: [FalModel] = imageModels + videoModels + audioModels + upscaleModels
-    static let entries: [CatalogEntry] = models.map(\.entry)
+    static let entries: [CatalogEntry] = models.map { model in
+        var e = model.entry
+        // ElevenLabs-family models are served BOTH directly by ElevenLabs and by fal's hosted
+        // endpoint; everything else here is fal. Declared as data — the resolver routes on this.
+        e.offers = e.id.hasPrefix("fal-ai/elevenlabs")
+            ? [ProviderOffer(provider: .elevenlabs, providerRef: e.id), ProviderOffer(provider: .fal, providerRef: e.id)]
+            : [ProviderOffer(provider: .fal, providerRef: e.id)]
+        return e
+    }
 
     private static let byId: [String: FalModel] =
         Dictionary(models.map { ($0.entry.id, $0) }, uniquingKeysWith: { a, _ in a })
