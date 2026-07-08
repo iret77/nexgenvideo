@@ -301,6 +301,9 @@ struct AgentPane: View {
     // MCP server, "copy command" in its settings) plug into the agent. Merged into --mcp-config.
     @ViewBuilder
     private var externalServersSection: some View {
+        Text("Agent tools (advanced)")
+            .font(.system(size: AppTheme.FontSize.md, weight: .medium))
+            .foregroundStyle(AppTheme.Text.primaryColor)
         ForEach(externalServers.keys.sorted(), id: \.self) { name in
             runtimeRow {
                 Text(name)
@@ -335,7 +338,7 @@ struct AgentPane: View {
                 .foregroundStyle(AppTheme.Accent.primary)
                 .disabled(newServerCommand.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        Text("External MCP servers for the embedded agent — e.g. ACE Studio 2's MCP command (Settings → MCP → copy command) or OpenArt's hosted server (https://mcp.openart.ai/mcp; OAuth servers need one interactive sign-in via `claude mcp add` first). The agent can then drive those tools directly.")
+        Text("External MCP servers the embedded agent drives directly — e.g. ACE Studio 2's MCP command (Settings → MCP → copy command) or OpenArt's hosted server (https://mcp.openart.ai/mcp; OAuth servers need one interactive `claude mcp add` first). Power-user escape hatch: these bypass NGV's provider routing and prompt gate. For curated generation, add the provider under Providers instead.")
             .font(.system(size: AppTheme.FontSize.xs))
             .foregroundStyle(AppTheme.Text.mutedColor)
             .fixedSize(horizontal: false, vertical: true)
