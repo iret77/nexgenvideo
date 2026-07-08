@@ -307,19 +307,19 @@ final class GenerationService {
         Log.generation.notice("run \(runId) start model=\(genInput.model) placeholders=\(placeholders.count)")
         defer { Log.generation.notice("run \(runId) settled") }
 
-        let endpoint = genInput.model
-
-        // LLM → NGV → Provider: the resolver decides which provider + transport runs this model
-        // (activated ∩ offers ∩ cheapest). Dispatch follows the resolved BINDING, not the model id —
-        // so a provider reachable only via its MCP subscription actually runs over MCP (not a keyless
-        // REST call), and the usable-only contract (`canRun`) matches what executes. When nothing is
-        // activated we fall back to the nominal provider over `.api`, so the existing "add a key"
-        // errors still fire.
+        // LLM → NGV → Provider. The LLM's model id is a LOGICAL id. The resolver decides which
+        // provider + transport runs it (activated ∩ offers ∩ cheapest); dispatch then uses the
+        // resolved offer's `providerRef` — the provider's OWN endpoint — so a logical id can differ
+        // from the provider endpoint (provider-neutral models). `.mcp` runs over MCP, not a keyless
+        // REST call, so `canRun` matches what executes; the nominal-provider fallback keeps the
+        // existing "add a key" errors when nothing is activated.
+        let logicalId = genInput.model
         let binding = ProviderResolver.resolve(
-            bindings: ProviderManifest.bindings(forModelId: endpoint),
+            bindings: ProviderManifest.bindings(forModelId: logicalId),
             activation: .current(),
             effectiveCost: ProviderManifest.effectiveCost)
-        let provider = binding?.provider ?? ProviderManifest.nominalProvider(forModelId: endpoint)
+        let provider = binding?.provider ?? ProviderManifest.nominalProvider(forModelId: logicalId)
+        let endpoint = binding?.providerRef ?? logicalId
 
         if binding?.transport == .mcp {
             await runMCPJob(
