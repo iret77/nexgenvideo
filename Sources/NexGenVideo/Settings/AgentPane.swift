@@ -14,6 +14,7 @@ struct AgentPane: View {
     @State private var newServerCommand = ""
     @AppStorage("claudeRuntimePluginDir") private var claudePluginDir: String = ""
     @AppStorage("claudeRuntimePermissionMode") private var claudePermissionMode: String = "bypassPermissions"
+    @AppStorage(CostGuard.autoApproveKey) private var autoApproveCredits: Int = 0
 
     private let consoleURL = URL(string: "https://console.anthropic.com/settings/keys")!
 
@@ -33,6 +34,36 @@ struct AgentPane: View {
             runAgentHeader
             apiKeySection
             claudeRuntimeSection
+            costGuardSection
+        }
+    }
+
+    /// Cost-Guard (M7): the user's final word on paid agent renders. The agent recommends a model and
+    /// NGV resolves the cheapest activated provider — but the user approves the spend. This dial is
+    /// how much they pre-approve; above it, every render waits for an explicit tap.
+    private var costGuardSection: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.md) {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                    Text("Confirm agent spend")
+                        .font(.system(size: AppTheme.FontSize.md))
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                    Text(autoApproveCredits <= 0
+                         ? "The agent asks before every paid render."
+                         : "The agent runs renders up to \(autoApproveCredits) credits without asking; anything more waits for your approval.")
+                        .font(.system(size: AppTheme.FontSize.sm))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: AppTheme.Spacing.lg)
+                Stepper(value: $autoApproveCredits, in: 0...1000, step: 10) {
+                    Text("\(autoApproveCredits)")
+                        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .frame(minWidth: AppTheme.IconSize.lg, alignment: .trailing)
+                }
+                .controlSize(.small)
+            }
         }
     }
 

@@ -56,6 +56,14 @@ struct AgentPanelView: View {
                 messageList
                 floatingTabBar
             }
+            if let approval = service.pendingSpendApproval {
+                SpendApprovalCard(
+                    approval: approval,
+                    onApprove: { modelId in service.resolveSpend(.approved(modelId: modelId)) },
+                    onDecline: { service.resolveSpend(.declined) }
+                )
+                .padding(.bottom, AppTheme.Spacing.xs)
+            }
             if let dialog = service.pendingDialog {
                 @Bindable var service = service
                 AgentDialogCard(

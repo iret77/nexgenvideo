@@ -46,15 +46,98 @@ extension ToolExecutor {
         return ((text: prompt, token: args.string("compileToken") ?? ""), false)
     }
 
+    // MARK: - Cost-Guard (M7) — the user's final word on paid agent renders
+
+    /// Gate a paid render on the user's approval. Returns the model id to actually run — the same one
+    /// when kept or under the auto-approve ceiling, a cheaper one when the user swaps. Throws when the
+    /// user declines, so the agent stops and asks rather than spending anyway. This is the one place an
+    /// agent render waits for a human tap; it is never agent-self-asserted.
+    @MainActor
+    private func confirmSpend(
+        _ editor: EditorViewModel, currentModelId: String, currentModelName: String,
+        credits: Int?, actionLabel: String, alternatives: [SpendAlternative]
+    ) async throws -> String {
+        guard CostGuard.needsApproval(credits: credits) else { return currentModelId }
+        let approval = SpendApproval(
+            id: UUID().uuidString,
+            modelId: currentModelId, modelName: currentModelName,
+            providerLabel: GenerationProvider.servicing(modelId: currentModelId).displayName,
+            credits: credits, alternatives: alternatives, actionLabel: actionLabel)
+        switch await editor.agentService.requestSpendApproval(approval) {
+        case .approved(let modelId):
+            return modelId
+        case .declined:
+            throw ToolError("Render declined — the user did not approve the spend. Ask what they'd prefer: a cheaper model, different settings, or skip this render.")
+        }
+    }
+
+    /// Cheaper runnable video models than the current pick, cost-ascending (≤ 3). `requiresSource`
+    /// keeps text-to-video and video-edit swaps within their own kind so a swap stays valid.
+    @MainActor
+    private func cheaperVideoAlternatives(
+        than modelId: String, currentCredits: Int?, duration: Int, resolution: String?, requiresSource: Bool
+    ) -> [SpendAlternative] {
+        guard let current = currentCredits else { return [] }
+        return VideoModelConfig.allModels
+            .filter { $0.id != modelId && $0.requiresSourceVideo == requiresSource && GenerationProvider.canRun(modelId: $0.id) }
+            .compactMap { m -> SpendAlternative? in
+                guard let c = CostEstimator.videoCost(
+                    model: m, durationSeconds: duration,
+                    resolution: resolution ?? m.resolutions?.first, generateAudio: true),
+                    c < current else { return nil }
+                return SpendAlternative(
+                    modelId: m.id, name: m.displayName,
+                    providerLabel: GenerationProvider.servicing(modelId: m.id).displayName, credits: c)
+            }
+            .sorted { ($0.credits ?? 0) < ($1.credits ?? 0) }
+            .prefix(3).map { $0 }
+    }
+
+    @MainActor
+    private func cheaperImageAlternatives(
+        than modelId: String, currentCredits: Int?, resolution: String?, quality: String?
+    ) -> [SpendAlternative] {
+        guard let current = currentCredits else { return [] }
+        return ImageModelConfig.allModels
+            .filter { $0.id != modelId && !MarbleModelRegistry.isMarbleModel($0.id) && GenerationProvider.canRun(modelId: $0.id) }
+            .compactMap { m -> SpendAlternative? in
+                guard let c = CostEstimator.imageCost(
+                    model: m, resolution: resolution ?? m.resolutions?.first,
+                    quality: quality ?? m.qualities?.last, numImages: 1),
+                    c < current else { return nil }
+                return SpendAlternative(
+                    modelId: m.id, name: m.displayName,
+                    providerLabel: GenerationProvider.servicing(modelId: m.id).displayName, credits: c)
+            }
+            .sorted { ($0.credits ?? 0) < ($1.credits ?? 0) }
+            .prefix(3).map { $0 }
+    }
+
     private func generateVideoEdit(
         _ editor: EditorViewModel, _ args: [String: Any],
-        prompt: String, model: VideoModelConfig
+        prompt: String, model modelIn: VideoModelConfig
     ) async throws -> ToolResult {
+        var model = modelIn
         guard let sourceRef = args.string("sourceVideoMediaRef") else {
             throw ToolError("Model '\(model.id)' requires 'sourceVideoMediaRef' pointing to a video asset.")
         }
         let sourceAsset = try asset(sourceRef, editor: editor, label: "Source video")
         let trimmed = try trimmedSource(args, editor: editor, source: sourceAsset)
+
+        // Cost-Guard (M7): approval before spend. Edit is source-driven, so a swap stays within the
+        // other source-requiring video models (a text-to-video model can't service an edit).
+        let editSeconds = Int((trimmed?.durationSeconds ?? sourceAsset.duration).rounded())
+        let editCredits = CostEstimator.videoCost(
+            model: model, durationSeconds: editSeconds, resolution: nil, generateAudio: true)
+        let editFinalId = try await confirmSpend(
+            editor, currentModelId: model.id, currentModelName: model.displayName,
+            credits: editCredits, actionLabel: "Generate edit",
+            alternatives: cheaperVideoAlternatives(
+                than: model.id, currentCredits: editCredits, duration: editSeconds,
+                resolution: nil, requiresSource: true))
+        if editFinalId != model.id, let swapped = VideoModelConfig.allModels.first(where: { $0.id == editFinalId }) {
+            model = swapped
+        }
 
         var imageRefs: [MediaAsset] = []
         for id in args.stringArray("referenceImageMediaRefs") {
@@ -91,13 +174,31 @@ extension ToolExecutor {
 
     private func generateVideoText(
         _ editor: EditorViewModel, _ args: [String: Any],
-        prompt: String, model: VideoModelConfig
+        prompt: String, model modelIn: VideoModelConfig
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
 
-        let duration = args.int("duration") ?? model.durations.first ?? 0
-        let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
-        let resolution = args.string("resolution") ?? model.resolutions?.first
+        var model = modelIn
+        var duration = args.int("duration") ?? model.durations.first ?? 0
+        var aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
+        var resolution = args.string("resolution") ?? model.resolutions?.first
+
+        // Cost-Guard (M7): the user's final word before this render spends money. Over the
+        // auto-approve ceiling → wait for a tap; a swap re-derives options against the chosen model.
+        let credits = CostEstimator.videoCost(
+            model: model, durationSeconds: duration, resolution: resolution, generateAudio: true)
+        let finalModelId = try await confirmSpend(
+            editor, currentModelId: model.id, currentModelName: model.displayName,
+            credits: credits, actionLabel: "Generate video",
+            alternatives: cheaperVideoAlternatives(
+                than: model.id, currentCredits: credits, duration: duration,
+                resolution: resolution, requiresSource: false))
+        if finalModelId != model.id, let swapped = VideoModelConfig.allModels.first(where: { $0.id == finalModelId }) {
+            model = swapped
+            if !swapped.durations.contains(duration) { duration = swapped.durations.first ?? duration }
+            if !swapped.aspectRatios.contains(aspectRatio) { aspectRatio = swapped.aspectRatios.first ?? aspectRatio }
+            if let allowed = swapped.resolutions, let r = resolution, !allowed.contains(r) { resolution = allowed.first }
+        }
 
         var frameSlots: [MediaAsset] = []
         if let startRef = args.string("startFrameMediaRef") {
@@ -162,15 +263,33 @@ extension ToolExecutor {
         _ editor: EditorViewModel, _ args: [String: Any], prompt: String
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
-        guard let modelId = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) } ?? ImageModelConfig.allModels.first?.id else {
+        guard var modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? ImageModelConfig.allModels.first?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
-        guard let model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
+        guard var model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
             throw ToolError("Unknown model '\(modelId)'. Available: \(ImageModelConfig.allModels.map(\.id).joined(separator: ", "))")
         }
-        let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
-        let resolution = args.string("resolution") ?? model.resolutions?.first
-        let quality = args.string("quality") ?? model.qualities?.last
+        var aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
+        var resolution = args.string("resolution") ?? model.resolutions?.first
+        var quality = args.string("quality") ?? model.qualities?.last
+
+        // Cost-Guard (M7): approval before spend. Marble is excluded as a swap target — it is a
+        // reference-driven world generator, not a drop-in cheaper image model.
+        let credits = CostEstimator.imageCost(
+            model: model, resolution: resolution, quality: quality, numImages: 1)
+        let finalModelId = try await confirmSpend(
+            editor, currentModelId: model.id, currentModelName: model.displayName,
+            credits: credits, actionLabel: "Generate image",
+            alternatives: cheaperImageAlternatives(
+                than: model.id, currentCredits: credits, resolution: resolution, quality: quality))
+        if finalModelId != model.id, let swapped = ImageModelConfig.allModels.first(where: { $0.id == finalModelId }) {
+            model = swapped
+            modelId = swapped.id
+            if !swapped.aspectRatios.contains(aspectRatio) { aspectRatio = swapped.aspectRatios.first ?? aspectRatio }
+            if let allowed = swapped.resolutions, let r = resolution, !allowed.contains(r) { resolution = allowed.first }
+            if let allowed = swapped.qualities, let q = quality, !allowed.contains(q) { quality = allowed.last }
+        }
+
         let refIds = args.stringArray("referenceMediaRefs")
         let refs: [MediaAsset] = try refIds.map { id in
             let a = try asset(id, editor: editor, label: "Reference image")

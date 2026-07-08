@@ -205,6 +205,39 @@ final class AgentService {
     func cancelDialog() {
         pendingDialog = nil
     }
+
+    // MARK: - Spend approval (Cost-Guard, M7)
+
+    /// The ONE pending spend confirmation (locked provider architecture — user has the final word on
+    /// paid agent renders). Set while an agent render waits for approval; the composer dock renders a
+    /// `SpendApprovalCard` above the input, exactly where the generative dialog lives (never a modal).
+    private(set) var pendingSpendApproval: SpendApproval?
+
+    @ObservationIgnored
+    private var spendContinuation: CheckedContinuation<SpendDecision, Never>?
+
+    /// Suspend the agent's render tool-call until the user taps Approve/Decline. This is what makes it
+    /// user-clicks-to-confirm and not agent-self-asserted: the continuation resolves ONLY from
+    /// `resolveSpend`, which the card's buttons call. A prior pending approval (should not happen —
+    /// one tool call at a time) is declined so no continuation leaks.
+    func requestSpendApproval(_ approval: SpendApproval) async -> SpendDecision {
+        if spendContinuation != nil { resolveSpend(.declined) }
+        editor?.agentPanelVisible = true
+        return await withCheckedContinuation { continuation in
+            spendContinuation = continuation
+            pendingSpendApproval = approval
+        }
+    }
+
+    /// Resolve the pending approval (from the card's buttons, or teardown). Clears the card and
+    /// resumes the suspended tool call exactly once.
+    func resolveSpend(_ decision: SpendDecision) {
+        pendingSpendApproval = nil
+        guard let continuation = spendContinuation else { return }
+        spendContinuation = nil
+        continuation.resume(returning: decision)
+    }
+
     private static let clipMentionLabelMaxLength = 24
 
     /// Bumped to ask the input field to take focus (e.g. after the plugin launcher inserts a command
@@ -486,6 +519,8 @@ final class AgentService {
     }
 
     func cancel() {
+        // A render awaiting spend approval is part of this turn — stopping declines it.
+        resolveSpend(.declined)
         if claudeRuntimeEnabled {
             _claudeRuntime?.stop()
             isStreaming = false
