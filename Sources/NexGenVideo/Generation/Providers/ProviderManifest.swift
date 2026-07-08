@@ -52,6 +52,18 @@ enum ProviderManifest {
         return .fal
     }
 
+    /// Activated providers reachable over MCP, cheapest first — the candidates for a workflow
+    /// tool-call (M4). WHICH one actually exposes the named tool is discovered at call time
+    /// (tools/list), so this is only the try-order; discovery-driven, no per-provider tool table.
+    @MainActor
+    static func toolProvidersCheapestFirst() -> [GenerationProvider] {
+        GenerationProvider.allCases
+            .filter { ProviderMCP.hasConfig($0) }
+            .map { ProviderBinding(provider: $0, transport: .mcp, kind: .tool, providerRef: "", billing: .subscription) }
+            .sorted { effectiveCost($0) < effectiveCost($1) }
+            .map(\.provider)
+    }
+
     /// Billing-aware cost of THIS call for a binding. Placeholder until the catalog's
     /// per-(model, provider, transport) price feeds in: a subscription MCP is cheaper per call
     /// than a pay-per-call API, and a provider's own endpoint beats the fal-hosted middleman

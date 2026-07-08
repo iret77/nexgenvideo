@@ -136,6 +136,7 @@ final class ToolExecutor {
         case .resolveModel:         return try resolveModelTool(editor, args)
         case .getUIContract:        return try getUIContractTool(editor)
         case .setGateState:         return try setGateStateTool(editor, args)
+        case .runProviderTool:      return try await runProviderTool(editor, args)
         }
     }
 

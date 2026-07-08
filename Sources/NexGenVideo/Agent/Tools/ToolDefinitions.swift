@@ -66,6 +66,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case resolveModel = "resolve_model"
     case getUIContract = "get_ui_contract"
     case setGateState = "set_gate_state"
+    case runProviderTool = "run_provider_tool"
 }
 
 struct AgentTool: @unchecked Sendable {
@@ -1109,6 +1110,20 @@ enum ToolDefinitions {
                     "notes": ["type": "string", "description": "Optional reviewer notes."],
                 ],
                 required: ["phase", "state"]
+            )
+        ),
+        AgentTool(
+            name: .runProviderTool,
+            description: "Run a NON-generative WORKFLOW tool exposed by an activated provider's MCP (e.g. background removal, reframe, roto, reference upload, a character lookup). NGV resolves which activated provider offers the named tool (cheapest first) and drives its MCP as the client on the user's subscription — you never call the provider directly. The user confirms the call before it runs (spend approval), same as a paid render.\n\nNOT for content generation: to make a video/image/audio, use generate_video / generate_image / generate_audio (they enforce the prompt engine and the compile gate) and upscale_media for upscaling — those paths are refused here. If a tool returns media URLs, import them with import_media. Only works when the user has configured a provider MCP in Settings → Providers.",
+            inputSchema: objectSchema(
+                properties: [
+                    "tool": ["type": "string", "description": "Exact tool name to run (as the provider's MCP exposes it). If unsure, the error lists the tools offered by the configured provider MCPs."],
+                    "arguments": [
+                        "type": "object",
+                        "description": "Arguments for the tool, as string values (the provider's MCP defines the schema). E.g. { \"image_url\": \"https://…\" }.",
+                    ],
+                ],
+                required: ["tool"]
             )
         ),
     ]
