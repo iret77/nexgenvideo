@@ -8,15 +8,26 @@ import Foundation
 /// (direct-to-ElevenLabs vs fal-hosted) — is two bindings resolved by activation, replacing
 /// the hardcoded `if elevenlabs.hasKey` in the old prefix ladder.
 enum ProviderManifest {
+    /// The candidate providers that can service a model — the ElevenLabs family has two (direct +
+    /// fal-hosted), everything else one.
+    static func candidateProviders(forModelId id: String) -> [GenerationProvider] {
+        id.hasPrefix("fal-ai/elevenlabs") ? [.elevenlabs, .fal] : [nominalProvider(forModelId: id)]
+    }
+
+    /// All bindings for a model: each candidate provider over `.api` (its key) and, when the user has
+    /// configured that provider's MCP, ALSO over `.mcp` (subscription). The resolver then picks the
+    /// cheapest activated one. The `.mcp` binding's `providerRef` stays the logical model id here; the
+    /// dispatch layer maps it to the provider's discovered MCP tool (`tools/list`) at call time.
     static func bindings(forModelId id: String) -> [ProviderBinding] {
-        if id.hasPrefix("fal-ai/elevenlabs") {
-            return [
-                ProviderBinding(provider: .elevenlabs, transport: .api, kind: .generation, providerRef: id, billing: .perCall),
-                ProviderBinding(provider: .fal, transport: .api, kind: .generation, providerRef: id, billing: .perCall),
-            ]
+        candidateProviders(forModelId: id).flatMap { provider -> [ProviderBinding] in
+            var out = [ProviderBinding(provider: provider, transport: .api, kind: .generation,
+                                       providerRef: id, billing: .perCall)]
+            if ProviderMCP.hasConfig(provider) {
+                out.append(ProviderBinding(provider: provider, transport: .mcp, kind: .generation,
+                                           providerRef: id, billing: .subscription))
+            }
+            return out
         }
-        return [ProviderBinding(provider: nominalProvider(forModelId: id), transport: .api,
-                                kind: .generation, providerRef: id, billing: .perCall)]
     }
 
     /// The single provider a non-multi-source model belongs to (registry membership) — the
