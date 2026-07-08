@@ -361,6 +361,12 @@ final class GenerationService {
                     onComplete: onComplete, onFailure: onFailure)
                 return
             }
+        case .openart, .ace:
+            // MCP-only providers: a resolved `.mcp` binding was handled above. Reaching here means no
+            // MCP was configured, so there is no direct-API path to fall back to.
+            return failJob(placeholders,
+                           "\(provider.displayName) runs over MCP — configure its MCP server in Settings \u{2192} Providers.",
+                           onFailure)
         case .fal:
             break
         }

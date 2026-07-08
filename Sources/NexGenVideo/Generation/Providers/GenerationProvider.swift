@@ -10,6 +10,8 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     case higgsfield
     case elevenlabs
     case marble
+    case openart
+    case ace
 
     var id: String { rawValue }
 
@@ -20,6 +22,8 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .higgsfield: return "Higgsfield"
         case .elevenlabs: return "ElevenLabs"
         case .marble: return "Marble"
+        case .openart: return "OpenArt"
+        case .ace: return "ACE Studio"
         }
     }
 
@@ -30,6 +34,8 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .higgsfield: return "Video \u{00B7} key format: KEY_ID:KEY_SECRET"
         case .elevenlabs: return "Voice · SFX · Music"
         case .marble: return "3D World · Panorama"
+        case .openart: return "Image · Video \u{00B7} via MCP"
+        case .ace: return "Voice · Singing \u{00B7} via MCP"
         }
     }
 
@@ -40,6 +46,18 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .higgsfield: return URL(string: "https://cloud.higgsfield.ai")!
         case .elevenlabs: return URL(string: "https://elevenlabs.io/app/settings/api-keys")!
         case .marble: return URL(string: "https://platform.worldlabs.ai/")!
+        case .openart: return URL(string: "https://openart.ai")!
+        case .ace: return URL(string: "https://acestudio.ai")!
+        }
+    }
+
+    /// Whether NGV has a direct REST client for this provider's own API key. When false the provider
+    /// is reached ONLY over MCP (no API-key field is shown — that would be a dead field). OpenArt and
+    /// ACE route through NGV as an MCP client, on the user's subscription.
+    var supportsDirectAPI: Bool {
+        switch self {
+        case .fal, .runway, .higgsfield, .elevenlabs, .marble: return true
+        case .openart, .ace: return false
         }
     }
 

@@ -59,7 +59,11 @@ struct ProvidersPane: View {
     private func providerSection(_ provider: GenerationProvider) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             providerHeader(provider)
-            keyField(provider)
+            // MCP-only providers (OpenArt, ACE) have no direct REST client, so no API-key field —
+            // showing one would be a dead field. They activate through the MCP fields below.
+            if provider.supportsDirectAPI {
+                keyField(provider)
+            }
             mcpField(provider)
         }
     }
