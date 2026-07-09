@@ -13,10 +13,21 @@ struct HomeView: View {
     ]
 
     @Bindable private var changelog = ChangelogStore.shared
+    @State private var showFormatSheet = false
+
+    /// New project → choose a format first, unless no packs are installed (then generic, no needless
+    /// one-option sheet).
+    private func startNewProject() {
+        if InstalledPack.all.isEmpty {
+            AppState.shared.createNewProject()
+        } else {
+            showFormatSheet = true
+        }
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            HomeSidebar()
+            HomeSidebar(onNewProject: startNewProject)
                 .frame(width: 220)
 
             content
@@ -26,6 +37,9 @@ struct HomeView: View {
         .frame(minWidth: 760, minHeight: 480)
         .background(.ultraThinMaterial)
         .focusEffectDisabled()
+        .sheet(isPresented: $showFormatSheet) {
+            NewProjectFormatSheet { format in AppState.shared.createNewProject(format: format) }
+        }
         .task { await VisualModelLoader.shared.prepare() }
         .onAppear { changelog.checkForWhatsNew() }
         .overlay(alignment: .bottomTrailing) {
@@ -72,7 +86,7 @@ struct HomeView: View {
         return ScrollView {
             LazyVGrid(columns: columns, alignment: .leading, spacing: AppTheme.Spacing.xl) {
                 if entries.isEmpty {
-                    NewProjectCard(action: { AppState.shared.createNewProject() })
+                    NewProjectCard(action: startNewProject)
                 } else {
                     ForEach(entries) { entry in
                         ProjectCard(
@@ -168,13 +182,15 @@ private struct WelcomeTitle: View {
 }
 
 private struct HomeSidebar: View {
+    let onNewProject: () -> Void
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 SidebarRowButton(
                     label: "New Project",
                     systemImage: "plus",
-                    action: { AppState.shared.createNewProject() }
+                    action: onNewProject
                 )
                 SidebarRowButton(
                     label: "Open Project",

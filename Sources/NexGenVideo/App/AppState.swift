@@ -120,7 +120,11 @@ final class AppState {
 
     // MARK: - Project lifecycle
 
-    func createNewProject() {
+    /// `format` is the chosen pack id (nil = generic), picked at the Welcome step. The editor reads the
+    /// active format when its `projectURL` is set (in `makeWindowControllers`), so the package must be
+    /// saved and `ngv.json` written BEFORE the windows are made — otherwise the project would open
+    /// generic regardless of the choice. Hence: save → set format → show windows.
+    func createNewProject(format: String? = nil) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [Self.projectContentType]
         panel.nameFieldStringValue = Project.defaultProjectName
@@ -131,11 +135,15 @@ final class AppState {
             let doc = VideoProject()
             doc.fileURL = url
             doc.fileType = VideoProject.typeIdentifier
-            doc.makeWindowControllers()
-            doc.showWindows()
             NSDocumentController.shared.addDocument(doc)
-            doc.save(to: url, ofType: VideoProject.typeIdentifier, for: .saveOperation) { _ in
+            doc.save(to: url, ofType: VideoProject.typeIdentifier, for: .saveOperation) { error in
+                guard error == nil else { return }
+                if let format, !format.isEmpty {
+                    ProjectPluginSettings.setActivePlugin(format, projectURL: url)
+                }
                 ProjectRegistry.shared.register(url)
+                doc.makeWindowControllers()
+                doc.showWindows()
             }
         }
     }
