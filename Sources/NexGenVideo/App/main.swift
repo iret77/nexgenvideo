@@ -19,6 +19,10 @@ Task { @MainActor in await RemoteCatalog.refresh() }
 // in the picker with a reason instead of loading (never a crash).
 PluginLoader.loadInstalled()
 
+// Keep installed packs current in the background (like Sparkle for the app): newer versions stage to
+// disk and go live on the next launch, so users rarely meet the "restart to update" path at all.
+Task { @MainActor in await PluginAutoUpdate.run() }
+
 // Shorten the default tooltip delay from 2s to 0.01s.
 UserDefaults.standard.set(10, forKey: "NSInitialToolTipDelay")
 
