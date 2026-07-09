@@ -251,9 +251,13 @@ struct AgentPanelView: View {
         return out
     }
 
+    /// Messages the transcript actually renders — hidden kickoff turns are dropped, so a chat whose
+    /// only turn is a hidden kickoff still counts as "empty" and shows the starters, not blank space.
+    private var visibleMessages: [AgentMessage] { service.messages.filter { !$0.hidden } }
+
     private var messageList: some View {
         Group {
-            if service.messages.isEmpty && !service.isStreaming {
+            if visibleMessages.isEmpty && !service.isStreaming {
                 // Scrollable: in a short pane (Edit-focus sidebar) a fixed empty state would
                 // overflow centered — covering the sidebar tabs above and running out below.
                 ScrollView {
@@ -279,7 +283,7 @@ struct AgentPanelView: View {
                     let results = toolResults
                     // Hidden kickoff turns (Start production, a pack starter) seed the agent but are
                     // never the user's own words — don't render them as a fake user bubble.
-                    ForEach(service.messages.filter { !$0.hidden }) { msg in
+                    ForEach(visibleMessages) { msg in
                         AgentMessageView(message: msg, toolResults: results)
                             .id(msg.id)
                     }

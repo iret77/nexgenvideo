@@ -791,8 +791,10 @@ final class AgentService {
               let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[idx].messages = messages
         sessions[idx].updatedAt = Date()
+        // Title from the first message the user actually typed — never a hidden kickoff (that would
+        // put the behind-the-scenes prompt on the tab/history).
         if sessions[idx].title == "New chat",
-           let first = messages.first(where: { $0.role == .user }) {
+           let first = messages.first(where: { $0.role == .user && !$0.hidden }) {
             sessions[idx].title = Self.title(from: first)
         }
     }
@@ -907,6 +909,20 @@ struct AgentMessage: Identifiable, Codable {
         self.mentions = mentions
         self.contextHint = contextHint
         self.hidden = hidden
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, role, blocks, mentions, contextHint, hidden }
+
+    // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
+    // and fail to decode pre-existing saved sessions, silently losing their chat history.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        role = try c.decode(Role.self, forKey: .role)
+        blocks = try c.decode([AgentContentBlock].self, forKey: .blocks)
+        mentions = try c.decodeIfPresent([AgentMention].self, forKey: .mentions) ?? []
+        contextHint = try c.decodeIfPresent(String.self, forKey: .contextHint)
+        hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
     }
 }
 
