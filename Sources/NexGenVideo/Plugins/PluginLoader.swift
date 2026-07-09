@@ -55,6 +55,17 @@ enum PluginLoader {
     /// Process-lifetime (reset on relaunch, which is exactly when a pending update goes live).
     private static var loadedVersions: [String: String] = [:]
 
+    /// Ids whose dylib was `Bundle.load()`-ed this process — recorded even when the principal-class
+    /// cast then FAILED. A dylib can't be unloaded, so once it's resident an update can only go live
+    /// after a relaunch. This is a superset of `loadedVersions` (which only records SUCCESSFUL
+    /// registration): it's what tells "a previously-broken pack was just updated → needs restart"
+    /// from "fresh install → loads live", so the broken case no longer re-shows "Damaged".
+    private static var residentBundleIDs: Set<String> = []
+
+    /// Whether this id's code is already mapped into the process (loaded, even if it failed to
+    /// register). An update to a resident id needs a relaunch to take effect.
+    static func isResident(_ id: String) -> Bool { residentBundleIDs.contains(id) }
+
     /// Decision for an id that is already resident this process (pure + testable). `nil` = not
     /// resident, proceed to load. `.loaded` = same version still live. `.updatePendingRestart` =
     /// a different (newer) version is on disk; using it needs a relaunch.
@@ -115,6 +126,9 @@ enum PluginLoader {
             return record(info, bundleURL: bundleURL,
                           state: .incompatible(.malformedMetadata("the pack's code failed to load")))
         }
+        // The dylib is now mapped in — resident for the process lifetime whether or not the cast
+        // below succeeds. Record it so a later update to this id knows a relaunch is required.
+        residentBundleIDs.insert(info.id)
         guard let entryClass = bundle.principalClass as? PackEntry.Type else {
             return record(info, bundleURL: bundleURL,
                           state: .incompatible(.malformedMetadata("entry point \(info.principalClass) not found")))

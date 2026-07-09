@@ -101,10 +101,11 @@ enum PluginInstaller {
             throw InstallError.gate(reason)
         }
 
-        // Finding 4: capture "already loaded this process" BEFORE the swap. A dylib
-        // for this id already resident can't be unloaded, so the new code can't go
-        // live until relaunch — we install it but don't pretend it's running.
-        let alreadyLoaded = PackCatalog.pack(named: entry.id) != nil
+        // Capture "already resident this process" BEFORE the swap. A dylib for this id can't be
+        // unloaded, so the new code can't go live until relaunch. Use RESIDENCY (was the code ever
+        // mapped in?), not registration — a pack that loaded but failed to register (a broken build)
+        // is still resident, so its update also needs a restart rather than re-showing "Damaged".
+        let alreadyLoaded = PluginLoader.isResident(entry.id)
 
         // All gates passed — now atomically swap the validated bundle into place.
         try moveIntoPlace(unpacked, id: entry.id)

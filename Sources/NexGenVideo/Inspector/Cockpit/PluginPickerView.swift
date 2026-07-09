@@ -136,9 +136,9 @@ struct PluginPickerView: View {
                 .foregroundStyle(AppTheme.Status.warningColor)
                 .fixedSize(horizontal: false, vertical: true)
         case .updatePendingRestart:
-            Label("Update installed. Restart NexGenVideo to apply it.", systemImage: "arrow.clockwise.circle")
+            Label("Update ready — restart to finish. A plugin's code can't be swapped while the app runs.", systemImage: "arrow.clockwise.circle")
                 .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-                .foregroundStyle(AppTheme.Status.warningColor)
+                .foregroundStyle(AppTheme.Accent.primary)
                 .fixedSize(horizontal: false, vertical: true)
         default:
             EmptyView()
@@ -207,7 +207,13 @@ struct PluginPickerView: View {
                         .controlSize(.small)
                 }
 
-            case .updatePendingRestart, .unavailable:
+            case .updatePendingRestart:
+                Button("Restart now") { AppRelaunch.now() }
+                    .buttonStyle(.capsule(.prominent, size: .regular))
+                    .controlSize(.small)
+                    .help("Relaunch NexGenVideo to activate the updated plugin.")
+
+            case .unavailable:
                 EmptyView()
             }
         }
