@@ -237,8 +237,15 @@ final class EditorViewModel {
     /// loads only this plugin's dir; changing it applies to the NEXT agent session.
     private(set) var activePluginName: String?
 
+    /// The format may change only until production starts — after that its pipeline artifacts
+    /// (phases/bible/shotlist) are format-specific and switching would strand them. Generic counts as
+    /// a started workflow once its pipeline exists (`projectState != nil`).
+    var canChangeFormat: Bool { projectState == nil && !productionStarting }
+
+    /// Enforced at the MODEL so every surface (title-bar chip, project cockpit) honors the lock — not
+    /// just the ones that remembered to check. A no-op once production has started.
     func setActivePlugin(_ name: String?) {
-        guard let projectURL else { return }
+        guard let projectURL, canChangeFormat else { return }
         ProjectPluginSettings.setActivePlugin(name, projectURL: projectURL)
         activePluginName = name
     }

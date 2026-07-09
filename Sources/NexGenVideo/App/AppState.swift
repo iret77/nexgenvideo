@@ -137,7 +137,12 @@ final class AppState {
             doc.fileType = VideoProject.typeIdentifier
             NSDocumentController.shared.addDocument(doc)
             doc.save(to: url, ofType: VideoProject.typeIdentifier, for: .saveOperation) { error in
-                guard error == nil else { return }
+                if let error {
+                    // Don't leave a hidden, window-less document registered — drop it and surface why.
+                    NSDocumentController.shared.removeDocument(doc)
+                    NSAlert(error: error).runModal()
+                    return
+                }
                 if let format, !format.isEmpty {
                     ProjectPluginSettings.setActivePlugin(format, projectURL: url)
                 }

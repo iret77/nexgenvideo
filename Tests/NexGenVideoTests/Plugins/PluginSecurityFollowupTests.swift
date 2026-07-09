@@ -11,21 +11,39 @@ struct PluginSecurityFollowupTests {
     // version as live — a dylib can't be unloaded, so it's restart-required.
 
     @Test @MainActor func residentDecisionNotResidentProceedsToLoad() {
-        #expect(PluginLoader.residentDecision(diskVersion: "1.0.0", loadedVersion: nil) == nil)
+        #expect(PluginLoader.residentDecision(
+            diskVersion: "1.0.0", residentVersion: nil, didRegister: false) == nil)
     }
 
     @Test @MainActor func residentDecisionSameVersionStaysLoaded() {
-        #expect(PluginLoader.residentDecision(diskVersion: "1.0.0", loadedVersion: "1.0.0") == .loaded)
+        #expect(PluginLoader.residentDecision(
+            diskVersion: "1.0.0", residentVersion: "1.0.0", didRegister: true) == .loaded)
     }
 
     @Test @MainActor func residentDecisionNewerDiskVersionNeedsRestart() {
         #expect(
-            PluginLoader.residentDecision(diskVersion: "2.0.0", loadedVersion: "1.0.0")
+            PluginLoader.residentDecision(diskVersion: "2.0.0", residentVersion: "1.0.0", didRegister: true)
                 == .updatePendingRestart
         )
         // Even a downgrade on disk is "different from what's live" → restart, never false-live.
         #expect(
-            PluginLoader.residentDecision(diskVersion: "0.9.0", loadedVersion: "1.0.0")
+            PluginLoader.residentDecision(diskVersion: "0.9.0", residentVersion: "1.0.0", didRegister: true)
+                == .updatePendingRestart
+        )
+    }
+
+    // The actual fix: a pack that loaded but failed its principal-class cast is resident but never
+    // registered. A rescan of the SAME broken version must fall through (re-report the failure), but
+    // once a NEWER version is staged on disk it must be restart-pending — not re-flagged "Damaged".
+
+    @Test @MainActor func residentDecisionSameBrokenVersionFallsThroughToReReport() {
+        #expect(PluginLoader.residentDecision(
+            diskVersion: "1.0.0", residentVersion: "1.0.0", didRegister: false) == nil)
+    }
+
+    @Test @MainActor func residentDecisionUpdateToBrokenPackNeedsRestartNotDamaged() {
+        #expect(
+            PluginLoader.residentDecision(diskVersion: "2.0.0", residentVersion: "1.0.0", didRegister: false)
                 == .updatePendingRestart
         )
     }

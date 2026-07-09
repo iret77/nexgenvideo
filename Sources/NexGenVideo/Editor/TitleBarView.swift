@@ -108,8 +108,8 @@ struct TitleBarView: View {
 
     /// Once production has started, the format is fixed — switching would strand the pipeline's
     /// artifacts (phases/bible/shotlist are format-specific). Generic counts as a started workflow too
-    /// once its pipeline exists.
-    private var formatLocked: Bool { editor.projectState != nil || editor.productionStarting }
+    /// once its pipeline exists. Single source of truth: the same gate `setActivePlugin` enforces.
+    private var formatLocked: Bool { !editor.canChangeFormat }
 
     /// The Format control. Before production starts it's a tappable picker (choose/change the format —
     /// generic ⇄ pack — safe, no artifacts yet). Once production starts it becomes a plain STATUS pill

@@ -55,25 +55,27 @@ enum PluginLoader {
     /// Process-lifetime (reset on relaunch, which is exactly when a pending update goes live).
     private static var loadedVersions: [String: String] = [:]
 
-    /// Ids whose dylib was `Bundle.load()`-ed this process — recorded even when the principal-class
-    /// cast then FAILED. A dylib can't be unloaded, so once it's resident an update can only go live
-    /// after a relaunch. This is a superset of `loadedVersions` (which only records SUCCESSFUL
-    /// registration): it's what tells "a previously-broken pack was just updated → needs restart"
-    /// from "fresh install → loads live", so the broken case no longer re-shows "Damaged".
-    private static var residentBundleIDs: Set<String> = []
+    /// Pack id → the version of the dylib actually mapped into this process — recorded even when the
+    /// principal-class cast then FAILED. A dylib can't be unloaded, so once it's resident an update can
+    /// only go live after a relaunch. Unlike `loadedVersions` (SUCCESSFUL registration only), this also
+    /// covers broken loads: it's what tells "a previously-broken pack was just updated → needs restart"
+    /// from "same broken version rescanned → still Damaged", so an update no longer re-shows "Damaged".
+    private static var residentVersions: [String: String] = [:]
 
     /// Whether this id's code is already mapped into the process (loaded, even if it failed to
     /// register). An update to a resident id needs a relaunch to take effect.
-    static func isResident(_ id: String) -> Bool { residentBundleIDs.contains(id) }
+    static func isResident(_ id: String) -> Bool { residentVersions[id] != nil }
 
     /// Decision for an id that is already resident this process (pure + testable). `nil` = not
-    /// resident, proceed to load. `.loaded` = same version still live. `.updatePendingRestart` =
-    /// a different (newer) version is on disk; using it needs a relaunch.
+    /// resident (or same broken version — re-report the load failure honestly), proceed to load.
+    /// `.loaded` = same version, registered, still live. `.updatePendingRestart` = a different (newer)
+    /// version is on disk; using it needs a relaunch — regardless of whether the resident one registered.
     static func residentDecision(
-        diskVersion: String, loadedVersion: String?
+        diskVersion: String, residentVersion: String?, didRegister: Bool
     ) -> InstalledPluginRecord.State? {
-        guard let loadedVersion else { return nil }
-        return loadedVersion == diskVersion ? .loaded : .updatePendingRestart
+        guard let residentVersion else { return nil }
+        if residentVersion != diskVersion { return .updatePendingRestart }
+        return didRegister ? .loaded : nil
     }
 
     /// Scan the install directory and load every pack. Idempotent.
@@ -118,7 +120,11 @@ enum PluginLoader {
         // already-loaded path resolves the principal class to the OLD code, so reporting
         // `.loaded` from the NEW disk metadata would be a false-live update. Same version →
         // still loaded; a newer on-disk version → the update needs a relaunch.
-        if let state = residentDecision(diskVersion: info.version, loadedVersion: loadedVersions[info.id]) {
+        if let state = residentDecision(
+            diskVersion: info.version,
+            residentVersion: residentVersions[info.id],
+            didRegister: loadedVersions[info.id] != nil
+        ) {
             return record(info, bundleURL: bundleURL, state: state)
         }
 
@@ -127,8 +133,8 @@ enum PluginLoader {
                           state: .incompatible(.malformedMetadata("the pack's code failed to load")))
         }
         // The dylib is now mapped in — resident for the process lifetime whether or not the cast
-        // below succeeds. Record it so a later update to this id knows a relaunch is required.
-        residentBundleIDs.insert(info.id)
+        // below succeeds. Record its version so a later update to this id knows a relaunch is required.
+        residentVersions[info.id] = info.version
         guard let entryClass = bundle.principalClass as? PackEntry.Type else {
             return record(info, bundleURL: bundleURL,
                           state: .incompatible(.malformedMetadata("entry point \(info.principalClass) not found")))

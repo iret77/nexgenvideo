@@ -140,23 +140,31 @@ struct ProjectSettingsView: View {
                 Button("Open Plugins…") { showsPluginPicker = true }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
-                Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
-                    .help("Back to the generic workflow. Pipeline data stays in the project.")
+                // Once production has started the format is locked — the recovery path is to install
+                // the missing plugin, not to strand the pipeline by dropping to generic.
+                if editor.canChangeFormat {
+                    Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .controlSize(.small)
+                        .help("Back to the generic workflow. Pipeline data stays in the project.")
+                }
             }
         }
     }
 
     private var noPluginRow: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            Text("Generic production workflow. Choose a format plugin to specialize this project.")
+            Text(editor.canChangeFormat
+                 ? "Generic production workflow. Choose a format plugin to specialize this project."
+                 : "Generic production workflow. Format is locked now that production has started.")
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Choose Plugin…") { showsPluginPicker = true }
-                .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
+            if editor.canChangeFormat {
+                Button("Choose Plugin…") { showsPluginPicker = true }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+            }
         }
     }
 
@@ -196,13 +204,16 @@ struct ProjectSettingsView: View {
                         .buttonStyle(.capsule(.prominent, size: .regular))
                         .controlSize(.small)
                 }
-                Button("Switch…") { showsPluginPicker = true }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
-                Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
-                    .buttonStyle(.capsule(.secondary, size: .regular))
-                    .controlSize(.small)
-                    .help("Back to the generic workflow. Pipeline data stays in the project.")
+                // Format is locked once production starts — its artifacts are format-specific.
+                if editor.canChangeFormat {
+                    Button("Switch…") { showsPluginPicker = true }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .controlSize(.small)
+                    Button("Remove") { withAnimation { editor.setActivePlugin(nil) } }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .controlSize(.small)
+                        .help("Back to the generic workflow. Pipeline data stays in the project.")
+                }
             }
         }
     }
