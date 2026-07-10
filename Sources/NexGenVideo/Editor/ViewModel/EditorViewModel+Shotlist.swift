@@ -25,6 +25,7 @@ extension EditorViewModel {
             }
         }.value
         guard saved else { return false }
+        onPipelineChanged?()
         await refreshEngineState()
         return true
     }

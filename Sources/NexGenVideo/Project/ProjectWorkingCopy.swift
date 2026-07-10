@@ -28,7 +28,11 @@ enum ProjectWorkingCopy {
     /// Otherwise materialize a fresh copy from the package's stored pipeline.
     @discardableResult
     static func open(key: String, packageURL: URL?) throws -> OpenResult {
-        if FileManager.default.fileExists(atPath: home(key).appendingPathComponent(pipelineDir).path) {
+        // Recovered only if the surviving working copy is a VALID data root (has project.yaml) — a
+        // partial copy from an interrupted materialize must NOT be mistaken for unsaved work.
+        let marker = home(key).appendingPathComponent(pipelineDir)
+            .appendingPathComponent(DataRootResolver.projectMarker)
+        if FileManager.default.fileExists(atPath: marker.path) {
             return OpenResult(home: home(key), recoveredUnsaved: true)
         }
         return OpenResult(home: try materialize(key: key, packageURL: packageURL), recoveredUnsaved: false)
@@ -49,8 +53,17 @@ enum ProjectWorkingCopy {
         let dstHome = AppPaths.ensure(home(key))
         let dstPipeline = dstHome.appendingPathComponent(pipelineDir)
         try? fm.removeItem(at: dstPipeline)
-        if let packageURL, let srcPipeline = packagePipeline(in: packageURL) {
-            try fm.copyItem(at: srcPipeline, to: dstPipeline)
+        guard let packageURL, let srcPipeline = packagePipeline(in: packageURL) else { return dstHome }
+        // Copy to a staging dir, then atomic-move into place: a mid-copy failure can never leave a
+        // partial `pipeline` that a later open would mistake for recoverable work.
+        let staging = dstHome.appendingPathComponent(".materialize-\(UUID().uuidString)", isDirectory: true)
+        try? fm.removeItem(at: staging)
+        do {
+            try fm.copyItem(at: srcPipeline, to: staging)
+            try fm.moveItem(at: staging, to: dstPipeline)
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
         }
         return dstHome
     }

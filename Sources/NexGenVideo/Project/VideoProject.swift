@@ -197,6 +197,9 @@ final class VideoProject: NSDocument {
         }
         try writeChatDirectory(snapshot.chatSessionFiles, to: packageURL, fm: fm)
         try copyMediaDirectoryIfNeeded(from: sourceURL, to: packageURL, fm: fm)
+        // Carry the active-format marker (ngv.json) across Save As / swap, else a copied pack project
+        // reopens as generic while still holding its pack-specific pipeline data.
+        try copyPreservedFile(ProjectPluginSettings.filename, from: sourceURL, to: packageURL, fm: fm)
         // Sync the engine's live working copy (bible, shotlist, renders, …) into the package so the
         // project is self-contained. Handles "Save As"/swap too: the pipeline lands in whatever
         // package URL NSDocument is writing to, not just an in-place save.

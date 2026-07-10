@@ -74,7 +74,8 @@ enum ToolName: String, CaseIterable, Sendable {
     var isPipelineWrite: Bool {
         switch self {
         case .initProject, .approveGate, .rewind, .runPhase, .recordRender,
-             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute, .setGateState:
+             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute, .setGateState,
+             .attachSong:
             return true
         default:
             return false

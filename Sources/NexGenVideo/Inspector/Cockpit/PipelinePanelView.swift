@@ -259,7 +259,11 @@ struct PipelinePanelView: View {
     private func apply(_ write: (URL) throws -> Void) {
         guard let dir = editor.workingRoot, !gateWriting else { return }
         gateWriting = true
-        do { try write(dir) } catch {
+        do {
+            try write(dir)
+            // The gate write landed in the working copy — mark the document edited so a save persists it.
+            editor.onPipelineChanged?()
+        } catch {
             editor.mediaPanelToast = MediaPanelToast(message: "Gate update failed: \(error.localizedDescription)")
         }
         Task {
