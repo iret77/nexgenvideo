@@ -110,16 +110,14 @@ enum CockpitStateView {
     @ViewBuilder
     private static func packHero(_ pack: InstalledPack) -> some View {
         if let badge = pack.headerImage() {
+            // The banner is a wide (~3.77:1) designed image — show it at its own aspect (no letterbox
+            // box) and without an extra border; a fixed 150pt height + stroke made it read as a grey frame.
             Image(nsImage: badge)
                 .resizable()
                 .scaledToFit()
-                .frame(maxWidth: 340, maxHeight: 150)
-                .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
-                        .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
-                )
-                .padding(.bottom, AppTheme.Spacing.xs)
+                .frame(maxWidth: 320)
+                .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
+                .padding(.bottom, AppTheme.Spacing.sm)
         }
         Text(pack.headline ?? pack.displayName)
             .font(.system(size: AppTheme.FontSize.lg, weight: .semibold))

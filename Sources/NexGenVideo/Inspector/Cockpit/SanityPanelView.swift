@@ -23,6 +23,7 @@ struct SanityPanelView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: editor.projectURL) { await load() }
+        .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
     }
 
     @ViewBuilder

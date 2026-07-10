@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The docked rendering of a pending `AgentDialog` (locked placement architecture, #96): a native
 /// card that shapes a step with clicks instead of prose. Presenter-agnostic — the agent panel hosts
@@ -19,6 +20,7 @@ struct AgentDialogCard: View {
     @State private var localChoiceSelections: [String: Set<String>] = [:]
     @State private var toggleStates: [String: Bool] = [:]
     @State private var direction: String = ""
+    @State private var isDropTargeted = false
 
     private var choiceSelections: [String: Set<String>] {
         get { externalSelections?.wrappedValue ?? localChoiceSelections }
@@ -50,12 +52,25 @@ struct AgentDialogCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
-                              lineWidth: AppTheme.BorderWidth.thin)
+                .strokeBorder(isDropTargeted ? AppTheme.Accent.primary
+                                             : AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
+                              lineWidth: isDropTargeted ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.thin)
         )
         .padding(.horizontal, AppTheme.Spacing.mdLg)
+        // Drop a file (e.g. an MP3) anywhere on the card to fill the path field — a leaf drop, not
+        // shadowed by any parent .onDrop. The card is where a "drag it in" step points.
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleFileDrop)
         .onAppear(perform: seedDefaults)
         .id(dialog.id)
+    }
+
+    private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: URL.self) }) else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+            guard let url, url.isFileURL else { return }
+            Task { @MainActor in direction = url.path }
+        }
+        return true
     }
 
     private var header: some View {
@@ -188,10 +203,10 @@ private struct FlowChips: View {
     let multiSelect: Bool
     let onTap: (String) -> Void
 
-    private let columns = [GridItem(.adaptive(minimum: 110), spacing: AppTheme.Spacing.xs)]
-
     var body: some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: AppTheme.Spacing.xs) {
+        // Wrap at each chip's NATURAL width — a fixed-column grid + lineLimit(1) truncated longer
+        // labels ("Local file on this Mac", "I'll drag it in / point to it").
+        WrapLayout(spacing: AppTheme.Spacing.xs) {
             ForEach(options) { option in
                 let isOn = selected.contains(option.id)
                 Button {
@@ -206,6 +221,7 @@ private struct FlowChips: View {
                             .font(.system(size: AppTheme.FontSize.xs,
                                           weight: isOn ? .semibold : .regular))
                             .lineLimit(1)
+                            .fixedSize()
                     }
                     .padding(.horizontal, AppTheme.Spacing.sm)
                     .padding(.vertical, AppTheme.Spacing.xxs)
