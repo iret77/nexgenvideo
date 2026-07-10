@@ -248,8 +248,9 @@ final class EditorViewModel {
     /// Stable per-project key for the working copy (same project → same copy across launches).
     var workingCopyKey: String? { projectURL.map { ProjectWorkingCopy.stableKey(for: $0) } }
 
-    /// Materialize the working copy from the package (or keep a crash-surviving one). Off-main file I/O;
-    /// the format-lock marker is probed synchronously first so an already-started project locks at once.
+    /// Materialize the working copy from the package (or keep a crash-surviving one). Synchronous so
+    /// `workingRoot` is valid immediately — the copy is cheap on APFS (copy-on-write clone), and only
+    /// the small pipeline artifacts move, never the media. The engine re-read is still async.
     private func prepareWorkingCopy() {
         recoveredUnsavedWork = false
         guard let projectURL, let key = workingCopyKey else {
@@ -257,17 +258,11 @@ final class EditorViewModel {
             refreshProductionPipelineMarker()
             return
         }
+        let result = try? ProjectWorkingCopy.open(key: key, packageURL: projectURL)
+        workingCopyHome = result?.home
+        recoveredUnsavedWork = result?.recoveredUnsaved ?? false
         refreshProductionPipelineMarker()
-        Task { [weak self] in
-            let result = await Task.detached {
-                try? ProjectWorkingCopy.open(key: key, packageURL: projectURL)
-            }.value
-            guard let self, self.projectURL == projectURL else { return }
-            self.workingCopyHome = result?.home
-            self.recoveredUnsavedWork = result?.recoveredUnsaved ?? false
-            self.refreshProductionPipelineMarker()
-            await self.refreshEngineState()
-        }
+        Task { [weak self] in await self?.refreshEngineState() }
     }
 
     /// Keep the recovered working copy (it's already the live editing state) and mark the document
