@@ -55,14 +55,16 @@ struct NewProjectFormatSheet: View {
             HStack(spacing: AppTheme.Spacing.md) {
                 Group {
                     if let badge {
-                        Image(nsImage: badge).resizable().scaledToFill()
+                        // Pack badges are wide banners (~3.77:1) — fit the whole thing, never crop the
+                        // sides. The frame matches that aspect so a banner fills it with no letterbox.
+                        Image(nsImage: badge).resizable().scaledToFit()
                     } else {
                         RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                             .fill(Color.white.opacity(AppTheme.Opacity.subtle))
                             .overlay(Image(systemName: "wand.and.stars").foregroundStyle(AppTheme.Text.tertiaryColor))
                     }
                 }
-                .frame(width: 68, height: 42)
+                .frame(width: 132, height: 35)
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
 
                 VStack(alignment: .leading, spacing: 1) {

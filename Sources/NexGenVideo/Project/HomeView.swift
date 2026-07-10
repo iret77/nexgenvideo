@@ -227,7 +227,8 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         window.setContentSize(AppTheme.Window.homeDefault)
         window.minSize = AppTheme.Window.homeMin
         window.title = "NexGenVideo"
-        window.setFrameAutosaveName("NexGenVideoHome-v2")
+        // v3: reset saved frames so the new landscape default replaces old square/stretched ones.
+        window.setFrameAutosaveName("NexGenVideoHome-v3")
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = AppTheme.Background.base.withAlphaComponent(0.4)
         window.isOpaque = false

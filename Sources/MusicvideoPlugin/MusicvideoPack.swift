@@ -40,7 +40,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 /// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.0.2"
+    public let version = "0.0.3"
 
     /// Values mirror the retired `plugins/musicvideo/ngv-plugin.json`. The badge ships INSIDE the
     /// pack's resources (self-contained — cut from the owner's badge masters in
