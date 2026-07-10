@@ -18,7 +18,7 @@ enum NativeCockpitReader {
         ].contains(kind)
     }
 
-    /// The project's data root (`<projectDir>/_studio` in the v2 layout, or the flat dir), or nil
+    /// The project's data root (`<projectDir>/pipeline` in the v2 layout, or the flat dir), or nil
     /// when `projectDir` is not a project yet — mirrors `read.py`'s `data_root_of` precheck.
     static func dataRoot(of projectDir: URL) -> URL? {
         DataRootResolver.dataRoot(of: projectDir)
@@ -118,10 +118,10 @@ enum NativeCockpitReader {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         let brief: Brief
         do {
-            brief = try store.load(Brief.self, at: StudioLayout.briefFile)
+            brief = try store.load(Brief.self, at: PipelineLayout.briefFile)
         } catch {
             // A missing brief.yaml is the not-yet-drafted state → literal null (like read.py).
-            let url = StudioLayout.url(StudioLayout.briefFile, in: dataRoot)
+            let url = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
             if !FileManager.default.fileExists(atPath: url.path) {
                 return Data("null".utf8)
             }
@@ -203,7 +203,7 @@ enum NativeCockpitReader {
             return try serialize(["error": "no shotlist", "project_dir": dataRoot.path])
         }
         let store = YAMLArtifactStore(dataRoot: dataRoot)
-        let brief = try? store.load(Brief.self, at: StudioLayout.briefFile)
+        let brief = try? store.load(Brief.self, at: PipelineLayout.briefFile)
         let bible = (try? loadBible(dataRoot: dataRoot)) ?? nil
         // Core checks plus the active pack's checks (e.g. music tempo/pacing), mirroring the Python
         // core-checks + discover_packs() gather.
@@ -257,7 +257,7 @@ enum NativeCockpitReader {
     /// mirrors `ledger.schema.load` (never raises for an absent file).
     static func loadLedger(dataRoot: URL) -> Ledger {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
-        return (try? store.load(Ledger.self, at: StudioLayout.ledgerFile)) ?? Ledger()
+        return (try? store.load(Ledger.self, at: PipelineLayout.ledgerFile)) ?? Ledger()
     }
 
     /// A YAMLValue passthrough (the frame-audit mapping) as a Foundation JSON object graph.

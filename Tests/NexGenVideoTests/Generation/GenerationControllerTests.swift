@@ -12,11 +12,11 @@ struct GenerationControllerTests {
 
     // MARK: Fixtures
 
-    /// A temp project dir (v2 `_studio` layout) with a project marker and the given ledger YAML.
+    /// A temp project dir (v2 `pipeline` layout) with a project marker and the given ledger YAML.
     private static func makeProject(ledgerYAML: String) throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ngv-controller-\(UUID().uuidString)")
-        let studio = root.appendingPathComponent("_studio")
+        let studio = root.appendingPathComponent("pipeline")
         try FileManager.default.createDirectory(at: studio, withIntermediateDirectories: true)
         try "project: t\nmode: beat\n".write(
             to: studio.appendingPathComponent("project.yaml"), atomically: true, encoding: .utf8)

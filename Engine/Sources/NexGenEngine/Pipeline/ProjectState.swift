@@ -34,8 +34,8 @@ public enum ProjectStateBuilder {
     ) throws -> ProjectState {
         let order = PhaseOrder.merged(core: core, packPlacements: packPlacements)
         let store = YAMLArtifactStore(dataRoot: dataRoot)
-        let meta = try store.load(ProjectMeta.self, at: StudioLayout.projectFile)
-        let gates = try store.load(Gates.self, at: StudioLayout.gatesFile)
+        let meta = try store.load(ProjectMeta.self, at: PipelineLayout.projectFile)
+        let gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
 
         let phases = order.map { phase -> PhaseStatus in
             let gate = gates.get(phase)
@@ -59,7 +59,7 @@ public enum ProjectStateBuilder {
     /// dp. No manifests / no renders dir ⇒ 0.0. Port of the aggregation
     /// `state.build_snapshot` does via `costs.already_spent_in_project`.
     static func spentInProject(dataRoot: URL) -> Double {
-        let rendersDir = StudioLayout.url(StudioLayout.rendersDir, in: dataRoot)
+        let rendersDir = PipelineLayout.url(PipelineLayout.rendersDir, in: dataRoot)
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: rendersDir, includingPropertiesForKeys: nil
         ) else { return 0.0 }

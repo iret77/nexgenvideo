@@ -7,7 +7,7 @@ import NexGenEngine
 /// artifact — mirroring the retired Python `analysis/pipeline.py::run_phase`
 /// (persist path, filename, snake_case shape, `duration_s`/`bpm` rounding).
 ///
-/// `dataRoot` is the project's `_studio/` data root (what `EngineRegistry`
+/// `dataRoot` is the project's `pipeline/` data root (what `EngineRegistry`
 /// phase runners receive and what `ShowFormatters.showAnalysis` reads from):
 /// audio lives at `<dataRoot>/audio/`, the artifact lands at
 /// `<dataRoot>/analysis/<stem>.json`.

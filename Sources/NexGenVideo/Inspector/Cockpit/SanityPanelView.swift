@@ -163,7 +163,7 @@ struct SanityPanelView: View {
     }
 
     private func load() async {
-        guard let dir = editor.studioProjectDir else {
+        guard let dir = editor.workingRoot else {
             state = .failed(.noProject)
             return
         }

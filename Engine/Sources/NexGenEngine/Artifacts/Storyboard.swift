@@ -349,7 +349,7 @@ public struct Storyboard: Codable, Sendable, Equatable {
 }
 
 /// Disk I/O for the storyboard version family, mirroring the free functions
-/// in `storyboard/schema.py`. Kept as static functions over `StudioLayout`
+/// in `storyboard/schema.py`. Kept as static functions over `PipelineLayout`
 /// paths rather than folded into `ArtifactStore`: `load` returns an Optional
 /// on a missing file (not a thrown not-found), matching the Python
 /// `-> Storyboard | None` signature.
@@ -362,7 +362,7 @@ public enum StoryboardStore {
 
     /// Port of `storyboard/schema.py::next_version`.
     public static func nextVersion(dataRoot: URL) -> Int {
-        let dir = StudioLayout.url(StudioLayout.storyboardDir, in: dataRoot)
+        let dir = PipelineLayout.url(PipelineLayout.storyboardDir, in: dataRoot)
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: nil
         ) else { return 1 }
@@ -381,15 +381,15 @@ public enum StoryboardStore {
     @discardableResult
     public static func save(_ storyboard: Storyboard, to dataRoot: URL, writeCurrent: Bool = true) throws -> URL {
         let yaml = try YAMLCoding.encode(storyboard)
-        let versionURL = StudioLayout.url(
-            StudioLayout.storyboardVersionFile(storyboard.meta.version), in: dataRoot
+        let versionURL = PipelineLayout.url(
+            PipelineLayout.storyboardVersionFile(storyboard.meta.version), in: dataRoot
         )
         try FileManager.default.createDirectory(
             at: versionURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
         try yaml.write(to: versionURL, atomically: true, encoding: .utf8)
         if writeCurrent {
-            let currentURL = StudioLayout.url(StudioLayout.storyboardCurrentFile, in: dataRoot)
+            let currentURL = PipelineLayout.url(PipelineLayout.storyboardCurrentFile, in: dataRoot)
             try yaml.write(to: currentURL, atomically: true, encoding: .utf8)
         }
         return versionURL
@@ -402,11 +402,11 @@ public enum StoryboardStore {
         let relativePath: String
         switch version {
         case .current:
-            relativePath = StudioLayout.storyboardCurrentFile
+            relativePath = PipelineLayout.storyboardCurrentFile
         case .number(let n):
-            relativePath = StudioLayout.storyboardVersionFile(n)
+            relativePath = PipelineLayout.storyboardVersionFile(n)
         }
-        let url = StudioLayout.url(relativePath, in: dataRoot)
+        let url = PipelineLayout.url(relativePath, in: dataRoot)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let text = try String(contentsOf: url, encoding: .utf8)
         return try YAMLCoding.decode(Storyboard.self, from: text)

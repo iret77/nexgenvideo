@@ -4,34 +4,34 @@ import NexGenEngine
 // Production-pipeline (engine) tools, native as of M7. These are the former Python `engine` MCP
 // tools, now first-class `nexgen` tools backed by NexGenEngine + the app's native reader/writer.
 // Arg names and return JSON shapes match the Python `mcp_server` functions field-for-field so the
-// pack phase docs keep working. `project_dir` is accepted but defaults to the open project's studio
-// dir; every function resolves it through DataRootResolver (accepts a project home OR its `_studio`
+// pack phase docs keep working. `project_dir` is accepted but defaults to the open project's pipeline
+// dir; every function resolves it through DataRootResolver (accepts a project home OR its `pipeline`
 // data root), mirroring the Python `data_root_of` precheck.
 
 extension ToolExecutor {
 
     // MARK: - project_dir resolution
 
-    /// The data root to operate on: the `project_dir` arg if given, else the open project's studio
-    /// dir — resolved through DataRootResolver so either a home or a `_studio` dir works. Throws a
+    /// The data root to operate on: the `project_dir` arg if given, else the open project's pipeline
+    /// dir — resolved through DataRootResolver so either a home or a `pipeline` dir works. Throws a
     /// clear error when neither is available or the path isn't a project.
     private func resolveDataRoot(_ args: [String: Any], editor: EditorViewModel) throws -> URL {
         let dir: URL
         if let path = args.string("project_dir") {
             dir = URL(fileURLWithPath: path)
-        } else if let open = editor.studioProjectDir {
+        } else if let open = editor.workingRoot {
             dir = open
         } else {
             throw ToolError("No project is open and no project_dir was given.")
         }
         guard let root = DataRootResolver.dataRoot(of: dir) else {
-            throw ToolError("Not a project (no _studio/project.yaml): \(dir.path). Run init_project first.")
+            throw ToolError("Not a project (no pipeline/project.yaml): \(dir.path). Run init_project first.")
         }
         return root
     }
 
     /// The active format pack for a project given its DATA ROOT. `ngv.json` lives in the project
-    /// PACKAGE (parent of `_studio`), so the data root must be lifted to its home before the lookup —
+    /// PACKAGE (parent of `pipeline`), so the data root must be lifted to its home before the lookup —
     /// reading `activePlugin(projectURL: dataRoot)` directly always resolves nil in the v2 layout.
     private func activePluginFor(dataRoot: URL) -> String? {
         ProjectPluginSettings.activePlugin(projectURL: FrameInventory.projectHome(of: dataRoot))
@@ -187,9 +187,9 @@ extension ToolExecutor {
     private func mutateGates(dataRoot: URL, _ body: (inout Gates) throws -> Void) throws -> Gates {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         do {
-            var gates = try store.load(Gates.self, at: StudioLayout.gatesFile)
+            var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
             try body(&gates)
-            try store.save(gates, to: StudioLayout.gatesFile)
+            try store.save(gates, to: PipelineLayout.gatesFile)
             return gates
         } catch {
             throw ToolError("Couldn't update gates: \(error)")
@@ -255,10 +255,10 @@ extension ToolExecutor {
     /// yields (the mutated attribute), surfacing LedgerError as a ToolError.
     private func mutateLedger<T>(dataRoot: URL, _ body: (inout Ledger) throws -> T) throws -> T {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
-        var ledger = (try? store.load(Ledger.self, at: StudioLayout.ledgerFile)) ?? Ledger()
+        var ledger = (try? store.load(Ledger.self, at: PipelineLayout.ledgerFile)) ?? Ledger()
         do {
             let result = try body(&ledger)
-            try store.save(ledger, to: StudioLayout.ledgerFile)
+            try store.save(ledger, to: PipelineLayout.ledgerFile)
             return result
         } catch let e as LedgerError {
             throw ToolError("Ledger update rejected: \(e)")
@@ -275,7 +275,7 @@ extension ToolExecutor {
         // Optional project override; resolve loosely (a missing/unopened project just means no override).
         let dataRoot: URL? = {
             if let path = args.string("project_dir") { return DataRootResolver.dataRoot(of: URL(fileURLWithPath: path)) }
-            return editor.studioProjectDir.flatMap { DataRootResolver.dataRoot(of: $0) }
+            return editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
         }()
         do {
             let r = try ModelRouter.resolve(taskClass, escalate: escalate, dataRoot: dataRoot)
@@ -574,7 +574,7 @@ extension ToolExecutor {
         return editor.addMediaAsset(from: fileURL)
     }
 
-    /// Re-run state: the ids of the assembly video/audio tracks, persisted next to the other studio
+    /// Re-run state: the ids of the assembly video/audio tracks, persisted next to the other pipeline
     /// artifacts so a later session rebuilds the same tracks instead of appending new ones.
     private struct AssemblySidecar {
         var videoTrackId: String? = nil
@@ -617,7 +617,7 @@ extension ToolExecutor {
 
         // The pack follows the TARGET project (an explicit project_dir may point elsewhere);
         // ngv.json is the write-through source the editor property mirrors anyway. It lives in the
-        // project PACKAGE (parent of `_studio`), not the data root — resolve the home first.
+        // project PACKAGE (parent of `pipeline`), not the data root — resolve the home first.
         let registry = PackCatalog.registry(activePack: activePluginFor(dataRoot: root))
         registry.registerAudioDecoder(AVFoundationAudioDecoder())
         guard let runner = registry.phases[phase] else {

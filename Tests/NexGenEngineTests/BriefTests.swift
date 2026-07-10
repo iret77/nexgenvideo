@@ -161,7 +161,7 @@ struct BriefTests {
     func fixtureParityWithGolden() throws {
         let fixtureHome = try DataRootResolverTests.fixtureHome()
         let url = fixtureHome
-            .appendingPathComponent("_studio")
+            .appendingPathComponent("pipeline")
             .appendingPathComponent("brief.yaml")
         let brief = try YAMLCoding.decode(Brief.self, from: url)
 

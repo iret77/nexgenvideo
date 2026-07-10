@@ -1,21 +1,20 @@
 import Foundation
 
-/// Project folder layout — fresh init + in-place flat→`_studio` migration. The
+/// Project folder layout — fresh init + in-place flat→`pipeline` migration. The
 /// generic mechanism; a pack contributes its own subdirs via `extraDirs`. Port
-/// of `core/layout.py`. Reuses `StudioLayout` (core subdirs, user dirs) and the
+/// of `core/layout.py`. Reuses `PipelineLayout` (core subdirs, user dirs) and the
 /// Gates / ProjectMeta artifact types.
 public enum ProjectScaffold {
-    /// Home entries kept in place during migration (user zones + `_studio` +
-    /// `studio.html`). Port of `layout.py::_HOME_ENTRIES`
-    /// (`{*USER_DIRS, STUDIO_DIRNAME, "studio.html"}`).
-    static let homeEntries: Set<String> = Set(
-        StudioLayout.userDirs + [DataRootResolver.studioDirname, "studio.html"]
-    )
+    /// Home entries kept in place during a flat→`pipeline` migration (the data-root dir itself,
+    /// current and legacy names).
+    static let homeEntries: Set<String> = [
+        DataRootResolver.pipelineDirname, DataRootResolver.legacyPipelineDirname,
+    ]
 
     public enum ScaffoldError: Swift.Error, Sendable, Equatable {
         /// `home` already contains a project. Port of the `FileExistsError` in `init_project`.
         case alreadyAProject(URL)
-        /// `home` already has a `_studio/`. Port of the `migrate_layout` guard.
+        /// `home` already has a `pipeline/`. Port of the `migrate_layout` guard.
         case alreadyMigrated(URL)
         /// `home` is not a flat legacy project. Port of the `FileNotFoundError` guard.
         case notFlatLegacy(URL)
@@ -37,7 +36,7 @@ public enum ProjectScaffold {
     }
 
     /// Create a fresh project below `home` and return its data root
-    /// (`home/_studio`). `extraDirs` are the active pack's subdirs. Fails if
+    /// (`home/pipeline`). `extraDirs` are the active pack's subdirs. Fails if
     /// `home` already holds a project. Port of `layout.py::init_project`.
     @discardableResult
     public static func initProject(
@@ -50,27 +49,26 @@ public enum ProjectScaffold {
             throw ScaffoldError.alreadyAProject(home)
         }
 
-        let dataRoot = home.appendingPathComponent(DataRootResolver.studioDirname)
-        try makeDirs(dataRoot, StudioLayout.coreSubdirs + extraDirs)
-        try makeDirs(home, StudioLayout.userDirs)
+        let dataRoot = home.appendingPathComponent(DataRootResolver.pipelineDirname)
+        try makeDirs(dataRoot, PipelineLayout.coreSubdirs + extraDirs)
 
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         try store.save(
             ProjectMeta(project: name, mode: mode, budgetEur: budgetEur, created: today()),
-            to: StudioLayout.projectFile
+            to: PipelineLayout.projectFile
         )
-        try store.save(Gates(project: name), to: StudioLayout.gatesFile)
+        try store.save(Gates(project: name), to: PipelineLayout.gatesFile)
         return dataRoot
     }
 
-    /// Migrate a flat legacy project folder in place into `_studio/`. Port of
+    /// Migrate a flat legacy project folder in place into `pipeline/`. Port of
     /// `layout.py::migrate_layout`.
     @discardableResult
     public static func migrateLayout(home: URL) throws -> URL {
         let home = home.standardizedFileURL
         let fm = FileManager.default
-        let studio = home.appendingPathComponent(DataRootResolver.studioDirname)
-        if fm.fileExists(atPath: studio.path) {
+        let pipeline = home.appendingPathComponent(DataRootResolver.pipelineDirname)
+        if fm.fileExists(atPath: pipeline.path) {
             throw ScaffoldError.alreadyMigrated(home)
         }
         // A flat legacy project has its data root AT home itself.
@@ -85,28 +83,27 @@ public enum ProjectScaffold {
             .filter { !homeEntries.contains($0.lastPathComponent) && !$0.lastPathComponent.hasPrefix(".") }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
-        try fm.createDirectory(at: studio, withIntermediateDirectories: false)
+        try fm.createDirectory(at: pipeline, withIntermediateDirectories: false)
         var moved: [URL] = []
         do {
             for entry in toMove {
-                let target = studio.appendingPathComponent(entry.lastPathComponent)
+                let target = pipeline.appendingPathComponent(entry.lastPathComponent)
                 try fm.moveItem(at: entry, to: target)
                 moved.append(target)
             }
         } catch {
-            // Roll back: move each already-moved entry back, then drop _studio.
+            // Roll back: move each already-moved entry back, then drop pipeline.
             for target in moved.reversed() {
                 try? fm.moveItem(at: target, to: home.appendingPathComponent(target.lastPathComponent))
             }
-            try? fm.removeItem(at: studio)
+            try? fm.removeItem(at: pipeline)
             throw ScaffoldError.migrationFailed(
                 entry: (moved.count < toMove.count ? toMove[moved.count].lastPathComponent : "?"),
                 underlying: String(describing: error)
             )
         }
 
-        try makeDirs(home, StudioLayout.userDirs)
-        return studio
+        return pipeline
     }
 
     /// `date.today().isoformat()` — local calendar date as `YYYY-MM-DD`.

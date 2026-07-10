@@ -13,21 +13,21 @@ struct DataRootResolverTests {
         return dir
     }
 
-    @Test("v2 project home resolves to its _studio data root")
-    func resolvesStudioLayout() throws {
+    @Test("v2 project home resolves to its pipeline data root")
+    func resolvesPipelineLayout() throws {
         let home = try Self.fixtureHome()
         let root = try #require(DataRootResolver.dataRoot(of: home))
-        #expect(root.lastPathComponent == DataRootResolver.studioDirname)
+        #expect(root.lastPathComponent == DataRootResolver.pipelineDirname)
         #expect(FileManager.default.fileExists(
             atPath: root.appendingPathComponent(DataRootResolver.projectMarker).path
         ))
     }
 
     @Test("the data root itself resolves as a legacy flat root")
-    func studioDirResolvesFlat() throws {
-        // Python semantics: _studio/project.yaml is a valid flat marker, so
-        // data_root_of(_studio) returns _studio itself (paths.py flat branch).
-        let studio = try Self.fixtureHome().appendingPathComponent("_studio", isDirectory: true)
+    func pipelineDirResolvesFlat() throws {
+        // Python semantics: pipeline/project.yaml is a valid flat marker, so
+        // data_root_of(pipeline) returns pipeline itself (paths.py flat branch).
+        let studio = try Self.fixtureHome().appendingPathComponent("pipeline", isDirectory: true)
         #expect(DataRootResolver.dataRoot(of: studio) == studio.standardizedFileURL)
     }
 

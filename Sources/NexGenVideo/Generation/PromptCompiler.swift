@@ -54,7 +54,7 @@ enum PromptCompiler {
             modelId: modelId,
             aspectRatio: aspectRatio,
             durationSeconds: durationSeconds,
-            projectDir: editor?.studioProjectDir
+            projectDir: editor?.workingRoot
         )
         return CompiledPrompt(
             text: composed.text,

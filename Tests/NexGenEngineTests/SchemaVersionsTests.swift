@@ -101,7 +101,7 @@ struct SchemaVersionsTests {
     @Test("parity: fixture brief.yaml is on the current schema version")
     func fixtureBriefIsCurrent() throws {
         let fixtureHome = try DataRootResolverTests.fixtureHome()
-        let dataRoot = fixtureHome.appendingPathComponent("_studio")
+        let dataRoot = fixtureHome.appendingPathComponent("pipeline")
         let findings = SchemaVersions.checkProjectVersions(dataRoot: dataRoot)
         let brief = try #require(findings.first { $0.schemaField == "brief" })
         #expect(brief.projectVersion == "brief/v1")

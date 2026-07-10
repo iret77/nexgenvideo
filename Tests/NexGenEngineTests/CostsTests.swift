@@ -411,7 +411,7 @@ struct CostsTests {
         let url = try #require(
             Bundle.module.url(
                 forResource: "project", withExtension: "yaml",
-                subdirectory: "Fixtures/basic-project/_studio"
+                subdirectory: "Fixtures/basic-project/pipeline"
             ),
             "fixture project.yaml not found in test bundle"
         )

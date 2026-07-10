@@ -238,7 +238,7 @@ final class EditorViewModel {
     /// loads only this plugin's dir; changing it applies to the NEXT agent session.
     private(set) var activePluginName: String?
 
-    /// Whether the on-disk production pipeline (`_studio/project.yaml`) exists. SYNCHRONOUS ground
+    /// Whether the on-disk production pipeline (`pipeline/project.yaml`) exists. SYNCHRONOUS ground
     /// truth for "production has started" — cached from a disk probe on `projectURL` change and after
     /// scaffold, NOT the async `projectState` (which is nil during its load window, which would briefly
     /// reopen the format lock on an already-started project).
@@ -273,8 +273,8 @@ final class EditorViewModel {
 
     func startProduction() {
         guard let url = projectURL, !productionStarting else { return }
-        // The pipeline (`_studio`) is created inside the project package itself so the cockpit — which
-        // reads `<projectURL>/_studio` — finds it. name is the display name, recorded in project.yaml.
+        // The pipeline (`pipeline`) is created inside the project package itself so the cockpit — which
+        // reads `<projectURL>/pipeline` — finds it. name is the display name, recorded in project.yaml.
         let home = url
         let name = url.deletingPathExtension().lastPathComponent
         let extraDirs = PackCatalog.projectDirs(activePack: activePluginName)
@@ -311,10 +311,10 @@ final class EditorViewModel {
         }
     }
 
-    /// Directory the studio engine reads/writes for cockpit data (Bible, shotlist, sanity, `_studio/`).
+    /// Directory the pipeline engine reads/writes for cockpit data (Bible, shotlist, sanity, `pipeline/`).
     /// It is the open project package itself — a `.nexgen` bundle is a directory, so engine data lives
     /// inside it next to `media/`: self-contained, per-project, moves with the project. Nil until saved.
-    var studioProjectDir: URL? { projectURL }
+    var workingRoot: URL? { projectURL }
 
     // Placeholder replaced in init() — @Observable doesn't support lazy var
     private(set) var mediaResolver: MediaResolver = MediaResolver(
@@ -418,7 +418,7 @@ final class EditorViewModel {
     @ObservationIgnored private var projectStateLoadToken = 0
 
     func refreshProjectState() async {
-        guard let dir = studioProjectDir else {
+        guard let dir = workingRoot else {
             projectState = nil
             return
         }
@@ -452,7 +452,7 @@ final class EditorViewModel {
         // The agent turn that a Start-production tap kicked off has finished; release the CTA lock so
         // it reflects the (now initialized, or still-empty) reality.
         productionStarting = false
-        guard let dir = studioProjectDir else {
+        guard let dir = workingRoot else {
             bible = nil
             shotlist = nil
             ledger = nil

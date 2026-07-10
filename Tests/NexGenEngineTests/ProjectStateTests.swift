@@ -35,9 +35,9 @@ struct ProjectStateTests {
         #expect(snap.nextPhase == "project_init")  // nothing approved → first phase
 
         let store = YAMLArtifactStore(dataRoot: dataRoot)
-        var gates = try store.load(Gates.self, at: StudioLayout.gatesFile)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&gates, phase: "project_init")
-        try store.save(gates, to: StudioLayout.gatesFile)
+        try store.save(gates, to: PipelineLayout.gatesFile)
 
         snap = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot)
         #expect(snap.nextPhase == "brief")
@@ -122,9 +122,9 @@ struct ProjectStateTests {
 
         // Approve project_init → analysis (its declared successor) is next, BEFORE brief.
         let store = YAMLArtifactStore(dataRoot: dataRoot)
-        var gates = try store.load(Gates.self, at: StudioLayout.gatesFile)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&gates, phase: "project_init")
-        try store.save(gates, to: StudioLayout.gatesFile)
+        try store.save(gates, to: PipelineLayout.gatesFile)
 
         snap = try ProjectStateBuilder.buildSnapshot(dataRoot: dataRoot, packPlacements: placements)
         #expect(snap.nextPhase == "analysis")  // gated before brief, honored not hidden

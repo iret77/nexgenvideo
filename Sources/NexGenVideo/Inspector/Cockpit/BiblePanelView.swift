@@ -102,7 +102,7 @@ struct BiblePanelView: View {
             ForEach(entities) { entity in
                 let ref = BibleEntityRef(kind: kind, id: entity.id)
                 let isInspected = editor.inspectedObject == .entity(ref)
-                BibleEntityCard(entity: entity, projectDir: editor.studioProjectDir)
+                BibleEntityCard(entity: entity, projectDir: editor.workingRoot)
                     .overlay(
                         RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                             .strokeBorder(
@@ -195,7 +195,7 @@ struct BiblePanelView: View {
     // MARK: - Load
 
     private func load() async {
-        guard let dir = editor.studioProjectDir else {
+        guard let dir = editor.workingRoot else {
             state = .failed(.noProject)
             return
         }

@@ -21,7 +21,7 @@ struct WorkflowToolsTests {
         return (ToolHarness(), dataRoot, tmp)
     }
 
-    /// Mark the given data root's project package (parent of `_studio`) active with `pack` by writing
+    /// Mark the given data root's project package (parent of `pipeline`) active with `pack` by writing
     /// its `ngv.json` — the same file `ProjectPluginSettings` reads. Proves the pack resolves from the
     /// project HOME, not the data root.
     private func activatePack(_ pack: String, dataRoot: URL) throws {

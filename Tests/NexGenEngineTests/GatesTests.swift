@@ -148,7 +148,7 @@ struct GatesTests {
     @Test("parity: fixture gates.yaml matches the golden")
     func fixtureParityWithGolden() throws {
         let fixtureHome = try DataRootResolverTests.fixtureHome()
-        let url = fixtureHome.appendingPathComponent("_studio").appendingPathComponent("gates.yaml")
+        let url = fixtureHome.appendingPathComponent("pipeline").appendingPathComponent("gates.yaml")
         let gates = try YAMLCoding.decode(Gates.self, from: url)
         #expect(gates.project == "basic-project")
         #expect(gates.schema == "gates/v2")

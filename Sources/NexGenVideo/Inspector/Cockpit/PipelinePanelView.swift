@@ -257,7 +257,7 @@ struct PipelinePanelView: View {
     /// snapshot (title-bar capsule + other panels) so every surface reflects the new gate state. The
     /// write is fast local YAML I/O — kept inline (the reloads are the async part).
     private func apply(_ write: (URL) throws -> Void) {
-        guard let dir = editor.studioProjectDir, !gateWriting else { return }
+        guard let dir = editor.workingRoot, !gateWriting else { return }
         gateWriting = true
         do { try write(dir) } catch {
             editor.mediaPanelToast = MediaPanelToast(message: "Gate update failed: \(error.localizedDescription)")
@@ -319,7 +319,7 @@ struct PipelinePanelView: View {
     }
 
     private func load() async {
-        guard let dir = editor.studioProjectDir else {
+        guard let dir = editor.workingRoot else {
             state = .failed(.noProject)
             return
         }

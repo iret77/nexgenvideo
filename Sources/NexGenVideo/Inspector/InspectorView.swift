@@ -115,7 +115,7 @@ struct InspectorView: View {
     private func entityInspectorContent(_ entity: any BibleEntity) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                BibleEntityCard(entity: entity, projectDir: editor.studioProjectDir)
+                BibleEntityCard(entity: entity, projectDir: editor.workingRoot)
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Button("Edit…") {
                         entityEditName = entity.name

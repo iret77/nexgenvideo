@@ -4,12 +4,12 @@ import Testing
 
 @Suite("FrameInventory")
 struct FrameInventoryTests {
-    /// A throwaway v2-layout project home with a `_studio/frames/` tree built
+    /// A throwaway v2-layout project home with a `pipeline/frames/` tree built
     /// to order, so each test controls exactly which shots/images/audits exist.
     static func makeProject() throws -> URL {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("nexgen-frame-inventory-\(UUID().uuidString)", isDirectory: true)
-        let studio = home.appendingPathComponent("_studio", isDirectory: true)
+        let studio = home.appendingPathComponent("pipeline", isDirectory: true)
         try FileManager.default.createDirectory(at: studio, withIntermediateDirectories: true)
         try "project: inventory-fixture\nmode: beat\n".write(
             to: studio.appendingPathComponent("project.yaml"), atomically: true, encoding: .utf8
@@ -21,7 +21,7 @@ struct FrameInventoryTests {
     func emptyFramesDirYieldsNoShots() throws {
         let home = try Self.makeProject()
         defer { try? FileManager.default.removeItem(at: home) }
-        let framesDir = home.appendingPathComponent("_studio/frames", isDirectory: true)
+        let framesDir = home.appendingPathComponent("pipeline/frames", isDirectory: true)
         try FileManager.default.createDirectory(at: framesDir, withIntermediateDirectories: true)
 
         let result = try FrameInventory.inventory(projectDir: home)
@@ -42,7 +42,7 @@ struct FrameInventoryTests {
     func listsImageCandidatesSortedByName() throws {
         let home = try Self.makeProject()
         defer { try? FileManager.default.removeItem(at: home) }
-        let shotDir = home.appendingPathComponent("_studio/frames/shot-02", isDirectory: true)
+        let shotDir = home.appendingPathComponent("pipeline/frames/shot-02", isDirectory: true)
         try FileManager.default.createDirectory(at: shotDir, withIntermediateDirectories: true)
         for name in ["b.png", "a.png", "c.txt", "d.webp"] {
             try Data().write(to: shotDir.appendingPathComponent(name))
@@ -52,7 +52,7 @@ struct FrameInventoryTests {
         let shot = try #require(result.shots.first)
         #expect(shot.shotId == "shot-02")
         #expect(shot.frames.map(\.name) == ["a.png", "b.png", "d.webp"])
-        #expect(shot.frames[0].path == "_studio/frames/shot-02/a.png")
+        #expect(shot.frames[0].path == "pipeline/frames/shot-02/a.png")
         #expect(shot.audit == nil)
     }
 
@@ -61,7 +61,7 @@ struct FrameInventoryTests {
         let home = try Self.makeProject()
         defer { try? FileManager.default.removeItem(at: home) }
         for shotId in ["shot-b", "shot-a"] {
-            let dir = home.appendingPathComponent("_studio/frames/\(shotId)", isDirectory: true)
+            let dir = home.appendingPathComponent("pipeline/frames/\(shotId)", isDirectory: true)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try Data().write(to: dir.appendingPathComponent("frame.png"))
         }
@@ -74,7 +74,7 @@ struct FrameInventoryTests {
     func passesThroughFrameAudit() throws {
         let home = try Self.makeProject()
         defer { try? FileManager.default.removeItem(at: home) }
-        let shotDir = home.appendingPathComponent("_studio/frames/shot-01", isDirectory: true)
+        let shotDir = home.appendingPathComponent("pipeline/frames/shot-01", isDirectory: true)
         try FileManager.default.createDirectory(at: shotDir, withIntermediateDirectories: true)
         try Data().write(to: shotDir.appendingPathComponent("frame.png"))
         try """
@@ -99,7 +99,7 @@ struct FrameInventoryTests {
     func malformedAuditWithNoImagesIsAbsent() throws {
         let home = try Self.makeProject()
         defer { try? FileManager.default.removeItem(at: home) }
-        let shotDir = home.appendingPathComponent("_studio/frames/shot-empty", isDirectory: true)
+        let shotDir = home.appendingPathComponent("pipeline/frames/shot-empty", isDirectory: true)
         try FileManager.default.createDirectory(at: shotDir, withIntermediateDirectories: true)
         try "- not\n- a\n- mapping\n".write(
             to: shotDir.appendingPathComponent(FrameInventory.auditFilename), atomically: true,
@@ -114,7 +114,7 @@ struct FrameInventoryTests {
     func auditOnlyShotIsReported() throws {
         let home = try Self.makeProject()
         defer { try? FileManager.default.removeItem(at: home) }
-        let shotDir = home.appendingPathComponent("_studio/frames/shot-audit-only", isDirectory: true)
+        let shotDir = home.appendingPathComponent("pipeline/frames/shot-audit-only", isDirectory: true)
         try FileManager.default.createDirectory(at: shotDir, withIntermediateDirectories: true)
         try "schema: frame_audit/v1\n".write(
             to: shotDir.appendingPathComponent(FrameInventory.auditFilename), atomically: true,
@@ -131,11 +131,11 @@ struct FrameInventoryTests {
     func resolvesFromDataRootDirectly() throws {
         let home = try Self.makeProject()
         defer { try? FileManager.default.removeItem(at: home) }
-        let shotDir = home.appendingPathComponent("_studio/frames/shot-01", isDirectory: true)
+        let shotDir = home.appendingPathComponent("pipeline/frames/shot-01", isDirectory: true)
         try FileManager.default.createDirectory(at: shotDir, withIntermediateDirectories: true)
         try Data().write(to: shotDir.appendingPathComponent("frame.png"))
 
-        let dataRoot = home.appendingPathComponent("_studio", isDirectory: true)
+        let dataRoot = home.appendingPathComponent("pipeline", isDirectory: true)
         let result = try FrameInventory.inventory(projectDir: dataRoot)
         #expect(result.shots.map(\.shotId) == ["shot-01"])
     }

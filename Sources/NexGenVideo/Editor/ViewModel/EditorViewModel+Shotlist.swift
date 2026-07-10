@@ -10,7 +10,7 @@ extension EditorViewModel {
     /// when there's no open project, no shotlist, the shot is missing, or the value is unchanged.
     @discardableResult
     func setShotSourceMode(shotId: String, to mode: SourceMode) async -> Bool {
-        guard let dir = studioProjectDir else { return false }
+        guard let dir = workingRoot else { return false }
         let saved: Bool = await Task.detached {
             guard var shotlist = (try? loadShotlist(dataRoot: dir)) ?? nil,
                   let index = shotlist.shots.firstIndex(where: { $0.id == shotId }),

@@ -2,7 +2,7 @@ import Foundation
 
 /// The canonical relative paths inside a data root, mirroring the Python
 /// engine's save locations and `core/layout.py::CORE_SUBDIRS`. Values are
-/// relative to the data root (the `_studio` directory in the v2 layout).
+/// relative to the data root (the `pipeline` directory in the v2 layout).
 ///
 /// Verified against the Python schema `save` functions:
 /// - `core/project.py`  → `project.yaml`
@@ -13,7 +13,7 @@ import Foundation
 /// - `treatment/schema.py` → `treatment/vN.md` (+ `current.md`)
 /// - `storyboard/schema.py` → `storyboard/vN.yaml` (+ `current.yaml`)
 /// - `shotlist/schema.py` → `shotlist/vN.yaml`
-public enum StudioLayout {
+public enum PipelineLayout {
     // MARK: Single-file artifacts (relative to the data root)
 
     public static let projectFile = "project.yaml"
@@ -45,9 +45,6 @@ public enum StudioLayout {
         "import/characters",
         "import/locations",
     ]
-
-    /// User-facing zone dirs, siblings of `_studio` — `core/layout.py::USER_DIRS`.
-    public static let userDirs: [String] = ["inbox", "review", "final"]
 
     /// Absolute URL of a layout entry within a data root.
     public static func url(_ relative: String, in dataRoot: URL) -> URL {
@@ -106,12 +103,12 @@ public struct YAMLArtifactStore: ArtifactStore {
     }
 
     public func load<Artifact: Decodable>(_ type: Artifact.Type, at relativePath: String) throws -> Artifact {
-        let url = StudioLayout.url(relativePath, in: dataRoot)
+        let url = PipelineLayout.url(relativePath, in: dataRoot)
         return try YAMLCoding.decode(type, from: url)
     }
 
     public func save<Artifact: Encodable>(_ artifact: Artifact, to relativePath: String) throws {
-        let url = StudioLayout.url(relativePath, in: dataRoot)
+        let url = PipelineLayout.url(relativePath, in: dataRoot)
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true
         )
@@ -131,13 +128,13 @@ public struct JSONArtifactStore: ArtifactStore {
     }
 
     public func load<Artifact: Decodable>(_ type: Artifact.Type, at relativePath: String) throws -> Artifact {
-        let url = StudioLayout.url(relativePath, in: dataRoot)
+        let url = PipelineLayout.url(relativePath, in: dataRoot)
         let data = try Data(contentsOf: url)
         return try JSONDecoder().decode(type, from: data)
     }
 
     public func save<Artifact: Encodable>(_ artifact: Artifact, to relativePath: String) throws {
-        let url = StudioLayout.url(relativePath, in: dataRoot)
+        let url = PipelineLayout.url(relativePath, in: dataRoot)
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true
         )

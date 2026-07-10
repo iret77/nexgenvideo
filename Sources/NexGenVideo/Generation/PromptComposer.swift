@@ -38,7 +38,7 @@ enum PromptComposer {
 
     /// Compose one model-ready prompt from free intent + the project ledger, running the engine
     /// linter as the pre-generation gate. `projectDir` is the open project's URL (see
-    /// `EditorViewModel.studioProjectDir`); when it isn't a project yet, composition proceeds with an
+    /// `EditorViewModel.workingRoot`); when it isn't a project yet, composition proceeds with an
     /// empty ledger.
     static func compose(
         intent: String,
@@ -113,7 +113,7 @@ enum PromptComposer {
 
     private static func loadDirectives(dataRoot root: URL) -> ProjectDirectives {
         let store = YAMLArtifactStore(dataRoot: root)
-        guard let ledger = try? store.load(Ledger.self, at: StudioLayout.ledgerFile) else {
+        guard let ledger = try? store.load(Ledger.self, at: PipelineLayout.ledgerFile) else {
             return ProjectDirectives(all: [], locked: [])
         }
         var all: [String] = []

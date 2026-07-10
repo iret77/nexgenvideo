@@ -325,7 +325,7 @@ enum EditSubmitter {
             return try await PromptComposer.compose(
                 intent: intent, modality: modality, modelId: gen.model,
                 aspectRatio: gen.aspectRatio, durationSeconds: gen.duration > 0 ? Double(gen.duration) : nil,
-                projectDir: editor.studioProjectDir).text
+                projectDir: editor.workingRoot).text
         } catch let e as PromptComposer.ComposeError {
             if case .lintBlocked(let code, let message) = e {
                 throw RerunError.compileBlocked(code: code, message: message)

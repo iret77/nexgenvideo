@@ -13,7 +13,7 @@ import Foundation
 ///
 /// `excludePhase` skips one phase (e.g. the current run being recalculated).
 public func alreadySpentInProject(dataRoot: URL, excludePhase: Phase? = nil) -> Double {
-    let rendersDir = StudioLayout.url(StudioLayout.rendersDir, in: dataRoot)
+    let rendersDir = PipelineLayout.url(PipelineLayout.rendersDir, in: dataRoot)
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: rendersDir.path, isDirectory: &isDir),
         isDir.boolValue

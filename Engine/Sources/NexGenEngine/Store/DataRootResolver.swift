@@ -4,26 +4,29 @@ import Yams
 /// Project directory resolution — Swift port of
 /// `engine/nexgen_engine/core/paths.py` (`data_root_of` + `_is_project_marker`).
 ///
-/// Since v0.14 a project's *data root* is the directory that holds
+/// A project's *data root* is the directory that holds
 /// `project.yaml` / `gates.yaml` / `brief.yaml`:
-/// - Layout v2 ("studio"): `<project-home>/_studio/`.
-/// - Legacy flat: `<project-home>/`.
+/// - Current layout: `<project-home>/pipeline/`.
+/// - Legacy: `<project-home>/_studio/` (pre-rename) or flat `<project-home>/`.
 public enum DataRootResolver {
-    /// The `_studio` subdirectory name of the v2 layout.
-    public static let studioDirname = "_studio"
+    /// The data-root subdirectory name.
+    public static let pipelineDirname = "pipeline"
+    /// Pre-rename data-root name; still recognized so older projects open and migrate.
+    public static let legacyPipelineDirname = "_studio"
     /// The file whose presence (and validity) marks a project.
     public static let projectMarker = "project.yaml"
 
     /// Return the data root if `directory` is a project home or data root.
     ///
-    /// Checks the v2 layout first (`<directory>/_studio/project.yaml`), then the
-    /// flat legacy layout (`<directory>/project.yaml`). Returns `nil` if it is
-    /// neither. Mirrors `paths.data_root_of`.
+    /// Checks `<directory>/pipeline/project.yaml`, then the legacy `_studio/`, then the
+    /// flat layout (`<directory>/project.yaml`). Returns `nil` if none marks a project.
     public static func dataRoot(of directory: URL) -> URL? {
         let base = directory.standardizedFileURL
-        let v2Marker = base.appendingPathComponent(studioDirname).appendingPathComponent(projectMarker)
-        if isProjectMarker(v2Marker) {
-            return base.appendingPathComponent(studioDirname)
+        for name in [pipelineDirname, legacyPipelineDirname] {
+            let marker = base.appendingPathComponent(name).appendingPathComponent(projectMarker)
+            if isProjectMarker(marker) {
+                return base.appendingPathComponent(name)
+            }
         }
         let flatMarker = base.appendingPathComponent(projectMarker)
         if isProjectMarker(flatMarker) {

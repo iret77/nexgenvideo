@@ -46,7 +46,7 @@ public enum FrameInventory {
             throw InventoryError.noProject(projectDir.path)
         }
         let home = projectHome(of: dataRoot)
-        let framesDir = dataRoot.appendingPathComponent(StudioLayout.framesDir, isDirectory: true)
+        let framesDir = dataRoot.appendingPathComponent(PipelineLayout.framesDir, isDirectory: true)
 
         var shots: [ShotInventory] = []
         let fm = FileManager.default
@@ -95,10 +95,10 @@ public enum FrameInventory {
     }
 
     /// Port of `paths.project_home`: the user-facing project folder for a
-    /// data root (parent of `_studio/`). Public so the app can lift a resolved
+    /// data root (parent of `pipeline/`). Public so the app can lift a resolved
     /// data root back to the package where `ngv.json` lives.
     public static func projectHome(of dataRoot: URL) -> URL {
-        dataRoot.lastPathComponent == DataRootResolver.studioDirname
+        dataRoot.lastPathComponent == DataRootResolver.pipelineDirname
             ? dataRoot.deletingLastPathComponent() : dataRoot
     }
 

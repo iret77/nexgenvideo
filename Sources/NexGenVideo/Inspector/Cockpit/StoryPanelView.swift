@@ -319,7 +319,7 @@ struct StoryPanelView: View {
     }
 
     private func loadTreatment() async {
-        guard let dir = editor.studioProjectDir else {
+        guard let dir = editor.workingRoot else {
             treatment = .failed(.noProject)
             return
         }

@@ -53,7 +53,7 @@ struct ProjectMetaTests {
     @Test("parity: fixture project.yaml matches the golden's key fields")
     func fixtureParityWithGolden() throws {
         let fixtureHome = try DataRootResolverTests.fixtureHome()
-        let url = fixtureHome.appendingPathComponent("_studio").appendingPathComponent("project.yaml")
+        let url = fixtureHome.appendingPathComponent("pipeline").appendingPathComponent("project.yaml")
         let meta = try YAMLCoding.decode(ProjectMeta.self, from: url)
         #expect(meta.project == "basic-project")
         #expect(meta.mode == .beat)

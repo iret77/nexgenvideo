@@ -166,7 +166,7 @@ enum CockpitDataService {
     }
 
     /// In-process native read for a kind NativeCockpitReader serves. Projectless kinds (contract,
-    /// router, phases) answer without a data root; state/brief/treatment resolve `<projectDir>/_studio`
+    /// router, phases) answer without a data root; state/brief/treatment resolve `<projectDir>/pipeline`
     /// first and report `.notInitialized` (the calm "no pipeline yet" state) when it isn't a project.
     private static func nativeRun(kind: String, projectDir: URL) -> Result<Data, CockpitError> {
         let activePack = ProjectPluginSettings.activePlugin(projectURL: projectDir)

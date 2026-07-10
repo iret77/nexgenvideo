@@ -37,16 +37,16 @@ struct ProjectScaffoldTests {
         }
         // .gitkeep dropped in each dir.
         #expect(fm.fileExists(atPath: dataRoot.appendingPathComponent("bible/.gitkeep").path))
-        // User zones are siblings of _studio.
-        for zone in StudioLayout.userDirs {
-            #expect(fm.fileExists(atPath: home.appendingPathComponent(zone).path, isDirectory: &isDir) && isDir.boolValue)
+        // No stray user zones at home — a project is just its pipeline data root.
+        for zone in ["inbox", "review", "final"] {
+            #expect(!fm.fileExists(atPath: home.appendingPathComponent(zone).path))
         }
 
         let store = YAMLArtifactStore(dataRoot: dataRoot)
-        let meta = try store.load(ProjectMeta.self, at: StudioLayout.projectFile)
+        let meta = try store.load(ProjectMeta.self, at: PipelineLayout.projectFile)
         #expect(meta.project == "demo")
         #expect(meta.budgetEur == 50.0)
-        #expect(fm.fileExists(atPath: dataRoot.appendingPathComponent(StudioLayout.gatesFile).path))
+        #expect(fm.fileExists(atPath: dataRoot.appendingPathComponent(PipelineLayout.gatesFile).path))
     }
 
     @Test("init_project on an existing project throws alreadyAProject")

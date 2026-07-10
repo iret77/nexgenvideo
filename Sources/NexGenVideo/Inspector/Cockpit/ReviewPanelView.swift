@@ -177,7 +177,7 @@ struct ReviewPanelView: View {
             SheetThumbnailView(
                 label: frame.name,
                 path: frame.path,
-                projectDir: editor.studioProjectDir,
+                projectDir: editor.workingRoot,
                 tileHeight: 90
             )
             .overlay(alignment: .topTrailing) {
@@ -356,7 +356,7 @@ struct ReviewPanelView: View {
     // MARK: - Load
 
     private func load() async {
-        guard let dir = editor.studioProjectDir else {
+        guard let dir = editor.workingRoot else {
             state = .failed(.noProject)
             return
         }

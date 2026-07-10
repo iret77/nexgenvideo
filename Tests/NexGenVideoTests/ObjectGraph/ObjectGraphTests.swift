@@ -177,7 +177,7 @@ struct ObjectGraphProvenanceTests {
         let graph = ObjectGraph.from(
             bible: bible, shotlist: shotlist, timeline: timeline,
             assetNames: ["assetR": "s001.mp4"],
-            assetPaths: ["assetR": "/proj/_studio/renders/s001.mp4"]
+            assetPaths: ["assetR": "/proj/pipeline/renders/s001.mp4"]
         )
         return (graph, timeline, clip)
     }

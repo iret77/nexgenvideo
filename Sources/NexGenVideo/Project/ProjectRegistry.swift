@@ -27,8 +27,22 @@ final class ProjectRegistry {
     private var pendingMutations: [(inout [ProjectEntry]) -> Void] = []
 
     private init() {
-        fileURL = Project.storageDirectory.appendingPathComponent(Project.registryFilename)
+        // App state, not project data: the registry lives in Application Support (Apple's guidance),
+        // never in the user's projects folder. Migrate a legacy in-folder registry on first run.
+        let appStateURL = AppPaths.applicationSupport.appendingPathComponent(Project.registryFilename)
+        Self.migrateLegacyRegistry(to: appStateURL)
+        fileURL = appStateURL
         load()
+    }
+
+    /// One-time move of `project-registry.json` out of the projects folder into Application Support.
+    private nonisolated static func migrateLegacyRegistry(to newURL: URL) {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: newURL.path) else { return }
+        let legacy = Project.storageDirectory.appendingPathComponent(Project.registryFilename)
+        guard fm.fileExists(atPath: legacy.path) else { return }
+        AppPaths.ensure(AppPaths.applicationSupport)
+        try? fm.moveItem(at: legacy, to: newURL)
     }
 
     init(fileURL: URL) {
@@ -65,16 +79,6 @@ final class ProjectRegistry {
             }
         }
         return result
-    }
-
-    /// Re-point at the registry inside the *current* projects folder and reload. The registry lives
-    /// in the projects folder, so when the user changes that folder in Settings the Home overview must
-    /// switch to the new location's project list — otherwise it keeps showing the old folder's projects.
-    func relocateToCurrentStorage() {
-        let newURL = Project.storageDirectory.appendingPathComponent(Project.registryFilename)
-        guard newURL.standardizedFileURL != fileURL.standardizedFileURL else { return }
-        fileURL = newURL
-        load()
     }
 
     // MARK: - Mutations
@@ -172,7 +176,7 @@ final class ProjectRegistry {
 
 private actor ProjectRegistryDisk {
     func load(from fileURL: URL) -> [ProjectEntry] {
-        Project.ensureStorageDirectory()
+        AppPaths.ensure(fileURL.deletingLastPathComponent())
         return ProjectRegistry.loadEntries(from: fileURL)
     }
 

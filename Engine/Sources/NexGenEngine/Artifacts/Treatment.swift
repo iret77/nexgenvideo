@@ -140,12 +140,12 @@ public struct Treatment: Sendable, Equatable {
 
 /// Disk I/O for the treatment version family, mirroring the free functions in
 /// `treatment/schema.py`. Kept as a narrow set of static functions over
-/// `StudioLayout` paths rather than folded into `ArtifactStore`, since the
+/// `PipelineLayout` paths rather than folded into `ArtifactStore`, since the
 /// artifact is Markdown+frontmatter, not Codable-shaped YAML.
 public enum TreatmentStore {
     /// Port of `treatment/schema.py::versions`.
     public static func versions(dataRoot: URL) -> [Int] {
-        let dir = StudioLayout.url(StudioLayout.treatmentDir, in: dataRoot)
+        let dir = PipelineLayout.url(PipelineLayout.treatmentDir, in: dataRoot)
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: nil
         ) else { return [] }
@@ -173,10 +173,10 @@ public enum TreatmentStore {
     public static func load(dataRoot: URL, version: Int? = nil) throws -> Treatment {
         let vs = versions(dataRoot: dataRoot)
         guard let latest = vs.last else {
-            throw LoadError.noTreatment(StudioLayout.url(StudioLayout.treatmentDir, in: dataRoot))
+            throw LoadError.noTreatment(PipelineLayout.url(PipelineLayout.treatmentDir, in: dataRoot))
         }
         let v = version ?? latest
-        let url = StudioLayout.url(StudioLayout.treatmentVersionFile(v), in: dataRoot)
+        let url = PipelineLayout.url(PipelineLayout.treatmentVersionFile(v), in: dataRoot)
         let raw = try String(contentsOf: url, encoding: .utf8)
         return try Treatment.parsing(raw)
     }
@@ -186,14 +186,14 @@ public enum TreatmentStore {
     @discardableResult
     public static func save(_ treatment: Treatment, to dataRoot: URL) throws -> URL {
         let content = try treatment.serialized()
-        let versionURL = StudioLayout.url(
-            StudioLayout.treatmentVersionFile(treatment.meta.version), in: dataRoot
+        let versionURL = PipelineLayout.url(
+            PipelineLayout.treatmentVersionFile(treatment.meta.version), in: dataRoot
         )
         try FileManager.default.createDirectory(
             at: versionURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
         try content.write(to: versionURL, atomically: true, encoding: .utf8)
-        let currentURL = StudioLayout.url(StudioLayout.treatmentCurrentFile, in: dataRoot)
+        let currentURL = PipelineLayout.url(PipelineLayout.treatmentCurrentFile, in: dataRoot)
         try content.write(to: currentURL, atomically: true, encoding: .utf8)
         return versionURL
     }

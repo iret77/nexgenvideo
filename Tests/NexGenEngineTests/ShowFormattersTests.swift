@@ -57,7 +57,7 @@ struct ShowFormattersTests {
             figures: .artistOnly,
             lyricsIntegration: .literal
         )
-        try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: StudioLayout.briefFile)
+        try YAMLArtifactStore(dataRoot: dataRoot).save(brief, to: PipelineLayout.briefFile)
 
         let out = ShowArtifact.gate("brief", dataRoot: dataRoot)
         #expect(out.hasPrefix("## Brief · demo"))

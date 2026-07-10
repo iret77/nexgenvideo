@@ -229,7 +229,7 @@ enum GenerationController {
                 modelId: request.modelId,
                 aspectRatio: request.aspectRatio,
                 durationSeconds: request.durationSeconds,
-                projectDir: editor.studioProjectDir)
+                projectDir: editor.workingRoot)
             return (composition.text, composition.notes)
         } catch let e as PromptComposer.ComposeError {
             throw GenerationRequestError.compile(e.errorDescription ?? "Prompt compilation failed.")

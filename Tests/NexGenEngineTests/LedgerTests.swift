@@ -34,7 +34,7 @@ struct LedgerTests {
 
     @Test("decodes the real fixture ledger.yaml with exact field values")
     func fixtureParity() throws {
-        let url = try Self.fixtureHome().appendingPathComponent("_studio/ledger.yaml")
+        let url = try Self.fixtureHome().appendingPathComponent("pipeline/ledger.yaml")
         let ledger = try YAMLCoding.decode(Ledger.self, from: url)
 
         #expect(ledger.schema_ == "ledger/v1")

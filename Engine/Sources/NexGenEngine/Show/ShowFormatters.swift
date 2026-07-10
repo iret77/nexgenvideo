@@ -32,7 +32,7 @@ enum ShowFormatters {
     // MARK: - Brief
 
     static func showBrief(_ dataRoot: URL) throws -> String {
-        let b = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: StudioLayout.briefFile)
+        let b = try YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
         var lines: [String] = []
         lines.append("## Brief · \(b.project)")
         lines.append("")

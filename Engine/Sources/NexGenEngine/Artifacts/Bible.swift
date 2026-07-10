@@ -534,7 +534,7 @@ public struct Bible: Codable, Sendable, Equatable {
 /// `bible/schema.py::load`, which returns `Bible | None` rather than raising
 /// on a missing file (unlike `YAMLArtifactStore.load`, which throws).
 public func loadBible(dataRoot: URL) throws -> Bible? {
-    let url = StudioLayout.url(StudioLayout.bibleFile, in: dataRoot)
+    let url = PipelineLayout.url(PipelineLayout.bibleFile, in: dataRoot)
     guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-    return try YAMLArtifactStore(dataRoot: dataRoot).load(Bible.self, at: StudioLayout.bibleFile)
+    return try YAMLArtifactStore(dataRoot: dataRoot).load(Bible.self, at: PipelineLayout.bibleFile)
 }

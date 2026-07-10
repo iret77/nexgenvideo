@@ -9,7 +9,7 @@ enum CockpitStateView {
     /// Error / not-initialized state. `subject` is retained for call-site symmetry across the panels;
     /// the copy is driven by `title` and the error case. When a format pack is active and the project
     /// isn't set up yet, `activePack` turns the placeholder into the pack's own hero (badge + pitch) —
-    /// so the workspace shows you're in that studio, not a generic empty state.
+    /// so the workspace shows you're in that pipeline, not a generic empty state.
     static func error(
         _ error: CockpitError,
         title: String,
@@ -105,7 +105,7 @@ enum CockpitStateView {
     }
 
     /// The active pack's identity for the not-yet-set-up workspace: its badge art, its bold pitch, and
-    /// the benefit line. Makes the empty Produce area read as "you're in the <pack> studio" rather than
+    /// the benefit line. Makes the empty Produce area read as "you're in the <pack> pipeline" rather than
     /// a generic placeholder. Badge falls back to nothing (the pitch text still carries it).
     @ViewBuilder
     private static func packHero(_ pack: InstalledPack) -> some View {

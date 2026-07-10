@@ -621,7 +621,7 @@ public struct Shotlist: Codable, Sendable, Equatable {
 /// Port of `shotlist/schema.py::latest_version`. Highest N among
 /// `shotlist/vN.yaml`, or nil if none exist.
 public func latestShotlistVersion(dataRoot: URL) -> Int? {
-    let dir = StudioLayout.url(StudioLayout.shotlistDir, in: dataRoot)
+    let dir = PipelineLayout.url(PipelineLayout.shotlistDir, in: dataRoot)
     guard let entries = try? FileManager.default.contentsOfDirectory(
         at: dir, includingPropertiesForKeys: nil
     ) else { return nil }
@@ -652,15 +652,15 @@ public func saveShotlist(_ shotlist: Shotlist, to dataRoot: URL, version: Int? =
     } else {
         resolvedVersion = (latestShotlistVersion(dataRoot: dataRoot) ?? 0) + 1
     }
-    let relativePath = StudioLayout.shotlistVersionFile(resolvedVersion)
+    let relativePath = PipelineLayout.shotlistVersionFile(resolvedVersion)
     try YAMLArtifactStore(dataRoot: dataRoot).save(shotlist, to: relativePath)
-    return StudioLayout.url(relativePath, in: dataRoot)
+    return PipelineLayout.url(relativePath, in: dataRoot)
 }
 
 /// Port of `shotlist/schema.py::load`. Loads the highest existing version, or
 /// nil if none exist (Optional return, not throwing).
 public func loadShotlist(dataRoot: URL) throws -> Shotlist? {
     guard let version = latestShotlistVersion(dataRoot: dataRoot) else { return nil }
-    let relativePath = StudioLayout.shotlistVersionFile(version)
+    let relativePath = PipelineLayout.shotlistVersionFile(version)
     return try YAMLArtifactStore(dataRoot: dataRoot).load(Shotlist.self, at: relativePath)
 }

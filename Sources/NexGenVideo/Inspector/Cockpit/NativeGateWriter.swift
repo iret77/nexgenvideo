@@ -46,9 +46,9 @@ enum NativeGateWriter {
         }
         let store = YAMLArtifactStore(dataRoot: root)
         do {
-            var gates = try store.load(Gates.self, at: StudioLayout.gatesFile)
+            var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
             try body(&gates)
-            try store.save(gates, to: StudioLayout.gatesFile)
+            try store.save(gates, to: PipelineLayout.gatesFile)
         } catch let error as WriteError {
             throw error
         } catch {

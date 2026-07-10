@@ -165,7 +165,7 @@ enum AgentInstructions {
           (get_ledger / set_ledger_attribute / lock_ledger_attribute / remove_ledger_attribute), \
           resolve_model, estimate_cost, and the render manifest (next_render_shot / record_render / \
           get_render_manifest). There is no separate engine server — call them like any other tool.
-        - Every pipeline tool takes an optional project_dir (the project's _studio data root). Omit it \
+        - Every pipeline tool takes an optional project_dir (the project's pipeline data root). Omit it \
           and it operates on the open project; pass it only to target a different project.
         - Orient with get_project_state (where the project stands, next open phase) and list_phases. \
           Before asking the user to approve a phase, call show_artifact to surface that gate's Markdown \

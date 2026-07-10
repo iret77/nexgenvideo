@@ -69,7 +69,7 @@ public enum Preflight {
 
     /// Checks a project's input artifacts before analysis. Port of
     /// `preflight.py::preflight`. `projectDir` is the project home (parent of
-    /// `_studio/`), matching Python's `project_dir` — audio/lyrics/import live
+    /// `pipeline/`), matching Python's `project_dir` — audio/lyrics/import live
     /// as siblings of the data root, not inside it.
     public static func run(projectDir: URL) -> Result {
         var result = Result(project: displayName(projectDir: projectDir))
