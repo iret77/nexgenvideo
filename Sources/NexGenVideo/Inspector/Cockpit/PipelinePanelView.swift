@@ -27,6 +27,9 @@ struct PipelinePanelView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: editor.projectURL) { await load() }
+        // Re-read when the engine state changes (e.g. production just started) — projectURL is unchanged
+        // then, so without this the panel would keep showing the stale "Start production" state.
+        .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
     }
 
     @ViewBuilder
