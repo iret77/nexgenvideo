@@ -572,12 +572,16 @@ extension ToolExecutor {
               !fileURL.standardizedFileURL.path.hasPrefix(projectURL.standardizedFileURL.path)
         else { return fileURL }
         let mediaDir = projectURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
-        // Collision-safe: distinct renders can share a basename (renders/s001/output.mp4 vs
-        // s002/output.mp4). Suffix with a hash of the SOURCE path so different sources never alias,
-        // while a re-run of the same source reuses its copy.
+        // Collision-safe AND freshness-safe: distinct renders can share a basename (renders/s001/
+        // output.mp4 vs s002/output.mp4), and a rerender overwrites the same source path. Hash the
+        // source path AND its mtime, so different sources never alias and a rerender yields a new copy;
+        // an unchanged source reuses its copy.
+        let fmProbe = FileManager.default
         let src = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let mtime = ((try? fmProbe.attributesOfItem(atPath: fileURL.path))?[.modificationDate] as? Date)?
+            .timeIntervalSince1970 ?? 0
         var h: UInt64 = 0xcbf29ce484222325
-        for b in src.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+        for b in "\(src)|\(mtime)".utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
         let base = fileURL.deletingPathExtension().lastPathComponent
         let ext = fileURL.pathExtension
         let stamped = "\(base)-\(String(h, radix: 16))"

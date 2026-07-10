@@ -64,11 +64,16 @@ enum ProjectWorkingCopy {
         // and must not read as recoverable if the app dies mid-materialize.
         try? fm.removeItem(at: sentinel)
         // Never destroy a possibly-real working copy: if an existing pipeline is a valid data root but
-        // lacks the sentinel (a legacy/interrupted copy), move it aside rather than delete it.
+        // lacks the sentinel (a legacy/interrupted copy), move it OUT of this home — a later clean-close
+        // discard removes home(key), so an in-home quarantine wouldn't survive. If it can't be moved
+        // aside, throw rather than delete it (fail-safe: never lose unsaved work).
         let existingMarker = dstPipeline.appendingPathComponent(DataRootResolver.projectMarker)
         if fm.fileExists(atPath: existingMarker.path) {
-            let quarantine = dstHome.appendingPathComponent(".pre-sentinel-\(UUID().uuidString)", isDirectory: true)
-            try? fm.moveItem(at: dstPipeline, to: quarantine)
+            let quarantineRoot = AppPaths.ensure(
+                AppPaths.recovery.appendingPathComponent(".quarantine", isDirectory: true))
+            let quarantine = quarantineRoot.appendingPathComponent("\(key)-\(UUID().uuidString)", isDirectory: true)
+            try fm.moveItem(at: dstPipeline, to: quarantine)
+            Log.project.notice("quarantined an unsentineled working copy to \(quarantine.lastPathComponent)")
         }
         try? fm.removeItem(at: dstPipeline)
         if let packageURL, let srcPipeline = packagePipeline(in: packageURL) {
