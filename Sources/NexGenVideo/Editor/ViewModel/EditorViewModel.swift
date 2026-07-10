@@ -222,6 +222,7 @@ final class EditorViewModel {
         didSet {
             guard projectURL != oldValue else { return }
             activePluginName = ProjectPluginSettings.activePlugin(projectURL: projectURL)
+            refreshProductionPipelineMarker()
             projectId = projectURL.flatMap { url in
                 let resolved = url.standardizedFileURL
                 return ProjectRegistry.shared.entries
@@ -237,10 +238,21 @@ final class EditorViewModel {
     /// loads only this plugin's dir; changing it applies to the NEXT agent session.
     private(set) var activePluginName: String?
 
+    /// Whether the on-disk production pipeline (`_studio/project.yaml`) exists. SYNCHRONOUS ground
+    /// truth for "production has started" — cached from a disk probe on `projectURL` change and after
+    /// scaffold, NOT the async `projectState` (which is nil during its load window, which would briefly
+    /// reopen the format lock on an already-started project).
+    private(set) var hasProductionPipeline = false
+
+    private func refreshProductionPipelineMarker() {
+        hasProductionPipeline = projectURL.map { DataRootResolver.dataRoot(of: $0) != nil } ?? false
+    }
+
     /// The format may change only until production starts — after that its pipeline artifacts
     /// (phases/bible/shotlist) are format-specific and switching would strand them. Generic counts as
-    /// a started workflow once its pipeline exists (`projectState != nil`).
-    var canChangeFormat: Bool { projectState == nil && !productionStarting }
+    /// a started workflow once its pipeline exists on disk. Gates on the durable marker, not async
+    /// state, so no load window can reopen it.
+    var canChangeFormat: Bool { !hasProductionPipeline && !productionStarting }
 
     /// Enforced at the MODEL so every surface (title-bar chip, project cockpit) honors the lock — not
     /// just the ones that remembered to check. A no-op once production has started.
@@ -434,6 +446,9 @@ final class EditorViewModel {
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
     func refreshEngineState() async {
+        // Re-probe the durable pipeline marker FIRST — a just-finished scaffold now exists on disk, so
+        // the format lock stays closed the instant `productionStarting` clears below (no reopen gap).
+        refreshProductionPipelineMarker()
         // The agent turn that a Start-production tap kicked off has finished; release the CTA lock so
         // it reflects the (now initialized, or still-empty) reality.
         productionStarting = false
