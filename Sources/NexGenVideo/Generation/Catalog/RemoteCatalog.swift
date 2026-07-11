@@ -7,7 +7,7 @@ import Foundation
 /// HTTPS only. The hosted file is a JSON array of `CatalogEntry`.
 enum RemoteCatalog {
     /// Same repo that serves the appcast; swap models.json to ship catalog changes release-free.
-    static let url = URL(string: "https://raw.githubusercontent.com/iret77/nexgen-video/main/catalog/models.json")!
+    static let url = URL(string: "https://raw.githubusercontent.com/iret77/nexgenvideo/main/catalog/models.json")!
 
     private static var cacheURL: URL? {
         try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,

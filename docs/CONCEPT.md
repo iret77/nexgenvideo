@@ -88,11 +88,11 @@ gehostete Generierung will, nutzt das Original-Produkt — nicht diesen Fork.
    es **den Core**. Erstes Pack: `musicvideo`; geplant: `explainer`, `fiction`/`shortmovie`, `trailer`,
    `vacation`, …
 
-**Ein Repo, ein Produkt, eine Sprache (Monorepo).** Alle drei Schichten leben in `nexgen-video` als
+**Ein Repo, ein Produkt, eine Sprache (Monorepo).** Alle drei Schichten leben in `nexgenvideo` als
 Swift — *kein* eigenes Core-Repo, *kein* Submodul, **kein Python mehr**:
 
 ```
-nexgen-video/
+nexgenvideo/
   Sources/NexGenVideo/            ← Swift-Host (App)
   Sources/NexGenEngine/           ← Generic Production Engine (Swift-Library)
   Sources/NexGenEngine/Packs/     ← native Format-Packs (musicvideo; weitere daneben)
@@ -259,7 +259,7 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 
 ## 9. Offene Entscheidungen
 
-- ✅ **Entschieden 2026-06-28 — Monorepo:** Generic Core + erste Packs leben in `nexgen-video`,
+- ✅ **Entschieden 2026-06-28 — Monorepo:** Generic Core + erste Packs leben in `nexgenvideo`,
   *kein* eigenes Repo, *kein* Submodul. Die alte „eigenes `nexgen-core`-Repo"-Tendenz war
   Über-Strukturierung und ist verworfen (ein autonomes Produkt = ein Repo).
 - ✅ **Umgesetzt (M0–M9) — nativ statt Python:** die Engine + Packs sind Swift (`Sources/NexGenEngine/`,
@@ -285,7 +285,7 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 **Kein lokaler Build — niemals.** Verifikation ausschließlich über **GitHub Actions**
 (`ci.yml`, `macos-26`, `swift build` + `swift test`). Signiert + notarisiert über **unsere eigene
 high5 Developer ID** (`release.yml`, App-Store-Connect-API-Key, EdDSA-Sparkle-Key). `dev-latest` =
-rollendes signiertes Prerelease als öffentlicher Direktlink. PRs immer `--repo iret77/nexgen-video`.
+rollendes signiertes Prerelease als öffentlicher Direktlink. PRs immer `--repo iret77/nexgenvideo`.
 
 ## 12. Status (Stand 2026-06-28)
 

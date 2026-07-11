@@ -32,7 +32,7 @@ struct PluginCatalog: Decodable, Equatable {
 enum PluginCatalogService {
     /// The catalog asset on the rolling `dev-latest` prerelease.
     static let catalogURL = URL(
-        string: "https://github.com/iret77/nexgen-video/releases/download/dev-latest/plugins.json")!
+        string: "https://github.com/iret77/nexgenvideo/releases/download/dev-latest/plugins.json")!
 
     enum FetchError: Error { case http(Int); case empty; case insecureURL(String) }
 

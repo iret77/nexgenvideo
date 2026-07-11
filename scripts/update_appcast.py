@@ -7,7 +7,7 @@ import sys
 from email.utils import formatdate
 
 version, build, length, signature, tag = sys.argv[1:6]
-url = f"https://github.com/iret77/nexgen-video/releases/download/{tag}/NexGenVideo.dmg"
+url = f"https://github.com/iret77/nexgenvideo/releases/download/{tag}/NexGenVideo.dmg"
 
 item = f"""        <item>
             <title>Version {version}</title>

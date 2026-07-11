@@ -8,9 +8,9 @@
   "icon": "icon.png",
   "author": {
     "name": "NexGenVideo",
-    "url": "https://github.com/iret77/nexgen-video"
+    "url": "https://github.com/iret77/nexgenvideo"
   },
-  "homepage": "https://github.com/iret77/nexgen-video",
+  "homepage": "https://github.com/iret77/nexgenvideo",
   "keywords": ["video", "editor", "timeline", "creative", "media"],
   "server": {
     "type": "node",

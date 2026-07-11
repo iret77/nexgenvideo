@@ -6,7 +6,7 @@
 
 **The video editor built for AI.**
 
-<a href="https://github.com/iret77/nexgen-video/releases/download/dev-latest/NexGenVideo.dmg">
+<a href="https://github.com/iret77/nexgenvideo/releases/download/dev-latest/NexGenVideo.dmg">
   <img src="./assets/macos-badge.png" alt="Download NexGenVideo for macOS" width="180" />
 </a>
 
@@ -101,15 +101,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md)
 ## Community &amp; Support
 
 - **Discord:** Join the community on **[Discord](https://discord.com/invite/SMVW6pKYmg)**.
-- **Feedback &amp; Support:** Create a [Github Issue](https://github.com/iret77/nexgen-video/issues).
+- **Feedback &amp; Support:** Create a [Github Issue](https://github.com/iret77/nexgenvideo/issues).
 
 ## Star History
 
-<a href="https://www.star-history.com/?type=date&repos=iret77%2Fnexgen-video">
+<a href="https://www.star-history.com/?type=date&repos=iret77%2Fnexgenvideo">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=iret77/nexgen-video&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=iret77/nexgen-video&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=iret77/nexgen-video&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=iret77/nexgenvideo&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=iret77/nexgenvideo&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=iret77/nexgenvideo&type=date&legend=top-left" />
  </picture>
 </a>
 

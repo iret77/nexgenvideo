@@ -2,7 +2,7 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
     <channel>
         <title>NexGenVideo</title>
-        <link>https://raw.githubusercontent.com/iret77/nexgen-video/main/appcast.xml</link>
+        <link>https://raw.githubusercontent.com/iret77/nexgenvideo/main/appcast.xml</link>
         <description>Updates for NexGenVideo</description>
         <language>en</language>
         <!-- No releases published yet. Items are intentionally empty so Sparkle offers no update —
@@ -14,7 +14,7 @@
             <sparkle:version>57</sparkle:version>
             <sparkle:shortVersionString>0.7.5</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/iret77/nexgen-video/releases/download/v0.7.5/NexGenVideo.dmg" length="26429983" type="application/octet-stream" sparkle:edSignature="AG1pAf6w6ri/y3BTVXQPl19pjE6Bq4x5FE+bIUtcJQ2cM8l8AD1LHM/fxJqKkIYgMhHCMAiM36GJI/y7ecKfBw=="/>
+            <enclosure url="https://github.com/iret77/nexgenvideo/releases/download/v0.7.5/NexGenVideo.dmg" length="26429983" type="application/octet-stream" sparkle:edSignature="AG1pAf6w6ri/y3BTVXQPl19pjE6Bq4x5FE+bIUtcJQ2cM8l8AD1LHM/fxJqKkIYgMhHCMAiM36GJI/y7ecKfBw=="/>
         </item>
         <item>
             <title>Version 0.7.6</title>
@@ -22,7 +22,7 @@
             <sparkle:version>58</sparkle:version>
             <sparkle:shortVersionString>0.7.6</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/iret77/nexgen-video/releases/download/v0.7.6/NexGenVideo.dmg" length="25524554" type="application/octet-stream" sparkle:edSignature="GErkXNaGEwg8ijGs6+aBpUyjbp9SoDetq0vRnWnXeRhU4luaHowB5wDn20KEecH7nbl4tqoTjmLMR/dNbgmzBQ=="/>
+            <enclosure url="https://github.com/iret77/nexgenvideo/releases/download/v0.7.6/NexGenVideo.dmg" length="25524554" type="application/octet-stream" sparkle:edSignature="GErkXNaGEwg8ijGs6+aBpUyjbp9SoDetq0vRnWnXeRhU4luaHowB5wDn20KEecH7nbl4tqoTjmLMR/dNbgmzBQ=="/>
         </item>
         <item>
             <title>Version 0.7.7</title>
@@ -30,7 +30,7 @@
             <sparkle:version>59</sparkle:version>
             <sparkle:shortVersionString>0.7.7</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/iret77/nexgen-video/releases/download/v0.7.7/NexGenVideo.dmg" length="25525655" type="application/octet-stream" sparkle:edSignature="gt+CQQA0yPhK10Zf/BkLf1bbtZrvR7GUOIBV0/AhAL8LVItMfhTFtAYtioqYUBv5d7W2DjxK0pJ62sZpoDkrBw=="/>
+            <enclosure url="https://github.com/iret77/nexgenvideo/releases/download/v0.7.7/NexGenVideo.dmg" length="25525655" type="application/octet-stream" sparkle:edSignature="gt+CQQA0yPhK10Zf/BkLf1bbtZrvR7GUOIBV0/AhAL8LVItMfhTFtAYtioqYUBv5d7W2DjxK0pJ62sZpoDkrBw=="/>
         </item>
         <item>
             <title>Version 0.7.8</title>
@@ -38,7 +38,7 @@
             <sparkle:version>60</sparkle:version>
             <sparkle:shortVersionString>0.7.8</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/iret77/nexgen-video/releases/download/v0.7.8/NexGenVideo.dmg" length="25552109" type="application/octet-stream" sparkle:edSignature="onNZ263uj83mIm2nA8G1mg5JxEaPmCnvvJ1f9UAiY2JndE2Pk4Ya802k4FI0tGFntz5o/thJbJanMLfeyO/qBg=="/>
+            <enclosure url="https://github.com/iret77/nexgenvideo/releases/download/v0.7.8/NexGenVideo.dmg" length="25552109" type="application/octet-stream" sparkle:edSignature="onNZ263uj83mIm2nA8G1mg5JxEaPmCnvvJ1f9UAiY2JndE2Pk4Ya802k4FI0tGFntz5o/thJbJanMLfeyO/qBg=="/>
         </item>
     </channel>
 </rss>

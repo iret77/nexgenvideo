@@ -53,7 +53,7 @@
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/iret77/nexgen-video/main/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/iret77/nexgenvideo/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>I8xZDqcV6YIvhIFIkDw/RWceQKCQV7cpSQk+U1S0GNo=</string>
 	<key>UTExportedTypeDeclarations</key>

@@ -17,7 +17,7 @@ struct PluginCatalogDecodeTests {
               "tagline": "Structured AI music-video production.",
               "version": "0.0.1",
               "minAppVersion": "0.1.0",
-              "url": "https://github.com/iret77/nexgen-video/releases/download/dev-latest/musicvideo.ngvpack.zip",
+              "url": "https://github.com/iret77/nexgenvideo/releases/download/dev-latest/musicvideo.ngvpack.zip",
               "sha256": "abc123"
             }
           ]

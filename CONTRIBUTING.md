@@ -15,8 +15,8 @@ With AI coding, human reviews are the bottleneck. We don't have the bandwidth to
 
 ### Develop
 ```bash
-git clone https://github.com/iret77/nexgen-video
-cd nexgen-video
+git clone https://github.com/iret77/nexgenvideo
+cd nexgenvideo
 
 swift build
 swift run
