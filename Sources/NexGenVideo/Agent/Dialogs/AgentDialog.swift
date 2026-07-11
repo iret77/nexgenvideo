@@ -127,6 +127,10 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         /// the `character`/`location` intakes so the host can name the destination folder. The name
         /// arrives in `AgentDialogResult.direction`.
         let namePrompt: String?
+        /// Whether a file (or, with a textField, text) is REQUIRED to confirm. Optional intakes (lyrics,
+        /// script) can be confirmed with nothing — that's an explicit "skip", reported to the agent so
+        /// it moves on instead of the user being forced to dismiss.
+        let required: Bool
     }
 
     let id: String
@@ -248,14 +252,18 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         let prompt = (raw["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachAs = (raw["attachAs"] as? String)?.trimmingCharacters(in: .whitespaces)
+        let attachAs = ((raw["attachAs"] as? String)?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 }
         let namePrompt = (raw["namePrompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Text sidecars (lyrics/script) are optional by default — the user can confirm-to-skip. The
+        // agent can still force it with required:true; other intakes (the song) default to required.
+        let defaultRequired = !(attachAs == "lyrics" || attachAs == "script")
         return FileIntake(
             accept: accept,
             prompt: (prompt?.isEmpty == false) ? prompt : nil,
             allowsMultiple: (raw["multiple"] as? Bool) ?? false,
-            attachAs: (attachAs?.isEmpty == false) ? attachAs : nil,
-            namePrompt: (namePrompt?.isEmpty == false) ? namePrompt : nil
+            attachAs: attachAs,
+            namePrompt: (namePrompt?.isEmpty == false) ? namePrompt : nil,
+            required: (raw["required"] as? Bool) ?? defaultRequired
         )
     }
 

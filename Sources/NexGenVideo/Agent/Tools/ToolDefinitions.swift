@@ -128,6 +128,7 @@ enum ToolDefinitions {
                             "multiple": ["type": "boolean", "description": "Allow more than one file. Default false."],
                             "attachAs": ["type": "string", "description": "Where the file goes. Omit \u{21D2} the media library, returned as an @mention (the song path). 'lyrics' \u{21D2} host writes lyrics/lyrics.txt and replies with the parsed [Section] markers. 'script' \u{21D2} host writes import/script.md for a brownfield project (accept ['text'] for both). 'character'/'location' \u{2192} host copies the images into import/characters|locations/<slug>/ as a bible anchor (accept ['image'], set namePrompt, usually multiple:true)."],
                             "namePrompt": ["type": "string", "description": "For attachAs 'character'/'location': the label of a REQUIRED identity-name field the well shows (e.g. 'Character name'). The typed name becomes the destination folder; confirm stays disabled until it's filled."],
+                            "required": ["type": "boolean", "description": "Whether a file/text is required to confirm. Default true; 'lyrics'/'script' default false (the user can confirm with nothing, an explicit skip the host reports to you). Set false to make any intake skippable via Confirm rather than only by dismissing."],
                         ],
                     ],
                     "sections": [

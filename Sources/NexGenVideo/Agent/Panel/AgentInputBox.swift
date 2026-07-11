@@ -70,7 +70,7 @@ struct AgentInputBox<LeadingTools: View>: View {
         VStack(spacing: 0) {
             textField
                 .popover(isPresented: Binding(
-                    get: { showMentionPicker },
+                    get: { showMentionPicker && !blocked },
                     set: { if !$0 { mentionQuery = nil } }
                 ), attachmentAnchor: .point(.topLeading), arrowEdge: .top) {
                     MentionPopover(
@@ -99,9 +99,14 @@ struct AgentInputBox<LeadingTools: View>: View {
         .overlay(alignment: .top) { resizeHandle }
         .animation(.easeOut(duration: 0.15), value: focused)
         .animation(.easeOut(duration: 0.15), value: isDropTargeted)
-        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop)
+        .onDrop(of: [.fileURL], isTargeted: blocked ? nil : $isDropTargeted, perform: handleDrop)
         .onChange(of: editor.agentService.focusInputRequestTick) { _, _ in
             Task { @MainActor in focused = true }
+        }
+        // A dialog card opened above: the composer is locked, so drop the mention popover and clear
+        // any hover-drop highlight — no second input surface competes with the card.
+        .onChange(of: blocked) { _, isBlocked in
+            if isBlocked { mentionQuery = nil; isDropTargeted = false }
         }
     }
 
@@ -342,6 +347,7 @@ struct AgentInputBox<LeadingTools: View>: View {
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard !blocked else { return false }  // locked while a dialog card owns the input
         var handled = false
         for provider in providers where provider.canLoadObject(ofClass: URL.self) {
             handled = true

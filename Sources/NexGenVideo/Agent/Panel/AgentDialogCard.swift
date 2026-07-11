@@ -339,6 +339,7 @@ struct AgentDialogCard: View {
     /// otherwise a file is required, plus the identity name when the intake asks for one.
     private var canSubmit: Bool {
         guard let intake = dialog.fileIntake else { return true }
+        if !intake.required { return true }  // optional intake: confirm even with nothing (an explicit skip)
         let hasText = !direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if dialog.textField != nil { return !pickedFiles.isEmpty || hasText }
         if pickedFiles.isEmpty { return false }
