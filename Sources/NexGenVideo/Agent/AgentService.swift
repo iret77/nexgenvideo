@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Observation
 
 @Observable
@@ -188,7 +189,12 @@ final class AgentService {
     /// material (brownfield) instead of inventing it. Kept host-side and deterministic, matching the
     /// hard-gate philosophy: the file placement is a fact, not something the agent narrates.
     private func attachTextSidecar(_ kind: String, dialog: AgentDialog, result: AgentDialogResult) {
-        guard let editor, let root = editor.workingRoot, let src = result.fileURLs.first else {
+        // Resolve the pipeline DATA ROOT the same way the workflow tools do (workingRoot may be the
+        // package home; the sidecar dirs live under <home>/pipeline). No project ⇒ don't drop the answer.
+        guard let editor, let workingRoot = editor.workingRoot,
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
+              let src = result.fileURLs.first
+        else {
             send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
             return
         }
@@ -201,7 +207,7 @@ final class AgentService {
         case "lyrics": (relDir, filename) = ("lyrics", "lyrics.txt")
         default: (relDir, filename) = ("import", "script.md")  // "script"
         }
-        let dir = root.appendingPathComponent(relDir, isDirectory: true)
+        let dir = dataRoot.appendingPathComponent(relDir, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try content.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)

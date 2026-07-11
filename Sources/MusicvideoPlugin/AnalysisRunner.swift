@@ -106,6 +106,14 @@ public enum MusicvideoAnalysisRunner {
             downbeats: raw.downbeats,
             durationS: raw.durationS
         )
+        // Guarantee full coverage: downbeat snapping can pull the first boundary off 0 (e.g. to the
+        // first downbeat at 0.5s) and the last off the track end — clamp the endpoints so no audio
+        // falls outside a section.
+        var sections = consolidation.sections
+        if !sections.isEmpty {
+            sections[0].start = 0.0
+            sections[sections.count - 1].end = raw.durationS
+        }
         let downbeatSource = Analysis.DownbeatSource(rawValue: raw.downbeatSource) ?? .librosaHeuristic
         let interpretation = consolidation.anomalies.isEmpty
             ? nil
@@ -121,7 +129,7 @@ public enum MusicvideoAnalysisRunner {
             beats: raw.beats,
             downbeats: raw.downbeats,
             downbeatSource: downbeatSource,
-            sections: consolidation.sections,
+            sections: sections,
             alignment: lyricsAlignment,
             structureCandidates: [StructureCandidate(source: .librosa, sections: detected)],
             energyCurve: raw.energyCurve,

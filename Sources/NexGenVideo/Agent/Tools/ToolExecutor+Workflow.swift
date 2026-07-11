@@ -416,6 +416,17 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = args.string("phase") ?? "final"
 
+        // Hard gate (terminal backstop): no assembly on an unapproved plan. Every phase up to and
+        // including shotlist — which, for musicvideo, includes the analysis gate that itself requires
+        // real measured beats/downbeats — must be approved before rendered shots hit the timeline.
+        let gates = (try? YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile))
+            ?? Gates(project: "")
+        do {
+            try GateGuard.requireChain(gates, order: mergedPhaseOrder(dataRoot: root), through: "shotlist")
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message)
+        }
+
         guard let grid = BeatAssembly.loadBeatGrid(dataRoot: root), !grid.beats.isEmpty else {
             throw ToolError("Run analysis first: no beat analysis found (expected analysis/<song>.json with beats). Run run_phase(\"analysis\").")
         }
