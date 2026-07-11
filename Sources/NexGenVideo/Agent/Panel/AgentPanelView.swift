@@ -69,6 +69,7 @@ struct AgentPanelView: View {
                 AgentDialogCard(
                     dialog: dialog,
                     externalSelections: $service.dialogChoiceSelections,
+                    accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
                     onSubmit: { result in service.submitDialog(dialog, result: result) },
                     onCancel: { service.cancelDialog() }
                 )

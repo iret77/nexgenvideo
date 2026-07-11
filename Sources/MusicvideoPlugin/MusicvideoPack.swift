@@ -52,7 +52,8 @@ public struct MusicvideoPack: Pack {
         headline: "Turn a song into a finished video.",
         benefit: "Reads your track and plans shots to the beat.",
         minAppVersion: musicvideoMinAppVersion,
-        badgeURL: PackKnowledge.badgeURL()
+        badgeURL: PackKnowledge.badgeURL(),
+        accentHex: "#FF2D55"
     )
 
     /// One honest starter. The prompt is USER-VISIBLE — it lands in the transcript as if the user
@@ -89,7 +90,7 @@ public struct MusicvideoPack: Pack {
         }
         // Hard gate: the analysis gate can't be stamped until a real analysis artifact (with genuine
         // beats/downbeats) exists — the deterministic backstop against a fabricated song structure.
-        registry.registerGateRequirement("analysis", MusicvideoGateChecks.requireRealAnalysis)
+        registry.registerGateRequirement("analysis") { try MusicvideoGateChecks.requireRealAnalysis(dataRoot: $0) }
         try? registry.registerUIContract(phase: "analysis", surface: "choice", taskClass: "classification")
     }
 }

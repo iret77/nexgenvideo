@@ -116,9 +116,10 @@ enum ToolDefinitions {
                         "type": "object",
                         "description": "Turn this dialog into a FILE INTAKE: the card shows a drop zone + a native file picker instead of the free-text field, so the user drops or chooses the file(s) and never types a path. Each chosen file is imported as a media asset and returned to you as an @mentioned asset in the answer message \u{2014} attach it by id (e.g. attach_song media:<id>). Use whenever a step needs a LOCAL file FROM THE USER (a song, footage, a still). A dialog may carry ONLY a fileIntake (no sections), or combine it with sections (e.g. a cut-mode choice alongside the track). Optional.",
                         "properties": [
-                            "accept": ["type": "array", "items": ["type": "string"], "description": "Accepted kinds ('audio', 'video', 'image') or bare file extensions ('mp3', 'wav'). Empty \u{21D2} any file."],
+                            "accept": ["type": "array", "items": ["type": "string"], "description": "Accepted kinds ('audio', 'video', 'image', 'text') or bare file extensions ('mp3', 'wav', 'txt'). Empty \u{21D2} any file."],
                             "prompt": ["type": "string", "description": "Short line shown in the drop well, e.g. 'Drop your track or choose a file (.wav / .mp3 / .m4a / .aiff / .flac / .aac)'."],
                             "multiple": ["type": "boolean", "description": "Allow more than one file. Default false."],
+                            "attachAs": ["type": "string", "description": "Where the file goes. Omit \u{21D2} the media library, returned as an @mention (the song path). 'lyrics' \u{21D2} host writes lyrics/lyrics.txt and replies with the parsed [Section] markers. 'script' \u{21D2} host writes import/script.md and tells you to build the treatment/bible FROM it (a brownfield project). Both are text sidecars \u{2014} use accept ['text'] with them."],
                         ],
                     ],
                     "sections": [

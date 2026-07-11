@@ -185,6 +185,9 @@ public struct PackManifest: Sendable, Equatable {
     /// mirror on the in-code manifest lets the picker show the requirement.
     public let minAppVersion: String
     public let badgeURL: URL?
+    /// The pack's brand accent as a `#RRGGBB` hex, used to make its critical in-chat controls (e.g. the
+    /// track/lyrics upload well) recognizably the pack's own. Nil → the host uses its default accent.
+    public let accentHex: String?
 
     public init(
         id: String,
@@ -193,7 +196,8 @@ public struct PackManifest: Sendable, Equatable {
         headline: String = "",
         benefit: String = "",
         minAppVersion: String = "0.0.0",
-        badgeURL: URL? = nil
+        badgeURL: URL? = nil,
+        accentHex: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -202,6 +206,7 @@ public struct PackManifest: Sendable, Equatable {
         self.benefit = benefit
         self.minAppVersion = minAppVersion
         self.badgeURL = badgeURL
+        self.accentHex = accentHex
     }
 }
 

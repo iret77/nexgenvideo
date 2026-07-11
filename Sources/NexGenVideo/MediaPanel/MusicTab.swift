@@ -125,6 +125,7 @@ struct MusicTab: View {
                     AgentDialogCard(
                         dialog: dialog,
                         preselected: dialogPreselected,
+                        accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
                         // Route through the ONE shared handler (audit #3). It dispatches on the
                         // dialog's `.generationIntent` purpose to the intent sink installed below.
                         onSubmit: { result in

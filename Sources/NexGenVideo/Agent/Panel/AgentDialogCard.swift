@@ -15,6 +15,9 @@ struct AgentDialogCard: View {
     /// so a click on a projected timeline range and a chip tap stay in sync. Nil ⇒ the card owns its
     /// own selection (Music-tab and any non-projected use — unchanged behavior).
     var externalSelections: Binding<[String: Set<String>]>? = nil
+    /// The active pack's brand accent, used to make a `fileIntake` well recognizably the pack's own
+    /// (the upload step everything downstream depends on). Defaults to the host accent.
+    var accent: Color = AppTheme.Accent.primary
     let onSubmit: (AgentDialogResult) -> Void
     let onCancel: () -> Void
 
@@ -174,37 +177,46 @@ struct AgentDialogCard: View {
         }
     }
 
+    /// Prominent, accent-tinted drop zone. Everything downstream in a pack workflow hangs on this one
+    /// upload (the song / lyrics), so it reads as the card's primary action — the pack's accent color,
+    /// a large glyph, a clear call to action, and a filled Choose button — not a quiet inline field.
     private func emptyFileWell(_ intake: AgentDialog.FileIntake) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Image(systemName: "arrow.down.doc")
-                .font(.system(size: AppTheme.FontSize.md))
-                .foregroundStyle(AppTheme.Accent.primary)
+        VStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "arrow.down.doc.fill")
+                .font(.system(size: AppTheme.FontSize.xl))
+                .foregroundStyle(accent)
             Text(intake.prompt ?? "Drop a file here or choose one")
-                .font(.system(size: AppTheme.FontSize.xs))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: AppTheme.Spacing.sm)
-            chooseButton(intake, label: "Choose…")
+            Button { presentFilePanel(intake) } label: {
+                Text("Choose…").fontWeight(.semibold)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(accent)
+            .controlSize(.regular)
         }
-        .padding(AppTheme.Spacing.sm)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(AppTheme.Spacing.mdLg)
+        .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .fill(Color.black.opacity(AppTheme.Opacity.muted))
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                .fill(accent.opacity(isDropTargeted ? AppTheme.Opacity.muted : AppTheme.Opacity.faint))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .strokeBorder(isDropTargeted ? AppTheme.Accent.primary : AppTheme.Border.subtleColor,
-                              style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thin,
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                .strokeBorder(accent.opacity(isDropTargeted ? AppTheme.Opacity.opaque : AppTheme.Opacity.strong),
+                              style: StrokeStyle(lineWidth: isDropTargeted ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.thin,
                                                  dash: [AppTheme.Spacing.xs]))
         )
+        .animation(.easeInOut(duration: AppTheme.Anim.hover), value: isDropTargeted)
     }
 
     private func pickedFileChip(_ url: URL) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: fileSymbol(url))
                 .font(.system(size: AppTheme.FontSize.xs))
-                .foregroundStyle(AppTheme.Accent.primary)
+                .foregroundStyle(accent)
             Text(url.lastPathComponent)
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.primaryColor)
@@ -269,6 +281,7 @@ struct AgentDialogCard: View {
             case "audio": types.append(.audio)
             case "video", "movie": types.append(.movie)
             case "image": types.append(.image)
+            case "text": types.append(contentsOf: [.plainText, .text])
             default:
                 if let type = UTType(filenameExtension: token) { types.append(type) }
             }
@@ -288,6 +301,7 @@ struct AgentDialogCard: View {
         if type.conforms(to: .audio) { return "music.note" }
         if type.conforms(to: .movie) { return "film" }
         if type.conforms(to: .image) { return "photo" }
+        if type.conforms(to: .text) { return "doc.plaintext" }
         return "doc"
     }
 
