@@ -176,11 +176,38 @@ extension EditorViewModel {
     @discardableResult
     private func addMediaAsset(from url: URL, type: ClipType, folderId: String? = nil) -> MediaAsset {
         let name = url.deletingPathExtension().lastPathComponent
-        let asset = MediaAsset(url: url, type: type, name: name)
+        let asset = MediaAsset(url: durableProjectMediaURL(for: url), type: type, name: name)
         asset.folderId = folderId
         importMediaAsset(asset)
         Task { await finalizeImportedAsset(asset) }
         return asset
+    }
+
+    /// Copy an imported file into the package's `media/` so the `.ngv` stays self-contained — the
+    /// manifest then records `.project(relativePath:)`, not a host-specific absolute path. Copy, never
+    /// move. Files already inside the package and unsaved projects (no package yet) pass through.
+    func durableProjectMediaURL(for fileURL: URL) -> URL {
+        guard let projectURL,
+              !fileURL.standardizedFileURL.path.hasPrefix(projectURL.standardizedFileURL.path)
+        else { return fileURL }
+        let mediaDir = projectURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
+        let fm = FileManager.default
+        // Hash source path + mtime so distinct sources never alias and an edited source yields a fresh
+        // copy, while re-importing an unchanged file reuses its copy.
+        let src = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let mtime = ((try? fm.attributesOfItem(atPath: fileURL.path))?[.modificationDate] as? Date)?
+            .timeIntervalSince1970 ?? 0
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in "\(src)|\(mtime)".utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+        let base = fileURL.deletingPathExtension().lastPathComponent
+        let ext = fileURL.pathExtension
+        let stamped = "\(base)-\(String(h, radix: 16))"
+        let dest = mediaDir.appendingPathComponent(ext.isEmpty ? stamped : "\(stamped).\(ext)")
+        if !fm.fileExists(atPath: dest.path) {
+            try? fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+            try? fm.copyItem(at: fileURL, to: dest)
+        }
+        return fm.fileExists(atPath: dest.path) ? dest : fileURL
     }
 
     struct MediaImportSummary: Sendable {
@@ -230,7 +257,7 @@ extension EditorViewModel {
 
         let importedAssets = plan.files.map { file in
             let folderId = parentFolderId(for: file.parent, plannedFolderIds: folderIds)
-            let asset = MediaAsset(url: file.url, type: file.type, name: file.name)
+            let asset = MediaAsset(url: durableProjectMediaURL(for: file.url), type: file.type, name: file.name)
             asset.folderId = folderId
             return asset
         }

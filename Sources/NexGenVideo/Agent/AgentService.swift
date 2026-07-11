@@ -164,14 +164,30 @@ final class AgentService {
         pendingDialog = nil
         switch dialog.purpose {
         case .chatClarification:
-            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+            let attached = importDialogFiles(result.fileURLs)
+            send(text: Self.chatMessage(from: dialog, result: result, attached: attached), mentions: attached)
         case .generationIntent:
             if let sink = onGenerationDialogIntent {
                 sink(Self.intentLine(from: dialog, result: result))
             } else {
-                send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+                let attached = importDialogFiles(result.fileURLs)
+                send(text: Self.chatMessage(from: dialog, result: result, attached: attached), mentions: attached)
             }
         }
+    }
+
+    /// Import a file-intake dialog's dropped/picked files as media assets, so the answer reaches the
+    /// agent as @mentioned assets it references by id (e.g. `attach_song media:`) — never a typed
+    /// path. Mirrors the composer's paperclip/drag path (`addMediaAsset` + a mention).
+    private func importDialogFiles(_ urls: [URL]) -> [AgentMention] {
+        guard let editor, !urls.isEmpty else { return [] }
+        var mentions: [AgentMention] = []
+        for url in urls {
+            guard let asset = editor.addMediaAsset(from: url) else { continue }
+            let displayName = Self.disambiguatedMentionName(for: asset, existing: mentions)
+            mentions.append(AgentMention(displayName: displayName, mediaRef: asset.id, type: asset.type))
+        }
+        return mentions
     }
 
     /// Sink for a `.generationIntent` dialog's composed intent, set by the surface that owns the
@@ -179,8 +195,10 @@ final class AgentService {
     /// answer is never dropped.
     var onGenerationDialogIntent: (@MainActor (String) -> Void)?
 
-    /// The structured chat-message form of a dialog answer — labeled sections + free-text direction.
-    private static func chatMessage(from dialog: AgentDialog, result: AgentDialogResult) -> String {
+    /// The structured chat-message form of a dialog answer — labeled sections, free-text direction,
+    /// and any files the user brought in (as @mention tokens so `send` carries them as real mentions).
+    private static func chatMessage(from dialog: AgentDialog, result: AgentDialogResult,
+                                    attached: [AgentMention] = []) -> String {
         var parts: [String] = []
         for section in dialog.sections {
             let picked = result.labels(section.id)
@@ -191,6 +209,10 @@ final class AgentService {
         }
         var line = "Dialog \u{201C}\(dialog.title)\u{201D} \u{2014} " + (parts.isEmpty ? "confirmed" : parts.joined(separator: "; "))
         if !result.direction.isEmpty { line += ". Direction: \(result.direction)" }
+        if !attached.isEmpty {
+            let tokens = attached.map { "@\($0.displayName)" }.joined(separator: " ")
+            line += ". Attached \(attached.count == 1 ? "file" : "files"): \(tokens)"
+        }
         return line
     }
 
