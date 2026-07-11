@@ -140,7 +140,15 @@ For any section whose options aren't exhaustive, set `allowsCustom: true` so the
    to use their style as a reference when phrasing the notes. Ask the
    user to approve the phrased notes sentence.
 
-#### Technical questions (own show_dialog calls after Batch 1b)
+#### Technical / render-tuning questions — DEFER these out of the brief interview
+
+To cut approval fatigue, do NOT front-load render-tuning into the opening
+brief. Settle only the ESSENTIALS now (Batch 1 + 1a + 1b: mission, format,
+mode, medium, style, and questions 11–12 figures/lyrics). Ask each of the
+following at the phase that actually needs it — the video-model and
+director-pattern choices when the shotlist-agent needs them, the preview
+pass and cut-handles at render — not up front. Each is its own show_dialog
+at that point; keep the answers in `brief.yaml` as they're settled.
 
 7. **Video model preference** — exactly 4 options (Other automatic for
    the rest). Concrete options depend on the host's available

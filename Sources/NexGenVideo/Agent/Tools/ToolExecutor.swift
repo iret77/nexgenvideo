@@ -128,6 +128,8 @@ final class ToolExecutor {
         case .rewind:               return try rewindTool(editor, args)
         case .estimateCost:         return try estimateCostTool(editor, args)
         case .showArtifact:         return try showArtifactTool(editor, args)
+        case .listProjectFiles:     return try listProjectFilesTool(editor, args)
+        case .copyProjectFile:      return try copyProjectFileTool(editor, args)
         case .runPhase:             return try await runPhaseTool(editor, args)
         case .attachSong:           return try attachSongTool(editor, args)
         case .nextRenderShot:       return try nextRenderShotTool(editor, args)

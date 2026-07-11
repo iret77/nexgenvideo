@@ -176,6 +176,9 @@ final class AgentService {
         case "style":
             attachStyleRefs(dialog: dialog, result: result)
             return
+        case "song":
+            attachSongFromDialog(dialog: dialog, result: result)
+            return
         default:
             break
         }
@@ -310,6 +313,49 @@ final class AgentService {
             }
         }
         return out.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    /// Place the picked song straight into the project's `audio/` (copy, never move) and hold the
+    /// one-song contract — no separate `attach_song` step for the agent to forget. Copies the new song
+    /// in first, THEN clears any other audio file, so a failure never leaves audio/ empty.
+    private func attachSongFromDialog(dialog: AgentDialog, result: AgentDialogResult) {
+        guard let editor, let workingRoot = editor.workingRoot,
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
+              let src = result.fileURLs.first
+        else {
+            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+            return
+        }
+        guard AudioProjectLayout.audioExtensions.contains(src.pathExtension.lowercased()) else {
+            send(text: "That isn't an audio file — the song must be .wav / .mp3 / .m4a / .aiff / .flac / .aac.", mentions: [])
+            return
+        }
+        let audioDir = dataRoot.appendingPathComponent("audio", isDirectory: true)
+        let dest = audioDir.appendingPathComponent(src.lastPathComponent)
+        do {
+            try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+            if src.standardizedFileURL != dest.standardizedFileURL {
+                // Stage next to the destination, then swap in — a failed copy never destroys an existing
+                // same-named song (copy-before-delete).
+                let staging = audioDir.appendingPathComponent(".song-\(UUID().uuidString).\(src.pathExtension)")
+                try FileManager.default.copyItem(at: src, to: staging)
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    _ = try FileManager.default.replaceItemAt(dest, withItemAt: staging)
+                } else {
+                    try FileManager.default.moveItem(at: staging, to: dest)
+                }
+            }
+            // One-song contract: retire any OTHER audio file only after the new one is safely in place.
+            for other in AudioProjectLayout.songFiles(dataRoot: dataRoot)
+            where other.lastPathComponent != dest.lastPathComponent {
+                try? FileManager.default.removeItem(at: other)
+            }
+        } catch {
+            send(text: "Couldn't place the song in audio/: \(error.localizedDescription).", mentions: [])
+            return
+        }
+        editor.onPipelineChanged?()
+        send(text: "Song placed in audio/ (\(src.lastPathComponent)). Now run run_phase(\"analysis\") to measure it.", mentions: [])
     }
 
     /// Copy loose style-reference images into the project's `import/` — a brownfield look source the

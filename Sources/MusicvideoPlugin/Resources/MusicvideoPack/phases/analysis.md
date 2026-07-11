@@ -77,12 +77,11 @@ Inspect the project yourself: is there an audio file in `audio/`? Are
 there lyrics in `lyrics/lyrics.txt`?
 
 - **Audio missing** → bring in the song with a **show_dialog** that carries
-  a `fileIntake` (`accept: ["audio"]`, prompt e.g. "Drop your track or choose
-  a file — .wav / .mp3 / .m4a / .aiff / .flac / .aac"). The user drops it or
-  picks it from a native file dialog (never types a path); it arrives as an
-  @mentioned audio asset. Then bring exactly one file into `audio/` with
-  `attach_song` (`media:<that asset id>`; `import_media` only reaches the
-  media library, not `audio/`). If you can't obtain a song, **HARD STOP**:
+  a `fileIntake` (`accept: ["audio"]`, `attachAs: "song"`, prompt e.g. "Drop
+  your track or choose a file — .wav / .mp3 / .m4a / .aiff / .flac / .aac").
+  The user drops it or picks it (never types a path); the host places it
+  straight into `audio/` under the one-song contract — no separate
+  `attach_song` step to forget. If you can't obtain a song, **HARD STOP**:
   "No audio file in `audio/` — without the song there is no analysis."
   Then wait.
 - **Everything present** → continue directly with step 2.

@@ -98,7 +98,7 @@ struct AgentDialogCard: View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: dialog.symbol)
                 .font(.system(size: AppTheme.FontSize.md))
-                .foregroundStyle(AppTheme.Accent.primary)
+                .foregroundStyle(accent)
             Text(dialog.title)
                 .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
@@ -125,7 +125,8 @@ struct AgentDialogCard: View {
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 FlowChips(options: options,
                           selected: choiceSelections[section.id] ?? [],
-                          multiSelect: multiSelect) { optionId in
+                          multiSelect: multiSelect,
+                          accent: accent) { optionId in
                     toggleChoice(sectionId: section.id, optionId: optionId, multiSelect: multiSelect)
                 }
                 if section.allowsCustom {
@@ -397,6 +398,7 @@ private struct FlowChips: View {
     let options: [AgentDialog.Choice]
     let selected: Set<String>
     let multiSelect: Bool
+    var accent: Color = AppTheme.Accent.primary
     let onTap: (String) -> Void
 
     var body: some View {
@@ -424,12 +426,12 @@ private struct FlowChips: View {
                     .foregroundStyle(isOn ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                     .background(
                         Capsule().fill(isOn
-                                       ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
+                                       ? accent.opacity(AppTheme.Opacity.faint)
                                        : Color.white.opacity(AppTheme.Opacity.subtle))
                     )
                     .overlay(
                         Capsule().strokeBorder(
-                            isOn ? AppTheme.Accent.primary : AppTheme.Border.subtleColor,
+                            isOn ? accent : AppTheme.Border.subtleColor,
                             lineWidth: AppTheme.BorderWidth.hairline)
                     )
                     .contentShape(Capsule())

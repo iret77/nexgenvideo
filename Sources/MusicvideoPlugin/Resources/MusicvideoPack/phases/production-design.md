@@ -65,7 +65,7 @@ You are re-spawned fresh on every `/continue`. Before doing anything:
 
 ### 2. Survey the existing material
 
-`Glob "import/**/*.{png,jpg,jpeg,webp}"` — what has the user already
+`list_project_files(subdir: "import")` — what has the user already
 uploaded? Heuristic:
 
 - `import/scenes/`, `import/moodboard/` → typically style refs.
@@ -79,9 +79,9 @@ Show the user the style candidates found **inline via `Read`** and ask
 via `show_dialog`: "Which of these define the look of the video?"
 (all / selection / none — multi-select).
 
-For each selected file: copy via `Bash cp` from `import/...` to
-`production_design/refs/<descriptive_name>.<ext>`. Clean file names,
-lowercase, underscores. The original stays in `import/`.
+For each selected file: `copy_project_file(from: "import/...", to:
+"production_design/refs/<descriptive_name>.<ext>")`. Clean file names,
+lowercase, underscores. The original stays in `import/` (it's a copy).
 
 ### 4. Sharpen the style
 

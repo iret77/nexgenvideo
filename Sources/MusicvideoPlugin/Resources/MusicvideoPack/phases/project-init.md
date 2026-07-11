@@ -159,5 +159,13 @@ Call `approve_gate(project_dir, "project_init")`.
   working / choose a different slug?" — never overwrite silently.
 - Ambiguous material in `import/` → the agent inventories at analysis
   start and asks the user on ambiguity; do not guess.
+- **Brownfield detection on (re)entry / resume.** The user's material on
+  disk IS the durable record of a brownfield project — nothing extra to
+  persist. On entering a project (fresh spawn or `/continue`), run
+  `list_project_files(subdir: "import")`: an `import/script.md`, or any
+  `import/characters/<id>/` or `import/locations/<id>/`, means BROWNFIELD —
+  build from that material, don't reinvent. Empty `import/` ⇒ greenfield.
+  Re-derive this each time rather than assuming; a later session sees the
+  same files.
 - `init_project` returns an error → surface it to the user verbatim;
   do not retry blindly or fall back to hand-creating folders.

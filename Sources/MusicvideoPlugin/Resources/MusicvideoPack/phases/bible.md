@@ -175,12 +175,11 @@ reference on every sheet generation.
 
 ### 6. Import review for identity anchors
 
-`Glob "import/characters/<id>/**"` (data-root relative) for every
-entity.
+`list_project_files(subdir: "import/characters/<id>")` for every entity.
 - If user refs exist: show them inline via `Read`. `show_dialog`
   "Which image is the identity anchor for <id>?" — copy the selected
-  ones (`Bash cp`) to `bible/refs/<id>/<name>.png` and add them to
-  `reference_images`.
+  ones with `copy_project_file(from: "import/characters/<id>/<name>",
+  to: "bible/refs/<id>/<name>.png")` and add them to `reference_images`.
 - If there are no user refs: skip — the `sheets` must provide the
   anchor.
 

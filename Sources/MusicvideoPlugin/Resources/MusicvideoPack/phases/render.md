@@ -38,8 +38,11 @@ repeat until `next_render_shot` reports `done`.
   cost_eur)`.
 - The render manifest, updated incrementally per shot (the engine
   persists it on every `record_render`).
-- Gate: R1 done → `approve_gate(project_dir, "videos_preview")`; R2 done
-  → `approve_gate(project_dir, "videos_final")`.
+- Gate: the pipeline has ONE terminal gate, `render`. R1 (preview) is a
+  quality pass, not a separate pipeline gate — don't approve anything for
+  it. When R2 (final) is done, close the pipeline:
+  `approve_gate(project_dir, "render")`. (`videos_preview`/`videos_final`
+  are not gates in this engine; approving them does nothing.)
 
 ## Steps
 
@@ -242,8 +245,7 @@ When the user asks to redo a single shot:
 2. Keep the old clip as history.
 3. Re-record via `record_render` (the new entry replaces the old).
 4. Deduct the budget via `estimate_cost`; do **not** reset the
-   `videos_preview` / `videos_final` gate (one shot, not the whole
-   project).
+   `render` gate (one shot, not the whole project).
 
 ### 8. Review in the chosen mode (video-review duty)
 
@@ -298,8 +300,8 @@ call-out the path just floats in the answer and the user never views it.
 
 ### 9. Gates
 
-- R1 done: `approve_gate(project_dir, "videos_preview")`.
-- R2 done: `approve_gate(project_dir, "videos_final")`.
+- R1 (preview) done: no gate — proceed to the final pass.
+- R2 (final) done: `approve_gate(project_dir, "render")` — closes the pipeline.
 
 ### 10. Timeline placement (optional)
 
@@ -347,8 +349,8 @@ pan-zoom).
   frames + clip, always together (step 8).
 - The render loop is driven by `next_render_shot` →
   build prompt → `generate_video` → `record_render`, repeated until
-  `done`. Budget is checked via `estimate_cost` after every shot; gates
-  are `videos_preview` / `videos_final` via `approve_gate`.
+  `done`. Budget is checked via `estimate_cost` after every shot; the
+  terminal gate is `render` (closed after the final pass) via `approve_gate`.
 - **What you do NOT do:**
   - No final cut. The user does the editing on the host timeline.
   - No audio rendering (clips come mute). The user lays the song over it.

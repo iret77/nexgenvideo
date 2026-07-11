@@ -145,6 +145,63 @@ extension ToolExecutor {
         }
     }
 
+    // MARK: - Project files (list / copy — replaces shell Glob/cp in pack docs)
+
+    /// Resolve a data-root-relative path, refusing anything that escapes the project — both lexically
+    /// (`../`) AND through a symlink. The symlink check resolves the deepest EXISTING ancestor (the
+    /// destination itself may not exist yet) and confirms it still lives under the canonical root.
+    private static func resolveInside(_ root: URL, _ rel: String) throws -> URL {
+        let base = root.standardizedFileURL
+        let target = base.appendingPathComponent(rel).standardizedFileURL
+        guard target.path == base.path || target.path.hasPrefix(base.path + "/") else {
+            throw ToolError("Path escapes the project: '\(rel)'.")
+        }
+        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        var probe = target
+        while !FileManager.default.fileExists(atPath: probe.path), probe.pathComponents.count > 1 {
+            probe = probe.deletingLastPathComponent()
+        }
+        let resolved = probe.resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.path == canonicalRoot.path || resolved.path.hasPrefix(canonicalRoot.path + "/") else {
+            throw ToolError("Path escapes the project via a link: '\(rel)'.")
+        }
+        return target
+    }
+
+    func listProjectFilesTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let subdir = try args.requireString("subdir")
+        let dir = try Self.resolveInside(root, subdir)
+        let prefix = root.standardizedFileURL.path + "/"
+        let files = ((try? FileManager.default.subpathsOfDirectory(atPath: dir.path)) ?? [])
+            .map { dir.appendingPathComponent($0) }
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile ?? false }
+            .map { $0.standardizedFileURL.path.replacingOccurrences(of: prefix, with: "") }
+            .sorted()
+        return try jsonResult(["subdir": subdir, "files": files])
+    }
+
+    func copyProjectFileTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let fromRel = try args.requireString("from")
+        let toRel = try args.requireString("to")
+        let from = try Self.resolveInside(root, fromRel)
+        let to = try Self.resolveInside(root, toRel)
+        guard FileManager.default.fileExists(atPath: from.path) else {
+            throw ToolError("Source not found: '\(fromRel)'.")
+        }
+        do {
+            try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if from.standardizedFileURL != to.standardizedFileURL {
+                if FileManager.default.fileExists(atPath: to.path) { try FileManager.default.removeItem(at: to) }
+                try FileManager.default.copyItem(at: from, to: to)
+            }
+        } catch {
+            throw ToolError("Couldn't copy '\(fromRel)' → '\(toRel)': \(error.localizedDescription)")
+        }
+        return try jsonResult(["from": fromRel, "to": toRel])
+    }
+
     // MARK: - Gates (WRITES)
 
     func approveGateTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {

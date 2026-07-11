@@ -67,6 +67,8 @@ enum ToolName: String, CaseIterable, Sendable {
     case getUIContract = "get_ui_contract"
     case setGateState = "set_gate_state"
     case runProviderTool = "run_provider_tool"
+    case listProjectFiles = "list_project_files"
+    case copyProjectFile = "copy_project_file"
 
     /// Tools that write the pipeline data root (not the timeline, which is undo-tracked and already
     /// marks the document edited). After one of these the working copy diverges from the saved package,
@@ -75,7 +77,7 @@ enum ToolName: String, CaseIterable, Sendable {
         switch self {
         case .initProject, .approveGate, .rewind, .runPhase, .recordRender,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute, .setGateState,
-             .attachSong:
+             .attachSong, .copyProjectFile:
             return true
         default:
             return false
@@ -126,7 +128,7 @@ enum ToolDefinitions {
                             "accept": ["type": "array", "items": ["type": "string"], "description": "Accepted kinds ('audio', 'video', 'image', 'text') or bare file extensions ('mp3', 'wav', 'txt'). Empty \u{21D2} any file."],
                             "prompt": ["type": "string", "description": "Short line shown in the drop well, e.g. 'Drop your track or choose a file (.wav / .mp3 / .m4a / .aiff / .flac / .aac)'."],
                             "multiple": ["type": "boolean", "description": "Allow more than one file. Default false."],
-                            "attachAs": ["type": "string", "description": "Where the file goes. Omit \u{21D2} the media library, returned as an @mention (the song path). 'lyrics' \u{21D2} host writes lyrics/lyrics.txt and replies with the parsed [Section] markers. 'script' \u{21D2} host writes import/script.md for a brownfield project (accept ['text'] for both). 'character'/'location' \u{2192} host copies the images into import/characters|locations/<slug>/ as a bible anchor (accept ['image'], set namePrompt, usually multiple:true). 'style' \u{2192} host copies loose mood/style reference images into import/ for the production-design agent (accept ['image'], multiple:true, no namePrompt)."],
+                            "attachAs": ["type": "string", "description": "Where the file goes. Omit \u{21D2} the media library, returned as an @mention. 'song' \u{21D2} host places the audio straight into audio/ under the one-song contract (accept ['audio']) \u{2014} no separate attach_song step. 'lyrics' \u{21D2} host writes lyrics/lyrics.txt and replies with the parsed [Section] markers. 'script' \u{21D2} host writes import/script.md for a brownfield project (accept ['text'] for both). 'character'/'location' \u{2192} host copies the images into import/characters|locations/<slug>/ as a bible anchor (accept ['image'], set namePrompt, usually multiple:true). 'style' \u{2192} host copies loose mood/style reference images into import/ for the production-design agent (accept ['image'], multiple:true, no namePrompt)."],
                             "namePrompt": ["type": "string", "description": "For attachAs 'character'/'location': the label of a REQUIRED identity-name field the well shows (e.g. 'Character name'). The typed name becomes the destination folder; confirm stays disabled until it's filled."],
                             "required": ["type": "boolean", "description": "Whether a file/text is required to confirm. Default true; 'lyrics'/'script' default false (the user can confirm with nothing, an explicit skip the host reports to you). Set false to make any intake skippable via Confirm rather than only by dismissing."],
                         ],
@@ -995,6 +997,29 @@ enum ToolDefinitions {
                     "gate": ["type": "string", "description": "Gate name to render (brief/production_design/treatment/storyboard/bible/shotlist/analysis/render)."],
                 ],
                 required: ["gate"]
+            )
+        ),
+        AgentTool(
+            name: .listProjectFiles,
+            description: "List files under a project subdirectory. Read-only. Use this instead of a shell/Glob to see what the user brought in — e.g. `subdir: \"import\"` for style references, `subdir: \"import/characters/mouse\"` for a character's refs. Returns `{subdir, files}` (paths relative to the data root, recursive, sorted). `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "subdir": ["type": "string", "description": "Data-root-relative directory to list, e.g. 'import' or 'import/characters/<id>'."],
+                ],
+                required: ["subdir"]
+            )
+        ),
+        AgentTool(
+            name: .copyProjectFile,
+            description: "Copy a file from one project-relative path to another WITHIN the project (copy, never move). WRITES. Use this instead of a shell `cp` to stage references — e.g. from `import/characters/<id>/face.png` to `bible/refs/<id>/face.png`. Creates the destination directory. Both paths are data-root-relative and must stay inside the project. Returns `{from, to}`.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "from": ["type": "string", "description": "Source path, data-root-relative (e.g. 'import/characters/mouse/face.png')."],
+                    "to": ["type": "string", "description": "Destination path, data-root-relative (e.g. 'bible/refs/mouse/face.png')."],
+                ],
+                required: ["from", "to"]
             )
         ),
         AgentTool(

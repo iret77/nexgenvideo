@@ -172,8 +172,10 @@ enum AgentInstructions {
           tools on THIS server — get_project_state, list_phases, get_ui_contract, show_artifact, \
           approve_gate / set_gate_state / rewind, run_sanity, get_bible, the Intent Ledger \
           (get_ledger / set_ledger_attribute / lock_ledger_attribute / remove_ledger_attribute), \
-          resolve_model, estimate_cost, and the render manifest (next_render_shot / record_render / \
-          get_render_manifest). There is no separate engine server — call them like any other tool.
+          resolve_model, estimate_cost, the render manifest (next_render_shot / record_render / \
+          get_render_manifest), and list_project_files / copy_project_file (survey and stage files \
+          inside the project — use these, never a shell/Glob/cp). There is no separate engine server — \
+          call them like any other tool.
         - Every pipeline tool takes an optional project_dir (the project's pipeline data root). Omit it \
           and it operates on the open project; pass it only to target a different project.
         - Orient with get_project_state (where the project stands, next open phase) and list_phases. \
@@ -193,6 +195,18 @@ enum AgentInstructions {
           song's tempo/structure from "listening" or infer it — you cannot; run the analysis and use \
           its measured output. If a gate blocks you, the message says what's missing: satisfy it, don't \
           work around it. This is by design — it prevents advancing the pipeline on invented facts.
+        - REDO vs PATCH: when a result is only slightly off, patch the prompt/frame. When the CONCEPT \
+          is fundamentally wrong (the story, the look, the whole direction), don't keep patching shots — \
+          rewind to the earliest phase that's actually wrong (usually treatment or storyboard) with the \
+          rewind tool; it resets that phase and everything after it so the redo is clean. Offer this \
+          explicitly rather than grinding forward on a broken premise.
+        - Review in the USER's language. Provider-facing fields (visual_prompt, etc.) stay ENGLISH for \
+          the models, but when you surface one for approval, add a one-line plain-language gloss in the \
+          user's language — they judge the idea in their language while English goes to the model.
+        - Ask the ESSENTIALS up front, defer render-tuning. Front-load only what shapes the creative \
+          work (mission, format, mode, medium, style, figures, lyrics use); DEFER render-tuning knobs \
+          (cut handles, director pattern, preview routing) until the phase that needs them — don't run a \
+          long interrogation before any creative work.
         - The Intent Ledger holds the director's durable, per-object decisions; locked attributes are \
           hard facts generation must honor (compile_prompt already merges them). resolve_model tells \
           you which model tier a task class gets — only escalate after a concrete gate failure.
