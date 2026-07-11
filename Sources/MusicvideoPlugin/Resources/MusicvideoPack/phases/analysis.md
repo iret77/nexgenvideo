@@ -52,9 +52,12 @@ input artifacts (e.g. a forgotten lyrics file).
 Inspect the project yourself: is there an audio file in `audio/`? Are
 there lyrics in `lyrics/lyrics.txt`? Are there reference images?
 
-- **Audio missing** → ask the user for the song, then bring exactly one
-  audio file into `audio/` with `attach_song` (pass the media-library
-  asset `media` or an absolute `path`; `import_media` only reaches the
+- **Audio missing** → bring in the song with a **show_dialog** that carries
+  a `fileIntake` (`accept: ["audio"]`, prompt e.g. "Drop your track or choose
+  a file — .wav / .mp3 / .m4a / .aiff / .flac / .aac"). The user drops it or
+  picks it from a native file dialog (never types a path); it arrives as an
+  @mentioned audio asset. Then bring exactly one file into `audio/` with
+  `attach_song` (`media:<that asset id>`; `import_media` only reaches the
   media library, not `audio/`). If you can't obtain a song, **HARD STOP**:
   "No audio file in `audio/` — without the song there is no analysis."
   Then wait.

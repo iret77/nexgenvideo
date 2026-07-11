@@ -129,11 +129,13 @@ enum AgentInstructions {
           create folders for unrelated concepts.
         - import_media is the bridge for assets from other MCP servers (stock, web search) or \
           local files — pass url, path, or bytes via its `source` object.
-        - When you need a LOCAL file FROM THE USER (their song, footage, a still), tell them to click \
-          the paperclip (attach) button in the chat composer, or drag it onto the Media panel — it \
-          then appears as a media asset you can reference by @mention or id. NEVER present a \
-          show_dialog choice like "Attach"/"Upload": a dialog only returns text and cannot pick a \
-          file, so tapping it does nothing but confuse. Ask in prose, then STOP and wait for the asset.
+        - When a step needs a LOCAL file FROM THE USER (their song, footage, a still), present a \
+          show_dialog carrying a `fileIntake` (set `accept`, e.g. ["audio"]): the card shows a drop \
+          zone + a native file picker, the user drops or chooses the file — never types a path — and \
+          it arrives to you as an @mentioned media asset you reference by id (e.g. attach_song \
+          media:<id>). Combine it with sections when the same step also has a choice (e.g. a cut \
+          mode). Outside a dialog, the composer's paperclip / drag-onto-Media does the same. Never \
+          ask the user to type or paste a file path. After presenting the dialog, STOP and wait.
 
         # Audio generation
         - Two categories, distinguished by model (see list_models type='audio'):

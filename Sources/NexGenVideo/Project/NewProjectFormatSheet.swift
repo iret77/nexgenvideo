@@ -24,7 +24,7 @@ struct NewProjectFormatSheet: View {
             }
 
             ScrollView {
-                VStack(spacing: AppTheme.Spacing.sm) {
+                VStack(spacing: AppTheme.Spacing.mdLg) {
                     optionCard(id: nil, title: "Generic",
                                subtitle: "Free-form AI editing — no fixed pipeline.", badge: nil)
                     ForEach(packs) { pack in
@@ -32,8 +32,9 @@ struct NewProjectFormatSheet: View {
                                    subtitle: pack.benefit ?? pack.tagline ?? "", badge: pack.headerImage())
                     }
                 }
+                .padding(.vertical, AppTheme.Spacing.xxs)
             }
-            .frame(maxHeight: 320)
+            .frame(maxHeight: 460)
 
             HStack {
                 Button("Cancel") { dismiss() }
@@ -46,54 +47,63 @@ struct NewProjectFormatSheet: View {
             }
         }
         .padding(AppTheme.Spacing.xl)
-        .frame(width: 460)
+        .frame(width: 500)
     }
+
+    /// Native banner aspect (728×193) — the hero frame matches it so a badge fills the full
+    /// card width with no letterbox and no side crop.
+    private static let bannerAspect: CGFloat = 728.0 / 193.0
 
     private func optionCard(id: String?, title: String, subtitle: String, badge: NSImage?) -> some View {
         let isSelected = selected == id
         return Button { selected = id } label: {
-            HStack(spacing: AppTheme.Spacing.md) {
+            VStack(alignment: .leading, spacing: 0) {
                 Group {
                     if let badge {
-                        // Pack badges are wide banners (~3.77:1) — fit the whole thing, never crop the
-                        // sides. The frame matches that aspect so a banner fills it with no letterbox.
-                        Image(nsImage: badge).resizable().scaledToFit()
+                        Image(nsImage: badge).resizable().scaledToFill()
                     } else {
-                        RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                            .fill(Color.white.opacity(AppTheme.Opacity.subtle))
-                            .overlay(Image(systemName: "wand.and.stars").foregroundStyle(AppTheme.Text.tertiaryColor))
+                        Color.white.opacity(AppTheme.Opacity.subtle)
+                            .overlay(
+                                Image(systemName: "wand.and.stars")
+                                    .font(.system(size: AppTheme.IconSize.lg))
+                                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            )
                     }
                 }
-                .frame(width: 132, height: 35)
-                .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+                .frame(maxWidth: .infinity)
+                .aspectRatio(Self.bannerAspect, contentMode: .fit)
+                .clipped()
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                    if !subtitle.isEmpty {
-                        Text(subtitle)
-                            .font(.system(size: AppTheme.FontSize.xs))
-                            .foregroundStyle(AppTheme.Text.tertiaryColor)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
+                HStack(spacing: AppTheme.Spacing.md) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                        Text(title)
+                            .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
+                            .foregroundStyle(AppTheme.Text.primaryColor)
+                        if !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(.system(size: AppTheme.FontSize.sm))
+                                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
                     }
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: AppTheme.FontSize.xl))
+                        .foregroundStyle(isSelected ? AppTheme.Accent.primary : AppTheme.Text.mutedColor)
                 }
-                Spacer(minLength: AppTheme.Spacing.sm)
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: AppTheme.FontSize.md))
-                    .foregroundStyle(isSelected ? AppTheme.Accent.primary : AppTheme.Text.mutedColor)
+                .padding(AppTheme.Spacing.mdLg)
             }
-            .padding(AppTheme.Spacing.smMd)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                     .fill(isSelected ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
                                      : Color.white.opacity(AppTheme.Opacity.subtle))
             )
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
             .overlay(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                     .strokeBorder(isSelected ? AppTheme.Accent.primary : AppTheme.Border.subtleColor,
-                                  lineWidth: AppTheme.BorderWidth.hairline)
+                                  lineWidth: isSelected ? AppTheme.BorderWidth.thin : AppTheme.BorderWidth.hairline)
             )
             .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
         }

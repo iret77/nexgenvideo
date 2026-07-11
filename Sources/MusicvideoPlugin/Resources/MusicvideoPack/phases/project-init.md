@@ -87,7 +87,9 @@ with a different slug if the user picks that.
 
 Briefly tell the user which files go where, relative to `data_root`:
 
-- the song as MP3/WAV/FLAC/M4A into `audio/`
+- the song (MP3/WAV/FLAC/M4A) — don't ask them to place it in a folder;
+  it is brought in through the track drop-zone/picker when analysis starts
+  (flow A1). Just tell them to have it ready.
 - lyrics as `lyrics/lyrics.txt`
 - **style inspiration** (mood refs, style templates, early visual
   development) into `import/` — the production-design-agent (K2) curates

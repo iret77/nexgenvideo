@@ -83,6 +83,7 @@ struct ReviewPanelView: View {
         case .failed(let error):
             CockpitStateView.error(error, title: "Couldn't load frames",
                                    subject: "the frames",
+                                   activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
                                    isStarting: editor.productionStarting) { Task { await load() } }
         case .loaded(let data):

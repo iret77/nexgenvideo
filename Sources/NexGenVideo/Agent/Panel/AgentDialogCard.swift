@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -21,6 +22,8 @@ struct AgentDialogCard: View {
     @State private var toggleStates: [String: Bool] = [:]
     @State private var direction: String = ""
     @State private var isDropTargeted = false
+    /// Files chosen for a `fileIntake` dialog — via the drop zone or the native picker.
+    @State private var pickedFiles: [URL] = []
 
     private var choiceSelections: [String: Set<String>] {
         get { externalSelections?.wrappedValue ?? localChoiceSelections }
@@ -42,7 +45,11 @@ struct AgentDialogCard: View {
             ForEach(dialog.sections) { section in
                 sectionView(section)
             }
-            directionField
+            if let intake = dialog.fileIntake {
+                fileWell(intake)
+            } else {
+                directionField
+            }
             footerRow
         }
         .padding(AppTheme.Spacing.md)
@@ -57,18 +64,27 @@ struct AgentDialogCard: View {
                               lineWidth: isDropTargeted ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.thin)
         )
         .padding(.horizontal, AppTheme.Spacing.mdLg)
-        // Drop a file (e.g. an MP3) anywhere on the card to fill the path field — a leaf drop, not
-        // shadowed by any parent .onDrop. The card is where a "drag it in" step points.
-        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleFileDrop)
+        // A file-intake dialog accepts a drop anywhere on the card (a big, forgiving target) — a leaf
+        // drop, not shadowed by any parent .onDrop. Non-file dialogs take no drop (isTargeted nil).
+        .onDrop(of: [.fileURL],
+                isTargeted: dialog.fileIntake != nil ? $isDropTargeted : nil,
+                perform: handleFileDrop)
         .onAppear(perform: seedDefaults)
         .id(dialog.id)
     }
 
     private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: URL.self) }) else { return false }
-        _ = provider.loadObject(ofClass: URL.self) { url, _ in
-            guard let url, url.isFileURL else { return }
-            Task { @MainActor in direction = url.path }
+        guard let intake = dialog.fileIntake else { return false }
+        let loaders = providers.filter { $0.canLoadObject(ofClass: URL.self) }
+        guard !loaders.isEmpty else { return false }
+        for provider in loaders {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url, url.isFileURL else { return }
+                Task { @MainActor in
+                    guard accepts(url, intake) else { return }
+                    addPicked(url, intake)
+                }
+            }
         }
         return true
     }
@@ -142,6 +158,139 @@ struct AgentDialogCard: View {
             )
     }
 
+    // MARK: - File intake
+
+    @ViewBuilder
+    private func fileWell(_ intake: AgentDialog.FileIntake) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            if pickedFiles.isEmpty {
+                emptyFileWell(intake)
+            } else {
+                ForEach(pickedFiles, id: \.self) { pickedFileChip($0) }
+                if intake.allowsMultiple {
+                    chooseButton(intake, label: "Add another…")
+                }
+            }
+        }
+    }
+
+    private func emptyFileWell(_ intake: AgentDialog.FileIntake) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "arrow.down.doc")
+                .font(.system(size: AppTheme.FontSize.md))
+                .foregroundStyle(AppTheme.Accent.primary)
+            Text(intake.prompt ?? "Drop a file here or choose one")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: AppTheme.Spacing.sm)
+            chooseButton(intake, label: "Choose…")
+        }
+        .padding(AppTheme.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .fill(Color.black.opacity(AppTheme.Opacity.muted))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .strokeBorder(isDropTargeted ? AppTheme.Accent.primary : AppTheme.Border.subtleColor,
+                              style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thin,
+                                                 dash: [AppTheme.Spacing.xs]))
+        )
+    }
+
+    private func pickedFileChip(_ url: URL) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: fileSymbol(url))
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Accent.primary)
+            Text(url.lastPathComponent)
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: AppTheme.Spacing.sm)
+            Button {
+                pickedFiles.removeAll { $0 == url }
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+            }
+            .buttonStyle(.plain)
+            .help("Remove")
+        }
+        .padding(AppTheme.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .fill(Color.black.opacity(AppTheme.Opacity.muted))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+        )
+    }
+
+    private func chooseButton(_ intake: AgentDialog.FileIntake, label: String) -> some View {
+        Button(label) { presentFilePanel(intake) }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+    }
+
+    private func presentFilePanel(_ intake: AgentDialog.FileIntake) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = intake.allowsMultiple
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        let types = allowedContentTypes(intake)
+        if !types.isEmpty { panel.allowedContentTypes = types }
+        panel.prompt = "Choose"
+        if let prompt = intake.prompt { panel.message = prompt }
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls where accepts(url, intake) {
+            addPicked(url, intake)
+        }
+    }
+
+    private func addPicked(_ url: URL, _ intake: AgentDialog.FileIntake) {
+        if intake.allowsMultiple {
+            if !pickedFiles.contains(url) { pickedFiles.append(url) }
+        } else {
+            pickedFiles = [url]
+        }
+    }
+
+    private func allowedContentTypes(_ intake: AgentDialog.FileIntake) -> [UTType] {
+        var types: [UTType] = []
+        for token in intake.accept {
+            switch token.lowercased() {
+            case "audio": types.append(.audio)
+            case "video", "movie": types.append(.movie)
+            case "image": types.append(.image)
+            default:
+                if let type = UTType(filenameExtension: token) { types.append(type) }
+            }
+        }
+        return types
+    }
+
+    private func accepts(_ url: URL, _ intake: AgentDialog.FileIntake) -> Bool {
+        let allowed = allowedContentTypes(intake)
+        guard !allowed.isEmpty else { return true }
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return allowed.contains { type.conforms(to: $0) }
+    }
+
+    private func fileSymbol(_ url: URL) -> String {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return "doc" }
+        if type.conforms(to: .audio) { return "music.note" }
+        if type.conforms(to: .movie) { return "film" }
+        if type.conforms(to: .image) { return "photo" }
+        return "doc"
+    }
+
     private var footerRow: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             if let cost = dialog.costHint {
@@ -153,7 +302,13 @@ struct AgentDialogCard: View {
             Button(dialog.confirmLabel) { submit() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.small)
+                .disabled(!canSubmit)
         }
+    }
+
+    /// A file-intake dialog can't be confirmed until the user has actually chosen a file.
+    private var canSubmit: Bool {
+        dialog.fileIntake == nil || !pickedFiles.isEmpty
     }
 
     // MARK: - State
@@ -190,7 +345,8 @@ struct AgentDialogCard: View {
         onSubmit(AgentDialogResult(
             selectedLabels: selectedLabels,
             toggles: toggleStates,
-            direction: direction.trimmingCharacters(in: .whitespacesAndNewlines)
+            direction: direction.trimmingCharacters(in: .whitespacesAndNewlines),
+            fileURLs: pickedFiles
         ))
     }
 }

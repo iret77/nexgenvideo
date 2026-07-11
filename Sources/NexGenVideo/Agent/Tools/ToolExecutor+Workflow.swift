@@ -568,30 +568,7 @@ extension ToolExecutor {
     /// timeline clip referencing it there would go offline on reopen. Copy any file outside the package
     /// into the package's `media/` (the durable, self-contained media home) and reference that copy.
     private func durableMediaURL(for fileURL: URL, editor: EditorViewModel) -> URL {
-        guard let projectURL = editor.projectURL,
-              !fileURL.standardizedFileURL.path.hasPrefix(projectURL.standardizedFileURL.path)
-        else { return fileURL }
-        let mediaDir = projectURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
-        // Collision-safe AND freshness-safe: distinct renders can share a basename (renders/s001/
-        // output.mp4 vs s002/output.mp4), and a rerender overwrites the same source path. Hash the
-        // source path AND its mtime, so different sources never alias and a rerender yields a new copy;
-        // an unchanged source reuses its copy.
-        let fmProbe = FileManager.default
-        let src = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
-        let mtime = ((try? fmProbe.attributesOfItem(atPath: fileURL.path))?[.modificationDate] as? Date)?
-            .timeIntervalSince1970 ?? 0
-        var h: UInt64 = 0xcbf29ce484222325
-        for b in "\(src)|\(mtime)".utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
-        let base = fileURL.deletingPathExtension().lastPathComponent
-        let ext = fileURL.pathExtension
-        let stamped = "\(base)-\(String(h, radix: 16))"
-        let dest = mediaDir.appendingPathComponent(ext.isEmpty ? stamped : "\(stamped).\(ext)")
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: dest.path) {
-            try? fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
-            try? fm.copyItem(at: fileURL, to: dest)
-        }
-        return fm.fileExists(atPath: dest.path) ? dest : fileURL
+        editor.durableProjectMediaURL(for: fileURL)
     }
 
     /// The single song in `audio/` as a media asset (imported once, reused after), or nil when there

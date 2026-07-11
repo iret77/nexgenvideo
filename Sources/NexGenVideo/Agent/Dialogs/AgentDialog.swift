@@ -12,6 +12,9 @@ struct AgentDialogResult: Sendable, Equatable {
     var selectedLabels: [String: [String]]
     var toggles: [String: Bool]
     var direction: String
+    /// Files the user dropped or picked in a `fileIntake` dialog. The host imports each as a media
+    /// asset and hands the agent an @mention — the user never types, and no path travels as prose.
+    var fileURLs: [URL] = []
 
     func labels(_ sectionId: String) -> [String] { selectedLabels[sectionId] ?? [] }
     var allLabels: [String] { selectedLabels.values.flatMap { $0 } }
@@ -76,6 +79,19 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         let kind: Kind
     }
 
+    /// Turns the dialog into a file intake: the card replaces its free-text field with a drop zone +
+    /// a native file picker, so the user drops or chooses the file(s) and never types a path. Picked
+    /// files come back in `AgentDialogResult.fileURLs`; the host imports each as a media asset and
+    /// references it to the agent as an @mention (e.g. `attach_song media:<id>`).
+    struct FileIntake: Equatable, Sendable {
+        /// Accepted tokens — a kind ("audio", "video"/"movie", "image") or a bare extension ("mp3").
+        /// Empty ⇒ any file.
+        let accept: [String]
+        /// Short line shown in the empty drop well.
+        let prompt: String?
+        let allowsMultiple: Bool
+    }
+
     let id: String
     let title: String
     /// SF Symbol shown next to the title.
@@ -87,6 +103,8 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
     /// Placeholder for the dialog-scoped free-text input ("Freitext, der nur diesen Dialog voranbringt").
     let textPlaceholder: String?
     let sections: [Section]
+    /// When set, the card shows a drop zone + native file picker instead of the free-text field.
+    let fileIntake: FileIntake?
     /// Visual candidates projected onto the canvas (timeline ranges / Review shot) instead of the card.
     let projection: Projection
     /// What submitting does — defaults to chat clarification (the agent's `show_dialog` path).
@@ -94,6 +112,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
 
     init(id: String, title: String, symbol: String, intro: String?, costHint: String?,
          confirmLabel: String, textPlaceholder: String?, sections: [Section],
+         fileIntake: FileIntake? = nil,
          projection: Projection = Projection(), purpose: Purpose = .chatClarification) {
         self.id = id
         self.title = title
@@ -103,6 +122,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         self.confirmLabel = confirmLabel
         self.textPlaceholder = textPlaceholder
         self.sections = sections
+        self.fileIntake = fileIntake
         self.projection = projection
         self.purpose = purpose
     }
@@ -138,8 +158,9 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
                 throw ToolError("show_dialog: unknown section type '\(other)' (use 'choices' or 'toggle').")
             }
         }
-        guard !sections.isEmpty else {
-            throw ToolError("show_dialog: at least one section is required — a dialog without structure is just a question; ask in prose instead.")
+        let fileIntake = parseFileIntake(args["fileIntake"] as? [String: Any])
+        guard !sections.isEmpty || fileIntake != nil else {
+            throw ToolError("show_dialog: at least one section (or a fileIntake) is required — a dialog without structure is just a question; ask in prose instead.")
         }
         let projection = try parseProjection(args["projection"] as? [String: Any])
         return AgentDialog(
@@ -151,7 +172,21 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             confirmLabel: (args["confirmLabel"] as? String) ?? "Continue",
             textPlaceholder: args["textPlaceholder"] as? String,
             sections: sections,
+            fileIntake: fileIntake,
             projection: projection
+        )
+    }
+
+    private static func parseFileIntake(_ raw: [String: Any]?) -> FileIntake? {
+        guard let raw else { return nil }
+        let accept = ((raw["accept"] as? [Any]) ?? [])
+            .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let prompt = (raw["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return FileIntake(
+            accept: accept,
+            prompt: (prompt?.isEmpty == false) ? prompt : nil,
+            allowsMultiple: (raw["multiple"] as? Bool) ?? false
         )
     }
 
