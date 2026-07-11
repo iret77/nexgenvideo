@@ -16,8 +16,6 @@
 
 </div>
 
-<img src="./assets/ngv-ui.png" alt="NexGenVideo UI" width="900" />
-
 ---
 
 NexGenVideo is an open source video editor for Mac. You and your agent can generate and edit videos together inside the timeline.
