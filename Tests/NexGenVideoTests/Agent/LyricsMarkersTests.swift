@@ -35,3 +35,30 @@ struct IdentitySlugTests {
         #expect(AgentService.identitySlug("---") == "")
     }
 }
+
+@Suite("Copy files uniquely")
+struct CopyFilesUniquelyTests {
+    @Test("copies (not moves), uniquifies duplicate basenames, keeps sources")
+    func copies() throws {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent("copy-\(UUID().uuidString)", isDirectory: true)
+        let a = tmp.appendingPathComponent("a", isDirectory: true)
+        let b = tmp.appendingPathComponent("b", isDirectory: true)
+        let dest = tmp.appendingPathComponent("dest", isDirectory: true)
+        defer { try? fm.removeItem(at: tmp) }
+        try fm.createDirectory(at: a, withIntermediateDirectories: true)
+        try fm.createDirectory(at: b, withIntermediateDirectories: true)
+        // Two different files with the SAME basename.
+        try Data("A".utf8).write(to: a.appendingPathComponent("ref.jpg"))
+        try Data("B".utf8).write(to: b.appendingPathComponent("ref.jpg"))
+
+        let names = try AgentService.copyFilesUniquely(
+            [a.appendingPathComponent("ref.jpg"), b.appendingPathComponent("ref.jpg")], into: dest)
+
+        #expect(names == ["ref.jpg", "ref-2.jpg"])            // uniquified, count truthful
+        #expect(fm.fileExists(atPath: dest.appendingPathComponent("ref.jpg").path))
+        #expect(fm.fileExists(atPath: dest.appendingPathComponent("ref-2.jpg").path))
+        #expect(fm.fileExists(atPath: a.appendingPathComponent("ref.jpg").path))  // sources untouched (copy)
+        #expect(fm.fileExists(atPath: b.appendingPathComponent("ref.jpg").path))
+    }
+}

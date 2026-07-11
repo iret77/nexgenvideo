@@ -173,6 +173,9 @@ final class AgentService {
         case "character", "location":
             attachIdentityAssets(dialog.fileIntake!.attachAs!, dialog: dialog, result: result)
             return
+        case "style":
+            attachStyleRefs(dialog: dialog, result: result)
+            return
         default:
             break
         }
@@ -278,32 +281,9 @@ final class AgentService {
         }
         let category = kind == "location" ? "locations" : "characters"
         let dir = dataRoot.appendingPathComponent("import").appendingPathComponent(category).appendingPathComponent(slug)
-        var copied: [String] = []
-        var usedNames: Set<String> = []
+        let copied: [String]
         do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            for src in result.fileURLs {
-                // Uniquify duplicate basenames so two "ref.jpg" from different folders don't collapse
-                // into one (which would overwrite and overstate the count).
-                let ext = src.pathExtension
-                let base = src.deletingPathExtension().lastPathComponent
-                var name = src.lastPathComponent
-                var n = 2
-                while usedNames.contains(name) {
-                    name = ext.isEmpty ? "\(base)-\(n)" : "\(base)-\(n).\(ext)"
-                    n += 1
-                }
-                usedNames.insert(name)
-                let dest = dir.appendingPathComponent(name)
-                // Re-picking a file already at its destination must not delete the source.
-                if src.standardizedFileURL == dest.standardizedFileURL {
-                    copied.append(name)
-                    continue
-                }
-                if FileManager.default.fileExists(atPath: dest.path) { try? FileManager.default.removeItem(at: dest) }
-                try FileManager.default.copyItem(at: src, to: dest)
-                copied.append(name)
-            }
+            copied = try Self.copyFilesUniquely(result.fileURLs, into: dir)
         } catch {
             send(text: "Couldn't attach the \(kind) \"\(name)\": \(error.localizedDescription).", mentions: [])
             return
@@ -330,6 +310,56 @@ final class AgentService {
             }
         }
         return out.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    /// Copy loose style-reference images into the project's `import/` — a brownfield look source the
+    /// production-design agent (K2) curates. No name: these are unstructured mood/style refs.
+    private func attachStyleRefs(dialog: AgentDialog, result: AgentDialogResult) {
+        guard let editor, let workingRoot = editor.workingRoot,
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot)
+        else {
+            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+            return
+        }
+        guard !result.fileURLs.isEmpty else {
+            send(text: "No style references provided — skipped. Proceed; production-design can develop the look from the brief.", mentions: [])
+            return
+        }
+        let dir = dataRoot.appendingPathComponent("import", isDirectory: true)
+        let copied: [String]
+        do { copied = try Self.copyFilesUniquely(result.fileURLs, into: dir) }
+        catch {
+            send(text: "Couldn't attach the style references: \(error.localizedDescription).", mentions: [])
+            return
+        }
+        editor.onPipelineChanged?()
+        send(text: "\(copied.count) style reference\(copied.count == 1 ? "" : "s") attached in import/. "
+            + "The production-design agent (K2) curates these as the style source.", mentions: [])
+    }
+
+    /// Copy files into `dir` (copy, never move), uniquifying duplicate basenames and skipping a file
+    /// already at its destination. Returns the destination names. One routine for every image intake.
+    nonisolated static func copyFilesUniquely(_ urls: [URL], into dir: URL) throws -> [String] {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var copied: [String] = []
+        var used: Set<String> = []
+        for src in urls {
+            let ext = src.pathExtension
+            let base = src.deletingPathExtension().lastPathComponent
+            var name = src.lastPathComponent
+            var n = 2
+            while used.contains(name) {
+                name = ext.isEmpty ? "\(base)-\(n)" : "\(base)-\(n).\(ext)"
+                n += 1
+            }
+            used.insert(name)
+            let dest = dir.appendingPathComponent(name)
+            if src.standardizedFileURL == dest.standardizedFileURL { copied.append(name); continue }
+            if FileManager.default.fileExists(atPath: dest.path) { try? FileManager.default.removeItem(at: dest) }
+            try FileManager.default.copyItem(at: src, to: dest)
+            copied.append(name)
+        }
+        return copied
     }
 
     /// Extract `[Section]` markers (one per line, e.g. `[Chorus]`) from lyrics text, in order.

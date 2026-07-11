@@ -32,5 +32,16 @@ enum MusicvideoGateChecks {
                     + "(beats=\(beats), downbeats=\(downbeats), duration=\(duration)s). Re-run "
                     + "run_phase(\"analysis\") on a decodable song.")
         }
+        // A2 gate: the DSP measures the grid, but the phase isn't done until A2 has INTERPRETED it —
+        // the measured sections must be labeled. `interpretation.section_labels` is written by the A2
+        // step (never the DSP), so requiring it forces A2 to actually run before the gate can close.
+        let interpretation = obj["interpretation"] as? [String: Any]
+        let sectionLabels = (interpretation?["section_labels"] as? [Any])?.count ?? 0
+        guard sectionLabels > 0 else {
+            throw GateBlocked(
+                "Can't approve \"analysis\" yet: the measured sections aren't interpreted. Complete A2 — "
+                    + "settle the tempo multiplier and write interpretation.section_labels (a label per "
+                    + "measured section) — then approve. The DSP measures the grid; A2 names it.")
+        }
     }
 }

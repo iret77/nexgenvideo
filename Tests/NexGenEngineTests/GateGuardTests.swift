@@ -14,14 +14,16 @@ struct GateGuardTests {
         return root
     }
 
-    private func writeAnalysis(_ root: URL, beats: [Double], downbeats: [Double], duration: Double) throws {
+    private func writeAnalysis(_ root: URL, beats: [Double], downbeats: [Double], duration: Double,
+                              sectionLabels: [[String: String]] = []) throws {
         let dir = root.appendingPathComponent("analysis")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let obj: [String: Any] = ["beats": beats, "downbeats": downbeats, "duration_s": duration]
+        var obj: [String: Any] = ["beats": beats, "downbeats": downbeats, "duration_s": duration]
+        if !sectionLabels.isEmpty { obj["interpretation"] = ["section_labels": sectionLabels] }
         try JSONSerialization.data(withJSONObject: obj).write(to: dir.appendingPathComponent("song.json"))
     }
 
-    @Test("analysis gate is blocked without real rhythm data, allowed with it")
+    @Test("analysis gate requires real rhythm data AND an A2 interpretation")
     func analysisRequirement() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -33,8 +35,13 @@ struct GateGuardTests {
         try writeAnalysis(root, beats: [], downbeats: [], duration: 0)
         #expect(throws: GateBlocked.self) { try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root) }
 
-        // Real measured data → passes.
+        // Real rhythm data but NO interpretation yet (A2 not done) → still blocked.
         try writeAnalysis(root, beats: [0.5, 1.0, 1.5], downbeats: [0.5, 2.5], duration: 12.0)
+        #expect(throws: GateBlocked.self) { try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root) }
+
+        // Measured + interpreted (section labels) → passes.
+        try writeAnalysis(root, beats: [0.5, 1.0, 1.5], downbeats: [0.5, 2.5], duration: 12.0,
+                          sectionLabels: [["index": "0", "label": "intro"]])
         try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
     }
 

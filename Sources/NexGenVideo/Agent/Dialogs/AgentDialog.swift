@@ -254,9 +254,9 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         let prompt = (raw["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachAs = ((raw["attachAs"] as? String)?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 }
         let namePrompt = (raw["namePrompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Text sidecars (lyrics/script) are optional by default — the user can confirm-to-skip. The
-        // agent can still force it with required:true; other intakes (the song) default to required.
-        let defaultRequired = !(attachAs == "lyrics" || attachAs == "script")
+        // Optional intakes (lyrics/script text sidecars, style refs) default to skippable — the user
+        // can confirm-to-skip. The agent can force required:true; other intakes (the song) require input.
+        let defaultRequired = !(attachAs == "lyrics" || attachAs == "script" || attachAs == "style")
         return FileIntake(
             accept: accept,
             prompt: (prompt?.isEmpty == false) ? prompt : nil,

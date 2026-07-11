@@ -125,9 +125,11 @@ Briefly tell the user which files go where, relative to `data_root`:
   (flow A1). Just tell them to have it ready.
 - lyrics — optional; offered as an upload after the analysis (flow A1).
 - **style inspiration** (mood refs, style templates, early visual
-  development) into `import/` — the production-design-agent (K2) curates
-  it as the style source. The user may use their own subdirs (e.g.
-  `import/anime_refs/`, `import/colors/`), that is optional.
+  development) — offer an upload via a **show_dialog** with a `fileIntake`
+  (`accept: ["image"]`, `multiple: true`, `attachAs: "style"`, prompt e.g.
+  "Drop any style / mood references — optional"). The host copies them into
+  `import/` and the production-design agent (K2) curates them as the style
+  source. Never tell the user to place files in a folder by hand.
 
 **The separation matters:**
 

@@ -55,9 +55,11 @@ for timing; do not describe the song's structure from "listening".
   - top-level key `interpretation` containing `section_labels`,
     `anomalies`, `overall_character`.
 - **Gate (HARD — enforced by the engine).** `approve_gate("analysis")` is
-  **rejected** unless a real analysis artifact exists with non-empty
-  `beats` AND `downbeats`. You cannot approve analysis over a structure you
-  imagined — run it for real first. After writing the interpretation, give a
+  **rejected** unless (a) a real analysis artifact exists with non-empty
+  `beats` AND `downbeats` (you ran it — didn't imagine it), AND (b) A2 is
+  done: `interpretation.section_labels` is written (the measured sections are
+  labeled). Run the DSP for real, THEN interpret, THEN approve — approving
+  right after the DSP run is refused. After writing the interpretation, give a
   summary (BPM, section labels, anomalies) and request approval via
   show_dialog ("approve / change a label / re-analyze"). On approval:
   `approve_gate(project_dir, "analysis", notes=...)`.
