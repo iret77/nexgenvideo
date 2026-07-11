@@ -267,13 +267,30 @@ final class AgentService {
         let category = kind == "location" ? "locations" : "characters"
         let dir = dataRoot.appendingPathComponent("import").appendingPathComponent(category).appendingPathComponent(slug)
         var copied: [String] = []
+        var usedNames: Set<String> = []
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             for src in result.fileURLs {
-                let dest = dir.appendingPathComponent(src.lastPathComponent)
+                // Uniquify duplicate basenames so two "ref.jpg" from different folders don't collapse
+                // into one (which would overwrite and overstate the count).
+                let ext = src.pathExtension
+                let base = src.deletingPathExtension().lastPathComponent
+                var name = src.lastPathComponent
+                var n = 2
+                while usedNames.contains(name) {
+                    name = ext.isEmpty ? "\(base)-\(n)" : "\(base)-\(n).\(ext)"
+                    n += 1
+                }
+                usedNames.insert(name)
+                let dest = dir.appendingPathComponent(name)
+                // Re-picking a file already at its destination must not delete the source.
+                if src.standardizedFileURL == dest.standardizedFileURL {
+                    copied.append(name)
+                    continue
+                }
                 if FileManager.default.fileExists(atPath: dest.path) { try? FileManager.default.removeItem(at: dest) }
                 try FileManager.default.copyItem(at: src, to: dest)
-                copied.append(src.lastPathComponent)
+                copied.append(name)
             }
         } catch {
             send(text: "Couldn't attach the \(kind) \"\(name)\": \(error.localizedDescription).", mentions: [])
