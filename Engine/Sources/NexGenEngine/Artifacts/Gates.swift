@@ -117,9 +117,35 @@ public struct Gates: Codable, Sendable, Equatable {
 }
 
 /// Raised when a required gate is not approved. Port of `gates.py::GateBlocked`.
-public struct GateBlocked: Swift.Error, Sendable, Equatable {
+public struct GateBlocked: Swift.Error, Sendable, Equatable, LocalizedError {
     public let message: String
     public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
+}
+
+/// Deterministic hard-gate enforcement. This is the code that physically prevents the agent from
+/// advancing a phase whose prerequisites aren't genuinely satisfied — the port of the predecessor's
+/// `require()`-chain + sanity self-approval guard. Two layers:
+///  - `checkApprovable`: a pack's per-phase artifact precondition (e.g. `analysis` must have produced
+///    real beats/downbeats) is verified BEFORE the gate can be stamped, in both approve paths.
+///  - `requireChain`: before an expensive downstream compute step (assembly/render), every phase up
+///    to and including a target must already be approved.
+public enum GateGuard {
+    /// Verify the deterministic precondition for approving `phase`. Prose phases that carry no
+    /// registered requirement are approvable on the user's judgement alone; phases with a requirement
+    /// (a real artifact must exist) throw `GateBlocked` when it isn't met.
+    public static func checkApprovable(phase: String, dataRoot: URL, requirement: EngineRegistry.GateRequirement?) throws {
+        try requirement?(dataRoot)
+    }
+
+    /// Terminal backstop: every phase up to and including `phase` in `order` must be approved, else
+    /// `GateBlocked`. Mirrors the predecessor render dispatcher's require-loop over the whole chain.
+    public static func requireChain(_ gates: Gates, order: [String], through phase: String) throws {
+        guard let idx = order.firstIndex(of: phase) else { return }
+        for p in order[...idx] {
+            _ = try GatesOperations.require(gates, phase: p)
+        }
+    }
 }
 
 /// Free-function operations on `Gates`, mirroring the Python module-level

@@ -83,23 +83,48 @@ slug under the project home): `show_dialog` "abort / continue working
 / choose a different slug?" — never overwrite silently. Re-run step 2
 with a different slug if the user picks that.
 
-### 4. Upload instructions for the user
+### 4. Greenfield or brownfield? (ask before inventing anything)
+
+A project is one of two shapes — establish which BEFORE the pipeline
+invents a story from scratch:
+
+- **Greenfield** — the user has only a song (and maybe lyrics). The
+  pipeline develops the concept, characters, and locations from the music.
+- **Brownfield** — the user already has a **story script** and/or
+  **prepared characters/locations**. The pipeline must work **FROM that
+  material** and stay consistent with it; it must NOT reinvent a different
+  story or different identities that then clash with the prepared assets.
+
+Offer the optional brownfield inputs with a **show_dialog**:
+
+- **Story script** — a `fileIntake` (`accept: ["text"]`,
+  `attachAs: "script"`, prompt e.g. "Have a script or story outline?
+  Drop it (.txt / .md) — optional"). The host writes `import/script.md`
+  and tells you to build the treatment/bible FROM it. If provided, treat
+  its characters, locations, and beats as the source of truth and confirm
+  your reading with the user.
+- **Prepared characters / locations** — real character photos and
+  location photos, **structured** into `import/characters/<id>/` or
+  `import/locations/<id>/`. This path convention is mandatory: it is how
+  the bible-agent (K5) recognizes identity refs and adopts them as bible
+  anchors. Tell the user to place them there (their own subdirs under
+  `import/` for loose style inspiration are also fine).
+
+If the user has neither, proceed greenfield — but only after asking, so a
+prepared project is never overwritten by an invented one.
+
+### 5. Upload instructions for the user
 
 Briefly tell the user which files go where, relative to `data_root`:
 
 - the song (MP3/WAV/FLAC/M4A) — don't ask them to place it in a folder;
   it is brought in through the track drop-zone/picker when analysis starts
   (flow A1). Just tell them to have it ready.
-- lyrics as `lyrics/lyrics.txt`
+- lyrics — optional; offered as an upload after the analysis (flow A1).
 - **style inspiration** (mood refs, style templates, early visual
   development) into `import/` — the production-design-agent (K2) curates
   it as the style source. The user may use their own subdirs (e.g.
   `import/anime_refs/`, `import/colors/`), that is optional.
-- **identity anchors** (real character photos, location photos)
-  **structured** into `import/characters/<id>/` or
-  `import/locations/<id>/` — this path convention is mandatory; it is
-  how the bible-agent (K5) recognizes the identity refs and adopts them
-  as bible anchors once the storyboard demand is known.
 
 **The separation matters:**
 
@@ -107,7 +132,7 @@ Briefly tell the user which files go where, relative to `data_root`:
 - `bible/` = final consistency refs (character sheets, location
   multi-views, prop sheets), filled only after the storyboard.
 
-### 5. On completion
+### 6. On completion
 
 Call `approve_gate(project_dir, "project_init")`.
 

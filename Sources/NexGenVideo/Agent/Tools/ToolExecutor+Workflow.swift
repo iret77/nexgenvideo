@@ -148,6 +148,7 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let notes = args.string("notes")
+        try enforceGateRequirement(phase: phase, dataRoot: root)
         let gates = try mutateGates(dataRoot: root) { GatesOperations.approve(&$0, phase: phase, notes: notes) }
         let gate = gates.get(phase)
         return try jsonResult([
@@ -169,6 +170,11 @@ extension ToolExecutor {
             throw ToolError("Unknown state '\(stateRaw)'. Expected approved/approved_with_notes/needs_revision/pending.")
         }
         let notes = args.string("notes")
+        // set_gate_state is an approval path too — enforce the same hard-gate precondition when it
+        // would mark the phase approved, so it can't be used to bypass approve_gate's guard.
+        if state == .approved || state == .approvedWithNotes {
+            try enforceGateRequirement(phase: phase, dataRoot: root)
+        }
         let gates = try mutateGates(dataRoot: root) { GatesOperations.setState(&$0, phase: phase, state: state, notes: notes) }
         let gate = gates.get(phase)
         return try jsonResult([
@@ -178,6 +184,18 @@ extension ToolExecutor {
             "approved": gate.approved,
             "notes": gate.notes.map { $0 as Any } ?? NSNull(),
         ])
+    }
+
+    /// Deterministic hard-gate check shared by approve_gate and set_gate_state: consult the active
+    /// pack's registered precondition for `phase` and surface a `GateBlocked` as an actionable tool
+    /// error. No requirement registered (prose phases) ⇒ approvable on the user's judgement.
+    private func enforceGateRequirement(phase: String, dataRoot: URL) throws {
+        let registry = PackCatalog.registry(activePack: activePluginFor(dataRoot: dataRoot))
+        do {
+            try GateGuard.checkApprovable(phase: phase, dataRoot: dataRoot, requirement: registry.gateRequirements[phase])
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message)
+        }
     }
 
     func rewindTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
@@ -397,6 +415,17 @@ extension ToolExecutor {
     func assembleTimelineTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = args.string("phase") ?? "final"
+
+        // Hard gate (terminal backstop): no assembly on an unapproved plan. Every phase up to and
+        // including shotlist — which, for musicvideo, includes the analysis gate that itself requires
+        // real measured beats/downbeats — must be approved before rendered shots hit the timeline.
+        let gates = (try? YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile))
+            ?? Gates(project: "")
+        do {
+            try GateGuard.requireChain(gates, order: mergedPhaseOrder(dataRoot: root), through: "shotlist")
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message)
+        }
 
         guard let grid = BeatAssembly.loadBeatGrid(dataRoot: root), !grid.beats.isEmpty else {
             throw ToolError("Run analysis first: no beat analysis found (expected analysis/<song>.json with beats). Run run_phase(\"analysis\").")
@@ -673,12 +702,30 @@ extension ToolExecutor {
         else {
             return ["phase": phase, "artifact": NSNull()]
         }
+        func number(_ any: Any?) -> Double? { (any as? NSNumber)?.doubleValue }
+        func numbers(_ any: Any?) -> [Double] { (any as? [Any])?.compactMap { ($0 as? NSNumber)?.doubleValue } ?? [] }
+        func ms(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+
         var summary: [String: Any] = ["artifact": artifact.path]
-        if let bpm = obj["bpm"] as? Double { summary["bpm"] = bpm }
-        if let duration = obj["duration_s"] as? Double { summary["duration_s"] = duration }
-        summary["beats"] = (obj["beats"] as? [Any])?.count ?? 0
-        summary["downbeats"] = (obj["downbeats"] as? [Any])?.count ?? 0
-        summary["sections"] = (obj["sections"] as? [Any])?.count ?? 0
+        if let bpm = number(obj["bpm"]) { summary["bpm"] = bpm }
+        if let duration = number(obj["duration_s"]) { summary["duration_s"] = duration }
+        let beats = numbers(obj["beats"])
+        let downbeats = numbers(obj["downbeats"])
+        summary["beats_count"] = beats.count
+        summary["downbeats_count"] = downbeats.count
+        // The MEASURED structural grid, handed to the agent verbatim so it never has to invent timing:
+        // the downbeat times (bar anchors) and the section table with real start/end boundaries. Rounded
+        // to milliseconds to keep the payload compact without losing beat-accuracy.
+        summary["downbeats"] = downbeats.map(ms)
+        summary["sections"] = (obj["sections"] as? [[String: Any]] ?? []).map { s -> [String: Any] in
+            var out: [String: Any] = [:]
+            if let i = (s["index"] as? NSNumber)?.intValue { out["index"] = i }
+            if let start = number(s["start"]) { out["start"] = ms(start) }
+            if let end = number(s["end"]) { out["end"] = ms(end) }
+            out["label"] = (s["label"] as? String).map { $0 as Any } ?? NSNull()
+            if let src = s["source"] as? String { out["source"] = src }
+            return out
+        }
         if let source = obj["downbeat_source"] as? String { summary["downbeat_source"] = source }
         if let project = obj["project"] as? String { summary["project"] = project }
         return summary

@@ -134,8 +134,12 @@ enum AgentInstructions {
           zone + a native file picker, the user drops or chooses the file — never types a path — and \
           it arrives to you as an @mentioned media asset you reference by id (e.g. attach_song \
           media:<id>). Combine it with sections when the same step also has a choice (e.g. a cut \
-          mode). Outside a dialog, the composer's paperclip / drag-onto-Media does the same. Never \
-          ask the user to type or paste a file path. After presenting the dialog, STOP and wait.
+          mode). For a TEXT sidecar that belongs in the pipeline rather than the media library, set \
+          fileIntake.attachAs: "lyrics" (host writes lyrics/lyrics.txt, replies with the [Section] \
+          markers) or "script" (host writes import/script.md for a brownfield project) with \
+          accept: ["text"]. Outside a dialog, the composer's paperclip / drag-onto-Media does the \
+          media case. Never ask the user to type or paste a file path. After presenting the dialog, \
+          STOP and wait.
 
         # Audio generation
         - Two categories, distinguished by model (see list_models type='audio'):
@@ -175,10 +179,17 @@ enum AgentInstructions {
           rewind resets a phase and everything after it when the user wants to redo earlier work.
         - The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; \
           run_phase returns runner: null with a note for those. Pack compute phases DO run through it — \
-          musicvideo's `analysis` invokes the native runner on the song in audio/ and returns a \
-          bpm/beats/sections summary. Use run_phase for those; drive the planning phases yourself. \
+          musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
+          downbeat times, and a sections table with real start/end. Use that data verbatim as the \
+          structural truth. Use run_phase for compute phases; drive the planning phases yourself. \
           Before analysis, bring the song into the project's audio/ with attach_song (media asset id \
           or absolute path; keeps the one-song contract) — import_media only reaches the media library.
+        - GATES ARE HARD (deterministic, engine-enforced). Some gates refuse approval until their real \
+          artifact exists — approve_gate("analysis") and set_gate_state to an approved state are \
+          REJECTED unless run_phase("analysis") actually produced beats + downbeats. Never describe a \
+          song's tempo/structure from "listening" or infer it — you cannot; run the analysis and use \
+          its measured output. If a gate blocks you, the message says what's missing: satisfy it, don't \
+          work around it. This is by design — it prevents advancing the pipeline on invented facts.
         - The Intent Ledger holds the director's durable, per-object decisions; locked attributes are \
           hard facts generation must honor (compile_prompt already merges them). resolve_model tells \
           you which model tier a task class gets — only escalate after a concrete gate failure.

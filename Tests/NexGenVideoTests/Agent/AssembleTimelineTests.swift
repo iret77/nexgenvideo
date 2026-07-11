@@ -67,7 +67,21 @@ struct AssembleTimelineTests {
         try Data("clipA".utf8).write(to: outA)
         try Data("clipB".utf8).write(to: outB)
 
+        // assemble_timeline is gated on an approved plan — approve the chain so these tests exercise
+        // assembly, not gate policy (the gate itself is covered by the blocked test below).
+        try approvePlanChain(dataRoot: dataRoot)
+
         return (ToolHarness(), dataRoot, tmp, [outA.path, outB.path])
+    }
+
+    /// Approve every core phase up to and including shotlist, so assemble_timeline's require-chain passes.
+    private func approvePlanChain(dataRoot: URL) throws {
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = (try? store.load(Gates.self, at: PipelineLayout.gatesFile)) ?? Gates(project: "demo")
+        for phase in ["project_init", "brief", "production_design", "treatment", "storyboard", "bible", "shotlist"] {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
     }
 
     /// Record s001 and s002 as rendered for `phase`; s003 stays unrendered.
@@ -78,6 +92,30 @@ struct AssembleTimelineTests {
         _ = try await h.runOK("record_render", args: [
             "project_dir": dataRoot.path, "phase": phase, "shot_id": "s002", "output": outputs[1],
         ])
+    }
+
+    // MARK: - hard gate
+
+    @Test("assemble_timeline is blocked until the plan chain is approved")
+    func assembleBlockedOnUnapprovedPlan() async throws {
+        let (h, dataRoot, cleanup, outputs) = try setup()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
+
+        // Un-approve an upstream gate — assembly must refuse (deterministic terminal backstop).
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.reset(&gates, phase: "shotlist")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+
+        let blocked = await h.runRaw("assemble_timeline", args: ["project_dir": dataRoot.path, "phase": "final"])
+        #expect(blocked.isError == true)
+
+        // Re-approve → assembly proceeds.
+        GatesOperations.approve(&gates, phase: "shotlist")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let ok = await h.runRaw("assemble_timeline", args: ["project_dir": dataRoot.path, "phase": "final"])
+        #expect(ok.isError == false)
     }
 
     // MARK: - happy path

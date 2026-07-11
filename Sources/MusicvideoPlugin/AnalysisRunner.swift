@@ -86,16 +86,40 @@ public enum MusicvideoAnalysisRunner {
     }
 
     /// Map the DSP-producible `AudioAnalysis` onto the canonical `Analysis` v2
-    /// schema. Only the v1-scope fields are populated; stems/alignment/key/
-    /// chords stay empty (deferred), matching the pipeline's scope note.
-    static func toCanonical(_ raw: AudioAnalysis, project: String, songPath: String) throws -> Analysis {
-        let sections = raw.sections.map {
+    /// schema. Section boundaries are run through the `Consolidator` so they snap
+    /// to the real downbeat grid (single detector today → the raw detector list is
+    /// kept as a `structure_candidate` and single-source anomalies are recorded).
+    /// When `lyricsAlignment` carries `[Section]` markers, those become the primary
+    /// boundary truth (Consolidator Path A). stems/key/chords stay empty (deferred).
+    static func toCanonical(
+        _ raw: AudioAnalysis, project: String, songPath: String, lyricsAlignment: [AlignmentLine] = []
+    ) throws -> Analysis {
+        let detected = raw.sections.map {
             AnalysisSection(
                 index: $0.index, start: $0.start, end: $0.end, cluster: $0.cluster,
-                label: $0.label, source: $0.source, confidence: $0.confidence
+                label: $0.label, source: $0.source ?? "librosa", confidence: $0.confidence
             )
         }
+        let consolidation = Consolidator.consolidate(
+            candidates: [detected],
+            alignment: lyricsAlignment.isEmpty ? nil : lyricsAlignment,
+            downbeats: raw.downbeats,
+            durationS: raw.durationS
+        )
+        // Guarantee full coverage: downbeat snapping can pull the first boundary off 0 (e.g. to the
+        // first downbeat at 0.5s) and the last off the track end — clamp the endpoints so no audio
+        // falls outside a section.
+        var sections = consolidation.sections
+        if !sections.isEmpty {
+            sections[0].start = 0.0
+            sections[sections.count - 1].end = raw.durationS
+        }
         let downbeatSource = Analysis.DownbeatSource(rawValue: raw.downbeatSource) ?? .librosaHeuristic
+        let interpretation = consolidation.anomalies.isEmpty
+            ? nil
+            : Interpretation(anomalies: consolidation.anomalies.map {
+                ["kind": $0.kind, "time": String(format: "%.3f", $0.time), "detail": $0.detail]
+            })
         return try Analysis(
             project: project,
             songPath: songPath,
@@ -106,8 +130,11 @@ public enum MusicvideoAnalysisRunner {
             downbeats: raw.downbeats,
             downbeatSource: downbeatSource,
             sections: sections,
+            alignment: lyricsAlignment,
+            structureCandidates: [StructureCandidate(source: .librosa, sections: detected)],
             energyCurve: raw.energyCurve,
             tempoCurve: raw.tempoCurve,
+            interpretation: interpretation,
             pipelineStages: ["load_audio", "rhythm", "structure", "features"]
         )
     }

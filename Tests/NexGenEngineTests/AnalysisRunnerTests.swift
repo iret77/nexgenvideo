@@ -119,6 +119,10 @@ struct AnalysisRunnerPlumbingTests {
         #expect(analysis.beats == [0.5, 1.0, 1.5])
         #expect(analysis.downbeatSource == .librosaHeuristic)
         #expect(analysis.sections.count == 1)
+        // Endpoints are clamped to the full track: no audio falls outside a section even after
+        // downbeat snapping.
+        #expect(analysis.sections.first?.start == 0.0)
+        #expect(analysis.sections.first?.end == 12.0)
         #expect(analysis.pipelineStages == ["load_audio", "rhythm", "structure", "features"])
     }
 

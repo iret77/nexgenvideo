@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "NexGenVideo",
+    defaultLocalization: "en",
     platforms: [.macOS(.v26)],
     products: [
         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),

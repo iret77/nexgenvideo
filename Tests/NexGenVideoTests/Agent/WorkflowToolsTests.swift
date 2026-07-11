@@ -166,6 +166,28 @@ struct WorkflowToolsTests {
         #expect(reset.last == "render")
     }
 
+    @Test("approve_gate is hard-blocked for analysis until a real artifact exists")
+    func analysisGateHardBlocked() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+
+        // No analysis artifact → approve_gate("analysis") is refused (deterministic hard gate).
+        let blocked = await h.runRaw("approve_gate", args: ["project_dir": dataRoot.path, "phase": "analysis"])
+        #expect(blocked.isError == true)
+        #expect(ToolHarness.textOf(blocked).contains("analysis"))
+
+        // set_gate_state to an approved state is refused the same way — no bypass.
+        let blocked2 = await h.runRaw("set_gate_state", args: [
+            "project_dir": dataRoot.path, "phase": "analysis", "state": "approved",
+        ])
+        #expect(blocked2.isError == true)
+
+        // A prose phase carries no requirement and still approves.
+        let ok = try await h.runOK("approve_gate", args: ["project_dir": dataRoot.path, "phase": "brief"]) as? [String: Any]
+        #expect(ok?["approved"] as? Bool == true)
+    }
+
     @Test("set_gate_state rejects an unknown state")
     func setGateStateBadValue() async throws {
         let (h, dataRoot, cleanup) = try scaffold()

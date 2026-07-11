@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Observation
 
 @Observable
@@ -162,6 +163,13 @@ final class AgentService {
     /// this one). Kept on `AgentService` so no surface re-implements dialog submission.
     func submitDialog(_ dialog: AgentDialog, result: AgentDialogResult) {
         pendingDialog = nil
+        // A text sidecar (lyrics / story script) is pipeline input, not a media clip: the host writes
+        // it deterministically into the project and briefs the agent, rather than importing it to the
+        // media library. Unknown/absent attachAs falls through to the normal media-asset path.
+        if let sidecar = dialog.fileIntake?.attachAs, sidecar == "lyrics" || sidecar == "script" {
+            attachTextSidecar(sidecar, dialog: dialog, result: result)
+            return
+        }
         switch dialog.purpose {
         case .chatClarification:
             let attached = importDialogFiles(result.fileURLs)
@@ -173,6 +181,71 @@ final class AgentService {
                 let attached = importDialogFiles(result.fileURLs)
                 send(text: Self.chatMessage(from: dialog, result: result, attached: attached), mentions: attached)
             }
+        }
+    }
+
+    /// Write a text-sidecar intake (lyrics / story script) deterministically into the project (copied,
+    /// never moved), then brief the agent on what arrived — so the pipeline works FROM the user's
+    /// material (brownfield) instead of inventing it. Kept host-side and deterministic, matching the
+    /// hard-gate philosophy: the file placement is a fact, not something the agent narrates.
+    private func attachTextSidecar(_ kind: String, dialog: AgentDialog, result: AgentDialogResult) {
+        // Resolve the pipeline DATA ROOT the same way the workflow tools do (workingRoot may be the
+        // package home; the sidecar dirs live under <home>/pipeline). No project ⇒ don't drop the answer.
+        guard let editor, let workingRoot = editor.workingRoot,
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
+              let src = result.fileURLs.first
+        else {
+            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+            return
+        }
+        guard let content = try? String(contentsOf: src, encoding: .utf8) else {
+            send(text: "Couldn't read the \(kind) file — it isn't UTF-8 text. Ask the user for a .txt/.md.", mentions: [])
+            return
+        }
+        let relDir: String, filename: String
+        switch kind {
+        case "lyrics": (relDir, filename) = ("lyrics", "lyrics.txt")
+        default: (relDir, filename) = ("import", "script.md")  // "script"
+        }
+        let dir = dataRoot.appendingPathComponent(relDir, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try content.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)
+        } catch {
+            send(text: "Couldn't attach the \(kind): \(error.localizedDescription).", mentions: [])
+            return
+        }
+        editor.onPipelineChanged?()
+        send(text: sidecarBrief(kind, relPath: "\(relDir)/\(filename)", content: content), mentions: [])
+    }
+
+    /// The agent-facing brief after a sidecar lands: what to do with it. Lyrics → label measured
+    /// sections; script → build the treatment/bible FROM it (brownfield), don't invent a new story.
+    private func sidecarBrief(_ kind: String, relPath: String, content: String) -> String {
+        switch kind {
+        case "lyrics":
+            let markers = Self.lyricsSectionMarkers(content)
+            if markers.isEmpty {
+                return "Lyrics attached to \(relPath). No [Section] markers found — label the measured "
+                    + "analysis sections yourself and keep their measured start/end boundaries; never invent timing."
+            }
+            return "Lyrics attached to \(relPath). Section markers, in order: \(markers.joined(separator: ", ")). "
+                + "Use them to LABEL the measured analysis sections (lyrics give labels/order; the measured "
+                + "downbeat-snapped boundaries stay the source of truth for timing)."
+        default:
+            return "Story script attached to \(relPath). This is a BROWNFIELD project: build the treatment, "
+                + "bible, and shots FROM this script — its characters, locations, and beats are the source of "
+                + "truth. Confirm your reading with the user; don't invent a different story."
+        }
+    }
+
+    /// Extract `[Section]` markers (one per line, e.g. `[Chorus]`) from lyrics text, in order.
+    nonisolated static func lyricsSectionMarkers(_ text: String) -> [String] {
+        text.split(whereSeparator: \.isNewline).compactMap { line in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            guard t.count > 2, t.hasPrefix("["), t.hasSuffix("]") else { return nil }
+            let inner = t.dropFirst().dropLast().trimmingCharacters(in: .whitespaces)
+            return inner.isEmpty ? nil : inner
         }
     }
 

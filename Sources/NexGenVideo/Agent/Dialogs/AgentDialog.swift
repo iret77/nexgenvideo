@@ -84,12 +84,17 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
     /// files come back in `AgentDialogResult.fileURLs`; the host imports each as a media asset and
     /// references it to the agent as an @mention (e.g. `attach_song media:<id>`).
     struct FileIntake: Equatable, Sendable {
-        /// Accepted tokens — a kind ("audio", "video"/"movie", "image") or a bare extension ("mp3").
-        /// Empty ⇒ any file.
+        /// Accepted tokens — a kind ("audio", "video"/"movie", "image", "text") or a bare extension
+        /// ("mp3", "txt"). Empty ⇒ any file.
         let accept: [String]
         /// Short line shown in the empty drop well.
         let prompt: String?
         let allowsMultiple: Bool
+        /// Where the chosen file goes. Default (nil) ⇒ the media library, referenced back as an
+        /// @mention (the song path). `"lyrics"` ⇒ the host writes it deterministically to the project's
+        /// `lyrics/lyrics.txt` — a pipeline sidecar, not a media clip — and reports the parsed section
+        /// markers to the agent.
+        let attachAs: String?
     }
 
     let id: String
@@ -183,10 +188,12 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         let prompt = (raw["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let attachAs = (raw["attachAs"] as? String)?.trimmingCharacters(in: .whitespaces)
         return FileIntake(
             accept: accept,
             prompt: (prompt?.isEmpty == false) ? prompt : nil,
-            allowsMultiple: (raw["multiple"] as? Bool) ?? false
+            allowsMultiple: (raw["multiple"] as? Bool) ?? false,
+            attachAs: (attachAs?.isEmpty == false) ? attachAs : nil
         )
     }
 

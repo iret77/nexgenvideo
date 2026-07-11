@@ -13,7 +13,11 @@ enum NativeGateWriter {
     }
 
     /// Approve `phase` (with optional notes) and persist. Port of `gates.approve` / MCP `approve_gate`.
+    /// Enforces the active pack's deterministic hard-gate precondition first — the same guard the agent
+    /// tool path uses — so a manual Pipeline-panel approval can't rubber-stamp a phase whose real
+    /// artifact is missing. A blocked gate surfaces its message to the panel's toast.
     static func approve(projectDir: URL, phase: String, notes: String? = nil) throws {
+        try enforceRequirement(projectDir: projectDir, phase: phase)
         try mutate(projectDir: projectDir) { gates in
             GatesOperations.approve(&gates, phase: phase, notes: notes)
         }
@@ -22,9 +26,20 @@ enum NativeGateWriter {
     /// Record the multi-state verdict (approved / approved_with_notes / needs_revision / pending).
     /// Port of `gates.set_state` / MCP `set_gate_state`.
     static func setState(projectDir: URL, phase: String, state: GateState, notes: String? = nil) throws {
+        if state == .approved || state == .approvedWithNotes {
+            try enforceRequirement(projectDir: projectDir, phase: phase)
+        }
         try mutate(projectDir: projectDir) { gates in
             GatesOperations.setState(&gates, phase: phase, state: state, notes: notes)
         }
+    }
+
+    /// Consult the active pack's registered hard-gate precondition for `phase` (nil ⇒ approvable).
+    private static func enforceRequirement(projectDir: URL, phase: String) throws {
+        guard let root = DataRootResolver.dataRoot(of: projectDir) else { throw WriteError.notInitialized }
+        let pack = ProjectPluginSettings.activePlugin(projectURL: projectDir)
+        let registry = PackCatalog.registry(activePack: pack)
+        try GateGuard.checkApprovable(phase: phase, dataRoot: root, requirement: registry.gateRequirements[phase])
     }
 
     /// Reset `phase` and every following phase to unapproved. Port of `gates.rewind_to` /

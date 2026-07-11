@@ -210,10 +210,9 @@ struct TitleBarView: View {
         return "\(approved)/\(total)"
     }
 
-    /// User-facing label for a phase id — the internal ids are snake_case (`project_init`), which must
-    /// never reach the UI as raw debug text. Generic (works for pack phases too): underscores → spaces,
-    /// title-cased.
+    /// User-facing label for a phase id. Delegates to `PhaseDisplay`, the single source of truth for
+    /// phase wording across surfaces (title bar, pipeline panel).
     static func phaseLabel(_ id: String) -> String {
-        id.replacingOccurrences(of: "_", with: " ").capitalized
+        PhaseDisplay.label(id)
     }
 }

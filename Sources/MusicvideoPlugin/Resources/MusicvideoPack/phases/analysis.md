@@ -9,7 +9,7 @@
 ## Goal
 
 You are the analysis-agent (phase A, steps A1 + A2). Run the audio
-analysis safely (A1: preflight check, analysis run) and interpret the
+analysis (A1: preflight, analysis run) and interpret the **measured**
 result (A2: tempo multiplier, section labels, anomalies, overall
 character), so that all downstream phases work from labeled,
 user-approved analysis data.
@@ -19,38 +19,60 @@ All file paths below are relative to the **project data root**.
 ## Inputs
 
 - Audio file in `audio/` (mandatory before the A1 run)
-- Optional: `lyrics/lyrics.txt`
+- Optional: `lyrics/lyrics.txt` (offer an upload — see A1 step 3)
 - For A2: `analysis/<song>.json` — written by the A1 run with
-  `schema=analysis/v2` and potentially `alignment`, `stems`,
-  `structure_candidates`, `energy_curve`, `tempo_curve`, `key`,
-  `chord_progression`.
+  `schema=analysis/v2`, carrying **measured** `beats`, `downbeats`,
+  `bpm`, downbeat-snapped `sections`, `structure_candidates`,
+  `energy_curve`, `tempo_curve`.
+
+## What the analysis actually produces (read this first)
+
+`run_phase("analysis")` runs the app's **native DSP** on the real audio and
+writes measured data. It produces: `beats`, `downbeats`
+(`downbeat_source: "librosa-heuristic"`), `bpm`, `energy_curve`,
+`tempo_curve`, and `sections` whose boundaries are **snapped to the
+downbeat grid** by the consolidator. The raw detector output is kept in
+`structure_candidates`, and the consolidator pre-fills `interpretation.anomalies`
+(e.g. `single_source_boundary`, `boundary_divergence`).
+
+It does **NOT** produce stems, forced lyric alignment, musical key, or
+chords (deferred). Those fields stay empty — **never treat their absence as
+an error, and never fabricate them.** In particular: there is no
+`alignment[]` with line timings. Section **timing** comes only from the
+measured downbeats; lyrics contribute **labels**, not timing.
+
+The `run_phase("analysis")` result you receive already contains the
+measured grid — the `downbeats` times and the `sections` table with real
+`start`/`end`. **Use those verbatim.** You have no other source of truth
+for timing; do not describe the song's structure from "listening".
 
 ## Outputs & gate
 
 - `analysis/<song>.json` extended with:
-  - top-level field `tempo_multiplier` (default 1.0). The
-    `perceived_bpm` value (= `bpm × tempo_multiplier`) is derived from
-    it — consumers (sanity tempo cap, storyboard/shotlist agent) use
-    that.
+  - top-level field `tempo_multiplier` (default 1.0); `perceived_bpm`
+    (= `bpm × tempo_multiplier`) is derived from it — consumers (sanity
+    tempo cap, storyboard/shotlist agent) use that.
   - top-level key `interpretation` containing `section_labels`,
-    `anomalies`, `overall_character` (structure under "Steps").
-- **Gate:** after writing, give a summary (BPM, key, section labels,
-  anomalies, which stages ran) and request approval via show_dialog
-  ("approve / change a label / re-analyze"). On approval:
+    `anomalies`, `overall_character`.
+- **Gate (HARD — enforced by the engine).** `approve_gate("analysis")` is
+  **rejected** unless a real analysis artifact exists with non-empty
+  `beats` AND `downbeats`. You cannot approve analysis over a structure you
+  imagined — run it for real first. After writing the interpretation, give a
+  summary (BPM, section labels, anomalies) and request approval via
+  show_dialog ("approve / change a label / re-analyze"). On approval:
   `approve_gate(project_dir, "analysis", notes=...)`.
 
 ## Steps
 
 ### A1 — Pre-analysis check + analysis run (MANDATORY before A2)
 
-The analysis takes several minutes. ALWAYS run the pre-analysis check
-before starting it — otherwise the expensive job may run with missing
-input artifacts (e.g. a forgotten lyrics file).
+The analysis runs in seconds. Still run the preflight first so the song is
+actually present.
 
 **Step 1 — Preflight (plain agent check, no shell):**
 
 Inspect the project yourself: is there an audio file in `audio/`? Are
-there lyrics in `lyrics/lyrics.txt`? Are there reference images?
+there lyrics in `lyrics/lyrics.txt`?
 
 - **Audio missing** → bring in the song with a **show_dialog** that carries
   a `fileIntake` (`accept: ["audio"]`, prompt e.g. "Drop your track or choose
@@ -61,44 +83,36 @@ there lyrics in `lyrics/lyrics.txt`? Are there reference images?
   media library, not `audio/`). If you can't obtain a song, **HARD STOP**:
   "No audio file in `audio/` — without the song there is no analysis."
   Then wait.
-- **Lyrics or reference images missing** → **show_dialog** before the
-  analysis starts. Show the concrete gap. Options:
-  - `start anyway` — the user knows that lyrics/refs are (still) missing
-    and deliberately wants to proceed (e.g. an instrumental track
-    without lyrics).
-  - `wait, I'm still uploading` — do NOT start the analysis, wait for
-    the upload, then re-check.
 - **Everything present** → continue directly with step 2.
 
 **Step 2 — Run the analysis:**
 
-Start the analysis via the engine MCP tool:
-
 `run_phase(project_dir, "analysis")`
 
-This runs the pack's audio-analysis pipeline (stem separation, alignment,
-structure, tempo/energy curves, key) and writes `analysis/<song>.json`.
+This decodes the song and runs the native DSP, writing `analysis/<song>.json`
+and returning the measured `bpm`, `downbeats`, and `sections` table. If it
+returns `{"error": "phase_failed", ...}`, the song couldn't be decoded — tell
+the user what the detail says (e.g. the file isn't a valid audio file) and ask
+for a clean track. **Do not proceed to A2 or approve the gate on a failed run.**
 
-**Dependency note (important).** The local audio analysis needs the
-optional `[audio]` extra (the heavy DSP dependencies). If `run_phase`
-returns `{"error": "missing_dependencies"}`:
+**Step 3 — Offer lyrics (optional, improves labeling):**
 
-- Tell the user that local audio analysis is not enabled. They can
-  **enable audio analysis (the `[audio]` extra) in Settings**, then you
-  re-run `run_phase(project_dir, "analysis")`.
-- Or, if they prefer not to: **proceed with manual / approximate timing**
-  — derive section boundaries and tempo by hand (from the lyrics
-  structure, the user's input, and listening), and label conservatively.
-  Flag in `anomalies` that the analysis is approximate (no DSP backend).
+If `lyrics/lyrics.txt` isn't present yet, offer a lyrics upload via a
+**show_dialog** with a `fileIntake` (`accept: ["text"]`, `attachAs: "lyrics"`,
+prompt e.g. "Drop the lyrics (.txt) — optional, sharpens the section labels").
+The host writes `lyrics/lyrics.txt` and replies with the `[Section]` markers in
+order. Lyrics are **preferred over guessing** for section labels: map the
+markers onto the measured sections in order. They do **not** move the measured
+boundaries. Instrumental track / user declines → skip, label conservatively.
 
-After a successful run, continue with A2 (interpretation, below).
+After a successful run, continue with A2.
 
 ### A2 — Precondition
 
 `run_phase(project_dir, "analysis")` was executed in A1;
-`analysis/<song>.json` exists with `schema=analysis/v2` and potentially
-`alignment`, `stems`, `structure_candidates`, `energy_curve`,
-`tempo_curve`, `key`, `chord_progression`.
+`analysis/<song>.json` exists with `schema=analysis/v2` and measured
+`beats`, `downbeats`, downbeat-snapped `sections`, `structure_candidates`,
+`energy_curve`, `tempo_curve`.
 
 ### A2 — Resume behavior (mandatory — check first)
 
@@ -119,80 +133,70 @@ Before writing the section labels, settle the tempo multiplier. The
 technically measured `bpm` value often deviates by a factor of 2 from
 the **subjectively perceived** tempo (measured 160, felt 80 — and the
 other way around). This has structural impact on storyboard and
-shotlist pacing, which is why it is decided NOW, not later in the
-shotlist.
+shotlist pacing, which is why it is decided NOW.
 
 Workflow:
 
-1. Read `bpm` from `analysis.json` and listen to / inspect the song
-   (energy_curve and tempo_curve help).
+1. Read `bpm` from `analysis.json` and inspect the song (energy_curve and
+   tempo_curve help).
 2. Ask the user a show_dialog with the three plausible options:
    - **`×1` (confirmed)** — measured ≈ felt, multiplier 1.0.
-   - **`×0.5` (halved)** — the track feels half as fast, e.g. when the
-     detector counted the off-beat as the beat.
-   - **`×2` (doubled)** — the track feels twice as fast, e.g. when the
-     detector counted the half notes.
+   - **`×0.5` (halved)** — the track feels half as fast.
+   - **`×2` (doubled)** — the track feels twice as fast.
 3. Write the result as the top-level field `tempo_multiplier` into
-   `analysis.json` (default 1.0). The `perceived_bpm` value
-   (= `bpm × tempo_multiplier`) is derived from it — consumers (sanity
-   tempo cap, storyboard/shotlist agent) use that.
+   `analysis.json` (default 1.0).
 4. Confirm to the user in chat: "Perceived tempo: <perceived> BPM
-   (= <bpm> × <multiplier>)." That settles the pacing baseline.
+   (= <bpm> × <multiplier>)."
 
 ### A2 — Write the interpretation
 
 Add the top-level key `interpretation` to the analysis.json:
 
-- `section_labels`: list of `{index, label, confidence, note}`
-  - If `sections[].source == "alignment"`: the labels come from the
-    `[Section]` markers in the lyrics, confidence high (0.9). Adopt
-    them.
-  - If `sections[].source == "consolidated"`: name narratively, based
-    on position in the song, the lyric lines in the alignment, and the
-    energy/tempo curves.
+- `section_labels`: list of `{index, label, confidence, note}`, one per
+  entry in the measured `sections`.
+  - If lyrics were attached: adopt the `[Section]` markers as labels in
+    order, confidence high (0.9).
+  - Otherwise name narratively from position in the song and the
+    energy/tempo curves, confidence lower.
   - Labels from {intro, verse1, verse2, ..., pre-chorus, chorus1,
     chorus2, ..., bridge, breakdown, outro}
-- `anomalies`: list of `{kind, time, note}` — extend the entries
-  pre-flagged by the consolidator with your own observations.
-- `overall_character`: 2-3 sentences; use the key (minor/major), the
-  tempo-curve dynamics, and the structure.
+- `anomalies`: keep the entries the consolidator pre-flagged
+  (`single_source_boundary`, `boundary_divergence`) and add your own
+  observations.
+- `overall_character`: 2-3 sentences from the tempo-curve dynamics and
+  the structure.
 
 ### Orientation on the (v2) fields
 
-- `alignment[]`: line texts + exact timestamps. The primary truth for
-  section boundaries when present.
-- `structure_candidates[]`: raw data per detector. For your own
-  plausibility checks.
+- `sections[]`: measured, downbeat-snapped boundaries — the source of
+  truth for section timing. Label them; do not move them.
+- `downbeats[]`: the bar grid. Every section boundary sits on one.
+- `structure_candidates[]`: the raw detector output (one `librosa`
+  candidate today) — for your own plausibility checks.
 - `energy_curve`, `tempo_curve`: for assessing dynamics.
-- `key`: musical key (e.g. "C major").
-- `chord_progression[]`: chord sequence, when available.
-- `pipeline_stages`: shows which stages ran (e.g. "alignment" is
-  missing for an instrumental track).
+- Empty by design (deferred — not errors): `alignment`, `stems`, `key`,
+  `chord_progression`.
 
 ## Mandatory rules
 
-- In A2, do not re-run the DSP — interpretation works on the JSON only;
-  the heavy lifting happened in the A1 `run_phase` call.
-- Invent nothing: if the alignment is missing, flag it in `anomalies`
-  and label conservatively.
-- On divergences (consolidator anomaly `boundary_divergence`): show
-  them to the user explicitly.
+- In A2, do not re-run the DSP — interpretation works on the JSON only.
+- **Invent nothing.** Timing comes from the measured `downbeats`/`sections`
+  only. If you didn't run analysis, you have no structure — run it. The
+  analysis gate will reject approval without a real artifact.
+- On divergences (`boundary_divergence`): show them to the user explicitly.
 - No treatment (treatment-agent). No shotlist (shotlist-agent).
 - Never demand a shell command from the user.
-- The heavy analysis is a silent worker job — it runs via
-  `run_phase(project_dir, "analysis")`, never via the `Agent` tool.
+- The analysis runs via `run_phase(project_dir, "analysis")`, never via the
+  `Agent` tool.
 
 ## Failure modes & escalation
 
-- Preflight: no audio → hard stop, hint to place the song in `audio/`,
-  wait for the user. Never start the expensive run anyway.
-- Preflight: lyrics/refs missing → show_dialog before any expensive
-  run; never start silently.
-- `run_phase` returns `{"error": "missing_dependencies"}` → tell the
-  user to enable audio analysis (the `[audio]` extra) in Settings, or
-  proceed with manual / approximate section + tempo timing (flag it in
-  `anomalies`).
-- Alignment missing (e.g. instrumental track) → label conservatively
-  and flag it in `anomalies`; `pipeline_stages` documents the gap.
+- Preflight: no audio → hard stop, offer the upload dialog, wait for the
+  user. Never approve the gate anyway.
+- `run_phase` returns `{"error": "phase_failed"}` → the song couldn't be
+  decoded. Surface the detail, ask for a clean audio file, re-run. Do not
+  proceed on a failed run.
+- Instrumental track / no lyrics → label sections conservatively from the
+  measured boundaries and flag low confidence; never invent labels as fact.
 - `boundary_divergence` flagged by the consolidator → surface it to the
-  user explicitly before requesting the gate.
+  user before requesting the gate.

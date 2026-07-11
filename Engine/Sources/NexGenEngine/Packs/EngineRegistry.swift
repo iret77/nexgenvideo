@@ -37,6 +37,12 @@ public final class EngineRegistry: @unchecked Sendable {
     public private(set) var projectDirs: [String] = []
     public private(set) var uiContracts: [String: UIContract.Entry] = [:]
 
+    /// Deterministic hard-gate preconditions, keyed by phase. A pack registers a check that throws
+    /// `GateBlocked` when the phase's artifact isn't genuinely present (e.g. musicvideo's `analysis`
+    /// requires a written artifact with real beats/downbeats). The approve paths consult this before
+    /// stamping a gate, so the agent cannot rubber-stamp a phase whose deterministic output is missing.
+    public private(set) var gateRequirements: [String: GateRequirement] = [:]
+
     /// The host's audio decoder, injected so a pack's phase runner can turn an
     /// audio file into a `PCMBuffer` without the pure engine linking
     /// AVFoundation. Nil until the app registers one — the analysis runner then
@@ -48,6 +54,10 @@ public final class EngineRegistry: @unchecked Sendable {
     /// phases land; kept minimal here for the one phase M8 registers. Port of
     /// `pack.py::PhaseRunner`.
     public typealias PhaseRunner = @Sendable (URL) throws -> Void
+
+    /// A deterministic precondition for approving a gate: throws `GateBlocked` (with an actionable
+    /// message) when the phase's artifact isn't genuinely present in the data root.
+    public typealias GateRequirement = @Sendable (URL) throws -> Void
 
     public init() {}
 
@@ -88,6 +98,12 @@ public final class EngineRegistry: @unchecked Sendable {
 
     public func registerDurationPolicy(_ policy: DurationPolicy) {
         durationPolicy = policy
+    }
+
+    /// Register a deterministic hard-gate precondition for `phase`. Consulted by the approve paths
+    /// (agent tool + Pipeline panel) before a gate is stamped.
+    public func registerGateRequirement(_ phase: String, _ check: @escaping GateRequirement) {
+        gateRequirements[phase] = check
     }
 
     /// Inject the host's audio decoder (the app's AVFoundation implementation).
@@ -169,6 +185,9 @@ public struct PackManifest: Sendable, Equatable {
     /// mirror on the in-code manifest lets the picker show the requirement.
     public let minAppVersion: String
     public let badgeURL: URL?
+    /// The pack's brand accent as a `#RRGGBB` hex, used to make its critical in-chat controls (e.g. the
+    /// track/lyrics upload well) recognizably the pack's own. Nil → the host uses its default accent.
+    public let accentHex: String?
 
     public init(
         id: String,
@@ -177,7 +196,8 @@ public struct PackManifest: Sendable, Equatable {
         headline: String = "",
         benefit: String = "",
         minAppVersion: String = "0.0.0",
-        badgeURL: URL? = nil
+        badgeURL: URL? = nil,
+        accentHex: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -186,6 +206,7 @@ public struct PackManifest: Sendable, Equatable {
         self.benefit = benefit
         self.minAppVersion = minAppVersion
         self.badgeURL = badgeURL
+        self.accentHex = accentHex
     }
 }
 

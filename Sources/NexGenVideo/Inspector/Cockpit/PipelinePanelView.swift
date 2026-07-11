@@ -111,7 +111,7 @@ struct PipelinePanelView: View {
             budgetBar(fraction: data.spentFraction, color: barColor)
 
             if let next = data.nextPhaseName {
-                Text("Next up: \(next) — \(String(format: "€%.2f", data.budgetRemainingEur)) available")
+                Text("Next up: \(PhaseDisplay.label(next)) — \(String(format: "€%.2f", data.budgetRemainingEur)) available")
                     .font(.system(size: AppTheme.FontSize.xs))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
@@ -172,7 +172,7 @@ struct PipelinePanelView: View {
                 .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             if let next = data.nextPhaseName, !data.isComplete {
-                Text("Next: \(next)")
+                Text("Next: \(PhaseDisplay.label(next))")
                     .font(.system(size: AppTheme.FontSize.sm))
                     .foregroundStyle(AppTheme.Accent.timecodeColor)
             }
@@ -184,7 +184,7 @@ struct PipelinePanelView: View {
         VStack(spacing: 0) {
             HStack(spacing: AppTheme.Spacing.smMd) {
                 statusDot(approved: phase.approved, isNext: isNext, state: phase.state)
-                Text(phase.phase)
+                Text(PhaseDisplay.label(phase.phase))
                     .font(.system(size: AppTheme.FontSize.sm,
                                   weight: isNext ? .semibold : (phase.approved ? .regular : .medium)))
                     .foregroundStyle(phase.approved ? AppTheme.Text.tertiaryColor
