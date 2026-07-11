@@ -145,7 +145,13 @@ struct AgentDialogCard: View {
     }
 
     private var directionField: some View {
-        TextField(dialog.textPlaceholder ?? "Add direction (optional)…", text: $direction, axis: .vertical)
+        dialogField(dialog.textPlaceholder ?? "Add direction (optional)…", text: $direction)
+    }
+
+    /// The single text-input styling for a dialog card — reused by the free-text direction and the
+    /// file-intake identity name so every input field in the AI chat looks and behaves identically.
+    private func dialogField(_ placeholder: String, text: Binding<String>) -> some View {
+        TextField(placeholder, text: text, axis: .vertical)
             .textFieldStyle(.plain)
             .lineLimit(1...3)
             .font(.system(size: AppTheme.FontSize.xs))
@@ -167,9 +173,7 @@ struct AgentDialogCard: View {
     private func fileWell(_ intake: AgentDialog.FileIntake) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             if let namePrompt = intake.namePrompt {
-                TextField(namePrompt, text: $direction)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                dialogField(namePrompt, text: $direction)
             }
             if pickedFiles.isEmpty {
                 emptyFileWell(intake)
