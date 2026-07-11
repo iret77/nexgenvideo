@@ -176,20 +176,23 @@ struct WorkflowToolsTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
 
-        // No analysis artifact → approve_gate("analysis") is refused (deterministic hard gate).
+        // Approve the predecessor first, so the analysis block is attributable to the ARTIFACT hard
+        // gate (no measured beats/downbeats), not merely to ordering.
+        let ok = try await h.runOK("approve_gate", args: ["project_dir": dataRoot.path, "phase": "project_init"]) as? [String: Any]
+        #expect(ok?["approved"] as? Bool == true)
+
+        // No analysis artifact → approve_gate("analysis") is refused by requireRealAnalysis (points at
+        // run_phase). This is the deterministic hard gate, not the ordering check.
         let blocked = await h.runRaw("approve_gate", args: ["project_dir": dataRoot.path, "phase": "analysis"])
         #expect(blocked.isError == true)
-        #expect(ToolHarness.textOf(blocked).contains("analysis"))
+        #expect(ToolHarness.textOf(blocked).contains("run_phase"))
 
         // set_gate_state to an approved state is refused the same way — no bypass.
         let blocked2 = await h.runRaw("set_gate_state", args: [
             "project_dir": dataRoot.path, "phase": "analysis", "state": "approved",
         ])
         #expect(blocked2.isError == true)
-
-        // The first phase (no requirement, no unapproved predecessor) still approves.
-        let ok = try await h.runOK("approve_gate", args: ["project_dir": dataRoot.path, "phase": "project_init"]) as? [String: Any]
-        #expect(ok?["approved"] as? Bool == true)
+        #expect(ToolHarness.textOf(blocked2).contains("run_phase"))
     }
 
     @Test("set_gate_state rejects an unknown state")
