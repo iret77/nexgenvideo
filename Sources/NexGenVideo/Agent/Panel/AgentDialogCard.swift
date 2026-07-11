@@ -24,6 +24,8 @@ struct AgentDialogCard: View {
     @State private var localChoiceSelections: [String: Set<String>] = [:]
     @State private var toggleStates: [String: Bool] = [:]
     @State private var direction: String = ""
+    /// Per-section "Other…" free text, for choice sections with `allowsCustom`.
+    @State private var customText: [String: String] = [:]
     @State private var isDropTargeted = false
     /// Files chosen for a `fileIntake` dialog — via the drop zone or the native picker.
     @State private var pickedFiles: [URL] = []
@@ -48,10 +50,11 @@ struct AgentDialogCard: View {
             ForEach(dialog.sections) { section in
                 sectionView(section)
             }
+            if let tf = dialog.textField {
+                dialogField(tf.placeholder, text: $direction, lineLimit: tf.multiline ? 3...12 : 1...3)
+            }
             if let intake = dialog.fileIntake {
                 fileWell(intake)
-            } else {
-                directionField
             }
             footerRow
         }
@@ -62,8 +65,7 @@ struct AgentDialogCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(isDropTargeted ? AppTheme.Accent.primary
-                                             : AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
+                .strokeBorder(isDropTargeted ? accent : accent.opacity(AppTheme.Opacity.medium),
                               lineWidth: isDropTargeted ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.thin)
         )
         .padding(.horizontal, AppTheme.Spacing.mdLg)
@@ -126,6 +128,12 @@ struct AgentDialogCard: View {
                           multiSelect: multiSelect) { optionId in
                     toggleChoice(sectionId: section.id, optionId: optionId, multiSelect: multiSelect)
                 }
+                if section.allowsCustom {
+                    dialogField("Other…", text: Binding(
+                        get: { customText[section.id] ?? "" },
+                        set: { customText[section.id] = $0 }
+                    ))
+                }
             }
         case .toggle:
             HStack(spacing: AppTheme.Spacing.sm) {
@@ -144,16 +152,13 @@ struct AgentDialogCard: View {
         }
     }
 
-    private var directionField: some View {
-        dialogField(dialog.textPlaceholder ?? "Add direction (optional)…", text: $direction)
-    }
-
-    /// The single text-input styling for a dialog card — reused by the free-text direction and the
-    /// file-intake identity name so every input field in the AI chat looks and behaves identically.
-    private func dialogField(_ placeholder: String, text: Binding<String>) -> some View {
+    /// The single text-input styling for a dialog card — reused by the free-text field, per-section
+    /// "Other…" inputs, and the file-intake identity name, so every input field in the AI chat looks
+    /// and behaves identically (one design, no one-offs).
+    private func dialogField(_ placeholder: String, text: Binding<String>, lineLimit: ClosedRange<Int> = 1...3) -> some View {
         TextField(placeholder, text: text, axis: .vertical)
             .textFieldStyle(.plain)
-            .lineLimit(1...3)
+            .lineLimit(lineLimit)
             .font(.system(size: AppTheme.FontSize.xs))
             .foregroundStyle(AppTheme.Text.primaryColor)
             .padding(AppTheme.Spacing.sm)
@@ -329,12 +334,16 @@ struct AgentDialogCard: View {
         }
     }
 
-    /// A file-intake dialog can't be confirmed until the user has actually chosen a file — and, when
-    /// the intake asks for an identity name (character/location), until that name is filled in too.
+    /// When the dialog can be confirmed. No file intake ⇒ always (choices/text). With a file intake:
+    /// if it also has a textField (paste-OR-upload, e.g. lyrics) a file OR non-empty text suffices;
+    /// otherwise a file is required, plus the identity name when the intake asks for one.
     private var canSubmit: Bool {
         guard let intake = dialog.fileIntake else { return true }
+        if !intake.required { return true }  // optional intake: confirm even with nothing (an explicit skip)
+        let hasText = !direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if dialog.textField != nil { return !pickedFiles.isEmpty || hasText }
         if pickedFiles.isEmpty { return false }
-        if intake.namePrompt != nil, direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+        if intake.namePrompt != nil, !hasText { return false }
         return true
     }
 
@@ -369,10 +378,14 @@ struct AgentDialogCard: View {
                 if !picked.isEmpty { selectedLabels[section.id] = picked.map(\.label) }
             }
         }
+        let customs = customText
+            .mapValues { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.value.isEmpty }
         onSubmit(AgentDialogResult(
             selectedLabels: selectedLabels,
             toggles: toggleStates,
             direction: direction.trimmingCharacters(in: .whitespacesAndNewlines),
+            customValues: customs,
             fileURLs: pickedFiles
         ))
     }

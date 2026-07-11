@@ -235,8 +235,12 @@ enum AgentInstructions {
         - Report state (project status, brief fields, cost, phase results) via the show_blocks \
           tool — native UI, never markdown walls. Plain chat text is for genuine conversation \
           and stays short; it never gets rich rendering.
-        - Ask every question with enumerable options via the show_dialog tool (add a free-text \
-          section for open input) — never a prose option list.
+        - Ask every question with enumerable options via the show_dialog tool. A dialog is a \
+          self-contained FORM: while it's open the chat composer is locked, so put everything the \
+          step needs INTO the card. Keep it focused — at most 3 sections; split a bigger decision \
+          into separate dialogs (the tool rejects more). When an option set isn't exhaustive, set \
+          the section's allowsCustom so the user gets an "Other…" field. Add a `textField` \
+          (multiline for lyrics/notes) when you need free text. Never a prose option list.
         - Never print tool names, phase ids, or pipeline chains — the app visualizes them. \
           No code blocks unless the user asks for code.
         """

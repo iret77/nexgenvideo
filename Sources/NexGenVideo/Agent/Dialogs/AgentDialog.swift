@@ -11,13 +11,24 @@ import Foundation
 struct AgentDialogResult: Sendable, Equatable {
     var selectedLabels: [String: [String]]
     var toggles: [String: Bool]
+    /// The dialog's single free-text field (`AgentDialog.textField`), when it declares one.
     var direction: String
+    /// Per-section "Other…" free text, for choice sections that set `allowsCustom` — keyed by section id.
+    var customValues: [String: String] = [:]
     /// Files the user dropped or picked in a `fileIntake` dialog. The host imports each as a media
     /// asset and hands the agent an @mention — the user never types, and no path travels as prose.
     var fileURLs: [URL] = []
 
     func labels(_ sectionId: String) -> [String] { selectedLabels[sectionId] ?? [] }
     var allLabels: [String] { selectedLabels.values.flatMap { $0 } }
+    /// A section's picked labels plus its "Other…" text (if any), for message composition.
+    func values(_ sectionId: String) -> [String] {
+        var out = labels(sectionId)
+        if let custom = customValues[sectionId]?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
+            out.append(custom)
+        }
+        return out
+    }
 }
 
 struct AgentDialog: Identifiable, Equatable, Sendable {
@@ -77,6 +88,23 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         let id: String
         let label: String
         let kind: Kind
+        /// For a choices section: also render a system "Other…" free-text so the user isn't boxed into
+        /// the preset options. The typed value comes back in `AgentDialogResult.customValues[id]`.
+        let allowsCustom: Bool
+
+        init(id: String, label: String, kind: Kind, allowsCustom: Bool = false) {
+            self.id = id
+            self.label = label
+            self.kind = kind
+            self.allowsCustom = allowsCustom
+        }
+    }
+
+    /// The dialog's single free-text field. Explicit (the agent declares it) rather than an always-on
+    /// input, and sized to its job — `multiline` for lyrics/notes, single-line for a short direction.
+    struct DialogTextField: Equatable, Sendable {
+        let placeholder: String
+        let multiline: Bool
     }
 
     /// Turns the dialog into a file intake: the card replaces its free-text field with a drop zone +
@@ -99,6 +127,10 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         /// the `character`/`location` intakes so the host can name the destination folder. The name
         /// arrives in `AgentDialogResult.direction`.
         let namePrompt: String?
+        /// Whether a file (or, with a textField, text) is REQUIRED to confirm. Optional intakes (lyrics,
+        /// script) can be confirmed with nothing — that's an explicit "skip", reported to the agent so
+        /// it moves on instead of the user being forced to dismiss.
+        let required: Bool
     }
 
     let id: String
@@ -109,10 +141,10 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
     /// e.g. "≈ €0.80 for 2 clips" — surfaced before money is spent.
     let costHint: String?
     let confirmLabel: String
-    /// Placeholder for the dialog-scoped free-text input ("Freitext, der nur diesen Dialog voranbringt").
-    let textPlaceholder: String?
+    /// The dialog's single free-text field, when it declares one. Explicit, not always-on.
+    let textField: DialogTextField?
     let sections: [Section]
-    /// When set, the card shows a drop zone + native file picker instead of the free-text field.
+    /// When set, the card shows a drop zone + native file picker.
     let fileIntake: FileIntake?
     /// Visual candidates projected onto the canvas (timeline ranges / Review shot) instead of the card.
     let projection: Projection
@@ -120,7 +152,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
     let purpose: Purpose
 
     init(id: String, title: String, symbol: String, intro: String?, costHint: String?,
-         confirmLabel: String, textPlaceholder: String?, sections: [Section],
+         confirmLabel: String, textField: DialogTextField?, sections: [Section],
          fileIntake: FileIntake? = nil,
          projection: Projection = Projection(), purpose: Purpose = .chatClarification) {
         self.id = id
@@ -129,7 +161,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         self.intro = intro
         self.costHint = costHint
         self.confirmLabel = confirmLabel
-        self.textPlaceholder = textPlaceholder
+        self.textField = textField
         self.sections = sections
         self.fileIntake = fileIntake
         self.projection = projection
@@ -141,8 +173,14 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         guard let title = (args["title"] as? String)?.trimmingCharacters(in: .whitespaces), !title.isEmpty else {
             throw ToolError("show_dialog: 'title' is required.")
         }
+        let rawSections = (args["sections"] as? [[String: Any]]) ?? []
+        // GUARDRAIL: a dialog stays a focused decision, not a wall of controls. Overloaded dialogs must
+        // be split into sub-steps by the agent — the schema won't render more than this.
+        guard rawSections.count <= Self.maxSections else {
+            throw ToolError("show_dialog: at most \(Self.maxSections) sections — split a bigger decision into separate, focused dialogs.")
+        }
         var sections: [Section] = []
-        for (index, raw) in ((args["sections"] as? [[String: Any]]) ?? []).enumerated() {
+        for (index, raw) in rawSections.enumerated() {
             let id = (raw["id"] as? String) ?? "section\(index)"
             let label = (raw["label"] as? String) ?? id
             switch (raw["type"] as? String) ?? "choices" {
@@ -157,19 +195,22 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
                                   symbol: opt["symbol"] as? String,
                                   rangeRef: opt["rangeRef"] as? String)
                 }
-                guard !options.isEmpty else {
-                    throw ToolError("show_dialog: choices section '\(id)' needs a non-empty 'options' array.")
+                // GUARDRAIL: enough to be a choice, few enough to scan. Set allowsCustom for open sets.
+                guard options.count >= 2, options.count <= Self.maxOptionsPerSection else {
+                    throw ToolError("show_dialog: choices section '\(id)' needs 2…\(Self.maxOptionsPerSection) options (set allowsCustom for an open 'Other…' field).")
                 }
                 sections.append(Section(id: id, label: label,
                                         kind: .choices(options: options,
-                                                       multiSelect: (raw["multiSelect"] as? Bool) ?? false)))
+                                                       multiSelect: (raw["multiSelect"] as? Bool) ?? false),
+                                        allowsCustom: (raw["allowsCustom"] as? Bool) ?? false))
             case let other:
                 throw ToolError("show_dialog: unknown section type '\(other)' (use 'choices' or 'toggle').")
             }
         }
+        let textField = parseTextField(args)
         let fileIntake = parseFileIntake(args["fileIntake"] as? [String: Any])
-        guard !sections.isEmpty || fileIntake != nil else {
-            throw ToolError("show_dialog: at least one section (or a fileIntake) is required — a dialog without structure is just a question; ask in prose instead.")
+        guard !sections.isEmpty || fileIntake != nil || textField != nil else {
+            throw ToolError("show_dialog: give it structure — at least one section, a textField, or a fileIntake; a bare question belongs in prose.")
         }
         let projection = try parseProjection(args["projection"] as? [String: Any])
         return AgentDialog(
@@ -179,11 +220,30 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             intro: args["intro"] as? String,
             costHint: args["costHint"] as? String,
             confirmLabel: (args["confirmLabel"] as? String) ?? "Continue",
-            textPlaceholder: args["textPlaceholder"] as? String,
+            textField: textField,
             sections: sections,
             fileIntake: fileIntake,
             projection: projection
         )
+    }
+
+    /// GUARDRAILS for agent-generated dialogs — the vocabulary is fixed and bounded so a card can never
+    /// render as an overloaded or malformed wall of controls (schema-enforced, not prompt discipline).
+    static let maxSections = 3
+    static let maxOptionsPerSection = 8
+
+    /// The one free-text field, if declared. New `textField: {placeholder, multiline}` object, or the
+    /// legacy single-line `textPlaceholder` string.
+    private static func parseTextField(_ args: [String: Any]) -> DialogTextField? {
+        if let raw = args["textField"] as? [String: Any] {
+            let placeholder = (raw["placeholder"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return DialogTextField(placeholder: placeholder.isEmpty ? "Add a note (optional)…" : placeholder,
+                                   multiline: (raw["multiline"] as? Bool) ?? false)
+        }
+        if let legacy = (args["textPlaceholder"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !legacy.isEmpty {
+            return DialogTextField(placeholder: legacy, multiline: false)
+        }
+        return nil
     }
 
     private static func parseFileIntake(_ raw: [String: Any]?) -> FileIntake? {
@@ -192,14 +252,18 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         let prompt = (raw["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let attachAs = (raw["attachAs"] as? String)?.trimmingCharacters(in: .whitespaces)
+        let attachAs = ((raw["attachAs"] as? String)?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 }
         let namePrompt = (raw["namePrompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Text sidecars (lyrics/script) are optional by default — the user can confirm-to-skip. The
+        // agent can still force it with required:true; other intakes (the song) default to required.
+        let defaultRequired = !(attachAs == "lyrics" || attachAs == "script")
         return FileIntake(
             accept: accept,
             prompt: (prompt?.isEmpty == false) ? prompt : nil,
             allowsMultiple: (raw["multiple"] as? Bool) ?? false,
-            attachAs: (attachAs?.isEmpty == false) ? attachAs : nil,
-            namePrompt: (namePrompt?.isEmpty == false) ? namePrompt : nil
+            attachAs: attachAs,
+            namePrompt: (namePrompt?.isEmpty == false) ? namePrompt : nil,
+            required: (raw["required"] as? Bool) ?? defaultRequired
         )
     }
 

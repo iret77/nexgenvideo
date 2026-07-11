@@ -336,6 +336,11 @@ final class EditorViewModel {
     /// (agent turn finished) in `refreshEngineState()`.
     private(set) var productionStarting = false
 
+    /// Production has been kicked off via ANY path — the button-driven scaffold (`productionStarting`)
+    /// or the agent scaffolding it itself (the pipeline now exists, `hasProductionPipeline`). Every
+    /// "Start production" affordance disables on this so a second start can't fire.
+    var productionStarted: Bool { productionStarting || hasProductionPipeline }
+
     func startProduction() {
         guard let url = projectURL, let key = workingCopyKey, !productionStarting else { return }
         // The pipeline is scaffolded into the WORKING COPY (not the package); ⌘S syncs it back. The

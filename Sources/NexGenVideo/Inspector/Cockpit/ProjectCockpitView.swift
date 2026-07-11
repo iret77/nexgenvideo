@@ -193,12 +193,23 @@ struct ProjectSettingsView: View {
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
                 } else if editor.productionStarting {
+                    // Genuine in-flight scaffold — a spinner, not a re-tappable button.
                     HStack(spacing: AppTheme.Spacing.xs) {
                         ProgressView().controlSize(.small)
                         Text("Starting…")
                             .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
+                } else if editor.hasProductionPipeline {
+                    // The pipeline exists (e.g. the agent scaffolded it) but this view's state hasn't
+                    // loaded — never offer Start again (double-start), never spin forever; the real
+                    // state lives in Pipeline.
+                    Button("Open Pipeline") {
+                        editor.cockpitTab = .pipeline
+                        editor.setWorkspaceFocus(.produce)
+                    }
+                    .buttonStyle(.capsule(.prominent, size: .regular))
+                    .controlSize(.small)
                 } else {
                     Button("Start production") { editor.startProduction() }
                         .buttonStyle(.capsule(.prominent, size: .regular))

@@ -42,7 +42,7 @@ struct PipelinePanelView: View {
                                    subject: "the pipeline",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarting) { Task { await load() } }
+                                   isStarting: editor.productionStarted) { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No pipeline yet",
                                    message: "This project has no phase state.")
@@ -221,7 +221,7 @@ struct PipelinePanelView: View {
                         .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
                         .foregroundStyle(AppTheme.Status.successColor)
                 }
-                gateMenu(phase)
+                gateMenu(phase, isNext: isNext)
             }
             .frame(height: AppTheme.IconSize.md)
             if !isLast {
@@ -231,19 +231,30 @@ struct PipelinePanelView: View {
     }
 
     /// Direct gate controls (docs/UI_UX_CONCEPT.md §4) — approve / send back / rewind, wired to the
-    /// in-process engine (NativeGateWriter), no agent round-trip. Disabled while a write is in flight.
+    /// in-process engine (NativeGateWriter), no agent round-trip. State-aware so the actions match where
+    /// the phase sits: a FUTURE phase (not reached) offers nothing; the ACTIVE (next) phase can be
+    /// approved; a COMPLETED phase can be sent back or rewound to. A future phase can't be approved
+    /// out of order or "rewound to" — that would be meaningless.
     @ViewBuilder
-    private func gateMenu(_ phase: ProjectPhase) -> some View {
+    private func gateMenu(_ phase: ProjectPhase, isNext: Bool) -> some View {
+        // The first not-yet-approved phase is the frontier: everything before it is done, it is active,
+        // everything after is in the future.
+        let isFuture = !phase.approved && !isNext
         Menu {
+            // Only the active (next) phase is approvable — no approving out of order.
             Button("Approve") { apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase) } }
-                .disabled(phase.approved && phase.state != "needs_revision")
+                .disabled(!isNext)
+            // Only a completed phase can be sent back for revision.
             Button("Needs revision") {
                 apply { try NativeGateWriter.setState(projectDir: $0, phase: phase.phase, state: .needsRevision) }
             }
+            .disabled(!phase.approved)
             Divider()
+            // Rewind to a phase already reached (active or completed) — never to the future.
             Button("Rewind to here", role: .destructive) {
                 apply { try NativeGateWriter.rewind(projectDir: $0, targetPhase: phase.phase) }
             }
+            .disabled(isFuture)
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.system(size: AppTheme.FontSize.xs))
@@ -252,8 +263,9 @@ struct PipelinePanelView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(gateWriting)
-        .help("Gate: approve, send back for revision, or rewind the pipeline to this phase")
+        .disabled(gateWriting || isFuture)
+        .help(isFuture ? "Not reached yet — approve earlier phases first"
+                       : "Gate: approve, send back for revision, or rewind the pipeline to this phase")
     }
 
     /// Run a gate mutation against the project dir, then reload both this panel and the shared engine

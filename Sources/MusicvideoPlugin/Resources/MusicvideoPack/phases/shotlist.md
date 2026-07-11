@@ -127,7 +127,12 @@ shot construction (Step 6).
 
 - **beat**: 20-50 short shots, `time_start`/`time_end` exactly from
   `analysis.downbeats`.
-- **phrase**: one or more shots per lyric phrase from
+- **phrase**: DEFERRED — not selectable in the brief (it needs per-line
+  lyric timing / forced alignment, which the analysis doesn't produce
+  yet). You should never see `project_mode: phrase`; if you do, fall back
+  to `section`. The alignment-based construction below stays as the spec
+  for when forced alignment lands.
+  One or more shots per lyric phrase from
   `analysis.alignment`, depending on the phrase duration and the
   tempo-band ASL. An 8-second phrase in mid-tempo (target 3 s, cap 6 s)
   is split into 2-3 shots, not mapped as one shot. One shot per phrase

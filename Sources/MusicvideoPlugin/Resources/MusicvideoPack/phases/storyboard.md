@@ -125,7 +125,7 @@ Mandatory mix in every section (music-video form, not a short film):
 - At least 1 non-story step per 4 story steps (mood-insert / cutaway /
   performance).
 - Refrain sections (chorus 1, chorus 2, final chorus) carry a
-  `refrain-anchor` — a recurring image that varies slightly in the
+  `structural-anchor` — a recurring image that varies slightly in the
   second and third chorus (same composition, different light tone or
   angle — via `setting_hint` or a `location_view_request` variant).
 - The bridge is visually **contrastive** to the rest — different
@@ -137,7 +137,7 @@ Per step:
 | Field | What |
 |---|---|
 | `id` | `<section>.<NN>`, e.g. `verse1.03`. Gapless. |
-| `function` | Tag from story / mood-insert / performance / cutaway / refrain-anchor / transition |
+| `function` | Tag from story / mood-insert / performance / cutaway / structural-anchor / transition |
 | `subject` | Who does WHAT in which **starting pose** + vector: "Alex stands in the school gate, left leg forward, about to step in" |
 | `camera` | **Starting framing + EXACTLY ONE move category**: "low angle ~1.5 m, static 2 s, then slow pull-back 1 m". Combinations like "push-in into orbit" or "pan into tracking" are forbidden — at most one move category per step. Allowed categories: push / pull / pan / tilt / track / orbit / crane / zoom / aerial / handheld. "static" counts as 0 and may be combined with one other category. |
 | `setting_hint` | Which location, rough perspective: "schoolyard, from the gate" |

@@ -198,15 +198,27 @@ final class AgentService {
         // Resolve the pipeline DATA ROOT the same way the workflow tools do (workingRoot may be the
         // package home; the sidecar dirs live under <home>/pipeline). No project ⇒ don't drop the answer.
         guard let editor, let workingRoot = editor.workingRoot,
-              let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
-              let src = result.fileURLs.first
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot)
         else {
             send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
             return
         }
-        guard let content = try? String(contentsOf: src, encoding: .utf8) else {
-            send(text: "Couldn't read the \(kind) file — it isn't UTF-8 text. Ask the user for a .txt/.md.", mentions: [])
-            return
+        // Accept EITHER an uploaded file OR pasted text (the dialog's textField). Neither ⇒ the user
+        // skipped this optional step; tell the agent so it moves on instead of waiting forever.
+        let content: String
+        if let src = result.fileURLs.first {
+            guard let text = try? String(contentsOf: src, encoding: .utf8) else {
+                send(text: "Couldn't read the \(kind) file — it isn't UTF-8 text. Ask the user for a .txt/.md.", mentions: [])
+                return
+            }
+            content = text
+        } else {
+            let pasted = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !pasted.isEmpty else {
+                send(text: "No \(kind) provided — the user skipped it. Proceed without \(kind).", mentions: [])
+                return
+            }
+            content = pasted
         }
         let relDir: String, filename: String
         switch kind {
@@ -355,7 +367,7 @@ final class AgentService {
                                     attached: [AgentMention] = []) -> String {
         var parts: [String] = []
         for section in dialog.sections {
-            let picked = result.labels(section.id)
+            let picked = result.values(section.id)  // includes the section's "Other…" text
             if !picked.isEmpty { parts.append("\(section.label): \(picked.joined(separator: ", "))") }
             if case .toggle = section.kind {
                 parts.append("\(section.label): \((result.toggles[section.id] ?? false) ? "yes" : "no")")
@@ -373,13 +385,19 @@ final class AgentService {
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
     /// direction, comma-joined (matches the music tab's original composition).
     private static func intentLine(from dialog: AgentDialog, result: AgentDialogResult) -> String {
-        var parts = result.allLabels
+        var parts = result.allLabels + result.customValues.values.sorted()
         if !result.direction.isEmpty { parts.append(result.direction) }
         return parts.joined(separator: ", ")
     }
 
+    /// Dismissing a dialog must not leave the agent waiting forever (it STOP-and-waits after show_dialog).
+    /// A dismissed chat-clarification dialog tells the agent it was skipped so it can move on.
     func cancelDialog() {
+        let dialog = pendingDialog
         pendingDialog = nil
+        if let dialog, dialog.purpose == .chatClarification {
+            send(text: "Dismissed the \u{201C}\(dialog.title)\u{201D} dialog without answering — ask in prose or move on.", mentions: [])
+        }
     }
 
     // MARK: - Spend approval (Cost-Guard, M7)

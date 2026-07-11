@@ -36,7 +36,7 @@ struct SanityPanelView: View {
                                    subject: "the sanity report",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarting) { Task { await load() } }
+                                   isStarting: editor.productionStarted) { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "checklist.unchecked", title: "Nothing to check",
                                    message: "Sanity runs once this project has a shotlist.")

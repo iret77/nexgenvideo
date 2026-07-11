@@ -44,6 +44,10 @@ struct AgentPanelView: View {
     private var service: AgentService { editor.agentService }
 
     private var canSend: Bool {
+        // A pending dialog card (or spend approval) owns the input — the composer is locked, so neither
+        // the Send button, Return-to-send, nor submit() may fire a stale draft past the card.
+        service.pendingDialog == nil &&
+        service.pendingSpendApproval == nil &&
         !service.isStreaming &&
         service.canStream &&
         (service.pendingFunction != nil ||
@@ -471,6 +475,9 @@ struct AgentPanelView: View {
                 mentions: $service.mentions,
                 isSending: service.isStreaming,
                 canSend: canSend,
+                blocked: service.pendingDialog != nil || service.pendingSpendApproval != nil,
+                blockedHint: service.pendingSpendApproval != nil ? "Respond to the approval above to continue"
+                                                                 : "Answer the card above to continue",
                 onSend: submit,
                 onCancel: { service.cancel() }
             ) {

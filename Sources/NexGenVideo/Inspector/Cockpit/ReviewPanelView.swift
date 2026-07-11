@@ -85,7 +85,7 @@ struct ReviewPanelView: View {
                                    subject: "the frames",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarting) { Task { await load() } }
+                                   isStarting: editor.productionStarted) { Task { await load() } }
         case .loaded(let data):
             if let data, !data.shots.isEmpty {
                 loadedBody(data)

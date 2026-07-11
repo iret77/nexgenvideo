@@ -65,4 +65,17 @@ struct GateGuardTests {
         GatesOperations.approve(&gates, phase: "brief")
         try GateGuard.requireChain(gates, order: coreGatePhases, through: "brief")
     }
+
+    @Test("requirePriorApproved enforces in-order approval")
+    func priorApproved() throws {
+        var gates = Gates(project: "p")
+        // The first phase has no predecessors — always approvable.
+        try GateGuard.requirePriorApproved(gates, order: coreGatePhases, phase: "project_init")
+        // brief needs project_init first.
+        #expect(throws: GateBlocked.self) {
+            try GateGuard.requirePriorApproved(gates, order: coreGatePhases, phase: "brief")
+        }
+        GatesOperations.approve(&gates, phase: "project_init")
+        try GateGuard.requirePriorApproved(gates, order: coreGatePhases, phase: "brief")
+    }
 }

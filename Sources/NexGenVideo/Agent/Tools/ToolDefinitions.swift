@@ -103,7 +103,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showDialog,
-            description: "Present a native structured dialog in the chat composer so the user shapes a step with clicks instead of prose — USE THIS instead of asking multi-option questions in text whenever a step has enumerable choices (styles, sections, modes, candidates). It renders as a card docked above the input (never a modal, never in the transcript); the input field becomes the dialog's free-text direction. When the step needs a LOCAL file FROM THE USER (a song, footage, a still), pass 'fileIntake' instead \u{2014} the card then shows a drop zone + a native file picker (no path typing), and the answer carries the chosen file as an @mentioned media asset you attach by id. After calling: STOP. The user's structured answer arrives as the next user message (\u{201C}Dialog \u{2026}\u{201D}); do not proceed with the step until then. Give every option a fitting SF Symbol; include costHint when the confirmed step will spend money.\n\nPROJECTION (when the choices ARE visual objects, show them where they live instead of describing them in prose): pass 'projection'. For choices that are TIMELINE RANGES (a section to trim, a moment to cut, a candidate span), put the spans in projection.timelineRanges (project frames, from get_timeline) and reference each from a choices option via 'rangeRef' \u{2014} the card stays compact and the ranges highlight on the timeline as labeled, clickable candidates; the user's click selects that choice. For choices about a SHOT's generated frames, set projection.reviewShot to the shot id \u{2014} the Review gallery opens focused on that shot. Only project real objects the user can see; keep prose options for abstract choices.",
+            description: "Present a native structured dialog in the chat composer so the user shapes a step with clicks instead of prose — USE THIS instead of asking multi-option questions in text whenever a step has enumerable choices (styles, sections, modes, candidates). It renders as a self-contained FORM docked above the input (never a modal, never in the transcript); while it is open the chat composer is LOCKED, so the card is the one input surface. Keep each dialog a FOCUSED decision \u{2014} at most 3 sections; split a bigger decision into separate dialogs. For a choice set that isn't exhaustive, set the section's 'allowsCustom' so the user gets an 'Other\u{2026}' field instead of being boxed in. Declare a 'textField' when you need a free-text answer (multiline for lyrics/notes). When the step needs a LOCAL file FROM THE USER (a song, footage, a still), pass 'fileIntake' instead \u{2014} the card then shows a drop zone + a native file picker (no path typing), and the answer carries the chosen file as an @mentioned media asset you attach by id. After calling: STOP. The user's structured answer arrives as the next user message (\u{201C}Dialog \u{2026}\u{201D}); do not proceed with the step until then. Give every option a fitting SF Symbol; include costHint when the confirmed step will spend money.\n\nPROJECTION (when the choices ARE visual objects, show them where they live instead of describing them in prose): pass 'projection'. For choices that are TIMELINE RANGES (a section to trim, a moment to cut, a candidate span), put the spans in projection.timelineRanges (project frames, from get_timeline) and reference each from a choices option via 'rangeRef' \u{2014} the card stays compact and the ranges highlight on the timeline as labeled, clickable candidates; the user's click selects that choice. For choices about a SHOT's generated frames, set projection.reviewShot to the shot id \u{2014} the Review gallery opens focused on that shot. Only project real objects the user can see; keep prose options for abstract choices.",
             inputSchema: objectSchema(
                 properties: [
                     "title": ["type": "string", "description": "Short imperative title, e.g. 'Shape the B-roll'."],
@@ -111,7 +111,14 @@ enum ToolDefinitions {
                     "intro": ["type": "string", "description": "One short sentence of context (optional)."],
                     "costHint": ["type": "string", "description": "Approximate cost of the confirmed step, e.g. '\u{2248} \u{20AC}0.80'."],
                     "confirmLabel": ["type": "string", "description": "Confirm button label (default 'Continue')."],
-                    "textPlaceholder": ["type": "string", "description": "Placeholder for the dialog-scoped free-text input."],
+                    "textField": [
+                        "type": "object",
+                        "description": "The dialog's single free-text field (optional). Declare it only when you need typed input beyond the choices \u{2014} e.g. lyrics to paste, or free notes. It renders inside the card (the composer is locked while the card is open).",
+                        "properties": [
+                            "placeholder": ["type": "string", "description": "Placeholder / label, e.g. 'Paste the lyrics here (optional)'."],
+                            "multiline": ["type": "boolean", "description": "Tall multi-line field for longer text like lyrics. Default false (single line)."],
+                        ],
+                    ],
                     "fileIntake": [
                         "type": "object",
                         "description": "Turn this dialog into a FILE INTAKE: the card shows a drop zone + a native file picker instead of the free-text field, so the user drops or chooses the file(s) and never types a path. Each chosen file is imported as a media asset and returned to you as an @mentioned asset in the answer message \u{2014} attach it by id (e.g. attach_song media:<id>). Use whenever a step needs a LOCAL file FROM THE USER (a song, footage, a still). A dialog may carry ONLY a fileIntake (no sections), or combine it with sections (e.g. a cut-mode choice alongside the track). Optional.",
@@ -121,11 +128,12 @@ enum ToolDefinitions {
                             "multiple": ["type": "boolean", "description": "Allow more than one file. Default false."],
                             "attachAs": ["type": "string", "description": "Where the file goes. Omit \u{21D2} the media library, returned as an @mention (the song path). 'lyrics' \u{21D2} host writes lyrics/lyrics.txt and replies with the parsed [Section] markers. 'script' \u{21D2} host writes import/script.md for a brownfield project (accept ['text'] for both). 'character'/'location' \u{2192} host copies the images into import/characters|locations/<slug>/ as a bible anchor (accept ['image'], set namePrompt, usually multiple:true)."],
                             "namePrompt": ["type": "string", "description": "For attachAs 'character'/'location': the label of a REQUIRED identity-name field the well shows (e.g. 'Character name'). The typed name becomes the destination folder; confirm stays disabled until it's filled."],
+                            "required": ["type": "boolean", "description": "Whether a file/text is required to confirm. Default true; 'lyrics'/'script' default false (the user can confirm with nothing, an explicit skip the host reports to you). Set false to make any intake skippable via Confirm rather than only by dismissing."],
                         ],
                     ],
                     "sections": [
                         "type": "array",
-                        "description": "1\u{2013}4 structured sections.",
+                        "description": "At most 3 focused sections (more is rejected \u{2014} split into separate dialogs).",
                         "items": [
                             "type": "object",
                             "properties": [
@@ -133,6 +141,7 @@ enum ToolDefinitions {
                                 "label": ["type": "string"],
                                 "type": ["type": "string", "enum": ["choices", "toggle"]],
                                 "multiSelect": ["type": "boolean"],
+                                "allowsCustom": ["type": "boolean", "description": "choices sections only: also show an 'Other\u{2026}' free-text so the user isn't limited to the preset options. Set this whenever the option set isn't exhaustive."],
                                 "defaultOn": ["type": "boolean", "description": "toggle sections only"],
                                 "options": [
                                     "type": "array",

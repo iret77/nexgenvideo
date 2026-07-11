@@ -41,7 +41,7 @@ struct StoryPanelView: View {
                     .notInitialized, title: "Story", subject: "the story",
                     activePack: InstalledPack.named(editor.activePluginName),
                     startProduction: { editor.startProduction() },
-                    isStarting: editor.productionStarting,
+                    isStarting: editor.productionStarted,
                     retry: { Task { await editor.refreshEngineState() } }
                 )
             } else {

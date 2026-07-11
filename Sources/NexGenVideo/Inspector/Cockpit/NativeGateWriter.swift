@@ -34,11 +34,16 @@ enum NativeGateWriter {
         }
     }
 
-    /// Consult the active pack's registered hard-gate precondition for `phase` (nil ⇒ approvable).
+    /// Enforce the same deterministic gate rules the agent tool path does — approve in order (all
+    /// predecessors approved) and the active pack's per-phase artifact precondition (nil ⇒ approvable).
     private static func enforceRequirement(projectDir: URL, phase: String) throws {
         guard let root = DataRootResolver.dataRoot(of: projectDir) else { throw WriteError.notInitialized }
         let pack = ProjectPluginSettings.activePlugin(projectURL: projectDir)
         let registry = PackCatalog.registry(activePack: pack)
+        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        let gates = (try? YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile))
+            ?? Gates(project: "")
+        try GateGuard.requirePriorApproved(gates, order: order, phase: phase)
         try GateGuard.checkApprovable(phase: phase, dataRoot: root, requirement: registry.gateRequirements[phase])
     }
 

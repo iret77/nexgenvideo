@@ -72,23 +72,29 @@ The orchestrator starts you fresh; you detect the state yourself.
 
 ### 2. Mandatory question catalog (always ask all of them, via show_dialog)
 
-#### Batch 1 — 4 questions (one show_dialog call)
+#### Batch 1 — the setup questions (AT MOST 3 sections per show_dialog — the schema rejects
+more, so split these across TWO dialogs: e.g. mission+format+mode, then concept type)
+
+For any section whose options aren't exhaustive, set `allowsCustom: true` so the user gets an
+"Other…" field (never leave them boxed in). Platform/target free text goes in a `textField`.
 
 1. **Mission & platform** — single_release | social_post | art_piece |
-   demo, plus a free-text field for the target platform
+   demo (allowsCustom), plus a `textField` for the target platform
    (YouTube/TikTok/IG/Vimeo/festival/…)
 2. **Format** — 16:9 | 9:16 | 1:1 | 4:5
    plus follow-up: full song length or an excerpt (and which one)?
-3. **Project mode** — exactly 4 options (Other automatic):
+3. **Project mode** — options (allowsCustom):
+   - `section` (**default / recommended**) — 1 shot per section
+     (intro/verse/chorus), calm, few renders
    - `beat` — many short shots (1.5-15 s), on downbeats, maximum
      editing freedom
-   - `phrase` (**recommended for narrative videos**) — 1 shot per lyric
-     phrase (3-15 s), uses the alignment as shot boundaries
-   - `section` — 1 shot per section (intro/verse/chorus), calm, few
-     renders
    - `multicam` — n cameras across the whole song, cut in the timeline
+   - `phrase` — **not yet available**: it needs per-line lyric timing
+     (forced alignment), which the analysis doesn't produce yet. Don't
+     offer it as a choice; if the user asks, explain it's coming and
+     use `section` or `beat` for now.
 4. **Concept type** — narrative | performance | abstract | hybrid
-   (4 options + Other for documentary etc.)
+   (allowsCustom for documentary etc.)
 
 #### Batch 1a — visual medium (own show_dialog call right after Batch 1)
 
@@ -187,44 +193,17 @@ The orchestrator starts you fresh; you detect the state yourself.
 12. **Lyrics integration** — literal | metaphorical | contrastive |
     ignored
 
-#### Retrospective questions about A1 (audio ingest runs BEFORE the brief in the story-first flow)
+#### Status from A1 (audio analysis runs BEFORE the brief in the story-first flow)
 
-Do not guess — read the status from the real artifacts.
+13. **Chord analysis & stems — not available (deferred).** The current
+    analysis runs the native beat/downbeat/tempo/structure DSP only. It
+    does **not** produce chords or stem separation — those fields stay
+    empty by design. Do not ask about them, do not read them, do not
+    offer to "switch provider" or "re-run for chords". Write
+    `chord_analysis: false` and `stems_provider: none` silently and move
+    on. (Never tell the user chords/stems were computed — they weren't.)
 
-13. **Chord analysis — status (do NOT ask anymore, only read)**
-
-    The chord decision is part of the analysis run. In the brief it is
-    therefore only **mirrored**, not asked again:
-
-    Read from `analysis/<song>.json` whether `chord_progression` is
-    populated (a list with > 0 entries).
-    - **present** → `chord_analysis: true`, chat note "Chord data from
-      A1 present."
-    - **missing/empty** → `chord_analysis: false`, chat note "No chord
-      data."
-
-    **No re-run in the brief.** If the user now does want chords after
-    all (edge case), that is a deliberate follow-up request: re-run the
-    analysis once via `run_phase(project_dir, "analysis")`, then set
-    `chord_analysis: true`. But that is the exception — the normal case
-    is "mirror the A1 status".
-
-14. **Stems provider — status & action**
-
-    Read `stems.provider` from `analysis/<song>.json` (or, as a
-    fallback, the contents of `analysis/stems/`) to see what A1 used for
-    stem separation.
-
-    - If the default separator ran: write `stems_provider: <that>` and
-      say in chat "A1 separated stems with <that>, adopting it."
-    - If **none / instrumental**: analogous, `stems_provider: none`.
-    - **Only if the user actively wants to switch** (rare — usually
-      after feedback that the separation was unclean): offer an optional
-      show_dialog with the note that switching re-runs the analysis
-      (`run_phase(project_dir, "analysis")`). The default is always
-      "stay with the current provider."
-
-15. **Final resolution** (mandatory). `show_dialog`:
+14. **Final resolution** (mandatory). `show_dialog`:
 
     > "Which resolution should the final render have? **1080p** is the
     > default. **720p** only if the budget is tight or distribution is

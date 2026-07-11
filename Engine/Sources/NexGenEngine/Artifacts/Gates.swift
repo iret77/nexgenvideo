@@ -146,6 +146,15 @@ public enum GateGuard {
             _ = try GatesOperations.require(gates, phase: p)
         }
     }
+
+    /// Approving in order: every phase BEFORE `phase` in `order` must already be approved. Phases not
+    /// in `order` (unknown) impose no constraint. Throws `GateBlocked` naming the first gap.
+    public static func requirePriorApproved(_ gates: Gates, order: [String], phase: String) throws {
+        guard let idx = order.firstIndex(of: phase), idx > 0 else { return }
+        for p in order[..<idx] where !gates.get(p).approved {
+            throw GateBlocked("Can't approve \"\(phase)\" yet — approve \"\(p)\" first (phases go in order).")
+        }
+    }
 }
 
 /// Free-function operations on `Gates`, mirroring the Python module-level

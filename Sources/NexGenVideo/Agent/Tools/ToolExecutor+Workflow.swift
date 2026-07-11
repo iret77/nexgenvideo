@@ -136,6 +136,9 @@ extension ToolExecutor {
             let dataRoot = try ProjectScaffold.initProject(
                 home: home, name: name, mode: mode, budgetEur: budget, extraDirs: extraDirs
             )
+            // Refresh engine state now (not just at turn end) so the cockpit sees the pipeline
+            // immediately — the "Start production" affordances disable at once, no double-start window.
+            Task { await editor.refreshEngineState() }
             return try jsonResult(["data_root": dataRoot.path, "project": name, "created": true])
         } catch let e as ProjectScaffold.ScaffoldError {
             throw ToolError("Couldn't scaffold project: \(e)")
@@ -191,7 +194,11 @@ extension ToolExecutor {
     /// error. No requirement registered (prose phases) ⇒ approvable on the user's judgement.
     private func enforceGateRequirement(phase: String, dataRoot: URL) throws {
         let registry = PackCatalog.registry(activePack: activePluginFor(dataRoot: dataRoot))
+        let gates = (try? YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile))
+            ?? Gates(project: "")
         do {
+            // In order (no approving a phase before its predecessors), then the phase's own artifact.
+            try GateGuard.requirePriorApproved(gates, order: mergedPhaseOrder(dataRoot: dataRoot), phase: phase)
             try GateGuard.checkApprovable(phase: phase, dataRoot: dataRoot, requirement: registry.gateRequirements[phase])
         } catch let blocked as GateBlocked {
             throw ToolError(blocked.message)

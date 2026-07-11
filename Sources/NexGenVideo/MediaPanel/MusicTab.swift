@@ -384,7 +384,7 @@ struct MusicTab: View {
             intro: "Pick a direction, or type your own — NexGenVideo writes the model prompt.",
             costHint: nil,
             confirmLabel: "Generate",
-            textPlaceholder: "Anything specific (instruments, reference, mood)…",
+            textField: AgentDialog.DialogTextField(placeholder: "Anything specific (instruments, reference, mood)…", multiline: false),
             sections: [
                 AgentDialog.Section(id: "mood", label: "Mood", kind: .choices(options: [
                     .init(id: "cinematic", label: "Cinematic", symbol: "film"),

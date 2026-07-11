@@ -48,7 +48,7 @@ struct BiblePanelView: View {
                                    subject: "the Bible",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarting) { Task { await load() } }
+                                   isStarting: editor.productionStarted) { Task { await load() } }
         case .loaded(nil):
             emptyState(
                 icon: "book.closed",

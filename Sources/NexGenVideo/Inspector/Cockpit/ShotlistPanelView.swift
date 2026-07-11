@@ -38,7 +38,7 @@ struct ShotlistPanelView: View {
                                    subject: "the shotlist",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
-                                   isStarting: editor.productionStarting) { Task { await load() } }
+                                   isStarting: editor.productionStarted) { Task { await load() } }
         case .loaded(nil):
             CockpitStateView.empty(icon: "film.stack", title: "No shotlist yet",
                                    message: "This project doesn't have a shotlist.")
