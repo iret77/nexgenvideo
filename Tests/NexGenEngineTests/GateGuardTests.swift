@@ -23,6 +23,32 @@ struct GateGuardTests {
         try JSONSerialization.data(withJSONObject: obj).write(to: dir.appendingPathComponent("song.json"))
     }
 
+    // MARK: - Fail-closed pack wiring (the triangle Engine↔Plugin↔Agent must be live)
+
+    @Test("requireWiredPack: a generic project (no declared pack) is unaffected")
+    func wiringGenericPasses() throws {
+        try GateGuard.requireWiredPack(declared: nil, resolved: nil, registry: EngineRegistry())
+    }
+
+    @Test("requireWiredPack: a declared pack that didn't wire blocks EVERY approval (P0 fail-closed)")
+    func wiringDeclaredButUnwiredBlocks() {
+        // Package declares musicvideo but the runtime resolved nil / built an empty registry — no step
+        // may be approved, or the pipeline would advance ungated masquerading as generic.
+        #expect(throws: GateBlocked.self) {
+            try GateGuard.requireWiredPack(declared: "musicvideo", resolved: nil, registry: EngineRegistry())
+        }
+        #expect(throws: GateBlocked.self) {
+            try GateGuard.requireWiredPack(declared: "musicvideo", resolved: "musicvideo", registry: EngineRegistry())
+        }
+    }
+
+    @Test("requireWiredPack: a genuinely wired pack passes")
+    func wiringWiredPasses() throws {
+        let registry = EngineRegistry()
+        registry.registerWiringProbe { PackWiring.token(pack: "musicvideo", nonce: $0) }
+        try GateGuard.requireWiredPack(declared: "musicvideo", resolved: "musicvideo", registry: registry)
+    }
+
     @Test("analysis gate requires real rhythm data AND an A2 interpretation")
     func analysisRequirement() throws {
         let root = try tempRoot()

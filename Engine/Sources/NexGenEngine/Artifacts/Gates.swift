@@ -138,6 +138,22 @@ public enum GateGuard {
         try requirement?(dataRoot)
     }
 
+    /// FAIL-CLOSED liveness precondition, checked before ANY approval. A project that DECLARES an active
+    /// pack owns that pack's gate machinery only if the pack is genuinely wired into the running
+    /// registry. If it isn't — the class of bug where a pack loads as a bundle but resolves to nil at
+    /// runtime, silently disabling every gate — NO step may be approved, or the pipeline would advance
+    /// ungated while masquerading as a generic project. A generic project (no declared pack) is
+    /// unaffected. `declared` is the ground truth from the package; `resolved`/`registry` are what the
+    /// runtime resolved and built. The deterministic verdict lives in `PackWiring`.
+    public static func requireWiredPack(declared: String?, resolved: String?, registry: EngineRegistry) throws {
+        guard PackWiring.verify(expected: declared, resolved: resolved, registry: registry).isWired else {
+            throw GateBlocked(
+                "Can't approve this step: the \"\(declared ?? "")\" workflow isn't wired into this session "
+                    + "— its engine↔plugin link is broken, so its gates and analysis are inactive. No step "
+                    + "can be approved until the pack is active. Reopen the project; if it persists, report it.")
+        }
+    }
+
     /// Terminal backstop: every phase up to and including `phase` in `order` must be approved, else
     /// `GateBlocked`. Mirrors the predecessor render dispatcher's require-loop over the whole chain.
     public static func requireChain(_ gates: Gates, order: [String], through phase: String) throws {

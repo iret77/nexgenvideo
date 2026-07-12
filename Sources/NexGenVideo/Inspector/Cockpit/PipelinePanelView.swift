@@ -236,11 +236,11 @@ struct PipelinePanelView: View {
         let isFuture = !phase.approved && !isNext
         Menu {
             // Only the active (next) phase is approvable — no approving out of order.
-            Button("Approve") { apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase) } }
+            Button("Approve") { apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase, declaredPack: editor.activePluginName) } }
                 .disabled(!isNext)
             // Only a completed phase can be sent back for revision.
             Button("Needs revision") {
-                apply { try NativeGateWriter.setState(projectDir: $0, phase: phase.phase, state: .needsRevision) }
+                apply { try NativeGateWriter.setState(projectDir: $0, phase: phase.phase, state: .needsRevision, declaredPack: editor.activePluginName) }
             }
             .disabled(!phase.approved)
             Divider()

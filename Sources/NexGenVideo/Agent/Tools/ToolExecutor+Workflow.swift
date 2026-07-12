@@ -208,7 +208,7 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let notes = args.string("notes")
-        try enforceGateRequirement(phase: phase, dataRoot: root)
+        try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: editor.activePluginName)
         let gates = try mutateGates(dataRoot: root) { GatesOperations.approve(&$0, phase: phase, notes: notes) }
         let gate = gates.get(phase)
         return try jsonResult([
@@ -233,7 +233,7 @@ extension ToolExecutor {
         // set_gate_state is an approval path too — enforce the same hard-gate precondition when it
         // would mark the phase approved, so it can't be used to bypass approve_gate's guard.
         if state == .approved || state == .approvedWithNotes {
-            try enforceGateRequirement(phase: phase, dataRoot: root)
+            try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: editor.activePluginName)
         }
         let gates = try mutateGates(dataRoot: root) { GatesOperations.setState(&$0, phase: phase, state: state, notes: notes) }
         let gate = gates.get(phase)
@@ -249,11 +249,14 @@ extension ToolExecutor {
     /// Deterministic hard-gate check shared by approve_gate and set_gate_state: consult the active
     /// pack's registered precondition for `phase` and surface a `GateBlocked` as an actionable tool
     /// error. No requirement registered (prose phases) ⇒ approvable on the user's judgement.
-    private func enforceGateRequirement(phase: String, dataRoot: URL) throws {
-        let registry = PackCatalog.registry(activePack: activePluginFor(dataRoot: dataRoot))
+    private func enforceGateRequirement(phase: String, dataRoot: URL, declaredPack: String?) throws {
+        let resolved = activePluginFor(dataRoot: dataRoot)
+        let registry = PackCatalog.registry(activePack: resolved)
         let gates = (try? YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile))
             ?? Gates(project: "")
         do {
+            // FAIL-CLOSED first: a project that declares a pack must have it wired, or NO step approves.
+            try GateGuard.requireWiredPack(declared: declaredPack, resolved: resolved, registry: registry)
             // In order (no approving a phase before its predecessors), then the phase's own artifact.
             try GateGuard.requirePriorApproved(gates, order: mergedPhaseOrder(dataRoot: dataRoot), phase: phase)
             try GateGuard.checkApprovable(phase: phase, dataRoot: dataRoot, requirement: registry.gateRequirements[phase])
