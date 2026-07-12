@@ -1,4 +1,5 @@
 import SwiftUI
+import NexGenEngine
 
 /// The document window's SwiftUI content: the stage chrome (title bar + editor), the export and
 /// settings-mismatch sheets, and the orthogonal Theater overlay. Reads `theaterActive` reactively —
@@ -11,6 +12,9 @@ struct EditorWindowContentView: View {
         VStack(spacing: 0) {
             if !editor.theaterActive {
                 TitleBarView()
+            }
+            if let broken = editor.packWiringBroken {
+                PackWiringBanner(result: broken)
             }
             EditorView()
                 .focusEffectDisabled()
@@ -29,6 +33,35 @@ struct EditorWindowContentView: View {
         }
         .overlay { TheaterOverlayView() }
         .overlay { TourOverlay() }
+    }
+}
+
+/// Loud, non-dismissable strip shown when the project's pack failed to wire into the session — its
+/// gates/analysis are silently off, so the app must SAY so instead of masquerading as a generic project.
+private struct PackWiringBanner: View {
+    let result: PackWiring.Result
+
+    private var packName: String {
+        switch result {
+        case .unresolved(let expected, _): return expected
+        case .runtimeAbsent(let pack): return pack
+        default: return "format"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text("The “\(packName)” workflow isn’t active in this session — its analysis and gates are off. This is a bug; please report it.")
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(AppTheme.Opacity.prominent))
     }
 }
 

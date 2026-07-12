@@ -71,6 +71,9 @@ public struct MusicvideoPack: Pack {
     public init() {}
 
     public func register(_ registry: EngineRegistry) {
+        // Wiring-liveness probe: proves this pack's code is actually installed into the registry the
+        // runtime built for a session (not silently absent). See PackWiring.
+        registry.registerWiringProbe { PackWiring.token(pack: "musicvideo", nonce: $0) }
         registry.registerDurationPolicy(MusicDurationPolicy())
         registry.registerProjectDirs(["audio", "lyrics", "analysis"])
         registry.registerSanityCheck("tempo", MusicvideoChecks.tempoCheck)

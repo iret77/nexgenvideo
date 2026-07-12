@@ -273,7 +273,29 @@ final class EditorViewModel {
         activeWorkingCopyKey = key
         recoveredUnsavedWork = result?.recoveredUnsaved ?? false
         refreshProductionPipelineMarker()
+        verifyPackWiring()
         Task { [weak self] in await self?.refreshEngineState() }
+    }
+
+    /// True when the project DECLARES a pack that the runtime can't actually see in this session — the
+    /// P0-class silent break (pack phases/gates/analysis all off). Drives a loud banner; the app must
+    /// never quietly degrade to "generic" behavior on a pack project.
+    private(set) var packWiringBroken: PackWiring.Result?
+
+    /// Deterministic, LLM-free startup check: does the pack the package declares actually resolve AND run
+    /// in the registry the runtime builds from the WORKING COPY (where the cockpit/tools/gates look)?
+    private func verifyPackWiring() {
+        guard let home = workingCopyHome else { packWiringBroken = nil; return }
+        let resolved = ProjectPluginSettings.activePlugin(projectURL: home)
+        let result = PackWiring.verify(expected: activePluginName, resolved: resolved,
+                                       registry: PackCatalog.registry(activePack: resolved))
+        if !result.isWired {
+            Log.project.error(
+                "PACK WIRING BROKEN (\(String(describing: result))): the project declares pack "
+                    + "\"\(activePluginName ?? "?")\" but the runtime can't see it — its phases, gates and "
+                    + "analysis are OFF this session.")
+        }
+        packWiringBroken = result.isWired ? nil : result
     }
 
     /// Keep the recovered working copy (it's already the live editing state) and mark the document

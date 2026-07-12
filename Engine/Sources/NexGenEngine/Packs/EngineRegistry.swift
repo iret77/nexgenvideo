@@ -43,6 +43,13 @@ public final class EngineRegistry: @unchecked Sendable {
     /// stamping a gate, so the agent cannot rubber-stamp a phase whose deterministic output is missing.
     public private(set) var gateRequirements: [String: GateRequirement] = [:]
 
+    /// Liveness probe for the active pack: a closure the pack registers that returns
+    /// `PackWiring.token(pack:nonce:)` for a nonce. It exists ONLY if the pack's code actually loaded
+    /// into THIS registry — so the host can prove, deterministically, that the pack a project declares is
+    /// genuinely wired into the session, not silently resolved to nil (the class of bug where the bundle
+    /// loads but the runtime never routes to it: no phases, no gates). See `PackWiring`.
+    public private(set) var wiringToken: (@Sendable (String) -> String)?
+
     /// The host's audio decoder, injected so a pack's phase runner can turn an
     /// audio file into a `PCMBuffer` without the pure engine linking
     /// AVFoundation. Nil until the app registers one — the analysis runner then
@@ -104,6 +111,12 @@ public final class EngineRegistry: @unchecked Sendable {
     /// (agent tool + Pipeline panel) before a gate is stamped.
     public func registerGateRequirement(_ phase: String, _ check: @escaping GateRequirement) {
         gateRequirements[phase] = check
+    }
+
+    /// Register the pack's wiring-liveness probe (see `wiringToken`). A pack calls this in `register`;
+    /// the host later asks the built registry for a token and compares it to the shared formula.
+    public func registerWiringProbe(_ probe: @escaping @Sendable (String) -> String) {
+        wiringToken = probe
     }
 
     /// Inject the host's audio decoder (the app's AVFoundation implementation).
