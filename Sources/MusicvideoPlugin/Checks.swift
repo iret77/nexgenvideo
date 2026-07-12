@@ -77,6 +77,25 @@ public enum MusicvideoChecks {
         return out
     }
 
+    /// Content-block risk: run the already-ported `ContentBlockLinter` (violence / real-name / brand /
+    /// real-photo tokens + multi-character block-rate risk) over each shot's RAW fields, pre-build. The
+    /// linter existed but was never wired into the audit. Advisory (warn) per the phase docs' severity
+    /// note — it informs, it doesn't hard-block the gate.
+    public static let contentBlockRiskCheck: SanityCheck = { ctx in
+        var out: [Finding] = []
+        for shot in ctx.shotlist.shots {
+            let findings = ContentBlockLinter.lintShotForMultiCharacterBlock(
+                characterRefs: shot.characterRefs, framing: shot.framing?.rawValue,
+                visualMedium: ctx.brief?.visualMedium.rawValue)
+                + ContentBlockLinter.lintProviderPrompt(shot.visualPrompt)
+            for f in findings {
+                let level: Level = (f.severity == .info) ? .info : .warn
+                out.append(Finding(level: level, code: f.code, shotId: shot.id, message: f.message))
+            }
+        }
+        return out
+    }
+
     /// Tempo-pacing check: ASL drift + per-shot hard-cap. Port of
     /// `checks.py::tempo`.
     ///
