@@ -35,8 +35,8 @@ struct TitleBarView: View {
             // the chrome when a format pack is active (generic project → neutral).
             ZStack {
                 Rectangle().fill(AppTheme.Background.raisedColor)
-                if editor.activePluginName != nil {
-                    Rectangle().fill(AppTheme.Accent.primary.opacity(AppTheme.Opacity.subtle))
+                if let accent = editor.activePackAccentColor {
+                    Rectangle().fill(accent.opacity(AppTheme.Opacity.subtle))
                 }
             }
             .contentShape(Rectangle())
@@ -45,10 +45,10 @@ struct TitleBarView: View {
         .overlay(alignment: .bottom) {
             // The window's bottom chrome edge becomes an accent line when a pack is active — the
             // clearest, full-width "you're in this format" signal without recoloring everything.
-            let packActive = editor.activePluginName != nil
+            let packAccent = editor.activePackAccentColor
             Rectangle()
-                .fill(packActive ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.strong) : AppTheme.Border.primaryColor)
-                .frame(height: packActive ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline)
+                .fill(packAccent.map { $0.opacity(AppTheme.Opacity.strong) } ?? AppTheme.Border.primaryColor)
+                .frame(height: packAccent != nil ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.hairline)
         }
         .task(id: editor.projectURL) { await editor.refreshEngineState() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in

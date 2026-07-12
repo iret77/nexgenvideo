@@ -33,6 +33,10 @@ struct EditorWindowContentView: View {
         }
         .overlay { TheaterOverlayView() }
         .overlay { TourOverlay() }
+        // The whole editor window takes on the ACTIVE PACK's accent (reactive, overriding the static
+        // host-controller tint) — so a musicvideo project actually feels like Music Video mode, not a
+        // generic window. Falls back to the app accent for generic projects.
+        .tint(editor.activePackAccentColor ?? AppTheme.Accent.primary)
     }
 }
 
