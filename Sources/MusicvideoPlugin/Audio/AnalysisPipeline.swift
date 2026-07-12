@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 /// Orchestrates the native audio analysis from raw PCM to the Analysis output
 /// shape, mirroring `pipeline.py`'s stage order (load → rhythm → structure →

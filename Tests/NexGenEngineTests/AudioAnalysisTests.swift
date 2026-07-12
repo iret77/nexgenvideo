@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import NexGenEngine
+@testable import MusicvideoPlugin
 
 /// Acceptance tests for the native audio analysis (M8c). All signals are
 /// synthesized deterministically — no fixture files. Ground truth is known by
