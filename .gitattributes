@@ -1,0 +1,2 @@
+# Vendored binary frameworks — opaque, never normalize or diff
+Vendor/whisper.xcframework/** binary

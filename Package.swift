@@ -37,6 +37,7 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "Lottie", package: "lottie-ios"),
                 .product(name: "NexGenEngine", package: "Engine"),
+                "whisper",
             ],
             path: "Sources/NexGenVideo",
             exclude: [
@@ -53,6 +54,9 @@ let package = Package(
             plugins: ["MetalCIKernelPlugin"]
         ),
         .plugin(name: "MetalCIKernelPlugin", capability: .buildTool()),
+        // Vendored whisper.cpp (macOS/arm64 slice) — on-device speech recognition behind the app's
+        // AudioTranscribing seam. See Vendor/README.md for provenance + update steps.
+        .binaryTarget(name: "whisper", path: "Vendor/whisper.xcframework"),
         // The musicvideo format pack. Links the shared NexGenEngine dynamic product
         // (from the Engine package) so its `Pack`/`PackEntry` metadata is IDENTICAL to
         // the host's. Its knowledge (pattern library, phase docs, badge) ships as target
