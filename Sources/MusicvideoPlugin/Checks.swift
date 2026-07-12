@@ -39,6 +39,25 @@ public enum MusicvideoChecks {
         return 0.0
     }
 
+    /// Bible reference integrity: every shot's character/location/prop reference must resolve to a real
+    /// bible entity. `sanity.md` claims `run_sanity` covers this, but no such check existed — the agent
+    /// could ship a shotlist referencing entities the bible never defines. Port of
+    /// `sanity/checks/bible_integration.py::MISSING_BIBLE_REF`.
+    public static let bibleReferenceIntegrityCheck: SanityCheck = { ctx in
+        guard let bible = ctx.bible else { return [] }
+        var out: [Finding] = []
+        for shot in ctx.shotlist.shots {
+            var refs: [(kind: String, ref: String)] =
+                shot.characterRefs.map { ("character", $0) } + shot.propRefs.map { ("prop", $0) }
+            if let loc = shot.locationRef, !loc.isEmpty { refs.append(("location", loc)) }
+            for r in refs where bible.lookupId(r.ref) == nil {
+                out.append(Finding(level: .error, code: "MISSING_BIBLE_REF", shotId: shot.id,
+                    message: "shot \(shot.id) references \(r.kind) \"\(r.ref)\" which isn't in the bible."))
+            }
+        }
+        return out
+    }
+
     /// Tempo-pacing check: ASL drift + per-shot hard-cap. Port of
     /// `checks.py::tempo`.
     ///
