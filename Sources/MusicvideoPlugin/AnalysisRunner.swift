@@ -64,17 +64,72 @@ public enum MusicvideoAnalysisRunner {
         }
     }
 
-    /// Run the analysis phase for the project at `dataRoot`, decoding via
-    /// `decoder`, and persist the artifact. Returns the outcome.
+    /// Lyric file extensions the runner reads for forced alignment.
+    public static let lyricsExtensions: Set<String> = ["txt", "md", "lrc"]
+
+    /// Run the analysis phase for the project at `dataRoot`. `decoder` turns the
+    /// song into PCM for the DSP baseline; the optional on-device ML seams
+    /// (resolved by the pack from the registry) upgrade it: `separator` isolates
+    /// vocals, `transcriber` reads them, `beatDetector` supplies a neural beat
+    /// grid. Provided lyrics are force-aligned against the transcript
+    /// (`LyricsAlignment`) so the Consolidator can take the alignment section
+    /// markers as boundary truth. Every ML stage is best-effort — a missing or
+    /// failing provider degrades to the DSP result, never a crash. Persists the
+    /// canonical artifact and returns the outcome.
     @discardableResult
-    public static func run(dataRoot: URL, decoder: any AudioPCMDecoding) throws -> Outcome {
+    public static func run(
+        dataRoot: URL,
+        decoder: any AudioPCMDecoding,
+        transcriber: (any AudioTranscribing)? = nil,
+        separator: (any AudioStemSeparating)? = nil,
+        beatDetector: (any AudioBeatDetecting)? = nil
+    ) throws -> Outcome {
         let song = try locateSong(dataRoot: dataRoot)
         let pcm = try decoder.decode(song)
-        let raw = AudioAnalysisPipeline.run(pcm)
+        var raw = AudioAnalysisPipeline.run(pcm)
+        var stages = ["load_audio", "rhythm", "structure", "features"]
+
+        // Source separation (optional) — a cleaner signal for transcription + beats.
+        var stems: SeparatedStems?
+        if let separator {
+            let stemsDir = dataRoot.appendingPathComponent("analysis", isDirectory: true)
+                .appendingPathComponent("stems", isDirectory: true)
+            try? FileManager.default.createDirectory(at: stemsDir, withIntermediateDirectories: true)
+            if let separated = try? separator.separateStems(song, into: stemsDir) {
+                stems = separated
+                stages.append("separation")
+            }
+        }
+
+        // Neural beat/downbeat detection (optional) — supersedes the DSP grid.
+        if let beatDetector, let grid = try? beatDetector.detectBeats(song, stems: stems),
+            !grid.beats.isEmpty {
+            raw.beats = grid.beats.map { Energy.round3($0) }
+            raw.downbeats = grid.downbeats.map { Energy.round3($0) }
+            raw.downbeatSource = Analysis.DownbeatSource.beatTransformer.rawValue
+            if let bpm = grid.bpm, bpm > 0 { raw.bpm = Energy.round3(bpm) }
+            stages.append("neural_beats")
+        }
+
+        // Forced lyric alignment (optional; needs both lyrics and a transcriber).
+        var alignment: [AlignmentLine] = []
+        if let transcriber, let lyrics = loadLyrics(dataRoot: dataRoot) {
+            let vocals = stems?.vocals ?? song
+            if let words = try? transcriber.transcribe(vocals, language: "en"), !words.isEmpty {
+                let tokens = words.map {
+                    TranscriptToken(text: $0.text, start: $0.start, end: $0.end, score: $0.confidence)
+                }
+                alignment = LyricsAlignment.align(lyrics: lyrics, transcript: tokens)
+                if !alignment.isEmpty { stages.append("alignment") }
+            }
+        }
 
         let songPath = FrameInventory.relativePath(of: song, to: dataRoot)
         let project = FrameInventory.projectName(of: dataRoot) ?? FrameInventory.projectHome(of: dataRoot).lastPathComponent
-        let analysis = try toCanonical(raw, project: project, songPath: songPath)
+        let analysis = try toCanonical(
+            raw, project: project, songPath: songPath,
+            stems: stems.map { relativeStems($0, dataRoot: dataRoot) },
+            lyricsAlignment: alignment, pipelineStages: stages)
 
         let outDir = dataRoot.appendingPathComponent("analysis")
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -85,14 +140,45 @@ public enum MusicvideoAnalysisRunner {
         return Outcome(analysis: analysis, artifactURL: outURL, songFilename: song.lastPathComponent)
     }
 
+    /// The project's provided lyrics (with `[Section]` markers / `(stage directions)`),
+    /// read from the single lyric file in `<dataRoot>/lyrics/`. Returns nil when the
+    /// dir holds no readable, non-empty lyric file.
+    static func loadLyrics(dataRoot: URL) -> String? {
+        let dir = dataRoot.appendingPathComponent("lyrics", isDirectory: true)
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.isRegularFileKey])) ?? []
+        let files = entries
+            .filter {
+                let isFile = (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile ?? false
+                return isFile && lyricsExtensions.contains($0.pathExtension.lowercased())
+            }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        for file in files {
+            if let text = try? String(contentsOf: file, encoding: .utf8),
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return text
+            }
+        }
+        return nil
+    }
+
+    /// Rewrite absolute stem paths to project-relative for the persisted `Stems`.
+    static func relativeStems(_ stems: SeparatedStems, dataRoot: URL) -> Stems {
+        func rel(_ url: URL?) -> String? { url.map { FrameInventory.relativePath(of: $0, to: dataRoot) } }
+        return Stems(vocals: rel(stems.vocals), drums: rel(stems.drums), bass: rel(stems.bass), other: rel(stems.other))
+    }
+
     /// Map the DSP-producible `AudioAnalysis` onto the canonical `Analysis` v2
     /// schema. Section boundaries are run through the `Consolidator` so they snap
     /// to the real downbeat grid (single detector today → the raw detector list is
     /// kept as a `structure_candidate` and single-source anomalies are recorded).
     /// When `lyricsAlignment` carries `[Section]` markers, those become the primary
-    /// boundary truth (Consolidator Path A). stems/key/chords stay empty (deferred).
+    /// boundary truth (Consolidator Path A). `stems` is populated when separation
+    /// ran; key/chords stay empty (deferred).
     static func toCanonical(
-        _ raw: AudioAnalysis, project: String, songPath: String, lyricsAlignment: [AlignmentLine] = []
+        _ raw: AudioAnalysis, project: String, songPath: String, stems: Stems? = nil,
+        lyricsAlignment: [AlignmentLine] = [],
+        pipelineStages: [String] = ["load_audio", "rhythm", "structure", "features"]
     ) throws -> Analysis {
         let detected = raw.sections.map {
             AnalysisSection(
@@ -130,12 +216,13 @@ public enum MusicvideoAnalysisRunner {
             downbeats: raw.downbeats,
             downbeatSource: downbeatSource,
             sections: sections,
+            stems: stems,
             alignment: lyricsAlignment,
             structureCandidates: [StructureCandidate(source: .librosa, sections: detected)],
             energyCurve: raw.energyCurve,
             tempoCurve: raw.tempoCurve,
             interpretation: interpretation,
-            pipelineStages: ["load_audio", "rhythm", "structure", "features"]
+            pipelineStages: pipelineStages
         )
     }
 

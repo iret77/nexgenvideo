@@ -102,10 +102,14 @@ public struct MusicvideoPack: Pack {
         // appended after render (the Python append-order would be an impossible
         // workflow here).
         registry.registerPhase("analysis", after: "project_init") { [weak registry] dataRoot in
-            guard let decoder = registry?.audioDecoder else {
+            guard let registry, let decoder = registry.audioDecoder else {
                 throw MusicvideoAnalysisRunner.RunError.noDecoder
             }
-            _ = try MusicvideoAnalysisRunner.run(dataRoot: dataRoot, decoder: decoder)
+            _ = try MusicvideoAnalysisRunner.run(
+                dataRoot: dataRoot, decoder: decoder,
+                transcriber: registry.transcriber,
+                separator: registry.stemSeparator,
+                beatDetector: registry.beatDetector)
         }
         // Hard gate: the analysis gate can't be stamped until a real analysis artifact (with genuine
         // beats/downbeats) exists — the deterministic backstop against a fabricated song structure.

@@ -218,6 +218,7 @@ public struct Analysis: Codable, Sendable, Equatable {
     public enum DownbeatSource: String, Codable, Sendable, CaseIterable {
         case madmom
         case librosaHeuristic = "librosa-heuristic"
+        case beatTransformer = "beat-transformer"
     }
 
     /// Subjectively perceived tempo = bpm x tempoMultiplier. Default

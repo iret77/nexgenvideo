@@ -157,6 +157,67 @@ struct AnalysisRunnerPlumbingTests {
         let runner = try #require(registry.phases["analysis"])
         #expect(throws: MusicvideoAnalysisRunner.RunError.self) { try runner(dataRoot) }
     }
+
+    // MARK: - Forced-alignment wiring (no DSP)
+
+    @Test("lyric alignment drives section boundaries (Consolidator Path A)")
+    func alignmentDrivesSections() throws {
+        let raw = AudioAnalysis(
+            sampleRate: 22050, durationS: 30.0, bpm: 120.0,
+            beats: [], downbeats: [0.0, 10.0, 20.0], downbeatSource: "librosa-heuristic",
+            sections: [], energyCurve: [], tempoCurve: []
+        )
+        let alignment = [
+            AlignmentLine(start: 0.2, end: 9.5, text: "opening line", sectionMarker: "verse1",
+                          words: [AlignmentWord(text: "opening", start: 0.2, end: 1.0, score: 1.0)]),
+            AlignmentLine(start: 10.1, end: 19.5, text: "the hook", sectionMarker: "chorus",
+                          words: [AlignmentWord(text: "hook", start: 10.1, end: 11.0, score: 1.0)]),
+        ]
+        let a = try MusicvideoAnalysisRunner.toCanonical(
+            raw, project: "P", songPath: "audio/s.mp3", lyricsAlignment: alignment)
+        // Sections come from the alignment markers, not the (empty) DSP detector.
+        #expect(!a.sections.isEmpty)
+        #expect(a.sections.allSatisfy { $0.source == "alignment" })
+        #expect(a.sections.contains { $0.label == "verse1" })
+        #expect(a.sections.contains { $0.label == "chorus" })
+        // The alignment itself is persisted for downstream (subtitles, section review).
+        #expect(a.alignment.count == 2)
+        #expect(a.sections.first?.start == 0.0 && a.sections.last?.end == 30.0)
+    }
+
+    @Test("stems are persisted project-relative")
+    func stemsRelative() throws {
+        let dataRoot = URL(fileURLWithPath: "/tmp/proj/pipeline", isDirectory: true)
+        let abs = SeparatedStems(
+            vocals: dataRoot.appendingPathComponent("analysis/stems/vocals.wav"),
+            drums: dataRoot.appendingPathComponent("analysis/stems/drums.wav"))
+        let rel = MusicvideoAnalysisRunner.relativeStems(abs, dataRoot: dataRoot)
+        #expect(rel.vocals == "analysis/stems/vocals.wav")
+        #expect(rel.drums == "analysis/stems/drums.wav")
+        #expect(rel.bass == nil && rel.other == nil)
+
+        let raw = AudioAnalysis(
+            sampleRate: 22050, durationS: 12.0, bpm: 120.0, beats: [0.5], downbeats: [0.5],
+            downbeatSource: "librosa-heuristic",
+            sections: [AudioSection(index: 0, start: 0, end: 12, cluster: 0, source: "consolidated")],
+            energyCurve: [], tempoCurve: [])
+        let a = try MusicvideoAnalysisRunner.toCanonical(
+            raw, project: "P", songPath: "audio/s.mp3", stems: rel,
+            pipelineStages: ["load_audio", "rhythm", "structure", "features", "separation"])
+        #expect(a.stems?.vocals == "analysis/stems/vocals.wav")
+        #expect(a.pipelineStages.contains("separation"))
+    }
+
+    @Test("loadLyrics reads the single lyric file; empty dir → nil")
+    func loadLyrics() throws {
+        let dataRoot = try Self.makeProject(name: "Lyrics")
+        #expect(MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot) == nil)
+        let lyricsDir = dataRoot.appendingPathComponent("lyrics")
+        try FileManager.default.createDirectory(at: lyricsDir, withIntermediateDirectories: true)
+        try "[Verse 1]\nHello world".write(
+            to: lyricsDir.appendingPathComponent("song.txt"), atomically: true, encoding: .utf8)
+        #expect(MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot)?.contains("Hello world") == true)
+    }
 }
 
 /// End-to-end runner tests that DRIVE THE DSP PIPELINE — parked identically to
@@ -201,5 +262,38 @@ struct AnalysisRunnerE2ETests {
         try runner(dataRoot)
 
         #expect(FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent("analysis/clip.json").path))
+    }
+
+    /// A transcriber stub returning fixed timed words regardless of the audio.
+    struct StubTranscriber: AudioTranscribing {
+        let words: [TranscribedWord]
+        func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord] { words }
+    }
+
+    @Test("a registered transcriber + provided lyrics force-aligns into the artifact")
+    func forcedAlignmentEndToEnd() throws {
+        let dataRoot = try AnalysisRunnerPlumbingTests.makeProject(name: "Aligned")
+        try AnalysisRunnerPlumbingTests.placeSong("song.wav", in: dataRoot)
+        let lyricsDir = dataRoot.appendingPathComponent("lyrics")
+        try FileManager.default.createDirectory(at: lyricsDir, withIntermediateDirectories: true)
+        try "[Verse 1]\nmorning light is falling\n[Chorus]\nburning clear and bright"
+            .write(to: lyricsDir.appendingPathComponent("song.txt"), atomically: true, encoding: .utf8)
+
+        let words = [
+            TranscribedWord(text: "morning", start: 1.0, end: 1.4), TranscribedWord(text: "light", start: 1.4, end: 1.7),
+            TranscribedWord(text: "is", start: 1.7, end: 1.9), TranscribedWord(text: "falling", start: 1.9, end: 2.5),
+            TranscribedWord(text: "burning", start: 5.0, end: 5.4), TranscribedWord(text: "clear", start: 5.4, end: 5.7),
+            TranscribedWord(text: "and", start: 5.7, end: 5.9), TranscribedWord(text: "bright", start: 5.9, end: 6.4),
+        ]
+        let outcome = try MusicvideoAnalysisRunner.run(
+            dataRoot: dataRoot,
+            decoder: AnalysisRunnerPlumbingTests.StubDecoder(buffer: AnalysisRunnerPlumbingTests.clickTrack(bpm: 120, seconds: 8)),
+            transcriber: StubTranscriber(words: words))
+
+        #expect(outcome.analysis.alignment.count == 2)
+        #expect(outcome.analysis.alignment.contains { $0.sectionMarker == "verse1" })
+        #expect(outcome.analysis.pipelineStages.contains("alignment"))
+        // Alignment markers drive the section boundaries.
+        #expect(outcome.analysis.sections.allSatisfy { $0.source == "alignment" })
     }
 }

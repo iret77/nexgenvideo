@@ -56,6 +56,13 @@ public final class EngineRegistry: @unchecked Sendable {
     /// returns an actionable error instead of crashing.
     public private(set) var audioDecoder: (any AudioPCMDecoding)?
 
+    /// Host-injected on-device audio-ML inference (see `AudioML.swift`). Each is
+    /// nil until the app registers it; a pack's analysis runner degrades or blocks
+    /// with an actionable message rather than crashing when one is absent.
+    public private(set) var transcriber: (any AudioTranscribing)?
+    public private(set) var stemSeparator: (any AudioStemSeparating)?
+    public private(set) var beatDetector: (any AudioBeatDetecting)?
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -123,6 +130,20 @@ public final class EngineRegistry: @unchecked Sendable {
     /// A pack's analysis phase runner resolves it from the registry at run time.
     public func registerAudioDecoder(_ decoder: any AudioPCMDecoding) {
         audioDecoder = decoder
+    }
+
+    /// Inject the host's on-device audio-ML implementations. A pack's analysis
+    /// runner resolves whichever are present at run time (see `AudioML.swift`).
+    public func registerTranscriber(_ transcriber: any AudioTranscribing) {
+        self.transcriber = transcriber
+    }
+
+    public func registerStemSeparator(_ separator: any AudioStemSeparating) {
+        self.stemSeparator = separator
+    }
+
+    public func registerBeatDetector(_ detector: any AudioBeatDetecting) {
+        self.beatDetector = detector
     }
 
     /// Domain reference data (e.g. music genre/mood pattern library).
