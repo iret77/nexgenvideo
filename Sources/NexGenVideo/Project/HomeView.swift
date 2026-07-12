@@ -224,11 +224,19 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     private init() {
         let hostingController = NSHostingController(rootView: HomeView().tint(AppTheme.Accent.primary))
         let window = NSWindow(contentViewController: hostingController)
-        window.setContentSize(AppTheme.Window.homeDefault)
-        window.minSize = AppTheme.Window.homeMin
         window.title = "NexGenVideo"
-        // v3: reset saved frames so the new landscape default replaces old square/stretched ones.
-        window.setFrameAutosaveName("NexGenVideoHome-v3")
+        // v4: bump the key so the taller screen-fraction default replaces frames saved by earlier,
+        // too-short builds. A user-resized frame is still honored on later launches.
+        let restored = window.setFrameUsingName("NexGenVideoHome-v4")
+        window.setFrameAutosaveName("NexGenVideoHome-v4")
+        let visible = (window.screen ?? NSScreen.main)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        window.minSize = NSSize(width: min(AppTheme.Window.homeMin.width, visible.width),
+                                height: min(AppTheme.Window.homeMin.height, visible.height))
+        if !restored {
+            window.setContentSize(Self.defaultContentSize(visible: visible))
+            window.center()
+        }
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = AppTheme.Background.base.withAlphaComponent(0.4)
         window.isOpaque = false
@@ -237,10 +245,19 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         window.isMovableByWindowBackground = true
         window.styleMask.insert(.fullSizeContentView)
         window.collectionBehavior = [.fullScreenNone]
-        window.center()
 
         super.init(window: window)
         window.delegate = self
+    }
+
+    /// A fraction of the visible screen (60% × 82%), capped at `homeDefault` and floored at `homeMin`,
+    /// so the launcher opens tall enough on any display for the format sheet to fit its pack cards.
+    private static func defaultContentSize(visible: NSRect) -> NSSize {
+        let cap = AppTheme.Window.homeDefault
+        let floor = AppTheme.Window.homeMin
+        let w = min(max(visible.width * 0.60, floor.width), cap.width, visible.width)
+        let h = min(max(visible.height * 0.82, floor.height), cap.height, visible.height)
+        return NSSize(width: w, height: h)
     }
 
     @available(*, unavailable)

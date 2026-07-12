@@ -287,9 +287,11 @@ enum AppTheme {
     }
 
     enum Window {
-        // Landscape — a square home window left the sparse project grid swimming in dead space.
-        static let homeDefault = NSSize(width: 1160, height: 740)
-        static let homeMin = NSSize(width: 760, height: 480)
+        // Cap for the home/launcher window. Like the editor, the real open size is a fraction of the
+        // visible screen (60% × 82%) capped here, so on a tall display the launcher opens tall — enough
+        // that the "Choose a format" sheet shows its pack cards without scrolling.
+        static let homeDefault = NSSize(width: 1440, height: 1040)
+        static let homeMin = NSSize(width: 760, height: 560)
         // Deliberately large caps: the actual open size is min(88% width, 92% height, cap, screen), so
         // these caps rarely bind — the window opens at ~90% of whatever display it lands on, generous
         // on small screens and large ones alike.
