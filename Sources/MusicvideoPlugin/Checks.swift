@@ -274,6 +274,67 @@ public enum MusicvideoChecks {
         return out
     }
 
+    /// MISSING_BIBLE_ANCHOR_FOR_T2V (error): a `keyframe_strategy=none` (pure text-to-video) shot that
+    /// still references bible entities has no visual anchor, so the video model invents the world —
+    /// inconsistent with image-to-video shots of the same location/character. Reference-mode on fal is
+    /// exempt (the bible refs ARE the anchor). Escape `text_to_video_ok:` in notes. Port of
+    /// `sanity/checks/keyframe_anchor.py`.
+    public static let keyframeAnchorCheck: SanityCheck = { ctx in
+        var out: [Finding] = []
+        for shot in ctx.shotlist.shots {
+            guard shot.keyframeStrategy == .none else { continue }
+            var refs: [String] = []
+            if let loc = shot.locationRef, !loc.isEmpty { refs.append("location_ref=\(loc)") }
+            if !shot.characterRefs.isEmpty { refs.append("character_refs=\(shot.characterRefs)") }
+            if !shot.propRefs.isEmpty { refs.append("prop_refs=\(shot.propRefs)") }
+            guard !refs.isEmpty else { continue }
+            if shot.seedanceInputMode == .reference && shot.sceneVideoProvider == .fal { continue }
+            if (shot.notes ?? "").lowercased().contains("text_to_video_ok:") { continue }
+            out.append(Finding(level: .error, code: "MISSING_BIBLE_ANCHOR_FOR_T2V", shotId: shot.id,
+                message: "shot \(shot.id) is keyframe_strategy=none (pure text-to-video) but references "
+                    + "bible entities (\(refs.joined(separator: ", "))). Without a visual anchor the video "
+                    + "model invents the world — guaranteed inconsistency with image-to-video shots of the "
+                    + "same location/character. Set keyframe_strategy=start + make an anchor frame, or "
+                    + "'text_to_video_ok: <reason>' in notes."))
+        }
+        return out
+    }
+
+    /// Location-view coverage + perspective-discipline reminder. Port of `sanity/checks/location_view.py`:
+    ///  - LOCATION_VIEW_MISSING (error): a shot's `location_view` isn't in the bible location's sheets.
+    ///  - MULTI_VIEW_LOCATION (info): ≥2 distinct views of one location (manual non-overlap check).
+    public static let locationViewCheck: SanityCheck = { ctx in
+        var out: [Finding] = []
+        if let bible = ctx.bible {
+            for shot in ctx.shotlist.shots {
+                guard let view = shot.locationView, !view.isEmpty,
+                      let locRef = shot.locationRef, !locRef.isEmpty else { continue }
+                guard case .location(let loc)? = bible.lookupId(locRef) else { continue }
+                var available = Set(loc.sheets.keys)
+                for i in 0..<loc.referenceImages.count { available.insert("ref_\(i)") }
+                if !available.contains(view) {
+                    out.append(Finding(level: .error, code: "LOCATION_VIEW_MISSING", shotId: shot.id,
+                        message: "shot \(shot.id): location_view=\"\(view)\" for location \"\(locRef)\" is "
+                            + "missing in the bible (have: \(loc.sheets.keys.sorted().joined(separator: ", "))). "
+                            + "The bible phase must generate the view, or the shot drops this anchor."))
+                }
+            }
+        }
+        var locViews: [String: Set<String>] = [:]
+        for shot in ctx.shotlist.shots {
+            if let locRef = shot.locationRef, let view = shot.locationView, !locRef.isEmpty, !view.isEmpty {
+                locViews[locRef, default: []].insert(view)
+            }
+        }
+        for (locRef, views) in locViews where views.count >= 2 {
+            out.append(Finding(level: .info, code: "MULTI_VIEW_LOCATION",
+                message: "location \"\(locRef)\" is shown from \(views.count) perspectives "
+                    + "(\(views.sorted().joined(separator: ", "))). Allowed only if the views share NO common "
+                    + "objects (perspective discipline) — verify non-overlap manually."))
+        }
+        return out
+    }
+
     /// Tempo-pacing check: ASL drift + per-shot hard-cap. Port of
     /// `checks.py::tempo`.
     ///
