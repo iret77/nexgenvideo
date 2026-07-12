@@ -161,6 +161,63 @@ public enum MusicvideoChecks {
         return out
     }
 
+    private static let establishingFramings: Set<Framing> = [.wide, .full, .aerial]
+    private static let detailFramings: Set<Framing> = [.cu, .ecu, .mcu, .insert, .ots, .ms]
+
+    /// Section dramaturgy. Port of `sanity/checks/variation.py`:
+    ///  - POST_ESTABLISHING_NO_VARIATION (warn): an establishing shot (wide/full/aerial) not resolved by
+    ///    a detail/reveal within the next 2 shots (escape `cut_ok: no_resolve_intentional`).
+    ///  - SECTION_NO_ARC (info): a ≥3-shot section missing an establishing OR a detail framing.
+    /// (VISUAL_REDUNDANCY follows with the redundancy port.)
+    public static let variationCheck: SanityCheck = { ctx in
+        var out: [Finding] = []
+        if ctx.shotlist.mode == .multicam { return out }
+        var bySection: [String: [Shot]] = [:]
+        var order: [String] = []
+        for shot in ctx.shotlist.shots {
+            let key = shot.section ?? "_unsectioned"
+            if bySection[key] == nil { order.append(key) }
+            bySection[key, default: []].append(shot)
+        }
+        let window = 2
+        for key in order {
+            let shots = bySection[key]!
+            for (i, shot) in shots.enumerated() {
+                guard let f = shot.framing, establishingFramings.contains(f) else { continue }
+                let notesLower = (shot.notes ?? "").lowercased()
+                if notesLower.contains("no_resolve_intentional") || notesLower.contains("cut_ok: no_resolve") {
+                    continue
+                }
+                let slice = shots[(i + 1)..<min(i + 1 + window, shots.count)]
+                if slice.isEmpty { continue }
+                let hasResolve = slice.contains { $0.framing.map { detailFramings.contains($0) } ?? false }
+                if !hasResolve {
+                    out.append(Finding(level: .warn, code: "POST_ESTABLISHING_NO_VARIATION", shotId: shot.id,
+                        message: "shot \(shot.id) (\(f.rawValue)) in section \"\(key)\" stays unresolved — no "
+                            + "detail/reveal (ms/mcu/cu/ecu/ots/insert) within the next \(window) shots. Add a "
+                            + "detail shot after it, or 'cut_ok: no_resolve_intentional' in notes."))
+                }
+            }
+        }
+        for key in order {
+            let shots = bySection[key]!
+            if shots.count < 3 { continue }
+            let framings = Set(shots.compactMap(\.framing))
+            let hasEst = !framings.isDisjoint(with: establishingFramings)
+            let hasDetail = !framings.isDisjoint(with: detailFramings)
+            if hasEst && !hasDetail {
+                out.append(Finding(level: .info, code: "SECTION_NO_ARC",
+                    message: "section \"\(key)\": only establishing framings, no detail/reveal — it runs at "
+                        + "one distance, no arc. Add at least one detail shot."))
+            } else if hasDetail && !hasEst && shots.count >= 4 {
+                out.append(Finding(level: .info, code: "SECTION_NO_ARC",
+                    message: "section \"\(key)\": only detail framings, no establishing (wide/full/aerial) — "
+                        + "no spatial anchor. Add an establishing shot."))
+            }
+        }
+        return out
+    }
+
     /// Tempo-pacing check: ASL drift + per-shot hard-cap. Port of
     /// `checks.py::tempo`.
     ///
