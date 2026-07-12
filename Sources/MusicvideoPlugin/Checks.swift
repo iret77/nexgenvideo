@@ -58,6 +58,25 @@ public enum MusicvideoChecks {
         return out
     }
 
+    /// NO_BLOCKING_AT_T0: a keyframe start/start_end shot whose visual_prompt doesn't structurally cover
+    /// the three blocking axes (pose/vector/camera) — its start frame isn't a clear t=0 state. `sanity.md`
+    /// / `frame.md` claim this is engine-enforced; it wasn't. Port of `prompts.py`'s use of
+    /// `blocking_validator.validate_blocking`.
+    public static let noBlockingAtT0Check: SanityCheck = { ctx in
+        var out: [Finding] = []
+        for shot in ctx.shotlist.shots
+        where shot.keyframeStrategy == .start || shot.keyframeStrategy == .startEnd {
+            let r = BlockingValidator.validate(
+                visualPrompt: shot.visualPrompt, hasCharacters: !shot.characterRefs.isEmpty)
+            if !r.ok {
+                out.append(Finding(level: .error, code: "NO_BLOCKING_AT_T0", shotId: shot.id,
+                    message: "shot \(shot.id) start frame isn't a clear t=0 blocking: "
+                        + r.reasons.joined(separator: " ")))
+            }
+        }
+        return out
+    }
+
     /// Tempo-pacing check: ASL drift + per-shot hard-cap. Port of
     /// `checks.py::tempo`.
     ///
