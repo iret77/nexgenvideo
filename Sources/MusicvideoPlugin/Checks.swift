@@ -218,6 +218,62 @@ public enum MusicvideoChecks {
         return out
     }
 
+    private static let redundancyStopwords: Set<String> = ["a", "an", "the", "and", "or", "but", "of",
+        "in", "on", "at", "to", "from", "with", "by", "for", "as", "is", "are", "was", "were", "be",
+        "been", "being", "has", "have", "had", "do", "does", "did", "this", "that", "these", "those",
+        "his", "her", "their", "its", "it", "he", "she", "they", "we", "you", "i", "me", "him", "them",
+        "us", "shot", "scene", "frame", "image", "camera", "static", "der", "die", "das", "ein", "eine",
+        "und", "oder", "aber", "im", "auf", "zu", "von", "mit", "fuer", "ist", "sind", "war", "waren",
+        "sein", "haben", "hatte", "diese", "dieser", "sich", "er", "sie", "es", "wir", "ihr"]
+    private static let tokenRegex = try? NSRegularExpression(pattern: #"\b[a-zA-ZÀ-ſ]{3,}\b"#)
+
+    private static func contentTokens(_ text: String?) -> Set<String> {
+        guard let text, !text.isEmpty, let re = tokenRegex else { return [] }
+        let ns = text as NSString
+        var out = Set<String>()
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let t = ns.substring(with: m.range).lowercased()
+            if !redundancyStopwords.contains(t) { out.insert(t) }
+        }
+        return out
+    }
+
+    private static func shotContentTokens(_ shot: Shot) -> Set<String> {
+        var t = contentTokens(shot.visualPrompt).union(contentTokens(shot.motion))
+        let blocking = shot.characterBlocking
+            .flatMap { [$0.pose, $0.position, $0.gaze, $0.relationToSet] }
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .joined(separator: " ")
+        if !blocking.isEmpty { t.formUnion(contentTokens(blocking)) }
+        return t
+    }
+
+    /// VISUAL_REDUNDANCY (warn): two consecutive shots on the same location with ≥55% Jaccard
+    /// content-token overlap — near-identical, wasteful renders. Escape `redundancy_ok:` in notes.
+    /// Port of `sanity/redundancy.py`.
+    public static let redundancyCheck: SanityCheck = { ctx in
+        let shots = ctx.shotlist.shots
+        guard shots.count >= 2 else { return [] }
+        var out: [Finding] = []
+        for i in 1..<shots.count {
+            let prev = shots[i - 1], shot = shots[i]
+            if (shot.notes ?? "").range(of: #"\bredundancy_ok\s*:"#,
+                                        options: [.regularExpression, .caseInsensitive]) != nil { continue }
+            guard shot.locationRef == prev.locationRef else { continue }
+            let a = shotContentTokens(prev), b = shotContentTokens(shot)
+            if a.isEmpty || b.isEmpty { continue }
+            let sim = Double(a.intersection(b).count) / Double(max(a.union(b).count, 1))
+            if sim >= 0.55 {
+                let common = a.intersection(b).sorted().prefix(8).joined(separator: ", ")
+                out.append(Finding(level: .warn, code: "VISUAL_REDUNDANCY", shotId: shot.id,
+                    message: "shot \(shot.id) has \(Int(sim * 100))% token overlap with \(prev.id) on the "
+                        + "same location (tokens: \(common)). Near-identical content — differentiate one shot "
+                        + "or cut it (or 'redundancy_ok: <reason>' in notes)."))
+            }
+        }
+        return out
+    }
+
     /// Tempo-pacing check: ASL drift + per-shot hard-cap. Port of
     /// `checks.py::tempo`.
     ///
