@@ -96,6 +96,71 @@ public enum MusicvideoChecks {
         return out
     }
 
+    private static let germanStopwordRegex = try? NSRegularExpression(
+        pattern: #"\b(?:und|oder|aber|sondern|denn|mit|von|nach|bei|seit|ueber|unter|vor|hinter|neben|zwischen|fuer|gegen|ohne|um|der|die|das|den|dem|des|ein|eine|einer|eines|einem|einen|sich|ihn|ihr|ihm|ihnen|uns|euch|mein|dein|sein|unser|auch|nicht|noch|schon|sehr|nur|doch|ja|nein|ist|sind|war|waren|wird|werden|hat|haben|kann|koennen|soll|sollen|muss|muessen|darf|duerfen|dass|weil|wenn|wie|wo|im|ins|am|ans|zum|zur|vom|beim)\b"#,
+        options: [.caseInsensitive])
+
+    /// PROMPT_NOT_ENGLISH (warn): image/video models are trained on English captions; a German
+    /// visual_prompt yields softer, camera/lighting-ignoring output. Heuristic: ≥2 unique German
+    /// stopwords, OR 1 umlaut + 1 stopword. Escape via `non_english_ok:` in notes. Port of
+    /// `sanity/checks/prompt_language.py`.
+    public static let promptLanguageCheck: SanityCheck = { ctx in
+        guard let re = germanStopwordRegex else { return [] }
+        var out: [Finding] = []
+        for shot in ctx.shotlist.shots {
+            if let notes = shot.notes,
+               notes.range(of: #"\bnon_english_ok\s*:"#, options: [.regularExpression, .caseInsensitive]) != nil {
+                continue
+            }
+            let prompt = shot.visualPrompt
+            let ns = prompt as NSString
+            let unique = Set(re.matches(in: prompt, range: NSRange(location: 0, length: ns.length))
+                .map { ns.substring(with: $0.range).lowercased() })
+            let hasUmlaut = prompt.range(of: "[äöüÄÖÜß]", options: .regularExpression) != nil
+            if unique.count >= 2 || (hasUmlaut && unique.count >= 1) {
+                out.append(Finding(level: .warn, code: "PROMPT_NOT_ENGLISH", shotId: shot.id,
+                    message: "shot \(shot.id) visual_prompt looks non-English (German tokens: "
+                        + "\(unique.sorted().prefix(4).joined(separator: ", "))). Write it in English "
+                        + "(or set notes 'non_english_ok: <reason>')."))
+            }
+        }
+        return out
+    }
+
+    private static let motionTokensPattern = #"\b(running|runs|ran|flying|flies|flew|leaping|leaps|leapt|jumping|jumps|jumped|falling|falls|fell|mid[\s-]?stride|sprinting|sprints|dashing|dashes|galloping|gallops|rushing|rushes|rushed|dancing|dances|danced|twirling|twirls|twirled|twisting|twists|twisted|spinning|spins|spun|skipping|skips|skipped|swinging|swings|swung|diving|dives|dove)\b"#
+
+    /// Still-only discipline. Port of `sanity/checks/still_only_discipline.py`:
+    ///  - STILL_ONLY_FORBIDDEN_LIVE_ACTION_WITH_CHARS (error): the still-only workaround is used on a
+    ///    live-action shot that has characters.
+    ///  - STILL_ONLY_MOTION_TOKEN (warn): a still-only shot's prompt still describes motion (unless
+    ///    `still_only_motion_ok:` escapes it).
+    public static let stillOnlyDisciplineCheck: SanityCheck = { ctx in
+        var out: [Finding] = []
+        let liveAction: Set<String> = ["live_action_realistic", "live_action_stylized"]
+        let vm = ctx.brief?.visualMedium.rawValue
+        for shot in ctx.shotlist.shots {
+            let notes = shot.notes ?? ""
+            guard notes.range(of: #"\bstill_only_approved\s*:"#,
+                              options: [.regularExpression, .caseInsensitive]) != nil else { continue }
+            if let vm, liveAction.contains(vm), !shot.characterRefs.isEmpty {
+                out.append(Finding(level: .error, code: "STILL_ONLY_FORBIDDEN_LIVE_ACTION_WITH_CHARS",
+                    shotId: shot.id,
+                    message: "shot \(shot.id): the still-only workaround is forbidden for live-action shots "
+                        + "with characters."))
+            }
+            let motionOK = notes.range(of: #"\bstill_only_motion_ok\s*:"#,
+                                       options: [.regularExpression, .caseInsensitive]) != nil
+            if !motionOK,
+               shot.visualPrompt.range(of: motionTokensPattern,
+                                       options: [.regularExpression, .caseInsensitive]) != nil {
+                out.append(Finding(level: .warn, code: "STILL_ONLY_MOTION_TOKEN", shotId: shot.id,
+                    message: "shot \(shot.id): a still-only shot describes motion — still-only frames must "
+                        + "show rest positions."))
+            }
+        }
+        return out
+    }
+
     /// Tempo-pacing check: ASL drift + per-shot hard-cap. Port of
     /// `checks.py::tempo`.
     ///
