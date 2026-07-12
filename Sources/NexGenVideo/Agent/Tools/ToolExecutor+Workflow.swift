@@ -735,6 +735,9 @@ extension ToolExecutor {
         // On-device speech recognition (whisper.cpp) for forced lyric alignment. The pack's analysis
         // runner resolves it from the registry; the model downloads on demand on first use.
         registry.registerTranscriber(WhisperCppTranscriber())
+        // On-device vocal isolation (HT-Demucs FT via ONNX Runtime) so transcription reads the clean
+        // voice, not the full mix. Model downloads on demand on first use.
+        registry.registerStemSeparator(DemucsStemSeparator())
         guard let runner = registry.phases[phase] else {
             return try jsonResult([
                 "phase": phase,

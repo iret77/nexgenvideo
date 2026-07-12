@@ -89,6 +89,16 @@ else
   exit 1
 fi
 
+# ONNX Runtime (Demucs + Beat This! inference) — a downloaded pod-archive binaryTarget. Locate the
+# macOS slice under SwiftPM's artifacts and embed it like the other frameworks.
+ORT_FW="$(find "$ROOT/.build/artifacts" -type d -name onnxruntime.framework -path '*macos*' 2>/dev/null | head -1)"
+if [ -n "$ORT_FW" ] && [ -d "$ORT_FW" ]; then
+  cp -R "$ORT_FW" "$APP/Contents/Frameworks/onnxruntime.framework"
+else
+  echo "!! onnxruntime.framework not found under .build/artifacts — the app links it and won't launch" >&2
+  exit 1
+fi
+
 # Flatten SwiftPM's resource bundle into the app's Resources tree.
 RES_BUNDLE="$(dirname "$BIN")/NexGenVideo_NexGenVideo.bundle"
 if [ -d "$RES_BUNDLE/Fonts" ]; then
@@ -196,6 +206,11 @@ echo "==> Codesigning embedded whisper framework"
 codesign --force --options runtime --timestamp \
   --sign "$SIGN_IDENTITY" \
   "$APP/Contents/Frameworks/whisper.framework"
+
+echo "==> Codesigning embedded onnxruntime framework"
+codesign --force --options runtime --timestamp \
+  --sign "$SIGN_IDENTITY" \
+  "$APP/Contents/Frameworks/onnxruntime.framework"
 
 echo "==> Codesigning main app"
 codesign --force --options runtime --timestamp \
