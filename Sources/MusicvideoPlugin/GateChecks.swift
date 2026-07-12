@@ -32,6 +32,23 @@ enum MusicvideoGateChecks {
                     + "(beats=\(beats), downbeats=\(downbeats), duration=\(duration)s). Re-run "
                     + "run_phase(\"analysis\") on a decodable song.")
         }
+        // Lyrics-mandatory + forced alignment (the predecessor's bar, never lower): the analysis must
+        // READ the song's sung words with timings, not skip them. Missing lyrics, or an analysis that
+        // never force-aligned them, blocks — the pipeline isolates the vocals (Demucs), transcribes
+        // them (whisper), and aligns the provided lyrics; that alignment is the section-boundary truth.
+        guard MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot) != nil else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": lyrics are required. Add the song's lyrics (plain text with "
+                    + "[Section] markers) to lyrics/, then re-run run_phase(\"analysis\") so they're "
+                    + "force-aligned to the vocals.")
+        }
+        let alignmentLines = (obj["alignment"] as? [Any])?.count ?? 0
+        guard alignmentLines > 0 else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": the lyrics weren't force-aligned. Re-run run_phase(\"analysis\") "
+                    + "— it isolates the vocals, transcribes them, and aligns your lyrics to the beat. If the "
+                    + "alignment stays empty, check that the lyrics match this song and the vocals are audible.")
+        }
         // A2 gate: the DSP measures the grid, but the phase isn't done until A2 has INTERPRETED it —
         // the measured sections must be labeled. `interpretation.section_labels` is written by the A2
         // step (never the DSP), so requiring it forces A2 to actually run before the gate can close.
