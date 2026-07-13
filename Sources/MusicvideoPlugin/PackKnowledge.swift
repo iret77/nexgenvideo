@@ -26,33 +26,45 @@ public enum PackKnowledge {
         func hasPack(_ dir: URL) -> Bool {
             fm.fileExists(atPath: dir.appendingPathComponent("MusicvideoPack").path)
         }
+        func search(_ containers: [URL]) -> URL? {
+            for container in containers {
+                // Flattened: <container>/MusicvideoPack/…
+                if hasPack(container) { return container }
+                // Nested generated bundle: <container>/NexGenVideo_MusicvideoPlugin.bundle/…
+                let nested = container.appendingPathComponent(nestedBundleName)
+                guard fm.fileExists(atPath: nested.path) else { continue }
+                if hasPack(nested) { return nested }
+                let nestedResources = nested.appendingPathComponent("Contents/Resources")
+                if hasPack(nestedResources) { return nestedResources }
+                if let bundle = Bundle(url: nested), let res = bundle.resourceURL, hasPack(res) { return res }
+            }
+            return nil
+        }
 
         let selfBundle = Bundle(for: BundleFinder.self)
-        // Directories that might directly hold MusicvideoPack/ (flattened) or the
-        // nested SwiftPM resource bundle.
-        var containers: [URL] = [
+        // Fast path: the bundle this code shipped in + the main bundle. This covers
+        // every layout we actually ship in (SwiftPM dev/test/CI and the installed
+        // `.ngvpack`), so the common case resolves here.
+        let primary: [URL] = [
             selfBundle.resourceURL,
             selfBundle.bundleURL,
             selfBundle.bundleURL.deletingLastPathComponent(),
             Bundle.main.resourceURL,
             Bundle.main.bundleURL,
         ].compactMap { $0 }
-        containers += Bundle.allBundles.compactMap { $0.resourceURL }
-        containers += Bundle.allBundles.map { $0.bundleURL }
-        containers += Bundle.allFrameworks.compactMap { $0.resourceURL }
+        if let found = search(primary) { return found }
 
-        for container in containers {
-            // Flattened: <container>/MusicvideoPack/…
-            if hasPack(container) { return container }
-            // Nested generated bundle: <container>/NexGenVideo_MusicvideoPlugin.bundle/…
-            let nested = container.appendingPathComponent(nestedBundleName)
-            guard fm.fileExists(atPath: nested.path) else { continue }
-            if hasPack(nested) { return nested }
-            let nestedResources = nested.appendingPathComponent("Contents/Resources")
-            if hasPack(nestedResources) { return nestedResources }
-            if let bundle = Bundle(url: nested), let res = bundle.resourceURL, hasPack(res) { return res }
-        }
-        return nil
+        // Fallback ONLY when the primary layout misses. `Bundle.allBundles` /
+        // `Bundle.allFrameworks` enumerate every loaded bundle and are slow +
+        // lock-heavy — running them eagerly inside this `static let`'s `swift_once`
+        // made many parallel first-touches (swift-testing runs tests as concurrent
+        // async tasks) block on the once and starve the Swift concurrency
+        // cooperative pool → SIGTRAP at test-process startup. Keeping them off the
+        // hot path fixes that while preserving full discovery coverage.
+        var fallback: [URL] = Bundle.allBundles.compactMap { $0.resourceURL }
+        fallback += Bundle.allBundles.map { $0.bundleURL }
+        fallback += Bundle.allFrameworks.compactMap { $0.resourceURL }
+        return search(fallback)
     }()
 
     private static func packDir(_ subpath: String) -> URL? {
