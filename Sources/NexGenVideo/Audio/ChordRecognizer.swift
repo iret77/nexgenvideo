@@ -21,11 +21,11 @@ struct ChordRecognizer: AudioChordRecognizing {
     private static let samplesPerWindow = 220_500          // instLenS · sr
     private static let hopLength = 2048                    // CQT hop (for trimming trailing silence)
 
-    // Hosted alongside the model, produced by scripts/export_btc_chord_onnx.py. Until the exported
-    // artifacts are hosted these resolve to a download failure → recognizeChords returns nil → the
-    // analysis simply carries no chords (the pipeline is unaffected), exactly like a missing model.
-    private static let modelURL = "https://huggingface.co/iret77/ngv-chord-btc/resolve/main/btc_chord.onnx"
-    private static let metaURL = "https://huggingface.co/iret77/ngv-chord-btc/resolve/main/btc_chord_meta.json"
+    // Hosted as GitHub release assets (chord-model-v1), produced by scripts/export_btc_chord_onnx.py.
+    // A download failure (offline) resolves to recognizeChords → nil → the analysis carries no chords
+    // (pipeline unaffected), exactly like a missing model.
+    private static let modelURL = "https://github.com/iret77/nexgenvideo/releases/download/chord-model-v1/btc_chord.onnx"
+    private static let metaURL = "https://github.com/iret77/nexgenvideo/releases/download/chord-model-v1/btc_chord_meta.json"
 
     /// Model sidecar: the vocabulary + geometry the Swift side needs to turn logits into chords.
     private struct Meta: Decodable {
