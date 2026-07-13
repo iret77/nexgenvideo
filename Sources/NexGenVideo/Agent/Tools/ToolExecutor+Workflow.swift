@@ -450,6 +450,9 @@ extension ToolExecutor {
             "source_mode": shot.map { $0.sourceMode.rawValue as Any } ?? (NSNull() as Any),
             "visual_prompt": shot.map { $0.visualPrompt as Any } ?? (NSNull() as Any),
             "framing": shot?.framing.map { $0.rawValue as Any } ?? (NSNull() as Any),
+            // #166: the structured camera triplet projected into ready prose, so the shot's declared
+            // camera is compiled from the spec (deterministic), not reconstructed by the agent.
+            "camera": shot?.cameraSetup.map { $0.promptProse() as Any } ?? (NSNull() as Any),
         ])
     }
 
