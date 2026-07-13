@@ -1007,6 +1007,9 @@ extension ToolExecutor {
         // On-device neural beat/downbeat tracking (Beat This! via ONNX Runtime) — supersedes the DSP
         // grid when it looks valid. Model downloads on demand on first use.
         registry.registerBeatDetector(BeatThisDetector())
+        // On-device chord recognition (BTC via ONNX, CQT baked into the graph) → analysis.chord_progression.
+        // Model downloads on demand on first use; absent/offline degrades to no chords.
+        registry.registerChordRecognizer(ChordRecognizer())
         guard let runner = registry.phases[phase] else {
             return try jsonResult([
                 "phase": phase,

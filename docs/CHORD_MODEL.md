@@ -38,7 +38,7 @@ All values from `run_config.yaml` and `utils/mir_eval_modules.py::audio_file_to_
 | Sample rate | 22050 Hz, mono | `run_config.mp3.song_hz`; `librosa.load(..., sr, mono=True)` |
 | Segment length | 10.0 s windows, CQT'd independently then concatenated on the time axis | `mp3.inst_len`; the `while` loop in `audio_file_to_features` |
 | Transform | `librosa.cqt(y, sr=22050, n_bins=144, bins_per_octave=24, hop_length=2048)` | `feature.n_bins/bins_per_octave/hop_length` |
-| CQT defaults (implicit) | `fmin = C1 ≈ 32.703 Hz`, `tuning` estimated from signal, `filter_scale=1`, `norm=1`, `sparsity=0.01` | librosa defaults — **pin these explicitly in the Swift port**; librosa estimates tuning by default, a real fidelity trap |
+| CQT defaults (implicit) | `fmin = C1 ≈ 32.703 Hz`, `tuning` estimated from signal, `filter_scale=1`, `norm=1`, `sparsity=0.01` | librosa defaults — **pin these explicitly in the nnAudio export config**; the `--check-parity` step is what confirms nnAudio reproduces them |
 | Magnitude | `feature = log(abs(CQT) + 1e-6)` | `audio_file_to_features` |
 | Layout | transpose to `[T, 144]` | `test.py:56` `feature = feature.T` |
 | **Normalization** | `feature = (feature - mean) / std`, where **`mean` and `std` are scalars stored in the checkpoint** (`checkpoint['mean']`, `checkpoint['std']`) | `test.py:40-41,57` — must be exported alongside the ONNX |
@@ -64,21 +64,38 @@ BTC's own decode:
 - **`AudioChordRecognizing` / `RecognizedChord`** is the provider seam; `EngineRegistry.chordRecognizer`
   is wired into the analysis phase.
 
-What remains (this doc + the export script make it mechanical):
+### Architecture decision: the CQT front-end is baked INTO the ONNX
 
-1. **Model artifact** — run `scripts/export_btc_chord_onnx.py` (see its header) to produce
-   `btc_chord.onnx` + `btc_chord_meta.json` (`{mean, std, vocabulary, timestep, ...}`) from the MIT
-   checkpoint. Host it the way `beat_this.onnx` / `htdemucs` are (raw URL → `HFModelStore.ensure`).
-2. **CQT frontend** — implement the CQT above in Swift/Accelerate (the DSP layer has STFT+mel but no
-   CQT). **Validate against a librosa golden fixture before enabling** — a plausible-but-wrong CQT
-   silently degrades chords, exactly the failure mode the on-device beat frontend guards against.
-3. **`ChordRecognizer` provider** — mirror `BeatThisDetector`: `HFModelStore.ensure` the model, compute
-   the frontend, apply `(x-mean)/std`, run `OrtRuntime` over 108-frame instances, arg-max, then
-   `ChordDecode.segments(...)`. Register via `registry.registerChordRecognizer(...)`. Like
-   `BeatThisDetector`, it **validates on-device** — return `nil` on an implausible result so the
-   analysis keeps an empty (never wrong) chord progression.
+The one fidelity-critical piece is the CQT. Rather than re-implement librosa's CQT in Swift (the issue's
+original step 4) — where it could not be verified against ground truth in a headless CI-only environment
+(no `librosa`) and would be "plausible but subtly wrong", the exact `mel_scale`-vs-`norm` trap — the CQT
+is **baked into the exported ONNX graph** via nnAudio (`CQT1992v2`, which follows librosa conventions).
+Consequences:
 
-Steps 2–3 are device/model-gated: they need the exported model and on-device inference to validate
-fidelity, and cannot be verified in a headless CI-only environment (no `librosa`/`torch` to generate a
-golden or run inference). They belong on a build the owner triggers with the model in hand — the same
-loop `BeatThisDetector` went through.
+- The exported model takes a **raw 10 s mono window at 22.05 kHz** and returns per-frame chord logits.
+  Normalization (`(x−mean)/std`) is baked in too.
+- **CQT↔librosa fidelity is verified in Python at export** (`export_btc_chord_onnx.py --check-parity`),
+  the one place librosa actually runs — not hand-waved on the Swift side.
+- The Swift provider shrinks to windowing + arg-max + the already-CI-tested `ChordDecode`; there is **no
+  fragile DSP in Swift** to get wrong.
+
+This trades a slightly heavier export step for the only design in which the DSP is machine-checkable
+against ground truth. The maj/min pretrained weights must still work through nnAudio's CQT rather than
+librosa's — the parity check (and eval on the repo's `example.mp3`, whose `.lab` is known) confirms that.
+
+### Landed (commit for this doc)
+
+- **`ChordRecognizer`** (`Sources/NexGenVideo/Audio/ChordRecognizer.swift`) — mirrors `BeatThisDetector`:
+  `HFModelStore.ensure` the model + meta, load mono 22.05 kHz, slice into 10 s windows, run `OrtRuntime`
+  per window, arg-max, then `ChordDecode.segments(hopSeconds: inst_len/timestep)`. Registered via
+  `registry.registerChordRecognizer(...)`. Degrades to `nil` (→ empty, never wrong) on any failure.
+- **`scripts/export_btc_chord_onnx.py`** — produces `btc_chord.onnx` (audio → logits, CQT baked in) +
+  `btc_chord_meta.json` (vocabulary/geometry), with the librosa parity check.
+
+### Remaining (single device/model step)
+
+Run the export script on a machine with torch+nnAudio+librosa, confirm the parity check + `example.mp3`
+eval, host `btc_chord.onnx` + `btc_chord_meta.json`, and set their URLs in `ChordRecognizer.swift`
+(currently a placeholder — until hosted, the provider cleanly downloads-fail → no chords, pipeline
+unaffected). Then validate on a real track from the built app, the same on-device loop
+`BeatThisDetector` went through — CI never runs the ONNX model.
