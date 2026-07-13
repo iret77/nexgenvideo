@@ -113,25 +113,48 @@ enum PromptComposer {
 
     private static func loadDirectives(dataRoot root: URL) -> ProjectDirectives {
         let store = YAMLArtifactStore(dataRoot: root)
-        guard let ledger = try? store.load(Ledger.self, at: PipelineLayout.ledgerFile) else {
-            return ProjectDirectives(all: [], locked: [])
-        }
         var all: [String] = []
         var locked: [String] = []
         var seen = Set<String>()
-        for objectKey in ledger.objects.keys.sorted() {
-            guard let attributes = ledger.objects[objectKey] else { continue }
-            for attrName in attributes.keys.sorted() {
-                let attribute = attributes[attrName]!
-                let raw = attribute.directive.isEmpty ? attribute.tag : attribute.directive
-                let directive = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                if directive.isEmpty || seen.contains(directive.lowercased()) { continue }
-                seen.insert(directive.lowercased())
-                all.append(directive)
-                if attribute.locked { locked.append(directive) }
+        func add(_ raw: String, locked isLocked: Bool) {
+            let directive = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !directive.isEmpty, !seen.contains(directive.lowercased()) else { return }
+            seen.insert(directive.lowercased())
+            all.append(directive)
+            if isLocked { locked.append(directive) }
+        }
+        if let ledger = try? store.load(Ledger.self, at: PipelineLayout.ledgerFile) {
+            for objectKey in ledger.objects.keys.sorted() {
+                guard let attributes = ledger.objects[objectKey] else { continue }
+                for attrName in attributes.keys.sorted() {
+                    let attribute = attributes[attrName]!
+                    add(attribute.directive.isEmpty ? attribute.tag : attribute.directive, locked: attribute.locked)
+                }
             }
         }
+        // Director-pattern style injection (#185, the strongest lever): the chosen pattern's craft tokens
+        // (lighting signature + camera vocabulary) flow into EVERY compiled prompt so each rendered frame
+        // inherits the style, not just the storyboard. Additive, not locked; no pattern/brief = empty.
+        for token in patternStyleTokens(dataRoot: root, store: store) { add(token, locked: false) }
         return ProjectDirectives(all: all, locked: locked)
+    }
+
+    /// The active director pattern's style tokens (lighting signature + camera vocabulary), resolved
+    /// through the pack's `PatternProviding` seam from `brief.director_pattern`. Empty when no pattern is
+    /// chosen, no provider is registered, or anything is unreadable — a normal state, never an error.
+    private static func patternStyleTokens(dataRoot root: URL, store: YAMLArtifactStore) -> [String] {
+        guard let brief = try? store.load(Brief.self, at: PipelineLayout.briefFile),
+            let id = brief.directorPattern?.trimmingCharacters(in: .whitespaces), !id.isEmpty else { return [] }
+        let activePack = ProjectPluginSettings.activePlugin(projectURL: FrameInventory.projectHome(of: root))
+        guard let provider = PackCatalog.registry(activePack: activePack).patternProvider,
+            let data = try? provider.get(id: id),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        var tokens: [String] = []
+        if let lighting = object["lighting_signature"] as? String { tokens.append(lighting) }
+        if let camera = object["camera_vocabulary"] as? [Any] {
+            tokens.append(contentsOf: camera.compactMap { $0 as? String })
+        }
+        return tokens
     }
 
     // MARK: - Audio composition (no engine builder)
