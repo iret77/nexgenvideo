@@ -6,12 +6,8 @@ import NexGenEngine
 // severities are byte-identical to the Python. Helpers are `b2`-prefixed to
 // avoid redeclaration across the other check files.
 //
-// SKIPPED expanding_camera: needs a model-capability registry
-// (`costs.model_map` / `capability.supports_keyframe_end`, resolved via
-// `shot.model_suggestion`) to choose between EXPANDING_CAMERA_NEEDS_END_FRAME
-// (warn) and EXPANDING_CAMERA_NO_END_KEYFRAME_SUPPORT (info). No engine port of
-// CostsConfig / model capabilities exists, and the branch severity cannot be
-// decided without it, so the whole module is skipped.
+// (expanding_camera now lives in ExpandingCamera.swift — its blocker, a model-capability registry, is
+// resolved via CostsConfig.bundledDefault.runwayModel + ModelCapabilities.supportsKeyframeEnd.)
 extension MusicvideoChecks {
 
     // MARK: - provider_consistency.py (Block 17)
