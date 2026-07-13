@@ -378,31 +378,62 @@ the anchor, or set `text_to_video_ok:` in notes with a reason?").
 
 ### F2.5-Audit — Frame audit (vision pass, MANDATORY before F3)
 
-Per rendered frame (`start` and, if present, `end`):
+The audit closes the loop between the image-provider call and the user's
+approve: a vision pass inspects each rendered keyframe against the shot
+spec and its **machine-validated verdict** routes the frame deterministically.
+Never surface a keyframe to the user before it has been audited. The
+verdict — not your own judgment — decides the next step.
+
+Per rendered frame (`start` and, if present, `end`), AFTER its
+`record_render`:
 
 1. **`Read frames/<shot>-<role>.png`** — load the image into context.
-2. **Check against the shot spec**, with the iron honesty rule (no
+2. **Judge against the shot spec**, with the iron honesty rule (no
    goodwill pass): does the frame match `framing`, `camera_setup`,
-   `character_blocking`, `location_view`, the t=0 pose, and the lighting?
-   Note per check: clean / minor / blocking, with the observed deviation.
-3. **On a blocking deviation:** formulate a re-render patch in
-   STRICT/MUST/NOT form addressing the specific problem, e.g.:
+   `character_blocking`, `character_count`, `gaze`, `visible_zones`,
+   `forbidden_elements`, the exact t=0 anchor, and the proportion anchor?
+   Assign each of the 10 standard checks a `status`
+   (`clean` / `minor` / `blocking` / `n/a`) plus what you `observed`.
+3. **Save the verdict — never freehand YAML:** call
+   `save_frame_audit(project_dir, shot_id, role, auditor, overall, checks
+   [, auto_rerender_patch, path])`. You supply only `status`/`observed`/
+   `note` per check plus `overall`; the tool measures the rest
+   (`render_sha256`, `generated`, each `expected` from the shot spec, and
+   the `auto_rerender_attempt` counter). `overall` must match the worst
+   check status or the call is rejected — fix and re-call. When `overall`
+   is `blocking`, include an `auto_rerender_patch` in STRICT/MUST/NOT form
+   addressing the specific problem, e.g.:
    ```
    STRICT BLOCKING OVERRIDE: alex MUST be looking DOWN at the notebook
    on the desk. alex's gaze does NOT meet the camera. Eyes downcast,
    head tilted slightly.
    ```
-4. **Re-render:** fold the patch into the prompt and call `generate_image`
-   again for that role; bring the new PNG in (keep the old one as
-   `<shot>-<role>.vN.png` for history) and re-record via
-   `record_render`. Max **2** auto re-render attempts; after that, the
-   user decides with the findings in view.
+4. **Route on the returned `verdict`:**
+   - **`APPROVE`** (clean, no findings): proceed to F3 — a short
+     confirmation only.
+   - **`RERENDER`** (blocking, `attempts_left > 0`): fold the
+     `auto_rerender_patch` into the prompt, call `generate_image` again for
+     that role, bring the new PNG in (keep the old one as
+     `<shot>-<role>.vN.png` for history), `record_render` it, then audit
+     the NEW frame. The tool bumps `auto_rerender_attempt` automatically
+     when the re-rendered bytes differ. **Never exceed 2 auto re-render
+     attempts** per shot+role — after that the tool returns `USER_DECIDES`.
+   - **`USER_DECIDES`** (minor findings, or blocking with the attempt
+     budget spent): go to F3 and surface the frame WITH the findings block
+     (render the findings via `show_blocks`, not a markdown wall); the user
+     approves or rejects with the deviations in view.
+
+The `frame_audit_bridge` sanity check echoes every non-clean audit into the
+sanity report (`FRAME_AUDIT_ISSUES`, info-level) so a blocking finding can't
+be silently approved past; a corrupt audit file surfaces as
+`FRAME_AUDIT_LOAD_FAILED` (warn) — re-create it via `save_frame_audit`.
 
 ### F3 — Review in the chosen mode
 
-**Precondition:** the F2.5 audit has run. If the audit was clean, F3 is
-only a short confirmation. If the audit found something the user should
-weigh, F3 shows the image WITH the findings block.
+**Precondition:** the F2.5 audit has run and returned `APPROVE` or
+`USER_DECIDES` for this frame (a `RERENDER` verdict loops back into F2.5,
+never reaches F3). On `APPROVE`, F3 is only a short confirmation. On
+`USER_DECIDES`, F3 shows the image WITH the findings block.
 
 **Spec-block format (mandatory next to every frame):**
 

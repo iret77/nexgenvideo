@@ -203,13 +203,20 @@ at that point; keep the answers in `brief.yaml` as they're settled.
 
 #### Status from A1 (audio analysis runs BEFORE the brief in the story-first flow)
 
-13. **Chord analysis & stems — not available (deferred).** The current
-    analysis runs the native beat/downbeat/tempo/structure DSP only. It
-    does **not** produce chords or stem separation — those fields stay
-    empty by design. Do not ask about them, do not read them, do not
-    offer to "switch provider" or "re-run for chords". Write
-    `chord_analysis: false` and `stems_provider: none` silently and move
-    on. (Never tell the user chords/stems were computed — they weren't.)
+13. **Chord analysis & stems.** Chords are computed in the analysis phase
+    whenever a chord model is available (the field `chord_progression` is
+    then populated; when no model is installed it stays empty — absence is
+    never a failure). Because analysis runs BEFORE the brief, the compute is
+    not gated by the brief. `enable_chord_analysis` instead gates downstream
+    **use** — whether shotlist planning / prompt composition consume the
+    chords — so the question the user answers is "should chords influence my
+    video?", not "compute chords?". Read `analysis/<song>.json`: if
+    `chord_progression` is non-empty you may offer the switch (default on);
+    if it's empty, set `chord_analysis: false` silently and move on — do not
+    offer to "switch provider" or "re-run for chords", and never claim
+    chords were computed when the field is empty. Stem separation follows the
+    same rule: present only if a separator ran; otherwise `stems_provider:
+    none`, silently.
 
 14. **Final resolution** (mandatory). `show_dialog`:
 

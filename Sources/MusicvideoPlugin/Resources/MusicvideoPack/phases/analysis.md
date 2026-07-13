@@ -35,9 +35,12 @@ downbeat grid** by the consolidator. The raw detector output is kept in
 `structure_candidates`, and the consolidator pre-fills `interpretation.anomalies`
 (e.g. `single_source_boundary`, `boundary_divergence`).
 
-It does **NOT** produce stems, forced lyric alignment, musical key, or
-chords (deferred). Those fields stay empty — **never treat their absence as
-an error, and never fabricate them.** In particular: there is no
+Optional signals — stems, forced lyric alignment, musical key, and
+`chord_progression` — are produced **only when the corresponding on-device
+model/provider is available** (chords need a chord model; alignment needs a
+transcriber; stems need a separator). When one isn't installed its field
+stays empty — **never treat their absence as an error, and never fabricate
+them.** In particular: there is no
 `alignment[]` with line timings. Section **timing** comes only from the
 measured downbeats; lyrics contribute **labels**, not timing.
 
@@ -175,8 +178,10 @@ Add the top-level key `interpretation` to the analysis.json:
 - `structure_candidates[]`: the raw detector output (one `librosa`
   candidate today) — for your own plausibility checks.
 - `energy_curve`, `tempo_curve`: for assessing dynamics.
-- Empty by design (deferred — not errors): `alignment`, `stems`, `key`,
-  `chord_progression`.
+- Present only when their model/provider ran, empty otherwise (never
+  errors): `alignment`, `stems`, `key`, `chord_progression`. A non-empty
+  `chord_progression` is the harmonic signal; `pipeline_stages` lists
+  `chords` when it was computed.
 
 ## Mandatory rules
 

@@ -87,6 +87,8 @@ enum ToolRunPresentation {
         "next_render_shot": "Picking the next shot to render",
         "record_render": "Recording a render",
         "get_render_manifest": "Reading the render manifest",
+        "save_frame_audit": "Auditing the frame",
+        "get_frame_audit": "Reading the frame audit",
         "get_ledger": "Reading the intent ledger",
         "set_ledger_attribute": "Recording creative intent",
         "lock_ledger_attribute": "Locking creative intent",

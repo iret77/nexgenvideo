@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import NexGenEngine
 
 enum ToolName: String, CaseIterable, Sendable {
     case getTimeline = "get_timeline"
@@ -60,6 +61,8 @@ enum ToolName: String, CaseIterable, Sendable {
     case nextRenderShot = "next_render_shot"
     case recordRender = "record_render"
     case getRenderManifest = "get_render_manifest"
+    case saveFrameAudit = "save_frame_audit"
+    case getFrameAudit = "get_frame_audit"
     case assembleTimeline = "assemble_timeline"
     case getLedger = "get_ledger"
     case setLedgerAttribute = "set_ledger_attribute"
@@ -77,7 +80,7 @@ enum ToolName: String, CaseIterable, Sendable {
     /// so the document must be marked edited to prompt a save.
     var isPipelineWrite: Bool {
         switch self {
-        case .initProject, .approveGate, .rewind, .runPhase, .recordRender,
+        case .initProject, .approveGate, .rewind, .runPhase, .recordRender, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute, .setGateState,
              .attachSong, .copyProjectFile:
             return true
@@ -1113,6 +1116,38 @@ enum ToolDefinitions {
             )
         ),
         AgentTool(
+            name: .saveFrameAudit,
+            description: "Record a vision-audit verdict for a rendered keyframe and get the routing decision. WRITES.\n\nCall this AFTER record_render for a keyframe and BEFORE surfacing it to the user: inspect the rendered image against the shot spec (framing, character count, gaze, blocking at t=0, forbidden elements, visible zones, proportion anchor) and report one status per audit point. The result's `verdict` routes deterministically — APPROVE (clean) → surface for approval; RERENDER (blocking, budget left) → apply `auto_rerender_patch` to a fresh compile+render, then re-audit; USER_DECIDES (minor, or blocking with budget spent) → surface the findings and let the user decide. Never exceed 2 auto re-renders per shot+role.\n\nYou judge; the machine measures. Supply only `status`/`observed`/`note` per check plus `overall`, `auditor`, and (when blocking) `auto_rerender_patch`. The executor fills `render_sha256`, `generated`, each `expected` (from the shot spec), and the `auto_rerender_attempt` counter — values you pass for those are ignored. All 10 standard check keys are required; extra keys are allowed. Strictly validated: `overall` must match the worst check status (a blocking check with a non-blocking overall is rejected), `pending` is never a valid end state — fix and re-call on any violation. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "shot_id": ["type": "string", "description": "The audited shot id."],
+                    "role": ["type": "string", "enum": ["start", "end"], "description": "Keyframe role (default \"start\")."],
+                    "auditor": ["type": "string", "description": "Who produced the audit, e.g. \"orchestrator-claude-opus-4.8\" or \"google-gemini-3-pro\"."],
+                    "overall": [
+                        "type": "string", "enum": ["clean", "minor", "blocking"],
+                        "description": "Aggregate verdict — must match the worst check status.",
+                    ],
+                    "auto_rerender_patch": ["type": "string", "description": "STRICT/MUST/NOT correction instructions for the next re-render; set when overall=blocking."],
+                    "path": ["type": "string", "description": "Explicit image path (project-home-relative or absolute) to audit — only needed when the frame isn't in the frames manifest yet."],
+                    "checks": frameAuditChecksSchema,
+                ],
+                required: ["shot_id", "auditor", "overall", "checks"]
+            )
+        ),
+        AgentTool(
+            name: .getFrameAudit,
+            description: "The stored vision-audit for a keyframe and its routing verdict. Read-only.\n\nReturns `{exists, shot_id, role, overall, verdict, has_blocking, has_minor, auto_rerender_attempt, attempts_left, auditor, render_sha256, render_path, auto_rerender_patch, checks}` — or `{exists:false}` when no audit was saved for that shot+role. Read the verdict here rather than recomputing routing policy. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "shot_id": ["type": "string", "description": "The shot id."],
+                    "role": ["type": "string", "enum": ["start", "end"], "description": "Keyframe role (default \"start\")."],
+                ],
+                required: ["shot_id"]
+            )
+        ),
+        AgentTool(
             name: .assembleTimeline,
             description: "Lay the rendered shots onto the timeline cut to the beat. WRITES.\n\nBuilds the final cut for the render `phase`: reads the analysis (beats, downbeats, sections), the shotlist (ordered shots + planned spans), and the render manifest (each shot's rendered file), then places every rendered shot in shotlist order on a dedicated assembly video track, each cut snapped to a beat: a downbeat at a section boundary, a regular beat otherwise. The song is laid on an audio track at frame 0 as the sync anchor if it isn't already there. Frame-exact at the project fps. Re-runnable: a second call rebuilds the assembly track in place rather than duplicating clips. Shots with no rendered output yet are skipped and named, not fatal; a shot's source_mode (generated / imported / ai_enhanced) doesn't matter, only that its output is recorded. Needs analysis (run_phase \"analysis\") and at least one recorded render first, or it returns an actionable error. Returns `{shots_placed, total_frames, video_track_index, song_track, placements, skipped}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
@@ -1216,6 +1251,32 @@ enum ToolDefinitions {
             )
         ),
     ]
+
+    /// `save_frame_audit`'s `checks` schema: an object requiring all 10 standard audit keys, each a
+    /// `{status, observed, note}` object with `status` enum-constrained. `expected` is machine-filled
+    /// so it's deliberately absent from the input schema. Extra free keys stay allowed.
+    private static var frameAuditChecksSchema: [String: Any] {
+        let checkSchema: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "status": [
+                    "type": "string", "enum": ["clean", "minor", "blocking", "n/a"],
+                    "description": "Verdict for this audit point (\"n/a\" when the spec doesn't constrain it).",
+                ],
+                "observed": ["type": "string", "description": "What the image shows."],
+                "note": ["type": "string", "description": "Short finding for the user / re-render patch."],
+            ],
+            "required": ["status"],
+        ]
+        var properties: [String: Any] = [:]
+        for key in standardAuditCheckKeys { properties[key] = checkSchema }
+        return [
+            "type": "object",
+            "description": "One verdict per audit point. All 10 standard keys are required (\(standardAuditCheckKeys.joined(separator: ", "))); extra keys are allowed. Supply status/observed/note only — expected is filled from the shot spec.",
+            "properties": properties,
+            "required": standardAuditCheckKeys,
+        ]
+    }
 
     /// Shared `project_dir` property schema for the pipeline tools (optional — defaults to the open
     /// project's pipeline dir when omitted).

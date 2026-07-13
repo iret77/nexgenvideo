@@ -103,6 +103,7 @@ public struct MusicvideoPack: Pack {
         registry.registerSanityCheck("frame_ratio", MusicvideoChecks.frameRatioCheck)
         registry.registerSanityCheck("frame_size", MusicvideoChecks.frameSizeCheck)
         registry.registerSanityCheck("builder_bypass", MusicvideoChecks.builderBypassCheck)
+        registry.registerSanityCheck("frame_audit_bridge", MusicvideoChecks.frameAuditBridgeCheck)
         // The runner resolves the audio decoder from the registry at run time
         // (weak capture — the registry outlives the call; no retain cycle). A
         // missing decoder surfaces as an actionable error, not a crash.
@@ -118,7 +119,8 @@ public struct MusicvideoPack: Pack {
                 dataRoot: dataRoot, decoder: decoder,
                 transcriber: registry.transcriber,
                 separator: registry.stemSeparator,
-                beatDetector: registry.beatDetector)
+                beatDetector: registry.beatDetector,
+                chordRecognizer: registry.chordRecognizer)
         }
         // Hard gate: the analysis gate can't be stamped until a real analysis artifact (with genuine
         // beats/downbeats) exists — the deterministic backstop against a fabricated song structure.

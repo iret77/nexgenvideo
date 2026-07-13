@@ -62,6 +62,7 @@ public final class EngineRegistry: @unchecked Sendable {
     public private(set) var transcriber: (any AudioTranscribing)?
     public private(set) var stemSeparator: (any AudioStemSeparating)?
     public private(set) var beatDetector: (any AudioBeatDetecting)?
+    public private(set) var chordRecognizer: (any AudioChordRecognizing)?
 
     /// Pack-provided director-pattern query surface (see `PatternProviding`). Nil until a pack registers
     /// one; the host's `suggest_patterns`/`get_pattern` tools return an actionable "no patterns" instead.
@@ -148,6 +149,10 @@ public final class EngineRegistry: @unchecked Sendable {
 
     public func registerBeatDetector(_ detector: any AudioBeatDetecting) {
         self.beatDetector = detector
+    }
+
+    public func registerChordRecognizer(_ recognizer: any AudioChordRecognizing) {
+        self.chordRecognizer = recognizer
     }
 
     /// Register the pack's director-pattern query surface (see `PatternProviding`).

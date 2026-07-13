@@ -82,7 +82,8 @@ public enum MusicvideoAnalysisRunner {
         decoder: any AudioPCMDecoding,
         transcriber: (any AudioTranscribing)? = nil,
         separator: (any AudioStemSeparating)? = nil,
-        beatDetector: (any AudioBeatDetecting)? = nil
+        beatDetector: (any AudioBeatDetecting)? = nil,
+        chordRecognizer: (any AudioChordRecognizing)? = nil
     ) throws -> Outcome {
         let song = try locateSong(dataRoot: dataRoot)
         let pcm = try decoder.decode(song)
@@ -111,6 +112,18 @@ public enum MusicvideoAnalysisRunner {
             stages.append("neural_beats")
         }
 
+        // Chord recognition (optional) — the harmonic planning signal. Computed whenever a
+        // recognizer is registered; the brief's `enable_chord_analysis` gates downstream USE
+        // (shotlist/prompt consumption), not the compute (analysis runs before the brief).
+        var chords: [Chord] = []
+        if let chordRecognizer, let recognized = try? chordRecognizer.recognizeChords(song, stems: stems),
+            !recognized.isEmpty {
+            chords = recognized.map {
+                Chord(start: Energy.round3($0.start), end: Energy.round3($0.end), label: $0.label)
+            }
+            stages.append("chords")
+        }
+
         // Forced lyric alignment (optional; needs both lyrics and a transcriber).
         var alignment: [AlignmentLine] = []
         if let transcriber, let lyrics = loadLyrics(dataRoot: dataRoot) {
@@ -129,7 +142,7 @@ public enum MusicvideoAnalysisRunner {
         let analysis = try toCanonical(
             raw, project: project, songPath: songPath,
             stems: stems.map { relativeStems($0, dataRoot: dataRoot) },
-            lyricsAlignment: alignment, pipelineStages: stages)
+            lyricsAlignment: alignment, chords: chords, pipelineStages: stages)
 
         let outDir = dataRoot.appendingPathComponent("analysis")
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -175,11 +188,11 @@ public enum MusicvideoAnalysisRunner {
     /// list is kept as a `structure_candidate`. When `lyricsAlignment` carries
     /// `[Section]` markers, those become the primary boundary truth (Consolidator
     /// Path A). `stems` is populated when separation ran; `key` carries the DSP
-    /// pipeline's Krumhansl-Schmuckler result; chords stay empty (deferred —
-    /// needed a deep-chroma chord model).
+    /// pipeline's Krumhansl-Schmuckler result; `chords` carry the recognizer's chord
+    /// progression when a chord model is registered (empty otherwise).
     static func toCanonical(
         _ raw: AudioAnalysis, project: String, songPath: String, stems: Stems? = nil,
-        lyricsAlignment: [AlignmentLine] = [],
+        lyricsAlignment: [AlignmentLine] = [], chords: [Chord] = [],
         pipelineStages: [String] = ["load_audio", "rhythm", "structure", "features"]
     ) throws -> Analysis {
         func map(_ secs: [AudioSection], defaultSource: String) -> [AnalysisSection] {
@@ -233,6 +246,7 @@ public enum MusicvideoAnalysisRunner {
             energyCurve: raw.energyCurve,
             tempoCurve: raw.tempoCurve,
             key: raw.key,
+            chordProgression: chords,
             interpretation: interpretation,
             pipelineStages: pipelineStages
         )

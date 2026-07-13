@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import NexGenEngine
 
@@ -510,6 +511,204 @@ extension ToolExecutor {
                 "spent_eur": s.spentEur,
             ],
         ])
+    }
+
+    // MARK: - Frame vision-audit
+
+    /// Record a vision-audit for a rendered keyframe and return the routing verdict. The agent judges
+    /// (`status`/`observed`/`note` per check + `overall`); the machine measures — `render_sha256`,
+    /// `generated`, each `expected` (from the shot spec), and `auto_rerender_attempt` are computed
+    /// here and any agent-supplied values for them are ignored. Strict: all 10 standard check keys
+    /// required, statuses enum-constrained, and `FrameAudit.validate()` enforces overall/worst-status
+    /// consistency — violations come back verbatim for a fix-and-re-call.
+    func saveFrameAuditTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let shotId = try args.requireString("shot_id")
+        let role = args.string("role") ?? "start"
+        guard role == "start" || role == "end" else {
+            throw ToolError("Unknown role '\(role)'. Expected 'start' or 'end'.")
+        }
+        let auditor = try args.requireString("auditor")
+        let overallRaw = try args.requireString("overall")
+        guard let overall = AuditStatus(rawValue: overallRaw), overall != .pending else {
+            throw ToolError("Unknown overall '\(overallRaw)'. Expected clean/minor/blocking.")
+        }
+
+        // Resolve the audited image: explicit `path` wins, else the frames manifest entry for this
+        // shot+role. `render_path` is stored project-home-relative (where the media library lives);
+        // `render_sha256` binds the audit to the exact bytes on disk.
+        let home = FrameInventory.projectHome(of: root)
+        guard let (fileURL, renderPath) = resolveAuditedFrame(
+            shotId: shotId, role: role, explicitPath: args.string("path"), home: home, dataRoot: root)
+        else {
+            throw ToolError("No rendered frame found for \(shotId)-\(role). record_render the keyframe "
+                + "first, or pass an explicit `path` to the image.")
+        }
+        guard let data = try? Data(contentsOf: fileURL) else {
+            throw ToolError("Rendered frame not readable on disk: \(fileURL.path).")
+        }
+        let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+
+        // Expected per standard check comes from the shot spec, never the model.
+        let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil
+        let shot = shotlist?.shots.first { $0.id == shotId }
+        let expected = frameAuditExpected(for: shot, brief: loadBriefIfAny(dataRoot: root))
+
+        guard let rawChecks = args["checks"] as? [String: Any] else {
+            throw ToolError("`checks` must be an object mapping each audit key to {status, observed, note}.")
+        }
+        var checks: [String: AuditCheck] = [:]
+        for (key, value) in rawChecks {
+            guard let cd = value as? [String: Any] else {
+                throw ToolError("check '\(key)' must be an object with a `status`.")
+            }
+            guard let statusRaw = cd.string("status") else {
+                throw ToolError("check '\(key)' is missing `status`.")
+            }
+            guard let status = AuditStatus(rawValue: statusRaw), status != .pending else {
+                throw ToolError("check '\(key)' has invalid status '\(statusRaw)'. Expected clean/minor/blocking/n/a.")
+            }
+            checks[key] = AuditCheck(
+                status: status,
+                expected: expected[key] ?? (cd.string("expected") ?? ""),
+                observed: cd.string("observed") ?? "",
+                note: cd.string("note") ?? "")
+        }
+        let missing = standardAuditCheckKeys.filter { checks[$0] == nil }
+        guard missing.isEmpty else {
+            throw ToolError("`checks` is missing required standard keys: \(missing.joined(separator: ", ")). "
+                + "All 10 must be present (use status \"n/a\" where the spec doesn't constrain it).")
+        }
+
+        // auto_rerender_attempt is machine-owned: bump only when a PRIOR blocking audit is being
+        // replaced by a genuinely different render (new sha). Same sha, or a non-blocking prior,
+        // preserves the counter. The model never touches it.
+        let prior = (try? loadFrameAudit(dataRoot: root, shotId: shotId, role: role)) ?? nil
+        let attempt: Int = {
+            guard let prior else { return 0 }
+            let reRendered = prior.hasBlocking && prior.renderSha256 != sha
+            return prior.autoRerenderAttempt + (reRendered ? 1 : 0)
+        }()
+
+        let audit: FrameAudit
+        do {
+            audit = try FrameAudit(
+                shotId: shotId, role: role, renderPath: renderPath, renderSha256: sha,
+                generated: currentTimestamp(), auditor: auditor, checks: checks, overall: overall,
+                autoRerenderAttempt: attempt, autoRerenderPatch: args.string("auto_rerender_patch") ?? "")
+        } catch let e as FrameAudit.ValidationError {
+            throw ToolError("Frame audit rejected: \(frameAuditViolation(e)). Fix and re-call.")
+        }
+        do {
+            try saveFrameAudit(audit, dataRoot: root)
+        } catch {
+            throw ToolError("Couldn't save frame audit: \(error)")
+        }
+        return try jsonResult(frameAuditJSON(audit, exists: true))
+    }
+
+    func getFrameAuditTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let shotId = try args.requireString("shot_id")
+        let role = args.string("role") ?? "start"
+        guard let audit = (try? loadFrameAudit(dataRoot: root, shotId: shotId, role: role)) ?? nil else {
+            return try jsonResult(["exists": false, "shot_id": shotId, "role": role])
+        }
+        return try jsonResult(frameAuditJSON(audit, exists: true))
+    }
+
+    /// Locate the frame image to audit and its project-home-relative render path. Explicit `path`
+    /// (absolute or home-relative) wins; otherwise the frames manifest's entry for this shot+role.
+    private func resolveAuditedFrame(
+        shotId: String, role: String, explicitPath: String?, home: URL, dataRoot: URL
+    ) -> (fileURL: URL, renderPath: String)? {
+        if let p = explicitPath {
+            if p.hasPrefix("/") {
+                let url = URL(fileURLWithPath: p)
+                return (url, FrameInventory.relativePath(of: url, to: home))
+            }
+            return (home.appendingPathComponent(p), p)
+        }
+        guard let manifest = try? loadFramesManifest(dataRoot: dataRoot),
+              let frame = manifest.shot(shotId)?.frames.first(where: { $0.role == role }),
+              !frame.path.isEmpty else { return nil }
+        return (home.appendingPathComponent(frame.path), frame.path)
+    }
+
+    /// Machine-derived `expected` per standard audit key, from the shot spec. Port of the Python
+    /// audit-skeleton derivation (`frames/audit.py::skeleton`). Empty shot ⇒ empty expecteds.
+    private func frameAuditExpected(for shot: Shot?, brief: Brief?) -> [String: String] {
+        guard let shot else { return [:] }
+        let blocking = shot.characterBlocking
+        let blockingExpected = blocking
+            .map { "\($0.characterRef)@\($0.position) (\($0.pose), gaze=\($0.gaze))" }
+            .joined(separator: "; ")
+        let gazeExpected = blocking
+            .map { "\($0.characterRef): \($0.gaze)" }
+            .joined(separator: "; ")
+        var forbidden: [String] = []
+        if !(brief?.allowTextOverlays ?? false) { forbidden.append("no text overlays / title cards") }
+        forbidden.append("no characters beyond declared character_refs")
+        return [
+            "character_count": "\(shot.characterRefs.count)",
+            "framing": shot.framing?.rawValue ?? "",
+            "camera_angle": shot.cameraSetup?.angle.rawValue ?? "",
+            "camera_height": shot.cameraSetup?.height.rawValue ?? "",
+            "character_position": blockingExpected,
+            "gaze": gazeExpected,
+            "forbidden_elements": forbidden.joined(separator: "; "),
+            "visible_zones": shot.visibleZones.joined(separator: ", "),
+            "anchor_at_t0": "exact t=0 state: subject in start pose, no objects from later in the shot already visible",
+            "proportion_anchor_match": "match figure-to-set scale of proportion_anchor_shot if set",
+        ]
+    }
+
+    /// The brief if one is saved, else nil (audit works without it — forbidden_elements just assumes
+    /// text overlays are disallowed).
+    private func loadBriefIfAny(dataRoot: URL) -> Brief? {
+        try? YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
+    }
+
+    private func frameAuditJSON(_ a: FrameAudit, exists: Bool) -> [String: Any] {
+        var checks: [String: Any] = [:]
+        for (key, c) in a.checks {
+            checks[key] = [
+                "status": c.status.rawValue,
+                "expected": c.expected,
+                "observed": c.observed,
+                "note": c.note,
+            ]
+        }
+        return [
+            "exists": exists,
+            "shot_id": a.shotId,
+            "role": a.role,
+            "overall": a.overall.rawValue,
+            "verdict": a.verdict.rawValue,
+            "has_blocking": a.hasBlocking,
+            "has_minor": a.hasMinor,
+            "auto_rerender_attempt": a.autoRerenderAttempt,
+            "attempts_left": a.attemptsLeft,
+            "auditor": a.auditor,
+            "render_sha256": a.renderSha256,
+            "render_path": a.renderPath,
+            "auto_rerender_patch": a.autoRerenderPatch,
+            "checks": checks,
+        ]
+    }
+
+    private func frameAuditViolation(_ e: FrameAudit.ValidationError) -> String {
+        switch e {
+        case .schemaUnknown(let s): return "unknown schema '\(s)'"
+        case .roleUnknown(let r): return "unknown role '\(r)'"
+        case .attemptNegative: return "auto_rerender_attempt must be >= 0"
+        case .overallPending: return "overall=pending is not a valid end state"
+        case .checkPending: return "a check still has status=pending — fill or mark it n/a"
+        case .blockingCheckOverallNotBlocking(let o):
+            return "overall='\(o)' is inconsistent with a blocking check — overall must be blocking"
+        case .minorCheckOverallNotMinor(let o):
+            return "overall='\(o)' is inconsistent with a minor check — overall must be minor (or blocking)"
+        }
     }
 
     // MARK: - Beat-synced assembly

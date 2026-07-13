@@ -77,3 +77,25 @@ public struct DetectedBeatGrid: Sendable, Equatable {
 public protocol AudioBeatDetecting: Sendable {
     func detectBeats(_ audio: URL, stems: SeparatedStems?) throws -> DetectedBeatGrid?
 }
+
+/// One recognized chord segment: a time span and its label (e.g. "Am", "G7", "C:maj").
+/// The no-chord ("N") label is already dropped by the recognizer.
+public struct RecognizedChord: Sendable, Equatable {
+    public var start: Double
+    public var end: Double
+    public var label: String
+
+    public init(start: Double, end: Double, label: String) {
+        self.start = start
+        self.end = end
+        self.label = label
+    }
+}
+
+/// Generic on-device chord recognition (e.g. a deep-chroma / transformer chord model
+/// over CQT or mel features, decoded with `ChordDecode`). Optional `stems` let a model
+/// run on a harmonic-leaning signal. Returns nil when no model is available, so the
+/// caller keeps an empty chord progression rather than treating it as a failure.
+public protocol AudioChordRecognizing: Sendable {
+    func recognizeChords(_ audio: URL, stems: SeparatedStems?) throws -> [RecognizedChord]?
+}
