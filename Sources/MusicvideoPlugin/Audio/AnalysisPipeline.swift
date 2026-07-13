@@ -42,9 +42,14 @@ public enum AudioAnalysisPipeline {
         var bpm = Energy.globalBPMFromDownbeats(downbeats)
         if bpm <= 0 { bpm = beatResult.bpm }
 
-        // 4. Structure.
+        // 4. Structure — two independent detectors so the consolidator has a real
+        // second opinion (Foote-novelty ‖ BIC-on-MFCC), not a single starved vote.
         let sections = duration > 0
             ? Structure.segment(y, sampleRate: sr, beats: beats, duration: duration)
+            : []
+        let sectionsEssentia = duration > 0
+            ? BICStructure.segment(mfcc: Structure.mfccFrames(y, sampleRate: sr, hop: hop),
+                                   hop: hop, sampleRate: sr, duration: duration)
             : []
 
         // 5. Features.
@@ -62,6 +67,7 @@ public enum AudioAnalysisPipeline {
             sections: sections,
             energyCurve: energy,
             tempoCurve: tempo,
+            sectionsEssentia: sectionsEssentia,
             key: key
         )
     }

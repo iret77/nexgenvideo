@@ -194,6 +194,21 @@ public enum Structure {
 
     // MARK: Features
 
+    /// Per-frame MFCC (`nMFCC` coeffs) for the whole signal — the feature the BIC
+    /// detector (`BICStructure`) segments on. Same mel → `mfccFromMelDB` path the
+    /// librosa detector uses internally. Empty for empty / silent input.
+    public static func mfccFrames(
+        _ y: [Float], sampleRate: Double, hop: Int = Spectral.hopLength, nMFCC: Int = 13
+    ) -> [[Double]] {
+        guard !y.isEmpty, sampleRate > 0 else { return [] }
+        let spec = Spectral.spectrogram(y, sampleRate: sampleRate, hop: hop)
+        let bank = Spectral.melFilterbank(sampleRate: sampleRate)
+        let mel = Spectral.melSpectrogram(spec, filterbank: bank)
+        let melDB = Spectral.powerToDB(mel)
+        guard !melDB.isEmpty else { return [] }
+        return mfccFromMelDB(melDB, nMFCC: nMFCC)
+    }
+
     /// Track-global 12-bin chroma: the mean of the per-frame chroma proxy over
     /// the whole signal. Feeds `MusicalKey` (Krumhansl-Schmuckler). Reuses the
     /// same mel → `chromaFromMelDB` path as `segment`, so the key derives from the

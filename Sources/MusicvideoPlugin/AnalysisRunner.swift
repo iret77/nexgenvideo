@@ -169,26 +169,35 @@ public enum MusicvideoAnalysisRunner {
     }
 
     /// Map the DSP-producible `AudioAnalysis` onto the canonical `Analysis` v2
-    /// schema. Section boundaries are run through the `Consolidator` so they snap
-    /// to the real downbeat grid (single detector today → the raw detector list is
-    /// kept as a `structure_candidate` and single-source anomalies are recorded).
-    /// When `lyricsAlignment` carries `[Section]` markers, those become the primary
-    /// boundary truth (Consolidator Path A). `stems` is populated when separation
-    /// ran; `key` carries the DSP pipeline's Krumhansl-Schmuckler result; chords
-    /// stay empty (deferred — needed a deep-chroma chord model).
+    /// schema. Both structure detectors (librosa Foote-novelty + BIC-on-MFCC
+    /// "essentia") feed the `Consolidator`, which snaps boundaries to the downbeat
+    /// grid and flags cross-detector convergence/divergence; each detector's raw
+    /// list is kept as a `structure_candidate`. When `lyricsAlignment` carries
+    /// `[Section]` markers, those become the primary boundary truth (Consolidator
+    /// Path A). `stems` is populated when separation ran; `key` carries the DSP
+    /// pipeline's Krumhansl-Schmuckler result; chords stay empty (deferred —
+    /// needed a deep-chroma chord model).
     static func toCanonical(
         _ raw: AudioAnalysis, project: String, songPath: String, stems: Stems? = nil,
         lyricsAlignment: [AlignmentLine] = [],
         pipelineStages: [String] = ["load_audio", "rhythm", "structure", "features"]
     ) throws -> Analysis {
-        let detected = raw.sections.map {
-            AnalysisSection(
-                index: $0.index, start: $0.start, end: $0.end, cluster: $0.cluster,
-                label: $0.label, source: $0.source ?? "librosa", confidence: $0.confidence
-            )
+        func map(_ secs: [AudioSection], defaultSource: String) -> [AnalysisSection] {
+            secs.map {
+                AnalysisSection(
+                    index: $0.index, start: $0.start, end: $0.end, cluster: $0.cluster,
+                    label: $0.label, source: $0.source ?? defaultSource, confidence: $0.confidence
+                )
+            }
         }
+        let detected = map(raw.sections, defaultSource: "librosa")
+        let detectedEssentia = map(raw.sectionsEssentia, defaultSource: "essentia")
+        // Both detectors feed the consolidator so its cross-source convergence
+        // (single_source_boundary / boundary_divergence) is real, not a facade.
+        var candidateLists = [detected]
+        if !detectedEssentia.isEmpty { candidateLists.append(detectedEssentia) }
         let consolidation = Consolidator.consolidate(
-            candidates: [detected],
+            candidates: candidateLists,
             alignment: lyricsAlignment.isEmpty ? nil : lyricsAlignment,
             downbeats: raw.downbeats,
             durationS: raw.durationS
@@ -219,7 +228,8 @@ public enum MusicvideoAnalysisRunner {
             sections: sections,
             stems: stems,
             alignment: lyricsAlignment,
-            structureCandidates: [StructureCandidate(source: .librosa, sections: detected)],
+            structureCandidates: [StructureCandidate(source: .librosa, sections: detected)]
+                + (detectedEssentia.isEmpty ? [] : [StructureCandidate(source: .essentia, sections: detectedEssentia)]),
             energyCurve: raw.energyCurve,
             tempoCurve: raw.tempoCurve,
             key: raw.key,

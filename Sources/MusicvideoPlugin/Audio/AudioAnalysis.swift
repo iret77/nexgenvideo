@@ -75,7 +75,11 @@ public struct AudioAnalysis: Codable, Sendable, Equatable {
     public var beats: [Double]
     public var downbeats: [Double]
     public var downbeatSource: String
+    /// Librosa (Foote-novelty) detector sections — the primary structure candidate.
     public var sections: [AudioSection]
+    /// BIC-on-MFCC (`source = "essentia"`) detector sections — the second,
+    /// independent candidate the consolidator converges against. Empty if unrun.
+    public var sectionsEssentia: [AudioSection]
     public var energyCurve: [EnergyPoint]
     public var tempoCurve: [TempoPoint]
     /// Detected musical key, e.g. `"C major"` / `"A minor"`; nil when undetermined.
@@ -91,6 +95,7 @@ public struct AudioAnalysis: Codable, Sendable, Equatable {
         sections: [AudioSection],
         energyCurve: [EnergyPoint],
         tempoCurve: [TempoPoint],
+        sectionsEssentia: [AudioSection] = [],
         key: String? = nil
     ) {
         self.sampleRate = sampleRate
@@ -100,6 +105,7 @@ public struct AudioAnalysis: Codable, Sendable, Equatable {
         self.downbeats = downbeats
         self.downbeatSource = downbeatSource
         self.sections = sections
+        self.sectionsEssentia = sectionsEssentia
         self.energyCurve = energyCurve
         self.tempoCurve = tempoCurve
         self.key = key
@@ -113,8 +119,24 @@ public struct AudioAnalysis: Codable, Sendable, Equatable {
         case downbeats
         case downbeatSource = "downbeat_source"
         case sections
+        case sectionsEssentia = "sections_essentia"
         case energyCurve = "energy_curve"
         case tempoCurve = "tempo_curve"
         case key
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sampleRate = try c.decode(Int.self, forKey: .sampleRate)
+        durationS = try c.decode(Double.self, forKey: .durationS)
+        bpm = try c.decode(Double.self, forKey: .bpm)
+        beats = try c.decode([Double].self, forKey: .beats)
+        downbeats = try c.decode([Double].self, forKey: .downbeats)
+        downbeatSource = try c.decode(String.self, forKey: .downbeatSource)
+        sections = try c.decode([AudioSection].self, forKey: .sections)
+        sectionsEssentia = try c.decodeIfPresent([AudioSection].self, forKey: .sectionsEssentia) ?? []
+        energyCurve = try c.decode([EnergyPoint].self, forKey: .energyCurve)
+        tempoCurve = try c.decode([TempoPoint].self, forKey: .tempoCurve)
+        key = try c.decodeIfPresent(String.self, forKey: .key)
     }
 }
