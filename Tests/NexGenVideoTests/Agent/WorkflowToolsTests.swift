@@ -461,18 +461,21 @@ struct WorkflowToolsTests {
         #expect((result?["note"] as? String)?.contains("agent-driven") == true)
     }
 
-    @Test("run_phase reaches the active pack's analysis runner (resolved from the project home)")
+    @Test("run_phase reaches the active pack's engine-pinned analysis machinery (resolved from home)")
     func runPhaseReachesPackRunner() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
 
-        // With the pack active but no song in audio/, the runner IS reached and returns its actionable
-        // blocker — NOT the "no code runner" shape (which is what the pre-fix nil-pack resolution gave).
+        // With the pack active but no song in audio/, the pack's engine-pinned one_song_contract step
+        // (#174) fires and blocks analysis upfront with its actionable message — proving the pack
+        // resolved (only a wired pack registers that step), NOT the "no code runner" shape the pre-fix
+        // nil-pack resolution gave.
         let result = try #require(try await h.runOK("run_phase", args: ["project_dir": dataRoot.path, "phase": "analysis"]) as? [String: Any])
         #expect(result["phase"] as? String == "analysis")
         #expect(result["note"] == nil)  // the no-runner branch never fired
-        #expect(result["error"] as? String == "phase_failed")
+        #expect(result["error"] as? String == "deterministic_step_failed")
+        #expect(result["step"] as? String == "one_song_contract")
         #expect((result["detail"] as? String)?.contains("audio/") == true)
     }
 
