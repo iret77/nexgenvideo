@@ -99,6 +99,7 @@ public struct MusicvideoPack: Pack {
         registry.registerSanityCheck("pattern_drift", MusicvideoChecks.patternDriftCheck)
         registry.registerSanityCheck("expanding_camera", MusicvideoChecks.expandingCameraCheck)
         registry.registerSanityCheck("seedance_camera", MusicvideoChecks.seedanceDisciplineCheck)
+        registry.registerSanityCheck("references", MusicvideoChecks.referenceBudgetCheck)
         // The runner resolves the audio decoder from the registry at run time
         // (weak capture — the registry outlives the call; no retain cycle). A
         // missing decoder surfaces as an actionable error, not a crash.
