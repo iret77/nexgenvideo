@@ -41,9 +41,12 @@ public enum MusicvideoChecks {
 
     /// Bible reference integrity: every shot's character/location/prop reference must resolve to a real
     /// bible entity. `sanity.md` claims `run_sanity` covers this, but no such check existed — the agent
-    /// could ship a shotlist referencing entities the bible never defines. Full port of
-    /// `sanity/checks/bible_integration.py`: MISSING_BIBLE_REF + NO_ANCHOR (every entity needs an image
-    /// anchor) + NO_FRONT_SHEET.
+    /// could ship a shotlist referencing entities the bible never defines. Port of
+    /// `sanity/checks/bible_integration.py`: MISSING_BIBLE_REF + NO_FRONT_SHEET. The Python's NO_ANCHOR
+    /// case is intentionally dropped: `Bible.validate()` already throws `.missingAnchors` for any
+    /// character/ensemble/location without an anchor at EVERY construction and decode boundary, so an
+    /// anchorless entity can't reach a sanity check here — the type invariant enforces it more strongly
+    /// than a warning ever could. (Props stay exempt, matching the Bible validator.)
     public static let bibleReferenceIntegrityCheck: SanityCheck = { ctx in
         guard let bible = ctx.bible else { return [] }
         var out: [Finding] = []
@@ -55,19 +58,6 @@ public enum MusicvideoChecks {
                 out.append(Finding(level: .error, code: "MISSING_BIBLE_REF", shotId: shot.id,
                     message: "shot \(shot.id) references \(r.kind) \"\(r.ref)\" which isn't in the bible."))
             }
-        }
-        // NO_ANCHOR: an entity with no image anchor can't be rendered consistently (sheet agent / upload).
-        for character in bible.characters where !character.hasAnchor() {
-            out.append(Finding(level: .error, code: "NO_ANCHOR", shotId: nil,
-                message: "character \"\(character.id)\" has neither reference_images nor sheets — run the sheet agent or upload one."))
-        }
-        for ensemble in bible.ensembles where !ensemble.hasAnchor() {
-            out.append(Finding(level: .error, code: "NO_ANCHOR", shotId: nil,
-                message: "ensemble \"\(ensemble.id)\" has neither reference_images nor sheets."))
-        }
-        for location in bible.locations where !location.hasAnchor() {
-            out.append(Finding(level: .error, code: "NO_ANCHOR", shotId: nil,
-                message: "location \"\(location.id)\" has no reference_image."))
         }
         // NO_FRONT_SHEET: a 'front' sheet is the recommended default anchor.
         for character in bible.characters where !character.sheets.isEmpty && character.sheets["front"] == nil {

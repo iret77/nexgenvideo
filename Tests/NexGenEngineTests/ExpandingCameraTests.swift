@@ -11,7 +11,7 @@ struct ExpandingCameraTests {
     func classify() {
         #expect(CameraMoves.isExpandingMove("slow pan across the room"))
         #expect(CameraMoves.isExpandingMove("orbit around her"))
-        #expect(CameraMoves.isExpandingMove("camera pulls out to reveal"))
+        #expect(CameraMoves.isExpandingMove("slow pull out to reveal the city"))
         #expect(CameraMoves.isExpandingMove("zoom out to wide"))
         #expect(!CameraMoves.isExpandingMove("slow zoom in on the face"))       // zoom-in is a push, not expanding
         #expect(!CameraMoves.isExpandingMove("locked-off wide shot, static"))
@@ -34,7 +34,7 @@ struct ExpandingCameraTests {
 
     @Test("an expanding move without an end frame is flagged")
     func expandingFlags() throws {
-        let shots = try [Self.shot("s1", prompt: "slow pan across the neon street", strategy: .start)]
+        let shots = try [Self.shot("s001", prompt: "slow pan across the neon street", strategy: .start)]
         let findings = try MusicvideoChecks.expandingCameraCheck(AuditContext(shotlist: try Self.shotlist(shots)))
         #expect(findings.contains {
             $0.code == "EXPANDING_CAMERA_NEEDS_END_FRAME" || $0.code == "EXPANDING_CAMERA_NO_END_KEYFRAME_SUPPORT"
@@ -43,8 +43,8 @@ struct ExpandingCameraTests {
 
     @Test("keyframe_end_skip_ok suppresses; a static shot is clean")
     func escapeAndStatic() throws {
-        let escaped = try Self.shot("s1", prompt: "slow pan", strategy: .start, notes: "keyframe_end_skip_ok: pure sky")
-        let staticShot = try Self.shot("s2", prompt: "locked-off wide, static", strategy: .start)
+        let escaped = try Self.shot("s001", prompt: "slow pan", strategy: .start, notes: "keyframe_end_skip_ok: pure sky")
+        let staticShot = try Self.shot("s002", prompt: "locked-off wide, static", strategy: .start)
         let findings = try MusicvideoChecks.expandingCameraCheck(
             AuditContext(shotlist: try Self.shotlist([escaped, staticShot])))
         #expect(!findings.contains { $0.code.hasPrefix("EXPANDING_CAMERA") })
@@ -52,7 +52,7 @@ struct ExpandingCameraTests {
 
     @Test("start_end without a frame_pair_strategy marker is flagged")
     func framePairUndocumented() throws {
-        let shots = try [Self.shot("s1", prompt: "slow pan", strategy: .startEnd)]
+        let shots = try [Self.shot("s001", prompt: "slow pan", strategy: .startEnd)]
         let findings = try MusicvideoChecks.expandingCameraCheck(AuditContext(shotlist: try Self.shotlist(shots)))
         #expect(findings.contains { $0.code == "FRAME_PAIR_NO_STRATEGY_DOCUMENTED" })
     }
