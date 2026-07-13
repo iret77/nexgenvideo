@@ -29,6 +29,7 @@ public enum PipelineLayout {
     public static let storyboardDir = "storyboard"
     public static let shotlistDir = "shotlist"
     public static let framesDir = "frames"
+    public static let framesManifestFile = "frames/manifest.json"
     public static let rendersDir = "renders"
 
     /// Format-neutral data-root subdirs created at init — exact order and names

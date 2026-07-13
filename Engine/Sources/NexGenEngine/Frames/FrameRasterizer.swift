@@ -69,6 +69,18 @@ public enum FrameRasterizer {
         return image
     }
 
+    /// Pixel dimensions of an image file, read from its metadata without a full
+    /// decode. Nil if the file is missing / undecodable. Used by the frame_ratio /
+    /// frame_size sanity checks (keeps ImageIO in the engine, off the format packs).
+    public static func pixelSize(of url: URL) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int,
+              let h = props[kCGImagePropertyPixelHeight] as? Int
+        else { return nil }
+        return (w, h)
+    }
+
     /// Crops `image` to `box` (left, top, right, bottom — PIL convention) and
     /// writes the result as PNG to `dest`. CGImage's origin is bottom-left,
     /// so the PIL top-down box is flipped vertically before cropping.
