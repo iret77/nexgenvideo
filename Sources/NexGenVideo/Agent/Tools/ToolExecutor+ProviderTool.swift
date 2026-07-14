@@ -23,7 +23,7 @@ extension ToolExecutor {
         var offered: Set<String> = []
 
         for provider in providers {
-            guard let client = ProviderMCP.client(for: provider) else { continue }
+            guard let client = await ProviderMCP.client(for: provider) else { continue }
             let tools: [MCPProviderClient.DiscoveredTool]
             do { tools = try await client.discoverTools() }
             catch { await client.disconnect(); continue }

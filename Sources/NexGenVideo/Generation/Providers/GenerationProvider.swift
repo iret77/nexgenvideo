@@ -31,7 +31,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .fal: return "Video · Image · Audio"
         case .runway: return "Video"
-        case .higgsfield: return "Video \u{00B7} key format: KEY_ID:KEY_SECRET"
+        case .higgsfield: return "Video \u{00B7} Image \u{00B7} 30+ models \u{00B7} sign in (MCP)"
         case .elevenlabs: return "Voice · SFX · Music"
         case .marble: return "3D World · Panorama"
         case .openart: return "Image · Video \u{00B7} via MCP"
@@ -43,7 +43,7 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .fal: return URL(string: "https://fal.ai/dashboard/keys")!
         case .runway: return URL(string: "https://dev.runwayml.com")!
-        case .higgsfield: return URL(string: "https://cloud.higgsfield.ai")!
+        case .higgsfield: return URL(string: "https://higgsfield.ai/mcp")!
         case .elevenlabs: return URL(string: "https://elevenlabs.io/app/settings/api-keys")!
         case .marble: return URL(string: "https://platform.worldlabs.ai/")!
         case .openart: return URL(string: "https://openart.ai")!
@@ -56,8 +56,10 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
     /// ACE route through NGV as an MCP client, on the user's subscription.
     var supportsDirectAPI: Bool {
         switch self {
-        case .fal, .runway, .higgsfield, .elevenlabs, .marble: return true
-        case .openart, .ace: return false
+        case .fal, .runway, .elevenlabs, .marble: return true
+        // Higgsfield issues no API keys ("No API keys to manage or configure" — higgsfield.ai/mcp);
+        // it, OpenArt and ACE are reached ONLY over MCP. No API-key field (that would be dead).
+        case .higgsfield, .openart, .ace: return false
         }
     }
 

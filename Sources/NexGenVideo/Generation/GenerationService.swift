@@ -492,7 +492,7 @@ final class GenerationService {
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
-        guard let client = ProviderMCP.client(for: provider) else {
+        guard let client = await ProviderMCP.client(for: provider) else {
             return failJob(placeholders, "No MCP endpoint configured for \(provider.displayName).", onFailure)
         }
         do {
