@@ -377,13 +377,13 @@ extension ToolExecutor {
         // the shot's structured camera + framing project deterministically into the prompt and the drift
         // linter checks the result against the spec (#197). A missing/unknown shot degrades to the plain
         // free-intent compile.
-        let shotProjection = shotProjection(args.string("shotId"), editor: editor)
+        let projection = shotProjection(args.string("shotId"), editor: editor)
         // Same contract as before ({ compiledPrompt, compileToken, notes }); composition now runs the
         // ENGINE path (PromptComposer: ledger directives + provider builder + PromptLinter) instead of
         // the old local ledger text-append, then the gate mints the token over the result.
         let compiled = try await PromptCompiler.compile(
             intent: intent, modelId: modelId,
-            modality: PromptCompiler.modalityForModel(modelId), editor: editor, shot: shotProjection)
+            modality: PromptCompiler.modalityForModel(modelId), editor: editor, shot: projection)
         let body: [String: Any] = [
             "compiledPrompt": compiled.text,
             "compileToken": compiled.token,
