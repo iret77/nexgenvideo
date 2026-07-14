@@ -380,6 +380,15 @@ final class EditorViewModel {
     /// "Start production" affordance disables on this so a second start can't fire.
     var productionStarted: Bool { productionStarting || hasProductionPipeline }
 
+    /// Mark production as kicking off WITHOUT the in-process scaffold — for when the agent starts it
+    /// from a chat starter instead of the button, so every "Start production" CTA disables at once. The
+    /// flag clears after the turn (`refreshEngineState`); if a pipeline now exists, `productionStarted`
+    /// stays true via `hasProductionPipeline`, otherwise the CTA correctly re-enables.
+    func markProductionStarting() {
+        guard !productionStarting, !hasProductionPipeline else { return }
+        productionStarting = true
+    }
+
     func startProduction() {
         guard let url = projectURL, let key = workingCopyKey, !productionStarting else { return }
         // The pipeline is scaffolded into the WORKING COPY (not the package); ⌘S syncs it back. The

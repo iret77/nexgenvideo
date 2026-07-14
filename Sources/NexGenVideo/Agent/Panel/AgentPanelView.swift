@@ -391,6 +391,10 @@ struct AgentPanelView: View {
                                 prompt: command.command
                             )
                             AgentStarterPromptButton(starterPrompt: starter) {
+                                // A pack entry command from the empty chat IS the production kickoff, so
+                                // disable every "Start production" CTA at once (the agent, not the button,
+                                // does the scaffolding here).
+                                editor.markProductionStarting()
                                 runStarter(starter)
                             }
                         }
@@ -515,20 +519,23 @@ struct AgentPanelView: View {
         service.mentions.removeAll()
     }
 
-    private func stageFunction(_ starter: AgentStarterPrompt) {
-        service.pendingFunction = AgentService.PendingFunction(
-            title: starter.title,
-            systemImage: starter.systemImage,
-            prompt: starter.prompt
-        )
-    }
-
-    /// A starter chip is a one-tap action: clicking it RUNS the starter immediately. If the user has
-    /// already typed a note in the composer it's composed in (visible); otherwise the prompt is seeded
-    /// hidden. Either way a click starts — it never just parks a pill the user then has to send.
+    /// A starter chip is a one-tap action: clicking it RUNS the starter immediately. Sent DIRECTLY, not
+    /// staged as a composer pill first — staging then submitting in the same update briefly flashes the
+    /// pill. The raw prompt is never the user's words, so a note-less run seeds the agent hidden; a note
+    /// the user already typed becomes their visible message.
     private func runStarter(_ starter: AgentStarterPrompt) {
-        stageFunction(starter)
-        submit()
+        let note = service.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if note.isEmpty {
+            service.send(text: starter.prompt, mentions: service.mentions, hidden: true)
+        } else {
+            service.send(
+                text: AgentService.composedFunctionMessage(prompt: starter.prompt, note: note),
+                mentions: service.mentions
+            )
+        }
+        service.pendingFunction = nil
+        service.draft = ""
+        service.mentions.removeAll()
     }
 }
 

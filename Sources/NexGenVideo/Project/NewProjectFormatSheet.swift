@@ -34,7 +34,9 @@ struct NewProjectFormatSheet: View {
                 }
                 .padding(.vertical, AppTheme.Spacing.xxs)
             }
-            .frame(maxHeight: 460)
+            // Tall enough that the usual one-or-few packs (Generic + installed packs) show their
+            // cards in full; only a long list scrolls.
+            .frame(maxHeight: 600)
 
             HStack {
                 Button("Cancel") { dismiss() }
