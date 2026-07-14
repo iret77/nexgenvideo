@@ -46,7 +46,8 @@ enum PromptCompiler {
         modality: PromptComposer.Modality,
         aspectRatio: String = "",
         durationSeconds: Double? = nil,
-        editor: EditorViewModel?
+        editor: EditorViewModel?,
+        shot: PromptComposer.ShotProjection? = nil
     ) async throws -> CompiledPrompt {
         let composed = try await PromptComposer.compose(
             intent: intent,
@@ -54,7 +55,8 @@ enum PromptCompiler {
             modelId: modelId,
             aspectRatio: aspectRatio,
             durationSeconds: durationSeconds,
-            projectDir: editor?.workingRoot
+            projectDir: editor?.workingRoot,
+            shot: shot
         )
         return CompiledPrompt(
             text: composed.text,

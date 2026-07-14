@@ -138,6 +138,71 @@ enum ReferencePlanner {
         return PlannedRefs(refs: accepted, dropped: dropped, warnings: warnings)
     }
 
+    /// Like `planShotRefs`, but additionally stacks identity-anchor frames (the frame rendered for the
+    /// first (section, character) shot) as TOP refs. Port of `plan_shot_refs_with_identity_anchors`.
+    ///
+    /// The inherited anchor frames are the most concrete identity source for a follow-up shot, so they
+    /// outrank every bible sheet (score 1.05, above any requested-view match). When the frames manifest
+    /// is missing or an anchor shot has no rendered frame yet, this falls back to plain `planShotRefs`
+    /// (no error) — the anchor simply isn't available to stack.
+    /// `framesBase` is the base the frames-manifest paths are relative to (the project home, where the
+    /// media library lives) — distinct from `projectDir` (the pipeline data root the bible sheets are
+    /// relative to) in NexGenVideo's storage model. Defaults to `projectDir` (they coincide in tests /
+    /// flat layouts).
+    static func planShotRefsWithIdentityAnchors(
+        projectDir: URL, bible: Bible, shot: Shot, shotlist: Shotlist,
+        framesManifest: FramesManifest?, maxRefs: Int, includeLightingAnchor: Bool = true,
+        framesBase: URL? = nil
+    ) -> PlannedRefs {
+        let base = planShotRefs(
+            projectDir: projectDir, bible: bible,
+            characterRefs: shot.characterRefs, locationRef: shot.locationRef, propRefs: shot.propRefs,
+            characterViews: shot.characterViews, locationView: shot.locationView, propViews: shot.propViews,
+            maxRefs: maxRefs, includeLightingAnchor: includeLightingAnchor)
+
+        let anchorMap = IdentityAnchor.pickIdentityAnchors(shotlist)
+        let inherited = IdentityAnchor.inheritedAnchorShots(anchorMap, shotId: shot.id)
+        guard !inherited.isEmpty, let manifest = framesManifest else { return base }
+
+        let anchorBase = framesBase ?? projectDir
+        var anchorRefs: [RefSource] = []
+        for anchorShotId in inherited {
+            guard let rel = anchorFramePath(manifest, shotId: anchorShotId), exists(anchorBase, rel) else { continue }
+            anchorRefs.append(RefSource(
+                path: rel, entityId: "anchor:\(anchorShotId)", entityKind: "identity_anchor",
+                view: "anchor_frame", purpose: "identity anchor from earlier shot \(anchorShotId)",
+                score: 1.05))  // higher than any requested-match, because identity beats view
+        }
+        if anchorRefs.isEmpty { return base }
+
+        // Anchor refs in front, everything else behind; re-sort and re-cut at the cap.
+        var pool = anchorRefs + base.refs + base.dropped
+        pool.sort {
+            if $0.score != $1.score { return $0.score > $1.score }
+            if $0.entityKind != $1.entityKind { return $0.entityKind < $1.entityKind }
+            if $0.entityId != $1.entityId { return $0.entityId < $1.entityId }
+            if $0.view != $1.view { return $0.view < $1.view }
+            return $0.path < $1.path
+        }
+        let accepted = maxRefs > 0 ? Array(pool.prefix(maxRefs)) : []
+        let dropped = maxRefs > 0 ? Array(pool.dropFirst(maxRefs)) : pool
+        var warnings = base.warnings
+        if base.refs.count + anchorRefs.count > maxRefs {
+            warnings.append(
+                "identity-anchor stack fills refs — \(anchorRefs.count) anchor(s), "
+                + "\(dropped.count) originally planned ref(s) dropped.")
+        }
+        return PlannedRefs(refs: accepted, dropped: dropped, warnings: warnings)
+    }
+
+    /// The anchor keyframe path for a shot from the frames manifest — the `start`-role frame (the
+    /// identity keyframe), or the first recorded frame. nil when the shot has no frame yet.
+    private static func anchorFramePath(_ manifest: FramesManifest, shotId: String) -> String? {
+        guard let sf = manifest.shot(shotId) else { return nil }
+        let start = sf.frames.first { $0.role == "start" }
+        return (start ?? sf.frames.first)?.path
+    }
+
     /// `kind/id/view` per dropped ref (view → "ref" when empty), comma-joined.
     static func droppedList(_ dropped: [RefSource]) -> String {
         dropped.map { "\($0.entityKind)/\($0.entityId)/\($0.view.isEmpty ? "ref" : $0.view)" }.joined(separator: ", ")

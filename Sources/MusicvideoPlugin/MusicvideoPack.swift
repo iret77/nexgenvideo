@@ -77,6 +77,7 @@ public struct MusicvideoPack: Pack {
         registry.registerDurationPolicy(MusicDurationPolicy())
         // Agent-callable pattern query surface (suggest/get) — the live path to the pattern library.
         registry.registerPatternProvider(MusicvideoPatternProvider())
+        registry.registerReferencePlanProvider(MusicvideoReferencePlanProvider())
         registry.registerProjectDirs(["audio", "lyrics", "analysis"])
         registry.registerSanityCheck("tempo", MusicvideoChecks.tempoCheck)
         registry.registerSanityCheck("pacing", MusicvideoChecks.pacingCheck)

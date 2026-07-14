@@ -22,10 +22,14 @@ public struct RenderEntry: Codable, Sendable, Equatable {
     public var output: String?
     public var costEur: Double
     public var updatedAt: String?
+    /// The rendered clip's extracted last frame, project-root-relative — set when the NEXT shot chains
+    /// off this one (`chain_with_previous_end`). Feeds the successor's start-frame condition (#196).
+    /// Port of `RenderResult.last_frame_path`.
+    public var lastFramePath: String?
 
     public init(
         shotId: String, phase: String, status: RenderStatus = .pending, output: String? = nil,
-        costEur: Double = 0.0, updatedAt: String? = nil
+        costEur: Double = 0.0, updatedAt: String? = nil, lastFramePath: String? = nil
     ) {
         self.shotId = shotId
         self.phase = phase
@@ -33,6 +37,7 @@ public struct RenderEntry: Codable, Sendable, Equatable {
         self.output = output
         self.costEur = costEur
         self.updatedAt = updatedAt
+        self.lastFramePath = lastFramePath
     }
 }
 
@@ -88,6 +93,7 @@ extension RenderManifest: Codable {
         let costEur: Double?
         let eurSpent: Double?
         let updatedAt: String?
+        let lastFramePath: String?
 
         enum CodingKeys: String, CodingKey {
             case shotId = "shot_id"
@@ -98,6 +104,7 @@ extension RenderManifest: Codable {
             case costEur = "cost_eur"
             case eurSpent = "eur_spent"
             case updatedAt = "updated_at"
+            case lastFramePath = "last_frame_path"
         }
     }
 
@@ -110,6 +117,7 @@ extension RenderManifest: Codable {
         let updatedAt: String?
         let eurSpent: Double
         let outPath: String?
+        let lastFramePath: String?
 
         enum CodingKeys: String, CodingKey {
             case shotId = "shot_id"
@@ -120,6 +128,7 @@ extension RenderManifest: Codable {
             case updatedAt = "updated_at"
             case eurSpent = "eur_spent"
             case outPath = "out_path"
+            case lastFramePath = "last_frame_path"
         }
     }
 
@@ -166,7 +175,8 @@ extension RenderManifest: Codable {
                 status: status,
                 output: output,
                 costEur: cost,
-                updatedAt: row.updatedAt
+                updatedAt: row.updatedAt,
+                lastFramePath: row.lastFramePath
             )
         }
         self.entries = entries
@@ -194,7 +204,7 @@ extension RenderManifest: Codable {
             RowOut(
                 shotId: entry.shotId, phase: entry.phase, status: entry.status, output: entry.output,
                 costEur: entry.costEur, updatedAt: entry.updatedAt, eurSpent: entry.costEur,
-                outPath: entry.output
+                outPath: entry.output, lastFramePath: entry.lastFramePath
             )
         }
         try container.encode(rows, forKey: .shots)
@@ -220,11 +230,11 @@ public func nextUnrendered(orderedShotIds: [String], manifest: RenderManifest) -
 public func record(
     _ manifest: inout RenderManifest, shotId: String, output: String?, costEur: Double,
     status: RenderStatus = .rendered, phase: String, updatedAt: String? = nil,
-    now: () -> String = currentTimestamp
+    lastFramePath: String? = nil, now: () -> String = currentTimestamp
 ) {
     manifest.entries[shotId] = RenderEntry(
         shotId: shotId, phase: phase, status: status, output: output, costEur: costEur,
-        updatedAt: updatedAt ?? now()
+        updatedAt: updatedAt ?? now(), lastFramePath: lastFramePath
     )
 }
 

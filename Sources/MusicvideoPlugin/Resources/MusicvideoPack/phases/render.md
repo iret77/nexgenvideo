@@ -181,18 +181,25 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
 `done: true`:
 
 1. **Get the next shot:** `next_render_shot(project_dir, "<phase>")`
-   returns `{shot_id, source_mode, visual_prompt, framing, done}`
-   (`imported` shots are already filtered out). Read the full shot
-   from `shotlist/current.yaml` for the remaining fields. If
-   `source_mode` is `ai_enhanced`, route it through the video-to-video
-   edit path (step 1a), not a from-scratch generation.
+   returns `{shot_id, source_mode, visual_prompt, framing, camera,
+   chain_with_previous_end, done}` plus, when applicable, a
+   `reference_images` list (the deterministic reference plan — bible
+   sheets + inherited identity-anchor frames, each a `{media_ref, …}`
+   already resolved for you), `reference_warnings`, and — for a chained
+   shot — `chain_start_frame_media_ref`. `imported` shots are already
+   filtered out. Read the full shot from `shotlist/current.yaml` for the
+   remaining fields. If `source_mode` is `ai_enhanced`, route it through
+   the video-to-video edit path (step 1a), not a from-scratch generation.
 2. **Determine the model** (step 2) and confirm it via `list_models`.
 3. **Build the clip prompt** from `shot.visual_prompt` + `shot.motion`
    (Subject → Action → Environment → Camera → Style → Constraints, kept
-   tight, ~60–100 words). The style already sits in `shot.visual_prompt`
-   from the bible look — **never** append freehand extra style tags
-   ("cinematic, ARRI ALEXA") and never quality killers ("epic /
-   stunning / amazing").
+   tight, ~60–100 words). Compile it with `compile_prompt(intent, model,
+   shotId=<shot_id>)`: passing `shotId` projects the shot's declared
+   camera + framing into the prompt deterministically and runs the drift
+   linter — heed any `CAMERA_/FRAMING_/GAZE_/SETTING_` note it returns.
+   The style already sits in `shot.visual_prompt` from the bible look —
+   **never** append freehand extra style tags ("cinematic, ARRI ALEXA")
+   and never quality killers ("epic / stunning / amazing").
 4. **Keyframe / reference selection:**
    - `keyframe_strategy ∈ {start, start_end}`: image-to-video. Import
      the approved frame(s) (`frames/<shot>-start.png`, and `-end.png`
@@ -200,15 +207,15 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
      the mediaRefs as `startFrameMediaRef` (+ `endFrameMediaRef`). If
      the expected frame is missing → STOP with a clear error; **no
      silent fallback to text_to_video** (that ruins pilots).
-   - `seedance_input_mode=reference`: import the bible sheets and pass
-     them as `referenceImageMediaRefs` in the deterministic order
-     (`@Image1` = character_refs[0], …; see shotlist rule 5).
-   - `chain_with_previous_end == true` (anchor-and-extend): use the
-     **last frame of the previous shot's clip** as this shot's start
-     frame — extract it from the predecessor's rendered clip (e.g.
-     `Bash` ffmpeg on the in-project file) and import it as the
-     `startFrameMediaRef`. Continuity is cleaner this way than with
-     frames generated in parallel.
+   - `seedance_input_mode=reference`: pass the `media_ref`s from
+     `next_render_shot`'s `reference_images` as `referenceImageMediaRefs`
+     in the given order (`@Image1` = the first entry, …). That list is
+     the planned set — bible sheets plus any identity-anchor frames — so
+     you don't hand-pick sheets.
+   - `chain_with_previous_end == true` (anchor-and-extend): pass
+     `chain_start_frame_media_ref` (the predecessor clip's extracted last
+     frame, already imported) as this shot's `startFrameMediaRef`. If it
+     is absent, the predecessor hasn't rendered yet — render it first.
    - Otherwise (`keyframe_strategy=none`, NO bible refs): text-to-video
      (no start frame). Sanity has already blocked the other case
      (`MISSING_BIBLE_ANCHOR_FOR_T2V`).

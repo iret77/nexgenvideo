@@ -36,17 +36,41 @@ enum PromptComposer {
 
     enum Modality: Sendable { case video, image, audio, music }
 
+    /// A shot's deterministic camera/framing projection plus the compliance read-surface, threaded into
+    /// a per-shot compile so `PromptPayload.camera/composition` come from the SPEC (not reconstructed by
+    /// the agent's intent) and the drift linter checks the built prompt against the shot. Port of the
+    /// camera/composition projection in `frames/generate.py::_payload_from_shot` + the per-frame
+    /// `lint_prompt_against_shot` call.
+    struct ShotProjection: Sendable {
+        let camera: String
+        let composition: String
+        let spec: ComplianceLinter.ShotSpec
+
+        init(_ shot: Shot) {
+            camera = shot.cameraSetup?.promptProse() ?? ""
+            composition = shot.framing?.compositionProse ?? ""
+            spec = ComplianceLinter.ShotSpec(
+                framing: shot.framing?.rawValue,
+                cameraHeight: shot.cameraSetup?.height.rawValue,
+                blockingGazes: shot.characterBlocking.map(\.gaze),
+                notes: shot.notes ?? "")
+        }
+    }
+
     /// Compose one model-ready prompt from free intent + the project ledger, running the engine
     /// linter as the pre-generation gate. `projectDir` is the open project's URL (see
     /// `EditorViewModel.workingRoot`); when it isn't a project yet, composition proceeds with an
-    /// empty ledger.
+    /// empty ledger. When `shot` is set (a per-shot render/frame compile), the shot's structured
+    /// camera + framing are projected into the payload and the compliance drift linter runs on the
+    /// built prompt, its findings surfaced as notes (warn-level, non-blocking — as in Python).
     static func compose(
         intent: String,
         modality: Modality,
         modelId: String,
         aspectRatio: String = "",
         durationSeconds: Double? = nil,
-        projectDir: URL?
+        projectDir: URL?,
+        shot: ShotProjection? = nil
     ) async throws -> Composition {
         let trimmed = normalize(intent)
         guard !trimmed.isEmpty else { throw ComposeError.emptyIntent }
@@ -57,20 +81,22 @@ enum PromptComposer {
         var notes: [String] = []
         switch modality {
         case .video:
-            let payload = PromptPayload(
+            var payload = PromptPayload(
                 subject: trimmed,
                 durationS: durationSeconds,
                 aspectRatio: aspectRatio,
                 directives: directives.all
             )
+            if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
             composed = PromptGenerator.buildVideoPrompt(modelID: engineModelID(modelId), payload: payload)
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .image:
-            let payload = PromptPayload(
+            var payload = PromptPayload(
                 subject: trimmed,
                 aspectRatio: aspectRatio,
                 directives: directives.all
             )
+            if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
             composed = try PromptGenerator.buildImagePrompt(modelID: engineModelID(modelId), payload: payload)
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .audio, .music:
@@ -82,6 +108,14 @@ enum PromptComposer {
                 notes.append("merged \(mergedCount) locked ledger directive(s)")
             }
             try lintAudio(composed, lockedDirectives: directives.locked)
+        }
+
+        // Compliance drift: does the built prompt still match the shot's declared camera / framing /
+        // gaze / setting? Warn-level, non-blocking — the safety net Python runs on every frame build.
+        if let shot {
+            for f in ComplianceLinter.lintPromptAgainstShot(composed, shot.spec) {
+                notes.append("\(f.code): \(f.message)")
+            }
         }
 
         let cap = PromptCompiler.lengthCap(modelId: modelId)

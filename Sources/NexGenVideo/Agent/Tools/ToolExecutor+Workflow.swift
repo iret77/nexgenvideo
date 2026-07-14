@@ -443,7 +443,7 @@ extension ToolExecutor {
             return try jsonResult(["phase": phase, "shot_id": NSNull(), "done": true])
         }
         let shot = shotlist?.shots.first { $0.id == shotId }
-        return try jsonResult([
+        var body: [String: Any] = [
             "phase": phase,
             "shot_id": shotId,
             "done": false,
@@ -453,10 +453,39 @@ extension ToolExecutor {
             // #166: the structured camera triplet projected into ready prose, so the shot's declared
             // camera is compiled from the spec (deterministic), not reconstructed by the agent.
             "camera": shot?.cameraSetup.map { $0.promptProse() as Any } ?? (NSNull() as Any),
-        ])
+            "chain_with_previous_end": shot?.chainWithPreviousEnd ?? false,
+        ]
+        // #196: when this shot chains off its predecessor, hand the agent the predecessor's extracted
+        // last frame (recorded by record_render) as the start-frame condition — pass it straight to the
+        // generate tool's startFrameMediaRef. Absent until the predecessor has rendered.
+        if let shotlist, let shot, shot.chainWithPreviousEnd,
+           let predId = ChainContinuity.chainPredecessor(shotlist, shotId: shotId),
+           let lastFrame = manifest.entries[predId]?.lastFramePath,
+           let asset = resolveRenderedAsset(lastFrame, editor: editor, dataRoot: root) {
+            body["chain_start_frame_media_ref"] = asset.id
+            body["chain_start_frame_path"] = lastFrame
+        }
+        // #195: the deterministic reference plan for this shot — bible sheets scored by view priority
+        // plus inherited identity-anchor frames stacked on top (multi-shot character consistency). Each
+        // planned ref is resolved to a media_ref the agent passes straight to the generate tool's
+        // referenceImageMediaRefs, so the ported planner drives the render instead of the agent guessing.
+        if let plan = PackCatalog.registry(activePack: activePluginFor(dataRoot: root))
+            .referencePlanProvider?.planReferences(dataRoot: root, shotId: shotId) {
+            var refImages: [[String: Any]] = []
+            for ref in plan.refs {
+                guard let asset = resolveRenderedAsset(ref.path, editor: editor, dataRoot: root) else { continue }
+                refImages.append([
+                    "media_ref": asset.id, "path": ref.path, "kind": ref.kind,
+                    "view": ref.view, "score": ref.score, "purpose": ref.purpose,
+                ])
+            }
+            if !refImages.isEmpty { body["reference_images"] = refImages }
+            if !plan.warnings.isEmpty { body["reference_warnings"] = plan.warnings }
+        }
+        return try jsonResult(body)
     }
 
-    func recordRenderTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func recordRenderTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let shotId = try args.requireString("shot_id")
@@ -478,6 +507,12 @@ extension ToolExecutor {
         // checks). Best-effort sidecar — never fail the render record over it.
         if phase == "frames", status == .rendered, let output, !output.isEmpty {
             recordFrameManifest(shotId: shotId, output: output, role: args.string("role"), editor: editor, dataRoot: root)
+        }
+        // #196: if the shot immediately after this one chains off it (`chain_with_previous_end`), extract
+        // this clip's last frame now and record it on the entry — `next_render_shot` feeds it as the
+        // successor's start frame. Best-effort — never fail the render record over it.
+        if status == .rendered, let output, !output.isEmpty {
+            await recordChainLastFrame(shotId: shotId, output: output, phase: phase, editor: editor, dataRoot: root)
         }
         let entry = manifest.entries[shotId]
         return try jsonResult([
@@ -915,6 +950,30 @@ extension ToolExecutor {
             ?? FramesManifest(project: FrameInventory.projectName(of: dataRoot) ?? "", generated: currentTimestamp()))
             .upserting(shotId: shotId, keyframeStrategy: ks, frame: entry)
         try? saveFramesManifest(manifest, dataRoot: dataRoot)
+    }
+
+    /// #196 — when the next shot in render order chains off this one, extract this rendered clip's last
+    /// frame to a durable PNG beside the clip and stamp its project-home-relative path onto the render
+    /// entry (`last_frame_path`). `next_render_shot` then hands that frame to the successor as its start
+    /// frame. Silent on any miss (no shotlist, no successor chain, non-video output, extraction failure):
+    /// continuity is an enhancement, never a reason to fail a recorded render.
+    private func recordChainLastFrame(shotId: String, output: String, phase: String, editor: EditorViewModel, dataRoot: URL) async {
+        guard let shotlist = (try? loadShotlist(dataRoot: dataRoot)) ?? nil,
+              ChainContinuity.needsLastFrame(shotlist, shotId: shotId),
+              let asset = resolveRenderedAsset(output, editor: editor, dataRoot: dataRoot) else { return }
+        let dest = asset.url.deletingPathExtension().appendingPathExtension("last_frame.png")
+        do {
+            try await LastFrameExtractor.extractLastFrame(video: asset.url, dest: dest)
+        } catch {
+            return
+        }
+        let home = FrameInventory.projectHome(of: dataRoot)
+        let rel = FrameInventory.relativePath(of: dest, to: home)
+        guard var manifest = try? loadRenderManifest(dataRoot: dataRoot, phase: phase),
+              var entry = manifest.entries[shotId] else { return }
+        entry.lastFramePath = rel
+        manifest.entries[shotId] = entry
+        try? saveRenderManifest(manifest, dataRoot: dataRoot)
     }
 
     private func resolveRenderedAsset(_ output: String, editor: EditorViewModel, dataRoot: URL) -> MediaAsset? {

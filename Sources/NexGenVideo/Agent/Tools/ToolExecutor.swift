@@ -135,7 +135,7 @@ final class ToolExecutor {
         case .runPhase:             return try await runPhaseTool(editor, args)
         case .attachSong:           return try attachSongTool(editor, args)
         case .nextRenderShot:       return try nextRenderShotTool(editor, args)
-        case .recordRender:         return try recordRenderTool(editor, args)
+        case .recordRender:         return try await recordRenderTool(editor, args)
         case .getRenderManifest:    return try getRenderManifestTool(editor, args)
         case .saveFrameAudit:       return try saveFrameAuditTool(editor, args)
         case .getFrameAudit:        return try getFrameAuditTool(editor, args)

@@ -78,6 +78,10 @@ public final class EngineRegistry: @unchecked Sendable {
     /// one; the host's `suggest_patterns`/`get_pattern` tools return an actionable "no patterns" instead.
     public private(set) var patternProvider: (any PatternProviding)?
 
+    /// Pack-provided reference-plan surface (see `ReferencePlanProviding`). Nil until a pack registers
+    /// one; the host's `next_render_shot` then surfaces no planned refs (the agent picks its own).
+    public private(set) var referencePlanProvider: (any ReferencePlanProviding)?
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -198,6 +202,11 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Register the pack's director-pattern query surface (see `PatternProviding`).
     public func registerPatternProvider(_ provider: any PatternProviding) {
         self.patternProvider = provider
+    }
+
+    /// Register the pack's reference-plan surface (see `ReferencePlanProviding`).
+    public func registerReferencePlanProvider(_ provider: any ReferencePlanProviding) {
+        self.referencePlanProvider = provider
     }
 
     /// Domain reference data (e.g. music genre/mood pattern library).

@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 extension ToolExecutor {
     func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) async throws -> ToolResult {
@@ -373,12 +374,17 @@ extension ToolExecutor {
     func compilePrompt(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let intent = try args.requireString("intent")
         let modelId = ModelCatalog.shared.internalId(forLogical: try args.requireString("model"))
+        // Optional per-shot compile: when the agent is rendering a specific shot it passes `shotId`, so
+        // the shot's structured camera + framing project deterministically into the prompt and the drift
+        // linter checks the result against the spec (#197). A missing/unknown shot degrades to the plain
+        // free-intent compile.
+        let projection = shotProjection(args.string("shotId"), editor: editor)
         // Same contract as before ({ compiledPrompt, compileToken, notes }); composition now runs the
         // ENGINE path (PromptComposer: ledger directives + provider builder + PromptLinter) instead of
         // the old local ledger text-append, then the gate mints the token over the result.
         let compiled = try await PromptCompiler.compile(
             intent: intent, modelId: modelId,
-            modality: PromptCompiler.modalityForModel(modelId), editor: editor)
+            modality: PromptCompiler.modalityForModel(modelId), editor: editor, shot: projection)
         let body: [String: Any] = [
             "compiledPrompt": compiled.text,
             "compileToken": compiled.token,
@@ -386,6 +392,18 @@ extension ToolExecutor {
         ]
         guard let json = Self.jsonString(body) else { return .error("Failed to encode compiled prompt") }
         return .ok(json)
+    }
+
+    /// Build a per-shot projection for `compile_prompt`'s `shotId` — loads the shot from the open
+    /// project's shotlist and derives the deterministic camera/framing projection plus the compliance
+    /// read-surface (#197). nil when there's no shot id, no open project, or no matching shot, so the
+    /// compile falls back to the plain free-intent path.
+    private func shotProjection(_ shotId: String?, editor: EditorViewModel) -> PromptComposer.ShotProjection? {
+        guard let shotId, !shotId.isEmpty,
+              let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+              let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil,
+              let shot = shotlist.shots.first(where: { $0.id == shotId }) else { return nil }
+        return PromptComposer.ShotProjection(shot)
     }
 
     func generateAudio(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
