@@ -140,8 +140,8 @@ struct PatternFitGoldenTests {
                 scoredWeights.append(w)
                 scoredScores.append(s)
             }
-            #expect(approx(scoredWeights.reduce(0, +), a.expectedCoverage), a.name)
-            #expect(approx(FitMath.rawFit(scoredWeights: scoredWeights, scores: scoredScores), a.expectedRawFit), a.name)
+            #expect(approx(scoredWeights.reduce(0, +), a.expectedCoverage), "\(a.name)")
+            #expect(approx(FitMath.rawFit(scoredWeights: scoredWeights, scores: scoredScores), a.expectedRawFit), "\(a.name)")
         }
     }
 

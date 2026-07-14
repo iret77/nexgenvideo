@@ -154,9 +154,9 @@ struct PatternFitPilotTests {
     func assemblerMapping() throws {
         let brief = try Brief(
             project: "proj", generated: "2026-01-01", mission: .demo, targetPlatform: "web",
-            aspectRatio: .landscape16x9, projectMode: "section", conceptType: .narrative,
+            aspectRatio: .landscape16x9, projectMode: "section", budgetEur: 5000, conceptType: .narrative,
             visualMedium: .liveActionStylized, visualMediumNotes: "neon", tone: [.melancholic, .poetic, .quiet],
-            figures: .artistPlusOthers, lyricsIntegration: .metaphorical, budgetEur: 5000)
+            figures: .artistPlusOthers, lyricsIntegration: .metaphorical)
         let project = ProjectProfileAssembler.assemble(brief: brief, perceivedBpm: 120)
 
         #expect(project.visual.visualMedium?.value == .liveActionStylized)
@@ -165,7 +165,7 @@ struct PatternFitPilotTests {
         #expect(project.creative.lyricsIntegration?.value == .metaphorical)
         // `quiet` implies no affect; only melancholic + poetic map, at equal weight.
         let affects = try #require(project.creative.affects?.value)
-        #expect(Set(affects.map(\.value)) == [.melancholic, .poetic])
+        #expect(Set(affects.map { $0.value }) == Set([AffectTag.melancholic, .poetic]))
         #expect(affects.allSatisfy { abs($0.weight - 0.5) < 1e-9 })
         #expect(project.audio.perceivedBpm?.value == 120)
         // No costed plan → the whole production dimension stays missing (never invented from budget_eur).
