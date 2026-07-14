@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 extension ToolExecutor {
     func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) async throws -> ToolResult {
