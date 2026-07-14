@@ -9,14 +9,6 @@ description: |
   Stimmung. Fuer Country-Rock, Indie-Folk, Americana-Tracks mit
   Roadmovie- oder Sehnsuchts-Bogen.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized]
-  moods: [melancholic, introspective, narrative, cinematic, dreamy]
-  tempo_bands: [slow, medium]
-  concept_types: [narrative, hybrid, performance]
-  figures: [artist_only, artist_plus_others]
-  aspect_ratios: []
-
 references:
   - name: "Anton Corbijn (U2 Joshua Tree visual era)"
     role: director

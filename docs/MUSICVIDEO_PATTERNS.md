@@ -7,6 +7,13 @@
 >
 > **Begriff:** Wir nennen das Feature **„Pattern"** (Code nutzt `pattern` bereits;
 > kein Rename). CONCEPT.md spricht synonym von „Blueprints berühmter Regisseure".
+>
+> **⚠️ Auswahl-Mechanismus abgelöst:** Die Pattern-**Auswahl/Empfehlung** folgt jetzt
+> normativ [docs/PATTERN_FIT_CONTRACT.md](PATTERN_FIT_CONTRACT.md) (`pattern-fit/1.0`):
+> deterministischer Fit-Scorer über eine eingefrorene Policy, `fit_profile`-Pflichtblock
+> je Pattern-YAML, harter Cutover ohne Trigger-Scorer/Fallback, fail-closed bis alle 23
+> Profile existieren. Die unten beschriebenen Trigger-/`scorePatterns`-Abschnitte sind
+> historisch — sie beschreiben den entfernten Integer-Scorer, nicht mehr das Verhalten.
 
 ## 1. Zweck & Einordnung
 

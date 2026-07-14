@@ -6,14 +6,6 @@ description: |
   Directors-Label-Kanon (Michel Gondry, Spike Jonze, Chris Cunningham)
   fuer narrative Musikvideos, in Folk- und Indie-Rock-Anwendungen.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized]
-  moods: [narrative, melancholic, introspective, dreamy, cinematic]
-  tempo_bands: [slow, medium]
-  concept_types: [narrative, hybrid]
-  figures: [artist_only, artist_plus_others, others_only, none]
-  aspect_ratios: []
-
 references:
   - name: "Michel Gondry"
     role: director

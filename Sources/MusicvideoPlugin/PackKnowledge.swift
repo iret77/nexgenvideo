@@ -78,6 +78,24 @@ public enum PackKnowledge {
         return entries.filter { $0.pathExtension == "yaml" }
     }
 
+    /// A frozen Pattern-fit contract fixture bundled under
+    /// `MusicvideoPack/contracts/` (the policy, golden vectors and pilot bundle),
+    /// or nil if absent.
+    public static func contractResourceURL(_ name: String) -> URL? {
+        guard let url = packDir("contracts/\(name)"), FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return url
+    }
+
+    /// The frozen scoring policy (`pattern-fit-policy.v1.json`).
+    public static func patternFitPolicyURL() -> URL? { contractResourceURL("pattern-fit-policy.v1.json") }
+
+    /// The cross-language scorer golden vectors (`pattern-fit-golden-vectors.v1.json`).
+    public static func patternFitGoldenVectorsURL() -> URL? {
+        contractResourceURL("pattern-fit-golden-vectors.v1.json")
+    }
+
     public enum PhaseDocError: Swift.Error, Sendable {
         case notFound(String)
     }

@@ -9,14 +9,6 @@ description: |
   retro-elektronische, ambient-elektronische und Internet-Mikrogenre-
   Tracks.
 
-triggers:
-  visual_mediums: [live_action_stylized, 3d_cg, illustration, mixed]
-  moods: [dreamy, melancholic, euphoric, cinematic, high_energy]
-  tempo_bands: [slow, medium, uptempo]
-  concept_types: [abstract, performance, hybrid]
-  figures: [artist_only, artist_plus_others, none]
-  aspect_ratios: []
-
 references:
   - name: "Synthwave (visual genre)"
     role: music_video

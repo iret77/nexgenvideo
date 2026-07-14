@@ -8,14 +8,6 @@ description: |
   Stoffe, Spot-Color-Akzente, faux-widescreen. Empfohlen fuer
   retro-poppige Tracks oder bewusst nostalgische Performance-Konzepte.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
-  moods: [euphoric, high_energy, dreamy, cinematic]
-  tempo_bands: [medium, uptempo, fast]
-  concept_types: [performance, narrative, hybrid]
-  figures: [artist_only, artist_plus_others]
-  aspect_ratios: []
-
 references:
   - name: "Russell Mulcahy"
     role: director

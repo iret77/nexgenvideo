@@ -8,14 +8,6 @@ description: |
   Kollektiv. Fuer ambitionierte Concept-Releases mit gemischten
   Modi (Performance + Narrative + Doku-Stuetze).
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
-  moods: [narrative, melancholic, introspective, cinematic, intimate, dreamy]
-  tempo_bands: [slow, medium]
-  concept_types: [narrative, hybrid, documentary, performance]
-  figures: [artist_only, artist_plus_others, others_only]
-  aspect_ratios: []
-
 references:
   - name: "Kahlil Joseph"
     role: director

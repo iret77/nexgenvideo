@@ -7,14 +7,6 @@ description: |
   unkonventionelle Bewegungen, ultra-slow-motion, Verfremdung. Fuer
   experimentelle Tracks mit starkem visuellem Konzept.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized, 3d_cg, mixed]
-  moods: [dreamy, melancholic, aggressive, cinematic, introspective]
-  tempo_bands: [slow, medium, uptempo]
-  concept_types: [abstract, narrative, hybrid]
-  figures: [artist_only, artist_plus_others, others_only, none]
-  aspect_ratios: []
-
 references:
   - name: "Chris Cunningham"
     role: director

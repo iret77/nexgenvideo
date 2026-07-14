@@ -7,14 +7,6 @@ description: |
   Benny Boom, Cole Bennett). Geeignet fuer Hip-Hop-, R&B- und Pop-
   Performance-Videos mit Larger-than-life-Geste.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized]
-  moods: [high_energy, euphoric, aggressive, cinematic]
-  tempo_bands: [medium, uptempo, fast]
-  concept_types: [performance, hybrid]
-  figures: [artist_only, artist_plus_others]
-  aspect_ratios: []
-
 references:
   - name: "Hype Williams"
     role: director

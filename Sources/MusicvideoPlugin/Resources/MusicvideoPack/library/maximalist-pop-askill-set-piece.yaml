@@ -7,14 +7,6 @@ description: |
   in der Komposition, Choreografie traegt die ganze Aussage. Fuer
   Maximalist-Pop-Tracks mit klarem Performer-Fokus.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized]
-  moods: [euphoric, high_energy, dreamy, cinematic, melancholic, aggressive]
-  tempo_bands: [medium, uptempo]
-  concept_types: [performance, hybrid, narrative]
-  figures: [artist_only, artist_plus_others]
-  aspect_ratios: []
-
 references:
   - name: "Daniel Askill"
     role: director

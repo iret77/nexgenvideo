@@ -1,0 +1,88 @@
+{
+  "schema_version": "pattern-fit-golden-vectors/1.0",
+  "policy_id": "nexgenvideo-pattern-fit-v1",
+  "categorical_resolution": [
+    {"bucket": "ideal", "expected_score": 1.0, "expected_resolution": "ideal"},
+    {"bucket": "compatible", "expected_score": 0.75, "expected_resolution": "compatible"},
+    {"bucket": "stretch", "expected_score": 0.4, "expected_resolution": "stretch"},
+    {"bucket": "avoid", "expected_score": 0.0, "expected_resolution": "conflict"},
+    {"bucket": "unlisted", "expected_score": 0.5, "expected_resolution": "unlisted"},
+    {"bucket": "missing_input", "expected_score": null, "expected_resolution": "unscored"}
+  ],
+  "continuous_resolution": [
+    {
+      "ranges": {"ideal": [0.6, 0.8], "compatible": [0.4, 0.9], "usable": [0.2, 1.0]},
+      "input": 0.6,
+      "expected_score": 1.0,
+      "expected_resolution": "ideal"
+    },
+    {
+      "ranges": {"ideal": [0.6, 0.8], "compatible": [0.4, 0.9], "usable": [0.2, 1.0]},
+      "input": 0.9,
+      "expected_score": 0.75,
+      "expected_resolution": "compatible"
+    },
+    {
+      "ranges": {"ideal": [0.6, 0.8], "compatible": [0.4, 0.9], "usable": [0.2, 1.0]},
+      "input": 0.2,
+      "expected_score": 0.4,
+      "expected_resolution": "stretch"
+    },
+    {
+      "ranges": {"ideal": [0.6, 0.8], "compatible": [0.4, 0.9], "usable": [0.2, 1.0]},
+      "input": 0.1,
+      "expected_score": 0.0,
+      "expected_resolution": "conflict"
+    }
+  ],
+  "aggregation": [
+    {
+      "name": "complete_dimension",
+      "weights": [0.4, 0.35, 0.25],
+      "scores": [1.0, 0.75, 0.4],
+      "expected_coverage": 1.0,
+      "expected_raw_fit": 0.7625
+    },
+    {
+      "name": "missing_axes_renormalize",
+      "global_weights": [0.08, 0.07, 0.05],
+      "scores": [1.0, 0.75, null],
+      "expected_coverage": 0.15,
+      "expected_raw_fit": 0.8833333333
+    }
+  ],
+  "confidence": [
+    {
+      "coverage": 0.8,
+      "normalized_scored_weights": [0.5, 0.5],
+      "input_confidence": [0.9, 0.7],
+      "evidence_confidence": [0.85, 0.6],
+      "expected_confidence": 0.474
+    }
+  ],
+  "conflict_modes": [
+    {
+      "mode": "conservative",
+      "raw_fit_points": 90.0,
+      "conflict_count": 1,
+      "expected_final_score": 49.0
+    },
+    {
+      "mode": "balanced",
+      "raw_fit_points": 82.0,
+      "conflict_count": 1,
+      "expected_final_score": 69.0
+    },
+    {
+      "mode": "experimental",
+      "raw_fit_points": 82.0,
+      "conflict_count": 1,
+      "expected_final_score": 80.0
+    }
+  ],
+  "qualification": [
+    {"coverage": 0.59, "confidence": 0.9, "expected_band": "provisional"},
+    {"coverage": 0.9, "confidence": 0.44, "expected_band": "provisional"},
+    {"coverage": 0.9, "confidence": 0.8, "score": 80.0, "expected_band": "strong"}
+  ]
+}
