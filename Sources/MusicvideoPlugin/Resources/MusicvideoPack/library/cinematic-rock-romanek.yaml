@@ -7,14 +7,6 @@ description: |
   fuer Rock-/Alt-Tracks mit erzaehlerischem Kern und visuell starkem
   Konzept.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized]
-  moods: [melancholic, introspective, aggressive, cinematic, narrative]
-  tempo_bands: [slow, medium]
-  concept_types: [narrative, hybrid, abstract]
-  figures: [artist_only, artist_plus_others]
-  aspect_ratios: []
-
 references:
   - name: "Mark Romanek"
     role: director

@@ -1,0 +1,48 @@
+{
+  "pattern_id": "wong-kar-wai-doyle-neon-dream",
+  "canonical_work": {
+    "title": "DJ Shadow — Six Days (dir. Wong Kar-wai, DOP Christopher Doyle, 2002)",
+    "url": "https://vimeo.com/2187876",
+    "owner_confirmed_by": "Christian",
+    "owner_confirmed_at": "2026-07-13T02:21:05+02:00"
+  },
+  "measurement": {
+    "artifact_path": "stats/results/wong-kar-wai-doyle-neon-dream--7ad8b9d8e916.rescued.json",
+    "artifact_sha256": "1db1c239394e745a754bdff7f81793e2725cd461453fc50e569e1d1fc777f2bd",
+    "verification_path": "stats/verification/wong-kar-wai-doyle-neon-dream--7ad8b9d8e916.rescued.verification.json",
+    "measured_at": "2026-07-13T16:32:17.864664Z"
+  },
+  "asl_range": {
+    "values": {
+      "min_s": 0.48,
+      "typical_s": 1.0,
+      "max_s": 3.288
+    },
+    "basis": "inferred",
+    "field_path": "asl_range"
+  },
+  "framing_mix": {
+    "values": {
+      "wide_pct": 17,
+      "full_pct": 7,
+      "ms_pct": 18,
+      "mcu_pct": 15,
+      "cu_pct": 13,
+      "ecu_pct": 19,
+      "ots_pct": 2,
+      "pov_pct": 0,
+      "insert_pct": 9,
+      "aerial_pct": 0
+    },
+    "basis": "inferred",
+    "field_path": "framing_mix"
+  },
+  "fit_profile_path": "patterns/wong-kar-wai-doyle-neon-dream.fit-profile.json",
+  "limitations": [
+    "A single canonical work is a work signature, not a director-wide frequency claim.",
+    "ASL remains detector-consensus inferred until the frozen boundary benchmark exists.",
+    "Framing is axis-rescued inferred evidence: 93.2% of shots and 89.816% of represented duration are resolved.",
+    "Ten abstract or illegible shots remain unclassified and are preserved in the uncertainty envelope.",
+    "Zero POV/aerial observations do not prove those devices are absent from the director's broader work."
+  ]
+}

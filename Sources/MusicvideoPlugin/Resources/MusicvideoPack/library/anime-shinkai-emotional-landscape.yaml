@@ -8,14 +8,6 @@ description: |
   fuer ruhige, bittersuesse Anime-Ballads, J-Pop-Inserts und
   introspektive 2D-Animation-Konzepte.
 
-triggers:
-  visual_mediums: [2d_animation, illustration, mixed]
-  moods: [melancholic, introspective, dreamy, intimate, cinematic, narrative]
-  tempo_bands: [slow, medium]
-  concept_types: [narrative, hybrid, abstract]
-  figures: [artist_only, artist_plus_others, others_only, none]
-  aspect_ratios: []
-
 references:
   - name: "Makoto Shinkai"
     role: director

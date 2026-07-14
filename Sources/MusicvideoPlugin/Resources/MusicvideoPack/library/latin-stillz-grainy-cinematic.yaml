@@ -8,14 +8,6 @@ description: |
   Momente, narrative Mini-Kurzfilme um Songtext-Philosophie. Fuer
   Reggaeton-, Latin-Pop- und urbanen R&B-Tracks.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
-  moods: [intimate, melancholic, narrative, cinematic, euphoric, high_energy]
-  tempo_bands: [medium, uptempo, fast]
-  concept_types: [narrative, hybrid, performance]
-  figures: [artist_only, artist_plus_others]
-  aspect_ratios: []
-
 references:
   - name: "Stillz (Matias Vasquez)"
     role: director

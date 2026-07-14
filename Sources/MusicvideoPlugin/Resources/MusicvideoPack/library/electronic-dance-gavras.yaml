@@ -6,14 +6,6 @@ description: |
   das Megaforce-Kollektiv. Bevorzugt Tracks mit BPM-Eskalation und
   klaren Drop-Momenten.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized]
-  moods: [high_energy, aggressive, euphoric, cinematic]
-  tempo_bands: [uptempo, fast]
-  concept_types: [performance, hybrid, narrative]
-  figures: [artist_only, artist_plus_others, others_only]
-  aspect_ratios: []
-
 references:
   - name: "Romain Gavras"
     role: director

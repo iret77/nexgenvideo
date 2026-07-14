@@ -9,14 +9,6 @@ description: |
   und gritty. Fuer Releases ohne narrative Performance, mit
   starkem Songtext und Brand-Voice.
 
-triggers:
-  visual_mediums: [illustration, mixed, 3d_cg, 2d_animation]
-  moods: [euphoric, high_energy, melancholic, dreamy, cinematic, narrative]
-  tempo_bands: [slow, medium, uptempo, fast]
-  concept_types: [abstract, hybrid, narrative]
-  figures: [none, artist_only]
-  aspect_ratios: []
-
 references:
   - name: "Kinetic Typography / Lyric Video tradition"
     role: music_video

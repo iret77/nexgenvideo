@@ -93,16 +93,20 @@ extension ToolExecutor {
     // MARK: - Director patterns (#185) — the agent-callable path to the pack's pattern library.
 
     func suggestPatternsTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
         let provider = try patternProvider(args, editor: editor)
-        let data = try provider.suggest(
-            visualMedium: args["visual_medium"] as? String,
-            mood: args["mood"] as? String,
-            perceivedBPM: args["perceived_bpm"] as? Double,
-            concept: args["concept"] as? String,
-            figures: args["figures"] as? String,
-            aspect: args["aspect"] as? String,
-            maxResults: (args["top"] as? Int) ?? 5,
-            allowGenreCross: (args["allow_genre_cross"] as? Bool) ?? false)
+        // The pack assembles the ProjectFitProfile from the persisted Brief; the host only forwards the
+        // Brief plus the agent-supplied options (perceived BPM, match mode, exclusions). Fit weights and
+        // the mapping live in the pack, behind the JSON seam.
+        let brief = try? YAMLArtifactStore(dataRoot: root).load(Brief.self, at: PipelineLayout.briefFile)
+        let briefJSON = (try? JSONEncoder().encode(brief)) ?? Data()
+        var options: [String: Any] = [:]
+        if let bpm = args["perceived_bpm"] as? Double { options["perceived_bpm"] = bpm }
+        if let mode = args["match_mode"] as? String { options["match_mode"] = mode }
+        if let excluded = args["excluded_pattern_ids"] as? [String] { options["excluded_pattern_ids"] = excluded }
+        if let top = args["top"] as? Int { options["max_results"] = top }
+        let optionsJSON = try JSONSerialization.data(withJSONObject: options)
+        let data = try provider.recommend(briefJSON: briefJSON, optionsJSON: optionsJSON)
         return .ok(String(decoding: data, as: UTF8.self))
     }
 

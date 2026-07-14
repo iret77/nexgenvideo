@@ -1,0 +1,283 @@
+{
+  "schema_version": "pattern-fit/1.0",
+  "pattern_id": "wong-kar-wai-doyle-neon-dream",
+  "pattern_kind": "director",
+  "style_families": ["cinematic_narrative", "surreal"],
+  "evidence": [
+    {
+      "evidence_id": "six-days-measured",
+      "basis": "measured",
+      "sources": ["https://vimeo.com/2187876"],
+      "measurement_artifact_sha256": ["1db1c239394e745a754bdff7f81793e2725cd461453fc50e569e1d1fc777f2bd"],
+      "measurement_field_paths": [
+        "camera_motion",
+        "screen_look",
+        "edit_music_sync",
+        "temporal_effects",
+        "format_texture",
+        "visual_recurrence"
+      ],
+      "note": "Deterministic fields from the owner-confirmed Six Days reference run."
+    },
+    {
+      "evidence_id": "six-days-inferred",
+      "basis": "inferred",
+      "sources": ["https://vimeo.com/2187876"],
+      "measurement_artifact_sha256": ["1db1c239394e745a754bdff7f81793e2725cd461453fc50e569e1d1fc777f2bd"],
+      "measurement_field_paths": [
+        "asl_range",
+        "framing_mix",
+        "style_distributions",
+        "transitions"
+      ],
+      "note": "Model-classified and axis-rescued fields are usable only as inferred evidence; the artifact retains coverage, disagreement, abstention and benchmark limitations."
+    },
+    {
+      "evidence_id": "wkw-doyle-documented",
+      "basis": "documented",
+      "sources": [
+        "https://www.bfi.org.uk/interviews/christopher-doyle-shooting-chungking-express",
+        "https://bampfa.org/node/244872",
+        "https://bampfa.org/event/mood-love-ONeill"
+      ],
+      "measurement_artifact_sha256": [],
+      "measurement_field_paths": [],
+      "note": "Craft sources document dreamy neon imagery, intimacy, urban space, elliptical narrative, romance, melancholy and intuitive performance direction."
+    },
+    {
+      "evidence_id": "editorial-fit",
+      "basis": "inferred",
+      "sources": [],
+      "measurement_artifact_sha256": [],
+      "measurement_field_paths": [],
+      "note": "Editorial project-fit ranges generalize conservatively from one canonical music video plus the documented Wong/Doyle body of work; BPM is intentionally broad and low-weight."
+    }
+  ],
+  "affect_energy": {
+    "affects": {
+      "ideal": ["cinematic", "dreamy", "intimate", "introspective", "melancholic", "poetic", "romantic"],
+      "compatible": ["dark", "fragile", "meditative", "narrative", "tense", "warm"],
+      "stretch": ["euphoric", "surreal", "urgent"],
+      "avoid": ["aggressive", "anthemic", "confrontational", "high_energy", "humorous", "triumphant"],
+      "evidence_ids": ["wkw-doyle-documented", "six-days-inferred"]
+    },
+    "energy_level": {
+      "ideal": {"min": 0.25, "max": 0.65},
+      "compatible": {"min": 0.15, "max": 0.8},
+      "usable": {"min": 0.05, "max": 0.95},
+      "evidence_ids": ["six-days-measured", "editorial-fit"]
+    },
+    "energy_arc": {
+      "ideal": ["wave", "dynamic_contrast", "gradual_build"],
+      "compatible": ["sparse", "sustained_low", "escalating"],
+      "stretch": ["drop_driven", "sustained_high"],
+      "avoid": [],
+      "evidence_ids": ["wkw-doyle-documented", "editorial-fit"]
+    }
+  },
+  "concept_story": {
+    "concept_type": {
+      "ideal": ["narrative", "hybrid"],
+      "compatible": ["abstract"],
+      "stretch": ["performance", "documentary"],
+      "avoid": ["other"],
+      "evidence_ids": ["wkw-doyle-documented", "six-days-inferred"]
+    },
+    "lyrics_integration": {
+      "ideal": ["metaphorical", "contrastive"],
+      "compatible": ["literal", "ignored"],
+      "stretch": ["other"],
+      "avoid": [],
+      "evidence_ids": ["wkw-doyle-documented", "editorial-fit"]
+    },
+    "narrative_clarity": {
+      "ideal": {"min": 0.35, "max": 0.75},
+      "compatible": {"min": 0.15, "max": 0.9},
+      "usable": {"min": 0.0, "max": 1.0},
+      "evidence_ids": ["wkw-doyle-documented", "six-days-inferred"]
+    }
+  },
+  "subject_performance": {
+    "figures": {
+      "ideal": ["artist_plus_others", "others_only"],
+      "compatible": ["artist_only"],
+      "stretch": ["none"],
+      "avoid": ["other"],
+      "evidence_ids": ["six-days-inferred", "editorial-fit"]
+    },
+    "performance_intensity": {
+      "ideal": ["low", "medium"],
+      "compatible": ["none"],
+      "stretch": ["high"],
+      "avoid": [],
+      "evidence_ids": ["wkw-doyle-documented", "six-days-inferred"]
+    },
+    "choreography": {
+      "ideal": ["none", "low"],
+      "compatible": [],
+      "stretch": ["medium"],
+      "avoid": ["high"],
+      "evidence_ids": ["six-days-inferred", "editorial-fit"]
+    },
+    "direct_address": {
+      "ideal": ["none", "low"],
+      "compatible": ["medium"],
+      "stretch": ["high"],
+      "avoid": [],
+      "evidence_ids": ["six-days-inferred", "editorial-fit"]
+    },
+    "crowd_energy": {
+      "ideal": ["none", "low"],
+      "compatible": [],
+      "stretch": ["medium"],
+      "avoid": ["high"],
+      "evidence_ids": ["six-days-inferred", "editorial-fit"]
+    }
+  },
+  "medium_aesthetic": {
+    "visual_medium": {
+      "ideal": ["live_action_stylized"],
+      "compatible": ["live_action_realistic", "mixed"],
+      "stretch": ["2d_animation", "illustration"],
+      "avoid": ["3d_cg", "stop_motion", "other"],
+      "evidence_ids": ["wkw-doyle-documented", "six-days-measured"]
+    },
+    "abstraction": {
+      "ideal": {"min": 0.2, "max": 0.65},
+      "compatible": {"min": 0.1, "max": 0.8},
+      "usable": {"min": 0.0, "max": 0.95},
+      "evidence_ids": ["wkw-doyle-documented", "six-days-inferred"]
+    },
+    "polish": {
+      "ideal": ["stylized"],
+      "compatible": ["naturalistic", "high_gloss"],
+      "stretch": ["lofi"],
+      "avoid": ["deliberately_raw"],
+      "evidence_ids": ["wkw-doyle-documented", "six-days-measured"]
+    },
+    "emotional_distance": {
+      "ideal": ["private", "intimate"],
+      "compatible": ["observational"],
+      "stretch": ["public"],
+      "avoid": ["confrontational"],
+      "evidence_ids": ["wkw-doyle-documented", "six-days-inferred"]
+    }
+  },
+  "rhythm_edit": {
+    "perceived_bpm": {
+      "ideal": {"min": 70.0, "max": 175.0},
+      "compatible": {"min": 55.0, "max": 200.0},
+      "usable": {"min": 40.0, "max": 240.0},
+      "evidence_ids": ["six-days-measured", "editorial-fit"]
+    },
+    "beat_salience": {
+      "ideal": ["low", "medium"],
+      "compatible": ["high"],
+      "stretch": ["none"],
+      "avoid": [],
+      "evidence_ids": ["six-days-measured", "editorial-fit"]
+    },
+    "onset_density_hz": {
+      "ideal": {"min": 1.0, "max": 5.5},
+      "compatible": {"min": 0.5, "max": 8.0},
+      "usable": {"min": 0.0, "max": 12.0},
+      "evidence_ids": ["six-days-measured", "editorial-fit"]
+    },
+    "rhythmic_regularity": {
+      "ideal": ["variable", "regular"],
+      "compatible": ["free"],
+      "stretch": ["grid_driven"],
+      "avoid": [],
+      "evidence_ids": ["six-days-measured", "editorial-fit"]
+    },
+    "section_contrast": {
+      "ideal": {"min": 0.3, "max": 0.8},
+      "compatible": {"min": 0.15, "max": 0.9},
+      "usable": {"min": 0.0, "max": 1.0},
+      "evidence_ids": ["six-days-measured", "editorial-fit"]
+    }
+  },
+  "production": {
+    "budget_tier": {
+      "ideal": ["medium", "high"],
+      "compatible": ["low"],
+      "stretch": ["micro"],
+      "avoid": [],
+      "evidence_ids": ["wkw-doyle-documented", "editorial-fit"]
+    },
+    "location_complexity": {
+      "ideal": ["medium", "high"],
+      "compatible": ["low"],
+      "stretch": ["none"],
+      "avoid": [],
+      "evidence_ids": ["wkw-doyle-documented", "six-days-inferred"]
+    },
+    "cast_scale": {
+      "ideal": ["low", "medium"],
+      "compatible": ["high"],
+      "stretch": ["none"],
+      "avoid": [],
+      "evidence_ids": ["wkw-doyle-documented", "six-days-inferred"]
+    },
+    "choreography_complexity": {
+      "ideal": ["none", "low"],
+      "compatible": ["medium"],
+      "stretch": [],
+      "avoid": ["high"],
+      "evidence_ids": ["six-days-inferred", "editorial-fit"]
+    },
+    "vfx_complexity": {
+      "ideal": ["low", "medium"],
+      "compatible": ["none"],
+      "stretch": ["high"],
+      "avoid": [],
+      "evidence_ids": ["six-days-measured", "editorial-fit"]
+    },
+    "post_complexity": {
+      "ideal": ["high"],
+      "compatible": ["medium"],
+      "stretch": ["low"],
+      "avoid": ["none"],
+      "evidence_ids": ["wkw-doyle-documented", "six-days-measured"]
+    }
+  },
+  "hard_constraints": {
+    "required_visual_mediums": [],
+    "required_capabilities": [],
+    "incompatible_project_constraints": [],
+    "evidence_ids": []
+  },
+  "adaptations": [
+    {
+      "adaptation_id": "high-energy-half-time",
+      "when": {"axis": "energy_level", "operator": "above", "values": [], "threshold": 0.8},
+      "actions": [
+        {"lever": "edit_pacing", "directive": "Phrase cuts in half-time groups and reserve rapid montage for section peaks."},
+        {"lever": "section_arc", "directive": "Preserve intimate visual breathing rooms between high-energy passages."}
+      ],
+      "maximum_recommended_fit": 72,
+      "evidence_ids": ["editorial-fit"]
+    },
+    {
+      "adaptation_id": "fast-track-phrase-over-beat",
+      "when": {"axis": "perceived_bpm", "operator": "above", "values": [], "threshold": 180.0},
+      "actions": [
+        {"lever": "edit_pacing", "directive": "Cut to phrases, gestures and emotional turns instead of tracking every beat."},
+        {"lever": "transitions", "directive": "Use temporal smears or step-printing selectively to absorb speed without losing atmosphere."}
+      ],
+      "maximum_recommended_fit": 70,
+      "evidence_ids": ["six-days-measured", "editorial-fit"]
+    },
+    {
+      "adaptation_id": "micro-budget-neon-room",
+      "when": {"axis": "budget_tier", "operator": "equals", "values": ["micro"], "threshold": null},
+      "actions": [
+        {"lever": "production", "directive": "Concentrate the concept in one controllable location with layered foreground architecture."},
+        {"lever": "lighting", "directive": "Build the palette from motivated practicals, signage and one dominant sequence color."},
+        {"lever": "color", "directive": "Prioritize color separation and temporal texture over broad VFX coverage."}
+      ],
+      "maximum_recommended_fit": 68,
+      "evidence_ids": ["wkw-doyle-documented", "editorial-fit"]
+    }
+  ]
+}

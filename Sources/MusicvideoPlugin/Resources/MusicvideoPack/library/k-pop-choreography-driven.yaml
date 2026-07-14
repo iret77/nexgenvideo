@@ -7,14 +7,6 @@ description: |
   Beat, Concept-Wechsel pro Section. Empfohlen fuer Mainstream-Pop-
   und K-Pop-Releases mit Tanz-Fokus.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
-  moods: [high_energy, euphoric, cinematic]
-  tempo_bands: [medium, uptempo, fast]
-  concept_types: [performance, hybrid]
-  figures: [artist_only, artist_plus_others, others_only]
-  aspect_ratios: []
-
 references:
   - name: "Kyle Hanagami"
     role: director

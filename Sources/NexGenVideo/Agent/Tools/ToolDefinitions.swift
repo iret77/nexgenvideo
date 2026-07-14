@@ -954,24 +954,20 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .suggestPatterns,
-            description: "Suggest director/style patterns for the brief (packs that ship a pattern library, e.g. musicvideo). Pass the brief's dimensions as raw enum strings — visual_medium, mood, perceived_bpm, concept, figures, aspect — and get the top-N patterns, each scored with WHY it matched and its cited sources. Use at the brief phase to pick a pattern, then set the chosen id as brief.director_pattern so PATTERN_DRIFT holds the shotlist to it. Read-only; omit dimensions you don't want to constrain. Errors if the active pack ships no patterns.",
+            description: "Rank the pack's director/style patterns against the project using the frozen Pattern-fit contract (packs that ship a pattern library, e.g. musicvideo). The pack assembles a project profile from the persisted Brief — you only supply the song's perceived_bpm and, optionally, a match_mode and pattern ids to exclude. Returns a `PatternRecommendationSet`: each result carries a Compatibility Index (0–100, NOT a probability of success), its band, confidence, coverage, per-axis strengths/conflicts and triggered adaptations, plus best_overall/production_efficient/creative_stretch slots and up to three high-impact follow-up questions. If the library is not yet fully authored the tool returns `{available:false, …}` (a fail-closed gate, never a partial ranking). Use at the brief phase to pick a pattern, then set the chosen id as brief.director_pattern so PATTERN_DRIFT holds the shotlist to it. Read-only. Errors if the active pack ships no patterns.",
             inputSchema: objectSchema(
                 properties: [
-                    "visual_medium": ["type": "string", "description": "e.g. live_action_realistic, 2d_animation."],
-                    "mood": ["type": "string", "description": "Mood band, e.g. dreamy, aggressive, melancholic."],
-                    "perceived_bpm": ["type": "number", "description": "The song's perceived BPM (from analysis)."],
-                    "concept": ["type": "string", "description": "Concept type, e.g. narrative, performance, abstract."],
-                    "figures": ["type": "string", "description": "Figure presence, e.g. solo, band, none."],
-                    "aspect": ["type": "string", "description": "Aspect ratio, e.g. landscape_16_9."],
-                    "top": ["type": "integer", "description": "How many to return (default 5)."],
-                    "allow_genre_cross": ["type": "boolean", "description": "Lift the visual-medium veto (default false)."],
+                    "perceived_bpm": ["type": "number", "description": "The song's perceived BPM (from analysis). Only 3% of total fit — omit if unknown."],
+                    "match_mode": ["type": "string", "enum": ["conservative", "balanced", "experimental"], "description": "Conflict appetite (default balanced): conservative caps conflicted patterns hard, experimental lifts the cap."],
+                    "excluded_pattern_ids": ["type": "array", "items": ["type": "string"], "description": "Pattern ids the user has ruled out — hard-excluded from the ranking."],
+                    "top": ["type": "integer", "description": "How many results to return (default 5)."],
                     "project_dir": ["type": "string", "description": "Optional pipeline data root; omit to use the open project."],
                 ]
             )
         ),
         AgentTool(
             name: .getPattern,
-            description: "Load one director pattern by id (an id from suggest_patterns): its framing_mix, asl_range, camera vocabulary, lighting signature, section arc, references and triggers. Consume these directives when writing the storyboard/shotlist/bible so the plan follows the pattern. Read-only.",
+            description: "Load one director pattern by id (an id from suggest_patterns): its framing_mix, asl_range, camera vocabulary, lighting signature, section arc, references and (when authored) its fit_profile. Consume these directives when writing the storyboard/shotlist/bible so the plan follows the pattern. Read-only.",
             inputSchema: objectSchema(
                 properties: [
                     "id": ["type": "string", "description": "Pattern id from suggest_patterns (e.g. anime-shinkai-emotional-landscape)."],

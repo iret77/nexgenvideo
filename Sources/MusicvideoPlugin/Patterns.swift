@@ -127,48 +127,6 @@ public struct SectionArcStep: Codable, Sendable, Equatable {
     }
 }
 
-/// Which brief properties activate this pattern. Empty list = wildcard (all
-/// values pass). Port of `patterns_schema.py::PatternTriggers`.
-public struct PatternTriggers: Codable, Sendable, Equatable {
-    public var visualMediums: [VisualMedium]
-    public var moods: [MoodBand]
-    public var tempoBands: [PatternTempoBand]
-    public var conceptTypes: [ConceptType]
-    public var figures: [FigurePresence]
-    public var aspectRatios: [AspectRatio]
-
-    private enum CodingKeys: String, CodingKey {
-        case visualMediums = "visual_mediums"
-        case moods
-        case tempoBands = "tempo_bands"
-        case conceptTypes = "concept_types"
-        case figures
-        case aspectRatios = "aspect_ratios"
-    }
-
-    public init(
-        visualMediums: [VisualMedium] = [], moods: [MoodBand] = [], tempoBands: [PatternTempoBand] = [],
-        conceptTypes: [ConceptType] = [], figures: [FigurePresence] = [], aspectRatios: [AspectRatio] = []
-    ) {
-        self.visualMediums = visualMediums
-        self.moods = moods
-        self.tempoBands = tempoBands
-        self.conceptTypes = conceptTypes
-        self.figures = figures
-        self.aspectRatios = aspectRatios
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        visualMediums = try container.decodeIfPresent([VisualMedium].self, forKey: .visualMediums) ?? []
-        moods = try container.decodeIfPresent([MoodBand].self, forKey: .moods) ?? []
-        tempoBands = try container.decodeIfPresent([PatternTempoBand].self, forKey: .tempoBands) ?? []
-        conceptTypes = try container.decodeIfPresent([ConceptType].self, forKey: .conceptTypes) ?? []
-        figures = try container.decodeIfPresent([FigurePresence].self, forKey: .figures) ?? []
-        aspectRatios = try container.decodeIfPresent([AspectRatio].self, forKey: .aspectRatios) ?? []
-    }
-}
-
 /// Target distribution of framings, in percent (sums to ~100). Port of
 /// `patterns_schema.py::FramingMix`.
 public struct FramingMix: Codable, Sendable, Equatable {
@@ -254,37 +212,14 @@ public struct AslRange: Codable, Sendable, Equatable {
     }
 }
 
-/// A single trigger-match in pattern scoring. Port of
-/// `patterns_schema.py::PatternMatchReason`.
-public struct PatternMatchReason: Sendable, Equatable {
-    /// "visual_medium" | "mood" | "tempo" | "concept" | "figures" | "aspect".
-    public let field: String
-    /// True = trigger matched, false = mismatch.
-    public let hit: Bool
-    /// Point contribution (positive or negative).
-    public let points: Int
-    /// User input, for display.
-    public let inputValue: String
-}
-
-/// Result of a pattern-scoring run. Port of `patterns_schema.py::PatternScore`.
-public struct PatternScore: Sendable, Equatable {
-    public let patternId: String
-    public let patternName: String
-    public let score: Int
-    public let reasons: [PatternMatchReason]
-
-    /// Plain-text justification for user display. Port of
-    /// `PatternScore.hit_summary`.
-    public func hitSummary() -> String {
-        guard !reasons.isEmpty else { return "(no triggers checked, score \(score))" }
-        let parts = reasons.map { "\($0.field) \($0.hit ? "\u{2713}" : "\u{2717}")" }
-        return "\(parts.joined(separator: " \u{b7} ")) (Score \(score))"
-    }
-}
-
 /// Director pattern: a positive compose backbone for the shotlist. Port of
 /// `patterns_schema.py::Pattern`.
+///
+/// The unshipped integer `triggers` scorer was removed in the pattern-fit
+/// cutover (`docs/PATTERN_FIT_CONTRACT.md`). Recommendation now runs off the
+/// mandatory `fit_profile` block via `PatternFitScorer`; the fields below stay
+/// as the compose backbone (`framing_mix`, `asl_range`, camera vocabulary,
+/// lighting signature, section arc) that the storyboard and PATTERN_DRIFT read.
 public struct Pattern: Codable, Sendable, Equatable {
     /// Slug id, e.g. "narrative-folk-static-long-takes".
     public var id: String
@@ -292,7 +227,10 @@ public struct Pattern: Codable, Sendable, Equatable {
     public var name: String
     /// 1-3 sentences describing what distinguishes this pattern (for user display).
     public var description: String
-    public var triggers: PatternTriggers
+    /// The mandatory Pattern-fit block, or nil until it is authored. A nil or
+    /// invalid profile keeps the pattern out of recommendations (fail-closed);
+    /// the compose/style path via `get`/`PATTERN_DRIFT` still works without it.
+    public var fitProfile: PatternFitProfile?
     /// Verifiable references with sources — at least one.
     public var references: [PatternReference]
     /// Recommended internal structure of a section.
@@ -313,7 +251,7 @@ public struct Pattern: Codable, Sendable, Equatable {
         case id
         case name
         case description
-        case triggers
+        case fitProfile = "fit_profile"
         case references
         case sectionArc = "section_arc"
         case framingMix = "framing_mix"
@@ -324,14 +262,14 @@ public struct Pattern: Codable, Sendable, Equatable {
     }
 
     public init(
-        id: String, name: String, description: String, triggers: PatternTriggers, references: [PatternReference],
+        id: String, name: String, description: String, references: [PatternReference],
         sectionArc: [SectionArcStep], framingMix: FramingMix, aslRange: AslRange, cameraVocabulary: [String],
-        lightingSignature: String, approximationBasis: String
+        lightingSignature: String, approximationBasis: String, fitProfile: PatternFitProfile? = nil
     ) {
         self.id = id
         self.name = name
         self.description = description
-        self.triggers = triggers
+        self.fitProfile = fitProfile
         self.references = references
         self.sectionArc = sectionArc
         self.framingMix = framingMix
@@ -339,71 +277,6 @@ public struct Pattern: Codable, Sendable, Equatable {
         self.cameraVocabulary = cameraVocabulary
         self.lightingSignature = lightingSignature
         self.approximationBasis = approximationBasis
-    }
-
-    /// True when every set trigger list allows the input (empty list = wildcard).
-    ///
-    /// Backward-compat entry point for v0.12.x callers. New callers use
-    /// `scoreAgainst` and sort by score. Port of `Pattern.matches`.
-    public func matches(
-        visualMedium: VisualMedium?, mood: MoodBand?, tempo: PatternTempoBand?, concept: ConceptType?,
-        figures: FigurePresence?, aspect: AspectRatio?
-    ) -> Bool {
-        let t = triggers
-        if !t.visualMediums.isEmpty, let visualMedium, !t.visualMediums.contains(visualMedium) { return false }
-        if !t.moods.isEmpty, let mood, !t.moods.contains(mood) { return false }
-        if !t.tempoBands.isEmpty, let tempo, !t.tempoBands.contains(tempo) { return false }
-        if !t.conceptTypes.isEmpty, let concept, !t.conceptTypes.contains(concept) { return false }
-        if !t.figures.isEmpty, let figures, !t.figures.contains(figures) { return false }
-        if !t.aspectRatios.isEmpty, let aspect, !t.aspectRatios.contains(aspect) { return false }
-        return true
-    }
-
-    /// Weighted match score against user brief inputs (v0.13.0).
-    ///
-    /// Point system:
-    /// - visualMedium: +3 on match. Mismatch: -10 (hard veto) OR -2 if
-    ///   `allowGenreCross=true` (`brief.allow_genre_cross_patterns`). The hard
-    ///   veto by default stops e.g. an anime pattern from being suggested on
-    ///   a live-action brief — a deliberate genre-cross lifts that.
-    /// - mood: +2 on match, -2 on mismatch.
-    /// - tempo: +2 on match, -1 on mismatch.
-    /// - concept: +2 on match, -1 on mismatch.
-    /// - figures: +1 on match, -1 on mismatch.
-    /// - aspect: +1 on match, 0 on mismatch (very rarely filtered).
-    /// - Wildcard (empty trigger list): 0 points (neutral).
-    /// - Input nil: 0 points (the user brief has not set the field).
-    ///
-    /// Port of `Pattern.score_against`.
-    public func scoreAgainst(
-        visualMedium: VisualMedium?, mood: MoodBand?, tempo: PatternTempoBand?, concept: ConceptType?,
-        figures: FigurePresence?, aspect: AspectRatio?, allowGenreCross: Bool = false
-    ) -> PatternScore {
-        let vmMismatch = allowGenreCross ? -2 : -10
-        let t = triggers
-        var score = 0
-        var reasons: [PatternMatchReason] = []
-
-        func check<T: Equatable>(field: String, input: T?, allowed: [T], matchPt: Int, mismatchPt: Int, label: (T) -> String) {
-            guard let input else { return }
-            guard !allowed.isEmpty else { return }  // Wildcard — pattern has no requirement on this field.
-            if allowed.contains(input) {
-                score += matchPt
-                reasons.append(PatternMatchReason(field: field, hit: true, points: matchPt, inputValue: label(input)))
-            } else {
-                score += mismatchPt
-                reasons.append(PatternMatchReason(field: field, hit: false, points: mismatchPt, inputValue: label(input)))
-            }
-        }
-
-        check(field: "visual_medium", input: visualMedium, allowed: t.visualMediums, matchPt: 3, mismatchPt: vmMismatch) { $0.rawValue }
-        check(field: "mood", input: mood, allowed: t.moods, matchPt: 2, mismatchPt: -2) { $0.rawValue }
-        check(field: "tempo", input: tempo, allowed: t.tempoBands, matchPt: 2, mismatchPt: -1) { $0.rawValue }
-        check(field: "concept", input: concept, allowed: t.conceptTypes, matchPt: 2, mismatchPt: -1) { $0.rawValue }
-        check(field: "figures", input: figures, allowed: t.figures, matchPt: 1, mismatchPt: -1) { $0.rawValue }
-        check(field: "aspect", input: aspect, allowed: t.aspectRatios, matchPt: 1, mismatchPt: 0) { $0.rawValue }
-
-        return PatternScore(patternId: id, patternName: name, score: score, reasons: reasons)
     }
 }
 
@@ -413,9 +286,8 @@ public enum PatternLibraryError: Swift.Error, Sendable {
     case decodingFailed(file: String, underlying: String)
 }
 
-/// Loads and scores the pattern library. Port of the loader/scorer half of
-/// `patterns_schema.py` (`load_pattern`, `load_all_patterns`,
-/// `score_patterns`, `suggest_patterns`).
+/// Loads the pattern library. Recommendation scoring lives in
+/// `PatternFitScorer` (the fit contract); this type only decodes YAMLs.
 public enum Patterns {
     /// Loads a `Pattern` from a single YAML string. Port of `load_pattern`
     /// (Swift takes YAML text + a name for error messages, since resource
@@ -438,52 +310,5 @@ public enum Patterns {
             out.append(try loadPattern(yaml: text, fileName: url.lastPathComponent))
         }
         return out
-    }
-
-    /// Returns the pattern library sorted by match score (v0.13.0). Port of
-    /// `score_patterns`.
-    ///
-    /// - Parameters:
-    ///   - maxResults: top-N by score.
-    ///   - minScore: patterns below this threshold are filtered out. `nil` =
-    ///     no threshold (negative scores allowed too).
-    ///   - allowGenreCross: `true` lifts the visual_medium veto (-10 -> -2).
-    ///     Pass through from `brief.allow_genre_cross_patterns` when the
-    ///     caller has the flag set in the brief.
-    public static func scorePatterns(
-        visualMedium: VisualMedium? = nil, mood: MoodBand? = nil, perceivedBPM: Double? = nil,
-        concept: ConceptType? = nil, figures: FigurePresence? = nil, aspect: AspectRatio? = nil, maxResults: Int = 5,
-        minScore: Int? = 0, allowGenreCross: Bool = false
-    ) throws -> [(pattern: Pattern, score: PatternScore)] {
-        let tempoBand = perceivedBPM.map(patternTempoBand)
-        var scored: [(Pattern, PatternScore)] = []
-        for p in try loadAllPatterns() {
-            let s = p.scoreAgainst(
-                visualMedium: visualMedium, mood: mood, tempo: tempoBand, concept: concept, figures: figures,
-                aspect: aspect, allowGenreCross: allowGenreCross
-            )
-            if let minScore, s.score < minScore { continue }
-            scored.append((p, s))
-        }
-        scored.sort { $0.1.score > $1.1.score }
-        return Array(scored.prefix(maxResults))
-    }
-
-    /// Filter over all known patterns (v0.12.x backward-compat). Hard filter
-    /// via `Pattern.matches`. New callers should use `scorePatterns` — it
-    /// returns a sorted list with `PatternScore` justification. Port of
-    /// `suggest_patterns`.
-    public static func suggestPatterns(
-        visualMedium: VisualMedium? = nil, mood: MoodBand? = nil, perceivedBPM: Double? = nil,
-        concept: ConceptType? = nil, figures: FigurePresence? = nil, aspect: AspectRatio? = nil, maxResults: Int = 3
-    ) throws -> [Pattern] {
-        let tempoBand = perceivedBPM.map(patternTempoBand)
-        let matches = try loadAllPatterns().filter {
-            $0.matches(
-                visualMedium: visualMedium, mood: mood, tempo: tempoBand, concept: concept, figures: figures,
-                aspect: aspect
-            )
-        }
-        return Array(matches.prefix(maxResults))
     }
 }

@@ -6,14 +6,6 @@ description: |
   Live-Performance-Formate. Empfohlen fuer ruhige Akustik-Tracks, wo der
   Performer im Mittelpunkt steht und die Welt drum herum minimal bleibt.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized]
-  moods: [intimate, melancholic, introspective]
-  tempo_bands: [slow, medium]
-  concept_types: [performance, hybrid]
-  figures: [artist_only, artist_plus_others]
-  aspect_ratios: []
-
 references:
   - name: "NPR Music Tiny Desk Concert series"
     role: music_video

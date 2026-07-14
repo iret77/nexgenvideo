@@ -7,14 +7,6 @@ description: |
   zimmer aufgenommen) und Mac DeMarco's Vintage-Bias. Fuer authentisch-
   intime Indie-Tracks ohne Production-Bombast.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
-  moods: [intimate, melancholic, introspective, dreamy]
-  tempo_bands: [slow, medium]
-  concept_types: [performance, narrative, hybrid, documentary]
-  figures: [artist_only]
-  aspect_ratios: []
-
 references:
   - name: "Clairo (Claire Cottrill)"
     role: music_video

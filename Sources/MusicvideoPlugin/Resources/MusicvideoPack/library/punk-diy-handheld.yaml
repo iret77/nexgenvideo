@@ -8,14 +8,6 @@ description: |
   Fuer Hardcore-, Punk-, Grindcore- und atmospheric-Metal-Tracks
   ohne Production-Lack.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized]
-  moods: [aggressive, high_energy, melancholic, narrative, cinematic]
-  tempo_bands: [medium, uptempo, fast]
-  concept_types: [performance, hybrid, documentary]
-  figures: [artist_only, artist_plus_others, others_only]
-  aspect_ratios: []
-
 references:
   - name: "Hardcore Punk visual tradition (genre)"
     role: music_video

@@ -7,14 +7,6 @@ description: |
   Coppola (The Virgin Suicides-Aesthetik, Romy Mars, Phoenix). Bestens
   fuer langsame Ballads mit hohem Stimmungsanteil.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized]
-  moods: [introspective, melancholic, dreamy, intimate, cinematic]
-  tempo_bands: [slow, medium]
-  concept_types: [narrative, performance, hybrid, abstract]
-  figures: [artist_only, artist_plus_others]
-  aspect_ratios: []
-
 references:
   - name: "Anton Corbijn"
     role: director

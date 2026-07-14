@@ -1,0 +1,116 @@
+{
+  "schema_version": "pattern-fit-policy/1.0",
+  "policy_id": "nexgenvideo-pattern-fit-v1",
+  "scorer_version": "pattern-fit-scorer/1.0",
+  "category_scores": {
+    "ideal": 1.0,
+    "compatible": 0.75,
+    "stretch": 0.4,
+    "avoid": 0.0,
+    "unlisted": 0.5
+  },
+  "continuous_scores": {
+    "ideal": 1.0,
+    "compatible": 0.75,
+    "stretch": 0.4,
+    "avoid": 0.0,
+    "unlisted": 0.5
+  },
+  "evidence_confidence": {
+    "measured": 0.95,
+    "documented": 0.85,
+    "inferred": 0.6
+  },
+  "dimensions": [
+    {
+      "dimension": "affect_energy",
+      "weight": 0.2,
+      "axes": [
+        {"axis": "affect", "weight": 0.4},
+        {"axis": "energy_level", "weight": 0.35},
+        {"axis": "energy_arc", "weight": 0.25}
+      ]
+    },
+    {
+      "dimension": "concept_story",
+      "weight": 0.2,
+      "axes": [
+        {"axis": "concept_type", "weight": 0.55},
+        {"axis": "lyrics_integration", "weight": 0.2},
+        {"axis": "narrative_clarity", "weight": 0.25}
+      ]
+    },
+    {
+      "dimension": "subject_performance",
+      "weight": 0.15,
+      "axes": [
+        {"axis": "figures", "weight": 0.3},
+        {"axis": "performance_intensity", "weight": 0.25},
+        {"axis": "choreography", "weight": 0.2},
+        {"axis": "direct_address", "weight": 0.15},
+        {"axis": "crowd_energy", "weight": 0.1}
+      ]
+    },
+    {
+      "dimension": "medium_aesthetic",
+      "weight": 0.15,
+      "axes": [
+        {"axis": "visual_medium", "weight": 0.4},
+        {"axis": "abstraction", "weight": 0.2},
+        {"axis": "polish", "weight": 0.2},
+        {"axis": "emotional_distance", "weight": 0.2}
+      ]
+    },
+    {
+      "dimension": "rhythm_edit",
+      "weight": 0.15,
+      "axes": [
+        {"axis": "perceived_bpm", "weight": 0.2},
+        {"axis": "beat_salience", "weight": 0.25},
+        {"axis": "onset_density_hz", "weight": 0.2},
+        {"axis": "rhythmic_regularity", "weight": 0.15},
+        {"axis": "section_contrast", "weight": 0.2}
+      ]
+    },
+    {
+      "dimension": "production",
+      "weight": 0.15,
+      "axes": [
+        {"axis": "budget_tier", "weight": 0.2},
+        {"axis": "location_complexity", "weight": 0.15},
+        {"axis": "cast_scale", "weight": 0.15},
+        {"axis": "choreography_complexity", "weight": 0.15},
+        {"axis": "vfx_complexity", "weight": 0.2},
+        {"axis": "post_complexity", "weight": 0.15}
+      ]
+    }
+  ],
+  "match_modes": [
+    {
+      "mode": "conservative",
+      "conflict_fit_cap": 49.0,
+      "avoid_penalty_points": 8.0
+    },
+    {
+      "mode": "balanced",
+      "conflict_fit_cap": 69.0,
+      "avoid_penalty_points": 5.0
+    },
+    {
+      "mode": "experimental",
+      "conflict_fit_cap": null,
+      "avoid_penalty_points": 2.0
+    }
+  ],
+  "fit_bands": [
+    {"band": "exceptional", "minimum_score": 90.0},
+    {"band": "strong", "minimum_score": 80.0},
+    {"band": "good", "minimum_score": 65.0},
+    {"band": "stretch", "minimum_score": 50.0},
+    {"band": "weak", "minimum_score": 0.0}
+  ],
+  "minimum_input_coverage": 0.6,
+  "minimum_confidence": 0.45,
+  "max_agent_questions": 3,
+  "default_max_results": 5
+}

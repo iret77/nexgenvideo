@@ -8,14 +8,6 @@ description: |
   Komplexitaet > Cut-Komplexitaet. Geeignet fuer Tracks mit klarer
   Eskalation und einem klaren visuellen Spielzug.
 
-triggers:
-  visual_mediums: [live_action_realistic, live_action_stylized, mixed]
-  moods: [euphoric, high_energy, cinematic, narrative, dreamy]
-  tempo_bands: [medium, uptempo, fast]
-  concept_types: [performance, hybrid, abstract]
-  figures: [artist_only, artist_plus_others]
-  aspect_ratios: []
-
 references:
   - name: "OK Go (Damian Kulash, Trish Sie)"
     role: director

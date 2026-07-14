@@ -8,14 +8,6 @@ description: |
   fuer ironische / surreal-komische / dunkel-humoristische Tracks mit
   cartoonigem Look.
 
-triggers:
-  visual_mediums: [2d_animation, illustration, mixed]
-  moods: [high_energy, cinematic, narrative, aggressive, dreamy]
-  tempo_bands: [medium, uptempo, fast]
-  concept_types: [narrative, performance, abstract, hybrid]
-  figures: [artist_only, artist_plus_others, others_only]
-  aspect_ratios: []
-
 references:
   - name: "Genndy Tartakovsky"
     role: director

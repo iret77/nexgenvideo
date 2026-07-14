@@ -6,18 +6,18 @@ import Foundation
 /// stays agnostic of the pack's `Pattern` schema — the same dependency-inversion the audio-ML seams use.
 ///
 /// This is the sanctioned path to the pattern library the predecessor had and the port lost (#185): the
-/// agent discovers patterns via `suggest` and loads one via `get`, instead of the ported YAMLs sitting
+/// agent recommends patterns via `recommend` and loads one via `get`, instead of the ported YAMLs sitting
 /// as dead data with no caller.
 public protocol PatternProviding: Sendable {
-    /// Top-N patterns matching the given brief dimensions (raw enum strings the agent supplies; nil =
-    /// unconstrained on that axis), returned as a JSON array of `{id, name, score, why, sources}`.
-    /// `allowGenreCross` lifts the visual-medium veto. Throws only on an internal library error.
-    func suggest(
-        visualMedium: String?, mood: String?, perceivedBPM: Double?, concept: String?,
-        figures: String?, aspect: String?, maxResults: Int, allowGenreCross: Bool
-    ) throws -> Data
+    /// Rank the pack's patterns against a project using the frozen Pattern-fit contract. `briefJSON` is
+    /// the persisted Brief as JSON; `optionsJSON` carries `{perceived_bpm, match_mode,
+    /// excluded_pattern_ids, project_profile?, max_results?}`. Returns a `PatternRecommendationSet` JSON
+    /// on success, or a `{available:false, …}` envelope while the library is not fully authored
+    /// (fail-closed — never a partial ranking). JSON is the currency so the engine stays agnostic of the
+    /// pack's fit schema. Throws only on a genuine configuration error (missing policy, no project input).
+    func recommend(briefJSON: Data, optionsJSON: Data) throws -> Data
 
     /// The full pattern for `id` as JSON (framing_mix, asl_range, camera vocabulary, lighting signature,
-    /// section arc, references, triggers), or nil when no pattern has that id.
+    /// section arc, references, and the fit_profile when authored), or nil when no pattern has that id.
     func get(id: String) throws -> Data?
 }

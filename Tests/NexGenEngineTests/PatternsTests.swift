@@ -36,21 +36,12 @@ struct PatternsTests {
         #expect(library.count == 23)
     }
 
-    @Test("score and similarity smoke")
-    func scoreAndSimilaritySmoke() throws {
-        let scored = try Patterns.scorePatterns(maxResults: 3, minScore: nil)
-        #expect(scored.count >= 1)
-        let anchorId = scored[0].pattern.id
+    @Test("similarity smoke over the loaded library")
+    func similaritySmoke() throws {
+        let library = try Patterns.loadAllPatterns()
+        let anchorId = try #require(library.first).id
         let neighbours = try PatternsSimilarity.suggestSimilar(patternId: anchorId, top: 3)
         #expect(neighbours.allSatisfy { $0.score >= 0.0 && $0.score <= 1.0 })
-    }
-
-    @Test("suggestPatterns hard-filters by trigger match")
-    func suggestPatternsHardFilters() throws {
-        let matches = try Patterns.suggestPatterns(visualMedium: .liveActionRealistic, maxResults: 50)
-        for pattern in matches {
-            #expect(pattern.matches(visualMedium: .liveActionRealistic, mood: nil, tempo: nil, concept: nil, figures: nil, aspect: nil))
-        }
     }
 
     // MARK: - PatternsMoodInference
