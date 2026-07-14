@@ -6,11 +6,13 @@ import Testing
 @MainActor
 struct ProviderManifestTests {
 
+    // Higgsfield is intentionally absent: its DoP direct registry was retired (#163). Higgsfield models
+    // now arrive via runtime MCP discovery with raw ids carrying `.mcp` offers (see MCPModelDiscoveryTests),
+    // never as a static `higgsfield/`-prefixed `.api` binding.
     @Test func singleSourceModelsMapToOneApiBinding() {
         for (id, provider) in [
             ("marble/marble-1.1", GenerationProvider.marble),
             ("runway/gen4.5", .runway),
-            ("higgsfield/dop-turbo", .higgsfield),
             ("fal-ai/flux-pro/v1.1", .fal),
         ] {
             let bindings = ProviderManifest.bindings(forModelId: id)

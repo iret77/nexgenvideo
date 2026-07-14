@@ -56,6 +56,12 @@ final class ModelCatalog {
     private(set) var lastError: String?
 
     @ObservationIgnored private var didConfigure = false
+    /// The curated base: launch-seed registries, then the hosted remote catalog. Replaced wholesale by
+    /// `load(entries:)`.
+    @ObservationIgnored private var baseEntries: [CatalogEntry] = []
+    /// Runtime MCP-discovered models per provider (#163). Layered ON TOP of the base so a remote
+    /// refresh never drops a signed-in provider's models, and a sign-out clears exactly that provider's.
+    @ObservationIgnored private var discoveredByProvider: [GenerationProvider: [CatalogEntry]] = [:]
 
     private init() {}
 
@@ -67,7 +73,50 @@ final class ModelCatalog {
     }
 
     func load(entries: [CatalogEntry]) {
-        apply(entries)
+        baseEntries = entries
+        rebuild()
+    }
+
+    /// Replace the runtime-discovered models for one provider (empty clears them), then rebuild the
+    /// union. Called when a provider signs in / out or its MCP discovery re-runs.
+    func applyDiscovered(_ entries: [CatalogEntry], for provider: GenerationProvider) {
+        discoveredByProvider[provider] = entries.isEmpty ? nil : entries
+        rebuild()
+    }
+
+    /// Replace the ENTIRE discovered set in one rebuild — the coordinator's per-refresh result. A
+    /// provider absent from `byProvider` has its discovered models cleared (signed out), so this is
+    /// self-correcting: what's not rediscovered disappears (usable-only).
+    func setDiscovered(_ byProvider: [GenerationProvider: [CatalogEntry]]) {
+        discoveredByProvider = byProvider.filter { !$0.value.isEmpty }
+        rebuild()
+    }
+
+    private func rebuild() { apply(mergedEntries()) }
+
+    /// Base ∪ discovered, base first and its curated fields winning; a model offered by both merges the
+    /// offers (so #159's "any activated provider that exposes it" resolves to the cheapest binding).
+    private func mergedEntries() -> [CatalogEntry] {
+        var order: [String] = []
+        var byId: [String: CatalogEntry] = [:]
+        func add(_ entries: [CatalogEntry]) {
+            for entry in entries {
+                if var existing = byId[entry.id] {
+                    var offers = existing.offers ?? []
+                    for offer in (entry.offers ?? []) where !offers.contains(offer) { offers.append(offer) }
+                    existing.offers = offers
+                    byId[entry.id] = existing
+                } else {
+                    byId[entry.id] = entry
+                    order.append(entry.id)
+                }
+            }
+        }
+        add(baseEntries)
+        for provider in GenerationProvider.allCases {
+            if let entries = discoveredByProvider[provider] { add(entries) }
+        }
+        return order.map { byId[$0]! }
     }
 
     /// The provider-neutral LOGICAL id the LLM sees — a known provider prefix stripped off.

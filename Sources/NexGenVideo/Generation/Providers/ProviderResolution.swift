@@ -49,6 +49,11 @@ struct ProviderBinding: Sendable, Hashable {
     /// Declared per-call cost from the catalog offer, when known; nil → resolver uses the
     /// billing-aware heuristic.
     var costPerCall: Double? = nil
+    /// For an `.mcp` `.generation` binding whose provider selects the concrete model through a tool
+    /// argument (the discovered generate tool takes a free-form `model` id — Higgsfield): the model id
+    /// to send. `providerRef` then names the generate TOOL, and this names the MODEL within it. nil for
+    /// API bindings and single-model MCP tools.
+    var modelParam: String? = nil
 }
 
 /// One provider's declared way to serve a model — the DATA that replaces id-prefix inference.
@@ -62,15 +67,19 @@ struct ProviderOffer: Codable, Sendable, Hashable {
     var transport: ProviderTransport = .api
     var providerRef: String? = nil
     var costPerCall: Double? = nil
+    /// The provider's own model id for an MCP generate tool that selects the model through a free-form
+    /// `model` argument (Higgsfield). `providerRef` names the generate tool; this names the model.
+    var modelParam: String? = nil
 
-    private enum CodingKeys: String, CodingKey { case provider, transport, providerRef, costPerCall }
+    private enum CodingKeys: String, CodingKey { case provider, transport, providerRef, costPerCall, modelParam }
 
     init(provider: GenerationProvider, transport: ProviderTransport = .api,
-         providerRef: String? = nil, costPerCall: Double? = nil) {
+         providerRef: String? = nil, costPerCall: Double? = nil, modelParam: String? = nil) {
         self.provider = provider
         self.transport = transport
         self.providerRef = providerRef
         self.costPerCall = costPerCall
+        self.modelParam = modelParam
     }
 
     init(from decoder: Decoder) throws {
@@ -79,6 +88,7 @@ struct ProviderOffer: Codable, Sendable, Hashable {
         transport = try c.decodeIfPresent(ProviderTransport.self, forKey: .transport) ?? .api
         providerRef = try c.decodeIfPresent(String.self, forKey: .providerRef)
         costPerCall = try c.decodeIfPresent(Double.self, forKey: .costPerCall)
+        modelParam = try c.decodeIfPresent(String.self, forKey: .modelParam)
     }
 }
 

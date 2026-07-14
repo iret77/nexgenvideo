@@ -9,10 +9,14 @@ PackSelfTest.runIfRequested()
 Telemetry.start()
 BundledFonts.register()
 ModelCatalog.shared.configure()
-ModelCatalog.shared.load(entries: FalModelRegistry.entries + MarbleModelRegistry.entries + RunwayModelRegistry.entries + HiggsfieldModelRegistry.entries)
+ModelCatalog.shared.load(entries: FalModelRegistry.entries + MarbleModelRegistry.entries + RunwayModelRegistry.entries)
 // Then refresh from the hosted catalog (models + ranking cards without an app release); the
 // registries above are the offline fallback and first-run seed.
 Task { @MainActor in await RemoteCatalog.refresh() }
+
+// Higgsfield/OpenArt and other MCP providers have no static registry — their models are discovered at
+// runtime once the user signs in (#163). Layered onto the catalog; re-runs on every activation change.
+MCPCatalogDiscovery.start()
 
 // Load installed format packs before any UI reads the catalog. Packs ship as
 // signed `.ngvpack` bundles outside the DMG; incompatible/unsigned ones surface

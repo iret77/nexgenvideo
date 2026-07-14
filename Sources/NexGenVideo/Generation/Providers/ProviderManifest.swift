@@ -22,7 +22,7 @@ enum ProviderManifest {
             out.append(ProviderBinding(
                 provider: offer.provider, transport: offer.transport, kind: .generation,
                 providerRef: ref, billing: offer.transport == .mcp ? .subscription : .perCall,
-                costPerCall: offer.costPerCall))
+                costPerCall: offer.costPerCall, modelParam: offer.modelParam))
             if offer.transport == .api, ProviderMCP.hasConfig(offer.provider) {
                 out.append(ProviderBinding(
                     provider: offer.provider, transport: .mcp, kind: .generation,
@@ -48,7 +48,8 @@ enum ProviderManifest {
     static func nominalProvider(forModelId id: String) -> GenerationProvider {
         if MarbleModelRegistry.isMarbleModel(id) { return .marble }
         if RunwayModelRegistry.isRunwayModel(id) { return .runway }
-        if HiggsfieldModelRegistry.isHiggsfieldModel(id) { return .higgsfield }
+        // Higgsfield models arrive via runtime MCP discovery (raw ids, always carrying `.mcp` offers),
+        // so they never fall through to this bootstrap default — no `higgsfield/` prefix branch needed.
         return .fal
     }
 

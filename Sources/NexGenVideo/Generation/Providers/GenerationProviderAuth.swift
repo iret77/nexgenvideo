@@ -47,4 +47,38 @@ extension GenerationProvider {
             return nil
         }
     }
+
+    /// When a provider's MCP generate tools take a free-form `model` id (rather than an inline enum),
+    /// the full model list lives behind a separate catalog tool. This names ONLY that tool + how to
+    /// page it — the model list itself stays live/discovery-driven (never a hardcoded model table).
+    /// `nil` → NGV maps the discovered generate tools directly (inline `model` enum expanded, else one
+    /// entry per modality).
+    var mcpModelCatalog: MCPModelCatalog? {
+        switch self {
+        // Higgsfield: `generate_*` take `model` as a required free string; `models_explore(action:list,
+        // type:…)` paginates the full catalog (`items[]`, `has_more`, `next_page_token`).
+        case .higgsfield:
+            return MCPModelCatalog(tool: "models_explore", listArgs: ["action": "list"],
+                                   typeArg: "type", cursorArg: "after")
+        // OpenArt's model-advertising shape is not yet verified on-device; until it is, OpenArt maps its
+        // discovered generate tools directly (usable, just not model-expanded). Fill this in once its
+        // catalog tool is confirmed — no guessing a shape we can't test.
+        case .openart, .ace, .fal, .runway, .elevenlabs, .marble:
+            return nil
+        }
+    }
+}
+
+/// A provider's MCP model-catalog tool: the bounded per-provider hint that lets NGV enumerate the
+/// provider's models when its generate tools take a free-form `model` id. NOT a model table — it only
+/// names the tool and its paging args; the models come back live from the call.
+struct MCPModelCatalog: Equatable, Sendable {
+    /// The catalog tool name, e.g. `models_explore`.
+    let tool: String
+    /// Fixed arguments that request a listing, e.g. `["action": "list"]`.
+    let listArgs: [String: String]
+    /// The argument that filters by output modality (`type` → "video"/"image"/"audio"), or nil to list all.
+    let typeArg: String?
+    /// The argument that carries the next-page cursor back to the tool (`after`), or nil if unpaged.
+    let cursorArg: String?
 }

@@ -345,8 +345,8 @@ final class GenerationService {
 
         if binding?.transport == .mcp {
             await runMCPJob(
-                provider: provider, params: params,
-                placeholders: placeholders, editor: editor,
+                provider: provider, toolName: endpoint, modelParam: binding?.modelParam,
+                params: params, placeholders: placeholders, editor: editor,
                 onComplete: onComplete, onFailure: onFailure)
             return
         }
@@ -359,12 +359,6 @@ final class GenerationService {
             await runMarbleJob(
                 model: marbleModel, prompt: p.prompt, referencePath: p.imageURLs.first,
                 name: genInput.prompt, placeholders: placeholders, editor: editor,
-                onComplete: onComplete, onFailure: onFailure)
-            return
-        case .higgsfield:
-            await runHiggsfieldJob(
-                endpoint: endpoint, params: params,
-                placeholders: placeholders, editor: editor,
                 onComplete: onComplete, onFailure: onFailure)
             return
         case .runway:
@@ -383,11 +377,12 @@ final class GenerationService {
                     onComplete: onComplete, onFailure: onFailure)
                 return
             }
-        case .openart, .ace:
-            // MCP-only providers: a resolved `.mcp` binding was handled above. Reaching here means no
-            // MCP was configured, so there is no direct-API path to fall back to.
+        case .higgsfield, .openart, .ace:
+            // MCP-only providers: a resolved `.mcp` binding was handled above. Reaching here means the
+            // provider isn't signed in (no `.mcp` binding, no direct-API path) — its models were never
+            // offered (usable-only), so this is the guidance for a stale id.
             return failJob(placeholders,
-                           "\(provider.displayName) runs over MCP — configure its MCP server in Settings \u{2192} Providers.",
+                           "\(provider.displayName) runs over MCP — sign in under Settings \u{2192} Providers.",
                            onFailure)
         case .fal:
             break
@@ -486,6 +481,8 @@ final class GenerationService {
     /// provider whose MCP exposes no matching tool fails with guidance, not a keyless REST attempt.
     private func runMCPJob(
         provider: GenerationProvider,
+        toolName: String?,
+        modelParam: String?,
         params: BackendGenerationParams,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
@@ -497,13 +494,18 @@ final class GenerationService {
         }
         do {
             let tools = try await client.discoverTools()
-            guard let tool = Self.matchMCPTool(tools, for: params) else {
+            // Prefer the exact generate tool the resolved offer named (from discovery); fall back to
+            // modality matching for a bootstrap/legacy offer that carried no tool name.
+            let tool = toolName.flatMap { name in tools.first { $0.name == name } }
+                ?? Self.matchMCPTool(tools, for: params)
+            guard let tool else {
                 await client.disconnect()
                 return failJob(placeholders,
                                "\(provider.displayName)'s MCP exposes no tool for this request — check the provider's MCP or add its API key.",
                                onFailure)
             }
-            let texts = try await client.callTool(name: tool.name, arguments: Self.mcpArguments(for: params))
+            let texts = try await client.callTool(
+                name: tool.name, arguments: Self.mcpArguments(for: params, model: modelParam))
             await client.disconnect()
             let urls = texts.flatMap(Self.extractURLs)
             guard !urls.isEmpty else {
@@ -541,14 +543,18 @@ final class GenerationService {
     }
 
     /// Arguments for the MCP tool call. The prompt is already gate-compiled upstream; pass it as the
-    /// common `prompt` field most generation MCPs accept. Provider-specific fields are field-tuned.
-    private static func mcpArguments(for params: BackendGenerationParams) -> [String: String] {
+    /// common `prompt` field most generation MCPs accept, plus the discovered `model` id when the tool
+    /// selects its model that way (Higgsfield's generate_* take a free-form `model`).
+    private static func mcpArguments(for params: BackendGenerationParams, model: String?) -> [String: String] {
+        var args: [String: String]
         switch params {
-        case .video(let p): return ["prompt": p.prompt]
-        case .image(let p): return ["prompt": p.prompt]
-        case .audio(let p): return ["prompt": p.prompt]
-        case .upscale: return [:]
+        case .video(let p): args = ["prompt": p.prompt]
+        case .image(let p): args = ["prompt": p.prompt]
+        case .audio(let p): args = ["prompt": p.prompt]
+        case .upscale: args = [:]
         }
+        if let model, !model.isEmpty { args["model"] = model }
+        return args
     }
 
     /// Pull http(s) URLs out of an MCP tool's text/JSON result content.
@@ -556,43 +562,6 @@ final class GenerationService {
         guard let re = try? NSRegularExpression(pattern: "https?://[^\\s\"'\\\\)]+") else { return [] }
         let ns = text as NSString
         return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { ns.substring(with: $0.range) }
-    }
-
-    private func runHiggsfieldJob(
-        endpoint: String,
-        params: BackendGenerationParams,
-        placeholders: [MediaAsset],
-        editor: EditorViewModel,
-        onComplete: (@MainActor (MediaAsset) -> Void)?,
-        onFailure: (@MainActor () -> Void)?
-    ) async {
-        guard let apiKey = ProviderKeychain.load(.higgsfield) else {
-            return failJob(placeholders, "Add a Higgsfield API key in Settings to generate.", onFailure)
-        }
-        guard let model = HiggsfieldModelRegistry.model(for: endpoint) else {
-            return failJob(placeholders, "Unknown Higgsfield model: \(endpoint)", onFailure)
-        }
-        guard case .video(let p) = params else {
-            return failJob(placeholders, "Unsupported Higgsfield request: \(endpoint)", onFailure)
-        }
-        guard let image = p.referenceImageURLs.first ?? p.startFrameURL else {
-            return failJob(placeholders,
-                           "\(model.entry.displayName) is image-to-video — add a reference image.",
-                           onFailure)
-        }
-        do {
-            let client = HiggsfieldClient(apiKey: apiKey)
-            let urls = try await client.dopImageToVideo(
-                model: model.apiModel, prompt: p.prompt, imageURL: image)
-            let job = BackendGenerationJob(
-                _id: UUID().uuidString, status: .succeeded, resultUrls: urls,
-                errorMessage: nil, costCredits: nil, completedAt: nil)
-            await finalizeSuccess(
-                job: job, placeholders: placeholders, editor: editor,
-                onComplete: onComplete, onFailure: onFailure)
-        } catch {
-            failJob(placeholders, error.localizedDescription, onFailure)
-        }
     }
 
     private func runRunwayJob(
