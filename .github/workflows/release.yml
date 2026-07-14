@@ -24,11 +24,9 @@ on:
         required: false
         default: true
         type: boolean
-  # Every push to main rebuilds and refreshes the signed + notarized `dev-latest` rolling download.
-  # Skip when a push touches only docs — the Swift app is unchanged.
-  push:
-    branches: [main]
-    paths-ignore: ['docs/**', '**/*.md']
+  # No auto-build on merge: pushing to main NEVER triggers a signed build. The DMG + dev-latest
+  # (incl. plugins.json) refresh ONLY on an explicit `workflow_dispatch` ("build now"). This decouples
+  # "merge" from "build" — merging code no longer produces or publishes a release artifact.
   # On PRs touching the signing setup, run the FULL pipeline end-to-end in dry mode (build → sign →
   # notarize → staple → DMG → dev-latest), so the whole thing is validated under our identity pre-merge.
   pull_request:
@@ -39,7 +37,6 @@ on:
       - "scripts/assemble_ngvpack.sh"
       - "scripts/gen_plugins_json.py"
       - "plugins/**"
-      - ".github/workflows/release.yml"
       - "Sources/NexGenVideo/Resources/Info.plist"
 
 permissions:
