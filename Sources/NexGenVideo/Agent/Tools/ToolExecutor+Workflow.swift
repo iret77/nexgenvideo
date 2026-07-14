@@ -666,6 +666,42 @@ extension ToolExecutor {
         return try jsonResult(frameAuditJSON(audit, exists: true))
     }
 
+    /// #199: deterministic render-larger-then-crop. Resolves the source frame (explicit path or the
+    /// shot's recorded frame), crops it to the target aspect via the pure `planCrop` geometry, writes
+    /// the result into the durable media library, and imports it as a usable asset. This is the
+    /// invocation surface the ported `CropPlanner`/`FrameRasterizer` lacked (they were test-only).
+    func cropToAspectTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let aspect = try args.requireString("aspect")
+        let anchor = CropAnchor(rawValue: args.string("anchor") ?? "center") ?? .center
+        let home = FrameInventory.projectHome(of: root)
+        guard let (masterURL, _) = resolveAuditedFrame(
+            shotId: args.string("shot_id") ?? "", role: args.string("role") ?? "start",
+            explicitPath: args.string("path"), home: home, dataRoot: root)
+        else {
+            throw ToolError("No source image for crop_to_aspect. Pass `path`, or a `shot_id` whose frame "
+                + "is recorded in the frames manifest.")
+        }
+        let mediaDir = home.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
+        let dest = mediaDir.appendingPathComponent(
+            "\(masterURL.deletingPathExtension().lastPathComponent)-crop-\(aspect.replacingOccurrences(of: ":", with: "x")).png")
+        let plan: CropPlan
+        do {
+            plan = try FrameRasterizer.generateCrop(masterPath: masterURL, dest: dest, targetAspect: aspect, anchor: anchor)
+        } catch {
+            throw ToolError("crop_to_aspect failed: \(error)")
+        }
+        let asset = existingOrImportedAsset(durableMediaURL(for: dest, editor: editor), editor: editor)
+        return try jsonResult([
+            "asset_id": asset.map { $0.id as Any } ?? NSNull(),
+            "output": FrameInventory.relativePath(of: dest, to: home),
+            "aspect": aspect,
+            "anchor": anchor.rawValue,
+            "target_size": ["width": plan.targetSize.width, "height": plan.targetSize.height],
+            "box": ["left": plan.box.left, "top": plan.box.top, "right": plan.box.right, "bottom": plan.box.bottom],
+        ])
+    }
+
     /// Locate the frame image to audit and its project-home-relative render path. Explicit `path`
     /// (absolute or home-relative) wins; otherwise the frames manifest's entry for this shot+role.
     private func resolveAuditedFrame(
