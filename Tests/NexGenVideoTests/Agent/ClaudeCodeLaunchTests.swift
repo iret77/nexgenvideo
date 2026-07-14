@@ -15,6 +15,18 @@ struct ClaudeCodeLaunchTests {
             #"{"mcpServers":{"nexgen":{"type":"http","url":"http://127.0.0.1:19789/mcp"}}}"#)
     }
 
+    @Test("#201: claude -p gets the FULL manual as --append-system-prompt (parity with the API agent)")
+    func fullManualAppended() {
+        // The runtime passes AgentInstructions.serverInstructions; verify that IS the full manual and
+        // still carries the presentation contract, so nothing is lost by switching off presentationContract.
+        let manual = AgentInstructions.serverInstructions
+        #expect(manual.contains(AgentInstructions.presentationContract))
+        #expect(manual.count > AgentInstructions.presentationContract.count * 2)
+        // And the args builder emits it verbatim.
+        let cfg = ClaudeCodeLaunchConfig(workingDirectory: URL(fileURLWithPath: "/tmp/proj"), appendSystemPrompt: manual)
+        #expect(valueAfter("--append-system-prompt", ClaudeCodeLaunch.arguments(cfg)) == manual)
+    }
+
     @Test func coreFlagsArePresent() {
         let cfg = ClaudeCodeLaunchConfig(workingDirectory: URL(fileURLWithPath: "/tmp/proj"))
         let args = ClaudeCodeLaunch.arguments(cfg)

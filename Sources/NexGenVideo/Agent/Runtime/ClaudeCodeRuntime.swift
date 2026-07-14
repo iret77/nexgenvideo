@@ -81,7 +81,11 @@ final class ClaudeCodeRuntime {
                 .merging(ExternalMcpServers.all()) { existing, _ in existing },
             mcpPort: mcpPort,
             permissionMode: permissionMode,
-            appendSystemPrompt: AgentInstructions.presentationContract
+            // #201: hand `claude -p` the FULL operating manual as a hard --append-system-prompt (it
+            // already ends with the presentation contract), at parity with the API-key agent which gets
+            // serverInstructions as its `system:` prompt. The MCP-advertised `instructions` field is a
+            // soft protocol hint, not guaranteed injection — this closes that backend gap.
+            appendSystemPrompt: AgentInstructions.serverInstructions
         )
         let newProcess = ClaudeCodeProcess()
         do {

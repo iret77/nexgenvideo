@@ -139,6 +139,7 @@ final class ToolExecutor {
         case .getRenderManifest:    return try getRenderManifestTool(editor, args)
         case .saveFrameAudit:       return try saveFrameAuditTool(editor, args)
         case .getFrameAudit:        return try getFrameAuditTool(editor, args)
+        case .cropToAspect:         return try cropToAspectTool(editor, args)
         case .assembleTimeline:     return try assembleTimelineTool(editor, args)
         case .getLedger:            return try getLedgerTool(editor, args)
         case .setLedgerAttribute:   return try setLedgerAttributeTool(editor, args)

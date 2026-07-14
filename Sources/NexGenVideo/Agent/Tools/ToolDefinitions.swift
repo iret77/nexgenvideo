@@ -63,6 +63,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case getRenderManifest = "get_render_manifest"
     case saveFrameAudit = "save_frame_audit"
     case getFrameAudit = "get_frame_audit"
+    case cropToAspect = "crop_to_aspect"
     case assembleTimeline = "assemble_timeline"
     case getLedger = "get_ledger"
     case setLedgerAttribute = "set_ledger_attribute"
@@ -1142,6 +1143,21 @@ enum ToolDefinitions {
                     "role": ["type": "string", "enum": ["start", "end"], "description": "Keyframe role (default \"start\")."],
                 ],
                 required: ["shot_id"]
+            )
+        ),
+        AgentTool(
+            name: .cropToAspect,
+            description: "Deterministically crop a rendered/master frame to a target aspect (render-larger-then-crop). WRITES.\n\nComputes the largest box of the requested aspect that fits inside the source image and crops to it — exact, reproducible geometry (no model, no eyeballing), so an establishing frame the Bible master shows in full wide can be cut to the shot's delivery aspect without drift. Resolves the source from an explicit `path` (project-home-relative or absolute) or a `shot_id` (+`role`) recorded in the frames manifest. Writes the cropped PNG into the project's media library and imports it as a usable asset. Returns `{asset_id, output, aspect, anchor, target_size, box}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "aspect": ["type": "string", "description": "Target aspect as \"W:H\", e.g. \"16:9\" or \"9:16\"."],
+                    "anchor": ["type": "string", "enum": ["center", "left", "right", "top", "bottom"], "description": "Which side to keep when cropping (default center)."],
+                    "path": ["type": "string", "description": "Source image path (home-relative or absolute). Use this or shot_id."],
+                    "shot_id": ["type": "string", "description": "Shot whose recorded frame to crop (resolved via the frames manifest). Use this or path."],
+                    "role": ["type": "string", "enum": ["start", "end"], "description": "Keyframe role when using shot_id (default \"start\")."],
+                ],
+                required: ["aspect"]
             )
         ),
         AgentTool(

@@ -75,6 +75,10 @@ final class ModelCatalog {
     func load(entries: [CatalogEntry]) {
         baseEntries = entries
         rebuild()
+        // `isLoaded` tracks the BASE catalog sync — not every rebuild. Applying runtime-discovered
+        // MCP models (a rebuild) must NOT mark the catalog loaded, or `list_models` can't tell
+        // "synced but empty" from "not synced yet".
+        isLoaded = true
     }
 
     /// Replace the runtime-discovered models for one provider (empty clears them), then rebuild the
@@ -179,7 +183,6 @@ final class ModelCatalog {
         self.cardsById = newCardsById
         self.offersById = newOffersById
         self.internalByLogical = newInternalByLogical
-        self.isLoaded = true
         self.lastError = nil
     }
 }

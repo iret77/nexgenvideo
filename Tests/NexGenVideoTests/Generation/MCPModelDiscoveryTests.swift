@@ -169,8 +169,12 @@ struct MCPModelDiscoveryTests {
         let byModality = MCPModelDiscovery.generateToolsByModality(higgsfieldTools)
         let entries = MCPModelDiscovery.catalogEntries(
             models: models, toolsByModality: byModality, provider: .higgsfield)
+        // Applying discovered MCP models must NOT change `isLoaded` — that tracks the BASE catalog
+        // sync only. (Regression: it used to flip true via rebuild(), leaking across tests.)
+        let loadedBefore = ModelCatalog.shared.isLoaded
         ModelCatalog.shared.applyDiscovered(entries, for: .higgsfield)
         defer { ModelCatalog.shared.setDiscovered([:]) }
+        #expect(ModelCatalog.shared.isLoaded == loadedBefore)
 
         let bindings = ProviderManifest.bindings(forModelId: "cinematic_studio_3_0")
         #expect(bindings.count == 1)
