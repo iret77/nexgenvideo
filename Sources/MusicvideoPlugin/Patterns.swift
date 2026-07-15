@@ -16,20 +16,6 @@ import NexGenEngine
 /// pattern describes a LANGUAGE, not a straitjacket — escape via
 /// `pattern_override:` in the brief or a shot's notes.
 
-/// Coarse mood classification, used for pattern triggers. Port of
-/// `patterns_schema.py::MoodBand`.
-public enum MoodBand: String, Codable, Sendable, CaseIterable {
-    case introspective
-    case melancholic
-    case euphoric
-    case highEnergy = "high_energy"
-    case aggressive
-    case dreamy
-    case intimate
-    case narrative
-    case cinematic
-}
-
 /// Coarse BPM bands (parallel to the pack's tempo classification). Port of
 /// `patterns_schema.py::TempoBand`.
 public enum PatternTempoBand: String, Codable, Sendable, CaseIterable {
