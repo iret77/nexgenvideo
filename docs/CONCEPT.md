@@ -110,7 +110,7 @@ keine Runtime-Bootstrap-Reibung. Ein eigenes `nexgen-core`-Repo bräuchte es nur
 > Entry-Class), außerhalb des DMG ausgeliefert und auf Anfrage geladen. Der frühere Zustand „Pack =
 > in den App-Binary hineinkompiliertes Swift-Modul" war ein nicht freigegebenes Interim: `NexGenEngine`
 > ist jetzt eine **geteilte dynamische Bibliothek**, die Host und Pack gemeinsam linken; ein
-> `plugins.json`-Katalog auf dem `dev-latest`-Release speist den In-App-Picker (Install/Update/Activate,
+> `catalog.json` auf dem stabilen `plugins`-Kanal speist den In-App-Picker (Install/Update/Activate,
 > mit hartem Lade-Gate: Version → Signatur → Load). Maßgeblich für das ladbare Format ist
 > **[PLUGIN_STANDARD.md](PLUGIN_STANDARD.md)**; die „Swift-Modul in NexGenEngine"-Formulierungen unten
 > und in §3 beschreiben weiterhin korrekt die *inhaltliche* Grenze (welches Wissen Core vs. Pack ist),
@@ -285,7 +285,8 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 **Kein lokaler Build — niemals.** Verifikation ausschließlich über **GitHub Actions**
 (`ci.yml`, `macos-26`, `swift build` + `swift test`). Signiert + notarisiert über **unsere eigene
 high5 Developer ID** (`release.yml`, App-Store-Connect-API-Key, EdDSA-Sparkle-Key). `dev-latest` =
-rollendes signiertes Prerelease als öffentlicher Direktlink. PRs immer `--repo iret77/nexgenvideo`.
+rollendes signiertes Prerelease als öffentlicher Direktlink **für die App (DMG)**; die Format-Packs
+laufen über den davon entkoppelten, append-only `plugins`-Kanal. PRs immer `--repo iret77/nexgenvideo`.
 
 ## 12. Status (Stand 2026-06-28)
 

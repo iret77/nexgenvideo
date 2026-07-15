@@ -129,12 +129,21 @@ Incompatible / unsigned packs become a picker row with a calm reason (e.g.
 
 ## Catalog, install, activation
 
-- **Catalog** — `plugins.json`, an asset on the rolling `dev-latest` release, lists
+- **Catalog** — `catalog.json`, an asset on the dedicated **`plugins` channel release**, lists
   packs `{id, displayName, tagline, headline?, benefit?, version, minAppVersion, url,
   sha256, badge?}`. The picker (`PluginPickerView`) fetches it; a fetch failure is a
   calm offline state (installed packs keep working). One primary action, `Activate`:
   for a catalog pack it downloads (a hidden step) then binds; there is no separate
   "Install" action.
+- **The channel is append-only and release-independent** — a pack id may be listed in
+  SEVERAL versions; the app installs the newest whose `minAppVersion ≤` its own version
+  (`PluginManager.selectCompatiblePerPack`), so a breaking pack change never strands an
+  older app. Assets are version-stamped (`<id>-<version>.ngvpack.zip`), the `plugins`
+  release is never deleted, and both the push and the versioned-release path publish to
+  it (`scripts/publish_plugin_catalog.py`). Do **not** point the app at `dev-latest`: it
+  is delete+recreated per push and carries the app DMG only — serving the catalog from
+  there is what let a released pack fix never reach users (the 0.7.7 "Damaged pack"
+  incident, #168).
 - **Install (staged + atomic)** — the pack `url` (and the catalog URL) **must be
   https**; a non-https or malformed URL is refused with an actionable error and no
   download. The download is checksum-verified (`sha256`), unpacked into a temp dir, and

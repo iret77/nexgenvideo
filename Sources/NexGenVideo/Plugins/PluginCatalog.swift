@@ -1,8 +1,9 @@
 import Foundation
 
-/// The `plugins.json` catalog published as an asset on the `dev-latest` release,
-/// listing every available pack. The picker fetches it to offer install/update;
-/// a fetch failure is a calm offline state (installed packs keep working).
+/// The `catalog.json` published on the stable `plugins` channel, listing every available
+/// pack — possibly in SEVERAL versions per pack, so an older app still finds its last
+/// compatible one (`PluginManager.selectCompatiblePerPack` picks). The picker fetches it to
+/// offer install/update; a fetch failure is a calm offline state (installed packs keep working).
 struct PluginCatalog: Decodable, Equatable {
     let plugins: [Entry]
 
@@ -30,9 +31,13 @@ struct PluginCatalog: Decodable, Equatable {
 /// Fetches the catalog. Kept separate from the model so it can be unit-tested
 /// against decoded JSON without the network.
 enum PluginCatalogService {
-    /// The catalog asset on the rolling `dev-latest` prerelease.
+    /// The catalog on the `plugins` channel — a dedicated release that is only ever appended to,
+    /// decoupled from the app/DMG release cycle. Deliberately NOT the rolling `dev-latest`, which is
+    /// deleted and recreated on every push to main: that made a versioned release ship a fixed pack
+    /// the app never read (0.7.7 "Damaged pack" stayed broken in the field until dev-latest was
+    /// re-run by hand). Pack assets here are version-stamped, so a URL always addresses one version.
     static let catalogURL = URL(
-        string: "https://github.com/iret77/nexgenvideo/releases/download/dev-latest/plugins.json")!
+        string: "https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json")!
 
     enum FetchError: Error { case http(Int); case empty; case insecureURL(String) }
 

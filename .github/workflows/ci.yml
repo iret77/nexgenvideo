@@ -89,11 +89,30 @@ jobs:
       - name: Assemble format pack (.ngvpack, ad-hoc) + catalog
         run: |
           set -euo pipefail
-          # Secret-free validation of the whole pack pipeline: assemble the
-          # ad-hoc-signed .ngvpack, then generate the plugins.json the app decodes.
+          # Secret-free validation of the whole pack pipeline: assemble the ad-hoc-signed
+          # .ngvpack, then merge it into a catalog the app decodes.
           scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
-          python3 scripts/gen_plugins_json.py .build/plugins "https://example.com/dev-latest" .build/plugins/plugins.json
-          cat .build/plugins/plugins.json
+          # Merge against a channel that already carries an OLDER version: the append-only
+          # promise #168 rests on (older versions survive, so an older app keeps its last
+          # compatible pack) is what makes the multi-version selection meaningful.
+          cat > .build/existing.json <<'JSON'
+          {"schema":"plugins/v2","plugins":[{"id":"musicvideo","displayName":"Music Video",
+           "tagline":"older","version":"0.0.1","minAppVersion":"0.1.0",
+           "url":"https://example.com/plugins/musicvideo-0.0.1.ngvpack.zip","sha256":"deadbeef"}]}
+          JSON
+          python3 scripts/publish_plugin_catalog.py .build/plugins "https://example.com/plugins" \
+            .build/plugins/catalog.json --existing .build/existing.json
+          cat .build/plugins/catalog.json
+          python3 - <<'PY'
+          import json, sys
+          plugins = json.load(open(".build/plugins/catalog.json"))["plugins"]
+          versions = [p["version"] for p in plugins if p["id"] == "musicvideo"]
+          assert "0.0.1" in versions, f"append-only violated — older version dropped: {versions}"
+          assert len(versions) > 1, f"the freshly built version was not appended: {versions}"
+          for p in plugins:
+              assert p["url"].endswith(f"{p['id']}-{p['version']}.ngvpack.zip"), f"unversioned asset URL: {p['url']}"
+          print(f"catalog carries {len(versions)} musicvideo version(s): {versions}")
+          PY
 
       - name: Verify pack links the SHARED engine (guards the PackEntry-cast regression)
         run: |

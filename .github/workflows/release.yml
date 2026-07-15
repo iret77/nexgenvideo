@@ -24,20 +24,11 @@ on:
         required: false
         default: true
         type: boolean
-  # No auto-build on merge: pushing to main NEVER triggers a signed build. The DMG + dev-latest
-  # (incl. plugins.json) refresh ONLY on an explicit `workflow_dispatch` ("build now"). This decouples
-  # "merge" from "build" — merging code no longer produces or publishes a release artifact.
-  # On PRs touching the signing setup, run the FULL pipeline end-to-end in dry mode (build → sign →
-  # notarize → staple → DMG → dev-latest), so the whole thing is validated under our identity pre-merge.
-  pull_request:
-    paths:
-      - "scripts/bundle.sh"
-      - "scripts/NexGenVideo.entitlements"
-      - "scripts/update_appcast.py"
-      - "scripts/assemble_ngvpack.sh"
-      - "scripts/gen_plugins_json.py"
-      - "plugins/**"
-      - "Sources/NexGenVideo/Resources/Info.plist"
+  # `workflow_dispatch` is the ONLY trigger. Nothing a commit, a merge, or a PR touches may start a
+  # signed build — not the bundling scripts, not the pack manifests, not this file. A build happens
+  # when a human asks for one, never as a side effect of changing code. Do not add `push:` or
+  # `pull_request:` here: correctness of the app is verified by ci.yml (build + test) on every PR;
+  # this workflow only produces and publishes artifacts, and that is a deliberate act.
 
 permissions:
   contents: write
@@ -52,18 +43,11 @@ jobs:
       - name: Resolve version + mode
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            V="${{ inputs.version }}"
-            echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "version must be X.Y.Z (got '$V')"; exit 1; }
-            DRY="${{ inputs.dry_run }}"
-          else
-            # Rolling dev-latest (push): auto-incrementing 0.1.<workflow run number> — monotonic, no manual bookkeeping.
-            V="0.1.${{ github.run_number }}"
-            DRY="true"
-          fi
+          V="${{ inputs.version }}"
+          echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "version must be X.Y.Z (got '$V')"; exit 1; }
           echo "REL_VERSION=$V" >> "$GITHUB_ENV"
-          echo "REL_DRY=$DRY" >> "$GITHUB_ENV"
-          echo "Building $V (dry=$DRY, event=${{ github.event_name }})"
+          echo "REL_DRY=${{ inputs.dry_run }}" >> "$GITHUB_ENV"
+          echo "Building $V (dry=${{ inputs.dry_run }})"
 
       - name: Cache SwiftPM
         uses: actions/cache@v4
@@ -146,6 +130,31 @@ jobs:
           scripts/assemble_ngvpack.sh plugins/musicvideo.json release .build/plugins "${SIGN_IDENTITY:-}"
           ls -la .build/plugins
 
+      - name: Publish packs to the stable plugin channel
+        # The `plugins` release is the channel the app reads. It is NEVER deleted (unlike dev-latest,
+        # which is delete+recreated on every build) and only ever appended to, and BOTH the dev-latest
+        # and the versioned-release path publish here — so a versioned release can no longer ship a
+        # pack fix the app never sees (#168).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/plugins"
+          gh release view plugins >/dev/null 2>&1 || gh release create plugins \
+            --prerelease --title "NexGenVideo — plugin channel" \
+            --notes "The stable catalog the app reads. Append-only: every published pack version stays, so an older app keeps finding its last compatible pack. Not tied to the app release cycle."
+          # Merge into what's already published — absent on the very first run.
+          gh release download plugins -p catalog.json -D .build 2>/dev/null || true
+          python3 scripts/publish_plugin_catalog.py .build/plugins "$BASE" .build/plugins/catalog.json \
+            --existing .build/catalog.json
+          # Version-stamped assets, so a published version's URL keeps addressing that version.
+          gh release upload plugins .build/plugins/*-*.ngvpack.zip --clobber
+          if compgen -G ".build/plugins/*-*.badge.png" >/dev/null; then
+            gh release upload plugins .build/plugins/*-*.badge.png --clobber
+          fi
+          # The catalog goes last: it only ever advertises assets that are already uploaded.
+          gh release upload plugins .build/plugins/catalog.json --clobber
+
       - name: EdDSA-sign DMG for Sparkle
         if: ${{ env.SPARKLE_PRIV_DER != '' }}
         run: |
@@ -158,25 +167,18 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Publish signed build to rolling dev-latest
-        # Only push-to-main refreshes the PUBLIC dev-latest download. PR runs still build+sign+notarize
-        # (validating signing changes end-to-end) but must NOT publish an unmerged branch build to the
-        # public rolling download.
-        if: ${{ env.REL_DRY == 'true' && github.event_name != 'pull_request' }}
+        # dev-latest is the rolling APP download only — packs live on the `plugins` channel (#168).
+        if: ${{ env.REL_DRY == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/dev-latest"
-          python3 scripts/gen_plugins_json.py .build/plugins "$BASE" .build/plugins/plugins.json
           gh release delete dev-latest --cleanup-tag --yes 2>/dev/null || true
           gh release create dev-latest \
             .build/NexGenVideo.dmg \
-            .build/plugins/*.ngvpack.zip \
-            .build/plugins/*.badge.png \
-            .build/plugins/plugins.json \
             --prerelease \
             --title "NexGenVideo — latest dev build" \
-            --notes "Signed with our Developer ID (high5 ventures GmbH) and notarized by Apple — open the DMG and drag NexGenVideo to Applications. No Gatekeeper workaround needed. Format packs (.ngvpack) and their plugins.json catalog are attached — the app fetches them on demand. Auto-built from \`${{ github.sha }}\`."
+            --notes "Signed with our Developer ID (high5 ventures GmbH) and notarized by Apple — open the DMG and drag NexGenVideo to Applications. No Gatekeeper workaround needed. Format packs (.ngvpack) are fetched on demand from the \`plugins\` channel. Auto-built from \`${{ github.sha }}\`."
 
       - name: Publish GitHub release + appcast
         if: ${{ env.REL_DRY == 'false' }}
@@ -195,13 +197,11 @@ jobs:
             git commit -m "release: appcast for $TAG"
           fi
           git push origin "HEAD:${{ github.ref_name }}"
-          BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG"
-          python3 scripts/gen_plugins_json.py .build/plugins "$BASE" .build/plugins/plugins.json
+          # Packs are NOT attached here: they went to the `plugins` channel above, which is what the
+          # app actually reads. Attaching them to the version tag is what created the illusion that a
+          # release shipped a pack fix (#168).
           gh release create "$TAG" \
             .build/NexGenVideo.dmg \
-            .build/plugins/*.ngvpack.zip \
-            .build/plugins/*.badge.png \
-            .build/plugins/plugins.json \
             --title "NexGenVideo $TAG" \
             --notes "NexGenVideo $REL_VERSION (build ${BUILD_NUMBER})." \
             --target "$(git rev-parse HEAD)"

@@ -17,7 +17,7 @@ struct PluginCatalogDecodeTests {
               "tagline": "Structured AI music-video production.",
               "version": "0.0.1",
               "minAppVersion": "0.1.0",
-              "url": "https://github.com/iret77/nexgenvideo/releases/download/dev-latest/musicvideo.ngvpack.zip",
+              "url": "https://github.com/iret77/nexgenvideo/releases/download/plugins/musicvideo-0.0.1.ngvpack.zip",
               "sha256": "abc123"
             }
           ]
@@ -32,7 +32,31 @@ struct PluginCatalogDecodeTests {
         #expect(entry.version == "0.0.1")
         #expect(entry.minAppVersion == "0.1.0")
         #expect(entry.sha256 == "abc123")
-        #expect(entry.url.lastPathComponent == "musicvideo.ngvpack.zip")
+        #expect(entry.url.lastPathComponent == "musicvideo-0.0.1.ngvpack.zip")
+    }
+
+    /// #168: the app must read the STABLE `plugins` channel. `dev-latest` is delete+recreated on
+    /// every push to main, so pointing here again would resurrect the 0.7.7 failure where a
+    /// released pack fix never reached the app. Cheap guard against an innocent-looking revert.
+    @Test func catalogURLIsTheStableChannelNotDevLatest() {
+        let url = PluginCatalogService.catalogURL
+        #expect(url.scheme == "https")
+        #expect(!url.absoluteString.contains("dev-latest"))
+        #expect(url.absoluteString.hasSuffix("/releases/download/plugins/catalog.json"))
+    }
+
+    /// The channel lists SEVERAL versions per pack; decoding must keep them all (the app, not the
+    /// decoder, narrows to the newest compatible one).
+    @Test func decodesMultipleVersionsOfOnePack() throws {
+        let catalog = try PluginCatalogService.decode("""
+        {"schema":"plugins/v2","plugins":[
+          {"id":"musicvideo","displayName":"MV","tagline":"t","version":"0.0.3","minAppVersion":"0.2.0",
+           "url":"https://ex.com/musicvideo-0.0.3.ngvpack.zip","sha256":"a"},
+          {"id":"musicvideo","displayName":"MV","tagline":"t","version":"0.0.1","minAppVersion":"0.1.0",
+           "url":"https://ex.com/musicvideo-0.0.1.ngvpack.zip","sha256":"b"}]}
+        """.data(using: .utf8)!)
+        #expect(catalog.plugins.count == 2)
+        #expect(catalog.plugins.map(\.version) == ["0.0.3", "0.0.1"])
     }
 
     @Test func emptyCatalogDecodes() throws {
