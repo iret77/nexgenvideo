@@ -13,7 +13,9 @@ struct PatternLibraryGoldenTests {
     @Test("every bundled pattern YAML file parses and validates")
     func everyPatternYAMLParses() throws {
         let urls = PackKnowledge.patternLibraryURLs()
-        #expect(urls.count == 23, "expected all 23 pattern YAMLs to be bundled as resources")
+        // No fixed count: the library grows as patterns get authored, and the pack simply loads
+        // whatever is bundled. Asserting a number here would fail on every addition.
+        #expect(!urls.isEmpty, "no pattern YAMLs bundled as resources")
 
         for url in urls.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let text = try String(contentsOf: url, encoding: .utf8)
@@ -29,11 +31,11 @@ struct PatternLibraryGoldenTests {
         }
     }
 
-    @Test("loadAllPatterns returns all 23 patterns sorted by filename")
-    func loadAllPatternsReturnsAll23() throws {
+    @Test("loadAllPatterns returns every bundled pattern, sorted by filename, with unique ids")
+    func loadAllPatternsReturnsTheLibrary() throws {
         let library = try Patterns.loadAllPatterns()
-        #expect(library.count == 23)
-        #expect(Set(library.map(\.id)).count == 23, "pattern ids must be unique across the library")
+        #expect(library.count == PackKnowledge.patternLibraryURLs().count, "every bundled YAML loads")
+        #expect(Set(library.map(\.id)).count == library.count, "pattern ids must be unique across the library")
     }
 
     @Test("every pattern's id matches its filename stem")

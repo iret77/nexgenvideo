@@ -4,9 +4,9 @@ import NexGenEngine
 /// The musicvideo pack's `PatternProviding` implementation — the live wire from the agent's
 /// `suggest_patterns`/`get_pattern` tools to the Pattern-fit contract. `recommend` assembles a
 /// `ProjectFitProfile` from the Brief, ranks the library with the deterministic `PatternFitScorer`
-/// against the frozen policy, and returns a `PatternRecommendationSet`. Fail-closed: while any of the
-/// library's `fit_profile` blocks is missing or invalid it returns an `available:false` envelope, never
-/// a partial ranking.
+/// against the frozen policy, and returns a `PatternRecommendationSet` plus the library coverage it
+/// rests on. A pattern is optional, so an unauthored one is simply not a candidate — never a reason
+/// to withhold the ranking.
 public struct MusicvideoPatternProvider: PatternProviding {
     public init() {}
 
@@ -41,13 +41,11 @@ public struct MusicvideoPatternProvider: PatternProviding {
             ?? Options(projectProfile: nil, perceivedBpm: nil, matchMode: nil, excludedPatternIds: nil, maxResults: nil)
         let brief = try? JSONDecoder().decode(Brief.self, from: briefJSON)
         do {
-            let set = try PatternFitLibrary.recommend(
+            let (set, coverage) = try PatternFitLibrary.recommend(
                 brief: brief, projectOverride: options.projectProfile, perceivedBpm: options.perceivedBpm,
                 matchMode: options.matchMode ?? .balanced, excludedPatternIds: options.excludedPatternIds ?? [],
                 maxResults: options.maxResults)
-            return try PatternFitLibrary.canonicalJSON(set)
-        } catch PatternFitError.recommendationsUnavailable(let missing, let invalid) {
-            return try unavailableEnvelope(missing: missing, invalid: invalid)
+            return try rankedEnvelope(set: set, coverage: coverage)
         } catch PatternFitError.noProjectInput {
             return try envelope([
                 "available": false,
@@ -68,18 +66,39 @@ public struct MusicvideoPatternProvider: PatternProviding {
         return try encoder.encode(pattern)
     }
 
-    /// The fail-closed body: no ranking, an actionable reason and the exact gap.
-    private func unavailableEnvelope(missing: [String], invalid: [String: [String]]) throws -> Data {
-        let total = missing.count + invalid.count
-        return try envelope([
-            "available": false,
-            "scorer_version": "pattern-fit-scorer/1.0",
-            "reason": "Pattern recommendations are disabled until every pattern ships a valid fit_profile. "
-                + "\(total) profile(s) still missing or invalid. This is a fail-closed configuration gate, "
-                + "not a scoring result — no partial ranking is produced.",
-            "missing_profiles": missing,
-            "invalid_profiles": invalid.mapValues { $0.sorted() },
-        ])
+    /// A ranking plus what it does and does not cover.
+    ///
+    /// A pattern is OPTIONAL. Without one, the video's structure comes from the analysis, the
+    /// user's intent and the agent-moderated process — so "none of the scored patterns fit" is a
+    /// real, usable answer, not a failure. Ranking is therefore never withheld because other
+    /// patterns are unauthored; authoring a profile is expensive and deliberate, and the useful
+    /// question ("does this one fit?") is answerable with one profile just as well as with 23.
+    ///
+    /// `library_coverage` keeps that honest: the agent must never present a 1-of-23 ranking as if
+    /// it were the whole field.
+    private func rankedEnvelope(
+        set: PatternRecommendationSet, coverage: PatternFitLibrary.LibraryCoverage
+    ) throws -> Data {
+        var body: [String: Any] = [
+            "available": true,
+            "pattern_optional": true,
+            "recommendations": try JSONSerialization.jsonObject(
+                with: try PatternFitLibrary.canonicalJSON(set)),
+            "library_coverage": [
+                "scored": coverage.scored,
+                "unscored": coverage.unscored,
+                "total": coverage.total,
+                "note": "Only scored patterns can be ranked. An unscored pattern is not a gap in the "
+                    + "answer — a pattern is optional, and without one the structure comes from the "
+                    + "analysis, the user's intent and this conversation. Never present this ranking "
+                    + "as the whole field: say how many patterns were actually weighed.",
+            ],
+        ]
+        if !coverage.invalid.isEmpty {
+            // A present-but-broken profile is a pack defect, not a normal state. Stay loud.
+            body["invalid_profiles"] = coverage.invalid.mapValues { $0.sorted() }
+        }
+        return try envelope(body)
     }
 
     private func envelope(_ object: [String: Any]) throws -> Data {

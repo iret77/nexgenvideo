@@ -6,18 +6,22 @@ import NexGenEngine
 public enum PatternFitError: Swift.Error, Sendable, Equatable {
     /// The frozen policy resource is missing or failed to decode.
     case policyUnavailable(String)
-    /// Fail-closed gate: the loaded library is not fully authored. Recommendations
-    /// stay unavailable — never a partial ranking. Lists patterns with no
-    /// `fit_profile` and patterns whose profile failed validation.
-    case recommendationsUnavailable(missing: [String], invalid: [String: [String]])
+    /// A pattern carries a `fit_profile` that is present but broken. That is a defect in the
+    /// pack, not a normal state — unlike an unauthored pattern, which is simply not a candidate.
+    case profileInvalid(id: String, issues: [String])
     /// Neither a Brief nor a prebuilt project profile was supplied.
     case noProjectInput
 }
 
-/// Loads the frozen policy and gate-validates the full Pattern library before
-/// any ranking. The heart of the fail-closed contract: recommendations are
-/// available only when every bundled pattern carries a schema-valid
-/// `fit_profile` (`docs/PATTERN_FIT_CONTRACT.md` §"Cutover and content gate").
+/// Loads the frozen policy and the scored part of the Pattern library.
+///
+/// A pattern is OPTIONAL: without one, a music video's structure comes from the analysis, the
+/// user's intent and the agent-moderated process. So an unauthored pattern is not a defect — it is
+/// simply not a candidate, and ranking the ones that ARE authored is exactly the useful answer
+/// ("does this pattern fit, yes or no"). Refusing to rank until all 23 are authored would withhold
+/// a working answer over a pattern nobody is required to take.
+///
+/// A profile that EXISTS but fails validation is different: that is a defect and stays loud.
 public enum PatternFitLibrary {
     /// Decode the committed scoring policy from the bundled resource. Weights are
     /// never hardcoded — they come from here.
@@ -40,30 +44,44 @@ public enum PatternFitLibrary {
         return sha256Hex(data)
     }
 
-    /// The recommendable library, or a fail-closed error. Every pattern must
-    /// carry a valid `fit_profile`; any missing or invalid profile makes the
-    /// whole feature unavailable rather than yielding a partial ranking.
-    public static func loadRecommendableLibrary() throws -> [(profile: PatternFitProfile, name: String)] {
+    /// How much of the library can currently be ranked. Reported alongside every result so the
+    /// agent never presents a 1-of-23 ranking as if it were the whole field.
+    public struct LibraryCoverage: Sendable, Equatable {
+        /// Patterns carrying a valid `fit_profile` — the candidates.
+        public var scored: [String]
+        /// Patterns with no profile yet. Authoring one is expensive, so this is the normal state,
+        /// not a gap to apologise for.
+        public var unscored: [String]
+        /// Present-but-broken profiles. A real defect.
+        public var invalid: [String: [String]]
+        public var total: Int { scored.count + unscored.count + invalid.count }
+    }
+
+    /// The scored part of the library, plus what it doesn't cover. Never throws over an unauthored
+    /// pattern: it is not a candidate, and a pattern is optional anyway.
+    public static func loadRecommendableLibrary() throws
+        -> (library: [(profile: PatternFitProfile, name: String)], coverage: LibraryCoverage)
+    {
         let patterns = try Patterns.loadAllPatterns()
         var recommendable: [(PatternFitProfile, String)] = []
-        var missing: [String] = []
+        var scored: [String] = []
+        var unscored: [String] = []
         var invalid: [String: [String]] = [:]
         for pattern in patterns {
             guard let profile = pattern.fitProfile else {
-                missing.append(pattern.id)
+                unscored.append(pattern.id)
                 continue
             }
             let issues = validate(profile, expectedId: pattern.id)
             if issues.isEmpty {
                 recommendable.append((profile, pattern.name))
+                scored.append(pattern.id)
             } else {
                 invalid[pattern.id] = issues
             }
         }
-        guard missing.isEmpty, invalid.isEmpty else {
-            throw PatternFitError.recommendationsUnavailable(missing: missing.sorted(), invalid: invalid)
-        }
-        return recommendable
+        return (recommendable, LibraryCoverage(
+            scored: scored.sorted(), unscored: unscored.sorted(), invalid: invalid))
     }
 
     /// Structural validation beyond JSON Schema: evidence references resolve,
@@ -94,15 +112,15 @@ public enum PatternFitLibrary {
         return issues
     }
 
-    /// Assemble a project profile and rank the recommendable library against it.
-    /// Throws `PatternFitError.recommendationsUnavailable` while any profile is
-    /// unauthored — the fail-closed state until all 23 ship.
+    /// Assemble a project profile and rank whatever the library can score against it. An empty
+    /// ranking is a legitimate answer ("none of the scored patterns fit — go without one"), not an
+    /// error.
     public static func recommend(
         brief: Brief?, projectOverride: ProjectFitProfile? = nil, perceivedBpm: Double? = nil,
         matchMode: FitMatchMode = .balanced, excludedPatternIds: [String] = [], maxResults: Int? = nil
-    ) throws -> PatternRecommendationSet {
+    ) throws -> (set: PatternRecommendationSet, coverage: LibraryCoverage) {
         let policy = try loadPolicy()
-        let library = try loadRecommendableLibrary()
+        let (library, coverage) = try loadRecommendableLibrary()
 
         let project: ProjectFitProfile
         if let projectOverride {
@@ -116,9 +134,10 @@ public enum PatternFitLibrary {
         }
 
         let projectSha = sha256Hex(try canonicalJSON(project))
-        return PatternFitScorer.rank(
+        let set = PatternFitScorer.rank(
             patterns: library, project: project, policy: policy, projectProfileSha256: projectSha,
             policySha256: policySha256(), maxResults: maxResults)
+        return (set, coverage)
     }
 
     // MARK: - Helpers

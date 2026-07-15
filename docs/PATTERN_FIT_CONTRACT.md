@@ -214,13 +214,22 @@ This contract is a hard cutover, not a migration:
 
 1. Replace and remove `PatternTriggers` and its integer scorer.
 2. Make `fit_profile` a required field of every Pattern that participates in recommendations.
-3. Validate the complete loaded Pattern library before ranking. If any of the 23 profiles is
-   missing or invalid, fail closed with an actionable internal configuration error; do not
-   return a partial ranking.
-4. Do not expose fallback candidates, adapters or alternate score semantics.
-5. App code and Pattern content may be developed on parallel branches, but the recommendation
-   feature may be integrated or enabled only when all 23 profiles pass schema and library
-   validation.
+3. Rank the patterns that carry a valid `fit_profile`. An unauthored pattern is **not** a defect
+   and **not** a reason to withhold the ranking — it is simply not a candidate.
+   **(Owner decision 2026-07-16, superseding the original all-or-nothing gate.)** A pattern is
+   OPTIONAL: without one, a music video's structure comes from the analysis, the user's intent
+   and the agent-moderated process. Authoring a profile is expensive and deliberate, so a
+   partially authored library is the normal state — and the useful question, "does this pattern
+   fit, yes or no", is answerable with one profile just as well as with a hundred. An empty ranking
+   ("none of the scored patterns fit") is a legitimate answer, not an error.
+   A profile that is PRESENT but invalid stays loud: it is a pack defect, reported as
+   `invalid_profiles`, and is excluded from the ranking.
+4. Report `library_coverage` (scored / unscored / total) with every ranking, so a partial field is
+   never presented as the whole library. **The library has no fixed size** — it grows as profiles
+   get authored. Never assert a pattern count in code, tests or docs; load and rank what is there.
+5. Do not expose fallback candidates, adapters or alternate score semantics.
+6. App code and Pattern content develop independently; the feature ships with however many
+   profiles exist.
 
 ## App-agent implementation order
 
@@ -234,6 +243,6 @@ This contract is a hard cutover, not a migration:
 6. Assemble the project profile from Brief + audio analysis; ask only missing high-impact
    questions.
 7. Add slot selection and fail-closed whole-library validation.
-8. Populate all 23 `fit_profile` blocks in parallel with steps 1–7. Contract fixtures may be
+8. Populate `fit_profile` blocks as patterns get authored, in parallel with steps 1–7. Contract fixtures may be
    used while app and content branches are separate; complete Pattern content is a mandatory
    integration and enablement gate.

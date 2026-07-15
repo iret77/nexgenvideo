@@ -58,18 +58,24 @@ struct PatternFitPilotTests {
         #expect(embedded == (try pilotProfile()))
     }
 
-    // MARK: Fail-closed gate
+    // MARK: Library coverage
 
-    @Test("library gate fails closed with the 22 unauthored profiles")
-    func failClosed() throws {
-        do {
-            _ = try PatternFitLibrary.loadRecommendableLibrary()
-            Issue.record("expected a fail-closed error while 22 profiles are unauthored")
-        } catch PatternFitError.recommendationsUnavailable(let missing, let invalid) {
-            #expect(missing.count == 22)
-            #expect(invalid.isEmpty, "the pilot must be valid, not invalid")
-            #expect(!missing.contains(pilotId))
-        }
+    /// A pattern is OPTIONAL, so an unauthored one is not a defect — it is simply not a candidate.
+    /// Ranking the pilot answers the only question that matters ("does it fit?") just as well with
+    /// 1 profile as with 23; withholding it would deny a working answer over a pattern nobody has
+    /// to take.
+    /// No count is asserted on purpose. Nobody says the library ends at 23 — it grows as profiles
+    /// get authored, and the code simply ranks whatever is there. A pinned number would make every
+    /// new pattern a failing test.
+    @Test("whatever carries a valid profile is rankable; the rest are simply not candidates")
+    func coverageRanksWhatExists() throws {
+        let (library, coverage) = try PatternFitLibrary.loadRecommendableLibrary()
+        #expect(coverage.scored.contains(pilotId), "the pilot is scorable today")
+        #expect(!coverage.unscored.contains(pilotId))
+        #expect(library.count == coverage.scored.count, "every scored pattern is a candidate")
+        #expect(coverage.invalid.isEmpty, "a present-but-broken profile would be a real defect")
+        #expect(coverage.total == coverage.scored.count + coverage.unscored.count)
+        #expect(coverage.total == (try Patterns.loadAllPatterns().count), "coverage spans the library")
     }
 
     // MARK: Deterministic scoring
