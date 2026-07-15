@@ -670,6 +670,74 @@ extension ToolExecutor {
     /// shot's recorded frame), crops it to the target aspect via the pure `planCrop` geometry, writes
     /// the result into the durable media library, and imports it as a usable asset. This is the
     /// invocation surface the ported `CropPlanner`/`FrameRasterizer` lacked (they were test-only).
+    /// #166: cut the location's camera views out of ONE panorama, so the layout survives an angle
+    /// change. Deterministic and free — the geometry is the product here, not a model's guess.
+    func extractScene3dPovsTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let locationId = try args.requireString("location_id")
+        let home = FrameInventory.projectHome(of: root)
+
+        // The panorama: explicit, else whatever the bible recorded for this location.
+        let panorama: URL
+        if let path = args.string("panorama"), !path.isEmpty {
+            panorama = path.hasPrefix("/") ? URL(fileURLWithPath: path) : home.appendingPathComponent(path)
+        } else if let recorded = recordedPanorama(locationId: locationId, dataRoot: root) {
+            panorama = recorded.hasPrefix("/")
+                ? URL(fileURLWithPath: recorded) : home.appendingPathComponent(recorded)
+        } else {
+            throw ToolError("No panorama for location '\(locationId)'. Generate one with a `marble/` "
+                + "model from a style-neutral clay wide, then pass `panorama` or record it as the "
+                + "location's `scene3d.panorama` in the Bible.")
+        }
+
+        let povs = try parsePovSpecs(args["povs"])
+        let width = args.int("width") ?? defaultPovSize.width
+        let height = args.int("height") ?? defaultPovSize.height
+        let outDir = home
+            .appendingPathComponent("bible/\(locationId)/scene3d/povs_clay", isDirectory: true)
+
+        let written: [String: URL]
+        do {
+            written = try PovExtractor.extractSet(
+                panorama: panorama, to: outDir, povs: povs, width: width, height: height)
+        } catch {
+            throw ToolError("extract_scene3d_povs failed: \(error.localizedDescription)")
+        }
+        return try jsonResult([
+            "location_id": locationId,
+            "panorama": FrameInventory.relativePath(of: panorama, to: home),
+            "povs": written.mapValues { FrameInventory.relativePath(of: $0, to: home) },
+            "size": ["width": width, "height": height],
+        ])
+    }
+
+    /// The location's recorded `scene3d.panorama`, if the Bible carries one.
+    private func recordedPanorama(locationId: String, dataRoot: URL) -> String? {
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        guard let bible = try? store.load(Bible.self, at: PipelineLayout.bibleFile),
+              let location = bible.locations.first(where: { $0.id == locationId })
+        else { return nil }
+        let panorama = location.scene3d["panorama"]?.trimmingCharacters(in: .whitespaces)
+        return (panorama?.isEmpty == false) ? panorama : nil
+    }
+
+    /// Custom camera set from the tool args; nil → the four cardinal walls.
+    private func parsePovSpecs(_ raw: Any?) throws -> [PovSpec]? {
+        guard let entries = raw as? [[String: Any]], !entries.isEmpty else { return nil }
+        return try entries.map { entry in
+            guard let name = entry["name"] as? String, !name.trimmingCharacters(in: .whitespaces).isEmpty
+            else { throw ToolError("Every pov needs a non-empty `name` — it becomes the sheet key.") }
+            guard let yaw = (entry["yaw"] as? NSNumber)?.doubleValue else {
+                throw ToolError("pov '\(name)' needs a numeric `yaw`.")
+            }
+            return PovSpec(
+                name: name,
+                yawDegrees: yaw,
+                pitchDegrees: (entry["pitch"] as? NSNumber)?.doubleValue ?? -5,
+                fovHorizontalDegrees: (entry["fov_h"] as? NSNumber)?.doubleValue ?? 75)
+        }
+    }
+
     func cropToAspectTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let aspect = try args.requireString("aspect")

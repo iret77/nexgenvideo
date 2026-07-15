@@ -10,15 +10,19 @@ import simd
 /// `e2p`) runs on-device once the panorama image exists; this pure spec + geometry is what guarantees
 /// the relationships and is CI-testable without an image.
 public struct PovSpec: Sendable, Equatable {
+    /// Identifier — becomes the `Location.sheets` key (e.g. `wide_chalkboard`), which is what a
+    /// shot's `locationView` names and `LOCATION_VIEW_MISSING` validates against.
     public let name: String
-    /// Horizontal rotation in degrees: 0 = front, +90 = right, 180 = back, −90 = left.
+    /// Horizontal rotation in degrees: 0 = the panorama's centre (front), +90 = right, 180 = back,
+    /// −90 = left.
     public let yawDegrees: Double
-    /// Vertical rotation in degrees (up positive).
+    /// Vertical rotation in degrees (up positive, so a downward tilt is negative).
     public let pitchDegrees: Double
     /// Horizontal field of view in degrees.
     public let fovHorizontalDegrees: Double
 
-    public init(name: String, yawDegrees: Double, pitchDegrees: Double = 0, fovHorizontalDegrees: Double = 90) {
+    /// Defaults mirror `pov.py::PovSpec` — a 75° lens tilted 5° down, not a 90° level one.
+    public init(name: String, yawDegrees: Double, pitchDegrees: Double = -5, fovHorizontalDegrees: Double = 75) {
         self.name = name
         self.yawDegrees = yawDegrees
         self.pitchDegrees = pitchDegrees
@@ -35,12 +39,17 @@ public struct PovSpec: Sendable, Equatable {
     }
 }
 
-/// The four cardinal wall POVs — front / right / back / left at yaw 0 / 90 / 180 / −90. Port of
-/// `pov.py::DEFAULT_4_WALL_POVS`: one master panorama yields all four geometrically-consistent angles,
-/// so opposite walls are the same wall and reverse shots mirror correctly.
+/// The four cardinal wall POVs — front / right / back / left at yaw 0 / 90 / 180 / −90, each a 75°
+/// lens tilted 5° down. Port of `pov.py::DEFAULT_4_WALL_POVS`: one master panorama yields all four
+/// geometrically-consistent angles, so opposite walls are the same wall and reverse shots mirror
+/// correctly.
 public let defaultFourWallPovs: [PovSpec] = [
     PovSpec(name: "wide_front", yawDegrees: 0),
     PovSpec(name: "wide_right", yawDegrees: 90),
     PovSpec(name: "wide_back", yawDegrees: 180),
     PovSpec(name: "wide_left", yawDegrees: -90),
 ]
+
+/// Default POV resolution. 1280×720 because Seedance requires at least 1024 px on the short edge —
+/// the same reason `pov.py` picks it.
+public let defaultPovSize = (width: 1280, height: 720)

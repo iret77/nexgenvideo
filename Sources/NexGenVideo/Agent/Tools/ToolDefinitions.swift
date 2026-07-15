@@ -64,6 +64,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case saveFrameAudit = "save_frame_audit"
     case getFrameAudit = "get_frame_audit"
     case cropToAspect = "crop_to_aspect"
+    case extractScene3dPovs = "extract_scene3d_povs"
     case assembleTimeline = "assemble_timeline"
     case getLedger = "get_ledger"
     case setLedgerAttribute = "set_ledger_attribute"
@@ -83,7 +84,7 @@ enum ToolName: String, CaseIterable, Sendable {
         switch self {
         case .initProject, .approveGate, .rewind, .runPhase, .recordRender, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute, .setGateState,
-             .attachSong, .copyProjectFile:
+             .attachSong, .copyProjectFile, .extractScene3dPovs:
             return true
         default:
             return false
@@ -1158,6 +1159,33 @@ enum ToolDefinitions {
                     "role": ["type": "string", "enum": ["start", "end"], "description": "Keyframe role when using shot_id (default \"start\")."],
                 ],
                 required: ["aspect"]
+            )
+        ),
+        AgentTool(
+            name: .extractScene3dPovs,
+            description: "Cut geometrically consistent camera views out of a location's 360\u00b0 panorama. WRITES. Deterministic, local, free \u2014 no model, no provider, no cost.\n\nThis is the spatial anchor for a location. Image models have no 3D understanding of a space: across shots they drift the layout, and they cannot honor the basic rule that what was on the left is on the right in the reverse shot. Every view cut here comes from the SAME equirectangular panorama, so the views are consistent with each other by construction \u2014 opposite walls really are the same wall, and doors/furniture stay put across angles.\n\nUsage: first obtain a panorama for the location (generate with a `marble/` model from a style-neutral clay wide, so the 3D provider supplies GEOMETRY while the bible image model stays the style master). Then call this to cut the views. The output is style-neutral clay: restyle each view into the project's look with an image-edit model (preserve perspective, composition and exact positions 1:1 \u2014 change only surfaces, lighting and color) before entering it as a Bible sheet.\n\nEach POV `name` becomes the `Location.sheets` key a shot's `locationView` then names. Default set: the four cardinal walls (wide_front / wide_right / wide_back / wide_left), 75\u00b0 lens tilted 5\u00b0 down, 1280\u00d7720. The panorama MUST be equirectangular (2:1); anything else is refused rather than silently skewed. Returns `{location_id, panorama, povs: {name: path}, size}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                    "location_id": ["type": "string", "description": "Bible location id the views belong to."],
+                    "panorama": ["type": "string", "description": "Equirectangular panorama (home-relative or absolute). Omit to use the location's recorded scene3d.panorama."],
+                    "povs": [
+                        "type": "array",
+                        "description": "Custom camera set. Omit for the four cardinal walls.",
+                        "items": objectSchema(
+                            properties: [
+                                "name": ["type": "string", "description": "Sheet key, e.g. \"wide_chalkboard\"."],
+                                "yaw": ["type": "number", "description": "Degrees; 0 = panorama centre, positive turns right."],
+                                "pitch": ["type": "number", "description": "Degrees; negative looks down (default -5)."],
+                                "fov_h": ["type": "number", "description": "Horizontal field of view in degrees (default 75)."],
+                            ],
+                            required: ["name", "yaw"]
+                        ),
+                    ],
+                    "width": ["type": "integer", "description": "POV width in px (default 1280)."],
+                    "height": ["type": "integer", "description": "POV height in px (default 720)."],
+                ],
+                required: ["location_id"]
             )
         ),
         AgentTool(
