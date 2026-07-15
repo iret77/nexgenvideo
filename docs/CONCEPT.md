@@ -189,12 +189,15 @@ ein manueller ACE-Schritt — bei MCP-Erweiterung von ACE automatisierbar. Quell
 ### 5.2 MCP-native Orchestrierung (größter Architektur-Hebel)
 
 Tools, die selbst MCP sprechen, sind die effizienteste Provider-Anbindung (Klasse b) — Claude hängt
-sich direkt dran, kein Driver pro Provider:
-- **Comfy Partner MCP** (offiziell): *ein* lokaler MCP-Server → vereinte Generate-Tools über **30+
-  Provider** (Flux/BFL, Ideogram, Kling, Runway, Veo, Meshy [3D-Assets], ElevenLabs, …). Kann große
-  Teile des Provider-Layers ersetzen.
-- **ComfyUI MCP** (z. B. `artokun/comfyui-mcp`): das gesamte Open-Source-Generierungs-Ökosystem +
-  eigene Graphen/Modelle, Live-Graph-Editing aus der Claude-Session. Maximale Pipeline-Tiefe.
+sich direkt dran, kein Driver pro Provider.
+
+> **Grenze (Owner, 2026-07-16):** Ein MCP-Provider darf **keine separate Installation** verlangen.
+> NGV ist der **integrierte Gegenentwurf** zur Verkettung von KI und Video-Tools über fremde,
+> lokal zu betreibende Server — ein Tool, nicht eine Werkzeugkette. Deshalb sind Comfy Partner /
+> ComfyUI hier gestrichen: sie sind lokale Server, die der User selbst aufsetzen und betreiben
+> müsste (Python, Modell-Downloads, GPU-Speicher). Gehostete MCP-Dienste, bei denen sich der User
+> nur anmeldet (Higgsfield, OpenArt), bleiben erwünscht — sie bieten Videobearbeitung ohnehin als
+> Modell an.
 - **Blender MCP**: Claude steuert Blender direkt — **veredelt genau die 3D-Clay/Kamera-Core-Pipeline**
   (`bible/scene3d`, Splat/SPZ): deterministische Kamera-Renders agentengetrieben statt CLI-Glue.
 
@@ -218,11 +221,24 @@ auf Auslieferungsqualität *und* schließt Konsistenzlücken:
   (Normals/Albedo/Depth/Specular/Roughness/Alpha) + Auto-Roto. Die Depth/Normal-Passes speisen
   zusätzlich die 3D-/Anker-Disziplin.
 - **Inpainting / Object-Removal:** **VOID** (mask-guided, SAM-3-Masken), temporal stabil/flickerfrei.
-- **Roto / Matte:** DaVinci Magic Mask, BiRefNet, SAM-3. **Layer-Zerlegung:** Generative Omnimatte.
-- **Upscale / Denoise / Frame-Interpolation:** **Topaz Video AI** (OSS-Fallback: Real-ESRGAN/Video2X).
+- **Roto / Matte:** BiRefNet, SAM-3; on-device kommt Apples Vision-Framework in Frage
+  (Personen-/Objekt-Freistellung, offline, kostenlos). **Layer-Zerlegung:** Generative Omnimatte.
+- **Upscale:** **Topaz Video AI**, Clarity — als einzige Finishing-Operation bereits ausgeliefert.
+  **Denoise:** lokaler Metal-Kernel (kantenbewahrend, chroma-gewichtet), kein Provider.
 - **Restyle / Style-Transfer:** Video-to-Video (z. B. Runway).
 
-Anbindung wie §5 (REST oder MCP-native); vieles kommt gebündelt über Comfy Partner / ComfyUI MCP.
+Anbindung wie §5 — über die **normale Provider-Schiene** (REST oder MCP-native), wie jede andere
+Generierung. Kein separates Werkzeug, keine Zweitinstallation: NGV ist ausdrücklich der
+**integrierte Gegenentwurf** zur Verkettung von KI und Video-Tools über fremde MCPs. Anbieter wie
+Higgsfield & Co. bieten Videobearbeitung ohnehin als Modell an und sind damit über die bestehende
+Schiene erreichbar. *(Owner-Entscheidung 2026-07-16: ComfyUI abgelehnt — separate Installation.
+DaVinci Magic Mask gestrichen: ein Desktop-App-Feature ohne API.)*
+
+> **Status:** Von den hier gelisteten Operationen sind **Upscale** und **Denoise** gebaut. Alles
+> andere ist **Vorschlag**, kein Auftrag — jede Operation braucht eine eigene Owner-Entscheidung
+> und ein Issue, bevor sie Arbeit auslöst. Insbesondere ist für **Beeble** (Relight) nirgends
+> belegt, dass es eine API gibt; sein Multi-Pass-Output (6 Passes) passt zudem nicht in das
+> flache `ResponseShape`-Modell des Katalogs. Siehe #200 und dessen Einzel-Issues.
 
 ## 6. Claude-Anbindung (zwei austauschbare Backends)
 
