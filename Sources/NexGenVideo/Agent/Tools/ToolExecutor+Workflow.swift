@@ -447,6 +447,22 @@ extension ToolExecutor {
             return try jsonResult(["phase": phase, "shot_id": NSNull(), "done": true])
         }
         let shot = shotlist?.shots.first { $0.id == shotId }
+
+        // #198 — the OPTIONAL hard spending stop. Enforced here, at the tool boundary that hands a
+        // shot out for rendering: the last point before money is spent, and the same seam the
+        // consistency machinery uses. No stop set → nothing is blocked, only reported.
+        if let verdict = budgetStopVerdict(dataRoot: root, phase: phase, shotId: shotId, shotlist: shotlist),
+           verdict.overBudget {
+            throw ToolError(
+                "Budget stop reached — render refused. This shot's estimated "
+                + String(format: "€%.2f", verdict.newRunEur)
+                + " would take the project to " + String(format: "€%.2f", verdict.projectTotalEur)
+                + ", over the user's limit of " + String(format: "€%.2f", verdict.budgetEur)
+                + " (already spent: " + String(format: "€%.2f", verdict.alreadySpentEur) + "). "
+                + "Do NOT work around this: tell the user, and let them raise the limit, drop shots, "
+                + "or pick a cheaper model.")
+        }
+
         var body: [String: Any] = [
             "phase": phase,
             "shot_id": shotId,
@@ -736,6 +752,35 @@ extension ToolExecutor {
                 pitchDegrees: (entry["pitch"] as? NSNumber)?.doubleValue ?? -5,
                 fovHorizontalDegrees: (entry["fov_h"] as? NSNumber)?.doubleValue ?? 75)
         }
+    }
+
+    /// The optional budget stop (#198), evaluated for the shot about to be handed out.
+    ///
+    /// `nil` when the user set no limit — the overwhelmingly common case, and deliberately the
+    /// default: without an amount there is only cost INFO, never a block. `Brief.budgetEur` is NOT
+    /// used for this; it defaults to 50 on every project, so gating on it would impose a limit
+    /// nobody chose.
+    ///
+    /// The check is pre-flight: this shot's ESTIMATE plus what the project already spent, against
+    /// the limit — so the stop lands before the money is gone rather than one shot after.
+    private func budgetStopVerdict(
+        dataRoot: URL, phase: String, shotId: String, shotlist: Shotlist?
+    ) -> CostGuardVerdict? {
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        guard let brief = try? store.load(Brief.self, at: PipelineLayout.briefFile),
+              let stop = brief.budgetStopEur, stop > 0,
+              let shotlist, let phaseValue = Phase(rawValue: phase)
+        else { return nil }
+        // The bundled prices — the same source the rest of the cost machinery uses (Checks,
+        // ExpandingCamera); there is no per-project costs.yaml in this port.
+        let costs = CostsConfig.bundledDefault
+        let projected = estimate(
+            shotlist: shotlist, costs: costs, phase: phaseValue,
+            finalResolution: brief.finalResolution.rawValue)
+        let shotEur = projected.shotEstimates.first { $0.shotId == shotId }?.eur ?? 0
+        return costGuardCheck(
+            dataRoot: dataRoot, estimateEur: shotEur, phase: phaseValue, budgetEur: stop,
+            guard: costs.costGuard)
     }
 
     func cropToAspectTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {

@@ -165,8 +165,16 @@ public struct Brief: Codable, Sendable, Equatable {
     public var frameImageModelOther: String?
     public var bibleImageModel: FrameImageModel?
     public var compositeImageModel: FrameImageModel?
+    /// The project's PLANNING budget — what the user expects to spend. Shown as €spent/€budget.
     /// Python: `Annotated[float, Field(gt=0)] = 50.0`, enforced in `validate()`.
     public var budgetEur: Double
+    /// OPTIONAL hard spending limit. `nil` (the default) means **no hard stop** — costs are shown,
+    /// nothing is blocked. Set it and the render is refused once the project total would exceed it.
+    ///
+    /// Deliberately NOT `budgetEur`: that one defaults to 50 and every project carries it, so
+    /// gating on it would impose a limit nobody chose. A stop only exists when the user names an
+    /// amount — absent = absent, which is also why old projects can't inherit a surprise stop.
+    public var budgetStopEur: Double?
 
     // Question 4 — concept type
     public var conceptType: ConceptType
@@ -237,6 +245,7 @@ public struct Brief: Codable, Sendable, Equatable {
         case bibleImageModel = "bible_image_model"
         case compositeImageModel = "composite_image_model"
         case budgetEur = "budget_eur"
+        case budgetStopEur = "budget_stop_eur"
         case conceptType = "concept_type"
         case conceptTypeOther = "concept_type_other"
         case visualMedium = "visual_medium"
@@ -281,6 +290,7 @@ public struct Brief: Codable, Sendable, Equatable {
         bibleImageModel: FrameImageModel? = nil,
         compositeImageModel: FrameImageModel? = nil,
         budgetEur: Double = 50.0,
+        budgetStopEur: Double? = nil,
         conceptType: ConceptType,
         conceptTypeOther: String? = nil,
         visualMedium: VisualMedium,
@@ -323,6 +333,7 @@ public struct Brief: Codable, Sendable, Equatable {
         self.bibleImageModel = bibleImageModel
         self.compositeImageModel = compositeImageModel
         self.budgetEur = budgetEur
+        self.budgetStopEur = budgetStopEur
         self.conceptType = conceptType
         self.conceptTypeOther = conceptTypeOther
         self.visualMedium = visualMedium
@@ -373,6 +384,7 @@ public struct Brief: Codable, Sendable, Equatable {
         bibleImageModel = try container.decodeIfPresent(FrameImageModel.self, forKey: .bibleImageModel)
         compositeImageModel = try container.decodeIfPresent(FrameImageModel.self, forKey: .compositeImageModel)
         budgetEur = try container.decodeIfPresent(Double.self, forKey: .budgetEur) ?? 50.0
+        budgetStopEur = try container.decodeIfPresent(Double.self, forKey: .budgetStopEur)
 
         conceptType = try container.decode(ConceptType.self, forKey: .conceptType)
         conceptTypeOther = try container.decodeIfPresent(String.self, forKey: .conceptTypeOther)
@@ -408,6 +420,7 @@ public struct Brief: Codable, Sendable, Equatable {
 
     public enum ValidationError: Swift.Error, Sendable, Equatable {
         case budgetNotPositive(Double)
+        case budgetStopNotPositive(Double)
         case visualMediumNotesRequired(VisualMedium)
     }
 
@@ -427,6 +440,11 @@ public struct Brief: Codable, Sendable, Equatable {
 
     public func validate() throws {
         guard budgetEur > 0 else { throw ValidationError.budgetNotPositive(budgetEur) }
+        // A stop of 0 or less would block every render — that is never what someone means; they mean
+        // "no stop", which is expressed by leaving it out.
+        if let budgetStopEur {
+            guard budgetStopEur > 0 else { throw ValidationError.budgetStopNotPositive(budgetStopEur) }
+        }
         if Self.visualMediumsNeedingNotes.contains(visualMedium) {
             guard let visualMediumNotes, !visualMediumNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else {
