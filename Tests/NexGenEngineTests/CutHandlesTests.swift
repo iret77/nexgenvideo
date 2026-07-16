@@ -8,10 +8,10 @@ import Testing
 @Suite("cut handles (#213)")
 struct CutHandlesTests {
     static func shot(
-        _ id: String, duration: Double = 4, tin: TransitionType = .hardCut,
+        _ id: String, start: Double = 0, duration: Double = 4, tin: TransitionType = .hardCut,
         tout: TransitionType = .hardCut, motion: String? = nil, visual: String = "a figure walks"
     ) throws -> Shot {
-        try Shot(id: id, section: "verse", timeStart: 0, timeEnd: duration, durationS: duration,
+        try Shot(id: id, section: "verse", timeStart: start, timeEnd: start + duration, durationS: duration,
                  type: .performance, description: "d", visualPrompt: visual, motion: motion, mood: "m",
                  transitionIn: tin, transitionOut: tout)
     }
@@ -131,8 +131,8 @@ struct CutHandlesTests {
     func handleBoundaryMismatch() throws {
         // s001 fades out, but s002 comes in on a hard cut — the blend is starved on s002's side.
         let ctx = AuditContext(shotlist: try Self.shotlist([
-            try Self.shot("s001", tout: .crossfade),
-            try Self.shot("s002"),
+            try Self.shot("s001", start: 0, tout: .crossfade),
+            try Self.shot("s002", start: 4),
         ]))
         let findings = try MusicvideoChecks.handleDisciplineCheck(ctx)
         #expect(findings.contains { $0.code == "HANDLE_BOUNDARY_MISMATCH" && $0.shotId == "s001" })
@@ -141,8 +141,8 @@ struct CutHandlesTests {
     @Test("a matched crossfade boundary is not flagged")
     func handleBoundaryMatched() throws {
         let ctx = AuditContext(shotlist: try Self.shotlist([
-            try Self.shot("s001", tout: .crossfade),
-            try Self.shot("s002", tin: .crossfade),
+            try Self.shot("s001", start: 0, tout: .crossfade),
+            try Self.shot("s002", start: 4, tin: .crossfade),
         ]))
         #expect(!(try MusicvideoChecks.handleDisciplineCheck(ctx)).contains { $0.code == "HANDLE_BOUNDARY_MISMATCH" })
     }

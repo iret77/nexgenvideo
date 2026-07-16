@@ -43,9 +43,13 @@ extension MusicvideoChecks {
 
     /// HANDLE_BOUNDARY_MISMATCH — a fade/crossfade needs overlap material on BOTH sides of the cut. When
     /// one shot declares a transition out that its successor doesn't declare in (or vice versa), only one
-    /// side renders a handle and the blend is starved. Walk adjacent shots in timeline order.
+    /// side renders a handle and the blend is starved.
+    ///
+    /// Adjacency is by TIMELINE order (`time_start`), not array order — "the cut between two shots" is a
+    /// timeline fact, and the rest of the engine orders shots the same way (`ChainContinuity.renderOrder`).
+    /// A shotlist stored out of order would otherwise be checked across boundaries that don't exist.
     private static func boundaryConsistency(_ shotlist: Shotlist) -> [Finding] {
-        let shots = shotlist.shots
+        let shots = shotlist.shots.sorted { $0.timeStart < $1.timeStart }
         guard shots.count > 1 else { return [] }
         var out: [Finding] = []
         for i in 0..<(shots.count - 1) {
