@@ -38,12 +38,14 @@ extension GenerationProvider {
             return MCPCapability(defaultURL: URL(string: "http://localhost:21572/mcp")!,
                                  auth: .localApp,
                                  note: "Singing-voice synthesis — requires the ACE Studio app running on this Mac.")
-        case .fal, .runway, .elevenlabs, .marble:
+        case .fal, .runway, .google, .openai, .elevenlabs, .marble:
             // API only for our purposes — verified against the live endpoints. fal has a hosted MCP
             // (mcp.fal.ai/mcp, 200 with `Authorization: Key`) but it adds nothing over the REST key and
             // is pay-per-call; Runway's MCP (mcp.runwayml.com/mcp) rejected the REST key (401) so it is
-            // NOT key-forwarding; ElevenLabs' MCP is a local stdio tool; Marble is REST-only. Showing an
-            // MCP field for any of these would be a dead/misleading affordance — they use the API key.
+            // NOT key-forwarding; ElevenLabs' MCP is a local stdio tool; Marble is REST-only. Google and
+            // OpenAI serve their image models over plain REST on the user's own key (#212) — neither
+            // ships an MCP server we reach. Showing an MCP field for any of these would be a dead/
+            // misleading affordance — they use the API key.
             return nil
         }
     }
@@ -63,7 +65,9 @@ extension GenerationProvider {
         // OpenArt's model-advertising shape is not yet verified on-device; until it is, OpenArt maps its
         // discovered generate tools directly (usable, just not model-expanded). Fill this in once its
         // catalog tool is confirmed — no guessing a shape we can't test.
-        case .openart, .ace, .fal, .runway, .elevenlabs, .marble:
+        // Google/OpenAI have no MCP at all — their image catalog is resolved over REST by
+        // `DirectImageDiscovery`, not by an MCP catalog tool.
+        case .openart, .ace, .fal, .runway, .google, .openai, .elevenlabs, .marble:
             return nil
         }
     }

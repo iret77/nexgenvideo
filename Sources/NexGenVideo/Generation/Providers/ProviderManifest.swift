@@ -48,6 +48,12 @@ enum ProviderManifest {
     static func nominalProvider(forModelId id: String) -> GenerationProvider {
         if MarbleModelRegistry.isMarbleModel(id) { return .marble }
         if RunwayModelRegistry.isRunwayModel(id) { return .runway }
+        // #212: a direct-provider-only model whose provider isn't activated resolves to no binding, and
+        // dispatch falls back here. Without these, an `openai/…` id would land on fal and the user would
+        // be told to add a *fal* key for an OpenAI model. Models that SHARE a fal id (Imagen) are
+        // deliberately absent — falling back to fal is right for them.
+        if id.hasPrefix(GoogleModelRegistry.idPrefix) { return .google }
+        if id.hasPrefix(OpenAIModelRegistry.idPrefix) { return .openai }
         // Higgsfield models arrive via runtime MCP discovery (raw ids, always carrying `.mcp` offers),
         // so they never fall through to this bootstrap default — no `higgsfield/` prefix branch needed.
         return .fal

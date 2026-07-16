@@ -14,9 +14,11 @@ ModelCatalog.shared.load(entries: FalModelRegistry.entries + MarbleModelRegistry
 // registries above are the offline fallback and first-run seed.
 Task { @MainActor in await RemoteCatalog.refresh() }
 
-// Higgsfield/OpenArt and other MCP providers have no static registry — their models are discovered at
-// runtime once the user signs in (#163). Layered onto the catalog; re-runs on every activation change.
-MCPCatalogDiscovery.start()
+// Models that only exist once a provider is activated: MCP providers (Higgsfield/OpenArt — no static
+// registry, discovered on sign-in, #163) and the direct-API image providers (Google/OpenAI — the
+// registry's curated caps intersected with what the key really exposes, #212). Layered onto the
+// catalog; re-runs on every activation change.
+CatalogDiscovery.start()
 
 // Load installed format packs before any UI reads the catalog. Packs ship as
 // signed `.ngvpack` bundles outside the DMG; incompatible/unsigned ones surface

@@ -62,6 +62,11 @@ final class GenerationService {
         let primaryId = placeholders[0].id
         let refURLs = references.map(\.url)
 
+        // #212: Google/OpenAI take reference bytes inline, so this run never produces hosted URLs.
+        // Resolved once, from the same inputs `runJob` resolves with, so the upload step and the
+        // dispatch agree on the provider.
+        let inlineBytes = Self.usesInlineReferenceBytes(modelId: genInput.model)
+
         Task { @MainActor in
             var tempToCleanup: [URL] = []
             defer { Self.cleanupTempFiles(tempToCleanup) }
@@ -102,18 +107,31 @@ final class GenerationService {
                         if i == 0 && trimmedFirst { return nil }
                         return asset
                     }
-                    uploaded = try await uploadReferences(
-                        at: urlsToUpload,
-                        types: refTypes,
-                        cacheKeys: cacheKeys,
-                    )
+                    if inlineBytes {
+                        // Hosting these on fal first would demand a fal key for a call that never
+                        // touches fal — exactly the dependency the direct providers exist to remove.
+                        // Local paths, purely so the direct client can read the bytes off disk.
+                        uploaded = urlsToUpload.map(\.path)
+                    } else {
+                        uploaded = try await uploadReferences(
+                            at: urlsToUpload,
+                            types: refTypes,
+                            cacheKeys: cacheKeys,
+                        )
+                    }
                 }
 
+                // On the inline-byte path `uploaded` holds LOCAL paths, which must never be
+                // persisted: GenerationInput rides in the project's media manifest, and an absolute
+                // path would break the self-contained `.ngv` the moment the project moves machines —
+                // and it would claim a hosted URL that never existed. The durable, portable record of
+                // what was actually referenced is `imageURLAssetIds`, set by the submission.
+                let persistedRefs = inlineBytes ? [] : uploaded
                 var finalGenInput = genInput
                 if let snapshotRefs {
-                    snapshotRefs(&finalGenInput, uploaded)
+                    snapshotRefs(&finalGenInput, persistedRefs)
                 } else {
-                    finalGenInput.imageURLs = uploaded.isEmpty ? nil : uploaded
+                    finalGenInput.imageURLs = persistedRefs.isEmpty ? nil : persistedRefs
                 }
                 if finalGenInput.createdAt == nil {
                     finalGenInput.createdAt = Date()
@@ -384,6 +402,24 @@ final class GenerationService {
             return failJob(placeholders,
                            "\(provider.displayName) runs over MCP — sign in under Settings \u{2192} Providers.",
                            onFailure)
+        case .google:
+            guard case .image(let p) = params,
+                  let model = GoogleModelRegistry.model(for: endpoint) else {
+                return failJob(placeholders, "Unsupported Google AI request for model: \(endpoint)", onFailure)
+            }
+            await runGoogleImageJob(
+                apiModel: endpoint, model: model, params: p,
+                placeholders: placeholders, editor: editor, onComplete: onComplete, onFailure: onFailure)
+            return
+        case .openai:
+            guard case .image(let p) = params,
+                  let model = OpenAIModelRegistry.model(for: endpoint) else {
+                return failJob(placeholders, "Unsupported OpenAI request for model: \(endpoint)", onFailure)
+            }
+            await runOpenAIImageJob(
+                apiModel: endpoint, model: model, params: p,
+                placeholders: placeholders, editor: editor, onComplete: onComplete, onFailure: onFailure)
+            return
         case .fal:
             break
         }
@@ -607,6 +643,128 @@ final class GenerationService {
         } catch {
             failJob(placeholders, error.localizedDescription, onFailure)
         }
+    }
+
+    /// #212 — does the provider that will service this model take reference images as inline bytes
+    /// (rather than a hosted URL)? Decided from the same resolution `runJob` uses, so the upload step
+    /// and the dispatch agree.
+    @MainActor
+    private static func usesInlineReferenceBytes(modelId: String) -> Bool {
+        switch GenerationProvider.servicing(modelId: modelId) {
+        case .google, .openai: return true
+        default: return false
+        }
+    }
+
+    /// Reference bytes for a direct client: the generate flow handed us local paths (see the inline-
+    /// bytes bypass), so read them off disk. A path that can't be read is skipped rather than failing
+    /// the render — the model still has the prompt.
+    private static func referenceBytes(_ paths: [String]) -> [Data] {
+        paths.compactMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
+    }
+
+    /// #212 — Google AI on the user's own key. Imagen and the Gemini image family need different
+    /// request envelopes; the registry says which.
+    private func runGoogleImageJob(
+        apiModel: String,
+        model: GoogleImageModel,
+        params: ImageGenerationParams,
+        placeholders: [MediaAsset],
+        editor: EditorViewModel,
+        onComplete: (@MainActor (MediaAsset) -> Void)?,
+        onFailure: (@MainActor () -> Void)?
+    ) async {
+        guard let apiKey = ProviderKeychain.load(.google) else {
+            return failJob(placeholders, "Add a Google AI API key in Settings to generate.", onFailure)
+        }
+        do {
+            let client = GoogleImageClient(apiKey: apiKey)
+            let images: [Data]
+            switch model.surface {
+            case .predict:
+                images = try await client.imagen(
+                    model: apiModel, prompt: params.prompt,
+                    aspectRatio: params.aspectRatio, count: placeholders.count)
+            case .generateContent:
+                images = try await client.geminiImage(
+                    model: apiModel, prompt: params.prompt,
+                    referenceImages: Self.referenceBytes(params.imageURLs))
+            }
+            await finalizeBytes(images, placeholders: placeholders, editor: editor,
+                                onComplete: onComplete, onFailure: onFailure)
+        } catch {
+            failJob(placeholders, error.localizedDescription, onFailure)
+        }
+    }
+
+    /// #212 — OpenAI images on the user's own key.
+    private func runOpenAIImageJob(
+        apiModel: String,
+        model: OpenAIImageModel,
+        params: ImageGenerationParams,
+        placeholders: [MediaAsset],
+        editor: EditorViewModel,
+        onComplete: (@MainActor (MediaAsset) -> Void)?,
+        onFailure: (@MainActor () -> Void)?
+    ) async {
+        guard let apiKey = ProviderKeychain.load(.openai) else {
+            return failJob(placeholders, "Add an OpenAI API key in Settings to generate.", onFailure)
+        }
+        // The registry only advertises ratios this model really renders, so an unmapped aspect means
+        // the caller bypassed validation — refuse rather than quietly render a different shape.
+        guard let size = OpenAIModelRegistry.size(forAspect: params.aspectRatio, model: model) else {
+            return failJob(
+                placeholders,
+                "\(model.entry.displayName) doesn't render \(params.aspectRatio). Supported: "
+                    + model.sizeByAspect.keys.sorted().joined(separator: ", ")
+                    + " — or crop after generating.",
+                onFailure)
+        }
+        do {
+            let images = try await OpenAIImageClient(apiKey: apiKey).generate(
+                model: apiModel, prompt: params.prompt, size: size,
+                quality: params.quality, count: placeholders.count)
+            await finalizeBytes(images, placeholders: placeholders, editor: editor,
+                                onComplete: onComplete, onFailure: onFailure)
+        } catch {
+            failJob(placeholders, error.localizedDescription, onFailure)
+        }
+    }
+
+    /// Finalize providers that answer with BYTES instead of a hosted URL: write each image to its
+    /// placeholder's destination and run the same steps `downloadAndFinalize` performs after its move.
+    /// A placeholder with no image left over (the provider returned fewer than asked) fails alone.
+    private func finalizeBytes(
+        _ images: [Data],
+        placeholders: [MediaAsset],
+        editor: EditorViewModel,
+        onComplete: (@MainActor (MediaAsset) -> Void)?,
+        onFailure: (@MainActor () -> Void)?
+    ) async {
+        var finalized: [MediaAsset] = []
+        for (i, placeholder) in placeholders.enumerated() {
+            guard i < images.count else {
+                placeholder.generationStatus = .failed("No image for placeholder")
+                continue
+            }
+            do {
+                try? FileManager.default.removeItem(at: placeholder.url)
+                try images[i].write(to: placeholder.url, options: .atomic)
+            } catch {
+                placeholder.generationStatus = .failed(error.localizedDescription)
+                continue
+            }
+            placeholder.generationStatus = .none
+            editor.importMediaAsset(placeholder, skipAppend: true)
+            editor.appendGenerationLog(for: placeholder)
+            await editor.finalizeImportedAsset(placeholder)
+            onComplete?(placeholder)
+            finalized.append(placeholder)
+        }
+        guard let first = finalized.first else { return onFailure?() ?? () }
+        AppNotifications.generationComplete(
+            assetId: first.id, projectURL: editor.projectURL, assetName: first.name,
+            assetType: first.type, count: finalized.count)
     }
 
     private func runElevenLabsJob(

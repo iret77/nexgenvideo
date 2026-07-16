@@ -1,7 +1,7 @@
 import Foundation
 
 /// Turns a provider's runtime MCP discovery into model-catalog entries — the pure, testable core of
-/// provider MCP discovery (#163). No I/O: the coordinator (`MCPCatalogDiscovery`) drives the tool
+/// provider MCP discovery (#163). No I/O: the coordinator (`CatalogDiscovery`) drives the tool
 /// calls; everything here is data-in / data-out, so the Tool→CatalogEntry mapping is unit-tested
 /// against the providers' real payload shapes without a live account.
 ///

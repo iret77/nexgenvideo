@@ -1,15 +1,21 @@
 import Foundation
 
-/// Runtime MCP model discovery (#163): for every activated MCP provider, NGV connects as the MCP
-/// client, learns the provider's generate tools (`tools/list`), enumerates its models, and layers
-/// them onto the catalog — so one "Sign in" makes the provider's models simply appear, gated and
-/// runnable. The pure mapping is `MCPModelDiscovery`; this is the I/O + wiring around it.
+/// Runtime model discovery — the layer that makes activation, not a hardcoded list, decide what the
+/// catalog offers. Two sources, one write:
 ///
-/// Self-correcting: each refresh rediscovers every activated provider and replaces the discovered set
-/// wholesale, so a signed-out provider's models vanish (usable-only, #159). Runs at launch and on
-/// every `.providerKeysChanged` (sign-in / sign-out / key change), coalescing overlapping runs.
+/// - **MCP providers** (#163): NGV connects as the MCP client, learns the provider's generate tools
+///   (`tools/list`), enumerates its models. The pure mapping is `MCPModelDiscovery`.
+/// - **Direct-API image providers** (#212): the provider's own model list decides which registry
+///   entries are really reachable on this key (`DirectImageDiscovery`).
+///
+/// Both feed ONE `setDiscovered` call, because that write replaces the discovered set wholesale — two
+/// writers would clobber each other's providers.
+///
+/// Self-correcting: each refresh rediscovers every activated provider, so a signed-out provider's (or
+/// a revoked key's) models vanish (usable-only, #159). Runs at launch and on every
+/// `.providerKeysChanged` (sign-in / sign-out / key change), coalescing overlapping runs.
 @MainActor
-enum MCPCatalogDiscovery {
+enum CatalogDiscovery {
     private static var running = false
     private static var queued = false
     private static var observer: NSObjectProtocol?
@@ -45,12 +51,17 @@ enum MCPCatalogDiscovery {
 
     private static func runOnce() async {
         var result: [GenerationProvider: [CatalogEntry]] = [:]
-        for provider in GenerationProvider.allCases where ProviderMCP.hasConfig(provider) {
-            let entries = await discover(provider)
+        for provider in GenerationProvider.allCases {
+            var entries: [CatalogEntry] = []
+            if ProviderMCP.hasConfig(provider) {
+                entries += await discover(provider)
+            }
+            // A provider can be reachable both ways; append rather than replace.
+            entries += await DirectImageDiscovery.discover(provider)
             if !entries.isEmpty { result[provider] = entries }
         }
         ModelCatalog.shared.setDiscovered(result)
-        Log.generation.notice("MCP discovery: \(result.count) provider(s), \(result.values.map(\.count).reduce(0, +)) model(s)")
+        Log.generation.notice("catalog discovery: \(result.count) provider(s), \(result.values.map(\.count).reduce(0, +)) model(s)")
     }
 
     private static func discover(_ provider: GenerationProvider) async -> [CatalogEntry] {
