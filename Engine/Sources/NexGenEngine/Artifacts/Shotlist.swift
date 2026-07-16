@@ -471,6 +471,8 @@ public struct Shot: Codable, Sendable, Equatable {
             try container.decodeIfPresent([String].self, forKey: .referenceImageRefs) ?? []
         chainWithPreviousEnd =
             try container.decodeIfPresent(Bool.self, forKey: .chainWithPreviousEnd) ?? false
+        transitionIn = try container.decodeIfPresent(TransitionType.self, forKey: .transitionIn) ?? .hardCut
+        transitionOut = try container.decodeIfPresent(TransitionType.self, forKey: .transitionOut) ?? .hardCut
         notes = try container.decodeIfPresent(String.self, forKey: .notes)
         try validate()
     }
