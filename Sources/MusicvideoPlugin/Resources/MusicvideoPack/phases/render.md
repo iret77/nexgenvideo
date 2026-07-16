@@ -331,12 +331,19 @@ the cut with the song over it.
   `startFrame`/`durationFrames` derived from the shot's
   `time_start`/`duration_s` times the project fps (`get_timeline` reports
   fps). The user lays the song audio over it and does the final cut.
-- Cut handles (freeze-frame head/tail for J-cuts / L-cuts / crossfades,
-  per `brief.cut_handles_mode`) are a post-processing follow-up — there
-  is no MCP tool for them on this surface yet. With
-  `cut_handles_mode=back_to_back`, no handles are wanted anyway; with
-  `with_overlap`, note to the user that handle generation is a manual
-  follow-up in the editor.
+- **Cut handles are rendered content, not freeze frames.** When a shot's
+  plan puts a fade/crossfade on a side (`transition_in`/`transition_out`),
+  or `brief.cut_handles_mode=with_overlap` forces it on every shot,
+  `next_render_shot` returns `render_duration_s` (gross) alongside
+  `net_duration_s`, plus `handle_pre_s`/`handle_post_s`. Order the model at
+  **`render_duration_s`** — `compile_prompt(shotId)` has already composed
+  the held-beat temporal structure into the prompt, so the model renders
+  the overlap as real micro-motion frames. Then place the clip trimmed to
+  **`net_duration_s`** (in-point at `handle_pre_s`), so the visible cut sits
+  on the net action and the handle material sits just off it for the fade.
+  Hard-cut shots return `render_duration_s == net_duration_s` and are
+  ordered/placed exactly as before. `estimate_cost` already bills the gross
+  seconds — never freeze-pad in post (two stills fading is slop).
 
 ### 11. Reporting after R1/R2
 

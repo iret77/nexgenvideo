@@ -70,7 +70,10 @@ enum ShowFormatters {
         var lyrics = b.lyricsIntegration.rawValue
         if let other = b.lyricsIntegrationOther, !other.isEmpty { lyrics += " · \(other)" }
         lines.append("| Lyrics-Integration | \(lyrics) |")
-        lines.append("| Cut-Handles | `\(b.cutHandlesMode.rawValue)` |")
+        let handleMode = b.cutHandlesMode == .withOverlap
+            ? "with_overlap (handles forced on every shot)"
+            : "back_to_back (handles only at planned fades)"
+        lines.append("| Cut-Handles | `\(handleMode)` |")
         let patternId = (b.directorPattern ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !patternId.isEmpty {
             lines.append("| Director-Pattern | `\(patternId)` |")
