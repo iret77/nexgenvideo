@@ -689,7 +689,7 @@ final class GenerationService {
                     aspectRatio: params.aspectRatio, count: placeholders.count)
             case .generateContent:
                 images = try await client.geminiImage(
-                    model: apiModel, prompt: params.prompt,
+                    model: apiModel, prompt: params.prompt, aspectRatio: params.aspectRatio,
                     referenceImages: Self.referenceBytes(params.imageURLs))
             }
             await finalizeBytes(images, placeholders: placeholders, editor: editor,
@@ -697,6 +697,23 @@ final class GenerationService {
         } catch {
             failJob(placeholders, error.localizedDescription, onFailure)
         }
+    }
+
+    /// The image format a provider ACTUALLY returned, sniffed from the bytes.
+    ///
+    /// Not from a `mimeType` header, and never assumed: a live Gemini call returns **JPEG** even though
+    /// the placeholder is created as `.png`, so trusting the extension writes JPEG bytes into a `.png`
+    /// file. The URL path handles this by renaming (`downloadAndFinalize` does it from the remote
+    /// URL's extension); the bytes path has no URL to read, so it reads the bytes. Magic numbers are
+    /// also provider-independent — the next provider's default format needs no new plumbing.
+    /// nil for anything unrecognized, which leaves the placeholder's own extension alone.
+    private static func imageExtension(sniffing data: Data) -> String? {
+        let b = [UInt8](data.prefix(12))
+        guard b.count >= 12 else { return nil }
+        if b.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { return "png" }
+        if b.starts(with: [0xFF, 0xD8, 0xFF]) { return "jpg" }
+        if b.starts(with: [0x52, 0x49, 0x46, 0x46]), Array(b[8..<12]) == [0x57, 0x45, 0x42, 0x50] { return "webp" }
+        return nil
     }
 
     /// Finalize providers that answer with BYTES instead of a hosted URL: write each image to its
@@ -714,6 +731,12 @@ final class GenerationService {
             guard i < images.count else {
                 placeholder.generationStatus = .failed("No image for placeholder")
                 continue
+            }
+            // Name the file after what the bytes ARE, not what we asked for — same correction
+            // `downloadAndFinalize` makes from the remote URL's extension.
+            if let realExt = Self.imageExtension(sniffing: images[i]),
+               realExt != placeholder.url.pathExtension.lowercased() {
+                placeholder.url = placeholder.url.deletingPathExtension().appendingPathExtension(realExt)
             }
             do {
                 try? FileManager.default.removeItem(at: placeholder.url)

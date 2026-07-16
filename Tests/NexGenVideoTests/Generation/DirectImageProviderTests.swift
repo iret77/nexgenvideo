@@ -142,3 +142,47 @@ struct DirectImageProviderTests {
         #expect(!DirectImageDiscovery.providers.contains { $0.rawValue == "openai" })
     }
 }
+
+/// The Gemini 3.x line and the format correction a live call exposed (#212).
+@Suite("gemini 3.x (#212)")
+@MainActor
+struct Gemini3ImageTests {
+
+    @Test("the current Gemini line is offered, with the preview id as the fallback candidate")
+    func geminiThreeIsRegistered() throws {
+        for id in ["google/gemini-3-pro-image", "google/gemini-3.1-flash-image"] {
+            let model = try #require(GoogleModelRegistry.models.first { $0.entry.id == id })
+            // GA first, preview only as fallback — never silently prefer a preview.
+            #expect(model.apiModelCandidates.first == id.replacingOccurrences(of: "google/", with: ""))
+            #expect(model.apiModelCandidates.last?.hasSuffix("-preview") == true)
+            // Same envelope as 2.5 — verified live: every gemini image model lists generateContent.
+            #expect(model.surface == .generateContent)
+        }
+    }
+
+    @Test("Gemini advertises the aspects NGV speaks — including 16:9")
+    func geminiAspectsCoverTheVocabulary() throws {
+        // The 2.5 entry used to advertise NONE, while the API has taken an aspect all along.
+        for id in ["google/gemini-3-pro-image", "fal-ai/gemini-25-flash-image/edit"] {
+            let model = try #require(GoogleModelRegistry.models.first { $0.entry.id == id })
+            guard case .image(let caps) = model.entry.uiCapabilities else {
+                Issue.record("expected image capabilities"); return
+            }
+            #expect(Set(caps.aspectRatios) == Set(["1:1", "16:9", "9:16", "4:3", "3:4"]))
+        }
+    }
+
+    @Test("an account without the 3.x line is offered none of it")
+    func geminiThreeIsDiscoveryFiltered() {
+        let entries = GoogleModelRegistry.entries(availableModelIds: ["gemini-2.5-flash-image"])
+        #expect(!entries.contains { $0.id.hasPrefix("google/gemini-3") })
+        // …and an account that has it gets exactly it.
+        let three = GoogleModelRegistry.entries(availableModelIds: ["gemini-3.1-flash-image"])
+        #expect(three.contains { $0.id == "google/gemini-3.1-flash-image" })
+    }
+
+    @Test("an unactivated Gemini 3.x model names Google, not fal")
+    func geminiThreeFallsBackToGoogle() {
+        #expect(ProviderManifest.nominalProvider(forModelId: "google/gemini-3-pro-image") == .google)
+    }
+}

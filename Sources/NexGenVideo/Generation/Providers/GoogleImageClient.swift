@@ -81,14 +81,26 @@ actor GoogleImageClient {
 
     /// Gemini image via `:generateContent`. `referenceImages` ride along as inline parts, which is how
     /// this family does image-to-image — the same call, one more part.
-    func geminiImage(model: String, prompt: String, referenceImages: [Data] = []) async throws -> [Data] {
+    ///
+    /// `aspectRatio` goes in `generationConfig.imageConfig` and is NOT optional in practice: without it
+    /// the model picks its own shape, and `frame_ratio` compares every frame's real pixel aspect against
+    /// the brief within 2% — so an unsent ratio flags on every sheet. Google's enum (verified live)
+    /// is 1:1 / 1:4 / 1:8 / 2:3 / 3:2 / 3:4 / 4:1 / 4:3 / 4:5 / 5:4 / 8:1 / 9:16 / 16:9 / 21:9, which
+    /// covers everything NGV speaks; an empty value is simply omitted.
+    func geminiImage(
+        model: String, prompt: String, aspectRatio: String = "", referenceImages: [Data] = []
+    ) async throws -> [Data] {
         var parts: [[String: Any]] = [["text": prompt]]
         for image in referenceImages {
             parts.append(["inline_data": ["mime_type": "image/png", "data": image.base64EncodedString()]])
         }
+        var generationConfig: [String: Any] = ["responseModalities": ["IMAGE"]]
+        if !aspectRatio.isEmpty {
+            generationConfig["imageConfig"] = ["aspectRatio": aspectRatio]
+        }
         let body: [String: Any] = [
             "contents": [["parts": parts]],
-            "generationConfig": ["responseModalities": ["IMAGE"]],
+            "generationConfig": generationConfig,
         ]
         let data = try await post(path: "models/\(model):generateContent", body: body)
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

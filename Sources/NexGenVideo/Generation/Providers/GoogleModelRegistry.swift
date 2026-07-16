@@ -33,7 +33,14 @@ enum GoogleModelRegistry {
     static let idPrefix = "google/"
 
     /// Google's `aspectRatio` enum for Imagen — the same labels NGV uses, so no lossy mapping.
+    /// Verified live: an invalid value is rejected with "Supported values are 1:1, 9:16, 16:9, 4:3, 3:4."
     private static let imagenAspects = ["1:1", "16:9", "9:16", "4:3", "3:4"]
+
+    /// The Gemini image family takes its ratio in `generationConfig.imageConfig.aspectRatio`. Its enum
+    /// is wider than Imagen's (it also does 2:3, 3:2, 4:5, 5:4, 21:9 and some extreme strips), but
+    /// these are the five NGV actually speaks — advertising ratios the brief can never ask for would
+    /// be noise, not honesty. Verified live against the API's own error enum.
+    private static let geminiAspects = ["1:1", "16:9", "9:16", "4:3", "3:4"]
 
     static let models: [GoogleImageModel] = [
         // Shares the fal id: one logical "Imagen 4", two offers.
@@ -46,16 +53,39 @@ enum GoogleModelRegistry {
                     supportsImageReference: false, maxImages: 4))),
             surface: .predict,
             apiModelCandidates: ["imagen-4.0-generate-001", "imagen-4.0-generate-preview-06-06"]),
-        // Shares the fal id for the Gemini edit model.
+        // Shares the fal id for the Gemini 2.5 edit model. Kept as the fal-hosted model's direct route;
+        // the 3.x line below supersedes it for quality, but this id is fal's and stays reachable.
         GoogleImageModel(
             entry: CatalogEntry(
                 id: "fal-ai/gemini-25-flash-image/edit", kind: .image, displayName: "Gemini 2.5 Flash (edit)",
                 allowedEndpoints: ["fal-ai/gemini-25-flash-image/edit"], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
-                    resolutions: nil, aspectRatios: [], qualities: nil,
+                    resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
                     supportsImageReference: true, maxImages: 1))),
             surface: .generateContent,
             apiModelCandidates: ["gemini-2.5-flash-image", "gemini-2.5-flash-image-preview"]),
+        // The current Gemini image line. No fal counterpart in the registry, so these carry their own
+        // `google/` ids. Two tiers, because that is the real choice: quality vs speed/price. (The
+        // account also exposes `gemini-3.1-flash-lite-image`; left out until a cheaper-still tier has
+        // a consumer, rather than adding a row on spec.)
+        GoogleImageModel(
+            entry: CatalogEntry(
+                id: "google/gemini-3-pro-image", kind: .image, displayName: "Gemini 3 Pro Image",
+                allowedEndpoints: ["google/gemini-3-pro-image"], responseShape: .images,
+                uiCapabilities: .image(ImageCaps(
+                    resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
+                    supportsImageReference: true, maxImages: 1))),
+            surface: .generateContent,
+            apiModelCandidates: ["gemini-3-pro-image", "gemini-3-pro-image-preview"]),
+        GoogleImageModel(
+            entry: CatalogEntry(
+                id: "google/gemini-3.1-flash-image", kind: .image, displayName: "Gemini 3.1 Flash Image",
+                allowedEndpoints: ["google/gemini-3.1-flash-image"], responseShape: .images,
+                uiCapabilities: .image(ImageCaps(
+                    resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
+                    supportsImageReference: true, maxImages: 1))),
+            surface: .generateContent,
+            apiModelCandidates: ["gemini-3.1-flash-image", "gemini-3.1-flash-image-preview"]),
     ]
 
     /// The entries whose Google model string this key actually exposes, each carrying a `.google` offer
