@@ -45,8 +45,11 @@ enum PromptComposer {
         let camera: String
         let composition: String
         let spec: ComplianceLinter.ShotSpec
+        /// The deterministic cut-handle timing for this shot (#213), empty when it carries no handle.
+        /// `forceHandles` is the project-wide override (brief.cut_handles_mode == with_overlap).
+        let temporalStructure: String
 
-        init(_ shot: Shot) {
+        init(_ shot: Shot, forceHandles: Bool = false) {
             camera = shot.cameraSetup?.promptProse() ?? ""
             composition = shot.framing?.compositionProse ?? ""
             spec = ComplianceLinter.ShotSpec(
@@ -54,6 +57,7 @@ enum PromptComposer {
                 cameraHeight: shot.cameraSetup?.height.rawValue,
                 blockingGazes: shot.characterBlocking.map(\.gaze),
                 notes: shot.notes ?? "")
+            temporalStructure = CutHandles.temporalStructure(for: shot, forceAll: forceHandles) ?? ""
         }
     }
 
@@ -87,7 +91,10 @@ enum PromptComposer {
                 aspectRatio: aspectRatio,
                 directives: directives.all
             )
-            if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
+            if let shot {
+                payload.camera = shot.camera; payload.composition = shot.composition
+                payload.temporalStructure = shot.temporalStructure
+            }
             composed = PromptGenerator.buildVideoPrompt(modelID: engineModelID(modelId), payload: payload)
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .image:

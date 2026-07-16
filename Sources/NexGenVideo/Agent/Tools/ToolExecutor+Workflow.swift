@@ -542,6 +542,32 @@ extension ToolExecutor {
             "camera": shot?.cameraSetup.map { $0.promptProse() as Any } ?? (NSNull() as Any),
             "chain_with_previous_end": shot?.chainWithPreviousEnd ?? false,
         ]
+        // #213: cut handles as content. When the plan puts a fade/crossfade on a side (or the global
+        // override forces it), the shot renders overlap material there — so the agent orders the GROSS
+        // duration from the model and trims the timeline clip to the NET window. Hard-cut shots carry no
+        // handle (gross == net) and are unchanged. The temporal structure is composed into the prompt by
+        // compile_prompt(shotId); here the agent gets the durations to order and to place.
+        if let shot {
+            let forceHandles = (try? YAMLArtifactStore(dataRoot: root).load(Brief.self, at: PipelineLayout.briefFile))?
+                .cutHandlesMode == .withOverlap
+            let h = CutHandles.handles(for: shot, forceAll: forceHandles)
+            // Only a HANDLED shot gets a render_duration_s. A hard-cut shot is ordered exactly as it was
+            // before this change — emitting a rounded duration for it too would tell the agent to order
+            // a second the estimate doesn't price, re-opening the same under-estimation against the
+            // pre-flight budget stop. Rounding a bare fractional net is an older question, not this one's.
+            if h.pre > 0 || h.post > 0 {
+                body["net_duration_s"] = shot.durationS
+                // Already a whole second — ordered as-is. Rounding happens here, not as a prose plea:
+                // a beat-derived net is often fractional and would otherwise be unorderable.
+                body["render_duration_s"] = CutHandles.orderableGrossDuration(for: shot, forceAll: forceHandles)
+                body["handle_pre_s"] = h.pre
+                body["handle_post_s"] = h.post
+                body["handle_note"] = "Order render_duration_s from the model exactly as given (it is "
+                    + "already a whole second). The compiled prompt holds \(h.pre)s before and \(h.post)s "
+                    + "after. Place the clip trimmed to net_duration_s (in-point at \(h.pre)s), so the "
+                    + "handle material sits just off the visible cut for the fade."
+            }
+        }
         // #196: when this shot chains off its predecessor, hand the agent the predecessor's extracted
         // last frame (recorded by record_render) as the start-frame condition — pass it straight to the
         // generate tool's startFrameMediaRef. Absent until the predecessor has rendered.
@@ -849,7 +875,8 @@ extension ToolExecutor {
         let costs = CostsConfig.bundledDefault
         let projected = estimate(
             shotlist: shotlist, costs: costs, phase: phaseValue,
-            finalResolution: brief.finalResolution.rawValue)
+            finalResolution: brief.finalResolution.rawValue,
+            forceHandles: brief.cutHandlesMode == .withOverlap)
         let shotEur = projected.shotEstimates.first { $0.shotId == shotId }?.eur ?? 0
         return costGuardCheck(
             dataRoot: dataRoot, estimateEur: shotEur, phase: phaseValue, budgetEur: stop,

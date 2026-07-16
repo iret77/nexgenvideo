@@ -119,7 +119,11 @@ public enum PreviewMode: String, Codable, Sendable, CaseIterable {
     case smallest
 }
 
-/// Post-render cut-handles strategy. Port of `brief/schema.py::CutHandlesMode`.
+/// The project-wide cut-handles override (#213). Handles are rendered CONTENT — overlap material for a
+/// fade/crossfade — not post-padding. By default a shot carries a handle only where its plan puts a
+/// fade/crossfade (`transition_in`/`transition_out`); `back_to_back` leaves that default in place.
+/// `with_overlap` FORCES a handle on every shot so the user keeps re-cutting options open everywhere, at
+/// the cost of more billed seconds and looser inference over the gross duration.
 public enum CutHandlesMode: String, Codable, Sendable, CaseIterable {
     case withOverlap = "with_overlap"
     case backToBack = "back_to_back"

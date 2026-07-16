@@ -134,6 +134,19 @@ public enum SourceMode: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// The planned cut at a shot boundary. A hard cut needs no overlap material; a fade or crossfade needs
+/// real moving frames beyond the net action on the adjoining side, or the blend has nothing to work
+/// with (#213). Default `.hardCut` so every existing shotlist decodes unchanged — no handles unless the
+/// plan asks for them.
+public enum TransitionType: String, Codable, Sendable, CaseIterable {
+    case hardCut = "hard_cut"
+    case fade
+    case crossfade
+
+    /// A fade/crossfade needs overlap material; a hard cut does not.
+    public var needsHandle: Bool { self != .hardCut }
+}
+
 // MARK: - Structs
 
 /// Camera triplet per shot. Port of `shotlist/schema.py::CameraSetup`.
@@ -319,6 +332,10 @@ public struct Shot: Codable, Sendable, Equatable {
     public var seedanceInputMode: SeedanceInputMode
     public var referenceImageRefs: [String]
     public var chainWithPreviousEnd: Bool
+    /// The planned cut at this shot's head / tail (#213). A non-hard-cut side is rendered with overlap
+    /// material (a "handle") so the fade/crossfade has real moving frames to work with. Default hard cut.
+    public var transitionIn: TransitionType
+    public var transitionOut: TransitionType
     public var notes: String?
 
     private enum CodingKeys: String, CodingKey {
@@ -354,6 +371,8 @@ public struct Shot: Codable, Sendable, Equatable {
         case seedanceInputMode = "seedance_input_mode"
         case referenceImageRefs = "reference_image_refs"
         case chainWithPreviousEnd = "chain_with_previous_end"
+        case transitionIn = "transition_in"
+        case transitionOut = "transition_out"
         case notes
     }
 
@@ -369,7 +388,9 @@ public struct Shot: Codable, Sendable, Equatable {
         propViews: [String: String] = [:], cameraId: String? = nil, cameraLabel: String? = nil,
         redo: Bool = false, sceneVideoProvider: SceneVideoProvider = .fal,
         seedanceInputMode: SeedanceInputMode = .keyframe, referenceImageRefs: [String] = [],
-        chainWithPreviousEnd: Bool = false, notes: String? = nil
+        chainWithPreviousEnd: Bool = false,
+        transitionIn: TransitionType = .hardCut, transitionOut: TransitionType = .hardCut,
+        notes: String? = nil
     ) throws {
         self.id = id
         self.section = section
@@ -403,6 +424,8 @@ public struct Shot: Codable, Sendable, Equatable {
         self.seedanceInputMode = seedanceInputMode
         self.referenceImageRefs = referenceImageRefs
         self.chainWithPreviousEnd = chainWithPreviousEnd
+        self.transitionIn = transitionIn
+        self.transitionOut = transitionOut
         self.notes = notes
         try validate()
     }
@@ -448,6 +471,8 @@ public struct Shot: Codable, Sendable, Equatable {
             try container.decodeIfPresent([String].self, forKey: .referenceImageRefs) ?? []
         chainWithPreviousEnd =
             try container.decodeIfPresent(Bool.self, forKey: .chainWithPreviousEnd) ?? false
+        transitionIn = try container.decodeIfPresent(TransitionType.self, forKey: .transitionIn) ?? .hardCut
+        transitionOut = try container.decodeIfPresent(TransitionType.self, forKey: .transitionOut) ?? .hardCut
         notes = try container.decodeIfPresent(String.self, forKey: .notes)
         try validate()
     }

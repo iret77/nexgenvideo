@@ -412,7 +412,10 @@ extension ToolExecutor {
                 + "\"none\" if this prompt belongs to no shot — but note that \"none\" compiles without "
                 + "the shot's camera projection and without the drift check.")
         }
-        return PromptComposer.ShotProjection(shot)
+        // #213: the global cut-handle override — the user forcing overlap material on every shot.
+        let forceHandles = (try? YAMLArtifactStore(dataRoot: root).load(Brief.self, at: PipelineLayout.briefFile))?
+            .cutHandlesMode == .withOverlap
+        return PromptComposer.ShotProjection(shot, forceHandles: forceHandles)
     }
 
     func generateAudio(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {

@@ -106,6 +106,12 @@ enum SeedanceBuilder {
             if !payload.style.isEmpty { parts.append(SlopStripper.strip(payload.style)) }
         }
 
+        // Cut-handle timing (#213): the held pre/post beats, so the model renders the overlap material
+        // as content rather than spreading the action across the gross duration. Emitted for every mode.
+        if !payload.temporalStructure.isEmpty {
+            parts.append(SlopStripper.strip(payload.temporalStructure))
+        }
+
         // Step 6 — Constraints (positive).
         let userConstraints = (payload.negatives).map { PositivePhrasing.phrase($0) }
         var standardConstraints = BuilderSupport.seedanceStandardVideoPositives

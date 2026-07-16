@@ -33,6 +33,10 @@ public struct PromptPayload: Sendable, Equatable {
     /// Ledger directives (Shot + Bible refs + look/film). Locked directives MUST
     /// appear here — the compliance lint checks the finished prompt against them.
     public var directives: [String]
+    /// Deterministic temporal structure for a handled shot (#213): a held beat of micro-motion before
+    /// the action and/or a held pose after, so the model renders the cut handles as content instead of
+    /// spreading the action across the gross duration. Empty for a plain shot.
+    public var temporalStructure: String
 
     public init(
         subject: String,
@@ -48,7 +52,8 @@ public struct PromptPayload: Sendable, Equatable {
         aspectRatio: String = "",
         nShots: Int = 1,
         multiRefHints: [String] = [],
-        directives: [String] = []
+        directives: [String] = [],
+        temporalStructure: String = ""
     ) {
         self.subject = subject
         self.setting = setting
@@ -64,6 +69,7 @@ public struct PromptPayload: Sendable, Equatable {
         self.nShots = nShots
         self.multiRefHints = multiRefHints
         self.directives = directives
+        self.temporalStructure = temporalStructure
     }
 }
 
