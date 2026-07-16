@@ -584,6 +584,12 @@ extension ToolExecutor {
         }
         var manifest = (try? loadRenderManifest(dataRoot: root, phase: phase)) ?? RenderManifest(project: "", phase: phase)
         record(&manifest, shotId: shotId, output: output, costEur: costEur, status: status, phase: phase)
+        // #231: stamp what this render was ACTUALLY conditioned on, so `plan_adherence` can audit it
+        // against what `next_render_shot` planned. Read off the submitted GenerationInput — the record
+        // of the real submission — not off the agent's say-so.
+        if status == .rendered, let output, !output.isEmpty {
+            stampRenderInputs(&manifest, shotId: shotId, output: output, editor: editor, dataRoot: root)
+        }
         do {
             try saveRenderManifest(manifest, dataRoot: root)
         } catch {
@@ -1170,6 +1176,53 @@ extension ToolExecutor {
             ?? FramesManifest(project: FrameInventory.projectName(of: dataRoot) ?? "", generated: currentTimestamp()))
             .upserting(shotId: shotId, keyframeStrategy: ks, frame: entry)
         try? saveFramesManifest(manifest, dataRoot: dataRoot)
+    }
+
+    /// #231 — record the render's actual conditioning (start frame + image references) on the manifest
+    /// entry, as project-home-relative paths, so a pure file-level check can compare them against the
+    /// deterministic plan. Read off the submitted `GenerationInput` — the record of the real submission.
+    ///
+    /// `imageURLAssetIds` is overloaded across the three submission shapes, so it cannot be read
+    /// blindly: only text-to-video puts frame slots there. Getting this wrong doesn't lose the audit, it
+    /// INVERTS it — a render that used every planned reference would be stamped as having used none and
+    /// then reported as ignoring the plan. Silent on any miss: the audit trail must never break
+    /// recording a render.
+    private func stampRenderInputs(
+        _ manifest: inout RenderManifest, shotId: String, output: String, editor: EditorViewModel,
+        dataRoot: URL
+    ) {
+        guard var entry = manifest.entries[shotId],
+              let asset = resolveRenderedAsset(output, editor: editor, dataRoot: dataRoot),
+              let gi = asset.generationInput else { return }
+        let home = FrameInventory.projectHome(of: dataRoot)
+        func paths(_ assetIds: [String]) -> [String] {
+            assetIds.compactMap { id in
+                editor.mediaAssets.first { $0.id == id }
+                    .map { FrameInventory.relativePath(of: $0.url, to: home) }
+            }
+        }
+        let imageURLIds = gi.imageURLAssetIds ?? []
+        // Branch on the MODEL, never on whether `referenceImageAssetIds` happens to be nil: it is nil
+        // both for a source-video edit AND for a text-to-video render that simply had no refs, and those
+        // two need opposite readings of `imageURLAssetIds`.
+        switch VideoModelConfig.allModels.first(where: { $0.id == gi.model }) {
+        case .some(let model) where model.requiresSourceVideo:
+            // Edit / v2v: `imageURLAssetIds` is [sourceVideo] + imageRefs. The source video is not a
+            // start frame — stamping it as one would mis-fire the chain check too.
+            entry.startFramePath = nil
+            entry.referencePaths = paths(Array(imageURLIds.dropFirst()))
+        case .some:
+            // Text-to-video / image-to-video: `imageURLAssetIds` is the frame slots, start frame first;
+            // image refs are kept separate.
+            entry.startFramePath = paths(Array(imageURLIds.prefix(1))).first
+            entry.referencePaths = paths(gi.referenceImageAssetIds ?? [])
+        case .none:
+            // Not a video model → image generation (`ImageGenerationSubmission.make`), i.e. the `frames`
+            // phase: every reference rides in `imageURLAssetIds`, and there is no start frame.
+            entry.startFramePath = nil
+            entry.referencePaths = paths(imageURLIds)
+        }
+        manifest.entries[shotId] = entry
     }
 
     /// #196 — when the next shot in render order chains off this one, extract this rendered clip's last

@@ -374,11 +374,11 @@ extension ToolExecutor {
     func compilePrompt(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let intent = try args.requireString("intent")
         let modelId = ModelCatalog.shared.internalId(forLogical: try args.requireString("model"))
-        // Optional per-shot compile: when the agent is rendering a specific shot it passes `shotId`, so
-        // the shot's structured camera + framing project deterministically into the prompt and the drift
-        // linter checks the result against the spec (#197). A missing/unknown shot degrades to the plain
-        // free-intent compile.
-        let projection = shotProjection(args.string("shotId"), editor: editor)
+        // #231: `shotId` is REQUIRED and has no default — "none" is the explicit free-intent choice. It
+        // used to be optional, so forgetting it degraded the compile silently: no camera projection from
+        // the spec, no drift lint, no error. The contract now forces the decision instead of asking the
+        // agent to remember it; an unknown id is refused rather than quietly treated as free intent.
+        let projection = try shotProjection(try args.requireString("shotId"), editor: editor)
         // Same contract as before ({ compiledPrompt, compileToken, notes }); composition now runs the
         // ENGINE path (PromptComposer: ledger directives + provider builder + PromptLinter) instead of
         // the old local ledger text-append, then the gate mints the token over the result.
@@ -394,15 +394,24 @@ extension ToolExecutor {
         return .ok(json)
     }
 
-    /// Build a per-shot projection for `compile_prompt`'s `shotId` — loads the shot from the open
-    /// project's shotlist and derives the deterministic camera/framing projection plus the compliance
-    /// read-surface (#197). nil when there's no shot id, no open project, or no matching shot, so the
-    /// compile falls back to the plain free-intent path.
-    private func shotProjection(_ shotId: String?, editor: EditorViewModel) -> PromptComposer.ShotProjection? {
-        guard let shotId, !shotId.isEmpty,
-              let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
-              let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil,
-              let shot = shotlist.shots.first(where: { $0.id == shotId }) else { return nil }
+    /// Build a per-shot projection for `compile_prompt`'s required `shotId` — loads the shot from the
+    /// open project's shotlist and derives the deterministic camera/framing projection plus the
+    /// compliance read-surface (#197). `"none"` is the explicit free-intent choice → nil.
+    ///
+    /// An id that names no shot THROWS (#231). It would otherwise be indistinguishable from free intent,
+    /// which is the silent degradation this contract exists to prevent: a typo'd id would drop the
+    /// camera projection and the drift lint without a word. A project that has no shotlist yet is a
+    /// normal state, not a violation — only a real miss against a real shotlist is an error.
+    private func shotProjection(_ shotId: String, editor: EditorViewModel) throws -> PromptComposer.ShotProjection? {
+        guard shotId != "none" else { return nil }
+        guard let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+              let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil else { return nil }
+        guard let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
+            throw ToolError(
+                "No shot '\(shotId)' in the shotlist. Pass a real shot id from next_render_shot, or "
+                + "\"none\" if this prompt belongs to no shot — but note that \"none\" compiles without "
+                + "the shot's camera projection and without the drift check.")
+        }
         return PromptComposer.ShotProjection(shot)
     }
 

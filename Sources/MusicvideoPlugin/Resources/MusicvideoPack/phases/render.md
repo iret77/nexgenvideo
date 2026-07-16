@@ -194,9 +194,12 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
 3. **Build the clip prompt** from `shot.visual_prompt` + `shot.motion`
    (Subject → Action → Environment → Camera → Style → Constraints, kept
    tight, ~60–100 words). Compile it with `compile_prompt(intent, model,
-   shotId=<shot_id>)`: passing `shotId` projects the shot's declared
-   camera + framing into the prompt deterministically and runs the drift
-   linter — heed any `CAMERA_/FRAMING_/GAZE_/SETTING_` note it returns.
+   shotId=<shot_id>)`. `shotId` is REQUIRED and has no default: the shot's
+   declared camera + framing are projected into the prompt deterministically
+   and the drift linter runs — heed any `CAMERA_/FRAMING_/GAZE_/SETTING_`
+   note it returns. Here it is always the real shot id; `"none"` exists only
+   for prompts that belong to no shot, and using it for a shot throws away
+   the camera projection and the drift check.
    The style already sits in `shot.visual_prompt` from the bible look —
    **never** append freehand extra style tags ("cinematic, ARRI ALEXA")
    and never quality killers ("epic / stunning / amazing").

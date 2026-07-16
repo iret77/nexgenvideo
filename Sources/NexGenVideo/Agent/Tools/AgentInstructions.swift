@@ -108,8 +108,11 @@ enum AgentInstructions {
         - PROMPT GATE (mandatory): never send your own phrasing to generate_video/image/audio. \
           Prepare the intent (translate to English, resolve contradictions; if essential info is \
           missing, ask the user FIRST — never guess and spend money), then call compile_prompt \
-          and pass its compiledPrompt + compileToken to the generate tool unchanged. rawPrompt is \
-          a pro escape hatch the user must enable in Settings.
+          and pass its compiledPrompt + compileToken to the generate tool unchanged. compile_prompt \
+          requires shotId: the shotlist shot you are rendering, or "none" when the prompt belongs to \
+          no shot. "none" compiles without the shot's camera projection and without the drift check — \
+          never pass it for a real shot. rawPrompt is a pro escape hatch the user must enable in \
+          Settings.
         - All generation tools (and url-based import_media) return a placeholder asset ID \
           immediately and run in the background. Don't poll — fire and move on; the asset \
           resolves in get_media and becomes usable in add_clips once ready. If an asset's \

@@ -26,10 +26,16 @@ public struct RenderEntry: Codable, Sendable, Equatable {
     /// off this one (`chain_with_previous_end`). Feeds the successor's start-frame condition (#196).
     /// Port of `RenderResult.last_frame_path`.
     public var lastFramePath: String?
+    /// What this render was ACTUALLY conditioned on, stamped by `record_render` from the submitted
+    /// generation input — the audit counterpart to what `next_render_shot` planned. `plan_adherence`
+    /// compares the two (#231). Nil on manifests written before the fields existed.
+    public var startFramePath: String?
+    public var referencePaths: [String]?
 
     public init(
         shotId: String, phase: String, status: RenderStatus = .pending, output: String? = nil,
-        costEur: Double = 0.0, updatedAt: String? = nil, lastFramePath: String? = nil
+        costEur: Double = 0.0, updatedAt: String? = nil, lastFramePath: String? = nil,
+        startFramePath: String? = nil, referencePaths: [String]? = nil
     ) {
         self.shotId = shotId
         self.phase = phase
@@ -38,6 +44,8 @@ public struct RenderEntry: Codable, Sendable, Equatable {
         self.costEur = costEur
         self.updatedAt = updatedAt
         self.lastFramePath = lastFramePath
+        self.startFramePath = startFramePath
+        self.referencePaths = referencePaths
     }
 }
 
@@ -94,6 +102,8 @@ extension RenderManifest: Codable {
         let eurSpent: Double?
         let updatedAt: String?
         let lastFramePath: String?
+        let startFramePath: String?
+        let referencePaths: [String]?
 
         enum CodingKeys: String, CodingKey {
             case shotId = "shot_id"
@@ -105,6 +115,8 @@ extension RenderManifest: Codable {
             case eurSpent = "eur_spent"
             case updatedAt = "updated_at"
             case lastFramePath = "last_frame_path"
+            case startFramePath = "start_frame_path"
+            case referencePaths = "reference_paths"
         }
     }
 
@@ -118,6 +130,8 @@ extension RenderManifest: Codable {
         let eurSpent: Double
         let outPath: String?
         let lastFramePath: String?
+        let startFramePath: String?
+        let referencePaths: [String]?
 
         enum CodingKeys: String, CodingKey {
             case shotId = "shot_id"
@@ -129,6 +143,8 @@ extension RenderManifest: Codable {
             case eurSpent = "eur_spent"
             case outPath = "out_path"
             case lastFramePath = "last_frame_path"
+            case startFramePath = "start_frame_path"
+            case referencePaths = "reference_paths"
         }
     }
 
@@ -176,7 +192,9 @@ extension RenderManifest: Codable {
                 output: output,
                 costEur: cost,
                 updatedAt: row.updatedAt,
-                lastFramePath: row.lastFramePath
+                lastFramePath: row.lastFramePath,
+                startFramePath: row.startFramePath,
+                referencePaths: row.referencePaths
             )
         }
         self.entries = entries
@@ -204,7 +222,8 @@ extension RenderManifest: Codable {
             RowOut(
                 shotId: entry.shotId, phase: entry.phase, status: entry.status, output: entry.output,
                 costEur: entry.costEur, updatedAt: entry.updatedAt, eurSpent: entry.costEur,
-                outPath: entry.output, lastFramePath: entry.lastFramePath
+                outPath: entry.output, lastFramePath: entry.lastFramePath,
+                startFramePath: entry.startFramePath, referencePaths: entry.referencePaths
             )
         }
         try container.encode(rows, forKey: .shots)

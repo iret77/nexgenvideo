@@ -3,7 +3,7 @@ import Foundation
 /// Universal slop-strip for image and video prompts. Port of
 /// `render/prompt/builder.py::_strip_prompt_slop` plus the module constants it
 /// depends on. Byte-faithful: emitted strings are the product.
-enum SlopStripper {
+public enum SlopStripper {
     /// Seedance mention tags (@Image1, @Video2, @Audio3 …). Port of
     /// `builder._AT_TAG_RE`. Case-insensitive.
     static let atTagRE = Rx.compile(#"@(?:Image|Video|Audio)\d+"#, caseInsensitive: true)
@@ -74,8 +74,9 @@ enum SlopStripper {
     // Unmask scan.
     private static let placeholderScanRE = Rx.compile("\u{0000}ATTAG(\\d+)\u{0000}")
 
-    /// Port of `_strip_prompt_slop`. Idempotent, safe on empty input.
-    static func strip(_ text: String) -> String {
+    /// Port of `_strip_prompt_slop`. Idempotent, safe on empty input. Public so an audit can
+    /// reproduce exactly what the builder emitted for a payload field (#231).
+    public static func strip(_ text: String) -> String {
         if text.isEmpty { return text }
 
         // Explicit mask/unmask of the Seedance mention tags.
