@@ -15,9 +15,9 @@ ModelCatalog.shared.load(entries: FalModelRegistry.entries + MarbleModelRegistry
 Task { @MainActor in await RemoteCatalog.refresh() }
 
 // Models that only exist once a provider is activated: MCP providers (Higgsfield/OpenArt — no static
-// registry, discovered on sign-in, #163) and the direct-API image providers (Google/OpenAI — the
-// registry's curated caps intersected with what the key really exposes, #212). Layered onto the
-// catalog; re-runs on every activation change.
+// registry, discovered on sign-in, #163) and the direct-API providers (Google images #212, Runway's
+// Aleph line #223 — the registry's curated caps intersected with what the key really exposes).
+// Layered onto the catalog; re-runs on every activation change.
 CatalogDiscovery.start()
 
 // Load installed format packs before any UI reads the catalog. Packs ship as

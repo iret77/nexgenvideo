@@ -62,7 +62,7 @@ final class GenerationService {
         let primaryId = placeholders[0].id
         let refURLs = references.map(\.url)
 
-        // #212: Google/OpenAI take reference bytes inline, so this run never produces hosted URLs.
+        // #212: Google takes reference bytes inline, so this run never produces hosted URLs.
         // Resolved once, from the same inputs `runJob` resolves with, so the upload step and the
         // dispatch agree on the provider.
         let inlineBytes = Self.usesInlineReferenceBytes(modelId: genInput.model)
@@ -411,15 +411,6 @@ final class GenerationService {
                 apiModel: endpoint, model: model, params: p,
                 placeholders: placeholders, editor: editor, onComplete: onComplete, onFailure: onFailure)
             return
-        case .openai:
-            guard case .image(let p) = params,
-                  let model = OpenAIModelRegistry.model(for: endpoint) else {
-                return failJob(placeholders, "Unsupported OpenAI request for model: \(endpoint)", onFailure)
-            }
-            await runOpenAIImageJob(
-                apiModel: endpoint, model: model, params: p,
-                placeholders: placeholders, editor: editor, onComplete: onComplete, onFailure: onFailure)
-            return
         case .fal:
             break
         }
@@ -662,7 +653,7 @@ final class GenerationService {
     @MainActor
     private static func usesInlineReferenceBytes(modelId: String) -> Bool {
         switch GenerationProvider.servicing(modelId: modelId) {
-        case .google, .openai: return true
+        case .google: return true
         default: return false
         }
     }
@@ -701,40 +692,6 @@ final class GenerationService {
                     model: apiModel, prompt: params.prompt,
                     referenceImages: Self.referenceBytes(params.imageURLs))
             }
-            await finalizeBytes(images, placeholders: placeholders, editor: editor,
-                                onComplete: onComplete, onFailure: onFailure)
-        } catch {
-            failJob(placeholders, error.localizedDescription, onFailure)
-        }
-    }
-
-    /// #212 — OpenAI images on the user's own key.
-    private func runOpenAIImageJob(
-        apiModel: String,
-        model: OpenAIImageModel,
-        params: ImageGenerationParams,
-        placeholders: [MediaAsset],
-        editor: EditorViewModel,
-        onComplete: (@MainActor (MediaAsset) -> Void)?,
-        onFailure: (@MainActor () -> Void)?
-    ) async {
-        guard let apiKey = ProviderKeychain.load(.openai) else {
-            return failJob(placeholders, "Add an OpenAI API key in Settings to generate.", onFailure)
-        }
-        // The registry only advertises ratios this model really renders, so an unmapped aspect means
-        // the caller bypassed validation — refuse rather than quietly render a different shape.
-        guard let size = OpenAIModelRegistry.size(forAspect: params.aspectRatio, model: model) else {
-            return failJob(
-                placeholders,
-                "\(model.entry.displayName) doesn't render \(params.aspectRatio). Supported: "
-                    + model.sizeByAspect.keys.sorted().joined(separator: ", ")
-                    + " — or crop after generating.",
-                onFailure)
-        }
-        do {
-            let images = try await OpenAIImageClient(apiKey: apiKey).generate(
-                model: apiModel, prompt: params.prompt, size: size,
-                quality: params.quality, count: placeholders.count)
             await finalizeBytes(images, placeholders: placeholders, editor: editor,
                                 onComplete: onComplete, onFailure: onFailure)
         } catch {
