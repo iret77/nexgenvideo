@@ -23,11 +23,11 @@ struct DirectImageProviderTests {
 
     @Test("a Google model resolves to whichever candidate id the key exposes")
     func googleResolvesCandidate() throws {
-        let model = try #require(GoogleModelRegistry.models.first { $0.entry.id == "fal-ai/imagen4" })
+        let model = try #require(GoogleModelRegistry.models.first { $0.entry.id == "fal-ai/gemini-25-flash-image/edit" })
         // Take the LAST candidate to prove it isn't just picking the first blindly.
         let fallback = try #require(model.apiModelCandidates.last)
         let entries = GoogleModelRegistry.entries(availableModelIds: [fallback])
-        let entry = try #require(entries.first { $0.id == "fal-ai/imagen4" })
+        let entry = try #require(entries.first { $0.id == "fal-ai/gemini-25-flash-image/edit" })
         let offer = try #require(entry.offers?.first)
         #expect(offer.provider == .google)
         #expect(offer.providerRef == fallback)
@@ -35,20 +35,20 @@ struct DirectImageProviderTests {
 
     @Test("candidate order wins when the key exposes several")
     func googlePrefersFirstCandidate() throws {
-        let model = try #require(GoogleModelRegistry.models.first { $0.entry.id == "fal-ai/imagen4" })
+        let model = try #require(GoogleModelRegistry.models.first { $0.entry.id == "fal-ai/gemini-25-flash-image/edit" })
         let entries = GoogleModelRegistry.entries(availableModelIds: Set(model.apiModelCandidates))
-        let offer = try #require(entries.first { $0.id == "fal-ai/imagen4" }?.offers?.first)
+        let offer = try #require(entries.first { $0.id == "fal-ai/gemini-25-flash-image/edit" }?.offers?.first)
         #expect(offer.providerRef == model.apiModelCandidates.first)
     }
 
     // MARK: - One model, several providers
 
-    @Test("the Google Imagen entry shares the fal id, so the catalog merges them into ONE model")
+    @Test("the Google Gemini 2.5 entry shares the fal id, so the catalog merges them into ONE model")
     func googleSharesFalIdForMergedOffers() throws {
-        let google = try #require(GoogleModelRegistry.models.first { $0.entry.id == "fal-ai/imagen4" })
+        let google = try #require(GoogleModelRegistry.models.first { $0.entry.id == "fal-ai/gemini-25-flash-image/edit" })
         let fal = FalModelRegistry.entries.first { $0.id == google.entry.id }
-        // A different id here would put two "Imagen 4" rows in front of the user instead of one model
-        // with two routes — the thing #212 is for.
+        // A different id here would put two "Gemini 2.5 Flash" rows in front of the user instead of
+        // one model with two routes — the thing #212 is for.
         #expect(fal != nil, "the Google entry must reuse the fal entry's id to merge offers")
         #expect(fal?.offers?.contains { $0.provider == .fal } == true)
     }
@@ -57,25 +57,25 @@ struct DirectImageProviderTests {
     func resolvesToActivatedProvider() throws {
         let bindings = [
             ProviderBinding(provider: .fal, transport: .api, kind: .generation,
-                            providerRef: "fal-ai/imagen4", billing: .perCall),
+                            providerRef: "fal-ai/gemini-25-flash-image/edit", billing: .perCall),
             ProviderBinding(provider: .google, transport: .api, kind: .generation,
-                            providerRef: "imagen-4.0-generate-001", billing: .perCall),
+                            providerRef: "gemini-2.5-flash-image", billing: .perCall),
         ]
         let googleOnly = ProviderActivation(active: [.init(provider: .google, transport: .api)])
         let picked = try #require(ProviderResolver.resolve(
             bindings: bindings, activation: googleOnly, effectiveCost: ProviderManifest.effectiveCost))
         #expect(picked.provider == .google)
         // The dispatch endpoint is the provider's OWN model string, not the fal id.
-        #expect(picked.providerRef == "imagen-4.0-generate-001")
+        #expect(picked.providerRef == "gemini-2.5-flash-image")
     }
 
     @Test("with both activated, the direct provider beats the fal middleman")
     func directBeatsFalWhenBothActive() throws {
         let bindings = [
             ProviderBinding(provider: .fal, transport: .api, kind: .generation,
-                            providerRef: "fal-ai/imagen4", billing: .perCall),
+                            providerRef: "fal-ai/gemini-25-flash-image/edit", billing: .perCall),
             ProviderBinding(provider: .google, transport: .api, kind: .generation,
-                            providerRef: "imagen-4.0-generate-001", billing: .perCall),
+                            providerRef: "gemini-2.5-flash-image", billing: .perCall),
         ]
         let both = ProviderActivation(active: [
             .init(provider: .google, transport: .api), .init(provider: .fal, transport: .api),
@@ -89,7 +89,7 @@ struct DirectImageProviderTests {
     func nothingActivatedResolvesNil() {
         let bindings = [
             ProviderBinding(provider: .google, transport: .api, kind: .generation,
-                            providerRef: "imagen-4.0-generate-001", billing: .perCall),
+                            providerRef: "gemini-2.5-flash-image", billing: .perCall),
         ]
         #expect(ProviderResolver.resolve(
             bindings: bindings, activation: ProviderActivation(active: []),
@@ -104,7 +104,7 @@ struct DirectImageProviderTests {
         // .fal here would tell the user to add a *fal* key for a Google model.
         #expect(ProviderManifest.nominalProvider(forModelId: "google/some-image") == .google)
         // A model sharing the fal id is a fal model by default — falling back to fal is correct.
-        #expect(ProviderManifest.nominalProvider(forModelId: "fal-ai/imagen4") == .fal)
+        #expect(ProviderManifest.nominalProvider(forModelId: "fal-ai/gemini-25-flash-image/edit") == .fal)
     }
 
     @Test("the registry lookup resolves both the API model string and the catalog id")
@@ -131,7 +131,7 @@ struct DirectImageProviderTests {
     @Test("the LLM sees provider-neutral logical ids")
     func logicalIdsAreProviderNeutral() {
         #expect(ModelCatalog.deriveLogicalId("google/some-image") == "some-image")
-        #expect(ModelCatalog.deriveLogicalId("fal-ai/imagen4") == "imagen4")
+        #expect(ModelCatalog.deriveLogicalId("fal-ai/gemini-25-flash-image/edit") == "gemini-25-flash-image/edit")
     }
 
     @Test("OpenAI is gone entirely — no provider, so no key field can be dead")
@@ -155,8 +155,6 @@ struct Gemini3ImageTests {
             // GA first, preview only as fallback — never silently prefer a preview.
             #expect(model.apiModelCandidates.first == id.replacingOccurrences(of: "google/", with: ""))
             #expect(model.apiModelCandidates.last?.hasSuffix("-preview") == true)
-            // Same envelope as 2.5 — verified live: every gemini image model lists generateContent.
-            #expect(model.surface == .generateContent)
         }
     }
 
@@ -184,5 +182,19 @@ struct Gemini3ImageTests {
     @Test("an unactivated Gemini 3.x model names Google, not fal")
     func geminiThreeFallsBackToGoogle() {
         #expect(ProviderManifest.nominalProvider(forModelId: "google/gemini-3-pro-image") == .google)
+    }
+
+    @Test("Imagen is not offered — every variant 404s despite being listed")
+    func imagenIsNotOffered() {
+        // Live: imagen-4.0-{,fast-,ultra-}generate-001 are all listed by GET /v1beta/models with
+        // methods:["predict"], and all answer 404 "no longer available to new users" when called.
+        // Discovery cannot catch that — Google's list is a catalog, not an entitlement — so the
+        // registry must simply not carry them, or the user 404s at spend time.
+        #expect(!GoogleModelRegistry.models.contains { $0.entry.id.contains("imagen") })
+        // Even if the key lists them, nothing is offered.
+        let entries = GoogleModelRegistry.entries(availableModelIds: [
+            "imagen-4.0-generate-001", "imagen-4.0-ultra-generate-001", "imagen-4.0-fast-generate-001",
+        ])
+        #expect(entries.isEmpty)
     }
 }

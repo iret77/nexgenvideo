@@ -5,11 +5,13 @@ import Foundation
 /// instead of routing through fal's hosted copies of the same models (#212: fal is *a* way to images,
 /// not *the* way). Port of the direct-provider half of `render/images/google_provider.py`.
 ///
-/// Two request shapes, because Google serves its image models through two different surfaces:
-/// - **Imagen** — `:predict`, an instances/parameters envelope, images back as `bytesBase64Encoded`.
-/// - **Gemini image** (the "nano-banana" family) — `:generateContent`, a contents/parts envelope with
-///   `responseModalities: ["IMAGE"]`, images back as inline base64 parts. This is the shape that also
-///   takes reference images (edit), as extra `inline_data` parts.
+/// One request shape: `:generateContent` — a contents/parts envelope with
+/// `responseModalities: ["IMAGE"]`, images back as inline base64 parts, and reference images riding
+/// along as extra `inline_data` parts (that is how this family does image-to-image).
+///
+/// Imagen's `:predict` envelope is deliberately NOT here: every `imagen-4.0-*` variant answers 404
+/// ("no longer available to new users") on this API, so a client for it would be code for a route
+/// nothing can take.
 ///
 /// Every generation endpoint returns raw image BYTES (no hosted URL), like `ElevenLabsClient`.
 actor GoogleImageClient {
@@ -58,26 +60,6 @@ actor GoogleImageClient {
     }
 
     // MARK: - Generation
-
-    /// Imagen via `:predict`. `aspectRatio` is Google's own enum ("1:1", "16:9", "9:16", "4:3", "3:4").
-    func imagen(model: String, prompt: String, aspectRatio: String, count: Int) async throws -> [Data] {
-        var parameters: [String: Any] = ["sampleCount": max(1, min(4, count))]
-        if !aspectRatio.isEmpty { parameters["aspectRatio"] = aspectRatio }
-        let body: [String: Any] = [
-            "instances": [["prompt": prompt]],
-            "parameters": parameters,
-        ]
-        let data = try await post(path: "models/\(model):predict", body: body)
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let predictions = object["predictions"] as? [[String: Any]], !predictions.isEmpty else {
-            throw ClientError.noImage(Self.snippet(data))
-        }
-        let images = predictions.compactMap { p -> Data? in
-            (p["bytesBase64Encoded"] as? String).flatMap { Data(base64Encoded: $0) }
-        }
-        guard !images.isEmpty else { throw ClientError.noImage(Self.snippet(data)) }
-        return images
-    }
 
     /// Gemini image via `:generateContent`. `referenceImages` ride along as inline parts, which is how
     /// this family does image-to-image — the same call, one more part.

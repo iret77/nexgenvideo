@@ -1,28 +1,27 @@
 import Foundation
 
-/// Google's image models reached on the user's OWN Google AI key (#212). fal hosts copies of these
-/// same models; this registry declares the DIRECT route so a user holding only a Google key can still
-/// make images — and so a user holding both gets the cheaper binding rather than the fal middleman.
+/// Google's image models reached on the user's OWN Google AI key (#212) — the Gemini image line.
+/// fal hosts a copy of one of them; this registry declares the DIRECT route so a user holding only a
+/// Google key can still make images, and so a user holding both gets the cheaper binding rather than
+/// the fal middleman.
 ///
-/// Ids are deliberately SHARED with the fal entry for the same model (`fal-ai/imagen4`), not
-/// namespaced under `google/`. The catalog merges entries by id and unions their offers, so one
-/// logical model ends up carrying both a `.fal` and a `.google` offer and the resolver picks by
-/// activation — which is the whole point of "the same model can be reachable through several
-/// providers". A model with no fal counterpart gets its own `google/` id.
+/// Where a model HAS a fal counterpart its id is deliberately SHARED with the fal entry
+/// (`fal-ai/gemini-25-flash-image/edit`) rather than namespaced under `google/`: the catalog merges
+/// entries by id and unions their offers, so one logical model carries both a `.fal` and a `.google`
+/// offer and the resolver picks by activation — the whole point of "the same model can be reachable
+/// through several providers". A model with no fal counterpart gets its own `google/` id.
 ///
-/// These entries are NOT in the launch seed: they are layered on by `DirectImageDiscovery` only for
-/// the models the user's key actually exposes (#159 — the catalog shows what is really runnable).
+/// **Imagen is deliberately absent.** All three variants (`imagen-4.0-{,fast-,ultra-}generate-001`)
+/// answer `404 NOT_FOUND: "no longer available to new users. Please update your code to use a newer
+/// model."` — while still being listed by `GET /v1beta/models` with `methods: ["predict"]`. Offering
+/// it would 404 at spend time, which is the one thing #159 forbids. Google's own guidance is the
+/// Gemini image line, which is what this registry carries and what is verified to actually run.
+///
+/// These entries are NOT in the launch seed: `DirectImageDiscovery` layers them on. Note what that
+/// filter can and cannot do — see its own note: absence from the list is proof of unavailability;
+/// presence is NOT proof of availability.
 struct GoogleImageModel: Sendable {
-    /// How Google serves this model — the two surfaces need different request envelopes.
-    enum Surface: Sendable {
-        /// Imagen: `:predict`, instances/parameters, `bytesBase64Encoded` back.
-        case predict
-        /// Gemini image ("nano-banana"): `:generateContent`, contents/parts, inline base64 back.
-        case generateContent
-    }
-
     let entry: CatalogEntry
-    let surface: Surface
     /// Google model strings to try, in order — the first the key exposes wins. A list rather than one
     /// id because Google renames across GA/preview (`…-preview-…` → `…-001`), and a stale single id
     /// would silently drop the model. Discovery resolves it against the live model list.
@@ -32,10 +31,6 @@ struct GoogleImageModel: Sendable {
 enum GoogleModelRegistry {
     static let idPrefix = "google/"
 
-    /// Google's `aspectRatio` enum for Imagen — the same labels NGV uses, so no lossy mapping.
-    /// Verified live: an invalid value is rejected with "Supported values are 1:1, 9:16, 16:9, 4:3, 3:4."
-    private static let imagenAspects = ["1:1", "16:9", "9:16", "4:3", "3:4"]
-
     /// The Gemini image family takes its ratio in `generationConfig.imageConfig.aspectRatio`. Its enum
     /// is wider than Imagen's (it also does 2:3, 3:2, 4:5, 5:4, 21:9 and some extreme strips), but
     /// these are the five NGV actually speaks — advertising ratios the brief can never ask for would
@@ -43,16 +38,6 @@ enum GoogleModelRegistry {
     private static let geminiAspects = ["1:1", "16:9", "9:16", "4:3", "3:4"]
 
     static let models: [GoogleImageModel] = [
-        // Shares the fal id: one logical "Imagen 4", two offers.
-        GoogleImageModel(
-            entry: CatalogEntry(
-                id: "fal-ai/imagen4", kind: .image, displayName: "Imagen 4",
-                allowedEndpoints: ["fal-ai/imagen4"], responseShape: .images,
-                uiCapabilities: .image(ImageCaps(
-                    resolutions: nil, aspectRatios: imagenAspects, qualities: nil,
-                    supportsImageReference: false, maxImages: 4))),
-            surface: .predict,
-            apiModelCandidates: ["imagen-4.0-generate-001", "imagen-4.0-generate-preview-06-06"]),
         // Shares the fal id for the Gemini 2.5 edit model. Kept as the fal-hosted model's direct route;
         // the 3.x line below supersedes it for quality, but this id is fal's and stays reachable.
         GoogleImageModel(
@@ -62,7 +47,6 @@ enum GoogleModelRegistry {
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
                     supportsImageReference: true, maxImages: 1))),
-            surface: .generateContent,
             apiModelCandidates: ["gemini-2.5-flash-image", "gemini-2.5-flash-image-preview"]),
         // The current Gemini image line. No fal counterpart in the registry, so these carry their own
         // `google/` ids. Two tiers, because that is the real choice: quality vs speed/price. (The
@@ -75,7 +59,6 @@ enum GoogleModelRegistry {
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
                     supportsImageReference: true, maxImages: 1))),
-            surface: .generateContent,
             apiModelCandidates: ["gemini-3-pro-image", "gemini-3-pro-image-preview"]),
         GoogleImageModel(
             entry: CatalogEntry(
@@ -84,7 +67,6 @@ enum GoogleModelRegistry {
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
                     supportsImageReference: true, maxImages: 1))),
-            surface: .generateContent,
             apiModelCandidates: ["gemini-3.1-flash-image", "gemini-3.1-flash-image-preview"]),
     ]
 

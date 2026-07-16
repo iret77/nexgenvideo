@@ -665,8 +665,7 @@ final class GenerationService {
         paths.compactMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
     }
 
-    /// #212 — Google AI on the user's own key. Imagen and the Gemini image family need different
-    /// request envelopes; the registry says which.
+    /// #212 — Google AI on the user's own key: the Gemini image line, all on `:generateContent`.
     private func runGoogleImageJob(
         apiModel: String,
         model: GoogleImageModel,
@@ -680,18 +679,9 @@ final class GenerationService {
             return failJob(placeholders, "Add a Google AI API key in Settings to generate.", onFailure)
         }
         do {
-            let client = GoogleImageClient(apiKey: apiKey)
-            let images: [Data]
-            switch model.surface {
-            case .predict:
-                images = try await client.imagen(
-                    model: apiModel, prompt: params.prompt,
-                    aspectRatio: params.aspectRatio, count: placeholders.count)
-            case .generateContent:
-                images = try await client.geminiImage(
-                    model: apiModel, prompt: params.prompt, aspectRatio: params.aspectRatio,
-                    referenceImages: Self.referenceBytes(params.imageURLs))
-            }
+            let images = try await GoogleImageClient(apiKey: apiKey).geminiImage(
+                model: apiModel, prompt: params.prompt, aspectRatio: params.aspectRatio,
+                referenceImages: Self.referenceBytes(params.imageURLs))
             await finalizeBytes(images, placeholders: placeholders, editor: editor,
                                 onComplete: onComplete, onFailure: onFailure)
         } catch {
