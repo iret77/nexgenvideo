@@ -485,15 +485,17 @@ extension ToolExecutor {
                 .cutHandlesMode == .withOverlap
             let h = CutHandles.handles(for: shot, forceAll: forceHandles)
             body["net_duration_s"] = shot.durationS
-            body["render_duration_s"] = CutHandles.grossDuration(for: shot, forceAll: forceHandles)
+            // Already a whole second — the agent orders this value as-is. Rounding is done here, not
+            // asked for in prose: a beat-derived net is often fractional and would otherwise be
+            // unorderable, and "please round" is the kind of plea a contract should replace.
+            body["render_duration_s"] = CutHandles.orderableGrossDuration(for: shot, forceAll: forceHandles)
             if h.pre > 0 || h.post > 0 {
                 body["handle_pre_s"] = h.pre
                 body["handle_post_s"] = h.post
-                body["handle_note"] = "Order render_duration_s (gross) from the model — round UP to the "
-                    + "model's nearest valid duration if it doesn't take that value exactly. The compiled "
-                    + "prompt holds \(h.pre)s before and \(h.post)s after. Place the clip trimmed to "
-                    + "net_duration_s (in-point at \(h.pre)s), so the handle material sits just off the "
-                    + "visible cut for the fade."
+                body["handle_note"] = "Order render_duration_s from the model exactly as given (it is "
+                    + "already a whole second). The compiled prompt holds \(h.pre)s before and \(h.post)s "
+                    + "after. Place the clip trimmed to net_duration_s (in-point at \(h.pre)s), so the "
+                    + "handle material sits just off the visible cut for the fade."
             }
         }
         // #196: when this shot chains off its predecessor, hand the agent the predecessor's extracted

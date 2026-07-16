@@ -24,13 +24,17 @@ extension MusicvideoChecks {
             guard h.pre > 0 || h.post > 0 else { continue }
             let text = (shot.visualPrompt + " " + (shot.motion ?? "")).lowercased()
             guard let hit = unholdableMotion.first(where: { text.contains($0) }) else { continue }
-            // A shot's handle is forced by the global override only when its own transition wouldn't ask
-            // for it — the remedy differs, so name it correctly rather than advising a no-op.
-            let forced = forceAll && !shot.transitionIn.needsHandle && !shot.transitionOut.needsHandle
-            let remedy = forced
-                ? "This handle is forced by cut_handles_mode=with_overlap, so a hard cut won't remove it — "
-                    + "turn the global override off, or soften the motion at the edge."
-                : "Either drop the transition to a hard cut (no handle) or soften the motion at that edge."
+            // Name the remedy that actually applies. The two sources are independent and can BOTH be in
+            // play on one shot (e.g. a planned fade out while the override forces the pre-handle), so a
+            // single either/or would send the user to a no-op for whichever side it missed.
+            let anyForced = forceAll
+                && (!shot.transitionIn.needsHandle || !shot.transitionOut.needsHandle)
+            let anyPlanned = shot.transitionIn.needsHandle || shot.transitionOut.needsHandle
+            var remedies: [String] = []
+            if anyPlanned { remedies.append("drop the planned transition to a hard cut") }
+            if anyForced { remedies.append("turn off the cut_handles_mode=with_overlap override") }
+            remedies.append("soften the motion at that edge")
+            let remedy = "To fix: " + remedies.joined(separator: ", or ") + "."
             out.append(Finding(
                 level: .warn, code: "HANDLE_HOLD_IMPLAUSIBLE", shotId: shot.id,
                 message: "shot \(shot.id) renders cut-handle material, but its motion (\"\(hit)\") peaks at "

@@ -65,6 +65,23 @@ struct CutHandlesTests {
         #expect(CutHandles.grossDuration(for: s, forceAll: true) == 4 + 2 * CutHandles.handleSeconds)
     }
 
+    @Test("the orderable gross is a whole second, even for a fractional beat-derived net")
+    func orderableGrossIsWholeSecond() throws {
+        // A beat-derived net is routinely fractional; the ordered duration must still be orderable.
+        let s = try Self.shot("s001", duration: 3.5, tout: .fade)
+        #expect(CutHandles.grossDuration(for: s, forceAll: false) == 4.5)
+        #expect(CutHandles.orderableGrossDuration(for: s, forceAll: false) == 5)  // ceil(4.5)
+        // Already whole → unchanged, no gratuitous inflation.
+        let whole = try Self.shot("s002", duration: 4, tout: .fade)
+        #expect(CutHandles.orderableGrossDuration(for: whole, forceAll: false) == 5)
+    }
+
+    @Test("orderable gross never rounds below a renderable second")
+    func orderableGrossFloor() throws {
+        let tiny = try Self.shot("s001", duration: 0.4)
+        #expect(CutHandles.orderableGrossDuration(for: tiny, forceAll: false) >= 1)
+    }
+
     // MARK: - Temporal structure prompt
 
     @Test("temporal structure describes a held pre-beat and post-hold for a handled shot")
@@ -154,6 +171,23 @@ struct CutHandlesTests {
             brief: try Self.brief(cutHandles: .withOverlap))
         let findings = try MusicvideoChecks.handleDisciplineCheck(ctx)
         let hold = try #require(findings.first { $0.code == "HANDLE_HOLD_IMPLAUSIBLE" })
+        #expect(hold.message.contains("with_overlap"))
+        // Nothing was planned, so advising a hard cut would be a no-op — it must not appear.
+        #expect(!hold.message.contains("drop the planned transition"))
+    }
+
+    @Test("a shot both forced AND planned names both remedies, not just one")
+    func mixedForcedAndPlannedRemedy() throws {
+        // transition_out is a planned fade (post handle); the override forces the pre handle too.
+        // Advising only the hard cut would leave the forced pre-handle in place.
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist([
+                try Self.shot("s001", tout: .fade, motion: "a violent whip pan"),
+            ]),
+            brief: try Self.brief(cutHandles: .withOverlap))
+        let hold = try #require(
+            try MusicvideoChecks.handleDisciplineCheck(ctx).first { $0.code == "HANDLE_HOLD_IMPLAUSIBLE" })
+        #expect(hold.message.contains("drop the planned transition"))
         #expect(hold.message.contains("with_overlap"))
     }
 

@@ -28,11 +28,20 @@ public enum CutHandles {
         return (pre, post)
     }
 
-    /// Gross render duration: the net action plus whichever handles this shot carries. This is the
-    /// duration ordered from the model and the duration billed — handles are content, so they cost.
+    /// Gross render duration: the net action plus whichever handles this shot carries. Handles are
+    /// content, so they are billed — this is what the cost estimate prices.
     public static func grossDuration(for shot: Shot, forceAll: Bool) -> Double {
         let h = handles(for: shot, forceAll: forceAll)
         return shot.durationS + h.pre + h.post
+    }
+
+    /// The gross duration as a whole second the agent can actually ORDER. Video models take discrete
+    /// whole-second durations, and a beat-derived net is often fractional (e.g. 3.5s), so the raw gross
+    /// is frequently unorderable. Rounding it here — rather than asking the agent in prose to round —
+    /// keeps the contract deterministic; any slack from the round-up lands in the handle material, which
+    /// is exactly what it is for. The timeline still trims to the net, so the extra never shows.
+    public static func orderableGrossDuration(for shot: Shot, forceAll: Bool) -> Int {
+        max(1, Int(grossDuration(for: shot, forceAll: forceAll).rounded(.up)))
     }
 
     /// The deterministic temporal instruction handed to the video prompt for a handled shot, so the
