@@ -286,18 +286,30 @@ anchor the views on a single world-model panorama:
   architecture visible."). Marble returns an **equirectangular
   panorama** of the location. Bring it into the project as
   `bible/<id>/scene3d/world_pano.png`.
-- Use the panorama as the primary `referenceMediaRefs` anchor when
-  generating each flat per-view sheet — every view then derives from the
-  same world, improving cross-view location consistency.
-- **POV extraction / re-style is a follow-up** (not available yet): there
-  is no deterministic POV-extract or restyle tool on this surface. So
-  Scene3D stays purely an anchor aid — you still generate each flat
-  `Location.sheets[<view>]` via `generate_image` as above. If the
-  panorama does not help (hallucinated geometry, wrong layout), drop it
-  and fall back to the flat sheets with text + upload anchors. Do not
-  force it.
+- **Cut the views out of the panorama** with
+  `extract_scene3d_povs(project_dir, location_id)` — a deterministic
+  equirect→perspective resample, not a generation. It returns the clay
+  POVs (default: the four cardinal walls), the POV set's geometry, and a
+  ready `restyle.instruction`. Because every view is cut from the SAME
+  panorama, the layout is identical across angles and a reverse shot
+  mirrors left/right correctly — that is the whole reason to do this, and
+  it is a property of the cut, not something the model is asked for.
+- **Restyle each clay POV into the look** with `generate_image`, passing
+  the clay POV as `referenceMediaRefs` and the returned
+  `restyle.instruction` as the intent — it already carries the
+  composition-preserving rule. Record each result as
+  `Location.sheets[<pov name>]` (the POV name IS the sheet key). Never
+  regenerate such a view from scratch: that throws the geometry away and
+  the walls stop agreeing.
+- If the panorama does not help (hallucinated geometry, wrong layout),
+  drop it and fall back to the flat sheets with text + upload anchors.
+  Do not force it.
 
-Record the panorama path under the location entry, e.g.:
+Record the panorama AND the POV geometry under the location entry —
+`extract_scene3d_povs` hands you the exact `scene3d` block to write.
+Without the `povs`, nothing can tell which sheets came from the panorama
+and no reverse angle can be derived; `scene3d_geometry` warns when it is
+missing. E.g.:
 
 ```yaml
 locations:
@@ -305,10 +317,16 @@ locations:
     name: 1970s classroom
     visual_prompt: ...
     sheets:
-      wide_chalkboard: bible/classroom_70s/wide_chalkboard.png
-      wide_door_side: bible/classroom_70s/wide_door_side.png
+      wide_front: bible/classroom_70s/scene3d/wide_front.png
+      wide_back: bible/classroom_70s/scene3d/wide_back.png
     scene3d:
       panorama: bible/classroom_70s/scene3d/world_pano.png
+      provider: marble
+      povs:
+        - {name: wide_front, yaw: 0, pitch: -5, fov: 75}
+        - {name: wide_right, yaw: 90, pitch: -5, fov: 75}
+        - {name: wide_back, yaw: 180, pitch: -5, fov: 75}
+        - {name: wide_left, yaw: -90, pitch: -5, fov: 75}
 ```
 
 #### Approval loop per sheet (MANDATORY)
@@ -372,8 +390,9 @@ full). After user approval: `approve_gate(project_dir, "bible")`.
   `referenceMediaRefs`. Never guess provider/key availability; check via
   `list_models` (`loaded=true` + the model present in `models`).
 - Scene3D (`marble/marble-1.1` panorama) is **optional** — the flat
-  per-view sheets are the baseline; POV-extract/restyle is a follow-up
-  and not available yet.
+  per-view sheets are the baseline. When you do use it, cut the views
+  with `extract_scene3d_povs` and restyle them; do not hand-generate a
+  view of a location that has a panorama, or it won't match the others.
 - Out of scope for this phase: do not write a shotlist; no video render
   (`generate_video`); the user never invokes shell commands. The heavy
   silent jobs that have a code runner go through `run_phase`, never the
