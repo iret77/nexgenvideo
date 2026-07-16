@@ -484,12 +484,15 @@ extension ToolExecutor {
             let forceHandles = (try? YAMLArtifactStore(dataRoot: root).load(Brief.self, at: PipelineLayout.briefFile))?
                 .cutHandlesMode == .withOverlap
             let h = CutHandles.handles(for: shot, forceAll: forceHandles)
-            body["net_duration_s"] = shot.durationS
-            // Already a whole second — the agent orders this value as-is. Rounding is done here, not
-            // asked for in prose: a beat-derived net is often fractional and would otherwise be
-            // unorderable, and "please round" is the kind of plea a contract should replace.
-            body["render_duration_s"] = CutHandles.orderableGrossDuration(for: shot, forceAll: forceHandles)
+            // Only a HANDLED shot gets a render_duration_s. A hard-cut shot is ordered exactly as it was
+            // before this change — emitting a rounded duration for it too would tell the agent to order
+            // a second the estimate doesn't price, re-opening the same under-estimation against the
+            // pre-flight budget stop. Rounding a bare fractional net is an older question, not this one's.
             if h.pre > 0 || h.post > 0 {
+                body["net_duration_s"] = shot.durationS
+                // Already a whole second — ordered as-is. Rounding happens here, not as a prose plea:
+                // a beat-derived net is often fractional and would otherwise be unorderable.
+                body["render_duration_s"] = CutHandles.orderableGrossDuration(for: shot, forceAll: forceHandles)
                 body["handle_pre_s"] = h.pre
                 body["handle_post_s"] = h.post
                 body["handle_note"] = "Order render_duration_s from the model exactly as given (it is "
