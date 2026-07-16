@@ -56,10 +56,9 @@ extension MusicvideoChecks {
     /// would call `banana.png` a match for `a.png`, hiding a genuinely missing reference.
     private static func samePath(_ a: String, _ b: String) -> Bool {
         let x = (a as NSString).pathComponents, y = (b as NSString).pathComponents
-        guard let shorter = [x, y].min(by: { $0.count < $1.count }),
-              let longer = [x, y].max(by: { $0.count < $1.count }),
-              !shorter.isEmpty else { return false }
-        return Array(longer.suffix(shorter.count)) == shorter
+        guard !x.isEmpty, !y.isEmpty else { return false }
+        let depth = Swift.min(x.count, y.count)
+        return Array(x.suffix(depth)) == Array(y.suffix(depth))
     }
 
     private static func adherence(
