@@ -130,20 +130,27 @@ extension ToolExecutor {
     func recordAffectTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
 
-        func weighted(_ key: String) throws -> [[String: Any]]? {
-            guard let raw = args[key] as? [[String: Any]] else { return nil }
+        // A tag carries signal only with a positive weight (the affect axis is a weighted mean), so a
+        // zero/negative-weight entry is rejected rather than persisted — it would otherwise count as a
+        // present-but-unscorable affect and shadow the tone-tag fallback.
+        func weighted(_ key: String) throws -> [[String: Any]] {
+            guard let raw = args[key] as? [[String: Any]] else { return [] }
             var out: [[String: Any]] = []
             for entry in raw {
                 guard let tag = entry["tag"] as? String, !tag.isEmpty else {
                     throw ToolError("Each \(key) entry needs a 'tag' (an affect from the enum).")
                 }
                 let weight = (entry["weight"] as? Double) ?? (entry["weight"] as? Int).map(Double.init) ?? 1.0
+                guard weight > 0 else {
+                    throw ToolError("\(key) tag '\(tag)' has weight \(weight) — weights must be positive (they are relative strengths).")
+                }
                 out.append(["value": tag, "weight": weight])
             }
             return out
         }
 
-        guard let detected = try weighted("detected"), !detected.isEmpty else {
+        let detected = try weighted("detected")
+        guard !detected.isEmpty else {
             throw ToolError("record_affect needs at least one 'detected' affect {tag, weight}.")
         }
         var profile: [String: Any] = [
@@ -151,7 +158,9 @@ extension ToolExecutor {
             "rationale": args.string("rationale") ?? "",
             "basis": args.string("basis") ?? "inferred",
         ]
-        if let override = try weighted("override") { profile["override"] = override }
+        // An empty override is not a correction — omit it so it never reads as one.
+        let override = try weighted("override")
+        if !override.isEmpty { profile["override"] = override }
 
         let data = try JSONSerialization.data(withJSONObject: profile, options: [.prettyPrinted, .sortedKeys])
         let url = PipelineLayout.url(Self.affectFile, in: root)

@@ -49,12 +49,23 @@ public struct AffectProfile: Codable, Sendable, Equatable {
         basis = try c.decodeIfPresent(EvidenceBasis.self, forKey: .basis) ?? .inferred
     }
 
-    /// True when the user overrode the detection — the profile carries an explicit correction.
-    public var isOverridden: Bool { override != nil }
+    /// Only positively-weighted tags carry signal: a zero/negative weight scores as nothing (the
+    /// affect axis is a weighted mean), so such entries must not count as "present" — otherwise a
+    /// `[{dark, 0}]` detection shadows the tone-tag fallback and then goes unscored.
+    private static func usable(_ affects: [WeightedAffect]) -> [WeightedAffect] {
+        affects.filter { $0.weight > 0 }
+    }
 
-    /// What pattern-fit actually scores against: the override if the user set one, else the detection.
-    /// Empty (no usable affect) when neither carries a weighted tag.
-    public var effective: [WeightedAffect] { override ?? detected }
+    /// True only when the override carries a usable tag. An empty (or all-zero) override is not a
+    /// correction — it must not report the detection as overridden, nor discard it.
+    public var isOverridden: Bool { !Self.usable(override ?? []).isEmpty }
+
+    /// What pattern-fit actually scores against: the override when it carries usable signal, else the
+    /// detection. Empty when neither does — the assembler then falls back to the brief tone tags.
+    public var effective: [WeightedAffect] {
+        let overridden = Self.usable(override ?? [])
+        return overridden.isEmpty ? Self.usable(detected) : overridden
+    }
 
     public static func load(dataRoot: URL) -> AffectProfile? {
         try? JSONArtifactStore(dataRoot: dataRoot).load(AffectProfile.self, at: file)

@@ -10,8 +10,8 @@ struct AffectDetectionTests {
     static func brief(tone: [ToneTag]) throws -> Brief {
         try Brief(project: "p", generated: "t", mission: .demo, targetPlatform: "web",
                   aspectRatio: .landscape16x9, projectMode: "beat", conceptType: .abstract,
-                  visualMedium: .liveActionRealistic, figures: .none, lyricsIntegration: .ignored,
-                  tone: tone)
+                  visualMedium: .liveActionRealistic, tone: tone, figures: .none,
+                  lyricsIntegration: .ignored)
     }
 
     static func affects(_ p: ProjectFitProfile) -> [AffectTag] {
@@ -59,6 +59,27 @@ struct AffectDetectionTests {
         let profile = AffectProfile(detected: [])
         let assembled = ProjectProfileAssembler.assemble(brief: brief, affectProfile: profile)
         #expect(Self.affects(assembled) == [.melancholic])
+        #expect(assembled.creative.affects?.source == .brief)
+    }
+
+    @Test("an empty override is not a correction — the detection stands, not the tone fallback")
+    func emptyOverrideDoesNotDiscardDetection() throws {
+        let brief = try Self.brief(tone: [.melancholic])
+        let profile = AffectProfile(detected: [WeightedAffect(value: .euphoric, weight: 1)], override: [])
+        #expect(profile.isOverridden == false)
+        #expect(profile.effective.map(\.value) == [.euphoric])
+        let assembled = ProjectProfileAssembler.assemble(brief: brief, affectProfile: profile)
+        #expect(Self.affects(assembled) == [.euphoric])
+        #expect(assembled.creative.affects?.source == .agentInference)
+    }
+
+    @Test("a zero-weight detection carries no signal and yields to the tone fallback, not a dead axis")
+    func zeroWeightDetectionYieldsToFallback() throws {
+        let brief = try Self.brief(tone: [.dark])
+        let profile = AffectProfile(detected: [WeightedAffect(value: .euphoric, weight: 0)])
+        #expect(profile.effective.isEmpty)
+        let assembled = ProjectProfileAssembler.assemble(brief: brief, affectProfile: profile)
+        #expect(Self.affects(assembled) == [.dark])
         #expect(assembled.creative.affects?.source == .brief)
     }
 
