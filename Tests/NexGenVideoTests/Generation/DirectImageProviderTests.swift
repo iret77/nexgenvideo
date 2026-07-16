@@ -42,14 +42,21 @@ struct DirectImageProviderTests {
         #expect(OpenAIModelRegistry.entries(availableModelIds: ["gpt-4o"]).isEmpty)
     }
 
-    @Test("gpt-image-1 is offered when the key exposes it")
+    @Test("gpt-image-2 is offered when the key exposes it")
     func openAIOffersAvailableModel() throws {
-        let entries = OpenAIModelRegistry.entries(availableModelIds: ["gpt-image-1"])
+        let entries = OpenAIModelRegistry.entries(availableModelIds: ["gpt-image-2"])
         let entry = try #require(entries.first)
-        #expect(entry.id == "openai/gpt-image-1")
+        #expect(entry.id == "openai/gpt-image-2")
         let offer = try #require(entry.offers?.first)
         #expect(offer.provider == .openai)
-        #expect(offer.providerRef == "gpt-image-1")
+        #expect(offer.providerRef == "gpt-image-2")
+    }
+
+    @Test("gpt-image-1 is never silently substituted for image-2")
+    func openAINeverFallsBackToImage1() {
+        // A key that exposes only the older model must yield NOTHING — quietly handing back image-1
+        // pixels would be worse than the model the user asked for simply not appearing.
+        #expect(OpenAIModelRegistry.entries(availableModelIds: ["gpt-image-1"]).isEmpty)
     }
 
     // MARK: - One model, several providers
@@ -113,7 +120,7 @@ struct DirectImageProviderTests {
     func nominalProviderKnowsDirectPrefixes() {
         // Nothing activated → no binding resolves → dispatch falls back to nominalProvider. Landing on
         // .fal here would tell the user to add a *fal* key for an OpenAI model.
-        #expect(ProviderManifest.nominalProvider(forModelId: "openai/gpt-image-1") == .openai)
+        #expect(ProviderManifest.nominalProvider(forModelId: "openai/gpt-image-2") == .openai)
         #expect(ProviderManifest.nominalProvider(forModelId: "google/some-image") == .google)
         // A model sharing the fal id is a fal model by default — falling back to fal is correct.
         #expect(ProviderManifest.nominalProvider(forModelId: "fal-ai/imagen4") == .fal)
@@ -125,7 +132,7 @@ struct DirectImageProviderTests {
         // not-activated fallback — both must find the model, or that path reports "unsupported model"
         // instead of "add a key".
         let openai = try #require(OpenAIModelRegistry.models.first)
-        #expect(OpenAIModelRegistry.model(for: "gpt-image-1") != nil)
+        #expect(OpenAIModelRegistry.model(for: "gpt-image-2") != nil)
         #expect(OpenAIModelRegistry.model(for: openai.entry.id) != nil)
         #expect(OpenAIModelRegistry.model(for: "nope") == nil)
 
@@ -137,15 +144,14 @@ struct DirectImageProviderTests {
 
     // MARK: - Honest capabilities
 
-    @Test("gpt-image-1 advertises only the ratios it really renders — no 16:9")
-    func openAIAspectsAreHonest() throws {
+    @Test("gpt-image-2 advertises every aspect NGV speaks, 16:9 included")
+    func openAIAspectsCoverTheVocabulary() throws {
         let model = try #require(OpenAIModelRegistry.models.first)
         guard case .image(let caps) = model.entry.uiCapabilities else {
             Issue.record("expected image capabilities"); return
         }
-        // 16:9 (1.78) is not 3:2 (1.50) — claiming it would trip the frame_ratio check at 2% tolerance.
-        #expect(!caps.aspectRatios.contains("16:9"))
-        #expect(Set(caps.aspectRatios) == Set(["1:1", "3:2", "2:3"]))
+        // image-2 takes arbitrary resolutions, so the image-1 era limitation (square/3:2/2:3 only) is gone.
+        #expect(Set(caps.aspectRatios) == Set(["1:1", "16:9", "9:16", "4:3", "3:4"]))
     }
 
     @Test("every advertised OpenAI ratio maps to a real size, and nothing else does")
@@ -158,7 +164,37 @@ struct DirectImageProviderTests {
             #expect(OpenAIModelRegistry.size(forAspect: aspect, model: model) != nil,
                     "advertised ratio must map to a size")
         }
-        #expect(OpenAIModelRegistry.size(forAspect: "16:9", model: model) == nil)
+        #expect(OpenAIModelRegistry.size(forAspect: "21:9", model: model) == nil)
+    }
+
+    /// Each advertised size must satisfy gpt-image-2's real constraints AND the pipeline's own checks.
+    /// Getting any of these wrong fails on every single sheet, not occasionally.
+    @Test("every advertised size is exact, 16-aligned, in-range, and clears the short-edge floor")
+    func openAISizesAreValid() throws {
+        let model = try #require(OpenAIModelRegistry.models.first)
+        for (aspect, size) in model.sizeByAspect {
+            let parts = size.split(separator: "x").compactMap { Int($0) }
+            guard parts.count == 2 else {
+                Issue.record("malformed size \(size) for \(aspect)"); continue
+            }
+            let (w, h) = (parts[0], parts[1])
+
+            // gpt-image-2: both edges multiples of 16, long edge ≤ 3840, ratio ≤ 3:1, 655_360…8_294_400 px.
+            if w % 16 != 0 || h % 16 != 0 { Issue.record("\(size) is not 16-aligned") }
+            if max(w, h) > 3840 { Issue.record("\(size) exceeds the 3840 long edge") }
+            if Double(max(w, h)) / Double(min(w, h)) > 3.0 { Issue.record("\(size) exceeds 3:1") }
+            if !(655_360...8_294_400).contains(w * h) { Issue.record("\(size) is outside the pixel range") }
+
+            // frame_size warns below a 1024 short edge — it would fire on every frame.
+            if min(w, h) < 1024 { Issue.record("\(size) short edge is under the 1024 floor") }
+
+            // frame_ratio compares real pixel aspect to the brief within 2% — so these must be EXACT.
+            let labels = aspect.split(separator: ":").compactMap { Double($0) }
+            guard labels.count == 2 else { Issue.record("bad aspect label \(aspect)"); continue }
+            let want = labels[0] / labels[1]
+            let got = Double(w) / Double(h)
+            if abs(got - want) >= 0.001 { Issue.record("\(aspect) -> \(size) is \(got), not \(want)") }
+        }
     }
 
     @Test("both direct providers are honest key-field providers")
@@ -171,7 +207,7 @@ struct DirectImageProviderTests {
 
     @Test("the LLM sees provider-neutral logical ids")
     func logicalIdsAreProviderNeutral() {
-        #expect(ModelCatalog.deriveLogicalId("openai/gpt-image-1") == "gpt-image-1")
+        #expect(ModelCatalog.deriveLogicalId("openai/gpt-image-2") == "gpt-image-2")
         #expect(ModelCatalog.deriveLogicalId("fal-ai/imagen4") == "imagen4")
     }
 }

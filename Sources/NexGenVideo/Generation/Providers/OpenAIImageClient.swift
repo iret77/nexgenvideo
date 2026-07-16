@@ -5,7 +5,7 @@ import Foundation
 /// (#212: someone holding only an OpenAI key must still be able to make images). Port of the direct-
 /// provider half of `render/images/openai_provider.py`.
 ///
-/// Returns raw image BYTES (no hosted URL), like `ElevenLabsClient` — `gpt-image-1` answers with
+/// Returns raw image BYTES (no hosted URL), like `ElevenLabsClient` — `gpt-image-2` answers with
 /// base64 regardless of `response_format`, so we never depend on a short-lived CDN link.
 actor OpenAIImageClient {
     let apiKey: String

@@ -17,27 +17,41 @@ struct OpenAIImageModel: Sendable {
 enum OpenAIModelRegistry {
     static let idPrefix = "openai/"
 
-    /// gpt-image-1 renders three shapes: square, landscape 3:2, portrait 2:3. It has **no 16:9**.
-    /// Advertising 16:9 and quietly returning 3:2 would be a lie the pipeline itself catches —
-    /// `frame_ratio` compares each frame's real pixel aspect against the brief's within 2%, and
-    /// 3:2 (1.50) vs 16:9 (1.78) is far outside that. So the honest caps are these, and a 16:9
-    /// project reaches this model through `crop_to_aspect`, not through a silent mismatch.
+    /// gpt-image-2 takes ARBITRARY resolutions, not a fixed enum: both edges a multiple of 16, long
+    /// edge ≤ 3840, long:short ≤ 3:1, and 655,360–8,294,400 total pixels. So it renders every aspect
+    /// NGV speaks — EXACTLY, with no crop and nothing to apologise for.
+    ///
+    /// (gpt-image-1 could only do square / 3:2 / 2:3, which is why an earlier cut of this registry
+    /// advertised those and sent 16:9 through `crop_to_aspect`. That limitation is gone with image-2.)
+    ///
+    /// Two constraints picked these exact numbers rather than the obvious ones:
+    /// - **Exact ratios.** `frame_ratio` compares a frame's real pixel aspect against the brief's
+    ///   within 2%, so an approximation would flag on every sheet. Each pair below is the ratio
+    ///   precisely (2048/1152 = 1.7778 = 16:9), not near it.
+    /// - **Short edge ≥ 1024.** `frame_size` warns below that (Seedance's identity-drift floor), which
+    ///   rules out the tempting 1280x720 — it is exact 16:9 and a multiple of 16, but its 720 short
+    ///   edge would warn on every frame.
     private static let gptImageSizes = [
         "1:1": "1024x1024",
-        "3:2": "1536x1024",
-        "2:3": "1024x1536",
+        "16:9": "2048x1152",
+        "9:16": "1152x2048",
+        "4:3": "2048x1536",
+        "3:4": "1536x2048",
     ]
 
     static let models: [OpenAIImageModel] = [
         OpenAIImageModel(
             entry: CatalogEntry(
-                id: "openai/gpt-image-1", kind: .image, displayName: "GPT Image 1",
-                allowedEndpoints: ["openai/gpt-image-1"], responseShape: .images,
+                id: "openai/gpt-image-2", kind: .image, displayName: "GPT Image 2",
+                allowedEndpoints: ["openai/gpt-image-2"], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: Array(gptImageSizes.keys).sorted(),
                     qualities: ["low", "medium", "high"],
                     supportsImageReference: false, maxImages: 4))),
-            apiModelCandidates: ["gpt-image-1"],
+            // Only image-2. gpt-image-1 is deliberately NOT a fallback candidate: it is the older,
+            // weaker model, and silently dropping to it would hand back worse pixels than the user
+            // asked for. If image-2 isn't exposed to the key, the model simply doesn't appear.
+            apiModelCandidates: ["gpt-image-2"],
             sizeByAspect: gptImageSizes),
     ]
 
