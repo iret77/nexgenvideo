@@ -1,6 +1,6 @@
 import Foundation
 
-/// #212 — availability discovery for the direct-API image providers (Google, OpenAI).
+/// Availability discovery for the direct-API providers (#212 Google/OpenAI images, #223 Runway).
 ///
 /// The registries carry the curated capabilities (aspect ratios, reference support, image count) that
 /// no `GET /models` call can tell you. This supplies the other half: which of those models the user's
@@ -12,9 +12,12 @@ import Foundation
 /// isn't rediscovered disappears.
 @MainActor
 enum DirectImageDiscovery {
-    /// The direct-API providers whose image catalog is resolved at runtime. fal/Runway/Marble ship
-    /// static seeds instead — their ids are pinned against a published SDK, not discovered.
-    static let providers: [GenerationProvider] = [.google, .openai]
+    /// The direct-API providers whose catalog is resolved at runtime against the key.
+    ///
+    /// Runway is here for its discovery-GATED models only (its stable ids stay a static seed): the
+    /// Aleph line proved why a pinned id is not enough — `gen4_aleph` is sunset 2026-07-30, and only
+    /// the account's own model list names the successor it can actually run.
+    static let providers: [GenerationProvider] = [.google, .openai, .runway]
 
     static func discover(_ provider: GenerationProvider) async -> [CatalogEntry] {
         guard providers.contains(provider), let apiKey = ProviderKeychain.load(provider) else { return [] }
@@ -26,6 +29,9 @@ enum DirectImageDiscovery {
             case .openai:
                 let ids = try await OpenAIImageClient(apiKey: apiKey).availableModelIds()
                 return OpenAIModelRegistry.entries(availableModelIds: ids)
+            case .runway:
+                let ids = try await RunwayClient(apiKey: apiKey).availableModelIds()
+                return RunwayModelRegistry.discoveredEntries(availableModelIds: ids)
             default:
                 return []
             }

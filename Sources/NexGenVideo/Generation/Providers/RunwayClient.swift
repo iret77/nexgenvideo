@@ -31,9 +31,12 @@ actor RunwayClient {
         return try await waitForOutput(taskId: taskId)
     }
 
-    /// POST /v1/video_to_video — Gen-4 Aleph's restyle pass (#223). `videoUri` is the source clip;
-    /// the model re-renders it under `promptText`. Same task+poll flow as every other Runway call.
-    /// Required fields per the API reference: model, videoUri, promptText, ratio.
+    /// POST /v1/video_to_video — the Aleph restyle pass (#223). `videoUri` is the source clip; the
+    /// model re-renders it under `promptText`. Same task+poll flow as every other Runway call.
+    ///
+    /// Body shape verified LIVE against the API: a probe with an unreachable `videoUri` is rejected
+    /// only on that field (`path: ["videoUri"]`), i.e. model / promptText / ratio all validate — for
+    /// `aleph2` and its sunset predecessor alike.
     func videoToVideo(
         model: String, videoUri: String, promptText: String, ratio: String
     ) async throws -> [String] {
@@ -54,6 +57,26 @@ actor RunwayClient {
             "ratio": ratio,
         ])
         return try await waitForOutput(taskId: taskId)
+    }
+
+    // MARK: - Availability
+
+    /// `GET /v1/organization` — the model ids THIS key's account is entitled to, from `tier.models`.
+    ///
+    /// Runway has no `GET /v1/models`; the organization endpoint is where the model list lives, and it
+    /// is scoped to the account rather than global — so it answers the only question that matters:
+    /// can this user actually run it (#159). Verified live: the payload keys `tier.models` by model id
+    /// (`aleph2`, `gen4.5`, `gen4_image`, …).
+    func availableModelIds() async throws -> Set<String> {
+        let (data, status) = try await send(method: "GET", path: "organization", body: nil)
+        guard (200..<300).contains(status) else {
+            let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
+            throw GenerationBackendError.transport("Runway organization HTTP \(status): \(detail)")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tier = json["tier"] as? [String: Any],
+              let models = tier["models"] as? [String: Any] else { return [] }
+        return Set(models.keys)
     }
 
     // MARK: - Task flow

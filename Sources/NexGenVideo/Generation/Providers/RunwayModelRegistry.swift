@@ -22,13 +22,39 @@ enum RunwayModelRegistry {
         image("runway/gen4_image", "Runway Gen-4 Image", apiModel: "gen4_image"),
         // #223 — the restyle pass. The FIRST model on the source-video edit path: `generateVideoEdit`
         // and the submission's edit branch already existed but nothing routed to them until now.
-        videoEdit("runway/gen4_aleph", "Runway Gen-4 Aleph (restyle)", apiModel: "gen4_aleph"),
+        videoEdit("runway/aleph2", "Runway Aleph 2 (restyle)", apiModel: "aleph2"),
     ]
 
-    static let entries: [CatalogEntry] = models.map { model in
-        var e = model.entry
-        e.offers = [ProviderOffer(provider: .runway, providerRef: e.id)]
-        return e
+    /// Models that only appear once the user's ACCOUNT is known to carry them (`discoveredEntries`).
+    /// Aleph is here because its predecessor, `gen4_aleph`, is being sunset (2026-07-30) — a hardcoded
+    /// seed entry is exactly how a dead model reaches a user. The account's own list decides instead.
+    private static let discoveryGated: Set<String> = ["runway/aleph2"]
+
+    /// The launch seed — the models whose ids are pinned against the published SDK and which every
+    /// Runway key can reach. Discovery-gated models are excluded; they arrive via `discoveredEntries`.
+    static let entries: [CatalogEntry] = models
+        .filter { !discoveryGated.contains($0.entry.id) }
+        .map { model in
+            var e = model.entry
+            e.offers = [ProviderOffer(provider: .runway, providerRef: e.id)]
+            return e
+        }
+
+    /// The discovery-gated models this ACCOUNT actually carries — resolved against
+    /// `GET /v1/organization`'s `tier.models` (#159: offer only what is really runnable).
+    ///
+    /// This is what the owner asked for in #223 and what I wrongly reported as impossible: Runway has
+    /// no `GET /v1/models`, but the organization endpoint returns the account's entitled model ids,
+    /// which is *better* than a global list — it is scoped to this key. Hardcoding `gen4_aleph`
+    /// instead is precisely how a model 14 days from sunset got shipped.
+    static func discoveredEntries(availableModelIds: Set<String>) -> [CatalogEntry] {
+        models
+            .filter { discoveryGated.contains($0.entry.id) && availableModelIds.contains($0.apiModel) }
+            .map { model in
+                var e = model.entry
+                e.offers = [ProviderOffer(provider: .runway, providerRef: e.id)]
+                return e
+            }
     }
 
     private static let byId: [String: RunwayModel] =
