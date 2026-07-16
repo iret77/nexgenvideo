@@ -62,6 +62,11 @@ final class GenerationService {
         let primaryId = placeholders[0].id
         let refURLs = references.map(\.url)
 
+        // #212: Google/OpenAI take reference bytes inline, so this run never produces hosted URLs.
+        // Resolved once, from the same inputs `runJob` resolves with, so the upload step and the
+        // dispatch agree on the provider.
+        let inlineBytes = Self.usesInlineReferenceBytes(modelId: genInput.model)
+
         Task { @MainActor in
             var tempToCleanup: [URL] = []
             defer { Self.cleanupTempFiles(tempToCleanup) }
@@ -102,11 +107,10 @@ final class GenerationService {
                         if i == 0 && trimmedFirst { return nil }
                         return asset
                     }
-                    if Self.usesInlineReferenceBytes(modelId: genInput.model) {
-                        // #212: Google/OpenAI take reference bytes INLINE in the request body. Hosting
-                        // them on fal first would demand a fal key for a call that never touches fal —
-                        // exactly the dependency the direct providers exist to remove. Pass the local
-                        // paths through; the direct client reads the bytes off disk.
+                    if inlineBytes {
+                        // Hosting these on fal first would demand a fal key for a call that never
+                        // touches fal — exactly the dependency the direct providers exist to remove.
+                        // Local paths, purely so the direct client can read the bytes off disk.
                         uploaded = urlsToUpload.map(\.path)
                     } else {
                         uploaded = try await uploadReferences(
@@ -117,11 +121,17 @@ final class GenerationService {
                     }
                 }
 
+                // On the inline-byte path `uploaded` holds LOCAL paths, which must never be
+                // persisted: GenerationInput rides in the project's media manifest, and an absolute
+                // path would break the self-contained `.ngv` the moment the project moves machines —
+                // and it would claim a hosted URL that never existed. The durable, portable record of
+                // what was actually referenced is `imageURLAssetIds`, set by the submission.
+                let persistedRefs = inlineBytes ? [] : uploaded
                 var finalGenInput = genInput
                 if let snapshotRefs {
-                    snapshotRefs(&finalGenInput, uploaded)
+                    snapshotRefs(&finalGenInput, persistedRefs)
                 } else {
-                    finalGenInput.imageURLs = uploaded.isEmpty ? nil : uploaded
+                    finalGenInput.imageURLs = persistedRefs.isEmpty ? nil : persistedRefs
                 }
                 if finalGenInput.createdAt == nil {
                     finalGenInput.createdAt = Date()
