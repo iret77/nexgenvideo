@@ -26,6 +26,7 @@ actor GoogleImageClient {
     enum ClientError: LocalizedError {
         case http(status: Int, message: String)
         case noImage(String)
+        case unsupportedReference
 
         var errorDescription: String? {
             switch self {
@@ -33,8 +34,35 @@ actor GoogleImageClient {
                 return "Google AI API error \(status): \(message)"
             case .noImage(let detail):
                 return "Google AI returned no image: \(detail)"
+            case .unsupportedReference:
+                return "Reference image is not a PNG, JPEG, WebP or HEIC file."
             }
         }
+    }
+
+    /// Gemini decodes `inline_data` by its DECLARED mime type, so a mislabeled reference fails the
+    /// call. The bytes come from whatever the user imported — commonly JPEG or HEIC, not PNG — so
+    /// sniff the real format from the magic numbers rather than trusting a name or a default.
+    /// An unrecognized format fails HERE, with a sentence that names the problem, instead of being
+    /// dressed up as a PNG and coming back as an opaque Google 400.
+    static func mimeType(of data: Data) throws -> String {
+        let b = [UInt8](data.prefix(12))
+        guard b.count >= 12 else { throw ClientError.unsupportedReference }
+        if b.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { return "image/png" }
+        if b.starts(with: [0xFF, 0xD8, 0xFF]) { return "image/jpeg" }
+        if b.starts(with: [0x52, 0x49, 0x46, 0x46]), Array(b[8..<12]) == [0x57, 0x45, 0x42, 0x50] {
+            return "image/webp"
+        }
+        // ISO-BMFF: "ftyp" at offset 4, brand at 8. Covers HEIC and its HEIF siblings, which Apple
+        // hands out by default — the format most likely to reach this from a Mac photo library.
+        if Array(b[4..<8]) == [0x66, 0x74, 0x79, 0x70] {
+            switch String(decoding: b[8..<12], as: UTF8.self) {
+            case "heic", "heix", "hevc", "hevx": return "image/heic"
+            case "mif1", "msf1", "heim", "heis": return "image/heif"
+            default: throw ClientError.unsupportedReference
+            }
+        }
+        throw ClientError.unsupportedReference
     }
 
     // MARK: - Availability
@@ -74,7 +102,8 @@ actor GoogleImageClient {
     ) async throws -> [Data] {
         var parts: [[String: Any]] = [["text": prompt]]
         for image in referenceImages {
-            parts.append(["inline_data": ["mime_type": "image/png", "data": image.base64EncodedString()]])
+            let mime = try Self.mimeType(of: image)
+            parts.append(["inline_data": ["mime_type": mime, "data": image.base64EncodedString()]])
         }
         var generationConfig: [String: Any] = ["responseModalities": ["IMAGE"]]
         if !aspectRatio.isEmpty {

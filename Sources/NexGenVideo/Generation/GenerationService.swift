@@ -12,6 +12,27 @@ final class FirstOnlyFlag {
     }
 }
 
+/// Where a model's reference files have to live before the provider can read them. NGV is
+/// provider-agnostic: hosting is a property of the RESOLVED provider, never a fixed dependency on
+/// one vendor's storage (#244 — fal used to host references even for calls that never touched fal,
+/// which made a fal key mandatory for providers that need none).
+enum ReferenceHosting: Equatable {
+    /// The provider reads the file itself — bytes in the request body (Google) or base64 off a local
+    /// path (Marble). References stay local paths and are never hosted.
+    case inline
+    /// Runway hosts its own, on the user's Runway key.
+    case runway
+    /// fal storage — for fal-hosted models.
+    case fal
+
+    /// Whether this hosting yields a URL worth writing into the project's media manifest. Local
+    /// paths must never be persisted: `GenerationInput` rides in the manifest, and an absolute path
+    /// would break the self-contained `.ngv` the moment the project moves machines — while also
+    /// claiming a hosted URL that never existed. Hosted refs are a cache with a TTL either way; the
+    /// durable record of what was referenced is `imageURLAssetIds`.
+    var persistsHostedURLs: Bool { self != .inline }
+}
+
 @MainActor
 final class GenerationService {
 
@@ -62,10 +83,9 @@ final class GenerationService {
         let primaryId = placeholders[0].id
         let refURLs = references.map(\.url)
 
-        // #212: Google takes reference bytes inline, so this run never produces hosted URLs.
         // Resolved once, from the same inputs `runJob` resolves with, so the upload step and the
         // dispatch agree on the provider.
-        let inlineBytes = Self.usesInlineReferenceBytes(modelId: genInput.model)
+        let hosting = Self.referenceHosting(modelId: genInput.model)
 
         Task { @MainActor in
             var tempToCleanup: [URL] = []
@@ -107,12 +127,15 @@ final class GenerationService {
                         if i == 0 && trimmedFirst { return nil }
                         return asset
                     }
-                    if inlineBytes {
+                    switch hosting {
+                    case .inline:
                         // Hosting these on fal first would demand a fal key for a call that never
                         // touches fal — exactly the dependency the direct providers exist to remove.
                         // Local paths, purely so the direct client can read the bytes off disk.
                         uploaded = urlsToUpload.map(\.path)
-                    } else {
+                    case .runway:
+                        uploaded = try await uploadReferencesToRunway(at: urlsToUpload, types: refTypes)
+                    case .fal:
                         uploaded = try await uploadReferences(
                             at: urlsToUpload,
                             types: refTypes,
@@ -121,12 +144,7 @@ final class GenerationService {
                     }
                 }
 
-                // On the inline-byte path `uploaded` holds LOCAL paths, which must never be
-                // persisted: GenerationInput rides in the project's media manifest, and an absolute
-                // path would break the self-contained `.ngv` the moment the project moves machines —
-                // and it would claim a hosted URL that never existed. The durable, portable record of
-                // what was actually referenced is `imageURLAssetIds`, set by the submission.
-                let persistedRefs = inlineBytes ? [] : uploaded
+                let persistedRefs = hosting.persistsHostedURLs ? uploaded : []
                 var finalGenInput = genInput
                 if let snapshotRefs {
                     snapshotRefs(&finalGenInput, persistedRefs)
@@ -263,6 +281,54 @@ final class GenerationService {
         }
     }
 
+    /// #244 — host references on RUNWAY for Runway's own models, so image-to-video and Aleph restyle
+    /// need no fal key. Runway's video models all require a hosted `promptImage`/`videoUri`, so
+    /// routing them through fal storage made a fal key mandatory for a provider that hosts its own.
+    ///
+    /// Deliberately does NOT use the shared upload cache: `MediaAsset.cachedRemoteURL` holds ONE url
+    /// per asset and is written by the fal path, so consulting it here would hand a fal URL to Runway
+    /// (re-introducing the dependency) or cache a Runway URI where fal is expected. Runway's URIs
+    /// expire after ~24h against that cache's 6-day TTL anyway. Uploads are free; re-uploading per run
+    /// is the honest trade.
+    private func uploadReferencesToRunway(at urls: [URL], types: [ClipType]) async throws -> [String] {
+        guard !urls.isEmpty else { return [] }
+        guard let apiKey = ProviderKeychain.load(.runway) else {
+            throw GenerationBackendError.transport("Add a Runway API key in Settings to use references.")
+        }
+        let client = RunwayClient(apiKey: apiKey)
+        let uploaded = try await withThrowingTaskGroup(of: (Int, String).self) { group in
+            for (i, url) in urls.enumerated() {
+                let type = types.indices.contains(i) ? types[i] : .image
+                let filename = Self.uploadFilename(for: url, fallback: type)
+                group.addTask { (i, try await client.uploadReference(fileURL: url, filename: filename)) }
+            }
+            var results = [(Int, String)]()
+            for try await r in group { results.append(r) }
+            return results
+        }
+        return uploaded.sorted(by: { $0.0 < $1.0 }).map(\.1)
+    }
+
+    /// Runway reads the content type off the filename EXTENSION and then pins it in the upload
+    /// policy, so a name without a usable extension fails the S3 check rather than defaulting. Give
+    /// the file one that matches what it really is.
+    static func uploadFilename(for url: URL, fallback: ClipType) -> String {
+        // `.text` maps every UNKNOWN extension to application/octet-stream, so anything else means
+        // the extension is one `contentType(for:)` recognizes and the real name can stand.
+        if contentType(for: url, fallback: .text) != "application/octet-stream" {
+            return url.lastPathComponent
+        }
+        let ext: String
+        switch fallback {
+        case .image: ext = "jpg"
+        case .video: ext = "mp4"
+        case .audio: ext = "mp3"
+        case .text, .lottie: ext = "bin"
+        }
+        let stem = url.deletingPathExtension().lastPathComponent
+        return (stem.isEmpty ? "reference" : stem) + "." + ext
+    }
+
     /// Uploads each reference and returns the hosted URLs.
     private func uploadReferences(
         at urls: [URL],
@@ -347,19 +413,9 @@ final class GenerationService {
         Log.generation.notice("run \(runId) start model=\(genInput.model) placeholders=\(placeholders.count)")
         defer { Log.generation.notice("run \(runId) settled") }
 
-        // LLM → NGV → Provider. The LLM's model id is a LOGICAL id. The resolver decides which
-        // provider + transport runs it (activated ∩ offers ∩ cheapest); dispatch then uses the
-        // resolved offer's `providerRef` — the provider's OWN endpoint — so a logical id can differ
-        // from the provider endpoint (provider-neutral models). `.mcp` runs over MCP, not a keyless
-        // REST call, so `canRun` matches what executes; the nominal-provider fallback keeps the
-        // existing "add a key" errors when nothing is activated.
+        // `.mcp` runs over MCP, not a keyless REST call, so `canRun` matches what executes.
         let logicalId = genInput.model
-        let binding = ProviderResolver.resolve(
-            bindings: ProviderManifest.bindings(forModelId: logicalId),
-            activation: .current(),
-            effectiveCost: ProviderManifest.effectiveCost)
-        let provider = binding?.provider ?? ProviderManifest.nominalProvider(forModelId: logicalId)
-        let endpoint = binding?.providerRef ?? logicalId
+        let (provider, endpoint, binding) = Self.dispatchTarget(modelId: logicalId)
 
         if binding?.transport == .mcp {
             await runMCPJob(
@@ -648,14 +704,39 @@ final class GenerationService {
     }
 
     /// #212 — does the provider that will service this model take reference images as inline bytes
-    /// (rather than a hosted URL)? Decided from the same resolution `runJob` uses, so the upload step
-    /// and the dispatch agree.
+    /// Where this model's references must live. Decided from `dispatchTarget` — the SAME resolution
+    /// `runJob` dispatches on — so the upload step and the dispatch cannot disagree about the
+    /// provider. (`GenerationProvider.servicing` is not usable here: with no bindings it falls back to
+    /// `.fal` while dispatch falls back to `nominalProvider`, so an undiscovered Runway/Google model
+    /// would have its references hosted on fal and then handed to a provider that can't read them.)
     @MainActor
-    private static func usesInlineReferenceBytes(modelId: String) -> Bool {
-        switch GenerationProvider.servicing(modelId: modelId) {
-        case .google: return true
-        default: return false
+    static func referenceHosting(modelId: String) -> ReferenceHosting {
+        switch dispatchTarget(modelId: modelId).provider {
+        // Marble takes a local path and base64s the file itself, so its reference was never hosted —
+        // it only reached the fal branch because the submission hands the path in pre-uploaded, which
+        // then got persisted as if it were a hosted URL.
+        case .google, .marble: return .inline
+        case .runway: return .runway
+        default: return .fal
         }
+    }
+
+    /// LLM → NGV → Provider. The LLM's model id is a LOGICAL id; the resolver decides which provider +
+    /// transport runs it (activated ∩ offers ∩ cheapest), and dispatch then uses the resolved offer's
+    /// `providerRef` — the provider's OWN endpoint — so a logical id can differ from the provider
+    /// endpoint (provider-neutral models). The nominal-provider fallback keeps the "add a key" errors
+    /// naming the right provider when nothing is activated.
+    @MainActor
+    static func dispatchTarget(
+        modelId: String
+    ) -> (provider: GenerationProvider, endpoint: String, binding: ProviderBinding?) {
+        let binding = ProviderResolver.resolve(
+            bindings: ProviderManifest.bindings(forModelId: modelId),
+            activation: .current(),
+            effectiveCost: ProviderManifest.effectiveCost)
+        return (binding?.provider ?? ProviderManifest.nominalProvider(forModelId: modelId),
+                binding?.providerRef ?? modelId,
+                binding)
     }
 
     /// Reference bytes for a direct client: the generate flow handed us local paths (see the inline-

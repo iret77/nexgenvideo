@@ -91,6 +91,7 @@ enum EditSubmitter {
         case notGenerated
         case unknownModel(String)
         case missingSource
+        case missingReference
         case invalid(String)
         case compileBlocked(code: String, message: String)
 
@@ -99,10 +100,22 @@ enum EditSubmitter {
             case .notGenerated: "This asset was not AI-generated"
             case .unknownModel(let id): "Model no longer available: \(id)"
             case .missingSource: "Cannot rerun: source not recorded"
+            case .missingReference: "Cannot rerun: a reference image is no longer in the project"
             case .invalid(let msg): msg
             case .compileBlocked(let code, let message): "Prompt lint failed (\(code)): \(message)"
             }
         }
+    }
+
+    /// The reference record (`imageURLAssetIds`) resolved back to the project's assets, so a rerun can
+    /// re-host them for whichever provider services the model now. An id that no longer resolves fails
+    /// LOUDLY: rerunning with fewer references than the original is the silent drift this record exists
+    /// to prevent.
+    private static func referenceAssets(_ ids: [String]?, editor: EditorViewModel) throws -> [MediaAsset] {
+        let ids = ids ?? []
+        let assets = ids.compactMap { id in editor.mediaAssets.first { $0.id == id } }
+        guard assets.count == ids.count else { throw RerunError.missingReference }
+        return assets
     }
 
     @discardableResult
@@ -201,7 +214,14 @@ enum EditSubmitter {
 
         if let imageModel = ImageModelConfig.allModels.first(where: { $0.id == modelId }) {
             let count = min(imageModel.maxImages, max(1, gen.numImages ?? 1))
-            let refCount = (preUploaded ?? []).count
+            // A provider that takes its references inline (#212) never persists hosted URLs, so
+            // `imageURLs` is empty for it and the durable record is `imageURLAssetIds`. Replaying
+            // only `imageURLs` would silently turn an image-to-image rerun into plain text-to-image.
+            let replayURLs = (preUploaded?.isEmpty == false) ? preUploaded : nil
+            let refs = replayURLs == nil
+                ? try referenceAssets(gen.imageURLAssetIds, editor: editor)
+                : []
+            let refCount = replayURLs?.count ?? refs.count
             if let err = imageModel.validate(
                 aspectRatio: gen.aspectRatio, resolution: gen.resolution, quality: gen.quality,
                 imageRefCount: refCount, numImages: count
@@ -212,8 +232,8 @@ enum EditSubmitter {
                 genInput: gen,
                 assetType: .image,
                 placeholderDuration: Defaults.imageDurationSeconds,
-                references: [],
-                preUploadedURLs: preUploaded,
+                references: refs,
+                preUploadedURLs: replayURLs,
                 name: rerunName(for: asset),
                 numImages: count,
                 folderId: asset.folderId,
