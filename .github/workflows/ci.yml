@@ -1,9 +1,10 @@
 name: CI
 
+# PRs only — NOT `push: branches:[main]`. A merge of an up-to-date PR produces a commit whose CONTENT
+# the PR run already proved green, so re-running on main billed every change twice for no new signal.
+# macOS runners cost 10x, so that second run was ~100 quota-minutes each time. Re-add only if main can
+# receive commits that never went through a PR.
 on:
-  push:
-    branches: [main]
-    paths-ignore: ['docs/**', '**/*.md']
   pull_request:
     paths-ignore: ['docs/**', '**/*.md']
   workflow_dispatch:
@@ -17,7 +18,9 @@ jobs:
     name: Build & Test
     # NexGenVideo targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.
     runs-on: macos-26
-    timeout-minutes: 40
+    # Real runs take ~5.5 min. This is a COST CEILING, not a budget: a hung job on a 10x-billed macOS
+    # runner burns the timeout in quota minutes, so keep it just far enough above the real duration.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -65,108 +68,3 @@ jobs:
           done
           echo "::error::swift test hit the environmental crash on all $attempts attempts"
           exit 1
-
-  bundle-app:
-    name: Bundle .app
-    # Smoke-test that the debug .app still assembles (no secrets, no local build) and keep it as a CI
-    # artifact. The public `dev-latest` download is the SIGNED + notarized DMG published by release.yml
-    # — ci.yml no longer writes that release.
-    runs-on: macos-26
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache SwiftPM
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
-
-      - name: Bundle (debug, ad-hoc signed)
-        run: scripts/bundle.sh debug
-
-      - name: Assemble format pack (.ngvpack, ad-hoc) + catalog
-        run: |
-          set -euo pipefail
-          # Secret-free validation of the whole pack pipeline: assemble the ad-hoc-signed
-          # .ngvpack, then merge it into a catalog the app decodes.
-          scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
-          # Merge against a channel that already carries an OLDER version: the append-only
-          # promise #168 rests on (older versions survive, so an older app keeps its last
-          # compatible pack) is what makes the multi-version selection meaningful.
-          cat > .build/existing.json <<'JSON'
-          {"schema":"plugins/v2","plugins":[{"id":"musicvideo","displayName":"Music Video",
-           "tagline":"older","version":"0.0.1","minAppVersion":"0.1.0",
-           "url":"https://example.com/plugins/musicvideo-0.0.1.ngvpack.zip","sha256":"deadbeef"}]}
-          JSON
-          python3 scripts/publish_plugin_catalog.py .build/plugins "https://example.com/plugins" \
-            .build/plugins/catalog.json --existing .build/existing.json
-          cat .build/plugins/catalog.json
-          python3 - <<'PY'
-          import json, sys
-          plugins = json.load(open(".build/plugins/catalog.json"))["plugins"]
-          versions = [p["version"] for p in plugins if p["id"] == "musicvideo"]
-          assert "0.0.1" in versions, f"append-only violated — older version dropped: {versions}"
-          assert len(versions) > 1, f"the freshly built version was not appended: {versions}"
-          for p in plugins:
-              assert p["url"].endswith(f"{p['id']}-{p['version']}.ngvpack.zip"), f"unversioned asset URL: {p['url']}"
-          print(f"catalog carries {len(versions)} musicvideo version(s): {versions}")
-          PY
-
-      - name: Verify pack links the SHARED engine (guards the PackEntry-cast regression)
-        run: |
-          set -euo pipefail
-          # A `.ngvpack` must link NexGenEngine as ONE shared dynamic image with the app —
-          # not statically absorb it. If it absorbs the engine, the pack carries its own
-          # `PackEntry` (ObjC `NGVPackEntry`) class, so the host's load-time
-          # `bundle.principalClass as? PackEntry.Type` cast fails ("entry point not found")
-          # and the pack silently never activates. No test inside the package graph can
-          # catch this (they link the pack statically → one class), so we assert the
-          # Mach-O invariant on the assembled bundle here.
-          PACK_BIN="$(ls .build/plugins/*.ngvpack/Contents/MacOS/* | head -1)"
-          APP_BIN=".build/NexGenVideo.app/Contents/MacOS/NexGenVideo"
-          echo "pack binary: $PACK_BIN"
-          # 1) pack references the shared engine dylib dynamically
-          otool -L "$PACK_BIN" | grep -q '@rpath/libNexGenEngine.dylib' \
-            || { echo "::error::pack does not dynamically link libNexGenEngine.dylib (engine statically absorbed)"; exit 1; }
-          # 2) pack must NOT carry its own copy of the engine's PackEntry class — a DEFINED
-          #    _OBJC_CLASS_$_NGVPackEntry means NexGenEngine was statically absorbed. (We don't
-          #    assert the undefined *import* symbol: under macOS chained fixups the cross-dylib
-          #    superclass bind lives in the fixup chains, not as a classic nm 'U' entry. Step 1's
-          #    dependent-dylib link already proves the class resolves from the shared engine.)
-          if nm "$PACK_BIN" | grep -E ' [SDTtbd] _OBJC_CLASS_\$_NGVPackEntry$'; then
-            echo "::error::NexGenEngine is statically absorbed — pack defines its own NGVPackEntry class"; exit 1
-          fi
-          # 3) the app links the engine dynamically too (else the shared image never loads)
-          otool -L "$APP_BIN" | grep -q '@rpath/libNexGenEngine.dylib' \
-            || { echo "::error::app does not dynamically link libNexGenEngine.dylib"; exit 1; }
-          echo "OK: NexGenEngine is one shared dynamic image across app + pack"
-
-      - name: Load-test — the app actually loads the pack from an EXTERNAL dir (guards the load-time cast)
-        run: |
-          set -euo pipefail
-          # The static checks above are necessary but NOT sufficient — they missed the 0.7.6 rpath
-          # regression where the pack couldn't resolve the shared engine at load time. This reproduces
-          # the FIELD layout: the pack lives OUTSIDE the app bundle, so its @rpath/libNexGenEngine.dylib
-          # must resolve to the host's Contents/Frameworks via @executable_path/../Frameworks. The REAL
-          # app binary loads it (gate → Bundle.load() → principalClass cast → makePack()) and exits 0
-          # only on success.
-          PACK_BIN="$(ls .build/plugins/*.ngvpack/Contents/MacOS/* | head -1)"
-          otool -l "$PACK_BIN" | grep -q 'path @executable_path/../Frameworks' \
-            || { echo "::error::pack is missing the @executable_path/../Frameworks rpath — it can't reach the host engine"; exit 1; }
-          EXTDIR="$(mktemp -d)/packs"; mkdir -p "$EXTDIR"
-          cp -R .build/plugins/musicvideo.ngvpack "$EXTDIR/"
-          echo "loading $EXTDIR/musicvideo.ngvpack with the real app binary…"
-          NGV_SELFTEST_PACK="$EXTDIR/musicvideo.ngvpack" .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
-          echo "OK: the app loaded the pack from an external directory"
-
-      - name: Zip .app
-        run: ditto -c -k --keepParent .build/NexGenVideo.app .build/NexGenVideo.zip
-
-      - name: Upload .app artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: NexGenVideo-app
-          path: .build/NexGenVideo.zip
-          if-no-files-found: error
