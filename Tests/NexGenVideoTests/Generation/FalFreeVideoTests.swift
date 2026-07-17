@@ -55,6 +55,19 @@ struct FalFreeVideoTests {
         }
     }
 
+    @Test("hosting follows the provider itself, so one resolution can serve both steps")
+    func hostingIsAPureFunctionOfTheProvider() {
+        // `generate()` resolves ONCE and hands the result to `runJob`. That is only possible because
+        // hosting depends on nothing but the provider — otherwise the activation would have to be read
+        // again after the upload, and a key added mid-upload could re-route the dispatch to a provider
+        // that can't read what was just hosted.
+        #expect(GenerationService.referenceHosting(for: .runway) == .runway)
+        #expect(GenerationService.referenceHosting(for: .google) == .inline)
+        #expect(GenerationService.referenceHosting(for: .marble) == .inline)
+        #expect(GenerationService.referenceHosting(for: .fal) == .fal)
+        #expect(GenerationService.referenceHosting(for: .elevenlabs) == .fal)
+    }
+
     // MARK: - What may be written into the project
 
     @Test("only hosted URLs are durable enough to persist; local paths never are")

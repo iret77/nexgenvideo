@@ -83,9 +83,13 @@ final class GenerationService {
         let primaryId = placeholders[0].id
         let refURLs = references.map(\.url)
 
-        // Resolved once, from the same inputs `runJob` resolves with, so the upload step and the
-        // dispatch agree on the provider.
-        let hosting = Self.referenceHosting(modelId: genInput.model)
+        // Resolved ONCE, here, and handed to `runJob` — never re-resolved. Reading the activation a
+        // second time after the upload would let the two disagree: a key added while a reference was
+        // still uploading would re-route the dispatch to a provider that cannot read what was just
+        // hosted (a direct provider handed a fal URL reads it as a file path, finds nothing, and
+        // silently renders without the reference).
+        let target = Self.dispatchTarget(modelId: genInput.model)
+        let hosting = Self.referenceHosting(for: target.provider)
 
         Task { @MainActor in
             var tempToCleanup: [URL] = []
@@ -164,6 +168,7 @@ final class GenerationService {
                     placeholders: placeholders,
                     params: params,
                     genInput: finalGenInput,
+                    target: target,
                     editor: editor,
                     onComplete: onComplete,
                     onFailure: onFailure
@@ -405,6 +410,7 @@ final class GenerationService {
         placeholders: [MediaAsset],
         params: BackendGenerationParams,
         genInput: GenerationInput,
+        target: (provider: GenerationProvider, endpoint: String, binding: ProviderBinding?),
         editor: EditorViewModel,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
@@ -414,8 +420,7 @@ final class GenerationService {
         defer { Log.generation.notice("run \(runId) settled") }
 
         // `.mcp` runs over MCP, not a keyless REST call, so `canRun` matches what executes.
-        let logicalId = genInput.model
-        let (provider, endpoint, binding) = Self.dispatchTarget(modelId: logicalId)
+        let (provider, endpoint, binding) = target
 
         if binding?.transport == .mcp {
             await runMCPJob(
@@ -703,7 +708,6 @@ final class GenerationService {
         }
     }
 
-    /// #212 — does the provider that will service this model take reference images as inline bytes
     /// Where this model's references must live. Decided from `dispatchTarget` — the SAME resolution
     /// `runJob` dispatches on — so the upload step and the dispatch cannot disagree about the
     /// provider. (`GenerationProvider.servicing` is not usable here: with no bindings it falls back to
@@ -711,7 +715,11 @@ final class GenerationService {
     /// would have its references hosted on fal and then handed to a provider that can't read them.)
     @MainActor
     static func referenceHosting(modelId: String) -> ReferenceHosting {
-        switch dispatchTarget(modelId: modelId).provider {
+        referenceHosting(for: dispatchTarget(modelId: modelId).provider)
+    }
+
+    static func referenceHosting(for provider: GenerationProvider) -> ReferenceHosting {
+        switch provider {
         // Marble takes a local path and base64s the file itself, so its reference was never hosted —
         // it only reached the fal branch because the submission hands the path in pre-uploaded, which
         // then got persisted as if it were a hosted URL.
