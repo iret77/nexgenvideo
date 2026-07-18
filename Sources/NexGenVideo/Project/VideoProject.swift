@@ -161,7 +161,10 @@ final class VideoProject: NSDocument {
             .compactMap { session in
                 ChatSessionStore.encodeSession(session).map { (name: "\(session.id.uuidString).json", data: $0) }
             }
-        snapshotWorkingCopyKey = editorViewModel.workingCopyKey
+        // The copy we've been WRITING into, not a key re-derived from the package: during a save the
+        // package is being rewritten, and a re-read that misses `ngv.json` mints a new identity — the
+        // pipeline then gets persisted from a directory that doesn't exist, silently.
+        snapshotWorkingCopyKey = editorViewModel.openWorkingCopyKey ?? editorViewModel.workingCopyKey
         snapshotPreparedForWrite = true
     }
 
