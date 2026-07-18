@@ -39,6 +39,7 @@ struct MentionPopover: View {
     @Binding var tab: MentionTab
     let scrollTick: Int
     let onPick: (MediaAsset) -> Void
+    let onUpload: () -> Void
 
     @State private var visibleIDs: Set<String> = []
 
@@ -48,9 +49,31 @@ struct MentionPopover: View {
             Rectangle().fill(AppTheme.Border.subtleColor).frame(height: 0.5)
             contentArea
                 .frame(height: 280)
+            Rectangle().fill(AppTheme.Border.subtleColor).frame(height: 0.5)
+            uploadRow
         }
         .frame(width: 260)
         .glassEffect(.clear, in: .rect(cornerRadius: AppTheme.Radius.md))
+    }
+
+    /// Pinned below the list so a new file is always one click away — the point of the picker is to
+    /// name something the agent can act on, and the thing you want may not be in the library yet.
+    /// Imports + @mentions the pick through the same path as the composer's paperclip.
+    private var uploadRow: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "paperclip")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .frame(width: 28, height: 20)
+            Text("Upload a file\u{2026}")
+                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+            Spacer()
+        }
+        .padding(.horizontal, AppTheme.Spacing.sm)
+        .padding(.vertical, AppTheme.Spacing.sm)
+        .contentShape(Rectangle())
+        .onTapGesture { onUpload() }
     }
 
     @ViewBuilder
