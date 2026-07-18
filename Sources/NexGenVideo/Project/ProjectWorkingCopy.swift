@@ -122,6 +122,15 @@ enum ProjectWorkingCopy {
     static func persist(key: String, to packageURL: URL) throws {
         let fm = FileManager.default
         let src = home(key).appendingPathComponent(pipelineDir)
+        // A key naming no working copy at all means the caller lost track of where the session's edits
+        // live — persisting "nothing" would report a successful save that dropped the entire pipeline
+        // (bible, shotlist, analysis, renders). Fail the save instead: the data is still on disk under
+        // the real key, and a failed save keeps the last good package.
+        guard fm.fileExists(atPath: home(key).path) else {
+            throw PersistError.noWorkingCopy(key: key)
+        }
+        // The home exists but carries no pipeline yet — a project whose engine has never run. Nothing
+        // to sync, and nothing wrong.
         guard fm.fileExists(atPath: src.path) else { return }
         let dst = packageURL.appendingPathComponent(pipelineDir)
         let staged = packageURL.appendingPathComponent(".pipeline.staging-\(UUID().uuidString)", isDirectory: true)
@@ -140,6 +149,28 @@ enum ProjectWorkingCopy {
         // A migrated project must not keep the pre-rename directory around.
         let legacy = packageURL.appendingPathComponent(DataRootResolver.legacyPipelineDirname)
         if legacy.lastPathComponent != pipelineDir { try? fm.removeItem(at: legacy) }
+        // Trust nothing: confirm the package really carries the pipeline before the save reports
+        // success. Everything above can be defeated by a replace that lands somewhere unexpected, and
+        // a save that "worked" while the package stayed empty is the failure we're closing.
+        guard fm.fileExists(atPath: dst.path) else {
+            throw PersistError.notInPackage(package: packageURL.lastPathComponent)
+        }
+    }
+
+    enum PersistError: LocalizedError {
+        case noWorkingCopy(key: String)
+        case notInPackage(package: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .noWorkingCopy(let key):
+                return "Couldn't save the project's pipeline: no working copy for \(key). "
+                    + "Your work is still on disk — quit without saving and report this."
+            case .notInPackage(let package):
+                return "Couldn't save the project's pipeline into \(package) — the package would have "
+                    + "been written without it. Your work is still in the working copy."
+            }
+        }
     }
 
     /// Remove the working copy — a clean close, so no crash-recovery prompt next time.

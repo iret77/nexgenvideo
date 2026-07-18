@@ -248,7 +248,18 @@ final class EditorViewModel {
 
     /// Stable per-project key for the working copy (same project → same copy across launches),
     /// derived from the package UUID so a move/rename keeps it and a new project never inherits it.
+    ///
+    /// ⚠️ This RE-READS the package's `ngv.json` on every access, and mints + writes a fresh id when it
+    /// can't read one. Use it to DECIDE which copy to open — never to answer "where is my data right
+    /// now": if the package is momentarily unreadable (mid-save, NSDocument replaces the package), this
+    /// silently answers with a NEW identity. Saving against that answer wrote the pipeline nowhere and
+    /// reported success. For that question use `openWorkingCopyKey`.
     var workingCopyKey: String? { projectURL.map { ProjectIdentity.key(for: $0) } }
+
+    /// The key of the working copy this session actually opened and has been writing into — the only
+    /// honest answer to "where does my unsaved work live". Unlike `workingCopyKey` it never touches
+    /// the disk, so it cannot drift while the package is being rewritten.
+    var openWorkingCopyKey: String? { activeWorkingCopyKey }
 
     /// Materialize the working copy from the package (or keep a crash-surviving one). Synchronous so
     /// `workingRoot` is valid immediately — the copy is cheap on APFS (copy-on-write clone), and only

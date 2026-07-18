@@ -177,4 +177,56 @@ struct ProjectWorkingCopyTests {
         ProjectWorkingCopy.purgeKeyedStore(store, liveKeys: [], graceInterval: 14 * 24 * 3600)
         #expect(FileManager.default.fileExists(atPath: stray.path))
     }
+
+    // MARK: - Field incident: a save that reported success and wrote no pipeline
+
+    @Test("persisting a key with no working copy FAILS instead of silently writing nothing")
+    func persistWithUnknownKeyThrows() throws {
+        // The incident: mid-save the package's id was momentarily unreadable, so the key was re-derived
+        // and came back as a FRESH identity. `persist` found no such working copy, returned quietly, and
+        // the save reported success — the package went to disk without bible/shotlist/analysis/renders
+        // while the real data sat under the previous key. Failing loudly keeps the last good package.
+        let pkg = try tempPackage()
+        defer { try? FileManager.default.removeItem(at: pkg) }
+        try FileManager.default.removeItem(at: pkg.appendingPathComponent(DataRootResolver.pipelineDirname))
+
+        #expect(throws: ProjectWorkingCopy.PersistError.self) {
+            try ProjectWorkingCopy.persist(key: uniqueKey(), to: pkg)   // key names no working copy
+        }
+        // …and it must not have left a half-written pipeline behind.
+        #expect(!FileManager.default.fileExists(
+            atPath: pkg.appendingPathComponent(DataRootResolver.pipelineDirname).path))
+    }
+
+    @Test("a working copy with no pipeline yet is not an error — nothing to sync")
+    func persistWithoutPipelineIsFine() throws {
+        // A project whose engine has never run legitimately has no pipeline. That must stay a no-op,
+        // or every save before the first phase would fail.
+        let pkg = try tempPackage()
+        let key = uniqueKey()
+        defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: pkg) }
+        try FileManager.default.createDirectory(
+            at: ProjectWorkingCopy.home(key), withIntermediateDirectories: true)
+
+        try ProjectWorkingCopy.persist(key: key, to: pkg)   // must not throw
+    }
+
+    @Test("a successful persist really lands the pipeline in the package")
+    func persistLandsInPackage() throws {
+        let pkg = try tempPackage()
+        let key = uniqueKey()
+        defer { ProjectWorkingCopy.discard(key: key); try? FileManager.default.removeItem(at: pkg) }
+
+        _ = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        let live = ProjectWorkingCopy.home(key).appendingPathComponent(DataRootResolver.pipelineDirname)
+        try "measured".write(
+            to: live.appendingPathComponent("analysis.json"), atomically: true, encoding: .utf8)
+
+        try ProjectWorkingCopy.persist(key: key, to: pkg)
+
+        let landed = pkg.appendingPathComponent(DataRootResolver.pipelineDirname)
+            .appendingPathComponent("analysis.json")
+        #expect(FileManager.default.fileExists(atPath: landed.path))
+        #expect(try String(contentsOf: landed, encoding: .utf8) == "measured")
+    }
 }
