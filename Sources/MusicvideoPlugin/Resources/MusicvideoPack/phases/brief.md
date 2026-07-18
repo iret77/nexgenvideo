@@ -30,10 +30,16 @@ with a clear notice.
 ## Outputs & gate
 
 - `brief.yaml` following the engine's brief schema
-  (BRIEF_SCHEMA_VERSION = "brief/v1"). If the user provides free text
-  under "Other", the value goes into the matching `*_other` field and
-  the enum stays `other`.
-- After writing `brief.yaml`, summarize for the orchestrator flow:
+  (BRIEF_SCHEMA_VERSION = "brief/v1"). **Never write `brief.yaml` by hand
+  and never reverse-engineer its schema** — the engine decoder rejects
+  freeform YAML. Instead **call the `write_brief` tool** with the brief
+  fields; the host validates them against the engine's brief schema and
+  writes the file for you. On any violation nothing is written and the
+  tool returns the exact field plus its allowed values — fix and re-call.
+  The host owns `schema`/`project`/`generated`/`generator`; do not pass
+  them. If the user provides free text under "Other", set the enum field
+  to `other` and put the text in the matching `*_other` field.
+- After calling `write_brief`, summarize for the orchestrator flow:
   - the file written
   - the result of the consistency check
   - deviations from defaults that deserve attention
@@ -63,9 +69,10 @@ Before asking any show_dialog:
      aborted earlier run): read the existing fields, determine which
      mandatory fields are missing, and ask **only** those. Do not
      re-ask mandatory fields that are already valid in the YAML.
-2. Whenever you change anything: rewrite `brief.yaml` completely at the
-   end (do not patch it) and run the consistency check over the full
-   result.
+2. Whenever you change anything: rewrite the brief completely at the end
+   via `write_brief` (pass the full field set — the host replaces the
+   file; never hand-patch `brief.yaml`) and run the consistency check
+   over the full result.
 
 This makes re-entry after a crash, abort, or re-spawn deterministic.
 The orchestrator starts you fresh; you detect the state yourself.
@@ -92,7 +99,8 @@ For any section whose options aren't exhaustive, set `allowsCustom: true` so the
    - `phrase` — **not yet available**: it needs per-line lyric timing
      (forced alignment), which the analysis doesn't produce yet. Don't
      offer it as a choice; if the user asks, explain it's coming and
-     use `section` or `beat` for now.
+     use `section` or `beat` for now. `write_brief` rejects it outright,
+     so this is enforced, not just advised.
 4. **Concept type** — narrative | performance | abstract | hybrid
    (allowsCustom for documentary etc.)
 
@@ -353,7 +361,8 @@ Examples:
 
 ### 4. Write, report, gate
 
-Write `brief.yaml`, summarize for the orchestrator, display via
+Write the brief by **calling `write_brief`** (never hand-author
+`brief.yaml`), summarize for the orchestrator, display via
 `show_artifact(project_dir, "brief")`, and request the gate approval as
 described in "Outputs & gate".
 

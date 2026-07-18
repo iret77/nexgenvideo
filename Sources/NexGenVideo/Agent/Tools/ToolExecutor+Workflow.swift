@@ -177,6 +177,70 @@ extension ToolExecutor {
         ])
     }
 
+    /// #247 — write `brief.yaml` through the real engine `Brief` decoder + `validate()`, not freeform
+    /// YAML. The agent supplies the brief fields (validated against `BriefWriteContract`); the host
+    /// injects the server-owned fields, decodes `Brief.self` (which enforces every enum + validation
+    /// rule), and only then persists. On any violation nothing is written and the exact field is named.
+    func writeBriefTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        // `project_dir` is a control arg; every other key must be a known agent-facing brief field. The
+        // server-owned fields are absent from allowedKeys, so passing one is rejected here.
+        try validateUnknownKeys(args, allowed: BriefWriteContract.allowedKeys.union(["project_dir"]), path: "write_brief")
+
+        var payload: [String: Any] = [:]
+        for field in BriefWriteContract.fields where args[field.key] != nil {
+            payload[field.key] = args[field.key]
+        }
+        payload["schema"] = briefSchemaVersion
+        payload["project"] = FrameInventory.projectName(of: root) ?? FrameInventory.projectHome(of: root).lastPathComponent
+        payload["generated"] = currentTimestamp()
+        payload["generator"] = "brief-agent@write_brief"
+
+        let brief: Brief
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            brief = try JSONDecoder().decode(Brief.self, from: data)
+        } catch let e as DecodingError {
+            throw ToolError("brief rejected — " + briefDecodeViolation(e, args: args) + ". Nothing was written; fix and re-call.")
+        } catch let e as Brief.ValidationError {
+            throw ToolError("brief rejected — " + briefValidationViolation(e) + " Nothing was written; fix and re-call.")
+        }
+        do {
+            try YAMLArtifactStore(dataRoot: root).save(brief, to: PipelineLayout.briefFile)
+        } catch {
+            throw ToolError("Couldn't write brief.yaml: \(error.localizedDescription)")
+        }
+        return try jsonResult([
+            "written": true,
+            "project": brief.project,
+            "path": PipelineLayout.briefFile,
+            "summary": briefSummary(brief),
+        ])
+    }
+
+    /// Compact one-line summary of the brief's key choices plus any non-default settings.
+    private func briefSummary(_ b: Brief) -> String {
+        let core = [
+            "mission=\(b.mission.rawValue)",
+            "platform=\(b.targetPlatform)",
+            "aspect=\(b.aspectRatio.rawValue)",
+            "mode=\(b.projectMode)",
+            "concept=\(b.conceptType.rawValue)",
+            "medium=\(b.visualMedium.rawValue)",
+            "figures=\(b.figures.rawValue)",
+            "lyrics=\(b.lyricsIntegration.rawValue)",
+        ].joined(separator: ", ")
+        var extra: [String] = []
+        if b.budgetEur != 50.0 { extra.append("budget_eur=\(b.budgetEur)") }
+        if let stop = b.budgetStopEur { extra.append("budget_stop_eur=\(stop)") }
+        if b.finalResolution != .res1080p { extra.append("final_resolution=\(b.finalResolution.rawValue)") }
+        if b.previewMode != .skip { extra.append("preview_mode=\(b.previewMode.rawValue)") }
+        if b.cutHandlesMode != .withOverlap { extra.append("cut_handles_mode=\(b.cutHandlesMode.rawValue)") }
+        if !b.tone.isEmpty { extra.append("tone=[\(b.tone.map(\.rawValue).joined(separator: ", "))]") }
+        if let pattern = b.directorPattern { extra.append("director_pattern=\(pattern)") }
+        return extra.isEmpty ? core : core + " · non-default: " + extra.joined(separator: ", ")
+    }
+
     func getPatternTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let provider = try patternProvider(args, editor: editor)
         let id = try args.requireString("id")
@@ -1625,4 +1689,51 @@ extension ToolExecutor {
 extension String {
     /// nil for an empty string — so an absent value and a blank one are the same absence.
     var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+/// Map a `Brief` decode failure to a message naming the offending wire field and — for enums — its
+/// allowed values, resolving the field through `BriefWriteContract` (which spans arrays via the coding
+/// path, e.g. a bad `tone` element).
+private func briefDecodeViolation(_ error: DecodingError, args: [String: Any]) -> String {
+    func fieldKey(_ ctx: DecodingError.Context) -> String {
+        for key in ctx.codingPath.reversed() where BriefWriteContract.field(key.stringValue) != nil {
+            return key.stringValue
+        }
+        return ctx.codingPath.last?.stringValue ?? "(unknown)"
+    }
+    func got(_ key: String) -> String {
+        switch args[key] {
+        case let s as String: return ", got `\(s)`"
+        case let n as NSNumber: return ", got `\(n)`"
+        default: return ""
+        }
+    }
+    switch error {
+    case .keyNotFound(let key, _):
+        return "missing required field `\(key.stringValue)`"
+    case .valueNotFound(_, let ctx):
+        return "missing required field `\(fieldKey(ctx))`"
+    case .typeMismatch(_, let ctx):
+        let key = fieldKey(ctx)
+        return "field `\(key)`: expected \(BriefWriteContract.field(key)?.kind.typeWord ?? "a different type")\(got(key))"
+    case .dataCorrupted(let ctx):
+        let key = fieldKey(ctx)
+        if let options = BriefWriteContract.field(key)?.enumOptions {
+            return "field `\(key)`: expected one of [\(options.joined(separator: ", "))]\(got(key))"
+        }
+        return "field `\(key)`: \(ctx.debugDescription)"
+    @unknown default:
+        return "\(error)"
+    }
+}
+
+private func briefValidationViolation(_ error: Brief.ValidationError) -> String {
+    switch error {
+    case .budgetNotPositive(let value):
+        return "field `budget_eur`: must be greater than 0 (got \(value))."
+    case .budgetStopNotPositive(let value):
+        return "field `budget_stop_eur`: must be greater than 0 when set (got \(value)); omit it for no hard stop."
+    case .visualMediumNotesRequired(let medium):
+        return "field `visual_medium_notes` is required when `visual_medium` is `\(medium.rawValue)` (a stylized medium — give a concrete style note)."
+    }
 }
