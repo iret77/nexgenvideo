@@ -125,6 +125,7 @@ final class ToolExecutor {
         case .runSanity:            return try runSanityTool(editor, args)
         case .suggestPatterns:      return try suggestPatternsTool(editor, args)
         case .recordAffect:         return try recordAffectTool(editor, args)
+        case .writeBrief:           return try writeBriefTool(editor, args)
         case .getPattern:           return try getPatternTool(editor, args)
         case .initProject:          return try initProjectTool(editor, args)
         case .approveGate:          return try approveGateTool(editor, args)

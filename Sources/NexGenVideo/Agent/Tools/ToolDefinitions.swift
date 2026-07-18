@@ -77,6 +77,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case runProviderTool = "run_provider_tool"
     case listProjectFiles = "list_project_files"
     case copyProjectFile = "copy_project_file"
+    case writeBrief = "write_brief"
 
     /// Tools that write the pipeline data root (not the timeline, which is undo-tracked and already
     /// marks the document edited). After one of these the working copy diverges from the saved package,
@@ -85,7 +86,7 @@ enum ToolName: String, CaseIterable, Sendable {
         switch self {
         case .initProject, .approveGate, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute, .setGateState,
-             .attachSong, .copyProjectFile, .extractScene3dPovs:
+             .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief:
             return true
         default:
             return false
@@ -1019,6 +1020,11 @@ enum ToolDefinitions {
             )
         ),
         AgentTool(
+            name: .writeBrief,
+            description: "Write the project's brief (`brief.yaml`) — the mandatory director's input every downstream phase reads. Call this INSTEAD of writing brief.yaml by hand: pass the brief fields and the host validates them against the engine's brief schema and persists the file for you. NEVER hand-author brief.yaml or reverse-engineer its schema — the engine decoder rejects freeform YAML, which is exactly the failure this tool exists to prevent. Required fields: mission, target_platform, aspect_ratio, project_mode, concept_type, visual_medium, figures, lyrics_integration; every other field is optional and takes the engine default when omitted. `visual_medium_notes` is required whenever visual_medium is anything other than live_action_realistic. For an \"Other\" answer, set the enum field to 'other' and put the free text in the matching *_other field. On ANY violation nothing is written and the error names the exact field and its allowed values — fix and re-call. The server owns schema/project/generated/generator; do not pass them.",
+            inputSchema: writeBriefSchema()
+        ),
+        AgentTool(
             name: .initProject,
             description: "Scaffold a fresh project and return `{data_root, project, created}`. WRITES.\n\nCreates the `pipeline/` data root with the engine's format-neutral core subdirs PLUS the active pack's own subdirs (e.g. musicvideo adds audio/lyrics/analysis), and writes `project.yaml` (mode, budget) and `gates.yaml`. `mode` is one of beat/phrase/section/multicam. Omit `home_dir` to scaffold the open project (recommended); pass it only for out-of-band scaffolding. Fails if the target already holds a project.",
             inputSchema: objectSchema(
@@ -1383,6 +1389,17 @@ enum ToolDefinitions {
                 return "• \(d.id) — \(d.displayName): \(params.isEmpty ? "no params" : params)"
             }
             .joined(separator: "\n")
+    }
+
+    /// The `write_brief` input schema, built entirely from `BriefWriteContract` — enum options come
+    /// from the engine `Brief` enums' `.allCases`, so this can never drift from the type by hand.
+    private static func writeBriefSchema() -> [String: Any] {
+        var properties: [String: [String: Any]] = [:]
+        for field in BriefWriteContract.fields {
+            properties[field.key] = field.schemaProperty
+        }
+        properties["project_dir"] = projectDirProperty
+        return objectSchema(properties: properties, required: BriefWriteContract.requiredKeys)
     }
 
     private static func objectSchema(
