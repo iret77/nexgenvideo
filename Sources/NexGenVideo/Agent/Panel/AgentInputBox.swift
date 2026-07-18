@@ -79,7 +79,8 @@ struct AgentInputBox<LeadingTools: View>: View {
                         highlightedIndex: $highlightedMentionIndex,
                         tab: $mentionTab,
                         scrollTick: mentionScrollTick,
-                        onPick: { asset in pickMention(asset) }
+                        onPick: { asset in pickMention(asset) },
+                        onUpload: { uploadFromMention() }
                     )
                 }
                 .onChange(of: mentionTab) { _, _ in highlightedMentionIndex = 0 }
@@ -286,6 +287,9 @@ struct AgentInputBox<LeadingTools: View>: View {
             case .return:
                 if candidates.indices.contains(highlightedMentionIndex) {
                     pickMention(candidates[highlightedMentionIndex])
+                } else if candidates.isEmpty {
+                    // Nothing to pick — the file you're naming isn't in the library, so upload it.
+                    uploadFromMention()
                 }
                 return .handled
             case .escape:
@@ -344,6 +348,18 @@ struct AgentInputBox<LeadingTools: View>: View {
         ))
         mentionQuery = nil
         highlightedMentionIndex = 0
+    }
+
+    /// Upload chosen from inside the @picker. Strip the half-typed `@query` first — unlike `pickMention`
+    /// (which replaces it), the attach path only APPENDS its own token, so the fragment would otherwise
+    /// linger as dead text. `presentAttachPanel` then imports the file and @mentions it, same as 📎.
+    private func uploadFromMention() {
+        if let lastAt = draft.lastIndex(of: "@") {
+            draft = String(draft[..<lastAt])
+        }
+        mentionQuery = nil
+        highlightedMentionIndex = 0
+        presentAttachPanel()
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
