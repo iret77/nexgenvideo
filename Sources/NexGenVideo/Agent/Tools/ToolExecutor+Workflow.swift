@@ -1672,6 +1672,9 @@ extension ToolExecutor {
             catch { throw ToolError("Couldn't remove \(url.lastPathComponent) from audio/: \(error.localizedDescription)") }
         }
 
+        // Same anchor as the dialog path — how the song arrived must not decide whether the user can
+        // hear it. Idempotent: assemble_timeline reuses this asset and skips its own placement.
+        editor.agentService.anchorSongOnTimeline(destURL, editor: editor)
         return try jsonResult(["filename": destURL.lastPathComponent, "audio_dir": audioDir.path])
     }
 

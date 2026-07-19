@@ -200,16 +200,7 @@ struct PipelinePanelView: View {
                 }
                 surfaceIcon(for: phase.phase)
                 if isNext {
-                    Text("NEXT")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: .bold))
-                        .tracking(AppTheme.Tracking.wide)
-                        .foregroundStyle(AppTheme.Accent.timecodeColor)
-                        .padding(.horizontal, AppTheme.Spacing.sm)
-                        .padding(.vertical, AppTheme.Spacing.xxs)
-                        .background(
-                            RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                                .fill(AppTheme.Accent.timecodeColor.opacity(AppTheme.Opacity.faint))
-                        )
+                    approveButton(phase)
                 } else if phase.approved {
                     Text("Approved")
                         .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
@@ -222,6 +213,28 @@ struct PipelinePanelView: View {
                 Divider().overlay(AppTheme.Border.subtleColor)
             }
         }
+    }
+
+    /// Approving a phase is the one action the pipeline cannot advance without — it belongs in the row,
+    /// not behind an unlabeled “…”. The menu keeps the rarer siblings (send back, rewind).
+    private func approveButton(_ phase: ProjectPhase) -> some View {
+        Button {
+            apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase,
+                                                 declaredPack: editor.activePluginName) }
+        } label: {
+            Text("Approve")
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .foregroundStyle(AppTheme.Accent.timecodeColor)
+                .padding(.horizontal, AppTheme.Spacing.sm)
+                .padding(.vertical, AppTheme.Spacing.xxs)
+                .background(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+                        .fill(AppTheme.Accent.timecodeColor.opacity(AppTheme.Opacity.faint))
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(gateWriting)
+        .help("Approve \(PhaseDisplay.label(phase.phase)) and move to the next phase")
     }
 
     /// Direct gate controls (docs/UI_UX_CONCEPT.md §4) — approve / send back / rewind, wired to the

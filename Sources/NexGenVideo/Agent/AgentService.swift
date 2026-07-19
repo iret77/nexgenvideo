@@ -355,7 +355,36 @@ final class AgentService {
             return
         }
         editor.onPipelineChanged?()
+        anchorSongOnTimeline(dest, editor: editor)
         send(text: "Song placed in audio/ (\(src.lastPathComponent)). Now run run_phase(\"analysis\") to measure it.", mentions: [])
+    }
+
+    /// Put the song on the timeline the moment it arrives. It is the project's spine — every cut keys
+    /// to its beats — so an empty timeline until the final assembly leaves the user unable to hear or
+    /// scrub the one thing the whole project is built around. `assemble_timeline` reuses this exact
+    /// asset and skips its own placement when the anchor is already at frame 0.
+    func anchorSongOnTimeline(_ fileURL: URL, editor: EditorViewModel) {
+        let target = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+        let existing = editor.mediaAssets.first {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath() == target
+        }
+        guard let asset = existing ?? editor.addMediaAsset(from: fileURL) else { return }
+        Task { @MainActor in
+            // Duration comes from the file, not the analysis — the anchor must not wait for a phase
+            // that may not run for a while.
+            if asset.duration <= 0 { await asset.loadMetadata() }
+            guard asset.duration > 0 else { return }
+            let anchored = editor.timeline.tracks.contains { track in
+                track.type == .audio && track.clips.contains { $0.mediaRef == asset.id && $0.startFrame == 0 }
+            }
+            guard !anchored else { return }
+            let trackIndex = editor.timeline.tracks.firstIndex { $0.type == .audio }
+                ?? editor.insertTrack(at: editor.timeline.tracks.count, type: .audio)
+            let frames = max(1, Int((asset.duration * Double(editor.timeline.fps)).rounded()))
+            _ = editor.placeClip(
+                asset: asset, trackIndex: trackIndex, startFrame: 0,
+                durationFrames: frames, addLinkedAudio: false)
+        }
     }
 
     /// Copy loose style-reference images into the project's `import/` — a brownfield look source the
