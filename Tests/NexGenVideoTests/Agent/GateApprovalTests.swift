@@ -78,11 +78,17 @@ struct GateApprovalTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let dir = dataRoot.path
 
+        // A decline wrote nothing, so it must NOT mark the document edited — otherwise the user is
+        // prompted to save changes that never happened.
+        var dirtied = 0
+        h.editor.onPipelineChanged = { dirtied += 1 }
+
         let result = await h.runGate("approve_gate", args: ["project_dir": dir, "phase": "project_init"], decision: .declined)
         // A decline is NOT an error — it's a non-error result steering the agent back to the phase.
         #expect(result.isError == false)
         #expect(ToolHarness.textOf(result).contains("did not approve"))
         #expect(h.editor.agentService.pendingGateApproval == nil)
+        #expect(dirtied == 0)
 
         // The gate was never written — project_init is still pending.
         let state = try await h.runOK("get_project_state", args: ["project_dir": dir]) as? [String: Any]
@@ -97,9 +103,14 @@ struct GateApprovalTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let dir = dataRoot.path
 
+        var dirtied = 0
+        h.editor.onPipelineChanged = { dirtied += 1 }
+
         let approved = try await h.runGateOK("approve_gate", args: ["project_dir": dir, "phase": "project_init"]) as? [String: Any]
         #expect(approved?["approved"] as? Bool == true)
         #expect(h.editor.agentService.pendingGateApproval == nil)
+        // A real write DID mark the document edited, so ⌘S persists it.
+        #expect(dirtied == 1)
 
         let state = try await h.runOK("get_project_state", args: ["project_dir": dir]) as? [String: Any]
         let phases = try #require(state?["phases"] as? [[String: Any]])

@@ -396,7 +396,11 @@ extension ToolExecutor {
             return .ok("The user did not approve \(PhaseDisplay.label(phase)) — keep working on this phase. "
                 + "Do NOT proceed to the next phase, and do NOT claim it was approved.")
         }
+        // The turn may have been cancelled (tab switch/new chat) while the card was up — never write
+        // the gate on a cancelled turn even if an approval slipped through. Same guard as confirmSpend.
+        try Task.checkCancellation()
         let gates = try mutateGates(dataRoot: root) { GatesOperations.approve(&$0, phase: phase, notes: notes) }
+        editor.onPipelineChanged?()  // real write — a declined approval returned above and marks nothing
         let gate = gates.get(phase)
         return try jsonResult([
             "project": gates.project,
@@ -427,8 +431,10 @@ extension ToolExecutor {
                 return .ok("The user did not approve \(PhaseDisplay.label(phase)) — keep working on this phase. "
                     + "Do NOT mark it approved or move on.")
             }
+            try Task.checkCancellation()
         }
         let gates = try mutateGates(dataRoot: root) { GatesOperations.setState(&$0, phase: phase, state: state, notes: notes) }
+        editor.onPipelineChanged?()  // real write; a declined approval returned above without marking
         let gate = gates.get(phase)
         return try jsonResult([
             "project": gates.project,
