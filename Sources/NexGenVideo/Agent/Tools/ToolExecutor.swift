@@ -128,7 +128,7 @@ final class ToolExecutor {
         case .writeBrief:           return try writeBriefTool(editor, args)
         case .getPattern:           return try getPatternTool(editor, args)
         case .initProject:          return try initProjectTool(editor, args)
-        case .approveGate:          return try approveGateTool(editor, args)
+        case .approveGate:          return try await approveGateTool(editor, args)
         case .rewind:               return try rewindTool(editor, args)
         case .estimateCost:         return try estimateCostTool(editor, args)
         case .showArtifact:         return try showArtifactTool(editor, args)
@@ -150,7 +150,7 @@ final class ToolExecutor {
         case .removeLedgerAttribute: return try removeLedgerAttributeTool(editor, args)
         case .resolveModel:         return try resolveModelTool(editor, args)
         case .getUIContract:        return try getUIContractTool(editor)
-        case .setGateState:         return try setGateStateTool(editor, args)
+        case .setGateState:         return try await setGateStateTool(editor, args)
         case .runProviderTool:      return try await runProviderTool(editor, args)
         }
     }

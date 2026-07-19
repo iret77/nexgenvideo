@@ -185,6 +185,11 @@ enum AgentInstructions {
           Before asking the user to approve a phase, call show_artifact to surface that gate's Markdown \
           artifact for review, then approve_gate (or set_gate_state for a multi-state verdict). \
           rewind resets a phase and everything after it when the user wants to redo earlier work.
+        - Approval is the USER'S decision, not yours: approve_gate (and set_gate_state to an approved \
+          state) SURFACE a confirmation in the composer and return only after the user taps Approve — \
+          the gate is written only then. You are REQUESTING approval, not granting it: never say you \
+          approved a phase. If the user declines, stay on that phase and keep working — don't advance \
+          or try to set the gate another way. (needs_revision / pending don't ask — they aren't approvals.)
         - The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; \
           run_phase returns runner: null with a note for those. Pack compute phases DO run through it — \
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \

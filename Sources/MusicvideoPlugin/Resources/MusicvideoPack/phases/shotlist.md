@@ -38,6 +38,9 @@ story-first order, the storyboard phase runs **before** the shotlist.
 - **Revision loop:** on a user revision request, the next shotlist run
   writes a new version file (`vN+1`). No overwriting.
 - **Gate:** on approval, `approve_gate(project_dir, "shotlist")`.
+  `approve_gate` surfaces the approval to the user and writes only after
+  they tap Approve; you're requesting it, not granting it. On a decline,
+  stay on this phase.
 - **Display in the user chat** runs via the engine MCP tool
   `show_artifact(project_dir, "shotlist")` — output the `markdown` field
   in full before asking for approval. Do not hand-print a finished

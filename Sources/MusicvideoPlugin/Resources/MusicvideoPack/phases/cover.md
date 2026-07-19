@@ -41,7 +41,9 @@ Per format under `cover/`:
 
 Gate: after the user approves the produced covers,
 `approve_gate(project_dir, "cover")`. The phase is optional and blocks
-no render — if the user skips it, leave the gate unset.
+no render — if the user skips it, leave the gate unset. `approve_gate`
+surfaces the approval to the user and writes only after they tap Approve;
+you're requesting it, not granting it. On a decline, stay on this phase.
 
 ## Steps
 

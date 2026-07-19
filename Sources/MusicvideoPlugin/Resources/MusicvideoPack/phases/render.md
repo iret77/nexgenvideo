@@ -42,7 +42,9 @@ repeat until `next_render_shot` reports `done`.
   quality pass, not a separate pipeline gate — don't approve anything for
   it. When R2 (final) is done, close the pipeline:
   `approve_gate(project_dir, "render")`. (`videos_preview`/`videos_final`
-  are not gates in this engine; approving them does nothing.)
+  are not gates in this engine; approving them does nothing.) `approve_gate`
+  surfaces the approval to the user and writes only after they tap Approve;
+  you're requesting it, not granting it. On a decline, stay on this phase.
 
 ## Steps
 

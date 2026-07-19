@@ -37,7 +37,9 @@ All project file paths are relative to the project data root.
 - Bible zone-status updates after approval of shots with
   `zone_introduces`.
 - Gate: when all required frames are rendered + approved →
-  `approve_gate(project_dir, "frames")` (step F4).
+  `approve_gate(project_dir, "frames")` (step F4). `approve_gate` surfaces
+  the approval to the user and writes only after they tap Approve; you're
+  requesting it, not granting it. On a decline, stay on this phase.
 
 ## Steps
 

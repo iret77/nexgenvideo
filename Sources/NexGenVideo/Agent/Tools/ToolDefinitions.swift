@@ -84,8 +84,11 @@ enum ToolName: String, CaseIterable, Sendable {
     /// so the document must be marked edited to prompt a save.
     var isPipelineWrite: Bool {
         switch self {
-        case .initProject, .approveGate, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
-             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute, .setGateState,
+        // approveGate / setGateState are NOT here: they can return a non-error result WITHOUT writing
+        // (the user declined the confirmation), and a categorical dirty-mark would then prompt a save
+        // for changes that never happened. They fire onPipelineChanged themselves, only on the write.
+        case .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
+             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief:
             return true
         default:

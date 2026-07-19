@@ -146,22 +146,24 @@ struct WorkflowToolsTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let dir = dataRoot.path
 
-        // Gates approve in order — project_init before brief.
-        _ = try await h.runOK("approve_gate", args: ["project_dir": dir, "phase": "project_init"])
-        let approved = try await h.runOK("approve_gate", args: ["project_dir": dir, "phase": "brief", "notes": "ok"]) as? [String: Any]
+        // Gates approve in order — project_init before brief. approve_gate now surfaces a user
+        // confirmation; runGate stands in for the user tapping Approve.
+        _ = try await h.runGateOK("approve_gate", args: ["project_dir": dir, "phase": "project_init"])
+        let approved = try await h.runGateOK("approve_gate", args: ["project_dir": dir, "phase": "brief", "notes": "ok"]) as? [String: Any]
         #expect(approved?["approved"] as? Bool == true)
         #expect(approved?["phase"] as? String == "brief")
         #expect(approved?["notes"] as? String == "ok")
 
-        // set_gate_state to needs_revision keeps the phase blocked (approved == false).
+        // set_gate_state to needs_revision keeps the phase blocked (approved == false). This is NOT an
+        // approval, so it writes straight through with no confirmation — plain runOK.
         let revised = try await h.runOK("set_gate_state", args: ["project_dir": dir, "phase": "brief", "state": "needs_revision", "notes": "redo"]) as? [String: Any]
         #expect(revised?["state"] as? String == "needs_revision")
         #expect(revised?["approved"] as? Bool == false)
 
         // Re-approve brief, then approve in order through treatment; rewind to brief resets brief + after.
-        _ = try await h.runOK("approve_gate", args: ["project_dir": dir, "phase": "brief"])
-        _ = try await h.runOK("approve_gate", args: ["project_dir": dir, "phase": "production_design"])
-        _ = try await h.runOK("approve_gate", args: ["project_dir": dir, "phase": "treatment"])
+        _ = try await h.runGateOK("approve_gate", args: ["project_dir": dir, "phase": "brief"])
+        _ = try await h.runGateOK("approve_gate", args: ["project_dir": dir, "phase": "production_design"])
+        _ = try await h.runGateOK("approve_gate", args: ["project_dir": dir, "phase": "treatment"])
         let rewound = try await h.runOK("rewind", args: ["project_dir": dir, "target_phase": "brief"]) as? [String: Any]
         #expect(rewound?["target"] as? String == "brief")
         let reset = try #require(rewound?["reset_phases"] as? [String])
@@ -178,17 +180,19 @@ struct WorkflowToolsTests {
 
         // Approve the predecessor first, so the analysis block is attributable to the ARTIFACT hard
         // gate (no measured beats/downbeats), not merely to ordering.
-        let ok = try await h.runOK("approve_gate", args: ["project_dir": dataRoot.path, "phase": "project_init"]) as? [String: Any]
+        let ok = try await h.runGateOK("approve_gate", args: ["project_dir": dataRoot.path, "phase": "project_init"]) as? [String: Any]
         #expect(ok?["approved"] as? Bool == true)
 
         // No analysis artifact → approve_gate("analysis") is refused by requireRealAnalysis (points at
-        // run_phase). This is the deterministic hard gate, not the ordering check.
-        let blocked = await h.runRaw("approve_gate", args: ["project_dir": dataRoot.path, "phase": "analysis"])
+        // run_phase). The hard gate is enforced BEFORE the user is ever asked to confirm — the tool
+        // errors without surfacing an approval card.
+        let blocked = await h.runGate("approve_gate", args: ["project_dir": dataRoot.path, "phase": "analysis"])
         #expect(blocked.isError == true)
         #expect(ToolHarness.textOf(blocked).contains("run_phase"))
+        #expect(h.editor.agentService.pendingGateApproval == nil, "a blocked gate must not surface an approval card")
 
-        // set_gate_state to an approved state is refused the same way — no bypass.
-        let blocked2 = await h.runRaw("set_gate_state", args: [
+        // set_gate_state to an approved state is refused the same way — no bypass, no card.
+        let blocked2 = await h.runGate("set_gate_state", args: [
             "project_dir": dataRoot.path, "phase": "analysis", "state": "approved",
         ])
         #expect(blocked2.isError == true)

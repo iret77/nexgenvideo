@@ -44,7 +44,9 @@ bible agent and is curated / generated there.
 - `production_design/production_design.yaml` — manifest (schema
   `production_design/v1`).
 - Gate after user approval:
-  `approve_gate(project_dir, "production_design")`.
+  `approve_gate(project_dir, "production_design")`. `approve_gate` surfaces
+  the approval to the user and writes only after they tap Approve; you're
+  requesting it, not granting it. On a decline, stay on this phase.
 
 ## Steps
 
