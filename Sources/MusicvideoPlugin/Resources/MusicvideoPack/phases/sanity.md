@@ -36,6 +36,9 @@ route the result through the gate.
     `approve_gate(project_dir, "sanity", notes="warns accepted: ...")`.
   - Clean: `approve_gate(project_dir, "sanity")` directly after a short
     summary.
+  - `approve_gate` surfaces the approval to the user and writes only after
+    they tap Approve; you're requesting it, not granting it. On a decline,
+    stay on this phase.
 
 ## Steps
 

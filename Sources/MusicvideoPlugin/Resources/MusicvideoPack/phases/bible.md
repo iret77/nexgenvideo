@@ -38,6 +38,9 @@ chain) is yours; the pixels come from the host.
   anchors under `bible/refs/<id>/<name>.png`, optional Scene3D
   panorama anchors under `bible/<id>/scene3d/`.
 - Gate: after user approval call `approve_gate(project_dir, "bible")`.
+  `approve_gate` surfaces the approval to the user and writes only after
+  they tap Approve; you're requesting it, not granting it. On a decline,
+  stay on this phase.
 
 ## Steps
 

@@ -66,7 +66,9 @@ for timing; do not describe the song's structure from "listening".
   right after the DSP run is refused. After writing the interpretation, give a
   summary (BPM, section labels, anomalies) and request approval via
   show_dialog ("approve / change a label / re-analyze"). On approval:
-  `approve_gate(project_dir, "analysis", notes=...)`.
+  `approve_gate(project_dir, "analysis", notes=...)` — which surfaces the
+  approval to the user and writes only after they tap Approve; you're
+  requesting it, not granting it. On a decline, stay on this phase.
 
 ## Steps
 

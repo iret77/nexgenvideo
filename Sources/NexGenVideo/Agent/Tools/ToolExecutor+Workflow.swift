@@ -383,11 +383,19 @@ extension ToolExecutor {
 
     // MARK: - Gates (WRITES)
 
-    func approveGateTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func approveGateTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let notes = args.string("notes")
+        // Hard preconditions FIRST — never ask the user to approve something that can't be approved.
         try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: editor.activePluginName)
+        // A phase gate is the USER's decision (HAX G11): surface the request in the composer and suspend
+        // until they decide. On a decline nothing is written — the agent stays on this phase.
+        let decision = await editor.agentService.requestGateApproval(GateApproval(phase: phase, notes: notes))
+        guard decision == .approved else {
+            return .ok("The user did not approve \(PhaseDisplay.label(phase)) — keep working on this phase. "
+                + "Do NOT proceed to the next phase, and do NOT claim it was approved.")
+        }
         let gates = try mutateGates(dataRoot: root) { GatesOperations.approve(&$0, phase: phase, notes: notes) }
         let gate = gates.get(phase)
         return try jsonResult([
@@ -401,7 +409,7 @@ extension ToolExecutor {
         ])
     }
 
-    func setGateStateTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func setGateStateTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let stateRaw = try args.requireString("state")
@@ -409,10 +417,16 @@ extension ToolExecutor {
             throw ToolError("Unknown state '\(stateRaw)'. Expected approved/approved_with_notes/needs_revision/pending.")
         }
         let notes = args.string("notes")
-        // set_gate_state is an approval path too — enforce the same hard-gate precondition when it
-        // would mark the phase approved, so it can't be used to bypass approve_gate's guard.
-        if state == .approved || state == .approvedWithNotes {
+        // Only the approving states are the user's decision to make: enforce the same hard-gate guard as
+        // approve_gate, then surface a user confirmation and suspend until they decide. needs_revision /
+        // pending are not approvals — they write straight through, unchanged.
+        if GateApproval.isApproval(state) {
             try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: editor.activePluginName)
+            let decision = await editor.agentService.requestGateApproval(GateApproval(phase: phase, notes: notes))
+            guard decision == .approved else {
+                return .ok("The user did not approve \(PhaseDisplay.label(phase)) — keep working on this phase. "
+                    + "Do NOT mark it approved or move on.")
+            }
         }
         let gates = try mutateGates(dataRoot: root) { GatesOperations.setState(&$0, phase: phase, state: state, notes: notes) }
         let gate = gates.get(phase)

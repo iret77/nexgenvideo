@@ -44,7 +44,9 @@ style stays exactly what the brief prescribes.
   schema; `origin` is one of `agent_proposal`, `agent_revision`,
   `user_supplied`, or `user_revision`.
 - Gate on approval:
-  `approve_gate(project_dir, "treatment", notes=...)`.
+  `approve_gate(project_dir, "treatment", notes=...)`. `approve_gate`
+  surfaces the approval to the user and writes only after they tap Approve;
+  you're requesting it, not granting it. On a decline, stay on this phase.
 
 ## Steps
 

@@ -35,6 +35,9 @@ All file paths below are relative to the **project data root** returned by
 - **Gate:** on completion call `approve_gate(project_dir,
   "project_init")`. With `project_init` approved, the way is clear for
   the audio upload and the analysis phase.
+- Approval is the user's: `approve_gate` surfaces the request in the
+  composer and writes only after they tap Approve — you're requesting it,
+  not granting it. On a decline, stay on this phase.
 
 ## Steps
 

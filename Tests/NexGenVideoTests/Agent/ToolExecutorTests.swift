@@ -31,6 +31,40 @@ final class ToolHarness {
         await executor.execute(name: name, args: args)
     }
 
+    /// Drive a gate tool that now suspends on the user's confirmation (approve_gate, or an approving
+    /// set_gate_state). Stands in for the user tapping the dock card: resolves the approval the moment
+    /// it is surfaced. A tool that errors BEFORE requesting approval (hard-gate block, unknown state)
+    /// never surfaces one — the resolver simply never fires and the tool's own result is returned.
+    func runGate(_ name: String, args: [String: Any] = [:], decision: GateDecision = .approved) async -> ToolResult {
+        // Start the resolver FIRST (it captures only the Sendable editor + decision), then await the
+        // tool directly on this MainActor. When the tool suspends on requestGateApproval, the MainActor
+        // is free to run the resolver, which taps the card. A tool that errors before requesting one
+        // never sets pendingGateApproval — the resolver just idles and is cancelled.
+        let resolver = Task { [editor] in
+            while !Task.isCancelled {
+                if editor.agentService.pendingGateApproval != nil {
+                    editor.agentService.resolveGate(decision)
+                    return
+                }
+                await Task.yield()
+            }
+        }
+        let result = await executor.execute(name: name, args: args)
+        resolver.cancel()
+        return result
+    }
+
+    /// `runGate` (default: approve) + decode the .ok JSON payload — the approval must have been granted.
+    func runGateOK(_ name: String, args: [String: Any] = [:], decision: GateDecision = .approved) async throws -> Any {
+        let result = await runGate(name, args: args, decision: decision)
+        #expect(result.isError == false, "gate tool \(name) returned error: \(Self.textOf(result))")
+        guard case let .text(s) = result.content.first else {
+            Issue.record("expected text content for gate tool \(name)")
+            return [:]
+        }
+        return try JSONSerialization.jsonObject(with: Data(s.utf8))
+    }
+
     static func textOf(_ result: ToolResult) -> String {
         if case let .text(s) = result.content.first { return s }
         return "(non-text)"

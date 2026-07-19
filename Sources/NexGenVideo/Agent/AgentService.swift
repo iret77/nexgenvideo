@@ -543,6 +543,38 @@ final class AgentService {
         continuation.resume(returning: decision)
     }
 
+    // MARK: - Gate approval (HAX G11 — a phase gate is the user's decision)
+
+    /// The ONE pending gate confirmation surfaced in the composer dock. Set while an agent-initiated
+    /// approve_gate / set_gate_state waits for the user to approve; `AgentPanelView` renders a
+    /// `GateApprovalCard` above the input, exactly where the spend card and dialog live (never a modal).
+    private(set) var pendingGateApproval: GateApproval?
+
+    @ObservationIgnored
+    private var gateContinuation: CheckedContinuation<GateDecision, Never>?
+
+    /// Suspend the agent's gate tool-call until the user taps Approve/Not yet. This is what makes gate
+    /// approval the USER's decision and not agent-self-asserted: the continuation resolves ONLY from
+    /// `resolveGate`, which the card's buttons call. A prior pending approval (should not happen — one
+    /// tool call at a time) is declined so no continuation leaks.
+    func requestGateApproval(_ approval: GateApproval) async -> GateDecision {
+        if gateContinuation != nil { resolveGate(.declined) }
+        editor?.agentPanelVisible = true
+        return await withCheckedContinuation { continuation in
+            gateContinuation = continuation
+            pendingGateApproval = approval
+        }
+    }
+
+    /// Resolve the pending gate confirmation (from the card's buttons, or teardown). Clears the card
+    /// and resumes the suspended tool call exactly once.
+    func resolveGate(_ decision: GateDecision) {
+        pendingGateApproval = nil
+        guard let continuation = gateContinuation else { return }
+        gateContinuation = nil
+        continuation.resume(returning: decision)
+    }
+
     private static let clipMentionLabelMaxLength = 24
 
     /// Bumped to ask the input field to take focus (e.g. after the plugin launcher inserts a command
@@ -716,6 +748,7 @@ final class AgentService {
     func newChat() {
         currentTask?.cancel()
         resolveSpend(.declined)
+        resolveGate(.declined)
         syncMessagesIntoCurrentSession()
         if let id = currentSessionId,
            let idx = sessions.firstIndex(where: { $0.id == id }),
@@ -740,6 +773,7 @@ final class AgentService {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
         currentTask?.cancel()
         resolveSpend(.declined)
+        resolveGate(.declined)
         syncMessagesIntoCurrentSession()
         if !sessions[idx].isOpen {
             sessions[idx].isOpen = true
@@ -758,6 +792,7 @@ final class AgentService {
             // THIS session — otherwise the still-running task appends into the next tab's messages.
             currentTask?.cancel()
             resolveSpend(.declined)
+            resolveGate(.declined)
             isStreaming = false
             syncMessagesIntoCurrentSession()
             if let next = sessions.first(where: { $0.isOpen }) {
@@ -829,8 +864,11 @@ final class AgentService {
     }
 
     func cancel() {
-        // A render awaiting spend approval is part of this turn — stopping declines it.
+        // A render awaiting spend approval, or a phase gate awaiting the user's confirmation, is part
+        // of this turn — stopping declines both (for the MCP/runtime backend the suspended tool call
+        // lives outside this task, so it must be resolved here or it would hang).
         resolveSpend(.declined)
+        resolveGate(.declined)
         if claudeRuntimeEnabled {
             _claudeRuntime?.stop()
             isStreaming = false

@@ -41,7 +41,9 @@ data root):
   paths relative to the project data root, versions never overwritten.
 - `storyboard/current.yaml` — kept in sync with the newest version.
 - Gate after user approval:
-  `approve_gate(project_dir, "storyboard")`.
+  `approve_gate(project_dir, "storyboard")`. `approve_gate` surfaces the
+  approval to the user and writes only after they tap Approve; you're
+  requesting it, not granting it. On a decline, stay on this phase.
 
 ## Steps
 

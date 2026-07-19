@@ -77,7 +77,7 @@ enum ToolRunPresentation {
         "list_phases": "Reading the phase plan",
         "get_ui_contract": "Reading the phase's interaction plan",
         "run_phase": "Running a pipeline phase",
-        "approve_gate": "Approving the phase gate",
+        "approve_gate": "Requesting phase-gate approval",
         "set_gate_state": "Updating the phase gate",
         "rewind": "Rewinding the pipeline",
         "get_bible": "Reading the Bible",

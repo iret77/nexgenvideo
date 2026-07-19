@@ -51,7 +51,9 @@ with a clear notice.
   read and edit it there." — and only then ask for explicit approval via
   show_dialog ("Approve the brief, change individual answers, or go through
   the questions again?"). Never ask for approval of a brief the user has not
-  been told how to read. On approval: `approve_gate(project_dir, "brief")`.
+  been told how to read. On approval: `approve_gate(project_dir, "brief")` —
+  which surfaces the approval to the user and writes only after they tap
+  Approve; you're requesting it, not granting it. On a decline, stay on this phase.
 
 ## Steps
 
