@@ -241,10 +241,17 @@ final class AppState {
     /// Fetch + install the pack through the same catalog resolution the plugin picker uses, then
     /// re-run the gate — an install that only lands on disk still can't open the project.
     private func installPack(id: String, for projectURL: URL) async -> Bool {
+        let progress = PackInstallProgress(packID: id)
+        progress.show()
+        // Explicit closes keep the panel from floating over an alert; the defer catches a future
+        // early return that forgets one.
+        defer { progress.close() }
+
         let manager = PluginManager()
         await manager.refresh()
 
         guard let entry = Self.catalogEntry(id: id, rows: manager.rows(activePluginName: nil)) else {
+            progress.close()
             notify(message: "Couldn't install the “\(id)” format pack",
                    informative: manager.catalogState == .offline
                        ? "The plugin library is unreachable. Reconnect, then open the project again."
@@ -252,10 +259,12 @@ final class AppState {
             return false
         }
         guard await manager.install(entry) else {
+            progress.close()
             notify(message: "Couldn't install the “\(id)” format pack",
                    informative: manager.lastError ?? "The install didn't complete.")
             return false
         }
+        progress.close()
 
         switch ProjectPackGate.evaluate(projectURL: projectURL) {
         case .satisfied:

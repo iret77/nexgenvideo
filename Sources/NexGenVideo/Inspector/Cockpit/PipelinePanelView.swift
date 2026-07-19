@@ -287,11 +287,12 @@ struct PipelinePanelView: View {
     @ViewBuilder
     private func surfaceIcon(for phase: String) -> some View {
         if let entry = editor.uiContract?.phases[phase] {
-            let (icon, target): (String, CockpitTab?) = switch entry.surface {
-            case "review": ("eye", .review)
-            case "prose": ("text.cursor", .story)
-            case "choice": ("slider.horizontal.3", nil)
-            default: ("questionmark", nil)
+            // The tooltip names the destination — the icon is the only route to the artifact.
+            let (icon, target, destination): (String, CockpitTab?, String) = switch entry.surface {
+            case "review": ("eye", .review, "Open in Review")
+            case "prose": ("text.cursor", .story, "Read it in Story")
+            case "choice": ("slider.horizontal.3", nil, "Answered in the chat")
+            default: ("questionmark", nil, "Surface: \(entry.surface)")
             }
             Button {
                 if let target { editor.cockpitTab = target }
@@ -302,7 +303,7 @@ struct PipelinePanelView: View {
             }
             .buttonStyle(.plain)
             .disabled(target == nil)
-            .help("Surface: \(entry.surface) · compute: \(entry.taskClass)")
+            .help("\(destination) · compute: \(entry.taskClass)")
         }
     }
 

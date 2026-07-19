@@ -46,10 +46,12 @@ with a clear notice.
 - The **display in the user chat** runs via the engine MCP tool
   `show_artifact(project_dir, "brief")`. Do not hand-print a finished
   user-facing table here.
-- **Gate:** after writing, summarize briefly and ask the user for
-  explicit approval via show_dialog ("Approve the brief, change
-  individual answers, or go through the questions again?"). On
-  approval: `approve_gate(project_dir, "brief")`.
+- **Gate:** after writing, summarize briefly, then tell the user where to
+  read the whole thing — "The full brief is in the **Story** tab; you can
+  read and edit it there." — and only then ask for explicit approval via
+  show_dialog ("Approve the brief, change individual answers, or go through
+  the questions again?"). Never ask for approval of a brief the user has not
+  been told how to read. On approval: `approve_gate(project_dir, "brief")`.
 
 ## Steps
 
@@ -363,8 +365,9 @@ Examples:
 
 Write the brief by **calling `write_brief`** (never hand-author
 `brief.yaml`), summarize for the orchestrator, display via
-`show_artifact(project_dir, "brief")`, and request the gate approval as
-described in "Outputs & gate".
+`show_artifact(project_dir, "brief")`, point the user at the **Story** tab
+for the full brief, and request the gate approval as described in
+"Outputs & gate".
 
 ## Mandatory rules
 

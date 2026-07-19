@@ -222,6 +222,7 @@ final class EditorViewModel {
         didSet {
             guard projectURL != oldValue else { return }
             activePluginName = ProjectPluginSettings.activePlugin(projectURL: projectURL)
+            intakeCoordinator.reset()
             // Identity is the package UUID (travels with the file), resolved once here so the working
             // copy, caches, and telemetry all key off the same stable id.
             projectId = projectURL.map { ProjectIdentity.uuid(for: $0) }
@@ -456,6 +457,8 @@ final class EditorViewModel {
 
     let generationService = GenerationService()
     let agentService = AgentService()
+    /// Presents the active pack's declared hard steps before the agent works a phase.
+    let intakeCoordinator = IntakeCoordinator()
 
     /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
     /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:
@@ -621,6 +624,9 @@ final class EditorViewModel {
         }
         uiContract = (try? ct.get()) ?? nil
         engineStateRevision += 1
+        // The pipeline may have advanced into a phase whose intake isn't collected yet. Asking is the
+        // workflow's job, not the agent's (#254) — and this is the one point every path funnels through.
+        intakeCoordinator.advance(editor: self)
     }
 
     var keyframesPanelVisible: Bool = {

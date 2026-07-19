@@ -83,7 +83,7 @@ slug under the project home): `show_dialog` "abort / continue working
 / choose a different slug?" — never overwrite silently. Re-run step 2
 with a different slug if the user picks that.
 
-### 4. Greenfield or brownfield? (ask before inventing anything)
+### 4. Greenfield or brownfield? (read what arrived — never re-ask)
 
 A project is one of two shapes — establish which BEFORE the pipeline
 invents a story from scratch:
@@ -95,41 +95,35 @@ invents a story from scratch:
   material** and stay consistent with it; it must NOT reinvent a different
   story or different identities that then clash with the prepared assets.
 
-Offer the optional brownfield inputs with a **show_dialog**:
+**The app collects this material itself, before this phase starts.** The
+script, character, location, and style intakes are hard steps the pack
+declares in `hardsteps.json`; the host presents them in the composer dock
+and writes the files deterministically. Asking is no longer your job.
 
-- **Story script** — a `fileIntake` (`accept: ["text"]`,
-  `attachAs: "script"`, prompt e.g. "Have a script or story outline?
-  Drop it (.txt / .md) — optional"). The host writes `import/script.md`
-  and tells you to build the treatment/bible FROM it. If provided, treat
-  its characters, locations, and beats as the source of truth and confirm
-  your reading with the user.
-- **Prepared characters / locations** — for each identity the user has
-  reference images for, present a **show_dialog** with a `fileIntake`
-  (`accept: ["image"]`, `multiple: true`, `attachAs: "character"` or
-  `"location"`, `namePrompt: "Character name"` / `"Location name"`,
-  prompt e.g. "Drop the reference images"). The user names the identity
-  and drops/picks the images; the host copies them into
-  `import/characters/<slug>/` or `import/locations/<slug>/` — the bible
-  anchor the bible-agent (K5) adopts. One dialog per identity; repeat for
-  each. Never tell the user to place files in a folder by hand.
+Establish the shape by READING, with
+`list_project_files(subdir: "import")`:
 
-If the user has neither, proceed greenfield — but only after asking, so a
-prepared project is never overwritten by an invented one.
+- `import/script.md` → brownfield story. Treat its characters, locations,
+  and beats as the source of truth, build the treatment/bible FROM it, and
+  confirm your reading with the user.
+- `import/characters/<slug>/`, `import/locations/<slug>/` → prepared
+  identities. These are the bible anchors the bible-agent (K5) adopts;
+  keep their names and looks, don't invent replacements.
+- loose images directly in `import/` → style references the
+  production-design agent (K2) curates as the style source.
+- nothing there → greenfield. The user was already asked and had nothing;
+  proceed and develop the concept from the music.
+
+Do NOT re-ask for a script, characters, locations, or style refs, and do
+not tell the user to place files in a folder by hand. If the user
+volunteers more material later, that's a normal `show_dialog` intake.
 
 ### 5. Upload instructions for the user
 
-Briefly tell the user which files go where, relative to `data_root`:
-
-- the song (MP3/WAV/FLAC/M4A) — don't ask them to place it in a folder;
-  it is brought in through the track drop-zone/picker when analysis starts
-  (flow A1). Just tell them to have it ready.
-- lyrics — optional; offered as an upload after the analysis (flow A1).
-- **style inspiration** (mood refs, style templates, early visual
-  development) — offer an upload via a **show_dialog** with a `fileIntake`
-  (`accept: ["image"]`, `multiple: true`, `attachAs: "style"`, prompt e.g.
-  "Drop any style / mood references — optional"). The host copies them into
-  `import/` and the production-design agent (K2) curates them as the style
-  source. Never tell the user to place files in a folder by hand.
+The song and lyrics are collected by the app as hard steps when the
+analysis phase opens (flow A1) — don't ask for them here and don't ask the
+user to place anything in a folder. If they ask, tell them to have the
+song file (MP3/WAV/FLAC/M4A) ready.
 
 **The separation matters:**
 

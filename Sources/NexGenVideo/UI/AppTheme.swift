@@ -281,6 +281,8 @@ enum AppTheme {
         static let agentComposerMaxHeight: CGFloat = 280
         static let agentComposerGrabHeight: CGFloat = 10
         static let agentBlockLabelWidth: CGFloat = 96
+        /// Label column of the Brief field rows — wide enough for the longest label ("Director pattern").
+        static let briefLabelWidth: CGFloat = 104
         /// Theater's floating transport cluster — wide enough for a comfortable scrub without
         /// spanning the whole window.
         static let theaterTransportWidth: CGFloat = 460

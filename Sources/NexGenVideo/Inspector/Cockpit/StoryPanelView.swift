@@ -81,22 +81,12 @@ struct StoryPanelView: View {
                 command: { "The project's brief.yaml fails to load. \($0)" }
             )
         } else if let brief = editor.brief {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                editableTextRow("Mission", text: $editedMission)
-                editableTextRow("Platform", text: $editedPlatform)
-                if let audience = brief.targetAudience, !audience.isEmpty {
-                    briefRow("Audience", audience)
-                }
-                editableMenuRow("Aspect", selection: $editedAspect, options: Self.aspectRatioOptions)
-                briefRow("Length", brief.lengthMode)
-                editableMenuRow("Mode", selection: $editedMode, options: Self.projectModeOptions)
-                briefRow("Budget", String(format: "€%.0f", brief.budgetEur))
-                briefRow("Medium", brief.visualMedium)
-                if let notes = brief.visualMediumNotes, !notes.isEmpty {
-                    proseBlock("Medium notes", notes)
-                }
-                if let notes = brief.notes, !notes.isEmpty {
-                    proseBlock("Notes", notes)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
+                ForEach(briefGroups(brief)) { group in
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                        sectionHeader(group.id)
+                        ForEach(group.rows) { row in briefRowView(row) }
+                    }
                 }
                 if let apply = briefEditsCommand(against: brief) {
                     applyBriefEditsRow(apply)
@@ -126,16 +116,145 @@ struct StoryPanelView: View {
         }
     }
 
+    // MARK: - Brief rows
+
+    /// The brief is what the user approves, so the panel lays out every field the payload carries —
+    /// grouped, and skipping what isn't set rather than printing a column of dashes. Rows are built as
+    /// data so a group that ends up empty can drop out entirely.
+    private enum BriefRow: Identifiable {
+        case value(String, String)
+        case prose(String, String)
+        case editableText(String, Binding<String>)
+        case editableMenu(String, Binding<String>, [String])
+
+        var id: String {
+            switch self {
+            case .value(let label, _), .prose(let label, _),
+                 .editableText(let label, _), .editableMenu(let label, _, _):
+                return label
+            }
+        }
+    }
+
+    private struct BriefGroup: Identifiable {
+        let id: String
+        let rows: [BriefRow]
+    }
+
+    @ViewBuilder
+    private func briefRowView(_ row: BriefRow) -> some View {
+        switch row {
+        case .value(let label, let value): briefRow(label, value)
+        case .prose(let label, let text): proseBlock(label, text)
+        case .editableText(let label, let text): editableTextRow(label, text: text)
+        case .editableMenu(let label, let selection, let options):
+            editableMenuRow(label, selection: selection, options: options)
+        }
+    }
+
+    private func briefGroups(_ brief: BriefData) -> [BriefGroup] {
+        [
+            BriefGroup(id: "Creative", rows: creativeRows(brief)),
+            BriefGroup(id: "Delivery", rows: deliveryRows(brief)),
+            BriefGroup(id: "Production", rows: productionRows(brief)),
+            BriefGroup(id: "Budget", rows: budgetRows(brief)),
+            BriefGroup(id: "Notes", rows: notesRows(brief)),
+        ].filter { !$0.rows.isEmpty }
+    }
+
+    private func creativeRows(_ brief: BriefData) -> [BriefRow] {
+        var rows: [BriefRow] = []
+        Self.add(&rows, "Concept", brief.conceptType)
+        Self.add(&rows, "Concept detail", brief.conceptTypeOther)
+        Self.add(&rows, "Medium", brief.visualMedium)
+        Self.add(&rows, "Medium detail", brief.visualMediumOther)
+        Self.addProse(&rows, "Medium notes", brief.visualMediumNotes)
+        Self.add(&rows, "Tone", brief.tone.joined(separator: ", "))
+        Self.add(&rows, "Tone detail", brief.toneOther)
+        Self.add(&rows, "References", brief.styleReferences.joined(separator: ", "))
+        Self.add(&rows, "Figures", brief.figures)
+        Self.add(&rows, "Figures detail", brief.figuresOther)
+        Self.add(&rows, "Figure count", brief.figureCountHint)
+        Self.add(&rows, "Lyrics", brief.lyricsIntegration)
+        Self.add(&rows, "Lyrics detail", brief.lyricsIntegrationOther)
+        return rows
+    }
+
+    private func deliveryRows(_ brief: BriefData) -> [BriefRow] {
+        var rows: [BriefRow] = [.editableText("Mission", $editedMission)]
+        Self.add(&rows, "Mission detail", brief.missionOther)
+        rows.append(.editableText("Platform", $editedPlatform))
+        Self.add(&rows, "Audience", brief.targetAudience)
+        rows.append(.editableMenu("Aspect", $editedAspect, Self.aspectRatioOptions))
+        Self.add(&rows, "Aspect detail", brief.aspectRatioOther)
+        Self.add(&rows, "Length", brief.lengthMode)
+        Self.add(&rows, "Cut handles", brief.cutHandlesMode)
+        return rows
+    }
+
+    private func productionRows(_ brief: BriefData) -> [BriefRow] {
+        var rows: [BriefRow] = [.editableMenu("Mode", $editedMode, Self.projectModeOptions)]
+        Self.add(&rows, "Video model", brief.modelPreference)
+        Self.add(&rows, "Model detail", brief.modelPreferenceOther)
+        Self.add(&rows, "Frame images", brief.frameImageModel)
+        Self.add(&rows, "Image detail", brief.frameImageModelOther)
+        Self.add(&rows, "Bible images", brief.bibleImageModel)
+        Self.add(&rows, "Composite images", brief.compositeImageModel)
+        Self.add(&rows, "Stems", brief.stemsProvider)
+        Self.add(&rows, "Resolution", brief.finalResolution)
+        Self.add(&rows, "Preview pass", brief.previewMode)
+        Self.add(&rows, "Chords", brief.enableChordAnalysis.map { $0 ? "On" : "Off" })
+        Self.add(&rows, "Text overlays", brief.allowTextOverlays.map { $0 ? "Allowed" : "Not allowed" })
+        Self.add(&rows, "Genre cross", brief.allowGenreCrossPatterns.map { $0 ? "Allowed" : "Not allowed" })
+        Self.add(&rows, "Director pattern", brief.directorPattern)
+        return rows
+    }
+
+    private func budgetRows(_ brief: BriefData) -> [BriefRow] {
+        var rows: [BriefRow] = []
+        // The engine rejects a budget of 0, so 0 here can only mean the payload didn't carry one.
+        Self.add(&rows, "Budget", brief.budgetEur > 0 ? Self.euro(brief.budgetEur) : nil)
+        // Absent = no hard stop at all, which is the default and worth stating.
+        Self.add(&rows, "Hard stop", brief.budgetStopEur.map(Self.euro) ?? "none")
+        return rows
+    }
+
+    private func notesRows(_ brief: BriefData) -> [BriefRow] {
+        var rows: [BriefRow] = []
+        Self.addProse(&rows, "Notes", brief.notes)
+        return rows
+    }
+
+    private static func add(_ rows: inout [BriefRow], _ label: String, _ value: String?) {
+        guard let value = trimmed(value) else { return }
+        rows.append(.value(label, value))
+    }
+
+    private static func addProse(_ rows: inout [BriefRow], _ label: String, _ value: String?) {
+        guard let value = trimmed(value) else { return }
+        rows.append(.prose(label, value))
+    }
+
+    private static func trimmed(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
+    }
+
+    private static func euro(_ amount: Double) -> String {
+        String(format: amount == amount.rounded() ? "€%.0f" : "€%.2f", amount)
+    }
+
     private func briefRow(_ label: String, _ value: String) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
+        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
             Text(label)
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: 70, alignment: .leading)
+                .frame(width: AppTheme.ComponentSize.briefLabelWidth, alignment: .leading)
             Text(value.isEmpty ? "—" : value)
                 .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
     }
@@ -145,7 +264,7 @@ struct StoryPanelView: View {
             Text(label)
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: 70, alignment: .leading)
+                .frame(width: AppTheme.ComponentSize.briefLabelWidth, alignment: .leading)
             TextField(label, text: text)
                 .textFieldStyle(.plain)
                 .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
@@ -159,7 +278,7 @@ struct StoryPanelView: View {
             Text(label)
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: 70, alignment: .leading)
+                .frame(width: AppTheme.ComponentSize.briefLabelWidth, alignment: .leading)
             Menu {
                 ForEach(options, id: \.self) { option in
                     Button(option) { selection.wrappedValue = option }

@@ -19,7 +19,8 @@ All file paths below are relative to the **project data root**.
 ## Inputs
 
 - Audio file in `audio/` (mandatory before the A1 run)
-- Optional: `lyrics/lyrics.txt` (offer an upload — see A1 step 3)
+- Optional: `lyrics/lyrics.txt` (collected by the app as a hard step —
+  read it, don't offer it; see A1 step 3)
 - For A2: `analysis/<song>.json` — written by the A1 run with
   `schema=analysis/v2`, carrying **measured** `beats`, `downbeats`,
   `bpm`, downbeat-snapped `sections`, `structure_candidates`,
@@ -76,18 +77,18 @@ actually present.
 
 **Step 1 — Preflight (plain agent check, no shell):**
 
-Inspect the project yourself: is there an audio file in `audio/`? Are
-there lyrics in `lyrics/lyrics.txt`?
+The song and the lyrics are hard steps the pack declares in
+`hardsteps.json`: the app asks for them in the composer dock when this
+phase opens, and writes them into `audio/` and `lyrics/lyrics.txt` itself.
+Asking is not your job — inspect the result.
 
-- **Audio missing** → bring in the song with a **show_dialog** that carries
-  a `fileIntake` (`accept: ["audio"]`, `attachAs: "song"`, prompt e.g. "Drop
-  your track or choose a file — .wav / .mp3 / .m4a / .aiff / .flac / .aac").
-  The user drops it or picks it (never types a path); the host places it
-  straight into `audio/` under the one-song contract — no separate
-  `attach_song` step to forget. If you can't obtain a song, **HARD STOP**:
-  "No audio file in `audio/` — without the song there is no analysis."
-  Then wait.
-- **Everything present** → continue directly with step 2.
+Is there an audio file in `audio/`?
+
+- **Present** → continue directly with step 2.
+- **Missing** → the user hasn't answered the track intake yet. **HARD
+  STOP**: "No audio file in `audio/` — without the song there is no
+  analysis." Then wait; the dock is already asking. Don't open your own
+  song dialog and don't ask for a path.
 
 **Step 2 — Run the analysis:**
 
@@ -99,15 +100,17 @@ returns `{"error": "phase_failed", ...}`, the song couldn't be decoded — tell
 the user what the detail says (e.g. the file isn't a valid audio file) and ask
 for a clean track. **Do not proceed to A2 or approve the gate on a failed run.**
 
-**Step 3 — Offer lyrics (optional, improves labeling):**
+**Step 3 — Use the lyrics if they arrived (optional, improves labeling):**
 
-If `lyrics/lyrics.txt` isn't present yet, offer a lyrics upload via a
-**show_dialog** with a `fileIntake` (`accept: ["text"]`, `attachAs: "lyrics"`,
-prompt e.g. "Drop the lyrics (.txt) — optional, sharpens the section labels").
-The host writes `lyrics/lyrics.txt` and replies with the `[Section]` markers in
-order. Lyrics are **preferred over guessing** for section labels: map the
-markers onto the measured sections in order. They do **not** move the measured
-boundaries. Instrumental track / user declines → skip, label conservatively.
+The lyrics intake is a hard step too — the app already offered it and the
+user either supplied lyrics or turned them down. Read `lyrics/lyrics.txt`;
+do not offer your own lyrics dialog.
+
+- **Present** → lyrics are **preferred over guessing** for section labels:
+  map the `[Section]` markers onto the measured sections in order. They do
+  **not** move the measured boundaries.
+- **Absent** → instrumental track or the user declined. Label
+  conservatively and move on.
 
 After a successful run, continue with A2.
 
