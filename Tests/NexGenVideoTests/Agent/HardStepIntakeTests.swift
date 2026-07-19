@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import MusicvideoPlugin
 @testable import NexGenVideo
 
 @Suite("Hard-step intake")
@@ -254,16 +255,46 @@ struct HardStepIntakeTests {
         #expect(repeated.id != first.id)
     }
 
-    @Test("the pack's own manifest is well-formed and routes only supported kinds")
+    @Test("the SHIPPED manifest decodes and keeps every step it declares")
     func shippedManifestIsUsable() throws {
-        let json = """
-        {"phases": [{"phase": "project_init", "steps": [
-          {"id": "project_init.script", "attachAs": "script", "title": "Story script"}
-        ]}]}
-        """
-        let manifest = try HardStepManifest.decode(Data(json.utf8))
-        for step in manifest.allSteps {
-            #expect(HardStep.Kind(rawValue: step.attachAs) != nil)
+        // Loads the real `hardsteps.json`, not a literal. An unknown `attachAs` is dropped silently at
+        // decode time (so a newer pack degrades instead of crashing an older host) — which means a typo
+        // like "characters" would remove that step with nothing to notice. Comparing the decoded count
+        // against the raw file is what catches it.
+        let url = try #require(PackKnowledge.hardStepManifestURL())
+        let data = try Data(contentsOf: url)
+        let manifest = try HardStepManifest.decode(data)
+
+        let raw = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let rawPhases = try #require(raw["phases"] as? [[String: Any]])
+        let rawStepCount = rawPhases.reduce(0) { $0 + (($1["steps"] as? [[String: Any]])?.count ?? 0) }
+
+        if manifest.allSteps.count != rawStepCount {
+            let kept = Set(manifest.allSteps.map(\.id))
+            let declared = rawPhases.flatMap { ($0["steps"] as? [[String: Any]]) ?? [] }
+                .compactMap { $0["id"] as? String }
+            Issue.record("dropped at decode (unknown attachAs?): \(declared.filter { !kept.contains($0) })")
         }
+    }
+
+    @Test("the song stays a REQUIRED step of the analysis phase")
+    func songStepSurvivesShipped() throws {
+        // The one step whose loss is silent and costly: without it the analysis phase would start with
+        // no song, which is the failure the whole hard-step mechanism exists to prevent.
+        let url = try #require(PackKnowledge.hardStepManifestURL())
+        let manifest = try HardStepManifest.decode(try Data(contentsOf: url))
+        let song = try #require(manifest.steps(for: "analysis").first { $0.kind == .song })
+        #expect(song.required)
+        #expect(song.accept.contains("audio"))
+    }
+
+    @Test("the shipped project-init steps cover script, characters and locations")
+    func projectInitStepsSurviveShipped() throws {
+        let url = try #require(PackKnowledge.hardStepManifestURL())
+        let manifest = try HardStepManifest.decode(try Data(contentsOf: url))
+        let kinds = Set(manifest.steps(for: "project_init").map(\.kind))
+        // These are the ones the agent skipped in the field — the reason the mechanism exists.
+        #expect(kinds.isSuperset(of: [.script, .character, .location]))
     }
 }

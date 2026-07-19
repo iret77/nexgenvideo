@@ -23,15 +23,22 @@ enum IntakePlanner {
 @MainActor
 final class IntakeCoordinator {
 
-    /// The step currently in the dock, with the material count at the moment it was offered. If the
-    /// count hasn't moved by the next pass, the user confirmed with nothing — that's the decline.
-    private var offered: (step: HardStep, fingerprint: Int)?
+    /// The step currently in the dock: the material count when it was offered, plus the id of the card
+    /// we put there. If the count hasn't moved by the next pass, the user confirmed with nothing —
+    /// that's the decline. The id is what tells an ANSWER apart from a DISPLACEMENT.
+    private var offered: (step: HardStep, fingerprint: Int, dialogID: String)?
     private var manifestCache: [String: HardStepManifest] = [:]
 
     /// Called whenever the app re-reads engine state — i.e. whenever the pipeline may have advanced.
     /// Cheap and idempotent: every exit below leaves the dock exactly as it found it.
     func advance(editor: EditorViewModel) {
         let service = editor.agentService
+        // Our card displaced by someone else's dialog: drop the offer WITHOUT recording a decline.
+        // Otherwise the agent's own dialog gets answered, our material count is unchanged, and the
+        // user is marked as having said "I don't have one" — a step they were never asked.
+        if let previous = offered, let pending = service.pendingDialog, pending.id != previous.dialogID {
+            offered = nil
+        }
         // Exactly one pending dialog is the locked dock rule; a spend approval owns the dock too.
         guard service.pendingDialog == nil, service.pendingSpendApproval == nil else { return }
         // Mid-turn refreshes come from tool calls; the turn-end refresh (isStreaming true→false, which
@@ -75,8 +82,9 @@ final class IntakeCoordinator {
     func reset() { offered = nil }
 
     private func present(_ step: HardStep, isRepeat: Bool, dataRoot: URL, editor: EditorViewModel) {
-        offered = (step, IntakeSatisfaction.fingerprint(step.kind, dataRoot: dataRoot))
-        editor.agentService.pendingDialog = AgentDialog(hardStep: step, isRepeat: isRepeat)
+        let dialog = AgentDialog(hardStep: step, isRepeat: isRepeat)
+        offered = (step, IntakeSatisfaction.fingerprint(step.kind, dataRoot: dataRoot), dialog.id)
+        editor.agentService.pendingDialog = dialog
         editor.agentPanelVisible = true
     }
 

@@ -88,6 +88,17 @@ public enum PackKnowledge {
         return url
     }
 
+    /// The pack's declarative hard-step manifest (`hardsteps.json`) — the intake steps the workflow
+    /// engine runs before the agent takes a phase. Exposed so a test can assert against the SHIPPED
+    /// file: a typo'd `attachAs` is silently dropped at decode time, which would quietly remove a
+    /// mandatory step (the song) with nothing to notice it.
+    public static func hardStepManifestURL() -> URL? {
+        guard let url = packDir("hardsteps.json"), FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return url
+    }
+
     /// The frozen scoring policy (`pattern-fit-policy.v1.json`).
     public static func patternFitPolicyURL() -> URL? { contractResourceURL("pattern-fit-policy.v1.json") }
 
