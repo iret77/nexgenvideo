@@ -41,7 +41,11 @@ final class AppState {
         }
     }
 
-    func showHome() {
+    /// Return to Home. `persist: true` (a real "go to Home" while the document stays open) saves the
+    /// project first, since autosave-in-place is off. `persist: false` is the post-close teardown, where
+    /// the Save/Don't-Save review has ALREADY decided — re-saving there fails on the just-released
+    /// working copy, and the failed-save alert would block app termination on "Don't Save".
+    func showHome(persist: Bool = true) {
         guard let project = activeProject else {
             HomeWindowController.shared.showWindow(nil)
             return
@@ -56,10 +60,9 @@ final class AppState {
             }
             HomeWindowController.shared.showWindow(nil)
         }
-        if project.isDocumentEdited, let url = project.fileURL {
-            // Autosave-in-place is off, so leaving to Home persists with an explicit save. On failure
-            // (e.g. the format pack is unavailable), surface the error and stay in the editor rather than
-            // hiding a project with unsaved work.
+        if persist, project.isDocumentEdited, let url = project.fileURL {
+            // On failure (e.g. the format pack is unavailable), surface it and stay in the editor rather
+            // than hiding a project with unsaved work.
             project.save(to: url, ofType: VideoProject.typeIdentifier, for: .saveOperation) { error in
                 DispatchQueue.main.async {
                     if let error {

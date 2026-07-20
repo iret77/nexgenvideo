@@ -340,7 +340,9 @@ final class VideoProject: NSDocument {
         super.close()
         DispatchQueue.main.async {
             if AppState.shared.activeProject === self {
-                AppState.shared.showHome()
+                // The review already resolved save/don't-save — navigate Home WITHOUT re-saving (a save
+                // here fails on the released working copy and its alert would block app termination).
+                AppState.shared.showHome(persist: false)
             }
         }
     }

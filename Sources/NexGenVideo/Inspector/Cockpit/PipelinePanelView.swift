@@ -20,6 +20,10 @@ struct PipelinePanelView: View {
     @State private var loadToken = 0
     /// True while a gate mutation (approve / needs-revision / rewind) is being written + reloaded.
     @State private var gateWriting = false
+    /// A gate mutation that was refused (an unmet precondition) or couldn't run — surfaced HERE in the
+    /// cockpit, next to the button that was clicked, not routed to the Media panel's toast where the user
+    /// can't see it. Cleared on the next successful gate write.
+    @State private var gateError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,6 +60,9 @@ struct PipelinePanelView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                 summaryHeader(data)
+                if let gateError {
+                    gateErrorBanner(gateError)
+                }
                 if data.phases.isEmpty {
                     CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No phases",
                                            message: "This project has no defined phases.")
@@ -279,20 +286,60 @@ struct PipelinePanelView: View {
     /// snapshot (title-bar capsule + other panels) so every surface reflects the new gate state. The
     /// write is fast local YAML I/O — kept inline (the reloads are the async part).
     private func apply(_ write: (URL) throws -> Void) {
-        guard let dir = editor.workingRoot, !gateWriting else { return }
+        guard !gateWriting else { return }
+        guard let dir = editor.workingRoot else {
+            gateError = "No open project to update — reopen the project and try again."
+            return
+        }
         gateWriting = true
         do {
             try write(dir)
             // The gate write landed in the working copy — mark the document edited so a save persists it.
+            gateError = nil
             editor.onPipelineChanged?()
         } catch {
-            editor.mediaPanelToast = MediaPanelToast(message: "Gate update failed: \(error.localizedDescription)")
+            // A refused gate (unmet precondition) or a write failure — show it in the cockpit, where the
+            // click happened. `error.localizedDescription` carries the block reason from the gate checks.
+            // `apply` also runs needs-revision / rewind, so the prefix stays action-neutral.
+            gateError = "Couldn't update the gate: \(error.localizedDescription)"
         }
         Task {
             await editor.refreshEngineState()
             await load()
             gateWriting = false
         }
+    }
+
+    /// The refusal/feedback for a gate action, rendered inline at the top of the cockpit (HAX G11 —
+    /// say WHY the pipeline didn't advance). Dismissible; also clears on the next successful write.
+    private func gateErrorBanner(_ message: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Status.errorColor)
+            Text(message)
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: AppTheme.Spacing.sm)
+            Button { gateError = nil } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .padding(AppTheme.Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .fill(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.faint))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .strokeBorder(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.muted), lineWidth: AppTheme.BorderWidth.hairline)
+        )
     }
 
     /// Contract-driven routing (docs/UI_UX_CONCEPT.md §7): the phase's declared surface, clickable —

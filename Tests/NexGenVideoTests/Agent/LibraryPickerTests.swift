@@ -32,11 +32,17 @@ struct LibraryPickerTests {
         #expect(it.accepts(url("song.mp3")) == false)
     }
 
-    @Test("a text intake accepts plain text and rejects an image")
-    func textAccept() {
+    @Test("a text intake accepts every document format the app recognizes, not just .txt")
+    func textAcceptsAllDocumentFormats() {
         let it = intake(["text"])
-        #expect(it.accepts(url("lyrics.txt")))
+        // ClipType-backed, so .md/.markdown/.rtf/.fountain match regardless of system UTI registration.
+        for ext in ClipType.documentExtensions {
+            if !it.accepts(url("lyrics.\(ext)")) {
+                Issue.record("text intake should accept .\(ext)")
+            }
+        }
         #expect(it.accepts(url("cover.png")) == false)
+        #expect(it.accepts(url("song.mp3")) == false)
     }
 
     @Test("an empty accept list takes any file — the well places no restriction")
