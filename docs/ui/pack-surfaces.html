@@ -1,0 +1,407 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>UI-Spec — Pack-contributed cockpit surfaces (Analysis)</title>
+<meta name="ui-spec-route" content="/project/cockpit">
+<meta name="ui-spec-viewports" content="1280x800,1040x760">
+<style>
+  /* ── Design tokens (→ AppTheme). These land as AppTheme constants, not literals. ───────────── */
+  :root {
+    --bg:            #17181b;   /* AppTheme.Background.primary   */
+    --bg-panel:      #1d1f23;   /* AppTheme.Background.secondary */
+    --bg-raised:     #24272c;   /* AppTheme.Background.raised    */
+    --border:        #2e3238;   /* AppTheme.Border.subtle       */
+    --border-strong: #3a3f47;   /* AppTheme.Border.medium       */
+    --text:          #e9ecef;   /* AppTheme.Text.primary        */
+    --text-2:        #aab1ba;   /* AppTheme.Text.secondary      */
+    --text-3:        #79818c;   /* AppTheme.Text.tertiary       */
+    --text-muted:    #5a616b;   /* AppTheme.Text.muted          */
+    --accent:        #6fb2ff;   /* AppTheme.Accent.timecode     */
+    --accent-dim:    #6fb2ff26;
+    --ok:            #58c774;   /* AppTheme.Status.success      */
+    --warn:          #e0b23a;
+    --err:           #e2685f;   /* AppTheme.Status.error        */
+    --pack:          #c08bff;   /* pack-scoped accent (distinguishes pack tabs from generic) */
+    --pack-dim:      #c08bff22;
+
+    --s-xxs: 3px; --s-xs: 6px; --s-sm: 9px; --s-md: 14px; --s-lg: 20px; --s-xl: 30px;  /* AppTheme.Spacing.* */
+    --r-xs: 4px; --r-sm: 7px; --r-md: 10px;                                             /* AppTheme.Radius.*  */
+    --f-micro: 10px; --f-xxs: 11px; --f-xs: 12px; --f-sm: 13px; --f-md: 15px; --f-lg: 19px;
+
+    --hair: 1px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #0f1012; color: var(--text);
+    font: 400 var(--f-sm)/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  body { padding: var(--s-xl); }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 var(--s-xs); }
+  h2 { font-size: var(--f-md); font-weight: 600; margin: var(--s-xl) 0 var(--s-sm);
+    padding-bottom: var(--s-xs); border-bottom: var(--hair) solid var(--border); }
+  h3 { font-size: var(--f-sm); font-weight: 600; color: var(--text-2); margin: var(--s-lg) 0 var(--s-xs); }
+  p  { color: var(--text-2); max-width: 78ch; }
+  code { font: 500 12px/1.4 "SF Mono", ui-monospace, monospace; color: var(--accent);
+    background: #ffffff0a; padding: 1px 5px; border-radius: var(--r-xs); }
+  a { color: var(--accent); }
+  .lead { color: var(--text); font-size: var(--f-md); max-width: 80ch; }
+  .doc { max-width: 1120px; margin: 0 auto; }
+
+  section#spec ul { max-width: 82ch; padding-left: 18px; }
+  section#spec li { color: var(--text-2); margin: var(--s-xxs) 0; }
+  section#spec li b, section#spec li strong { color: var(--text); font-weight: 600; }
+  .tag { display: inline-block; font: 700 var(--f-micro)/1 -apple-system, sans-serif;
+    letter-spacing: .06em; padding: 3px 6px; border-radius: var(--r-xs); vertical-align: middle; }
+  .tag.pack { color: var(--pack); background: var(--pack-dim); }
+  .tag.ro   { color: var(--text-3); background: #ffffff0d; }
+
+  table.tok { border-collapse: collapse; width: 100%; max-width: 820px; margin-top: var(--s-xs); }
+  table.tok th, table.tok td { text-align: left; padding: var(--s-xs) var(--s-sm);
+    border-bottom: var(--hair) solid var(--border); font-size: var(--f-xs); }
+  table.tok th { color: var(--text-3); font-weight: 600; }
+  table.tok td code { background: none; padding: 0; }
+
+  /* ── Mockup frame ───────────────────────────────────────────────────────────────────────── */
+  .mock { margin: var(--s-md) 0 var(--s-lg); }
+  .mock > .cap { font-size: var(--f-xs); color: var(--text-3); margin-bottom: var(--s-xs); }
+  .cockpit { width: 100%; background: var(--bg); border: var(--hair) solid var(--border);
+    border-radius: var(--r-md); overflow: hidden; }
+
+  /* tab bar */
+  .tabs { display: flex; align-items: stretch; gap: 0; background: var(--bg-panel);
+    border-bottom: var(--hair) solid var(--border); padding: var(--s-xs) var(--s-xs) 0; }
+  .tab { position: relative; padding: var(--s-sm) var(--s-md); font-size: var(--f-xs); color: var(--text-3);
+    border-bottom: 2px solid transparent; cursor: default; white-space: nowrap; }
+  .tab.sel { color: var(--text); border-bottom-color: var(--accent); }
+  .tab.pack { color: var(--text-2); }
+  .tab.pack.sel { border-bottom-color: var(--pack); color: var(--text); }
+  .tab.pack .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--pack); margin-right: 6px; vertical-align: middle; }
+  .tabs .gear { margin-left: auto; padding: var(--s-sm) var(--s-md); color: var(--text-muted); font-size: var(--f-sm); }
+
+  .panel { padding: var(--s-lg); }
+
+  /* stat row */
+  .stats { display: flex; flex-wrap: wrap; gap: var(--s-sm); }
+  .stat { flex: 1 1 120px; background: var(--bg-panel); border: var(--hair) solid var(--border);
+    border-radius: var(--r-sm); padding: var(--s-sm) var(--s-md); }
+  .stat .k { font-size: var(--f-micro); letter-spacing: .07em; color: var(--text-3); text-transform: uppercase; }
+  .stat .v { font-size: var(--f-lg); font-weight: 600; color: var(--text); margin-top: 2px;
+    font-variant-numeric: tabular-nums; }
+  .stat .v small { font-size: var(--f-xs); font-weight: 500; color: var(--text-3); }
+
+  /* beat-grid timeline */
+  .tl-head { display: flex; justify-content: space-between; align-items: baseline;
+    margin: var(--s-lg) 0 var(--s-xs); }
+  .tl-head .t { font-size: var(--f-xs); color: var(--text-2); font-weight: 600; }
+  .tl-head .src { font-size: var(--f-micro); color: var(--text-muted); }
+  .timeline { position: relative; height: 76px; background: var(--bg-panel);
+    border: var(--hair) solid var(--border); border-radius: var(--r-sm); overflow: hidden; }
+  .sections { position: absolute; inset: 0 0 auto 0; height: 20px; display: flex; }
+  .sec { height: 20px; border-right: var(--hair) solid var(--bg); display: flex; align-items: center;
+    padding-left: 6px; font-size: var(--f-micro); color: #0f1012; font-weight: 700; letter-spacing: .03em;
+    overflow: hidden; white-space: nowrap; }
+  .grid { position: absolute; left: 0; right: 0; top: 20px; bottom: 0; }
+  .beat { position: absolute; bottom: 0; width: 1px; background: var(--text-muted); }
+  .beat.down { width: 2px; background: var(--accent); }
+  .beat.b { height: 40%; } .beat.d { height: 78%; }
+  .ruler { position: absolute; left: 0; right: 0; bottom: 4px; display: flex;
+    justify-content: space-between; padding: 0 6px; font-size: 9px; color: var(--text-muted);
+    font-variant-numeric: tabular-nums; }
+
+  /* section list */
+  .seclist { margin-top: var(--s-md); border: var(--hair) solid var(--border); border-radius: var(--r-sm);
+    overflow: hidden; }
+  .seclist .row { display: grid; grid-template-columns: 14px 1fr 88px 64px; gap: var(--s-sm);
+    align-items: center; padding: var(--s-xs) var(--s-md); border-bottom: var(--hair) solid var(--border);
+    font-size: var(--f-xs); }
+  .seclist .row:last-child { border-bottom: 0; }
+  .seclist .row .sw { width: 10px; height: 10px; border-radius: 3px; }
+  .seclist .row .nm { color: var(--text); font-weight: 500; }
+  .seclist .row .lab { color: var(--text-3); }
+  .seclist .row .tc { color: var(--text-2); text-align: right; font-variant-numeric: tabular-nums; }
+  .prov { margin-top: var(--s-md); font-size: var(--f-micro); color: var(--text-muted); }
+
+  /* empty / loading / error */
+  .center { padding: var(--s-xl) var(--s-lg); text-align: center; }
+  .center .glyph { font-size: 26px; color: var(--text-muted); }
+  .center .ttl { margin-top: var(--s-sm); color: var(--text); font-weight: 600; }
+  .center .sub { margin-top: var(--s-xs); color: var(--text-3); font-size: var(--f-xs); max-width: 46ch;
+    margin-inline: auto; }
+  .center .cta { display: inline-block; margin-top: var(--s-md); font-size: var(--f-xs); color: var(--accent);
+    border: var(--hair) solid var(--border-strong); border-radius: var(--r-xs); padding: 5px 12px; }
+  .bar { height: 4px; width: 180px; margin: var(--s-md) auto 0; background: var(--bg-raised);
+    border-radius: 2px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 45%; background: var(--pack); border-radius: 2px; }
+  .banner { display: flex; gap: var(--s-sm); align-items: flex-start; padding: var(--s-sm) var(--s-md);
+    border-radius: var(--r-sm); font-size: var(--f-xs); }
+  .banner.warn { background: #e0b23a12; border: var(--hair) solid #e0b23a44; color: var(--text-2); }
+
+  /* pipeline route row */
+  .pl-row { display: flex; align-items: center; gap: var(--s-sm); padding: var(--s-sm) var(--s-md);
+    background: var(--bg-panel); border: var(--hair) solid var(--border); border-radius: var(--r-sm);
+    font-size: var(--f-xs); max-width: 620px; }
+  .pl-row .st { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
+  .pl-row .ph { color: var(--text); font-weight: 500; }
+  .pl-row .route { margin-left: auto; color: var(--pack); border: var(--hair) solid var(--pack);
+    border-radius: var(--r-xs); padding: 3px 9px; font-size: var(--f-micro); }
+  .pl-row .route .dot { display:inline-block; width:5px; height:5px; border-radius:50%; background:var(--pack);
+    margin-right:5px; vertical-align: middle; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-md); }
+  @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+  pre.mermaid { background: var(--bg-panel); border: var(--hair) solid var(--border);
+    border-radius: var(--r-sm); padding: var(--s-md); color: var(--text-2); font-size: var(--f-xs); overflow:auto; }
+</style>
+
+<div class="doc">
+<section id="spec">
+  <h1>Pack-contributed cockpit surfaces</h1>
+  <p class="lead">A format pack can give its own measured/structured artifacts a <b>persistent home in the
+  cockpit</b> — data that the generic tabs (Story, Bible, Shotlist, Review) can't hold because they are
+  format-agnostic. The first case is the <b>musicvideo</b> pack's <b>song analysis</b> (tempo map, key,
+  section boundaries, beat grid), which today lives only on disk and scrolls away in chat.</p>
+
+  <h2>Why (grounded in the current code)</h2>
+  <ul>
+    <li>The cockpit routes each phase to a declared <code>surface</code> — and knows exactly three:
+      <code>prose</code>→Story, <code>review</code>→Review, <code>choice</code>→in-chat
+      (<code>PipelinePanelView.surfaceIcon</code>). There is <b>no surface type for pack-specific
+      structured data</b>.</li>
+    <li>The <code>analysis</code> phase measures BPM / beats / downbeats / key onto
+      <code>analysis/&lt;song&gt;.json</code> (<code>BeatThisDetector</code> + DSP) and the agent's beat
+      planning consumes it (<code>BeatAssembly</code>) — but nothing <i>renders</i> it. It is invisible
+      (on disk) or ephemeral (chat).</li>
+    <li>Per the platform split (generic Swift host + thin format-packs), a pack must <b>not</b> ship a
+      native view. So a pack surface is <b>declarative</b>: the pack supplies data + a layout descriptor,
+      the host renders it with a fixed vocabulary of cockpit primitives.</li>
+  </ul>
+
+  <h2>Mechanism — declarative pack surfaces</h2>
+  <ul>
+    <li>The pack's UI contract gains <code>cockpitSurfaces: [{ id, title, symbol, phase, dataFile,
+      layout }]</code>. <code>layout</code> is an ordered list of <b>host primitives</b> bound to fields
+      of <code>dataFile</code>. The host owns the rendering; the pack owns the data + mapping.</li>
+    <li><b>Host primitive vocabulary</b> (the only things a pack surface may compose):
+      <code>statRow</code> (labelled value tiles), <code>beatTimeline</code> (beats + downbeats +
+      section bands over a duration), <code>sectionList</code> (labelled time bands),
+      <code>keyValue</code> (flat facts). New primitives are host changes, never pack code.</li>
+    <li>A pack surface is <b>read-only ground truth</b>. Measured values (BPM, beats, downbeats,
+      sections) are never editable here — lyrics <i>label</i> sections, they never move the measured
+      boundaries. Editing belongs to the agent flow, not this panel.</li>
+  </ul>
+
+  <h2>Placement rules</h2>
+  <ul>
+    <li>A pack surface appears as a <b>contextual tab</b> <b>only when it has content</b> — i.e. the
+      analysis data file exists. No active pack (generic project) <b>or</b> a pack whose analysis hasn't
+      run yet → the tab is <b>not rendered at all</b>; it never sits empty. First-run progress is reported
+      in the chat, where the analysis is triggered. Budget: <b>≤5 generic + ≤1 pack</b>, present only while
+      it has something to show.</li>
+    <li>Position: <b>immediately after Pipeline</b>, before the generic artifact tabs —
+      <code>Pipeline · Analysis · Story · Bible · Shotlist · Review</code>. Rationale: it is upstream
+      ground truth the whole production reads from, so it sits next to the control room, not amid the
+      downstream artifacts.</li>
+    <li>The pack tab is <b>visually marked as pack-scoped</b> (a <span class="tag pack">PACK</span> dot in
+      the accent colour <code>--pack</code>) so it never reads as a first-party generic tab.</li>
+    <li>It is <b>also reachable from Pipeline</b>: the <code>analysis</code> phase row's route button opens
+      this surface (reusing the existing <code>surfaceIcon</code> routing), so approving the phase and
+      inspecting its result are one gesture.</li>
+  </ul>
+
+  <h2>States that must be covered</h2>
+  <ul>
+    <li><b>Not shown</b> — no analysis data yet: generic project, <i>or</i> pack active but analysis not
+      run. The tab does not exist; there is never an empty Analysis tab. (First-run progress lives in the
+      chat.)</li>
+    <li><b>Loaded</b> — data present: stats + beat timeline + section list + provenance.</li>
+    <li><b>Degraded</b> — data present but no reliable beat grid: show what <i>was</i> found (duration,
+      key) and name the limitation; never present an empty grid as truth.</li>
+    <li><b>Re-measuring</b> — data present and a fresh analysis is running: in-panel progress over the
+      last-known values; the tab does not vanish mid-run.</li>
+  </ul>
+
+  <h2>Tokens (→ AppTheme)</h2>
+  <table class="tok">
+    <tr><th>Spec token</th><th>AppTheme</th><th>Use</th></tr>
+    <tr><td><code>--pack</code> #c08bff</td><td>add <code>AppTheme.Accent.pack</code></td><td>pack-scoped tab marker, route button, timeline accents</td></tr>
+    <tr><td><code>--accent</code></td><td><code>AppTheme.Accent.timecode</code></td><td>downbeats, selected generic tab</td></tr>
+    <tr><td><code>--text-3 / --text-muted</code></td><td><code>AppTheme.Text.tertiary / .muted</code></td><td>labels, ruler, provenance</td></tr>
+    <tr><td><code>--r-sm / --s-md</code></td><td><code>AppTheme.Radius.sm / Spacing.md</code></td><td>panels, tiles</td></tr>
+  </table>
+
+  <h2>Acceptance criteria</h2>
+  <ul>
+    <li>The Analysis tab appears <b>only once analysis has produced data</b>. Before that (analysis not
+      run) and for generic projects the bar is the 5-tab generic bar — <b>never an empty Analysis tab</b>.
+      When data exists the bar is <code>Pipeline · Analysis · Story · Bible · Shotlist · Review</code>.</li>
+    <li>The Analysis tab and the Pipeline <code>analysis</code>-row route open the <b>same</b> panel.</li>
+    <li>The panel is rendered entirely from host primitives fed by <code>analysis/&lt;song&gt;.json</code>;
+      no pack-supplied view code is loaded.</li>
+    <li>No control in the panel mutates BPM / beats / downbeats / sections (read-only ground truth).</li>
+    <li>Every state above renders without layout break at 1280px and 1040px cockpit widths.</li>
+  </ul>
+</section>
+
+<section id="mockups">
+  <h2>Mockups</h2>
+
+  <!-- LOADED -->
+  <div class="mock">
+    <div class="cap">Loaded — musicvideo project, Analysis tab (pack-scoped) selected</div>
+    <div class="cockpit">
+      <div class="tabs">
+        <div class="tab">Pipeline</div>
+        <div class="tab pack sel"><span class="dot"></span>Analysis</div>
+        <div class="tab">Story</div>
+        <div class="tab">Bible</div>
+        <div class="tab">Shotlist</div>
+        <div class="tab">Review</div>
+        <div class="gear">⚙</div>
+      </div>
+      <div class="panel">
+        <div class="stats">
+          <div class="stat"><div class="k">Track</div><div class="v" style="font-size:15px">midnight_drive.wav</div></div>
+          <div class="stat"><div class="k">Duration</div><div class="v">3:42</div></div>
+          <div class="stat"><div class="k">Tempo</div><div class="v">128 <small>BPM</small></div></div>
+          <div class="stat"><div class="k">Key</div><div class="v">A minor</div></div>
+          <div class="stat"><div class="k">Sections</div><div class="v">6</div></div>
+        </div>
+
+        <div class="tl-head">
+          <span class="t">Beat grid</span>
+          <span class="src">measured · BeatThis · downbeats: model · 892 beats / 223 downbeats</span>
+        </div>
+        <div class="timeline">
+          <div class="sections">
+            <div class="sec" style="width:12%; background:#6fb2ff">Intro</div>
+            <div class="sec" style="width:20%; background:#58c774">Verse 1</div>
+            <div class="sec" style="width:16%; background:#e0b23a">Chorus</div>
+            <div class="sec" style="width:20%; background:#58c774">Verse 2</div>
+            <div class="sec" style="width:18%; background:#e0b23a">Chorus</div>
+            <div class="sec" style="width:14%; background:#c08bff">Outro</div>
+          </div>
+          <div class="grid">
+            <!-- representative ticks; downbeats taller + accent -->
+            <span class="beat down d" style="left:2%"></span>
+            <span class="beat b" style="left:5%"></span><span class="beat b" style="left:8%"></span><span class="beat b" style="left:11%"></span>
+            <span class="beat down d" style="left:14%"></span>
+            <span class="beat b" style="left:17%"></span><span class="beat b" style="left:20%"></span><span class="beat b" style="left:23%"></span>
+            <span class="beat down d" style="left:26%"></span>
+            <span class="beat b" style="left:29%"></span><span class="beat b" style="left:32%"></span><span class="beat b" style="left:35%"></span>
+            <span class="beat down d" style="left:38%"></span>
+            <span class="beat b" style="left:41%"></span><span class="beat b" style="left:44%"></span><span class="beat b" style="left:47%"></span>
+            <span class="beat down d" style="left:50%"></span>
+            <span class="beat b" style="left:53%"></span><span class="beat b" style="left:56%"></span><span class="beat b" style="left:59%"></span>
+            <span class="beat down d" style="left:62%"></span>
+            <span class="beat b" style="left:65%"></span><span class="beat b" style="left:68%"></span><span class="beat b" style="left:71%"></span>
+            <span class="beat down d" style="left:74%"></span>
+            <span class="beat b" style="left:77%"></span><span class="beat b" style="left:80%"></span><span class="beat b" style="left:83%"></span>
+            <span class="beat down d" style="left:86%"></span>
+            <span class="beat b" style="left:89%"></span><span class="beat b" style="left:92%"></span><span class="beat b" style="left:95%"></span>
+            <span class="beat down d" style="left:98%"></span>
+            <div class="ruler"><span>0:00</span><span>0:55</span><span>1:51</span><span>2:46</span><span>3:42</span></div>
+          </div>
+        </div>
+
+        <div class="seclist">
+          <div class="row"><span class="sw" style="background:#6fb2ff"></span><span class="nm">Intro</span><span class="lab">instrumental</span><span class="tc">0:00 – 0:27</span></div>
+          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 1</span><span class="lab">lyrics-labelled</span><span class="tc">0:27 – 1:11</span></div>
+          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">lyrics-labelled</span><span class="tc">1:11 – 1:47</span></div>
+          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 2</span><span class="lab">lyrics-labelled</span><span class="tc">1:47 – 2:31</span></div>
+          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">lyrics-labelled</span><span class="tc">2:31 – 3:11</span></div>
+          <div class="row"><span class="sw" style="background:#c08bff"></span><span class="nm">Outro</span><span class="lab">instrumental</span><span class="tc">3:11 – 3:42</span></div>
+        </div>
+        <div class="prov">Measured ground truth <span class="tag ro">READ-ONLY</span> — lyrics label the sections; they never move the measured boundaries. Source: <code>analysis/midnight_drive.json</code>.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="two">
+    <!-- EMPTY -->
+    <div class="mock">
+      <div class="cap">Not shown — no analysis data (generic project, OR pack active but not run yet)</div>
+      <div class="cockpit">
+        <div class="tabs">
+          <div class="tab sel">Pipeline</div><div class="tab">Story</div><div class="tab">Bible</div>
+          <div class="tab">Shotlist</div><div class="tab">Review</div><div class="gear">⚙</div>
+        </div>
+        <div class="panel"><div class="center">
+          <div class="glyph">▤</div>
+          <div class="ttl" style="color:var(--text-3);font-weight:500">No Analysis tab</div>
+          <div class="sub">No pack surface has data yet, so the bar stays at five — never an empty tab.
+            When analysis runs its progress shows in the chat; the tab appears once it has data.</div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- LOADING -->
+    <div class="mock">
+      <div class="cap">Re-measuring — data present, a fresh analysis is running (the tab stays)</div>
+      <div class="cockpit">
+        <div class="tabs">
+          <div class="tab">Pipeline</div><div class="tab pack sel"><span class="dot"></span>Analysis</div>
+          <div class="tab">Story</div><div class="tab">Bible</div><div class="tab">Shotlist</div><div class="tab">Review</div>
+        </div>
+        <div class="panel"><div class="center">
+          <div class="glyph">♪</div>
+          <div class="ttl">Re-measuring midnight_drive.wav</div>
+          <div class="sub">A new analysis is running; the last-known grid stays until it completes.</div>
+          <div class="bar"><i></i></div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEGRADED -->
+  <div class="mock">
+    <div class="cap">Degraded — no reliable beat grid (never present an empty grid as truth)</div>
+    <div class="cockpit">
+      <div class="tabs">
+        <div class="tab">Pipeline</div><div class="tab pack sel"><span class="dot"></span>Analysis</div>
+        <div class="tab">Story</div><div class="tab">Bible</div><div class="tab">Shotlist</div><div class="tab">Review</div>
+      </div>
+      <div class="panel">
+        <div class="stats">
+          <div class="stat"><div class="k">Track</div><div class="v" style="font-size:15px">field_recording.m4a</div></div>
+          <div class="stat"><div class="k">Duration</div><div class="v">2:08</div></div>
+          <div class="stat"><div class="k">Tempo</div><div class="v" style="color:var(--text-muted)">—</div></div>
+          <div class="stat"><div class="k">Key</div><div class="v">D minor</div></div>
+        </div>
+        <div class="banner warn" style="margin-top:var(--s-md)">
+          <span>⚠</span>
+          <span>No stable beat grid detected — this track is rubato / beatless. Beat-synced cutting is
+          unavailable; the section labels and key are still usable. Re-run with a percussive stem if you
+          expect a grid.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PIPELINE ROUTE -->
+  <div class="mock">
+    <div class="cap">Second entry — the Pipeline analysis-phase route opens the same panel</div>
+    <div class="cockpit"><div class="panel" style="padding:var(--s-md)">
+      <div class="pl-row">
+        <span class="st"></span>
+        <span class="ph">Analysis</span>
+        <span style="color:var(--text-3);font-size:var(--f-micro)">approved</span>
+        <span class="route"><span class="dot"></span>Analysis</span>
+      </div>
+      <p style="font-size:var(--f-xs);margin:var(--s-sm) 0 0">The route button carries the pack accent +
+        label — the same routing the generic phases use for Story / Review, extended to the pack surface.</p>
+    </div></div>
+  </div>
+
+  <h2>Flow — how a pack surface reaches the screen</h2>
+  <pre class="mermaid">
+flowchart LR
+  A[Pack UI contract\ncockpitSurfaces[]] --> B[Host reads contract\non project open]
+  B --> C{active pack declares a surface\n&amp; its data file exists?}
+  C -- no --> D[no Analysis tab\n(generic, or not run yet)]
+  C -- yes --> E[insert contextual\nAnalysis tab after Pipeline]
+  F[analysis/&lt;song&gt;.json] --> G[Host primitives\nstatRow · beatTimeline · sectionList]
+  E --> G
+  H[Pipeline analysis row\nroute button] --> G
+  G --> I[Analysis panel\nread-only]
+  </pre>
+</section>
+</div>
