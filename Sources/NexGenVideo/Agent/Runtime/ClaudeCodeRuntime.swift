@@ -192,6 +192,13 @@ final class ClaudeCodeRuntime {
         for (provider, name) in providerEnvNames {
             if let key = ProviderKeychain.load(provider) { env[name] = key }
         }
+        // Human-in-the-loop tools SUSPEND until the user acts: approve_gate / set_gate_state / the spend
+        // confirmation pop a card in the composer and don't return until the user taps it. claude's
+        // default MCP tool timeout would fire first — the card is torn down before the user responds and
+        // the pipeline silently stalls. Give it a 30-min ceiling (both the overall and idle timeouts);
+        // the app resolves the card on tab-close / new-chat / cancel, so abandonment is still handled.
+        env["MCP_TOOL_TIMEOUT"] = "1800000"
+        env["MCP_TOOL_IDLE_TIMEOUT"] = "1800000"
         return env
     }
 }
