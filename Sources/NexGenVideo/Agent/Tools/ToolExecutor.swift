@@ -35,6 +35,10 @@ final class ToolExecutor {
         )
         do {
             let resolved = try expandingIdPrefixes(in: args, editor: editor)
+            // HARD GATE: a tool that does phase-N work is refused until every earlier phase is approved.
+            if let phase = tool.advancingPhase(args: resolved) {
+                try guardFrontier(phase: phase, args: resolved, editor: editor)
+            }
             result = try await run(tool, editor, resolved)
             // Record any edit that actually changed the timeline so `undo` can revert it.
             if tool != .undo, !result.isError, editor.timeline != before,

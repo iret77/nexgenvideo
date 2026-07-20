@@ -110,6 +110,21 @@ struct ClaudeCodeLaunchTests {
         let content = message?["content"] as? [[String: Any]]
         #expect(content?.first?["text"] as? String == "place the clip at frame 0")
     }
+
+    @Test("an attached image rides along as an image block after the text — reaches the subprocess")
+    func userMessageLineCarriesImageBlocks() {
+        let image: [String: Any] = ["type": "image",
+                                    "source": ["type": "base64", "media_type": "image/png", "data": "QUJD"]]
+        let line = ClaudeCodeLaunch.userMessageLine("what is in this screenshot?", imageBlocks: [image])
+        let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8), options: [])) as? [String: Any]
+        let content = (obj?["message"] as? [String: Any])?["content"] as? [[String: Any]]
+        #expect(content?.count == 2)
+        #expect(content?.first?["text"] as? String == "what is in this screenshot?")
+        #expect(content?.last?["type"] as? String == "image")
+        let source = content?.last?["source"] as? [String: Any]
+        #expect(source?["media_type"] as? String == "image/png")
+        #expect(source?["data"] as? String == "QUJD")
+    }
 }
 
 @Suite("ClaudeCodeLocator")

@@ -464,6 +464,22 @@ extension ToolExecutor {
         }
     }
 
+    /// HARD GATE for work tools: refuse a phase's work until every PRIOR phase's gate is approved — so
+    /// the agent can't run analysis, draft the brief, etc. while an earlier gate is still unapproved.
+    /// Only the prior-approval check (NOT `checkApprovable`: the artifact this tool is about to WRITE
+    /// doesn't exist yet). Applied centrally in `execute` via `ToolName.advancingPhase`; read-only tools
+    /// never reach it. Not `private` — `execute` (in ToolExecutor.swift) calls it.
+    func guardFrontier(phase: String, args: [String: Any], editor: EditorViewModel) throws {
+        let root = try resolveDataRoot(args, editor: editor)
+        let gates = (try? YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile))
+            ?? Gates(project: "")
+        do {
+            try GateGuard.requirePriorApproved(gates, order: mergedPhaseOrder(dataRoot: root), phase: phase)
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message)
+        }
+    }
+
     func rewindTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let target = try args.requireString("target_phase")

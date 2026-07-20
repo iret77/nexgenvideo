@@ -53,7 +53,9 @@ enum ClaudeStreamDecoder {
         case "result":
             let isError = (obj["is_error"] as? Bool ?? false) || (obj["subtype"] as? String != "success")
             let cost = obj["total_cost_usd"] as? Double
-            let text = obj["result"] as? String
+            // On an error the payload carries `errors: [String]` rather than a `result` string (e.g. a
+            // dead `--resume` → "No conversation found with session ID: <id>"). Verified vs claude 2.1.207.
+            let text = (obj["result"] as? String) ?? (obj["errors"] as? [String])?.joined(separator: "\n")
             return [.turnFinished(isError: isError, errorMessage: isError ? text : nil, costUSD: cost)]
         default:
             return []

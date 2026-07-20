@@ -1,9 +1,10 @@
 import Foundation
 
-// Drives one embedded `claude -p` session: starts the subprocess on the first message, streams its
-// stdout through the decoder + mapper, writes follow-up user messages to stdin (one live process per
-// session, so the conversation continues without --resume), and publishes the running conversation
-// back to the agent panel via `onUpdate`.
+// Drives one embedded `claude -p` session for ONE chat: starts the subprocess on the first message,
+// streams its stdout through the decoder + mapper, writes follow-up user messages to stdin (the live
+// process is the conversation's memory), and publishes the running conversation back to the agent panel
+// via `onUpdate`. A new instance can `--resume` a prior session id and be seeded with its transcript, so
+// the chat's memory + display survive a tab switch, cancel, or app reload.
 //
 // MainActor-isolated: all state + publishing happen on the main thread; the only suspension points are
 // awaiting the line stream. Dependencies are injected so the error paths are unit-testable without a
@@ -15,46 +16,70 @@ final class ClaudeCodeRuntime {
     private let pluginDirectories: [URL]
     private let mcpPort: Int
     private let permissionMode: String
+    /// When set, the session is launched with `--resume <id>` so `claude` restores this chat's memory.
+    private let resumeSessionId: String?
     private let resolveExecutable: () -> URL?
     private let resolveWorkingDirectory: @MainActor () -> URL?
+    /// Reports `claude`'s confirmed session id (from `system/init`) once, so the app can persist it and
+    /// `--resume` this chat after a tab switch, cancel, or app reload.
+    private let onSessionId: (@MainActor (String) -> Void)?
+    /// Fired when `claude` reports our `--resume` id as unknown (project moved to another Mac, session
+    /// store cleared, session expired): the turn errors with no `system/init` and the error text echoes
+    /// the exact id. The app clears the stored id so the chat isn't poisoned into resuming a dead id.
+    /// Deliberately narrow — a transient failure (not logged in) neither errors on our id nor is matched.
+    private let onResumeFailed: (@MainActor () -> Void)?
     private let onUpdate: @MainActor ([AgentMessage], _ isStreaming: Bool) -> Void
 
     private var mapper = ClaudeCodeEventMapper()
     private var process: ClaudeCodeProcess?
     private var readTask: Task<Void, Never>?
+    /// Bumped on every `stop()`; a `consume` loop only publishes while its captured value still matches,
+    /// so a torn-down session can never repaint a fresh transcript with its stale messages.
+    private var generation = 0
+    private var reportedSessionId = false
+    private var resumeFailureHandled = false
 
     init(
         pluginDirectories: [URL] = [],
         mcpPort: Int = 19789,
         permissionMode: String = "bypassPermissions",
+        resumeSessionId: String? = nil,
+        seedMessages: [AgentMessage] = [],
         resolveExecutable: @escaping () -> URL? = { ClaudeCodeLocator.resolve().executableURL },
         resolveWorkingDirectory: @MainActor @escaping () -> URL?,
+        onSessionId: (@MainActor (String) -> Void)? = nil,
+        onResumeFailed: (@MainActor () -> Void)? = nil,
         onUpdate: @MainActor @escaping ([AgentMessage], Bool) -> Void
     ) {
         self.pluginDirectories = pluginDirectories
         self.mcpPort = mcpPort
         self.permissionMode = permissionMode
+        self.resumeSessionId = resumeSessionId
         self.resolveExecutable = resolveExecutable
         self.resolveWorkingDirectory = resolveWorkingDirectory
+        self.onSessionId = onSessionId
+        self.onResumeFailed = onResumeFailed
         self.onUpdate = onUpdate
+        if !seedMessages.isEmpty { mapper.seed(seedMessages) }
     }
 
     var messages: [AgentMessage] { mapper.messages }
 
     /// `context` (e.g. the user's current selection) is prepended to the payload sent to the model but
     /// never shown in the transcript — the user sees exactly what they typed.
-    func send(text: String, context: String? = nil, hidden: Bool = false) {
+    func send(text: String, context: String? = nil, imageBlocks: [[String: Any]] = [], hidden: Bool = false) {
         mapper.appendUserText(text, hidden: hidden)
         let payload = context.map { "\($0)\n\n\(text)" } ?? text
         if process == nil {
-            guard startSession(firstMessage: payload) else { return }  // failure path already published
+            guard startSession(firstMessage: payload, imageBlocks: imageBlocks) else { return }  // failure path already published
         } else {
-            process?.send(line: ClaudeCodeLaunch.userMessageLine(payload))
+            process?.send(line: ClaudeCodeLaunch.userMessageLine(payload, imageBlocks: imageBlocks))
         }
         onUpdate(mapper.messages, true)
     }
 
     func stop() {
+        generation &+= 1
         readTask?.cancel()
         readTask = nil
         process?.terminate()
@@ -64,7 +89,7 @@ final class ClaudeCodeRuntime {
 
     /// Returns true if the process started (and the first message was sent); false on failure
     /// (a note is appended and published before returning).
-    private func startSession(firstMessage: String) -> Bool {
+    private func startSession(firstMessage: String, imageBlocks: [[String: Any]] = []) -> Bool {
         guard let executable = resolveExecutable() else {
             fail("Claude Code CLI not found. Install it, or set its path in Settings → Agent.")
             return false
@@ -85,7 +110,8 @@ final class ClaudeCodeRuntime {
             // already ends with the presentation contract), at parity with the API-key agent which gets
             // serverInstructions as its `system:` prompt. The MCP-advertised `instructions` field is a
             // soft protocol hint, not guaranteed injection — this closes that backend gap.
-            appendSystemPrompt: AgentInstructions.serverInstructions
+            appendSystemPrompt: AgentInstructions.serverInstructions,
+            resumeSessionId: resumeSessionId
         )
         let newProcess = ClaudeCodeProcess()
         do {
@@ -96,9 +122,10 @@ final class ClaudeCodeRuntime {
                 environment: Self.childEnvironment()
             )
             process = newProcess
-            newProcess.send(line: ClaudeCodeLaunch.userMessageLine(firstMessage))
+            newProcess.send(line: ClaudeCodeLaunch.userMessageLine(firstMessage, imageBlocks: imageBlocks))
+            let gen = generation   // captured NOW, not inside the task: a stop() before consume runs must invalidate it
             readTask = Task { [weak self] in
-                await self?.consume(stream)
+                await self?.consume(stream, generation: gen)
             }
             return true
         } catch {
@@ -107,13 +134,27 @@ final class ClaudeCodeRuntime {
         }
     }
 
-    private func consume(_ stream: AsyncThrowingStream<String, Error>) async {
+    private func consume(_ stream: AsyncThrowingStream<String, Error>, generation gen: Int) async {
         var sawOutput = false
         do {
             for try await line in stream {
+                guard gen == generation else { return }   // stopped / rotated before this line: don't ingest or publish
                 let events = ClaudeStreamDecoder.decode(line: line)
                 if !events.isEmpty { sawOutput = true }
                 for event in events { mapper.ingest(event) }
+                if !reportedSessionId, let sid = mapper.sessionId {
+                    reportedSessionId = true
+                    onSessionId?(sid)
+                }
+                // A dead --resume id: the turn errors WITHOUT a system/init, and claude echoes the exact
+                // id it couldn't find. Narrow on purpose (not a generic "no output"): a transient auth
+                // failure never emits our id, so its still-valid session is preserved.
+                if let rid = resumeSessionId, !reportedSessionId, !resumeFailureHandled,
+                   events.contains(where: { if case .turnFinished(true, let m?, _) = $0 { return m.contains(rid) } else { return false } }) {
+                    resumeFailureHandled = true
+                    mapper.appendNote("Couldn't resume the previous Claude session (it's no longer available) — your next message will start a fresh one.")
+                    onResumeFailed?()
+                }
                 let finished = events.contains { event in
                     if case .turnFinished = event { return true }
                     return false
@@ -123,6 +164,7 @@ final class ClaudeCodeRuntime {
         } catch {
             mapper.appendNote("Claude Code stream error: \(error.localizedDescription)")
         }
+        guard gen == generation else { return }
         // A session that ends with no parseable output almost always means claude exited early
         // (not logged in, a rejected flag/MCP config, a missing plugin venv, …). Surface its stderr
         // so the failure isn't silent.

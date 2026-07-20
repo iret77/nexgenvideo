@@ -118,11 +118,16 @@ enum ClaudeCodeLaunch {
         return args
     }
 
-    /// One stream-json input line carrying a user text message (written to the process stdin).
-    static func userMessageLine(_ text: String) -> String {
+    /// One stream-json input line carrying a user message (written to the process stdin). `imageBlocks`
+    /// are `{"type":"image","source":{...}}` dicts (the same base64 shape the API path builds) so an
+    /// uploaded image reaches the subprocess instead of being dropped — the CLI's stream-json `user`
+    /// message accepts the API image-source shape.
+    static func userMessageLine(_ text: String, imageBlocks: [[String: Any]] = []) -> String {
+        var content: [[String: Any]] = [["type": "text", "text": text]]
+        content.append(contentsOf: imageBlocks)
         let payload: [String: Any] = [
             "type": "user",
-            "message": ["role": "user", "content": [["type": "text", "text": text]]],
+            "message": ["role": "user", "content": content],
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let string = String(data: data, encoding: .utf8)

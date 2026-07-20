@@ -95,6 +95,22 @@ enum ToolName: String, CaseIterable, Sendable {
             return false
         }
     }
+
+    /// The phase whose WORK this tool performs — the hard gate refuses it until every earlier phase is
+    /// approved. `nil` ⇒ ungated (read-only / cross-cutting / `init` / `rewind` / the approval tools).
+    func advancingPhase(args: [String: Any]) -> String? {
+        switch self {
+        case .runPhase:
+            let p = (args["phase"] as? String)?.trimmingCharacters(in: .whitespaces)
+            return (p?.isEmpty == false) ? p : nil
+        case .attachSong, .recordAffect:  return "analysis"
+        case .writeBrief:                 return "brief"
+        case .extractScene3dPovs:         return "bible"
+        case .saveFrameAudit:             return "frames"
+        case .recordRender:               return "render"
+        default:                          return nil
+        }
+    }
 }
 
 struct AgentTool: @unchecked Sendable {

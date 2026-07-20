@@ -6,6 +6,9 @@ struct ChatSession: Codable, Identifiable {
     var updatedAt: Date
     var messages: [AgentMessage]
     var isOpen: Bool
+    /// `claude`'s own session id for this chat, once known. Persisted so reopening the tab or reloading
+    /// the project can `--resume` the exact conversation instead of starting the agent from scratch.
+    var claudeSessionId: String?
 
     init(id: UUID = UUID(), title: String = "New chat", messages: [AgentMessage] = [], isOpen: Bool = true) {
         self.id = id
@@ -13,9 +16,10 @@ struct ChatSession: Codable, Identifiable {
         self.updatedAt = Date()
         self.messages = messages
         self.isOpen = isOpen
+        self.claudeSessionId = nil
     }
 
-    private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, isOpen }
+    private enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, isOpen, claudeSessionId }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -24,6 +28,7 @@ struct ChatSession: Codable, Identifiable {
         self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         self.messages = try c.decode([AgentMessage].self, forKey: .messages)
         self.isOpen = try c.decodeIfPresent(Bool.self, forKey: .isOpen) ?? true
+        self.claudeSessionId = try c.decodeIfPresent(String.self, forKey: .claudeSessionId)
     }
 }
 

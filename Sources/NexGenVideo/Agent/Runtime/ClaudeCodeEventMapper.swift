@@ -25,6 +25,15 @@ struct ClaudeCodeEventMapper {
         for event in ClaudeStreamDecoder.decode(line: line) { ingest(event) }
     }
 
+    /// Preload a resumed conversation's transcript so the display keeps its history — new stream events
+    /// append after this seed. Assumes `claude -p --resume` does NOT re-echo past turns to stdout (true
+    /// for print mode); if a CLI version ever did, the seeded turns would appear twice and this seed
+    /// would be dropped in favour of the replay. The id map stays empty: resumed turns get fresh ids.
+    mutating func seed(_ history: [AgentMessage]) {
+        messages = history
+        assistantIndexByMessageId = [:]
+    }
+
     /// Append the user's own message (the stream does not echo it). Keeps `messages` the single,
     /// correctly-ordered source of truth for the whole conversation.
     mutating func appendUserText(_ text: String, hidden: Bool = false) {

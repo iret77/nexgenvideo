@@ -72,9 +72,13 @@ final class AgentService {
     var messages: [AgentMessage] = []
     var isStreaming: Bool = false {
         didSet {
-            // A finished agent turn may have written engine artifacts (brief, treatment, ledger,
-            // gates, frames) — re-read them so the cockpit reflects the work without a window switch.
             if oldValue, !isStreaming {
+                // A turn finished: flush its messages into the active chat and mark the document edited
+                // (`onSessionsChanged`) so ⌘S / the close-warning actually persists the transcript AND
+                // the chat's claudeSessionId — the runtime backend has no post-turn sync of its own,
+                // unlike kickOffStream. Then re-read the engine artifacts it may have written.
+                syncMessagesIntoCurrentSession()
+                onSessionsChanged?()
                 Task { @MainActor [weak self] in await self?.editor?.refreshEngineState() }
             }
         }
@@ -738,6 +742,12 @@ final class AgentService {
     private var currentTask: Task<Void, Never>?
 
     func loadSessions(from projectURL: URL?) {
+        // Opening a project tears down any runtime from the previous one: its `claude` process has the
+        // OLD working directory, so reusing it would run the new project's turns against the wrong folder.
+        currentTask?.cancel()
+        currentTask = nil
+        _claudeRuntime?.stop()
+        _claudeRuntime = nil
         sessions = ChatSessionStore.load(from: projectURL)
             .filter { !$0.messages.isEmpty }
             .map {
@@ -751,6 +761,7 @@ final class AgentService {
         sessions.insert(session, at: 0)
         currentSessionId = session.id
         messages = []
+        isStreaming = false
         draft = ""
         mentions.removeAll()
         pendingFunction = nil
@@ -762,6 +773,10 @@ final class AgentService {
         currentTask?.cancel()
         resolveSpend(.declined)
         resolveGate(.declined)
+        // The runtime process IS a single conversation kept alive for the whole session — a fresh chat
+        // must therefore START a fresh process, or it would silently continue the previous conversation.
+        _claudeRuntime?.stop()
+        _claudeRuntime = nil
         syncMessagesIntoCurrentSession()
         if let id = currentSessionId,
            let idx = sessions.firstIndex(where: { $0.id == id }),
@@ -772,6 +787,7 @@ final class AgentService {
         sessions.insert(session, at: 0)
         currentSessionId = session.id
         messages = []
+        isStreaming = false          // a cancelled first-send encode never had a runtime to stop
         draft = ""
         mentions = []
         pendingFunction = nil
@@ -792,8 +808,14 @@ final class AgentService {
             sessions[idx].isOpen = true
             onSessionsChanged?()
         }
+        // Rotate to this chat's runtime: change current FIRST so the old runtime's late callbacks no-op
+        // (they're bound to the previous chat), then tear it down. The next send rebuilds + `--resume`s
+        // the selected chat, reseeded from its transcript.
         currentSessionId = id
         messages = sessions[idx].messages
+        isStreaming = false
+        _claudeRuntime?.stop()
+        _claudeRuntime = nil
         streamError = nil
     }
 
@@ -811,6 +833,8 @@ final class AgentService {
             if let next = sessions.first(where: { $0.isOpen }) {
                 currentSessionId = next.id
                 messages = next.messages
+                _claudeRuntime?.stop()
+                _claudeRuntime = nil
             } else {
                 newChat()
                 return
@@ -820,12 +844,19 @@ final class AgentService {
     }
 
     func deleteSession(_ id: UUID) {
+        let deletingActive = currentSessionId == id
         sessions.removeAll { $0.id == id }
-        if currentSessionId == id {
+        if deletingActive {
+            currentTask?.cancel()
+            resolveSpend(.declined)     // the deleted chat's suspended card/continuation must not carry over
+            resolveGate(.declined)
             currentSessionId = sessions.first(where: { $0.isOpen })?.id
             messages = currentSessionId
                 .flatMap { id in sessions.first { $0.id == id }?.messages }
                 ?? []
+            isStreaming = false
+            _claudeRuntime?.stop()      // its process belonged to the deleted chat
+            _claudeRuntime = nil
         }
         if openSessions.isEmpty { newChat(); return }
         onSessionsChanged?()
@@ -838,7 +869,7 @@ final class AgentService {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
             streamError = nil
-            sendViaClaudeRuntime(trimmed, hidden: hidden)
+            sendViaClaudeRuntime(trimmed, mentions: mentions, hidden: hidden)
             return
         }
         guard canStream else {
@@ -883,7 +914,10 @@ final class AgentService {
         resolveSpend(.declined)
         resolveGate(.declined)
         if claudeRuntimeEnabled {
+            currentTask?.cancel()          // a pending attachment encode
+            currentTask = nil
             _claudeRuntime?.stop()
+            _claudeRuntime = nil           // next send rebuilds + `--resume`s this chat
             isStreaming = false
             return
         }
@@ -900,50 +934,111 @@ final class AgentService {
 
     @ObservationIgnored
     private var _claudeRuntime: ClaudeCodeRuntime?
-    /// The active pack the cached runtime was built with — a change rebuilds on the next send so the
-    /// session's context line names the current pack.
-    @ObservationIgnored
-    private var claudeRuntimeBuiltWithPlugin: String?
 
-    /// The embedded Claude Code runtime, lazily built and cached. Rebuilt (only when safe — never
-    /// mid-stream) when the active pack changes, so the next session picks up the current context.
-    /// Rebuilding stops the old runtime's process; the fresh one starts on the next `send`.
+    /// The embedded Claude Code runtime for the CURRENT chat, built lazily so its seed + `--resume`
+    /// reflect that chat. Alive across the chat's turns; a switch / cancel / reload rotates it.
     private var claudeRuntime: ClaudeCodeRuntime {
-        if let runtime = _claudeRuntime {
-            let pluginChanged = claudeRuntimeBuiltWithPlugin != editor?.activePluginName
-            if pluginChanged, !isStreaming {
-                runtime.stop()
-                return makeClaudeRuntime()
-            }
-            return runtime
-        }
-        return makeClaudeRuntime()
+        _claudeRuntime ?? makeClaudeRuntime()
     }
 
     @discardableResult
     private func makeClaudeRuntime() -> ClaudeCodeRuntime {
+        let boundSessionId = currentSessionId
+        let chat = boundSessionId.flatMap { id in sessions.first { $0.id == id } }
         let runtime = ClaudeCodeRuntime(
             pluginDirectories: configuredPluginDirectories(),
             mcpPort: Int(MCPService.port),
             permissionMode: Self.configuredPermissionMode(),
+            resumeSessionId: chat?.claudeSessionId,
+            seedMessages: messages,
             resolveWorkingDirectory: { [weak self] in
                 Self.configuredWorkingDirectory(projectURL: self?.editor?.projectURL)
             },
+            onSessionId: { [weak self] sid in
+                self?.storeClaudeSessionId(sid, for: boundSessionId)
+            },
+            onResumeFailed: { [weak self] in
+                self?.clearClaudeSessionId(for: boundSessionId)
+            },
             onUpdate: { [weak self] messages, isStreaming in
-                self?.messages = messages
-                self?.isStreaming = isStreaming
+                guard let self, self.currentSessionId == boundSessionId else { return }
+                self.messages = messages
+                self.isStreaming = isStreaming
             }
         )
-        claudeRuntimeBuiltWithPlugin = editor?.activePluginName
         _claudeRuntime = runtime
         return runtime
     }
 
-    /// Route a message to the embedded Claude Code runtime. The engine is native and in-process, so
-    /// there's nothing to bootstrap — the session starts immediately with NexGenVideo's MCP.
-    private func sendViaClaudeRuntime(_ trimmed: String, hidden: Bool = false) {
-        let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
-        claudeRuntime.send(text: trimmed, context: context, hidden: hidden)
+    /// Persist `claude`'s confirmed session id onto its chat so a later tab switch / reload can resume it.
+    private func storeClaudeSessionId(_ sid: String, for sessionId: UUID?) {
+        guard let sessionId,
+              let idx = sessions.firstIndex(where: { $0.id == sessionId }),
+              sessions[idx].claudeSessionId != sid else { return }
+        sessions[idx].claudeSessionId = sid
+    }
+
+    /// `claude` reported this chat's `--resume` id as unknown: forget it so the next send starts fresh,
+    /// and drop the failed runtime if it's still the active one so the rebuild omits `--resume`.
+    private func clearClaudeSessionId(for sessionId: UUID?) {
+        guard let sessionId, let idx = sessions.firstIndex(where: { $0.id == sessionId }) else { return }
+        sessions[idx].claudeSessionId = nil
+        if currentSessionId == sessionId { _claudeRuntime = nil }
+    }
+
+    /// Route a message to the embedded Claude Code runtime. Mirrors the API path's attachment handling
+    /// (`apiMessages`/`inlineImageBlocks`) so uploaded images actually REACH the subprocess instead of
+    /// being dropped: referenced image mentions are inlined as base64 image blocks, and the mention JSON
+    /// + each asset's on-disk path go into the app-context so the agent can Read / inspect_media a
+    /// non-image too.
+    private func sendViaClaudeRuntime(_ trimmed: String, mentions: [AgentMention], hidden: Bool = false) {
+        // One turn at a time per chat: the composer disables send while streaming, but programmatic
+        // callers (kickoffs, pack starters) don't — without this a second send could jump ahead of a
+        // first turn still encoding its attachments, delivering the two out of order. Marking busy NOW
+        // also means a synchronous launch failure (no binary / no project dir) still transitions
+        // true→false, so its error note + the user message get flushed into the chat and the doc dirtied.
+        guard !isStreaming else { return }
+        isStreaming = true
+        let referenced = AgentMentionContext.referencedMentions(mentions, in: trimmed)
+        guard !referenced.isEmpty else {
+            // No attachments — send synchronously (the selection/plugin context only).
+            let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
+            claudeRuntime.send(text: trimmed, context: context, hidden: hidden)
+            return
+        }
+        let selection = Self.selectionHint(editor: editor)
+        let mentionHint = AgentMentionContext.hint(referenced, editor: editor)
+        let pathNote = Self.mentionPathNote(referenced, editor: editor)
+        // Encoding is async: fence the turn to the chat that sent it, so a switch / new-chat / second
+        // send during encode can't deliver this turn into a different chat's process.
+        let turn = currentSessionId
+        currentTask?.cancel()
+        currentTask = Task { [weak self] in
+            guard let self else { return }
+            let inlined = await self.inlineImageBlocks(for: referenced)  // base64-encodes off the main actor
+            guard !Task.isCancelled, self.currentSessionId == turn else { return }
+            var parts: [String] = []
+            if let selection { parts.append(selection) }
+            parts.append(mentionHint)
+            if let pathNote { parts.append(pathNote) }
+            if let note = AgentMentionContext.inlineNote(for: inlined) { parts.append(note) }
+            let context = "<app-context>\(parts.joined(separator: " "))</app-context>"
+            self.claudeRuntime.send(text: trimmed, context: context, imageBlocks: inlined.blocks, hidden: hidden)
+        }
+    }
+
+    /// The on-disk path of each mentioned library asset, so the runtime agent (which has native Read over
+    /// the project) can open a NON-image attachment (audio/video/document) it wasn't handed inline.
+    private static func mentionPathNote(_ mentions: [AgentMention], editor: EditorViewModel?) -> String? {
+        guard let editor else { return nil }
+        let lines: [String] = mentions.compactMap { mention in
+            guard let ref = mention.mediaRef,
+                  let asset = editor.mediaAssets.first(where: { $0.id == ref }) else { return nil }
+            return "@\(mention.displayName) → \(asset.url.path)"
+        }
+        guard !lines.isEmpty else { return nil }
+        return "Attached files live in the project; read a non-image one with the Read tool at: "
+            + lines.joined(separator: "; ") + "."
     }
 
     private static func configuredPermissionMode() -> String {

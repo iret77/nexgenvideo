@@ -35,6 +35,50 @@ struct ClaudeCodeMapperUserTests {
         #expect(mapper.messages.first?.role == .assistant)
         #expect(mapper.messages.first.map(texts)?.first == "CLI not found")
     }
+
+    @Test("seed preloads a resumed transcript; new stream turns append after it")
+    func seedPreloadsHistoryThenAppendsNewTurns() {
+        var mapper = ClaudeCodeEventMapper()
+        mapper.seed([
+            AgentMessage(role: .user, blocks: [.text("earlier question")]),
+            AgentMessage(role: .assistant, blocks: [.text("earlier answer")]),
+        ])
+        #expect(mapper.messages.count == 2)
+        mapper.appendUserText("follow-up")
+        mapper.ingest(line: #"{"type":"assistant","message":{"id":"m9","content":[{"type":"text","text":"resumed reply"}]}}"#)
+        #expect(mapper.messages.count == 4)                       // history preserved, not overwritten
+        #expect(mapper.messages.first.map(texts)?.first == "earlier question")
+        #expect(mapper.messages.last?.role == .assistant)
+        #expect(mapper.messages.last.map(texts)?.first == "resumed reply")
+    }
+}
+
+@Suite("ClaudeCodeDecoder resume signal")
+struct ClaudeCodeDecoderResumeTests {
+
+    @Test("a dead --resume result line decodes to an errored turn whose message carries the session id")
+    func staleResumeResultLineCarriesErrorId() {
+        // Verified vs claude 2.1.207: a bad --resume emits this result line (no system/init), the errors
+        // array echoing the exact id — the narrow signal the runtime uses to clear the stale id.
+        let line = #"{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"dead-id","errors":["No conversation found with session ID: dead-id"]}"#
+        let events = ClaudeStreamDecoder.decode(line: line)
+        #expect(events.count == 1)
+        guard case .turnFinished(let isError, let msg, _) = events.first else {
+            Issue.record("expected a turnFinished event"); return
+        }
+        #expect(isError)
+        #expect(msg?.contains("dead-id") == true)
+    }
+
+    @Test("a successful result line is not an error and yields no error message")
+    func successResultLineHasNoError() {
+        let line = #"{"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.01}"#
+        guard case .turnFinished(let isError, let msg, _) = ClaudeStreamDecoder.decode(line: line).first else {
+            Issue.record("expected a turnFinished event"); return
+        }
+        #expect(!isError)
+        #expect(msg == nil)
+    }
 }
 
 @MainActor
