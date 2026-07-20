@@ -49,14 +49,19 @@ enum ClipType: String, Codable, Sendable, CaseIterable {
         return self == other || (self.isVisual && other.isVisual)
     }
 
+    /// File extensions the app types as text documents (the `.document` kind) — the single source of
+    /// truth for what "text" means, shared by the media importer and file-intake accept matching.
+    static let documentExtensions: Set<String> = ["txt", "md", "markdown", "rtf", "fountain"]
+
     init?(fileExtension ext: String) {
         switch ext {
         case "mov", "mp4", "m4v": self = .video
         case "mp3", "wav", "aac", "m4a", "aiff", "aif", "aifc", "flac": self = .audio
         case "png", "jpg", "jpeg", "tiff", "heic", "webp": self = .image
         case "json", "lottie": self = .lottie
-        case "txt", "md", "markdown", "rtf", "fountain": self = .document
-        default: return nil
+        default:
+            guard Self.documentExtensions.contains(ext) else { return nil }
+            self = .document
         }
     }
 }

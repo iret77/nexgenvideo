@@ -298,7 +298,9 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
 }
 
 extension AgentDialog.FileIntake {
-    /// The UTTypes this intake accepts, resolved from its `accept` tokens. Empty ⇒ any file.
+    /// The UTTypes this intake accepts, for the native file panel. For "text" this adds the known
+    /// document extensions (via `ClipType.documentExtensions`) so formats the system doesn't register
+    /// as a shared UTType (.md/.markdown/.fountain) stay selectable, not just .txt.
     var allowedContentTypes: [UTType] {
         var types: [UTType] = []
         for token in accept {
@@ -306,7 +308,11 @@ extension AgentDialog.FileIntake {
             case "audio": types.append(.audio)
             case "video", "movie": types.append(.movie)
             case "image": types.append(.image)
-            case "text": types.append(contentsOf: [.plainText, .text])
+            case "text":
+                // Plain text plus the known document extensions — NOT the broad `public.text` supertype,
+                // which would also admit .json/.csv/.html. Stays in sync with ClipType.documentExtensions.
+                types.append(.plainText)
+                types.append(contentsOf: ClipType.documentExtensions.compactMap { UTType(filenameExtension: $0) })
             default:
                 if let type = UTType(filenameExtension: token) { types.append(type) }
             }
@@ -314,12 +320,24 @@ extension AgentDialog.FileIntake {
         return types
     }
 
-    /// Whether a file at `url` is one this intake accepts. The ONE match used by the drop well, the
-    /// native picker, and the in-card library picker — so all three agree on what counts.
+    /// Whether a file at `url` is one this intake accepts — the ONE match used by the drop well, the
+    /// native picker, and the in-card library picker. Kind tokens resolve through the app's own
+    /// file-typing (`ClipType`) first, so a text format the system doesn't register as a UTType still
+    /// counts; UTType conformance is the fallback for breadth and the no-restriction (empty) default.
     func accepts(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        for token in accept {
+            switch token.lowercased() {
+            case "audio": if ClipType(fileExtension: ext) == .audio { return true }
+            case "video", "movie": if ClipType(fileExtension: ext) == .video { return true }
+            case "image": if ClipType(fileExtension: ext) == .image { return true }
+            case "text": if ClipType(fileExtension: ext) == .document { return true }
+            default: if token.lowercased() == ext { return true }
+            }
+        }
         let allowed = allowedContentTypes
         guard !allowed.isEmpty else { return true }
-        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        guard let type = UTType(filenameExtension: ext) else { return false }
         return allowed.contains { type.conforms(to: $0) }
     }
 }
