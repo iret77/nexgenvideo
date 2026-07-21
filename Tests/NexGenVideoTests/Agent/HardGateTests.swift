@@ -31,7 +31,7 @@ struct HardGateTests {
             .appendingPathComponent("hard-gate-\(UUID().uuidString)", isDirectory: true)
         let home = tmp.appendingPathComponent("proj", isDirectory: true)
         let dataRoot = try ProjectScaffold.initProject(home: home, name: "demo", mode: .beat)
-        return (ToolHarness(), dataRoot.path, tmp)
+        return (ToolHarness(enforceHardGates: true), dataRoot.path, tmp)
     }
 
     @Test("a work tool is refused until the earlier gate is approved, then clears it")

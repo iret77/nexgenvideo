@@ -9,11 +9,13 @@ final class ToolHarness {
     let editor: EditorViewModel
     let executor: ToolExecutor
 
-    init(timeline: Timeline = Fixtures.timeline()) {
+    /// `enforceHardGates` defaults OFF: these tests exercise a tool in isolation over minimal scaffolded
+    /// state, so the phase-gate chain isn't walked. The hard-gate suite opts back IN to test the gate.
+    init(timeline: Timeline = Fixtures.timeline(), enforceHardGates: Bool = false) {
         let editor = EditorViewModel()
         editor.timeline = timeline
         self.editor = editor
-        self.executor = ToolExecutor(editor: editor)
+        self.executor = ToolExecutor(editor: editor, enforceHardGates: enforceHardGates)
     }
 
     /// Run a tool by name and decode the .ok text payload as JSON.
