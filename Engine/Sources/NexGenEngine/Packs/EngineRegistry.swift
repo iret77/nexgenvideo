@@ -37,11 +37,6 @@ public final class EngineRegistry: @unchecked Sendable {
     public private(set) var projectDirs: [String] = []
     public private(set) var uiContracts: [String: UIContract.Entry] = [:]
 
-    /// Cockpit surfaces a pack contributes — a persistent read-only home for measured/structured
-    /// artifacts the generic tabs can't hold (e.g. musicvideo's song analysis). The host renders each
-    /// via a fixed surface `kind` it owns; the pack only declares which kind + phase, keeping packs thin.
-    public private(set) var cockpitSurfaces: [CockpitSurface] = []
-
     /// Deterministic hard-gate preconditions, keyed by phase. A pack registers a check that throws
     /// `GateBlocked` when the phase's artifact isn't genuinely present (e.g. musicvideo's `analysis`
     /// requires a written artifact with real beats/downbeats). The approve paths consult this before
@@ -86,6 +81,16 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Pack-provided reference-plan surface (see `ReferencePlanProviding`). Nil until a pack registers
     /// one; the host's `next_render_shot` then surfaces no planned refs (the agent picks its own).
     public private(set) var referencePlanProvider: (any ReferencePlanProviding)?
+
+    // ⚠️ ABI: a `.ngvpack` is compiled SEPARATELY against this class and ships on its own channel, so
+    // ivar offsets are baked into the pack binary. Inserting a stored property ABOVE an existing one
+    // shifts every later offset and the already-shipped pack writes to the wrong field → SIGSEGV on
+    // `register`. ADD NEW STORED PROPERTIES ONLY BELOW THIS LINE, never in the middle.
+
+    /// Cockpit surfaces a pack contributes — a persistent read-only home for measured/structured
+    /// artifacts the generic tabs can't hold (e.g. musicvideo's song analysis). The host renders each
+    /// via a fixed surface `kind` it owns; the pack only declares which kind + phase, keeping packs thin.
+    public private(set) var cockpitSurfaces: [CockpitSurface] = []
 
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
