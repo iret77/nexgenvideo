@@ -22,6 +22,7 @@ struct GenerationControllerTests {
             to: studio.appendingPathComponent("project.yaml"), atomically: true, encoding: .utf8)
         try ledgerYAML.write(
             to: studio.appendingPathComponent("ledger.yaml"), atomically: true, encoding: .utf8)
+        try Fixtures.prepareProjectPackage(at: root)
         return root
     }
 
@@ -95,7 +96,12 @@ struct GenerationControllerTests {
 
     @Test func compileBlocksOnLintError() async throws {
         let project = try Self.makeProject(ledgerYAML: Self.metaInstructionLedger)
-        defer { try? FileManager.default.removeItem(at: project) }
+        defer {
+            ProjectIdentity.existingKey(for: project).map {
+                ProjectWorkingCopy.discard(key: $0)
+            }
+            try? FileManager.default.removeItem(at: project)
+        }
         let editor = stubEditor(projectURL: project)
         let before = editor.mediaAssets.count
 
@@ -111,7 +117,12 @@ struct GenerationControllerTests {
 
     @Test func compilePassesWithACleanLockedDirectiveAndSubmits() async throws {
         let project = try Self.makeProject(ledgerYAML: Self.cleanLockedLedger)
-        defer { try? FileManager.default.removeItem(at: project) }
+        defer {
+            ProjectIdentity.existingKey(for: project).map {
+                ProjectWorkingCopy.discard(key: $0)
+            }
+            try? FileManager.default.removeItem(at: project)
+        }
         let editor = stubEditor(projectURL: project)
         let before = editor.mediaAssets.count
 
@@ -124,6 +135,11 @@ struct GenerationControllerTests {
         #expect(!outcome.placeholderId.isEmpty)
         // FEEDBACK: a media-library submission created a placeholder asset.
         #expect(editor.mediaAssets.count == before + 1)
+        let key = try #require(ProjectIdentity.existingKey(for: project))
+        #expect(try ProjectWorkingCopy.open(
+            key: key,
+            packageURL: project
+        ).recoveredUnsaved)
     }
 
     @Test func compileSkippedForEmptyIntentStillSubmits() async {

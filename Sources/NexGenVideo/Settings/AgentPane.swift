@@ -320,7 +320,7 @@ struct AgentPane: View {
             }
 
             // The working dir follows the open project package automatically — no field here. Format
-            // packs are native (built in); this is only an extra dir for developing an external
+            // Format packs are native `.ngvpack`s; this is only an extra dir for developing an external
             // Claude-Code plugin.
             folderRow(title: "Extra plugin folder (optional)", path: $claudePluginDir)
             permissionRow

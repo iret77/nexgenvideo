@@ -12,8 +12,8 @@ Merge rules:
   * a version not yet in the catalog is APPENDED — older versions are never dropped, so an
     older app still finds its last compatible pack (the app picks the newest whose
     minAppVersion <= its own; see PluginManager.selectCompatiblePerPack).
-  * a rebuild of a version already published REPLACES that one entry (signatures are
-    timestamped, so the same pack version rebuilds to a different sha). Loud, never silent.
+  * a published version is immutable. A different build with the same id/version fails;
+    bump the pack version instead.
 
 Writes {"schema": "plugins/v2", "plugins": [...]} — the shape PluginCatalog decodes. v2 is
 v1 plus the promise that MULTIPLE versions per pack id may be listed.
@@ -63,7 +63,11 @@ for path in sorted(glob.glob(os.path.join(args.entries_dir, "*.entry.json"))):
     if prior is None:
         print(f"==> publishing {stem} (new version)")
     elif prior.get("sha256") != entry.get("sha256"):
-        print(f"==> REPUBLISHING {stem} — rebuilt, sha {prior.get('sha256', '?')[:12]} -> {entry['sha256'][:12]}")
+        raise SystemExit(
+            f"refusing to replace published {stem}: "
+            f"sha {prior.get('sha256', '?')[:12]} != {entry['sha256'][:12]}; "
+            "bump the pack version"
+        )
     else:
         print(f"==> {stem} unchanged")
     published[key(entry)] = entry

@@ -21,27 +21,50 @@ struct AgentMessageView: View {
 
     @ViewBuilder
     private var userBody: some View {
-        let texts = message.blocks.compactMap { block -> String? in
-            if case let .text(s) = block { return s }
-            return nil
-        }
-        if !texts.isEmpty {
-            HStack {
-                Spacer(minLength: 48)
-                Text(texts.joined(separator: "\n"))
-                    .font(.body)
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                    .lineSpacing(3)
-                    .padding(.horizontal, AppTheme.Spacing.lg)
-                    .padding(.vertical, AppTheme.Spacing.smMd)
-                    .background(
-                        RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
-                            .fill(Color.white.opacity(AppTheme.Opacity.faint))
-                    )
-                    .textSelection(.enabled)
+        if let presentation = message.userPresentation {
+            VStack(spacing: AppTheme.Spacing.sm) {
+                if let record = presentation.choiceRecord {
+                    HStack {
+                        DialogChoiceRecordView(record: record)
+                        Spacer(minLength: AppTheme.Spacing.xxl)
+                    }
+                }
+                if let typed = presentation.typedText, !typed.isEmpty {
+                    userBubble(typed)
+                }
+                if let notice = presentation.notice, !notice.isEmpty {
+                    HStack {
+                        DialogNoticeView(text: notice)
+                        Spacer(minLength: AppTheme.Spacing.xxl)
+                    }
+                }
             }
+            .frame(maxWidth: .infinity)
+        } else {
+            let texts = message.blocks.compactMap { block -> String? in
+                if case let .text(s) = block { return s }
+                return nil
+            }
+            if !texts.isEmpty { userBubble(texts.joined(separator: "\n")) }
         }
         // Tool-result user messages render merged into the preceding assistant row.
+    }
+
+    private func userBubble(_ text: String) -> some View {
+        HStack {
+            Spacer(minLength: AppTheme.Spacing.xxl)
+            Text(text)
+                .font(.body)
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .lineSpacing(AppTheme.Spacing.xxs)
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.smMd)
+                .background(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                        .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint))
+                )
+                .textSelection(.enabled)
+        }
     }
 
     @ViewBuilder
@@ -92,6 +115,53 @@ struct AgentMessageView: View {
     }
 }
 
+private struct DialogChoiceRecordView: View {
+    let record: AgentChoiceRecord
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
+            Text(record.summary)
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, AppTheme.Spacing.smMd)
+        .padding(.vertical, AppTheme.Spacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .fill(AppTheme.Background.raisedColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+        )
+        .accessibilityLabel("Selected: \(record.summary)")
+    }
+}
+
+private struct DialogNoticeView: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "exclamationmark.triangle.fill")
+            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+            .foregroundStyle(AppTheme.Status.errorColor)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, AppTheme.Spacing.smMd)
+            .padding(.vertical, AppTheme.Spacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                    .fill(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.subtle))
+            )
+            .textSelection(.enabled)
+    }
+}
+
 private struct CopyMessageButton: View {
     let text: String
     @State private var copied = false
@@ -136,6 +206,99 @@ struct ToolRunResult {
     let isError: Bool
 }
 
+struct AgentActivityView: View {
+    let activity: AgentActivity
+    let toolResults: [String: ToolRunResult]
+    @State private var expanded = false
+
+    private var hasError: Bool {
+        activity.steps.contains { toolResults[$0.id]?.isError == true }
+    }
+
+    private var hasIncompleteStep: Bool {
+        !activity.isRunning && activity.steps.contains { toolResults[$0.id] == nil }
+    }
+
+    private var label: String {
+        activity.currentStatus
+            ?? activity.steps.last.map { ToolRunPresentation.label(for: $0.name) }
+            ?? "Working"
+    }
+
+    private var accessibilityState: String {
+        if activity.isRunning { return "Working" }
+        if hasError { return "Failed" }
+        if hasIncompleteStep { return "Incomplete" }
+        return "Completed"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Button {
+                withAnimation(.easeOut(duration: AppTheme.Anim.hover)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    statusIcon
+                    Text(label)
+                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .lineLimit(2)
+                        .contentTransition(.opacity)
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .foregroundStyle(AppTheme.Text.mutedColor)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(accessibilityState): \(label)")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    if activity.statuses.count > 1 {
+                        ForEach(Array(activity.statuses.dropLast().enumerated()), id: \.offset) { _, status in
+                            Text(status)
+                                .font(.system(size: AppTheme.FontSize.xs))
+                                .foregroundStyle(AppTheme.Text.mutedColor)
+                        }
+                    }
+                    ForEach(activity.steps) { step in
+                        ToolRunRow(
+                            name: step.name,
+                            inputJSON: step.inputJSON,
+                            result: toolResults[step.id]
+                        )
+                    }
+                }
+                .padding(.leading, AppTheme.Spacing.xxs)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(.easeOut(duration: AppTheme.Anim.hover), value: label)
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        if activity.isRunning {
+            ProgressView()
+                .controlSize(.mini)
+                .frame(width: AppTheme.Spacing.md, height: AppTheme.Spacing.md)
+        } else {
+            Image(systemName: hasError || hasIncompleteStep
+                ? "exclamationmark.circle.fill"
+                : "checkmark.circle.fill")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(
+                    hasError || hasIncompleteStep
+                        ? AppTheme.Status.warningColor.opacity(AppTheme.Opacity.prominent)
+                        : AppTheme.Text.tertiaryColor
+                )
+        }
+    }
+}
+
 private struct ToolRunRow: View {
     let name: String
     let inputJSON: String
@@ -149,8 +312,7 @@ private struct ToolRunRow: View {
     }
     private var statusTint: Color {
         guard let result else { return AppTheme.Text.mutedColor }
-        // Warning, not error red: a failed probe is routine for the agent (it reads the error
-        // and adjusts) — alarm color belongs to failures the USER must act on.
+        // Tool failures are routine agent feedback, not user-facing fatal errors.
         return result.isError
             ? AppTheme.Status.warningColor.opacity(AppTheme.Opacity.prominent)
             : AppTheme.Text.tertiaryColor
@@ -159,7 +321,7 @@ private struct ToolRunRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
+                withAnimation(.easeOut(duration: AppTheme.Anim.hover)) { expanded.toggle() }
             } label: {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     if isRunning {
@@ -172,11 +334,11 @@ private struct ToolRunRow: View {
                             .foregroundStyle(statusTint)
                     }
                     Text(ToolRunPresentation.label(for: name))
-                        .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .opacity(isRunning ? 0.7 : 1.0)
+                        .opacity(isRunning ? AppTheme.Opacity.prominent : AppTheme.Opacity.opaque)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
@@ -198,7 +360,7 @@ private struct ToolRunRow: View {
                 .padding(AppTheme.Spacing.md)
                 .background(
                     RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                        .fill(Color.white.opacity(AppTheme.Opacity.subtle))
+                        .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
                 )
                 .textSelection(.enabled)
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -220,7 +382,11 @@ private struct ToolRunRow: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Text(r.isError ? "error" : "result")
                 .font(.system(size: AppTheme.FontSize.xxs))
-                .foregroundStyle(r.isError ? .red.opacity(AppTheme.Opacity.prominent) : AppTheme.Text.mutedColor)
+                .foregroundStyle(
+                    r.isError
+                        ? AppTheme.Status.errorColor.opacity(AppTheme.Opacity.prominent)
+                        : AppTheme.Text.mutedColor
+                )
             ForEach(Array(r.content.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .text(let s):

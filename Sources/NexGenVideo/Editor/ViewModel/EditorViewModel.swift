@@ -225,7 +225,7 @@ final class EditorViewModel {
             intakeCoordinator.reset()
             // Identity is the package UUID (travels with the file), resolved once here so the working
             // copy, caches, and telemetry all key off the same stable id.
-            projectId = projectURL.map { ProjectIdentity.uuid(for: $0) }
+            projectId = projectURL.flatMap { ProjectIdentity.existingUUID(for: $0) }
             prepareWorkingCopy()
         }
     }
@@ -240,36 +240,69 @@ final class EditorViewModel {
     /// key is unchanged — used to tell "re-pointed at my own live copy" apart from "opened a project",
     /// so a move never re-reads the session's edits as crash-recovered.
     private var activeWorkingCopyKey: String?
+    private var preopenedWorkingCopy: (
+        packageURL: URL,
+        key: String,
+        result: ProjectWorkingCopy.OpenResult
+    )?
     /// A crash left a working copy from the last session — the UI offers to restore it. Bindable so the
     /// recovery alert can dismiss itself.
     var recoveredUnsavedWork = false
     /// Marks the document edited when the pipeline changes (so the user is prompted to save, which
     /// persists the working copy into the package). Set by the owning document.
     var onPipelineChanged: (() -> Void)?
+    var onWorkingCopyReset: ((URL) -> Void)?
 
-    /// Stable per-project key for the working copy (same project → same copy across launches),
-    /// derived from the package UUID so a move/rename keeps it and a new project never inherits it.
-    ///
-    /// ⚠️ This RE-READS the package's `ngv.json` on every access, and mints + writes a fresh id when it
-    /// can't read one. Use it to DECIDE which copy to open — never to answer "where is my data right
-    /// now": if the package is momentarily unreadable (mid-save, NSDocument replaces the package), this
-    /// silently answers with a NEW identity. Saving against that answer wrote the pipeline nowhere and
-    /// reported success. For that question use `openWorkingCopyKey`.
-    var workingCopyKey: String? { projectURL.map { ProjectIdentity.key(for: $0) } }
+    /// Stable store key derived once when `projectURL` changes. It never re-reads a package mid-save.
+    var workingCopyKey: String? { projectId.map { "p-" + $0 } }
 
-    /// The key of the working copy this session actually opened and has been writing into — the only
-    /// honest answer to "where does my unsaved work live". Unlike `workingCopyKey` it never touches
-    /// the disk, so it cannot drift while the package is being rewritten.
+    /// The key of the working copy this session actually opened and has been writing into.
     var openWorkingCopyKey: String? { activeWorkingCopyKey }
 
-    /// Materialize the working copy from the package (or keep a crash-surviving one). Synchronous so
-    /// `workingRoot` is valid immediately — the copy is cheap on APFS (copy-on-write clone), and only
-    /// the small pipeline artifacts move, never the media. The engine re-read is still async.
+    func adoptWorkingCopy(
+        _ result: ProjectWorkingCopy.OpenResult,
+        key: String,
+        packageURL: URL
+    ) {
+        preopenedWorkingCopy = (packageURL, key, result)
+        if projectURL == packageURL {
+            prepareWorkingCopy()
+        } else {
+            projectURL = packageURL
+        }
+    }
+
+    /// Materialize the complete package into Recovery, or adopt a crash-surviving dirty copy.
     private func prepareWorkingCopy() {
         recoveredUnsavedWork = false
-        guard let projectURL, let key = workingCopyKey else {
+        guard let projectURL else {
             workingCopyHome = nil
             activeWorkingCopyKey = nil
+            refreshProductionPipelineMarker()
+            return
+        }
+        if let preopenedWorkingCopy,
+           preopenedWorkingCopy.packageURL.standardizedFileURL
+            == projectURL.standardizedFileURL {
+            self.preopenedWorkingCopy = nil
+            workingCopyHome = preopenedWorkingCopy.result.home
+            activeWorkingCopyKey = preopenedWorkingCopy.key
+            recoveredUnsavedWork = preopenedWorkingCopy.result.recoveredUnsaved
+            activePluginName = ProjectPluginSettings.activePlugin(
+                projectURL: preopenedWorkingCopy.result.home
+            )
+            rebindProjectMediaURLs()
+            refreshProductionPipelineMarker()
+            verifyPackWiring()
+            Task { [weak self] in await self?.refreshEngineState() }
+            return
+        }
+        guard let key = workingCopyKey else {
+            workingCopyHome = nil
+            activeWorkingCopyKey = nil
+            mediaPanelToast = MediaPanelToast(
+                message: "The project identity is unavailable. Reopen the project."
+            )
             refreshProductionPipelineMarker()
             return
         }
@@ -280,10 +313,21 @@ final class EditorViewModel {
             refreshProductionPipelineMarker()
             return
         }
-        let result = try? ProjectWorkingCopy.open(key: key, packageURL: projectURL)
-        workingCopyHome = result?.home
+        let result: ProjectWorkingCopy.OpenResult
+        do {
+            result = try ProjectWorkingCopy.open(key: key, packageURL: projectURL)
+        } catch {
+            workingCopyHome = nil
+            activeWorkingCopyKey = nil
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            refreshProductionPipelineMarker()
+            return
+        }
+        workingCopyHome = result.home
         activeWorkingCopyKey = key
-        recoveredUnsavedWork = result?.recoveredUnsaved ?? false
+        recoveredUnsavedWork = result.recoveredUnsaved
+        activePluginName = ProjectPluginSettings.activePlugin(projectURL: result.home)
+        rebindProjectMediaURLs()
         refreshProductionPipelineMarker()
         verifyPackWiring()
         Task { [weak self] in await self?.refreshEngineState() }
@@ -319,22 +363,43 @@ final class EditorViewModel {
 
     /// Throw away the recovered working copy and start from the last saved project state.
     func discardRecoveredWork() {
-        guard let projectURL, let key = workingCopyKey else { return }
+        guard let projectURL, let key = activeWorkingCopyKey else { return }
         recoveredUnsavedWork = false
         Task { [weak self] in
-            let home = await Task.detached {
-                try? ProjectWorkingCopy.rematerialize(key: key, packageURL: projectURL)
+            let result = await Task.detached {
+                Result {
+                    try ProjectWorkingCopy.rematerialize(
+                        key: key,
+                        packageURL: projectURL
+                    )
+                }
             }.value
             guard let self, self.projectURL == projectURL else { return }
+            guard case .success(let home) = result else {
+                if case .failure(let error) = result {
+                    Log.project.error(
+                        "discard recovery failed: \(error.localizedDescription)"
+                    )
+                    self.mediaPanelToast = MediaPanelToast(
+                        message: error.localizedDescription
+                    )
+                }
+                self.recoveredUnsavedWork = true
+                return
+            }
             self.workingCopyHome = home
+            self.activePluginName = ProjectPluginSettings.activePlugin(projectURL: home)
+            self.onWorkingCopyReset?(home)
+            self.rebindProjectMediaURLs()
             self.refreshProductionPipelineMarker()
+            self.verifyPackWiring()
             await self.refreshEngineState()
         }
     }
 
     /// Discard the working copy on a clean close (so no false crash-recovery prompt next time).
     func releaseWorkingCopy() {
-        guard let key = workingCopyKey else { return }
+        guard let key = activeWorkingCopyKey else { return }
         ProjectWorkingCopy.discard(key: key)
         workingCopyHome = nil
         activeWorkingCopyKey = nil
@@ -368,19 +433,19 @@ final class EditorViewModel {
     /// Enforced at the MODEL so every surface (title-bar chip, project cockpit) honors the lock — not
     /// just the ones that remembered to check. A no-op once production has started.
     func setActivePlugin(_ name: String?) {
-        guard let projectURL, canChangeFormat else { return }
-        ProjectPluginSettings.setActivePlugin(name, projectURL: projectURL)
-        // Keep the working copy's ngv.json mirror in step: the in-session pack resolution reads the
-        // WORKING COPY, not the package, so a format change must reach it now — not only at next open.
-        if let home = workingCopyHome {
-            ProjectPluginSettings.setActivePlugin(name, projectURL: home)
+        guard let home = workingCopyHome, canChangeFormat else { return }
+        do {
+            try ProjectPluginSettings.setActivePlugin(name, projectURL: home)
+            activePluginName = name
+            onPipelineChanged?()
+        } catch {
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
         }
-        activePluginName = name
     }
 
     /// The generic-workflow entry (docs/UI_UX_CONCEPT.md, Epic #98/G): every project can start AI
     /// production — no plugin required. Composes a deterministic agent command (concrete paths, no
-    /// guessing) that initializes the engine pipeline inside the project package, then hands off to
+    /// guessing) that initializes the engine pipeline inside the working copy, then hands off to
     /// assisted brief drafting. Plugins later SPECIALIZE this generic baseline; they never gate it.
     /// True while a production start is in flight — drives the CTA's "Starting…" state and blocks the
     /// repeat taps that happened when nothing visibly changed. Cleared when the engine state reloads
@@ -402,7 +467,7 @@ final class EditorViewModel {
     }
 
     func startProduction() {
-        guard let url = projectURL, let key = workingCopyKey, !productionStarting else { return }
+        guard let url = projectURL, let key = openWorkingCopyKey, !productionStarting else { return }
         // The pipeline is scaffolded into the WORKING COPY (not the package); ⌘S syncs it back. The
         // cockpit reads the working copy via `workingRoot`, so it finds the freshly-created pipeline.
         let home = ProjectWorkingCopy.home(key)
@@ -410,6 +475,13 @@ final class EditorViewModel {
         let name = url.deletingPathExtension().lastPathComponent
         let extraDirs = PackCatalog.projectDirs(activePack: activePluginName)
         productionStarting = true
+        do {
+            try ProjectWorkingCopy.markDirty(key: key)
+        } catch {
+            productionStarting = false
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            return
+        }
         // Produce focus surfaces the cockpit + agent together, so the work is visible instead of
         // buried in a chat panel the user has to notice.
         workspaceFocus = .produce
@@ -445,10 +517,17 @@ final class EditorViewModel {
         }
     }
 
-    /// Directory the pipeline engine reads/writes for cockpit data (Bible, shotlist, sanity, `pipeline/`).
-    /// It is the open project package itself — a `.nexgen` bundle is a directory, so engine data lives
-    /// inside it next to `media/`: self-contained, per-project, moves with the project. Nil until saved.
+    /// Complete live project root used by the editor, agent, media layer, and pipeline engine.
     var workingRoot: URL? { workingCopyHome }
+
+    private func rebindProjectMediaURLs() {
+        for asset in mediaAssets {
+            guard let entry = mediaManifest.entries.first(where: { $0.id == asset.id }),
+                  case .project = entry.source,
+                  let url = mediaResolver.expectedURL(for: asset.id) else { continue }
+            asset.url = url
+        }
+    }
 
     // Placeholder replaced in init() — @Observable doesn't support lazy var
     private(set) var mediaResolver: MediaResolver = MediaResolver(
@@ -673,7 +752,7 @@ final class EditorViewModel {
     init() {
         mediaResolver = MediaResolver(
             manifest: { [weak self] in self?.mediaManifest ?? MediaManifest() },
-            projectURL: { [weak self] in self?.projectURL }
+            projectURL: { [weak self] in self?.workingCopyHome }
         )
         agentService.editor = self
         searchIndex.assetsProvider = { [weak self] in self?.mediaAssets ?? [] }

@@ -17,6 +17,19 @@ struct ProjectPackageExportTests {
 
         try Data("INTERNAL-BYTES".utf8).write(to: sourceMedia.appendingPathComponent("gen-abc123.mp4"))
         try Data("JPEG".utf8).write(to: source.appendingPathComponent(Project.thumbnailFilename))
+        let pipeline = source.appendingPathComponent(
+            DataRootResolver.pipelineDirname,
+            isDirectory: true
+        )
+        try fm.createDirectory(at: pipeline, withIntermediateDirectories: true)
+        try Data("project: export".utf8).write(
+            to: pipeline.appendingPathComponent(DataRootResolver.projectMarker)
+        )
+        let chat = source.appendingPathComponent(ChatSessionStore.dirName, isDirectory: true)
+        try fm.createDirectory(at: chat, withIntermediateDirectories: true)
+        try Data("{\"chat\":true}".utf8).write(to: chat.appendingPathComponent("session.json"))
+        try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: source)
+        _ = try ProjectIdentity.uuid(for: source)
 
         let externalContents = "EXTERNAL-BYTES"
         try Data(externalContents.utf8).write(to: root.appendingPathComponent("external-clip.mov"))
@@ -58,6 +71,16 @@ struct ProjectPackageExportTests {
         for name in [Project.timelineFilename, Project.manifestFilename, Project.generationLogFilename, Project.thumbnailFilename] {
             #expect(fm.fileExists(atPath: dest.appendingPathComponent(name).path), "missing \(name)")
         }
+        #expect(fm.fileExists(
+            atPath: dest.appendingPathComponent(DataRootResolver.pipelineDirname)
+                .appendingPathComponent(DataRootResolver.projectMarker).path
+        ))
+        #expect(fm.fileExists(
+            atPath: dest.appendingPathComponent(ChatSessionStore.dirName)
+                .appendingPathComponent("session.json").path
+        ))
+        #expect(ProjectPluginSettings.activePlugin(projectURL: dest) == "musicvideo")
+        #expect(try ProjectIdentity.uuid(for: dest) != ProjectIdentity.uuid(for: source))
 
         // Manifest sources rewritten: resolvable entries internalized, missing one untouched.
         let outManifest = try JSONDecoder().decode(
@@ -117,5 +140,63 @@ struct ProjectPackageExportTests {
         // Only one physical file copied into media/.
         let mediaFiles = try fm.contentsOfDirectory(atPath: dest.appendingPathComponent(Project.mediaDirectoryName).path)
         #expect(mediaFiles.count == 1)
+    }
+
+    @Test func failedExportLeavesAnExistingDestinationUntouched() throws {
+        let (root, source, dest, _) = try makeFixture()
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+        let sentinel = dest.appendingPathComponent("keep.txt")
+        try Data("last-good".utf8).write(to: sentinel)
+        let outside = root.appendingPathComponent("outside.mov")
+        try Data("outside".utf8).write(to: outside)
+        try fm.createSymbolicLink(
+            at: source.appendingPathComponent(Project.mediaDirectoryName)
+                .appendingPathComponent("escape.mov"),
+            withDestinationURL: outside
+        )
+
+        #expect(throws: ProjectWorkingCopy.PersistError.self) {
+            try ProjectPackageExporter.export(
+                timeline: Fixtures.timeline(),
+                manifest: manifest(
+                    externalPath: root.appendingPathComponent("external-clip.mov").path
+                ),
+                generationLog: GenerationLog(),
+                sourceProjectURL: source,
+                to: dest
+            )
+        }
+        #expect(try Data(contentsOf: sentinel) == Data("last-good".utf8))
+    }
+
+    @Test func projectRelativeEscapeIsReportedMissingAndNeverCollected() throws {
+        let (root, source, dest, _) = try makeFixture()
+        defer { try? fm.removeItem(at: root) }
+        let outside = root.appendingPathComponent("secret.mov")
+        try Data("secret".utf8).write(to: outside)
+        var escaped = MediaManifest()
+        escaped.entries = [
+            MediaManifestEntry(
+                id: "escape",
+                name: "Escape",
+                type: .video,
+                source: .project(relativePath: "../secret.mov"),
+                duration: 1
+            )
+        ]
+
+        let report = try ProjectPackageExporter.export(
+            timeline: Fixtures.timeline(),
+            manifest: escaped,
+            generationLog: GenerationLog(),
+            sourceProjectURL: source,
+            to: dest
+        )
+
+        #expect(report.missing == [.init(id: "escape", name: "Escape")])
+        #expect(try fm.contentsOfDirectory(
+            atPath: dest.appendingPathComponent(Project.mediaDirectoryName).path
+        ).isEmpty)
     }
 }

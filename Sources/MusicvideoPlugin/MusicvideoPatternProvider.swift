@@ -70,16 +70,7 @@ public struct MusicvideoPatternProvider: PatternProviding {
         return try encoder.encode(pattern)
     }
 
-    /// A ranking plus what it does and does not cover.
-    ///
-    /// A pattern is OPTIONAL. Without one, the video's structure comes from the analysis, the
-    /// user's intent and the agent-moderated process — so "none of the scored patterns fit" is a
-    /// real, usable answer, not a failure. Ranking is therefore never withheld because other
-    /// patterns are unauthored; authoring a profile is expensive and deliberate, and the useful
-    /// question ("does this one fit?") is answerable with one profile just as well as with 23.
-    ///
-    /// `library_coverage` keeps that honest: the agent must never present a 1-of-23 ranking as if
-    /// it were the whole field.
+    /// Ranks any valid authored subset and reports its library coverage.
     private func rankedEnvelope(
         set: PatternRecommendationSet, coverage: PatternFitLibrary.LibraryCoverage
     ) throws -> Data {

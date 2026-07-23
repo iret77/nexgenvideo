@@ -18,6 +18,16 @@ struct ChangelogSection: Decodable {
     let items: [String]
 }
 
+enum WhatsNewPolicy {
+    static func shouldPresent(current: String, lastSeen: String?, availableVersions: Set<String>) -> Bool {
+        guard !current.isEmpty,
+              let lastSeen,
+              !lastSeen.isEmpty,
+              lastSeen != current else { return false }
+        return availableVersions.contains(current)
+    }
+}
+
 @MainActor @Observable
 final class ChangelogStore {
     static let shared = ChangelogStore()
@@ -37,14 +47,22 @@ final class ChangelogStore {
         changelogURL = feed.changelogURL.flatMap { URL(string: $0) }
 
         let current = currentVersion
+        guard !current.isEmpty else { return }
         let lastSeen = UserDefaults.standard.string(forKey: lastSeenKey)
-        UserDefaults.standard.set(current, forKey: lastSeenKey)
-
-        guard let lastSeen, !lastSeen.isEmpty, lastSeen != current else { return }
+        guard let lastSeen, !lastSeen.isEmpty else {
+            UserDefaults.standard.set(current, forKey: lastSeenKey)
+            return
+        }
+        guard WhatsNewPolicy.shouldPresent(
+            current: current,
+            lastSeen: lastSeen,
+            availableVersions: Set(feed.entries.map(\.version))
+        ) else { return }
         pending = feed.entries.first { $0.version == current }
     }
 
     func dismiss() {
+        if pending != nil { UserDefaults.standard.set(currentVersion, forKey: lastSeenKey) }
         pending = nil
     }
 

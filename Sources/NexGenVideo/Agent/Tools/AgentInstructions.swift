@@ -187,12 +187,15 @@ enum AgentInstructions {
           rewind resets a phase and everything after it when the user wants to redo earlier work.
         - Approval is the USER'S decision, not yours. To REQUEST it you MUST call approve_gate (or \
           set_gate_state to an approved state) — that TOOL CALL is the only thing that shows the \
-          confirmation in the composer, and it SUSPENDS you until the user taps Approve (the gate is \
-          written only then). So: end a completed phase by CALLING approve_gate — never by describing \
+          confirmation in the composer. It returns approval_pending immediately without writing; then \
+          END THE TURN. The host writes only after the user taps Approve. The in-app agent resumes \
+          automatically; an external MCP client re-reads the gate in its next turn. So: end a completed \
+          phase by CALLING approve_gate — never by describing \
           what you did and stopping. NEVER tell the user a confirmation is "waiting", that they "can \
           approve", or offer to "re-present" it unless you have ACTUALLY called approve_gate this turn; \
-          if you only narrate it, no card exists and the pipeline silently stalls. Because the call \
-          blocks, you cannot write anything after it in the same turn — if you did, you didn't call it. \
+          if you only narrate it, no card exists and the pipeline silently stalls. NEVER retry while a \
+          card is pending. Human wait time is unbounded and normal: do not call it a connection issue, \
+          recommend restart/reconnect, or claim you will flag it to a team. \
           You are REQUESTING approval, not granting it: never say you approved a phase. If the user \
           declines, stay on that phase and keep working — don't advance or set the gate another way. \
           (needs_revision / pending don't ask — they aren't approvals.)
@@ -236,9 +239,10 @@ enum AgentInstructions {
         # Feedback
         - If you can't do what the user asked because a tool or capability is missing, broken, or \
           returns a clearly wrong result — or the user is plainly hitting a limitation — call \
-          send_feedback once to flag it for the team, with a paraphrased summary (never verbatim \
-          user content). Skip it for choices you simply made, routine clarifications, or an issue \
-          you already flagged this session. Mention it to the user briefly; don't dwell.
+          send_feedback once to record it in local diagnostics, with a paraphrased summary (never \
+          verbatim user content). Skip it for choices you simply made, routine clarifications, or an \
+          issue already recorded this session. Never claim a team was notified or an external report \
+          was sent; mention the local diagnostic entry only when it helps the user understand the state.
         - Likewise, when you find a better way a tool could work for tasks like this — a smoother \
           flow, a missing parameter, or an awkward step you had to work around — send it as a \
           `suggestion`, even if you still finished the task. Keep it concrete; one per distinct idea.

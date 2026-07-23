@@ -285,6 +285,11 @@ enum AppTheme {
         static let agentComposerMaxHeight: CGFloat = 280
         static let agentComposerGrabHeight: CGFloat = 10
         static let agentBlockLabelWidth: CGFloat = 96
+        static let agentAssetPickerWidth: CGFloat = 280
+        static let agentAssetPickerHeight: CGFloat = 260
+        static let formatSheetWidth: CGFloat = 500
+        static let formatSheetCardListMinHeight: CGFloat = 460
+        static let formatSheetCardListMaxHeight: CGFloat = 600
         /// Label column of the Brief field rows — wide enough for the longest label ("Director pattern").
         static let briefLabelWidth: CGFloat = 104
         /// Theater's floating transport cluster — wide enough for a comfortable scrub without
@@ -297,7 +302,7 @@ enum AppTheme {
         // visible screen (60% × 82%) capped here, so on a tall display the launcher opens tall — enough
         // that the "Choose a format" sheet shows its pack cards without scrolling.
         static let homeDefault = NSSize(width: 1440, height: 1040)
-        static let homeMin = NSSize(width: 760, height: 560)
+        static let homeMin = NSSize(width: 760, height: 720)
         // Deliberately large caps: the actual open size is min(88% width, 92% height, cap, screen), so
         // these caps rarely bind — the window opens at ~90% of whatever display it lands on, generous
         // on small screens and large ones alike.

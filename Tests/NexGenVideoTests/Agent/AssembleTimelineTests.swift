@@ -70,8 +70,14 @@ struct AssembleTimelineTests {
         // assemble_timeline is gated on an approved plan — approve the chain so these tests exercise
         // assembly, not gate policy (the gate itself is covered by the blocked test below).
         try approvePlanChain(dataRoot: dataRoot)
+        try Fixtures.prepareProjectPackage(at: home)
 
-        return (ToolHarness(), dataRoot, tmp, [outA.path, outB.path])
+        let harness = ToolHarness()
+        harness.editor.projectURL = home
+        let workingDataRoot = try #require(
+            harness.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+        return (harness, workingDataRoot, tmp, [outA.path, outB.path])
     }
 
     /// Approve every core phase up to and including shotlist, so assemble_timeline's require-chain passes.
@@ -99,7 +105,10 @@ struct AssembleTimelineTests {
     @Test("assemble_timeline is blocked until the plan chain is approved")
     func assembleBlockedOnUnapprovedPlan() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
 
         // Un-approve an upstream gate — assembly must refuse (deterministic terminal backstop).
@@ -123,7 +132,10 @@ struct AssembleTimelineTests {
     @Test("places rendered shots on beats, lays the song at frame 0, skips the unrendered shot")
     func assemblesToTheBeat() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
 
         let result = try #require(try await h.runOK("assemble_timeline", args: [
@@ -161,7 +173,10 @@ struct AssembleTimelineTests {
     @Test("assembling again rebuilds in place — no duplicated clips or song")
     func reRunReplaces() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
 
         _ = try await h.runOK("assemble_timeline", args: ["project_dir": dataRoot.path, "phase": "final"])
@@ -190,7 +205,10 @@ struct AssembleTimelineTests {
     @Test("errors when no shots are rendered yet")
     func errorsWithoutRenders() async throws {
         let (h, dataRoot, cleanup, _) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let result = await h.runRaw("assemble_timeline", args: ["project_dir": dataRoot.path, "phase": "final"])
         #expect(result.isError)
         #expect(ToolHarness.textOf(result).contains("No rendered shots"))
@@ -199,7 +217,10 @@ struct AssembleTimelineTests {
     @Test("errors when the analysis artifact is missing")
     func errorsWithoutAnalysis() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         try FileManager.default.removeItem(at: dataRoot.appendingPathComponent("analysis/song.json"))
         try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
 

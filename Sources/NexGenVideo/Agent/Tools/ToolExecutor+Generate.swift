@@ -362,7 +362,7 @@ extension ToolExecutor {
             editor.revealCockpit(.review)
             editor.inspectedObject = .shot(shot)
         }
-        return .ok("Dialog \u{201C}\(dialog.title)\u{201D} is presented in the composer. STOP \u{2014} the user's structured answer arrives as the next user message; do not act on this step until then.")
+        return .ok("Dialog \u{201C}\(dialog.title)\u{201D} is presented in the composer. STOP — the user's structured answer arrives as the next semantic user turn; do not act on this step until then.")
     }
 
     /// Validation IS the execution: a strict parse failure returns the exact violation for the

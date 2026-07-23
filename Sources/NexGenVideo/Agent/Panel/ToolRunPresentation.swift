@@ -93,7 +93,7 @@ enum ToolRunPresentation {
         "set_ledger_attribute": "Recording creative intent",
         "lock_ledger_attribute": "Locking creative intent",
         "remove_ledger_attribute": "Removing a ledger entry",
-        "send_feedback": "Sending feedback",
+        "send_feedback": "Recording feedback",
         // Claude Code runtime built-ins
         "ToolSearch": "Loading tools",
         "Task": "Delegating a subtask",

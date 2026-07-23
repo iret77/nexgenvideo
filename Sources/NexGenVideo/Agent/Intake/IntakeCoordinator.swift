@@ -39,8 +39,10 @@ final class IntakeCoordinator {
         if let previous = offered, let pending = service.pendingDialog, pending.id != previous.dialogID {
             offered = nil
         }
-        // Exactly one pending dialog is the locked dock rule; a spend approval owns the dock too.
-        guard service.pendingDialog == nil, service.pendingSpendApproval == nil else { return }
+        // Exactly one card owns the dock.
+        guard service.pendingDialog == nil,
+              service.pendingSpendApproval == nil,
+              service.pendingGateApproval == nil else { return }
         // Mid-turn refreshes come from tool calls; the turn-end refresh (isStreaming true→false, which
         // fires AFTER the flag clears) picks the step up instead, so nothing is lost by waiting.
         guard !service.isStreaming else { return }

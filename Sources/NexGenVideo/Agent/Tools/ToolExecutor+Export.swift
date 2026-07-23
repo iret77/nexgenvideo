@@ -130,7 +130,7 @@ extension ToolExecutor {
             timeline: editor.timeline,
             manifest: editor.mediaManifest,
             generationLog: editor.generationLog,
-            sourceProjectURL: editor.projectURL,
+            sourceProjectURL: editor.workingRoot,
             outputURL: outputURL,
             acquireSlot: false
         ) else {

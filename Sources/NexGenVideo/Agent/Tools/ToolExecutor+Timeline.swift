@@ -259,7 +259,7 @@ extension ToolExecutor {
         // only once a generation SUCCEEDS, so reading the manifest here left the agent blind to
         // anything in-flight or failed (it would poll forever and conclude the job never ran).
         // Per-entry shape stays identical to the manifest (toManifestEntry) plus generationStatus.
-        let projectURL = editor.projectURL
+        let projectURL = editor.workingRoot
         var entries: [Any] = []
         for asset in editor.mediaAssets {
             guard var obj = Self.encodeAsJSONObject(asset.toManifestEntry(projectURL: projectURL)) as? [String: Any] else {

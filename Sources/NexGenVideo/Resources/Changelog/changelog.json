@@ -2,6 +2,27 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "0.7.8",
+      "date": "2026-07-09",
+      "sections": [
+        {
+          "heading": "Agent",
+          "items": [
+            "Attach project media directly from the composer.",
+            "Workflow starters no longer appear as messages you typed.",
+            "Existing chat sessions remain compatible with the updated transcript format."
+          ]
+        },
+        {
+          "heading": "Format packs",
+          "items": [
+            "The active format now has a visible workspace identity and accent.",
+            "Music Video uses clearer starter copy and human-readable phase names."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.4.1",
       "date": "2026-06-25",
       "sections": [

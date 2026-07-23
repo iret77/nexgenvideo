@@ -51,6 +51,9 @@ extension ToolExecutor {
         }
         if isDir.boolValue {
             let summary = await editor.importFinderItems([fileURL], into: folderId)
+            if let failure = summary.failure {
+                throw ToolError(failure)
+            }
             guard summary.assetCount > 0 else {
                 throw ToolError("No supported media found in folder: \(path)")
             }
@@ -60,8 +63,11 @@ extension ToolExecutor {
         guard ClipType(fileExtension: ext) != nil else {
             throw ToolError("Unsupported file extension '.\(ext)'. Supported: mov/mp4/m4v, mp3/wav/aac/m4a/aiff/aifc/flac, png/jpg/jpeg/tiff/heic, json (Lottie).")
         }
-        guard let asset = editor.addMediaAsset(from: fileURL) else {
-            throw ToolError("Failed to import file: \(path)")
+        let asset: MediaAsset
+        do {
+            asset = try editor.addMediaAssetThrowing(from: fileURL)
+        } catch {
+            throw ToolError(error.localizedDescription)
         }
         applyImportMetadata(editor: editor, asset: asset, name: name, folderId: folderId)
         return .ok("Imported '\(asset.name)' (id: \(asset.id), type: \(asset.type.rawValue)) from path. Available now in get_media.")
@@ -77,10 +83,10 @@ extension ToolExecutor {
         guard let data = Data(base64Encoded: base64, options: [.ignoreUnknownCharacters]), !data.isEmpty else {
             throw ToolError("source.bytes is not valid non-empty base64")
         }
-        guard let projectURL = editor.projectURL else {
-            throw ToolError("No project is open; cannot import bytes")
+        guard let workingRoot = editor.workingRoot else {
+            throw ToolError(MediaImportError.projectMustBeSaved.localizedDescription)
         }
-        let mediaDir = projectURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
+        let mediaDir = workingRoot.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
         } catch {
@@ -89,13 +95,17 @@ extension ToolExecutor {
         let filename = "imported-\(UUID().uuidString.prefix(8)).\(fileExt)"
         let destURL = mediaDir.appendingPathComponent(filename)
         do {
-            try data.write(to: destURL)
+            try data.write(to: destURL, options: .atomic)
         } catch {
+            try? FileManager.default.removeItem(at: destURL)
             throw ToolError("Failed to write bytes to disk: \(error.localizedDescription)")
         }
-        guard let asset = editor.addMediaAsset(from: destURL) else {
+        let asset: MediaAsset
+        do {
+            asset = try editor.addMediaAssetThrowing(from: destURL)
+        } catch {
             try? FileManager.default.removeItem(at: destURL)
-            throw ToolError("Failed to register imported asset")
+            throw ToolError(error.localizedDescription)
         }
         applyImportMetadata(editor: editor, asset: asset, name: name, folderId: folderId)
         return .ok("Imported '\(asset.name)' (id: \(asset.id), type: \(asset.type.rawValue), \(data.count) bytes). Available now in get_media.")
@@ -133,10 +143,10 @@ extension ToolExecutor {
             throw ToolError("Unsupported file extension '.\(fileExt)'")
         }
 
-        guard let projectURL = editor.projectURL else {
-            throw ToolError("No project is open; cannot import from URL")
+        guard let workingRoot = editor.workingRoot else {
+            throw ToolError(MediaImportError.projectMustBeSaved.localizedDescription)
         }
-        let mediaDir = projectURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
+        let mediaDir = workingRoot.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
         } catch {

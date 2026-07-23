@@ -27,10 +27,22 @@ enum ProjectPackageExporter {
         progress: (@Sendable (Double) -> Void)? = nil
     ) throws -> Report {
         let fm = FileManager.default
-        let staging = fm.temporaryDirectory.appendingPathComponent("ngv-export-\(UUID().uuidString)", isDirectory: true)
-        let mediaDir = staging.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
-        try fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+        let parent = destURL.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        let staging = parent.appendingPathComponent(
+            ".\(destURL.lastPathComponent).export-\(UUID().uuidString)",
+            isDirectory: true
+        )
         defer { try? fm.removeItem(at: staging) }
+        if let sourceProjectURL {
+            try fm.copyItem(at: sourceProjectURL, to: staging)
+            try ProjectWorkingCopy.sanitizePackageStaging(staging, fm: fm)
+        } else {
+            try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        }
+        let mediaDir = staging.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
+        try? fm.removeItem(at: mediaDir)
+        try fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
 
         var report = Report()
         var newEntries: [MediaManifestEntry] = []
@@ -74,15 +86,14 @@ enum ProjectPackageExporter {
         try encoder.encode(newManifest).write(to: staging.appendingPathComponent(Project.manifestFilename))
         try encoder.encode(generationLog).write(to: staging.appendingPathComponent(Project.generationLogFilename))
 
-        // Carry across non-media bundle contents (thumbnail, chat history) when present.
-        if let sourceProjectURL {
-            copyIfPresent(Project.thumbnailFilename, from: sourceProjectURL, to: staging, fm: fm)
-            copyIfPresent(ChatSessionStore.dirName, from: sourceProjectURL, to: staging, fm: fm)
+        let sourceKey = ProjectIdentity.existingKey(for: staging)
+        try ProjectIdentity.regenerate(at: staging)
+        guard let exportedKey = ProjectIdentity.existingKey(for: staging),
+              exportedKey != sourceKey else {
+            throw ProjectWorkingCopy.PersistError.identityNotRegenerated
         }
 
-        if fm.fileExists(atPath: destURL.path) { try fm.removeItem(at: destURL) }
-        try fm.createDirectory(at: destURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fm.moveItem(at: staging, to: destURL)
+        try ProjectWorkingCopy.commitStagedPackage(staging, to: destURL, fm: fm)
         return report
     }
 
@@ -91,7 +102,16 @@ enum ProjectPackageExporter {
     private static func sourceURL(for source: MediaSource, projectURL: URL?) -> URL? {
         switch source {
         case .external(let path): URL(fileURLWithPath: path)
-        case .project(let rel): projectURL?.appendingPathComponent(rel)
+        case .project(let rel):
+            guard let projectURL else { return nil }
+            let root = projectURL.standardizedFileURL.resolvingSymlinksInPath()
+            let candidate = projectURL.appendingPathComponent(rel)
+                .standardizedFileURL.resolvingSymlinksInPath()
+            guard candidate.path == root.path
+                    || candidate.path.hasPrefix(root.path + "/") else {
+                return nil
+            }
+            return candidate
         }
     }
 
@@ -120,12 +140,6 @@ enum ProjectPackageExporter {
             if !fm.fileExists(atPath: url.path) { return url }
             n += 1
         }
-    }
-
-    private static func copyIfPresent(_ name: String, from source: URL, to staging: URL, fm: FileManager) {
-        let src = source.appendingPathComponent(name)
-        guard fm.fileExists(atPath: src.path) else { return }
-        try? fm.copyItem(at: src, to: staging.appendingPathComponent(name))
     }
 
     private static func fileSize(_ url: URL, fm: FileManager) -> Int64 {

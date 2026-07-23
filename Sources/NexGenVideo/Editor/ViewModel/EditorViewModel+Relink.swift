@@ -10,8 +10,12 @@ extension EditorViewModel {
             mediaPanelToast = "Can't relink — \"\(newURL.lastPathComponent)\" is \(newType.trackLabel.lowercased()), not \(asset.type.trackLabel.lowercased())."
             return
         }
-        applyRelink(id: id, to: newURL)
-        notifyTimelineChanged()
+        do {
+            try applyRelink(id: id, to: newURL)
+            notifyTimelineChanged()
+        } catch {
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+        }
     }
 
     /// Match every offline asset to a same-named file under `folder` (recursive) and relink it.
@@ -23,18 +27,23 @@ extension EditorViewModel {
         var relinked = 0
         for asset in offline {
             guard let match = index[asset.url.lastPathComponent.lowercased()] else { continue }
-            applyRelink(id: asset.id, to: match)
-            relinked += 1
+            do {
+                try applyRelink(id: asset.id, to: match)
+                relinked += 1
+            } catch {
+                mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            }
         }
         if relinked > 0 { notifyTimelineChanged() }
         return (relinked, offline.count)
     }
 
-    private func applyRelink(id: String, to newURL: URL) {
+    private func applyRelink(id: String, to newURL: URL) throws {
         guard let i = mediaAssets.firstIndex(where: { $0.id == id }) else { return }
-        mediaAssets[i].url = newURL
+        mediaAssets[i].url = try durableProjectMediaURL(for: newURL)
         if let j = mediaManifest.entries.firstIndex(where: { $0.id == id }) {
-            mediaManifest.entries[j].source = mediaAssets[i].toManifestEntry(projectURL: projectURL).source
+            mediaManifest.entries[j].source = mediaAssets[i]
+                .toManifestEntry(projectURL: workingRoot).source
         }
         let asset = mediaAssets[i]
         Task { await finalizeImportedAsset(asset) }

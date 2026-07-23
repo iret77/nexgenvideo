@@ -67,8 +67,14 @@ final class ClaudeCodeRuntime {
 
     /// `context` (e.g. the user's current selection) is prepended to the payload sent to the model but
     /// never shown in the transcript — the user sees exactly what they typed.
-    func send(text: String, context: String? = nil, imageBlocks: [[String: Any]] = [], hidden: Bool = false) {
-        mapper.appendUserText(text, hidden: hidden)
+    func send(
+        text: String,
+        context: String? = nil,
+        imageBlocks: [[String: Any]] = [],
+        hidden: Bool = false,
+        presentation: AgentUserPresentation? = nil
+    ) {
+        mapper.appendUserText(text, hidden: hidden, presentation: presentation)
         let payload = context.map { "\($0)\n\n\(text)" } ?? text
         if process == nil {
             guard startSession(firstMessage: payload, imageBlocks: imageBlocks) else { return }  // failure path already published
@@ -234,11 +240,7 @@ final class ClaudeCodeRuntime {
         for (provider, name) in providerEnvNames {
             if let key = ProviderKeychain.load(provider) { env[name] = key }
         }
-        // Human-in-the-loop tools SUSPEND until the user acts: approve_gate / set_gate_state / the spend
-        // confirmation pop a card in the composer and don't return until the user taps it. claude's
-        // default MCP tool timeout would fire first — the card is torn down before the user responds and
-        // the pipeline silently stalls. Give it a 30-min ceiling (both the overall and idle timeouts);
-        // the app resolves the card on tab-close / new-chat / cancel, so abandonment is still handled.
+        // Spend approval still suspends; gate approval no longer depends on this timeout.
         env["MCP_TOOL_TIMEOUT"] = "1800000"
         env["MCP_TOOL_IDLE_TIMEOUT"] = "1800000"
         return env

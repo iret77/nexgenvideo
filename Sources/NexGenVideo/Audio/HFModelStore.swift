@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Download-on-demand for on-device ML model files hosted publicly on Hugging Face (a free, public
@@ -25,16 +26,40 @@ enum HFModelStore {
     /// Resolve `repo`/`file` from the HF resolve endpoint into `subdir`, downloading (blocking) if the
     /// cached copy is absent or too small. Returns the local file URL. `minBytes` guards against a
     /// cached error page / truncated download being trusted as a model (these models are tens of MB+).
-    static func ensure(repo: String, file: String, subdir: String, minBytes: Int = 1_000_000) throws -> URL {
+    static func ensure(
+        repo: String,
+        file: String,
+        subdir: String,
+        minBytes: Int = 1_000_000,
+        expectedSHA256: String? = nil
+    ) throws -> URL {
         try ensure(urlString: "https://huggingface.co/\(repo)/resolve/main/\(file)?download=true",
-                   file: file, subdir: subdir, minBytes: minBytes)
+                   file: file, subdir: subdir, minBytes: minBytes, expectedSHA256: expectedSHA256)
     }
 
     /// Resolve `file` from an explicit public URL into `subdir` (for models hosted outside HF, e.g. a
     /// GitHub raw asset), downloading (blocking) if absent or too small. Returns the local file URL.
-    static func ensure(urlString: String, file: String, subdir: String, minBytes: Int = 1_000_000) throws -> URL {
+    static func ensure(
+        urlString: String,
+        file: String,
+        subdir: String,
+        minBytes: Int = 1_000_000,
+        expectedSHA256: String? = nil
+    ) throws -> URL {
         let dest = try modelsDir(subdir).appendingPathComponent(file)
-        if fileSize(dest) >= minBytes { return dest }
+        if let expectedSHA256, !isSHA256(expectedSHA256) {
+            throw StoreError.downloadFailed("invalid pinned checksum for \(file)")
+        }
+        if fileSize(dest) >= minBytes {
+            if let expectedSHA256 {
+                if (try? sha256Hex(of: dest))?.caseInsensitiveCompare(expectedSHA256) == .orderedSame {
+                    return dest
+                }
+                try? FileManager.default.removeItem(at: dest)
+            } else {
+                return dest
+            }
+        }
         guard let url = URL(string: urlString) else {
             throw StoreError.downloadFailed("bad model URL: \(urlString)")
         }
@@ -62,7 +87,24 @@ enum HFModelStore {
             try? FileManager.default.removeItem(at: dest)
             throw StoreError.downloadFailed("\(file) came back too small (\(fileSize(dest)) bytes) — not a valid model")
         }
+        if let expectedSHA256 {
+            guard (try? sha256Hex(of: dest)).map({
+                $0.caseInsensitiveCompare(expectedSHA256) == .orderedSame
+            }) == true else {
+                try? FileManager.default.removeItem(at: dest)
+                throw StoreError.downloadFailed("\(file) didn't match its pinned checksum")
+            }
+        }
         return dest
+    }
+
+    static func sha256Hex(of url: URL) throws -> String {
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func isSHA256(_ value: String) -> Bool {
+        value.count == 64 && value.allSatisfy(\.isHexDigit)
     }
 
     private static func fileSize(_ url: URL) -> Int {

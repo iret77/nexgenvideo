@@ -81,6 +81,9 @@ final class AgentService {
                 onSessionsChanged?()
                 Task { @MainActor [weak self] in await self?.editor?.refreshEngineState() }
             }
+            if !isStreaming, pendingGateFollowUp != nil {
+                Task { @MainActor [weak self] in self?.flushPendingGateFollowUp() }
+            }
         }
     }
     var streamError: AgentStreamError?
@@ -112,10 +115,7 @@ final class AgentService {
         return prompt + "\n\n" + trimmedNote
     }
 
-    /// The ONE pending generative dialog (#96, composer-dock architecture). Set by the show_dialog
-    /// tool; the card renders above the input. Submitting composes a single structured message —
-    /// the compact transcript record — and clears; cancel clears silently (the agent was told to
-    /// wait for the next user message either way).
+    /// The one dialog currently owning the composer input surface.
     var pendingDialog: AgentDialog? {
         didSet {
             guard oldValue?.id != pendingDialog?.id else { return }
@@ -188,14 +188,28 @@ final class AgentService {
         }
         switch dialog.purpose {
         case .chatClarification:
-            let attached = importDialogFiles(result.fileURLs)
-            send(text: Self.chatMessage(from: dialog, result: result, attached: attached), mentions: attached)
+            let imported = importDialogFiles(result.fileURLs)
+            sendDialogResponse(
+                dialog,
+                result: result,
+                attached: imported.mentions,
+                presentedAttachmentNames: imported.mentions.map(\.displayName),
+                userNotice: imported.failureNotice,
+                agentContext: imported.failureContext
+            )
         case .generationIntent:
             if let sink = onGenerationDialogIntent {
                 sink(Self.intentLine(from: dialog, result: result))
             } else {
-                let attached = importDialogFiles(result.fileURLs)
-                send(text: Self.chatMessage(from: dialog, result: result, attached: attached), mentions: attached)
+                let imported = importDialogFiles(result.fileURLs)
+                sendDialogResponse(
+                    dialog,
+                    result: result,
+                    attached: imported.mentions,
+                    presentedAttachmentNames: imported.mentions.map(\.displayName),
+                    userNotice: imported.failureNotice,
+                    agentContext: imported.failureContext
+                )
             }
         }
     }
@@ -210,7 +224,11 @@ final class AgentService {
         guard let editor, let workingRoot = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: workingRoot)
         else {
-            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Save the project before attaching \(kind)."
+            )
             return
         }
         // Accept EITHER an uploaded file OR pasted text (the dialog's textField). Neither ⇒ the user
@@ -218,14 +236,23 @@ final class AgentService {
         let content: String
         if let src = result.fileURLs.first {
             guard let text = try? String(contentsOf: src, encoding: .utf8) else {
-                send(text: "Couldn't read the \(kind) file — it isn't UTF-8 text. Ask the user for a .txt/.md.", mentions: [])
+                sendDialogFailure(
+                    dialog,
+                    result: result,
+                    notice: "Couldn't read \(src.lastPathComponent). Use a UTF-8 .txt or .md file.",
+                    agentContext: "The host couldn't read the \(kind) file because it isn't UTF-8 text. Ask for a .txt or .md file."
+                )
                 return
             }
             content = text
         } else {
             let pasted = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !pasted.isEmpty else {
-                send(text: "No \(kind) provided — the user skipped it. Proceed without \(kind).", mentions: [])
+                sendDialogResponse(
+                    dialog,
+                    result: result,
+                    agentContext: "No \(kind) was provided; the user skipped it. Proceed without \(kind)."
+                )
                 return
             }
             content = pasted
@@ -237,14 +264,26 @@ final class AgentService {
         }
         let dir = dataRoot.appendingPathComponent(relDir, isDirectory: true)
         do {
+            if let key = editor.openWorkingCopyKey {
+                try ProjectWorkingCopy.markDirty(key: key)
+            }
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try content.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)
         } catch {
-            send(text: "Couldn't attach the \(kind): \(error.localizedDescription).", mentions: [])
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Couldn't attach \(kind): \(error.localizedDescription)",
+                agentContext: "The host couldn't attach the \(kind): \(error.localizedDescription)."
+            )
             return
         }
         editor.onPipelineChanged?()
-        send(text: sidecarBrief(kind, relPath: "\(relDir)/\(filename)", content: content), mentions: [])
+        sendDialogResponse(
+            dialog,
+            result: result,
+            agentContext: sidecarBrief(kind, relPath: "\(relDir)/\(filename)", content: content)
+        )
     }
 
     /// The agent-facing brief after a sidecar lands: what to do with it. Lyrics → label measured
@@ -272,34 +311,60 @@ final class AgentService {
     /// typed. This is the brownfield path: the bible-agent (K5) adopts these as identity anchors, so the
     /// pipeline stays consistent with the user's prepared assets instead of inventing new ones.
     private func attachIdentityAssets(_ kind: String, dialog: AgentDialog, result: AgentDialogResult) {
+        guard !result.fileURLs.isEmpty else {
+            sendDialogResponse(
+                dialog,
+                result: result,
+                agentContext: "No \(kind) references were provided. Ask for at least one image."
+            )
+            return
+        }
         guard let editor, let workingRoot = editor.workingRoot,
-              let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
-              !result.fileURLs.isEmpty
-        else {
-            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot) else {
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Save the project before attaching \(kind) references."
+            )
             return
         }
         let name = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)
         let slug = Self.identitySlug(name)
         guard !slug.isEmpty else {
-            send(text: "Couldn't attach the \(kind) — no usable name was given. Ask the user for the "
-                + "\(kind)'s name, then re-present the dialog.", mentions: [])
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Enter a usable \(kind) name before attaching references.",
+                agentContext: "The host couldn't attach the \(kind) because no usable name was given. Ask for its name, then re-present the dialog."
+            )
             return
         }
         let category = kind == "location" ? "locations" : "characters"
         let dir = dataRoot.appendingPathComponent("import").appendingPathComponent(category).appendingPathComponent(slug)
         let copied: [String]
         do {
+            if let key = editor.openWorkingCopyKey {
+                try ProjectWorkingCopy.markDirty(key: key)
+            }
             copied = try Self.copyFilesUniquely(result.fileURLs, into: dir)
         } catch {
-            send(text: "Couldn't attach the \(kind) \"\(name)\": \(error.localizedDescription).", mentions: [])
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Couldn't attach \(kind) references: \(error.localizedDescription)",
+                agentContext: "The host couldn't attach the \(kind) \"\(name)\": \(error.localizedDescription)."
+            )
             return
         }
         editor.onPipelineChanged?()
         let noun = kind == "location" ? "Location" : "Character"
-        send(text: "\(noun) \"\(name)\" attached: \(copied.count) reference image\(copied.count == 1 ? "" : "s") "
-            + "in import/\(category)/\(slug)/. This is a BROWNFIELD anchor — the bible-agent adopts it; "
-            + "keep this identity consistent across the pipeline and don't invent a different one.", mentions: [])
+        sendDialogResponse(
+            dialog,
+            result: result,
+            agentContext: "\(noun) \"\(name)\" attached: \(copied.count) reference image\(copied.count == 1 ? "" : "s") "
+                + "in import/\(category)/\(slug)/. This is a BROWNFIELD anchor — the bible-agent adopts it; "
+                + "keep this identity consistent across the pipeline and don't invent a different one."
+        )
     }
 
     /// A filesystem-safe slug for an identity folder name: lowercased, non-alphanumerics collapsed to
@@ -323,30 +388,58 @@ final class AgentService {
     /// one-song contract — no separate `attach_song` step for the agent to forget. Copies the new song
     /// in first, THEN clears any other audio file, so a failure never leaves audio/ empty.
     private func attachSongFromDialog(dialog: AgentDialog, result: AgentDialogResult) {
+        guard let src = result.fileURLs.first else {
+            sendDialogResponse(
+                dialog,
+                result: result,
+                agentContext: "No song was provided. Ask the user to choose an audio file."
+            )
+            return
+        }
         guard let editor, let workingRoot = editor.workingRoot,
-              let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
-              let src = result.fileURLs.first
-        else {
-            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot) else {
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Save the project before attaching a song."
+            )
             return
         }
         guard AudioProjectLayout.audioExtensions.contains(src.pathExtension.lowercased()) else {
-            send(text: "That isn't an audio file — the song must be .wav / .mp3 / .m4a / .aiff / .flac / .aac.", mentions: [])
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Choose a .wav, .mp3, .m4a, .aiff, .flac, or .aac audio file.",
+                agentContext: "The selected song isn't a supported audio file; use .wav, .mp3, .m4a, .aiff, .flac, or .aac."
+            )
             return
         }
         let audioDir = dataRoot.appendingPathComponent("audio", isDirectory: true)
         let dest = audioDir.appendingPathComponent(src.lastPathComponent)
         do {
+            if let key = editor.openWorkingCopyKey {
+                try ProjectWorkingCopy.markDirty(key: key)
+            }
             try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
             if src.standardizedFileURL != dest.standardizedFileURL {
                 // Stage next to the destination, then swap in — a failed copy never destroys an existing
                 // same-named song (copy-before-delete).
-                let staging = audioDir.appendingPathComponent(".song-\(UUID().uuidString).\(src.pathExtension)")
-                try FileManager.default.copyItem(at: src, to: staging)
-                if FileManager.default.fileExists(atPath: dest.path) {
-                    _ = try FileManager.default.replaceItemAt(dest, withItemAt: staging)
-                } else {
-                    try FileManager.default.moveItem(at: staging, to: dest)
+                let staging = audioDir.appendingPathComponent(
+                    ".song-\(UUID().uuidString).partial"
+                )
+                do {
+                    try FileManager.default.copyItem(at: src, to: staging)
+                    if FileManager.default.fileExists(atPath: dest.path) {
+                        _ = try FileManager.default.replaceItemAt(
+                            dest,
+                            withItemAt: staging
+                        )
+                    } else {
+                        try FileManager.default.moveItem(at: staging, to: dest)
+                    }
+                } catch {
+                    try? FileManager.default.removeItem(at: staging)
+                    throw error
                 }
             }
             // One-song contract: retire any OTHER audio file only after the new one is safely in place.
@@ -355,12 +448,21 @@ final class AgentService {
                 try? FileManager.default.removeItem(at: other)
             }
         } catch {
-            send(text: "Couldn't place the song in audio/: \(error.localizedDescription).", mentions: [])
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Couldn't attach the song: \(error.localizedDescription)",
+                agentContext: "The host couldn't place the song in audio/: \(error.localizedDescription)."
+            )
             return
         }
         editor.onPipelineChanged?()
         anchorSongOnTimeline(dest, editor: editor)
-        send(text: "Song placed in audio/ (\(src.lastPathComponent)). Now run run_phase(\"analysis\") to measure it.", mentions: [])
+        sendDialogResponse(
+            dialog,
+            result: result,
+            agentContext: "Song placed in audio/ (\(src.lastPathComponent)). Now run run_phase(\"analysis\") to measure it."
+        )
     }
 
     /// Put the song on the timeline the moment it arrives. It is the project's spine — every cut keys
@@ -394,26 +496,48 @@ final class AgentService {
     /// Copy loose style-reference images into the project's `import/` — a brownfield look source the
     /// production-design agent (K2) curates. No name: these are unstructured mood/style refs.
     private func attachStyleRefs(dialog: AgentDialog, result: AgentDialogResult) {
+        guard !result.fileURLs.isEmpty else {
+            sendDialogResponse(
+                dialog,
+                result: result,
+                agentContext: "No style references were provided; the user skipped them. Production design can develop the look from the brief."
+            )
+            return
+        }
         guard let editor, let workingRoot = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: workingRoot)
         else {
-            send(text: Self.chatMessage(from: dialog, result: result), mentions: [])
-            return
-        }
-        guard !result.fileURLs.isEmpty else {
-            send(text: "No style references provided — skipped. Proceed; production-design can develop the look from the brief.", mentions: [])
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Save the project before attaching style references."
+            )
             return
         }
         let dir = dataRoot.appendingPathComponent("import", isDirectory: true)
         let copied: [String]
-        do { copied = try Self.copyFilesUniquely(result.fileURLs, into: dir) }
+        do {
+            if let key = editor.openWorkingCopyKey {
+                try ProjectWorkingCopy.markDirty(key: key)
+            }
+            copied = try Self.copyFilesUniquely(result.fileURLs, into: dir)
+        }
         catch {
-            send(text: "Couldn't attach the style references: \(error.localizedDescription).", mentions: [])
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "Couldn't attach style references: \(error.localizedDescription)",
+                agentContext: "The host couldn't attach the style references: \(error.localizedDescription)."
+            )
             return
         }
         editor.onPipelineChanged?()
-        send(text: "\(copied.count) style reference\(copied.count == 1 ? "" : "s") attached in import/. "
-            + "The production-design agent (K2) curates these as the style source.", mentions: [])
+        sendDialogResponse(
+            dialog,
+            result: result,
+            agentContext: "\(copied.count) style reference\(copied.count == 1 ? "" : "s") attached in import/. "
+                + "The production-design agent (K2) curates these as the style source."
+        )
     }
 
     /// Copy files into `dir` (copy, never move), choosing a free name for each so nothing is ever
@@ -425,24 +549,32 @@ final class AgentService {
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         var used = Set((try? fm.contentsOfDirectory(atPath: dir.path)) ?? [])
         var copied: [String] = []
-        for src in urls {
-            let inPlace = dir.appendingPathComponent(src.lastPathComponent)
-            if src.standardizedFileURL == inPlace.standardizedFileURL {
-                used.insert(src.lastPathComponent)
-                copied.append(src.lastPathComponent)
-                continue
+        var created: [URL] = []
+        do {
+            for src in urls {
+                let inPlace = dir.appendingPathComponent(src.lastPathComponent)
+                if src.standardizedFileURL == inPlace.standardizedFileURL {
+                    used.insert(src.lastPathComponent)
+                    copied.append(src.lastPathComponent)
+                    continue
+                }
+                let ext = src.pathExtension
+                let base = src.deletingPathExtension().lastPathComponent
+                var name = src.lastPathComponent
+                var n = 2
+                while used.contains(name) {
+                    name = ext.isEmpty ? "\(base)-\(n)" : "\(base)-\(n).\(ext)"
+                    n += 1
+                }
+                let destination = dir.appendingPathComponent(name)
+                try fm.copyItem(at: src, to: destination)
+                used.insert(name)
+                copied.append(name)
+                created.append(destination)
             }
-            let ext = src.pathExtension
-            let base = src.deletingPathExtension().lastPathComponent
-            var name = src.lastPathComponent
-            var n = 2
-            while used.contains(name) {
-                name = ext.isEmpty ? "\(base)-\(n)" : "\(base)-\(n).\(ext)"
-                n += 1
-            }
-            used.insert(name)
-            try fm.copyItem(at: src, to: dir.appendingPathComponent(name))
-            copied.append(name)
+        } catch {
+            for url in created.reversed() { try? fm.removeItem(at: url) }
+            throw error
         }
         return copied
     }
@@ -457,24 +589,42 @@ final class AgentService {
         }
     }
 
-    /// Import a file-intake dialog's dropped/picked files as media assets, so the answer reaches the
-    /// agent as @mentioned assets it references by id (e.g. `attach_song media:`) — never a typed
-    /// path. Mirrors the composer's paperclip/drag path (`addMediaAsset` + a mention).
-    private func importDialogFiles(_ urls: [URL]) -> [AgentMention] {
-        guard let editor, !urls.isEmpty else { return [] }
+    /// Captures durable dialog-file imports and their visible failures.
+    private struct DialogFileImport {
+        var mentions: [AgentMention] = []
+        var failures: [String] = []
+
+        var failureContext: String? {
+            guard !failures.isEmpty else { return nil }
+            return "The host couldn't import: \(failures.joined(separator: "; ")). These files were not attached."
+        }
+
+        var failureNotice: String? {
+            guard !failures.isEmpty else { return nil }
+            return failures.joined(separator: "\n")
+        }
+    }
+
+    private func importDialogFiles(_ urls: [URL]) -> DialogFileImport {
+        guard let editor, !urls.isEmpty else { return DialogFileImport() }
+        var imported = DialogFileImport()
         var mentions: [AgentMention] = []
         for url in urls {
-            // A file PICKED from the library (the in-card picker) is already an asset — reuse it instead
-            // of importing a duplicate. Only a genuinely new file (drop / native picker) is imported.
+            // Reuse library picks; import only files that are not assets yet.
             let target = url.standardizedFileURL.resolvingSymlinksInPath()
             let existing = editor.mediaAssets.first {
                 $0.url.standardizedFileURL.resolvingSymlinksInPath() == target
             }
-            guard let asset = existing ?? editor.addMediaAsset(from: url) else { continue }
+            guard let asset = existing ?? editor.addMediaAsset(from: url) else {
+                let reason = editor.mediaPanelToast?.message ?? "The file couldn't be copied into the project."
+                imported.failures.append("\(url.lastPathComponent): \(reason)")
+                continue
+            }
             let displayName = Self.disambiguatedMentionName(for: asset, existing: mentions)
             mentions.append(AgentMention(displayName: displayName, mediaRef: asset.id, type: asset.type))
         }
-        return mentions
+        imported.mentions = mentions
+        return imported
     }
 
     /// Sink for a `.generationIntent` dialog's composed intent, set by the surface that owns the
@@ -482,25 +632,101 @@ final class AgentService {
     /// answer is never dropped.
     var onGenerationDialogIntent: (@MainActor (String) -> Void)?
 
-    /// The structured chat-message form of a dialog answer — labeled sections, free-text direction,
-    /// and any files the user brought in (as @mention tokens so `send` carries them as real mentions).
-    private static func chatMessage(from dialog: AgentDialog, result: AgentDialogResult,
-                                    attached: [AgentMention] = []) -> String {
-        var parts: [String] = []
+    struct DialogResponse: Equatable {
+        let agentText: String
+        let presentation: AgentUserPresentation
+    }
+
+    /// Builds separate model semantics and user-facing dialog presentation.
+    static func dialogResponse(
+        from dialog: AgentDialog,
+        result: AgentDialogResult,
+        attached: [AgentMention] = [],
+        presentedAttachmentNames: [String]? = nil,
+        userNotice: String? = nil
+    ) -> DialogResponse {
+        var selections: [AgentChoiceRecord.Selection] = []
+        var agentLines = ["The user submitted the \(dialog.title) dialog."]
         for section in dialog.sections {
-            let picked = result.values(section.id)  // includes the section's "Other…" text
-            if !picked.isEmpty { parts.append("\(section.label): \(picked.joined(separator: ", "))") }
+            var semanticValues = result.labels(section.id)
+            var presentedValues = semanticValues.map { section.transcriptValue(for: $0) }
+            if let custom = result.customValues[section.id]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !custom.isEmpty {
+                semanticValues.append(custom)
+                presentedValues.append(custom)
+            }
             if case .toggle = section.kind {
-                parts.append("\(section.label): \((result.toggles[section.id] ?? false) ? "yes" : "no")")
+                semanticValues = [(result.toggles[section.id] ?? false) ? "Yes" : "No"]
+                presentedValues = semanticValues
+            }
+            if !semanticValues.isEmpty {
+                selections.append(.init(label: section.shortLabel, values: presentedValues))
+                agentLines.append("\(section.label): \(semanticValues.joined(separator: ", "))")
             }
         }
-        var line = "Dialog \u{201C}\(dialog.title)\u{201D} \u{2014} " + (parts.isEmpty ? "confirmed" : parts.joined(separator: "; "))
-        if !result.direction.isEmpty { line += ". Direction: \(result.direction)" }
-        if !attached.isEmpty {
-            let tokens = attached.map { "@\($0.displayName)" }.joined(separator: " ")
-            line += ". Attached \(attached.count == 1 ? "file" : "files"): \(tokens)"
+        let direction = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !direction.isEmpty { agentLines.append("Direction: \(direction)") }
+        let attachmentNames = presentedAttachmentNames ?? (attached.isEmpty
+            ? result.fileURLs.map(\.lastPathComponent)
+            : attached.map(\.displayName))
+        if !attachmentNames.isEmpty {
+            let values = attached.isEmpty
+                ? attachmentNames.joined(separator: ", ")
+                : attached.map { "@\($0.displayName)" }.joined(separator: " ")
+            agentLines.append("Attached \(attachmentNames.count == 1 ? "file" : "files"): \(values)")
         }
-        return line
+        let confirmed = selections.isEmpty && attachmentNames.isEmpty && result.fileURLs.isEmpty
+        let needsRecord = !selections.isEmpty || !attachmentNames.isEmpty || (direction.isEmpty && confirmed)
+        let record = needsRecord ? AgentChoiceRecord(
+            selections: selections,
+            attachmentNames: attachmentNames,
+            confirmed: confirmed
+        ) : nil
+        return DialogResponse(
+            agentText: agentLines.joined(separator: "\n"),
+            presentation: AgentUserPresentation(
+                choiceRecord: record,
+                typedText: direction.isEmpty ? nil : direction,
+                notice: userNotice
+            )
+        )
+    }
+
+    private func sendDialogResponse(
+        _ dialog: AgentDialog,
+        result: AgentDialogResult,
+        attached: [AgentMention] = [],
+        presentedAttachmentNames: [String]? = nil,
+        userNotice: String? = nil,
+        agentContext: String? = nil
+    ) {
+        let response = Self.dialogResponse(
+            from: dialog,
+            result: result,
+            attached: attached,
+            presentedAttachmentNames: presentedAttachmentNames,
+            userNotice: userNotice
+        )
+        let text = [response.agentText, agentContext].compactMap { value in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }.joined(separator: "\n\nHost result: ")
+        send(text: text, mentions: attached, presentation: response.presentation)
+    }
+
+    private func sendDialogFailure(
+        _ dialog: AgentDialog,
+        result: AgentDialogResult,
+        notice: String,
+        agentContext: String? = nil
+    ) {
+        sendDialogResponse(
+            dialog,
+            result: result,
+            presentedAttachmentNames: [],
+            userNotice: notice,
+            agentContext: agentContext ?? "The host couldn't complete the requested file attachment."
+        )
     }
 
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
@@ -517,7 +743,11 @@ final class AgentService {
         let dialog = pendingDialog
         pendingDialog = nil
         if let dialog, dialog.purpose == .chatClarification {
-            send(text: "Dismissed the \u{201C}\(dialog.title)\u{201D} dialog without answering — ask in prose or move on.", mentions: [])
+            send(
+                text: "The user dismissed the \u{201C}\(dialog.title)\u{201D} dialog without answering. Ask in prose or move on.",
+                mentions: [],
+                hidden: true
+            )
         }
     }
 
@@ -562,34 +792,107 @@ final class AgentService {
 
     // MARK: - Gate approval (HAX G11 — a phase gate is the user's decision)
 
-    /// The ONE pending gate confirmation surfaced in the composer dock. Set while an agent-initiated
-    /// approve_gate / set_gate_state waits for the user to approve; `AgentPanelView` renders a
-    /// `GateApprovalCard` above the input, exactly where the spend card and dialog live (never a modal).
+    /// The one gate decision currently waiting in the composer.
     private(set) var pendingGateApproval: GateApproval?
+    private(set) var gateApprovalError: String?
 
     @ObservationIgnored
-    private var gateContinuation: CheckedContinuation<GateDecision, Never>?
+    private var pendingGateFollowUp: GateFollowUp?
 
-    /// Suspend the agent's gate tool-call until the user taps Approve/Not yet. This is what makes gate
-    /// approval the USER's decision and not agent-self-asserted: the continuation resolves ONLY from
-    /// `resolveGate`, which the card's buttons call. A prior pending approval (should not happen — one
-    /// tool call at a time) is declined so no continuation leaks.
-    func requestGateApproval(_ approval: GateApproval) async -> GateDecision {
-        if gateContinuation != nil { resolveGate(.declined) }
+    private struct GateFollowUp {
+        let sessionId: UUID?
+        let text: String
+    }
+
+    /// Keeps retries idempotent while one approval card is open.
+    func requestGateApproval(_ approval: GateApproval) -> GateApprovalRequest {
+        let scoped = approval.scoped(to: isStreaming ? currentSessionId : nil)
+        if let pending = pendingGateApproval {
+            return GateApprovalRequest(
+                approval: pending,
+                isNew: false,
+                matchesRequestedApproval: pending.matchesRequest(scoped)
+            )
+        }
         editor?.agentPanelVisible = true
-        return await withCheckedContinuation { continuation in
-            gateContinuation = continuation
-            pendingGateApproval = approval
+        gateApprovalError = nil
+        pendingGateApproval = scoped
+        return GateApprovalRequest(approval: scoped, isNew: true, matchesRequestedApproval: true)
+    }
+
+    /// Applies the decision locally and resumes its originating in-app turn when possible.
+    @discardableResult
+    func resolveGate(_ decision: GateDecision) -> ToolResult? {
+        guard let approval = pendingGateApproval else { return nil }
+        switch decision {
+        case .declined:
+            pendingGateApproval = nil
+            gateApprovalError = nil
+            let message = "The user chose Not yet for \(approval.phaseLabel). Keep working on this phase. "
+                + "Do not advance or claim the gate was approved."
+            enqueueGateFollowUp(message, sessionId: approval.sessionId)
+            return .ok("The user did not approve \(approval.phaseLabel).")
+        case .approved:
+            guard let toolExecutor else {
+                let message = "The gate writer is unavailable. The approval request remains open."
+                gateApprovalError = message
+                return .error(message)
+            }
+            do {
+                let payload = try toolExecutor.commitGateApproval(approval)
+                pendingGateApproval = nil
+                gateApprovalError = nil
+                enqueueGateFollowUp(
+                    "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
+                        + "Continue from the updated project state; do not request this approval again.",
+                    sessionId: approval.sessionId
+                )
+                return .ok(payload)
+            } catch let error as ToolError {
+                return recordGateApprovalFailure(error.message, approval: approval)
+            } catch {
+                return recordGateApprovalFailure(error.localizedDescription, approval: approval)
+            }
         }
     }
 
-    /// Resolve the pending gate confirmation (from the card's buttons, or teardown). Clears the card
-    /// and resumes the suspended tool call exactly once.
-    func resolveGate(_ decision: GateDecision) {
+    private func recordGateApprovalFailure(_ reason: String, approval: GateApproval) -> ToolResult {
+        let message = "Couldn't approve \(approval.phaseLabel): \(reason)"
+        gateApprovalError = message
+        enqueueGateFollowUp(
+            "The user approved \(approval.phaseLabel), but the host could not write the gate: \(reason) "
+                + "The approval card remains open. Address the stated cause without claiming approval, "
+                + "inventing a support team, or asking the user to restart the app.",
+            sessionId: approval.sessionId
+        )
+        return .error(message)
+    }
+
+    private func enqueueGateFollowUp(_ text: String, sessionId: UUID?) {
+        guard let sessionId else { return }
+        pendingGateFollowUp = GateFollowUp(sessionId: sessionId, text: text)
+        Task { @MainActor [weak self] in self?.flushPendingGateFollowUp() }
+    }
+
+    private func flushPendingGateFollowUp() {
+        guard !isStreaming, let followUp = pendingGateFollowUp else { return }
+        if let sessionId = followUp.sessionId {
+            guard sessions.contains(where: { $0.id == sessionId }) else {
+                pendingGateFollowUp = nil
+                return
+            }
+            if sessionId != currentSessionId {
+                selectSession(sessionId)
+            }
+        }
+        pendingGateFollowUp = nil
+        send(text: followUp.text, mentions: [], hidden: true)
+    }
+
+    private func abandonGateApproval() {
         pendingGateApproval = nil
-        guard let continuation = gateContinuation else { return }
-        gateContinuation = nil
-        continuation.resume(returning: decision)
+        gateApprovalError = nil
+        pendingGateFollowUp = nil
     }
 
     private static let clipMentionLabelMaxLength = 24
@@ -744,6 +1047,7 @@ final class AgentService {
     func loadSessions(from projectURL: URL?) {
         // Opening a project tears down any runtime from the previous one: its `claude` process has the
         // OLD working directory, so reusing it would run the new project's turns against the wrong folder.
+        abandonGateApproval()
         currentTask?.cancel()
         currentTask = nil
         _claudeRuntime?.stop()
@@ -772,7 +1076,6 @@ final class AgentService {
     func newChat() {
         currentTask?.cancel()
         resolveSpend(.declined)
-        resolveGate(.declined)
         // The runtime process IS a single conversation kept alive for the whole session — a fresh chat
         // must therefore START a fresh process, or it would silently continue the previous conversation.
         _claudeRuntime?.stop()
@@ -802,7 +1105,6 @@ final class AgentService {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
         currentTask?.cancel()
         resolveSpend(.declined)
-        resolveGate(.declined)
         syncMessagesIntoCurrentSession()
         if !sessions[idx].isOpen {
             sessions[idx].isOpen = true
@@ -827,7 +1129,6 @@ final class AgentService {
             // THIS session — otherwise the still-running task appends into the next tab's messages.
             currentTask?.cancel()
             resolveSpend(.declined)
-            resolveGate(.declined)
             isStreaming = false
             syncMessagesIntoCurrentSession()
             if let next = sessions.first(where: { $0.isOpen }) {
@@ -849,7 +1150,6 @@ final class AgentService {
         if deletingActive {
             currentTask?.cancel()
             resolveSpend(.declined)     // the deleted chat's suspended card/continuation must not carry over
-            resolveGate(.declined)
             currentSessionId = sessions.first(where: { $0.isOpen })?.id
             messages = currentSessionId
                 .flatMap { id in sessions.first { $0.id == id }?.messages }
@@ -864,12 +1164,18 @@ final class AgentService {
 
     /// `hidden` seeds the agent's first turn without a visible user bubble — for kickoffs the user
     /// never typed (Start production, a pack starter). The model sees it; the transcript does not.
-    func send(text: String, mentions: [AgentMention], hidden: Bool = false) {
+    func send(
+        text: String,
+        mentions: [AgentMention],
+        hidden: Bool = false,
+        presentation: AgentUserPresentation? = nil
+    ) {
         if claudeRuntimeEnabled {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
+            guard prepareWorkingCopyForTurn() else { return }
             streamError = nil
-            sendViaClaudeRuntime(trimmed, mentions: mentions, hidden: hidden)
+            sendViaClaudeRuntime(trimmed, mentions: mentions, hidden: hidden, presentation: presentation)
             return
         }
         guard canStream else {
@@ -878,6 +1184,7 @@ final class AgentService {
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        guard prepareWorkingCopyForTurn() else { return }
         let referencedMentions = AgentMentionContext.referencedMentions(mentions, in: trimmed)
         let mentionHint = referencedMentions.isEmpty
             ? nil
@@ -888,10 +1195,28 @@ final class AgentService {
         resolveOrphanToolUses()
         messages.append(AgentMessage(
             role: .user, blocks: [.text(trimmed)],
-            mentions: referencedMentions, contextHint: contextHint, hidden: hidden
+            mentions: referencedMentions, contextHint: contextHint, hidden: hidden,
+            userPresentation: presentation
         ))
+        checkpointCurrentSession()
         streamError = nil
         kickOffStream()
+    }
+
+    private func prepareWorkingCopyForTurn() -> Bool {
+        guard let key = editor?.openWorkingCopyKey else { return true }
+        do {
+            try ProjectWorkingCopy.markDirty(key: key)
+            return true
+        } catch {
+            streamError = .upstream(error.localizedDescription)
+            return false
+        }
+    }
+
+    private func checkpointCurrentSession() {
+        syncMessagesIntoCurrentSession()
+        onSessionsChanged?()
     }
 
     /// Grounds scoped prose ("make this warmer") in the user's current selection — the app tells the
@@ -908,11 +1233,8 @@ final class AgentService {
     }
 
     func cancel() {
-        // A render awaiting spend approval, or a phase gate awaiting the user's confirmation, is part
-        // of this turn — stopping declines both (for the MCP/runtime backend the suspended tool call
-        // lives outside this task, so it must be resolved here or it would hang).
+        // Gate approval remains open because its tool call has already returned.
         resolveSpend(.declined)
-        resolveGate(.declined)
         if claudeRuntimeEnabled {
             currentTask?.cancel()          // a pending attachment encode
             currentTask = nil
@@ -952,7 +1274,7 @@ final class AgentService {
             resumeSessionId: chat?.claudeSessionId,
             seedMessages: messages,
             resolveWorkingDirectory: { [weak self] in
-                Self.configuredWorkingDirectory(projectURL: self?.editor?.projectURL)
+                Self.configuredWorkingDirectory(projectURL: self?.editor?.workingRoot)
             },
             onSessionId: { [weak self] sid in
                 self?.storeClaudeSessionId(sid, for: boundSessionId)
@@ -991,7 +1313,12 @@ final class AgentService {
     /// being dropped: referenced image mentions are inlined as base64 image blocks, and the mention JSON
     /// + each asset's on-disk path go into the app-context so the agent can Read / inspect_media a
     /// non-image too.
-    private func sendViaClaudeRuntime(_ trimmed: String, mentions: [AgentMention], hidden: Bool = false) {
+    private func sendViaClaudeRuntime(
+        _ trimmed: String,
+        mentions: [AgentMention],
+        hidden: Bool = false,
+        presentation: AgentUserPresentation? = nil
+    ) {
         // One turn at a time per chat: the composer disables send while streaming, but programmatic
         // callers (kickoffs, pack starters) don't — without this a second send could jump ahead of a
         // first turn still encoding its attachments, delivering the two out of order. Marking busy NOW
@@ -1003,7 +1330,8 @@ final class AgentService {
         guard !referenced.isEmpty else {
             // No attachments — send synchronously (the selection/plugin context only).
             let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
-            claudeRuntime.send(text: trimmed, context: context, hidden: hidden)
+            claudeRuntime.send(text: trimmed, context: context, hidden: hidden, presentation: presentation)
+            checkpointCurrentSession()
             return
         }
         let selection = Self.selectionHint(editor: editor)
@@ -1023,7 +1351,14 @@ final class AgentService {
             if let pathNote { parts.append(pathNote) }
             if let note = AgentMentionContext.inlineNote(for: inlined) { parts.append(note) }
             let context = "<app-context>\(parts.joined(separator: " "))</app-context>"
-            self.claudeRuntime.send(text: trimmed, context: context, imageBlocks: inlined.blocks, hidden: hidden)
+            self.claudeRuntime.send(
+                text: trimmed,
+                context: context,
+                imageBlocks: inlined.blocks,
+                hidden: hidden,
+                presentation: presentation
+            )
+            self.checkpointCurrentSession()
         }
     }
 
@@ -1057,8 +1392,6 @@ final class AgentService {
     }
 
     private static func configuredWorkingDirectory(projectURL: URL?) -> URL? {
-        // The embedded runtime's cwd is the open project package — never a global override, which
-        // used to redirect every project's engine data to one shared folder.
         projectURL
     }
 
@@ -1158,14 +1491,22 @@ final class AgentService {
 
     private func runPendingToolUses(assistantID: UUID) async {
         guard let assistantIndex = assistantMessageIndex(id: assistantID) else { return }
-        guard let executor = toolExecutor else {
-            messages.append(AgentMessage(role: .user, blocks: [.text("Tool executor unavailable.")]))
-            return
-        }
-
         let toolUses: [(id: String, name: String, input: String)] = messages[assistantIndex].blocks.compactMap {
             if case let .toolUse(id, name, input) = $0 { return (id, name, input) }
             return nil
+        }
+        guard let executor = toolExecutor else {
+            messages.append(AgentMessage(
+                role: .user,
+                blocks: toolUses.map {
+                    .toolResult(
+                        toolUseId: $0.id,
+                        content: [.text("Tool executor unavailable.")],
+                        isError: true
+                    )
+                }
+            ))
+            return
         }
         let alreadyResolved = resolvedToolUseIds(afterAssistantAt: assistantIndex)
 
@@ -1245,7 +1586,10 @@ final class AgentService {
         // Title from the first message the user actually typed — never a hidden kickoff (that would
         // put the behind-the-scenes prompt on the tab/history).
         if sessions[idx].title == "New chat",
-           let first = messages.first(where: { $0.role == .user && !$0.hidden }) {
+           let first = messages.first(where: {
+               $0.role == .user && !$0.hidden
+                   && ($0.userPresentation == nil || $0.userPresentation?.typedText?.isEmpty == false)
+           }) {
             sessions[idx].title = Self.title(from: first)
         }
     }
@@ -1331,6 +1675,10 @@ final class AgentService {
     }
 
     private static func title(from message: AgentMessage) -> String {
+        if let typed = message.userPresentation?.typedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !typed.isEmpty {
+            return String(typed.prefix(40))
+        }
         for block in message.blocks {
             if case let .text(s) = block {
                 let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1352,17 +1700,30 @@ struct AgentMessage: Identifiable, Codable {
     /// but NOT rendered in the transcript (showing it would be a fake, uneditable user message —
     /// a look into the kitchen). Default false; decodes as false for pre-existing sessions.
     var hidden: Bool = false
+    /// Optional rendering for a structured user action whose blocks remain model-facing.
+    var userPresentation: AgentUserPresentation?
 
-    init(id: UUID = UUID(), role: Role, blocks: [AgentContentBlock], mentions: [AgentMention] = [], contextHint: String? = nil, hidden: Bool = false) {
+    init(
+        id: UUID = UUID(),
+        role: Role,
+        blocks: [AgentContentBlock],
+        mentions: [AgentMention] = [],
+        contextHint: String? = nil,
+        hidden: Bool = false,
+        userPresentation: AgentUserPresentation? = nil
+    ) {
         self.id = id
         self.role = role
         self.blocks = blocks
         self.mentions = mentions
         self.contextHint = contextHint
         self.hidden = hidden
+        self.userPresentation = userPresentation
     }
 
-    private enum CodingKeys: String, CodingKey { case id, role, blocks, mentions, contextHint, hidden }
+    private enum CodingKeys: String, CodingKey {
+        case id, role, blocks, mentions, contextHint, hidden, userPresentation
+    }
 
     // Custom decode so `hidden` (added later) is optional: synthesized Codable would REQUIRE the key
     // and fail to decode pre-existing saved sessions, silently losing their chat history.
@@ -1374,6 +1735,7 @@ struct AgentMessage: Identifiable, Codable {
         mentions = try c.decodeIfPresent([AgentMention].self, forKey: .mentions) ?? []
         contextHint = try c.decodeIfPresent(String.self, forKey: .contextHint)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        userPresentation = try c.decodeIfPresent(AgentUserPresentation.self, forKey: .userPresentation)
     }
 }
 

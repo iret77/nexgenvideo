@@ -102,6 +102,27 @@ struct BudgetStopTests {
         #expect(next?["shot_id"] as? String == "s001")
     }
 
+    @Test("a corrupt brief fails closed before a render is handed out")
+    func corruptBriefCannotDisableStop() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try shotlist(), to: dataRoot)
+        let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+        try FileManager.default.createDirectory(
+            at: briefURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("budget_stop_eur: [broken".utf8).write(to: briefURL)
+
+        let result = await h.runRaw("next_render_shot", args: [
+            "project_dir": dataRoot.path,
+            "phase": "final",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("brief.yaml"))
+    }
+
     /// Prior spend counts: the limit is about the PROJECT, not one render.
     @Test("already-spent EUR counts toward the stop")
     func priorSpendCounts() async throws {
@@ -120,6 +141,70 @@ struct BudgetStopTests {
         ])
         #expect(raw.isError, "prior spend must count toward the project limit")
         #expect(ToolHarness.textOf(raw).contains("already spent"))
+    }
+
+    @Test("already-spent EUR in the same phase counts toward the stop")
+    func samePhaseSpendCounts() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try shotlist(), to: dataRoot)
+        try writeBrief(stop: 12, to: dataRoot)
+        _ = try await h.runOK("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "final",
+            "shot_id": "earlier-shot",
+            "output": "earlier.mp4",
+            "cost_eur": 11.5,
+        ])
+
+        let result = await h.runRaw("next_render_shot", args: [
+            "project_dir": dataRoot.path,
+            "phase": "final",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("already spent"))
+    }
+
+    @Test("an unreadable prior cost manifest fails closed")
+    func corruptPriorSpendCannotBeSkipped() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try shotlist(), to: dataRoot)
+        try writeBrief(stop: 10_000, to: dataRoot)
+        let manifestURL = PipelineLayout.url(
+            PipelineLayout.renderManifestFile(phase: "preview"),
+            in: dataRoot
+        )
+        try FileManager.default.createDirectory(
+            at: manifestURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{\"entries\":".utf8).write(to: manifestURL)
+
+        let result = await h.runRaw("next_render_shot", args: [
+            "project_dir": dataRoot.path,
+            "phase": "final",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("Couldn't verify project spend"))
+    }
+
+    @Test("an unpriced render phase cannot bypass an explicit stop")
+    func unpricedPhaseFailsClosed() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try shotlist(), to: dataRoot)
+        try writeBrief(stop: 10_000, to: dataRoot)
+
+        let result = await h.runRaw("next_render_shot", args: [
+            "project_dir": dataRoot.path,
+            "phase": "frames",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("no pricing model"))
     }
 
     /// A stop of zero or less is never what someone means — they mean "no stop", expressed by

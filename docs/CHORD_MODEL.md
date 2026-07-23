@@ -102,10 +102,9 @@ The export + baked front-end were run and validated against BTC's own reference 
 
 This confirms the baked-CQT design is faithful to BTC before any Swift on-device run.
 
-### Remaining (single device/model step)
+### Remaining (single on-device validation step)
 
-Run the export script on a machine with torch+nnAudio+librosa, confirm the parity check + `example.mp3`
-eval, host `btc_chord.onnx` + `btc_chord_meta.json`, and set their URLs in `ChordRecognizer.swift`
-(currently a placeholder — until hosted, the provider cleanly downloads-fail → no chords, pipeline
-unaffected). Then validate on a real track from the built app, the same on-device loop
-`BeatThisDetector` went through — CI never runs the ONNX model.
+`btc_chord.onnx` and `btc_chord_meta.json` are published on the GitHub release
+`chord-model-v1`; `ChordRecognizer.swift` pins that release and both checksums. Validate the
+downloaded model on a real track in the signed app, using the same on-device loop
+`BeatThisDetector` went through — CI does not execute the ONNX model.

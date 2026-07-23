@@ -21,9 +21,7 @@ struct PatternProviderTests {
             lyricsIntegration: .metaphorical)
     }
 
-    /// Only the pilot ships a fit_profile today — and that is enough to answer the question. The
-    /// seam ranks it and states what the ranking covers, so the agent can't pass a 1-of-23 field
-    /// off as the whole library.
+    /// Coverage keeps a partial ranking from being presented as the whole library.
     @Test("recommend ranks the scored pattern and reports what it covers")
     func recommendRanksWhatIsScored() throws {
         let briefJSON = try JSONEncoder().encode(brief())
@@ -38,9 +36,7 @@ struct PatternProviderTests {
         #expect(!results.isEmpty, "the scored pattern is ranked rather than withheld")
         #expect(results.contains { $0["pattern_id"] as? String == "wong-kar-wai-doyle-neon-dream" })
 
-        // Coverage is a RELATIONSHIP, never a fixed count: the library grows over time (1, 5, 22,
-        // 145 — the code ranks whatever is authored). Pinning a number here would turn every new
-        // pattern into a red test.
+        // Coverage is a relationship, never a fixed count; the code ranks whatever is authored.
         let coverage = try #require(object["library_coverage"] as? [String: Any])
         let scored = try #require(coverage["scored"] as? [String])
         let unscored = try #require(coverage["unscored"] as? [String])

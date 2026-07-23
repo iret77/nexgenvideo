@@ -162,8 +162,8 @@ NexGen bindet **Generator-Plattformen direkt ein** — der User bringt die Zugä
 Key/Driver**: NexGens eingebettete Claude-Runtime hängt sie als **zusätzlichen MCP-Server** in die
 `mcpServers`-Config (neben NexGens Timeline-MCP), Claude orchestriert sie direkt.
 
-Fertige Clips/Audio landen in beiden Fällen per `import_media` (referenziert in place, kostenlos) +
-`add_clips` frame-/beat-genau auf der NexGen-Timeline.
+Fertige Clips/Audio landen in beiden Fällen per `import_media` als Kopie im selbstenthaltenen
+Projekt + `add_clips` frame-/beat-genau auf der NexGen-Timeline.
 
 ### 5.1 ACE Studio 2 (MCP-native Vertonung — Stimme, Instrumente, SFX, Video-Scoring)
 
@@ -249,8 +249,9 @@ Claude steuert die eingebundenen Modelle und orchestriert das Projekt — **nach
 Die beiden sind **sich gegenseitig ausschließende** Backends desselben In-App-Agenten (ist die
 Runtime an, wird der API-Key-Pfad übersprungen). **Keine Claude-Desktop-App nötig.** Die
 eingebettete Runtime liegt unter `Sources/NexGenVideo/Agent/Runtime/` (Process, Event-Mapper,
-Locator, Launch). Sie **lädt kein Python** — Engine + Format-Packs sind nativ in den App-Binary
-kompiliert und über die `nexgen`-MCP-Tools erreichbar. Sie spricht NexGens MCP
+Locator, Launch). Sie **lädt kein Python** — die Engine ist nativ in die App eingebunden,
+Format-Packs werden als signierte `.ngvpack`-Bundles geladen, und beide sind über die
+`nexgen`-MCP-Tools erreichbar. Sie spricht NexGens MCP
 (`127.0.0.1:19789/mcp`) hermetisch (`--strict-mcp-config`), Auth über Abo (`--setting-sources
 project,local`, `--permission-mode bypassPermissions` headless). `--plugin-dir` bleibt nur für
 **externe** Claude-Code-Plugins (Dev-Override); erstklassige Format-Packs brauchen es nicht.

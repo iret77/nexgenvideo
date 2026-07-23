@@ -3,10 +3,7 @@ import Testing
 @testable import MusicvideoPlugin
 @testable import NexGenEngine
 
-/// The Wong-Kar-Wai pilot is the roundtrip + scorer fixture: it exercises the
-/// full machinery (policy load, profile decode/validate, deterministic scoring,
-/// adaptations, hard gates, fail-closed gate, Brief→project assembly) while the
-/// other 22 profiles are authored externally.
+/// Exercises the complete scorer contract with one authored profile from a partial library.
 @Suite("Pattern fit pilot", .serialized)
 struct PatternFitPilotTests {
     private let pilotId = "wong-kar-wai-doyle-neon-dream"
@@ -60,13 +57,7 @@ struct PatternFitPilotTests {
 
     // MARK: Library coverage
 
-    /// A pattern is OPTIONAL, so an unauthored one is not a defect — it is simply not a candidate.
-    /// Ranking the pilot answers the only question that matters ("does it fit?") just as well with
-    /// 1 profile as with 23; withholding it would deny a working answer over a pattern nobody has
-    /// to take.
-    /// No count is asserted on purpose. Nobody says the library ends at 23 — it grows as profiles
-    /// get authored, and the code simply ranks whatever is there. A pinned number would make every
-    /// new pattern a failing test.
+    /// Valid authored profiles rank without asserting a library size.
     @Test("whatever carries a valid profile is rankable; the rest are simply not candidates")
     func coverageRanksWhatExists() throws {
         let (library, coverage) = try PatternFitLibrary.loadRecommendableLibrary()
@@ -76,6 +67,25 @@ struct PatternFitPilotTests {
         #expect(coverage.invalid.isEmpty, "a present-but-broken profile would be a real defect")
         #expect(coverage.total == coverage.scored.count + coverage.unscored.count)
         #expect(coverage.total == (try Patterns.loadAllPatterns().count), "coverage spans the library")
+    }
+
+    @Test("an undecodable fit profile is reported without invalidating neighboring patterns")
+    func undecodableProfileStaysLocal() throws {
+        let url = try #require(PackKnowledge.patternLibraryURLs().first {
+            $0.deletingPathExtension().lastPathComponent == pilotId
+        })
+        let valid = try String(contentsOf: url, encoding: .utf8)
+        let broken = valid.replacingOccurrences(
+            of: "  schema_version: pattern-fit/1.0",
+            with: "  schema_version: [broken]"
+        )
+        #expect(broken != valid)
+
+        let record = try PatternFitLibrary.recommendationRecord(yaml: broken, fileName: url.lastPathComponent)
+
+        #expect(record.id == pilotId)
+        #expect(record.profile == nil)
+        #expect(record.profileDecodeIssue?.contains("fit_profile decode failed") == true)
     }
 
     // MARK: Deterministic scoring

@@ -1,37 +1,32 @@
 import Foundation
 import NexGenEngine
 
-/// The live editing copy of a project's pipeline data root, kept in the Recovery store (Application
-/// Support) — NOT inside the `.ngv` package. The engine and agent write here during a session; ⌘S
-/// syncs it back into the package; a clean close discards it. If the app crashes, the working copy
-/// survives, so the next open can offer to restore the unsaved work (ACE Studio model).
-/// See `docs/PROJECT_STORAGE.md`.
+/// The complete live editing copy of a project. The package is read-only while it is open; every
+/// editor, media, chat, and pipeline write lands here until Save replaces the package.
 enum ProjectWorkingCopy {
     private static let pipelineDir = DataRootResolver.pipelineDirname   // "pipeline"
-    /// Written only after a materialize fully completes. Its presence proves the working copy is a
-    /// COMPLETE mirror — a partial/interrupted copy (or one from an older direct-copy build) lacks it
-    /// and is never treated as recoverable, so a partial tree can't be persisted over the package.
     private static let completeSentinel = ".ngv-materialized"
+    private static let dirtyMarker = ".ngv-dirty"
+    private static let internalNames = Set([completeSentinel, dirtyMarker])
 
-    /// The working-copy home for a project; its `pipeline/` data root lives directly under it. `key` is
-    /// the project's `ProjectIdentity.key(for:)` — a package UUID, not the file path.
     static func home(_ key: String) -> URL { AppPaths.workingCopy(projectId: key) }
 
     struct OpenResult: Sendable { let home: URL; let recoveredUnsaved: Bool }
 
-    /// Prepare the working copy for an opening project. If one already exists, the previous session
-    /// ended without a clean close (a crash) — keep it untouched and flag it for a restore prompt.
-    /// Otherwise materialize a fresh copy from the package's stored pipeline.
+    struct Checkpoint: Sendable {
+        let timeline: Data
+        let manifest: Data?
+        let generationLog: Data?
+        let thumbnail: Data?
+        let chatSessionFiles: [(name: String, data: Data)]
+    }
+
     @discardableResult
     static func open(key: String, packageURL: URL?) throws -> OpenResult {
-        // Recovered only if the surviving working copy fully materialized (completion sentinel) AND is
-        // a valid data root (has project.yaml). A partial/interrupted copy is rebuilt from the package,
-        // never persisted over it.
         let fm = FileManager.default
-        let sentinel = home(key).appendingPathComponent(completeSentinel)
-        let marker = home(key).appendingPathComponent(pipelineDir)
-            .appendingPathComponent(DataRootResolver.projectMarker)
-        if fm.fileExists(atPath: sentinel.path), fm.fileExists(atPath: marker.path) {
+        let existing = home(key)
+        if isComplete(existing, fm: fm),
+           fm.fileExists(atPath: existing.appendingPathComponent(dirtyMarker).path) {
             migrateSchemas(in: home(key))
             return OpenResult(home: home(key), recoveredUnsaved: true)
         }
@@ -40,10 +35,6 @@ enum ProjectWorkingCopy {
         return OpenResult(home: materialized, recoveredUnsaved: false)
     }
 
-    /// Lift the project's artifacts to the current schema — the storage model's auto-migrate mandate
-    /// (#202). Deliberately on the WORKING COPY: the package stays untouched until ⌘S, so a migration
-    /// the user never saves is simply discarded with the copy, and a recovered copy gets migrated too.
-    /// Never blocks opening — an artifact the migrator can't lift is rejected loudly by its own reader.
     private static func migrateSchemas(in home: URL) {
         let dataRoot = home.appendingPathComponent(pipelineDir)
         guard FileManager.default.fileExists(
@@ -58,122 +49,132 @@ enum ProjectWorkingCopy {
         }
     }
 
-    /// Throw away any working copy and re-materialize from the package (the "discard unsaved" path).
     @discardableResult
     static func rematerialize(key: String, packageURL: URL?) throws -> URL {
-        discard(key: key)
         return try materialize(key: key, packageURL: packageURL)
     }
 
-    /// Copy the package's stored data root (current `pipeline/`, or legacy `_studio/`) into a fresh
-    /// working copy. A project with no pipeline yet yields an empty working-copy home.
     @discardableResult
     static func materialize(key: String, packageURL: URL?) throws -> URL {
         let fm = FileManager.default
-        let dstHome = AppPaths.ensure(home(key))
-        let dstPipeline = dstHome.appendingPathComponent(pipelineDir)
-        let sentinel = dstHome.appendingPathComponent(completeSentinel)
-        // Clear the completion sentinel FIRST: while the copy is in flight the working copy is partial
-        // and must not read as recoverable if the app dies mid-materialize.
-        try? fm.removeItem(at: sentinel)
-        // Never destroy a possibly-real working copy: if an existing pipeline is a valid data root but
-        // lacks the sentinel (a legacy/interrupted copy), move it OUT of this home — a later clean-close
-        // discard removes home(key), so an in-home quarantine wouldn't survive. If it can't be moved
-        // aside, throw rather than delete it (fail-safe: never lose unsaved work).
-        let existingMarker = dstPipeline.appendingPathComponent(DataRootResolver.projectMarker)
-        if fm.fileExists(atPath: existingMarker.path) {
-            let quarantineRoot = AppPaths.ensure(
-                AppPaths.recovery.appendingPathComponent(".quarantine", isDirectory: true))
-            let quarantine = quarantineRoot.appendingPathComponent("\(key)-\(UUID().uuidString)", isDirectory: true)
-            try fm.moveItem(at: dstPipeline, to: quarantine)
-            Log.project.notice("quarantined an unsentineled working copy to \(quarantine.lastPathComponent)")
-        }
-        try? fm.removeItem(at: dstPipeline)
-        if let packageURL, let srcPipeline = packagePipeline(in: packageURL) {
-            // Copy to a staging dir, then atomic-move into place: a mid-copy failure can never leave a
-            // partial `pipeline`.
-            let staging = dstHome.appendingPathComponent(".materialize-\(UUID().uuidString)", isDirectory: true)
-            try? fm.removeItem(at: staging)
-            do {
-                try fm.copyItem(at: srcPipeline, to: staging)
-                try fm.moveItem(at: staging, to: dstPipeline)
-            } catch {
-                try? fm.removeItem(at: staging)
-                throw error
-            }
-        }
-        // Mirror the project's app metadata (`ngv.json` — active pack + id) into the working copy. The
-        // runtime resolves the ACTIVE PACK from the working copy (cockpit, gate enforcement, run_phase),
-        // so without this copy the pack never loads in-session: no pack phases, no hard gates, no analysis
-        // DSP runner — the agent is left to improvise the very analysis the gates exist to force.
-        if let packageURL {
-            let srcMeta = packageURL.appendingPathComponent(ProjectPluginSettings.filename)
-            let dstMeta = dstHome.appendingPathComponent(ProjectPluginSettings.filename)
-            try? fm.removeItem(at: dstMeta)
-            if fm.fileExists(atPath: srcMeta.path) { try? fm.copyItem(at: srcMeta, to: dstMeta) }
-        }
-        // Materialize is complete (empty home for a new project, or a full pipeline copy).
-        try? Data().write(to: sentinel)
-        return dstHome
-    }
-
-    /// Sync the working copy's `pipeline/` into the `.ngv` package at `packageURL` (atomic replace).
-    /// Also removes a legacy `_studio/` from the package so the migrated project carries only `pipeline/`.
-    static func persist(key: String, to packageURL: URL) throws {
-        let fm = FileManager.default
-        let src = home(key).appendingPathComponent(pipelineDir)
-        // A key naming no working copy at all means the caller lost track of where the session's edits
-        // live — persisting "nothing" would report a successful save that dropped the entire pipeline
-        // (bible, shotlist, analysis, renders). Fail the save instead: the data is still on disk under
-        // the real key, and a failed save keeps the last good package.
-        guard fm.fileExists(atPath: home(key).path) else {
-            throw PersistError.noWorkingCopy(key: key)
-        }
-        // The home exists but carries no pipeline yet — a project whose engine has never run. Nothing
-        // to sync, and nothing wrong.
-        guard fm.fileExists(atPath: src.path) else { return }
-        let dst = packageURL.appendingPathComponent(pipelineDir)
-        let staged = packageURL.appendingPathComponent(".pipeline.staging-\(UUID().uuidString)", isDirectory: true)
-        try? fm.removeItem(at: staged)
-        try fm.copyItem(at: src, to: staged)
+        let recovery = AppPaths.ensure(AppPaths.recovery)
+        let destination = home(key)
+        let staging = recovery.appendingPathComponent(
+            ".materialize-\(key)-\(UUID().uuidString)", isDirectory: true)
         do {
-            if fm.fileExists(atPath: dst.path) {
-                _ = try fm.replaceItemAt(dst, withItemAt: staged)
-            } else {
-                try fm.moveItem(at: staged, to: dst)
+            guard let packageURL else {
+                throw PersistError.incompletePackage(package: "Unsaved project")
             }
+            try validatePackage(packageURL, fm: fm)
+            try fm.copyItem(at: packageURL, to: staging)
+            try normalizePipelineLayout(in: staging, fm: fm)
+            try Data().write(
+                to: staging.appendingPathComponent(completeSentinel),
+                options: .atomic
+            )
+            try installWorkingCopy(staging, at: destination, key: key, fm: fm)
+            return destination
         } catch {
-            try? fm.removeItem(at: staged)
+            try? fm.removeItem(at: staging)
             throw error
         }
-        // A migrated project must not keep the pre-rename directory around.
-        let legacy = packageURL.appendingPathComponent(DataRootResolver.legacyPipelineDirname)
-        if legacy.lastPathComponent != pipelineDir { try? fm.removeItem(at: legacy) }
-        // Trust nothing: confirm the package really carries the pipeline before the save reports
-        // success. Everything above can be defeated by a replace that lands somewhere unexpected, and
-        // a save that "worked" while the package stayed empty is the failure we're closing.
-        guard fm.fileExists(atPath: dst.path) else {
-            throw PersistError.notInPackage(package: packageURL.lastPathComponent)
+    }
+
+    static func checkpoint(key: String, snapshot: Checkpoint) throws {
+        let fm = FileManager.default
+        let root = home(key)
+        guard isComplete(root, fm: fm) else {
+            throw PersistError.noWorkingCopy(key: key)
+        }
+        try markDirty(key: key)
+        try snapshot.timeline.write(
+            to: root.appendingPathComponent(Project.timelineFilename),
+            options: .atomic
+        )
+        try writeOptional(snapshot.manifest, named: Project.manifestFilename, in: root, fm: fm)
+        try writeOptional(
+            snapshot.generationLog,
+            named: Project.generationLogFilename,
+            in: root,
+            fm: fm
+        )
+        if let thumbnail = snapshot.thumbnail {
+            try thumbnail.write(
+                to: root.appendingPathComponent(Project.thumbnailFilename),
+                options: .atomic
+            )
+        }
+        try replaceChatDirectory(snapshot.chatSessionFiles, in: root, fm: fm)
+    }
+
+    static func markDirty(key: String) throws {
+        let fm = FileManager.default
+        let root = home(key)
+        guard isComplete(root, fm: fm) else {
+            throw PersistError.noWorkingCopy(key: key)
+        }
+        try Data().write(to: root.appendingPathComponent(dirtyMarker), options: .atomic)
+    }
+
+    static func markSaved(key: String) {
+        try? FileManager.default.removeItem(at: home(key).appendingPathComponent(dirtyMarker))
+    }
+
+    static func persist(key: String, to packageURL: URL, mintNewIdentity: Bool = false) throws {
+        let fm = FileManager.default
+        let source = home(key)
+        guard isComplete(source, fm: fm) else {
+            throw PersistError.noWorkingCopy(key: key)
+        }
+        let parent = packageURL.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        let staging = parent.appendingPathComponent(
+            ".\(packageURL.lastPathComponent).save-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        do {
+            try fm.copyItem(at: source, to: staging)
+            try sanitizePackageStaging(staging, fm: fm)
+            try normalizePipelineLayout(in: staging, fm: fm)
+            if mintNewIdentity {
+                let oldKey = ProjectIdentity.existingKey(for: staging)
+                try ProjectIdentity.regenerate(at: staging)
+                guard let newKey = ProjectIdentity.existingKey(for: staging),
+                      newKey != oldKey else {
+                    throw PersistError.identityNotRegenerated
+                }
+            }
+            try commitStagedPackage(staging, to: packageURL, fm: fm)
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
         }
     }
 
     enum PersistError: LocalizedError {
         case noWorkingCopy(key: String)
-        case notInPackage(package: String)
+        case incompletePackage(package: String)
+        case identityNotRegenerated
+        case symbolicLink(path: String)
 
         var errorDescription: String? {
             switch self {
             case .noWorkingCopy(let key):
-                return "Couldn't save the project's pipeline: no working copy for \(key). "
+                return "Couldn't save the project: no complete working copy for \(key). "
                     + "Your work is still on disk — quit without saving and report this."
-            case .notInPackage(let package):
-                return "Couldn't save the project's pipeline into \(package) — the package would have "
-                    + "been written without it. Your work is still in the working copy."
+            case .incompletePackage(let package):
+                return "Couldn't save \(package) because the project copy is incomplete. "
+                    + "The last saved package was left untouched."
+            case .identityNotRegenerated:
+                return "Couldn't create an independent identity for the project copy. "
+                    + "The original project was left untouched."
+            case .symbolicLink(let path):
+                return "The project contains a symbolic link at \(path). "
+                    + "NexGenVideo projects must be self-contained."
             }
         }
     }
 
-    /// Remove the working copy — a clean close, so no crash-recovery prompt next time.
     static func discard(key: String) {
         try? FileManager.default.removeItem(at: home(key))
     }
@@ -229,15 +230,197 @@ enum ProjectWorkingCopy {
         for item in items where idle(item, now: now) > graceInterval { try? fm.removeItem(at: item) }
     }
 
-    /// The package's stored data root, current or legacy, if present.
-    private static func packagePipeline(in packageURL: URL) -> URL? {
-        let fm = FileManager.default
-        for name in [pipelineDir, DataRootResolver.legacyPipelineDirname] {
-            let candidate = packageURL.appendingPathComponent(name)
-            if fm.fileExists(atPath: candidate.appendingPathComponent(DataRootResolver.projectMarker).path) {
-                return candidate
+    private static func isComplete(_ root: URL, fm: FileManager) -> Bool {
+        fm.fileExists(atPath: root.appendingPathComponent(completeSentinel).path)
+            && fm.fileExists(atPath: root.appendingPathComponent(Project.timelineFilename).path)
+    }
+
+    private static func validatePackage(_ package: URL, fm: FileManager) throws {
+        var isDirectory = ObjCBool(false)
+        guard fm.fileExists(atPath: package.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              fm.fileExists(
+                atPath: package.appendingPathComponent(Project.timelineFilename).path
+        ) else {
+            throw PersistError.incompletePackage(package: package.lastPathComponent)
+        }
+        try validateNoSymbolicLinks(in: package, fm: fm)
+    }
+
+    static func validateForOpen(_ package: URL) throws {
+        try validatePackage(package, fm: .default)
+    }
+
+    private static func validateNoSymbolicLinks(
+        in root: URL,
+        fm: FileManager
+    ) throws {
+        let keys: [URLResourceKey] = [.isSymbolicLinkKey]
+        guard let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: keys,
+            options: []
+        ) else {
+            throw PersistError.incompletePackage(package: root.lastPathComponent)
+        }
+        for case let item as URL in enumerator {
+            if try item.resourceValues(forKeys: Set(keys)).isSymbolicLink == true {
+                throw PersistError.symbolicLink(
+                    path: item.path.replacingOccurrences(
+                        of: root.path + "/",
+                        with: ""
+                    )
+                )
             }
         }
-        return nil
+    }
+
+    private static func normalizePipelineLayout(in root: URL, fm: FileManager) throws {
+        let legacy = root.appendingPathComponent(
+            DataRootResolver.legacyPipelineDirname,
+            isDirectory: true
+        )
+        let current = root.appendingPathComponent(pipelineDir, isDirectory: true)
+        guard legacy.standardizedFileURL != current.standardizedFileURL,
+              fm.fileExists(atPath: legacy.path) else { return }
+        if fm.fileExists(atPath: current.path) {
+            try fm.removeItem(at: legacy)
+        } else {
+            try fm.moveItem(at: legacy, to: current)
+        }
+    }
+
+    private static func installWorkingCopy(
+        _ staging: URL,
+        at destination: URL,
+        key: String,
+        fm: FileManager
+    ) throws {
+        guard fm.fileExists(atPath: destination.path) else {
+            try fm.moveItem(at: staging, to: destination)
+            return
+        }
+        if !isComplete(destination, fm: fm) {
+            let quarantineRoot = AppPaths.ensure(
+                AppPaths.recovery.appendingPathComponent(".quarantine", isDirectory: true)
+            )
+            let quarantine = quarantineRoot.appendingPathComponent(
+                "\(key)-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try fm.moveItem(at: destination, to: quarantine)
+            do {
+                try fm.moveItem(at: staging, to: destination)
+                Log.project.notice(
+                    "quarantined an incomplete working copy to \(quarantine.lastPathComponent)"
+                )
+            } catch {
+                try? fm.moveItem(at: quarantine, to: destination)
+                throw error
+            }
+            return
+        }
+        _ = try fm.replaceItemAt(destination, withItemAt: staging)
+    }
+
+    private static func replaceDirectory(
+        at destination: URL,
+        with staging: URL,
+        fm: FileManager
+    ) throws {
+        if fm.fileExists(atPath: destination.path) {
+            _ = try fm.replaceItemAt(destination, withItemAt: staging)
+        } else {
+            try fm.moveItem(at: staging, to: destination)
+        }
+    }
+
+    private static func writeOptional(
+        _ data: Data?,
+        named name: String,
+        in root: URL,
+        fm: FileManager
+    ) throws {
+        let destination = root.appendingPathComponent(name)
+        if let data {
+            try data.write(to: destination, options: .atomic)
+        } else if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+    }
+
+    private static func replaceChatDirectory(
+        _ files: [(name: String, data: Data)],
+        in root: URL,
+        fm: FileManager
+    ) throws {
+        let destination = root.appendingPathComponent(
+            ChatSessionStore.dirName,
+            isDirectory: true
+        )
+        let staging = root.appendingPathComponent(
+            ".chat-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        do {
+            for file in files {
+                try file.data.write(
+                    to: staging.appendingPathComponent(file.name),
+                    options: .atomic
+                )
+            }
+            try replaceDirectory(at: destination, with: staging, fm: fm)
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
+    }
+
+    static func sanitizePackageStaging(
+        _ root: URL,
+        fm: FileManager = .default
+    ) throws {
+        try validateNoSymbolicLinks(in: root, fm: fm)
+        let topLevel = try fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil
+        )
+        for item in topLevel {
+            let name = item.lastPathComponent
+            guard internalNames.contains(name) || name.hasPrefix(".chat-") else { continue }
+            try fm.removeItem(at: item)
+        }
+        guard let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: []
+        ) else {
+            throw PersistError.incompletePackage(package: root.lastPathComponent)
+        }
+        var partials: [URL] = []
+        while let item = enumerator.nextObject() as? URL {
+            let name = item.lastPathComponent
+            let isKnownPartial = name.hasSuffix(".partial")
+                && (name.hasPrefix(".import-") || name.hasPrefix(".song-"))
+            guard isKnownPartial else { continue }
+            partials.append(item)
+            if try item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true {
+                enumerator.skipDescendants()
+            }
+        }
+        for item in partials.sorted(by: { $0.path.count > $1.path.count }) {
+            try fm.removeItem(at: item)
+        }
+    }
+
+    static func commitStagedPackage(
+        _ staging: URL,
+        to destination: URL,
+        fm: FileManager = .default
+    ) throws {
+        try validatePackage(staging, fm: fm)
+        try replaceDirectory(at: destination, with: staging, fm: fm)
+        try validatePackage(destination, fm: fm)
     }
 }

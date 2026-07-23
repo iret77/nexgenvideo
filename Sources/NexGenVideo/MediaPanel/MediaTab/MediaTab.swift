@@ -266,6 +266,7 @@ struct MediaTab: View {
     private var actionsRow: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             toolbarButton(title: "Import", systemImage: "plus", action: importMedia)
+                .help("Copy media into the project")
                 .tourAnchor(.importButton)
             toolbarButton(title: "Generate", systemImage: "sparkles", filled: true, accentStyle: AnyShapeStyle(AppTheme.aiGradient), action: toggleGenerationPanel)
                 .tourAnchor(.generateButton)
@@ -718,7 +719,7 @@ struct MediaTab: View {
                     .tracking(AppTheme.Tracking.tight)
                     .foregroundStyle(AppTheme.Text.primaryColor)
 
-                Text("Drop files here or import from disk")
+                Text("Drop files here or copy them into the project")
                     .font(.system(size: AppTheme.FontSize.sm))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
@@ -747,7 +748,7 @@ struct MediaTab: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
-        panel.message = "Select media files or folders to import"
+        panel.message = "Select media files or folders to copy into the project. Originals stay in place."
         var types: [UTType] = [.movie, .image, .audio, .json, .plainText]
         // Story scripts and outlines are source material the pipeline reads. `.plainText` doesn't
         // cover Markdown/Fountain, so name those explicitly or the picker greys them out.

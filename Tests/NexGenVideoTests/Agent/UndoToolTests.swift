@@ -5,6 +5,8 @@ import Testing
 @MainActor
 @Suite("undo tool")
 struct UndoToolTests {
+    private struct TransactionFailure: Error {}
+
     /// Returns the harness and the UndoManager (editor.undoManager is weak — the caller must
     /// hold the manager alive for the test).
     private func harness() -> (ToolHarness, UndoManager) {
@@ -52,5 +54,20 @@ struct UndoToolTests {
         }
         let result = await h.runRaw("undo")
         #expect(result.isError == true) // won't revert the user's edit
+    }
+
+    @Test func throwingTimelineSwapRollsBackWithoutRegisteringUndo() {
+        let (h, um) = harness()
+        let before = h.editor.timeline
+
+        #expect(throws: TransactionFailure.self) {
+            try h.editor.withTimelineSwap(actionName: "Failed Assembly") {
+                h.editor.timeline.tracks[0].clips.removeAll()
+                throw TransactionFailure()
+            }
+        }
+
+        #expect(h.editor.timeline == before)
+        #expect(um.canUndo == false)
     }
 }

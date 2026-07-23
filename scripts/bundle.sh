@@ -6,6 +6,7 @@ set -euo pipefail
 #   scripts/bundle.sh debug --fast              # fastest: skip dSYM + deep sign, just env+build
 #   scripts/bundle.sh release --sign            # build + Developer ID codesign
 #   scripts/bundle.sh release --dist            # build + sign + notarize + staple + DMG
+#   scripts/bundle.sh release --package         # notarize + DMG from an existing signed app
 
 CONFIG="release"
 MODE="dev"
@@ -15,6 +16,7 @@ for arg in "$@"; do
     --fast)        MODE="fast" ;;
     --sign)        MODE="sign" ;;
     --dist)        MODE="dist" ;;
+    --package)     MODE="package" ;;
     *) echo "unknown arg: $arg" >&2; exit 1 ;;
   esac
 done
@@ -47,13 +49,94 @@ RESOURCES="$ROOT/Sources/NexGenVideo/Resources"
 APP="$ROOT/.build/NexGenVideo.app"
 ZIP="$ROOT/.build/NexGenVideo.zip"
 DMG="$ROOT/.build/NexGenVideo.dmg"
+DSYM="$ROOT/.build/NexGenVideo.dSYM"
 
-# For signed builds (fast/sign/dist), resolve the Developer ID Application identity from the keychain.
-if [ "$MODE" = "fast" ] || [ "$MODE" = "sign" ] || [ "$MODE" = "dist" ]; then
+upload_dsyms() {
+  if [ -z "${SENTRY_AUTH_TOKEN:-}" ] || [ -z "${SENTRY_ORG:-}" ] || [ -z "${SENTRY_PROJECT:-}" ]; then
+    echo "==> Sentry creds not set — skipping dSYM upload"
+    return
+  fi
+  if ! command -v sentry-cli >/dev/null 2>&1; then
+    echo "!! sentry-cli not found in PATH — skipping dSYM upload"
+    return
+  fi
+  echo "==> Uploading dSYM to Sentry"
+  sentry-cli debug-files upload --include-sources "$DSYM" || echo "!! sentry-cli upload failed (continuing)"
+}
+
+package_release() {
+  if [ -z "$NOTARY_KEY_FILE" ] || [ -z "$NOTARY_KEY_ID" ] || [ -z "$NOTARY_ISSUER" ]; then
+    echo "!! notarization needs NOTARY_KEY_FILE / NOTARY_KEY_ID / NOTARY_ISSUER" >&2
+    exit 1
+  fi
+
+  DMG_BG="$ROOT/assets/dmg-background.png"
+  [ -f "$DMG_BG" ] || { echo "!! missing DMG background: $DMG_BG" >&2; exit 1; }
+  [ -f "$RESOURCES/AppIcon.icns" ] || { echo "!! missing DMG volume icon" >&2; exit 1; }
+  [ -f "$ROOT/scripts/dmg-settings.py" ] || { echo "!! missing dmg-settings.py" >&2; exit 1; }
+
+  if [ -n "${DMGBUILD_BIN:-}" ]; then
+    [ -x "$DMGBUILD_BIN" ] || { echo "!! DMGBUILD_BIN is not executable: $DMGBUILD_BIN" >&2; exit 1; }
+  else
+    DMG_VENV="$(mktemp -d)/dmgvenv"
+    python3 -m venv "$DMG_VENV"
+    "$DMG_VENV/bin/pip" install --quiet --disable-pip-version-check "dmgbuild==1.6.7"
+    DMGBUILD_BIN="$DMG_VENV/bin/dmgbuild"
+  fi
+
+  echo "==> Zipping .app for notarization"
+  rm -f "$ZIP"
+  /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
+
+  echo "==> Submitting to Apple notary (this can take several minutes)"
+  xcrun notarytool submit "$ZIP" \
+    --key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
+    --wait
+
+  echo "==> Stapling ticket to .app"
+  xcrun stapler staple "$APP"
+  rm -f "$ZIP"
+
+  echo "==> Building DMG"
+  rm -f "$DMG"
+  DMG_VOLNAME="NexGenVideo"
+  DMG_APP="$APP" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" \
+    "$DMGBUILD_BIN" -s "$ROOT/scripts/dmg-settings.py" "$DMG_VOLNAME" "$DMG"
+
+  echo "==> Codesigning DMG"
+  codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
+
+  echo "==> Submitting DMG to notary"
+  xcrun notarytool submit "$DMG" \
+    --key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
+    --wait
+
+  echo "==> Stapling DMG"
+  xcrun stapler staple "$DMG"
+
+  upload_dsyms
+
+  echo ""
+  echo "==> Done"
+  echo "   App: $APP"
+  echo "   DMG: $DMG"
+  echo "   (Sparkle EdDSA signing + appcast update happen in the release workflow.)"
+}
+
+# For signed builds, resolve the Developer ID Application identity from the keychain.
+if [ "$MODE" = "fast" ] || [ "$MODE" = "sign" ] || [ "$MODE" = "dist" ] || [ "$MODE" = "package" ]; then
   if [ -z "$SIGN_IDENTITY" ]; then
     SIGN_IDENTITY="$(security find-identity -v -p codesigning | awk '/Developer ID Application/{print $2; exit}')"
   fi
   [ -n "$SIGN_IDENTITY" ] || { echo "!! no 'Developer ID Application' identity in the keychain (set SIGN_IDENTITY or import the cert)" >&2; exit 1; }
+fi
+
+if [ "$MODE" = "package" ]; then
+  [ "$CONFIG" = "release" ] || { echo "!! --package requires release configuration" >&2; exit 1; }
+  [ -d "$APP" ] || { echo "!! signed app not found at $APP — run release --sign first" >&2; exit 1; }
+  codesign --verify --strict --verbose=2 "$APP"
+  package_release
+  exit 0
 fi
 
 echo "==> Building ($CONFIG)"
@@ -152,23 +235,9 @@ if [ "$MODE" = "fast" ]; then
   exit 0
 fi
 
-DSYM="$ROOT/.build/NexGenVideo.dSYM"
 echo "==> Generating dSYM"
 rm -rf "$DSYM"
 dsymutil "$APP/Contents/MacOS/NexGenVideo" -o "$DSYM"
-
-upload_dsyms() {
-  if [ -z "${SENTRY_AUTH_TOKEN:-}" ] || [ -z "${SENTRY_ORG:-}" ] || [ -z "${SENTRY_PROJECT:-}" ]; then
-    echo "==> Sentry creds not set — skipping dSYM upload"
-    return
-  fi
-  if ! command -v sentry-cli >/dev/null 2>&1; then
-    echo "!! sentry-cli not found in PATH — skipping dSYM upload"
-    return
-  fi
-  echo "==> Uploading dSYM to Sentry"
-  sentry-cli debug-files upload --include-sources "$DSYM" || echo "!! sentry-cli upload failed (continuing)"
-}
 
 if [ "$MODE" = "dev" ]; then
   echo "==> Ad-hoc signing dev app"
@@ -224,77 +293,4 @@ if [ "$MODE" = "sign" ]; then
   exit 0
 fi
 
-if [ -z "$NOTARY_KEY_FILE" ] || [ -z "$NOTARY_KEY_ID" ] || [ -z "$NOTARY_ISSUER" ]; then
-  echo "!! notarization needs NOTARY_KEY_FILE / NOTARY_KEY_ID / NOTARY_ISSUER" >&2
-  exit 1
-fi
-
-echo "==> Zipping .app for notarization"
-rm -f "$ZIP"
-/usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
-
-echo "==> Submitting to Apple notary (this can take several minutes)"
-xcrun notarytool submit "$ZIP" \
-  --key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
-  --wait
-
-echo "==> Stapling ticket to .app"
-xcrun stapler staple "$APP"
-rm -f "$ZIP"
-
-echo "==> Building DMG"
-rm -f "$DMG"
-DMG_VOLNAME="NexGenVideo"
-
-# Dedicated branded install-window backdrop (retina @2x, 144 dpi → ~750x525 pt). Used as-is; the
-# artwork is authored at the window size, so no resizing/distortion.
-DMG_BG="$ROOT/assets/dmg-background.png"
-[ -f "$DMG_BG" ] || DMG_BG=""
-
-# Prefer dmgbuild (headless — writes the .DS_Store directly, no Finder/AppleScript) for a branded
-# window background; fall back to a plain DMG so a release is never blocked on cosmetics.
-DMG_DONE=""
-# Install into a venv: macOS's system python is externally-managed (PEP 668) and rejects
-# `pip install --user`, which is exactly why this silently fell back to a plain DMG before. Errors
-# are surfaced now (no `>/dev/null`) so a future regression is visible in the log, not hidden.
-DMG_VENV="$(mktemp -d)/dmgvenv"
-if python3 -m venv "$DMG_VENV" && "$DMG_VENV/bin/pip" install --quiet --disable-pip-version-check dmgbuild; then
-  if DMG_APP="$APP" DMG_BG="$DMG_BG" DMG_VOLICON="$RESOURCES/AppIcon.icns" \
-       "$DMG_VENV/bin/dmgbuild" -s "$ROOT/scripts/dmg-settings.py" "$DMG_VOLNAME" "$DMG"; then
-    DMG_DONE="branded background"
-  else
-    echo "!! dmgbuild run failed (output above)"
-  fi
-else
-  echo "!! dmgbuild venv/install failed (output above)"
-fi
-if [ -z "$DMG_DONE" ]; then
-  echo "!! dmgbuild unavailable or failed — building a plain DMG (volume icon only)"
-  STAGING="$(mktemp -d)"
-  cp -R "$APP" "$STAGING/NexGenVideo.app"
-  ln -s /Applications "$STAGING/Applications"
-  cp "$RESOURCES/AppIcon.icns" "$STAGING/.VolumeIcon.icns"
-  hdiutil create -volname "$DMG_VOLNAME" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
-  rm -rf "$STAGING"
-  DMG_DONE="plain"
-fi
-echo "==> DMG: $DMG_DONE"
-
-echo "==> Codesigning DMG"
-codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
-
-echo "==> Submitting DMG to notary"
-xcrun notarytool submit "$DMG" \
-  --key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
-  --wait
-
-echo "==> Stapling DMG"
-xcrun stapler staple "$DMG"
-
-upload_dsyms
-
-echo ""
-echo "==> Done"
-echo "   App: $APP"
-echo "   DMG: $DMG"
-echo "   (Sparkle EdDSA signing + appcast update happen in the release workflow.)"
+package_release

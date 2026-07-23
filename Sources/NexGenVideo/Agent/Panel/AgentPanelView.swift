@@ -73,6 +73,7 @@ struct AgentPanelView: View {
             if let gate = service.pendingGateApproval {
                 GateApprovalCard(
                     approval: gate,
+                    error: service.gateApprovalError,
                     onApprove: { service.resolveGate(.approved) },
                     onDecline: { service.resolveGate(.declined) }
                 )
@@ -84,7 +85,7 @@ struct AgentPanelView: View {
                     dialog: dialog,
                     externalSelections: $service.dialogChoiceSelections,
                     accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
-                    libraryAssets: pickableLibraryAssets,
+                    libraryAssets: editor.agentPickableMediaAssets,
                     onSubmit: { result in service.submitDialog(dialog, result: result) },
                     onCancel: { service.cancelDialog() }
                 )
@@ -111,28 +112,6 @@ struct AgentPanelView: View {
         discoveredPlugins = PluginCommandCatalog.discover(progress: packProgress)
             .filter { $0.name == editor.activePluginName }
     }
-
-    /// Library assets the user can reference from the composer or pick inside a file-intake card — those
-    /// backed by a real file on disk and not mid-generation, since both paths read the file (the intake
-    /// copies it, the composer may inline an image). The cheap in-memory checks short-circuit first, so
-    /// the `fileExists` stat runs only over otherwise-usable assets (a small set). The intake card
-    /// filters these further to its accept type; the composer offers all of them.
-    private var pickableLibraryAssets: [MediaAsset] {
-        editor.mediaAssets.filter { asset in
-            !asset.isGenerating
-                && !editor.missingMediaRefs.contains(asset.id)
-                && !editor.offlineMediaRefs.contains(asset.id)
-                && FileManager.default.fileExists(atPath: asset.url.path)
-        }
-    }
-
-    /// The composer's Reference-asset control shows only when the input can act on a pick: not while a
-    /// card owns the dock (blocked), and only when there's something in the library to reference.
-    private var showReferenceButton: Bool {
-        !service.isComposerBlocked && !pickableLibraryAssets.isEmpty
-    }
-
-    @State private var showReferencePicker = false
 
     private var packProgress: PackProgress {
         guard let state = editor.projectState else { return .untouched }
@@ -162,7 +141,9 @@ struct AgentPanelView: View {
                     }
                     .onChange(of: service.currentSessionId) { _, new in
                         guard let new else { return }
-                        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(new, anchor: .center) }
+                        withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
+                            proxy.scrollTo(new, anchor: .center)
+                        }
                     }
                 }
                 newTabButton
@@ -305,13 +286,13 @@ struct AgentPanelView: View {
         return out
     }
 
-    /// Messages the transcript actually renders — hidden kickoff turns are dropped, so a chat whose
-    /// only turn is a hidden kickoff still counts as "empty" and shows the starters, not blank space.
-    private var visibleMessages: [AgentMessage] { service.messages.filter { !$0.hidden } }
+    private var transcriptEntries: [AgentTranscriptEntry] {
+        AgentTranscriptProjection.entries(messages: service.messages, isStreaming: service.isStreaming)
+    }
 
     private var messageList: some View {
         Group {
-            if visibleMessages.isEmpty && !service.isStreaming {
+            if transcriptEntries.isEmpty && !service.isStreaming {
                 // Scrollable: in a short pane (Edit-focus sidebar) a fixed empty state would
                 // overflow centered — covering the sidebar tabs above and running out below.
                 ScrollView {
@@ -335,13 +316,19 @@ struct AgentPanelView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
                     let results = toolResults
-                    // Hidden kickoff turns (Start production, a pack starter) seed the agent but are
-                    // never the user's own words — don't render them as a fake user bubble.
-                    ForEach(visibleMessages) { msg in
-                        AgentMessageView(message: msg, toolResults: results)
-                            .id(msg.id)
+                    let entries = transcriptEntries
+                    ForEach(entries) { entry in
+                        switch entry {
+                        case .message(let message):
+                            AgentMessageView(message: message, toolResults: results)
+                        case .activity(let activity):
+                            AgentActivityView(activity: activity, toolResults: results)
+                        }
                     }
-                    if service.isStreaming {
+                    if service.isStreaming && !entries.contains(where: {
+                        if case .activity(let activity) = $0 { return activity.isRunning }
+                        return false
+                    }) {
                         ThinkingDots().id("streaming-indicator")
                     }
                     errorBanner
@@ -359,7 +346,9 @@ struct AgentPanelView: View {
                 let distance = geo.contentSize.height - geo.contentOffset.y - geo.containerSize.height
                 return distance > 80
             } action: { _, newValue in
-                withAnimation(.easeOut(duration: 0.15)) { isScrolledFromBottom = newValue }
+                withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
+                    isScrolledFromBottom = newValue
+                }
             }
             .onChange(of: service.messages.count) { _, _ in scrollToBottom(proxy) }
             .onChange(of: service.isStreaming) { _, _ in scrollToBottom(proxy) }
@@ -395,7 +384,7 @@ struct AgentPanelView: View {
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                 Text(err.localizedDescription)
                     .font(.system(size: AppTheme.FontSize.xs))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppTheme.Status.errorColor)
                     .multilineTextAlignment(.leading)
                 if let cta = errorCTA(for: err) {
                     Button(action: cta.action) {
@@ -475,7 +464,7 @@ struct AgentPanelView: View {
 
     @ViewBuilder
     private var missingKeyState: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
+        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.xs) {
             Text("Add an Anthropic API key or enable Claude Code in")
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -491,13 +480,15 @@ struct AgentPanelView: View {
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        if service.isStreaming {
-            withAnimation(.easeOut(duration: 0.15)) {
-                proxy.scrollTo("streaming-indicator", anchor: .bottom)
-            }
-        } else if let last = service.messages.last {
-            withAnimation(.easeOut(duration: 0.15)) {
-                proxy.scrollTo(last.id, anchor: .bottom)
+        let runningActivity = transcriptEntries.first {
+            if case .activity(let activity) = $0 { return activity.isRunning }
+            return false
+        }
+        let target = runningActivity?.id
+            ?? (service.isStreaming ? "streaming-indicator" : transcriptEntries.last?.id)
+        if let target {
+            withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
+                proxy.scrollTo(target, anchor: .bottom)
             }
         }
     }
@@ -508,19 +499,10 @@ struct AgentPanelView: View {
             if !service.canStream && !service.messages.isEmpty {
                 missingKeyState
             }
-            // Composer chips above the input: a staged function pill (hides its prose prompt) and the
-            // Reference-asset control that lets the user point the agent at a library asset — the visible,
-            // discoverable form of the `@`-mention picker (docs/UI_UX_CONCEPT.md §2.2). Both hide while a
-            // card owns the dock.
-            if service.pendingFunction != nil || showReferenceButton {
+            if let fn = service.pendingFunction {
                 HStack(spacing: AppTheme.Spacing.xs) {
-                    if let fn = service.pendingFunction {
-                        FunctionPill(title: fn.title, systemImage: fn.systemImage) {
-                            service.pendingFunction = nil
-                        }
-                    }
-                    if showReferenceButton {
-                        referenceAssetButton
+                    FunctionPill(title: fn.title, systemImage: fn.systemImage) {
+                        service.pendingFunction = nil
                     }
                     Spacer(minLength: 0)
                 }
@@ -531,7 +513,7 @@ struct AgentPanelView: View {
                 isSending: service.isStreaming,
                 canSend: canSend,
                 blocked: service.isComposerBlocked,
-                blockedHint: service.pendingGateApproval != nil ? "Approve or decline the phase above to continue"
+                blockedHint: service.pendingGateApproval != nil ? "Approve or choose Not yet above to continue"
                            : service.pendingSpendApproval != nil ? "Respond to the approval above to continue"
                                                                  : "Answer the card above to continue",
                 onSend: submit,
@@ -546,40 +528,6 @@ struct AgentPanelView: View {
         .padding(.top, AppTheme.Spacing.xs)
         .frame(maxWidth: Layout.chatColumnMax)
         .frame(maxWidth: .infinity)
-    }
-
-    /// The visible, discoverable way to point the agent at a library asset — the same picker the
-    /// file-intake card uses, opened above the input. A pick routes through the existing
-    /// `attachMention(for:)`, so it lands as an `@`-reference exactly like `@`-typing or drag; adding a
-    /// NEW file stays on the paperclip inside the input.
-    private var referenceAssetButton: some View {
-        Button { showReferencePicker.toggle() } label: {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                Image(systemName: "plus")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
-                Text("Reference asset")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
-            }
-        }
-        .buttonStyle(.capsule(.secondary))
-        .controlSize(.small)
-        .focusable(false)
-        .help("Reference a library asset in your message")
-        .popover(isPresented: $showReferencePicker, arrowEdge: .bottom) {
-            LibraryAssetPicker(
-                assets: pickableLibraryAssets,
-                showsSearch: true,
-                showsTypeTabs: true,
-                scrollHeight: 260,
-                pinnedId: editor.selectedMediaAssetIds.first,
-                onPick: { asset in
-                    service.attachMention(for: asset)
-                    showReferencePicker = false
-                }
-            )
-            .frame(width: 280)
-            .padding(AppTheme.Spacing.sm)
-        }
     }
 
     private func submit() {

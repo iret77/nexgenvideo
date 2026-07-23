@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// The user's confirmation of an agent-initiated phase-gate approval (HAX G11). Docked in the composer
-/// exactly where the spend card and generative dialog live — never a modal. The agent's approve_gate /
-/// set_gate_state tool-call is suspended until Approve or Not yet; the gate is written only on Approve.
+/// Commits a deferred gate only after the user approves it here.
 struct GateApprovalCard: View {
     let approval: GateApproval
+    let error: String?
     let onApprove: () -> Void
     let onDecline: () -> Void
 
@@ -63,6 +62,13 @@ struct GateApprovalCard: View {
             Text("Review it in the Story / Review tab first.")
                 .font(.system(size: AppTheme.FontSize.xxs))
                 .foregroundStyle(AppTheme.Text.mutedColor)
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, AppTheme.Spacing.xxs)
+            }
         }
     }
 

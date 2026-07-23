@@ -1,4 +1,16 @@
+import Foundation
 import SwiftUI
+
+extension EditorViewModel {
+    var agentPickableMediaAssets: [MediaAsset] {
+        mediaAssets.filter { asset in
+            !asset.isGenerating
+                && !missingMediaRefs.contains(asset.id)
+                && !offlineMediaRefs.contains(asset.id)
+                && FileManager.default.fileExists(atPath: asset.url.path)
+        }
+    }
+}
 
 /// One library-asset row — a thumbnail (or a type-symbol fallback), the name, and the type. The single
 /// asset row shared by the `@`-mention popover, the composer's Reference picker, and the file-intake

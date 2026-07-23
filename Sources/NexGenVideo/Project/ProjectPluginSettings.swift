@@ -1,9 +1,7 @@
 import Foundation
 
-/// Per-project production settings, stored as `<package>/ngv.json` — app-owned and written directly
-/// (outside the NSDocument save cycle) so it can't interact with document versioning. Carries the
-/// ACTIVE format plugin: exactly one per project, or none for the generic workflow. Installed ≠
-/// active (Epic #98 / #95 C2) — a plugin being on disk never means every project builds with it.
+/// Per-project production settings stored in `ngv.json`. An open project writes the working copy;
+/// Save carries it into the package. Project creation may seed the package before it is opened.
 enum ProjectPluginSettings {
     static let filename = "ngv.json"
 
@@ -16,11 +14,14 @@ enum ProjectPluginSettings {
         return name
     }
 
-    static func setActivePlugin(_ name: String?, projectURL: URL) {
+    static func setActivePlugin(_ name: String?, projectURL: URL) throws {
         let url = projectURL.appendingPathComponent(filename)
         var json: [String: Any] = [:]
-        if let data = try? Data(contentsOf: url),
-           let existing = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+        if FileManager.default.fileExists(atPath: url.path) {
+            let data = try Data(contentsOf: url)
+            guard let existing = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
             json = existing
         }
         if let name, !name.isEmpty {
@@ -28,7 +29,7 @@ enum ProjectPluginSettings {
         } else {
             json.removeValue(forKey: "activePlugin")
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]) else { return }
-        try? data.write(to: url, options: .atomic)
+        let data = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+        try data.write(to: url, options: .atomic)
     }
 }

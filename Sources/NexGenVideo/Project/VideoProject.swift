@@ -3,10 +3,20 @@ import SwiftUI
 import AVFoundation
 import UniformTypeIdentifiers
 
+private struct ProjectEditableContents: Sendable {
+    var timeline: Timeline
+    var manifest: MediaManifest?
+    var generationLog: GenerationLog?
+    var thumbnail: Data?
+}
+
 private struct ProjectPackageContents: Sendable {
     var timeline: Timeline
     var manifest: MediaManifest?
     var generationLog: GenerationLog?
+    var thumbnail: Data?
+    var workingCopyKey: String
+    var workingCopy: ProjectWorkingCopy.OpenResult
 }
 
 private struct ProjectPackageSnapshot: Sendable {
@@ -16,6 +26,7 @@ private struct ProjectPackageSnapshot: Sendable {
     var thumbnail: Data?
     var chatSessionFiles: [(name: String, data: Data)]
     var workingCopyKey: String?
+    var mintNewIdentity: Bool
 }
 
 final class VideoProject: NSDocument {
@@ -28,6 +39,9 @@ final class VideoProject: NSDocument {
     private nonisolated(unsafe) var loadedTimeline: Timeline?
     private nonisolated(unsafe) var loadedManifest: MediaManifest?
     private nonisolated(unsafe) var loadedGenerationLog: GenerationLog?
+    private nonisolated(unsafe) var loadedThumbnail: Data?
+    private nonisolated(unsafe) var loadedWorkingCopyKey: String?
+    private nonisolated(unsafe) var loadedWorkingCopy: ProjectWorkingCopy.OpenResult?
 
     /// Captured on main thread before writes may continue off-main.
     private nonisolated(unsafe) var snapshotTimeline: Data?
@@ -37,7 +51,10 @@ final class VideoProject: NSDocument {
     private nonisolated(unsafe) var snapshotChatSessionFiles: [(name: String, data: Data)] = []
     private nonisolated(unsafe) var snapshotSourceProjectURL: URL?
     private nonisolated(unsafe) var snapshotWorkingCopyKey: String?
+    private nonisolated(unsafe) var snapshotMintNewIdentity = false
     private nonisolated(unsafe) var snapshotPreparedForWrite = false
+    private nonisolated(unsafe) var snapshotCaptureError: Error?
+    private var checkpointFailurePresented = false
 
     // MARK: - Persistence
 
@@ -65,6 +82,9 @@ final class VideoProject: NSDocument {
         loadedTimeline = contents.timeline
         loadedManifest = contents.manifest
         loadedGenerationLog = contents.generationLog
+        loadedThumbnail = contents.thumbnail
+        loadedWorkingCopyKey = contents.workingCopyKey
+        loadedWorkingCopy = contents.workingCopy
         Log.project.notice(
             "read ok tracks=\(self.loadedTimeline?.tracks.count ?? 0)",
             telemetry: "Project read",
@@ -78,7 +98,28 @@ final class VideoProject: NSDocument {
     }
 
     private nonisolated static func readProjectPackage(at url: URL) throws -> ProjectPackageContents {
-        let data = try requiredData(Project.timelineFilename, in: url)
+        if ProjectIdentity.existingKey(for: url) == nil {
+            try ProjectWorkingCopy.validateForOpen(url)
+            _ = try readEditableContents(at: url)
+        }
+        let key = try ProjectIdentity.key(for: url)
+        let workingCopy = try ProjectWorkingCopy.open(key: key, packageURL: url)
+        let contents = try readEditableContents(at: workingCopy.home)
+
+        return ProjectPackageContents(
+            timeline: contents.timeline,
+            manifest: contents.manifest,
+            generationLog: contents.generationLog,
+            thumbnail: contents.thumbnail,
+            workingCopyKey: key,
+            workingCopy: workingCopy
+        )
+    }
+
+    private nonisolated static func readEditableContents(
+        at root: URL
+    ) throws -> ProjectEditableContents {
+        let data = try requiredData(Project.timelineFilename, in: root)
         let timeline: Timeline
         do {
             timeline = try JSONDecoder().decode(Timeline.self, from: data)
@@ -88,7 +129,7 @@ final class VideoProject: NSDocument {
         }
 
         let manifest: MediaManifest?
-        if let manifestData = try optionalData(Project.manifestFilename, in: url) {
+        if let manifestData = try optionalData(Project.manifestFilename, in: root) {
             do {
                 manifest = try JSONDecoder().decode(MediaManifest.self, from: manifestData)
             } catch {
@@ -99,13 +140,30 @@ final class VideoProject: NSDocument {
             manifest = nil
         }
 
-        let generationLog = try optionalData(Project.generationLogFilename, in: url)
-            .flatMap { try? JSONDecoder().decode(GenerationLog.self, from: $0) }
+        let generationLog: GenerationLog?
+        if let logData = try optionalData(Project.generationLogFilename, in: root) {
+            do {
+                generationLog = try JSONDecoder().decode(
+                    GenerationLog.self,
+                    from: logData
+                )
+            } catch {
+                Log.project.error(
+                    "read generation log decode failed bytes=\(logData.count) error=\(error)"
+                )
+                throw CocoaError(.fileReadCorruptFile)
+            }
+        } else {
+            generationLog = nil
+        }
+        _ = try ChatSessionStore.loadThrowing(from: root)
+        let thumbnail = try optionalData(Project.thumbnailFilename, in: root)
 
-        return ProjectPackageContents(
+        return ProjectEditableContents(
             timeline: timeline,
             manifest: manifest,
-            generationLog: generationLog
+            generationLog: generationLog,
+            thumbnail: thumbnail
         )
     }
 
@@ -125,8 +183,20 @@ final class VideoProject: NSDocument {
         }
 
         captureSaveSnapshot()
+        if let snapshotCaptureError {
+            completionHandler(snapshotCaptureError)
+            return
+        }
         snapshotSourceProjectURL = fileURL
-        super.save(to: url, ofType: typeName, for: saveOperation, completionHandler: completionHandler)
+        snapshotMintNewIdentity = saveOperation == .saveAsOperation || saveOperation == .saveToOperation
+        let savedWorkingCopyKey = snapshotWorkingCopyKey
+        let clearsWorkingCopy = saveOperation != .saveToOperation
+        super.save(to: url, ofType: typeName, for: saveOperation) { error in
+            if error == nil, clearsWorkingCopy, let savedWorkingCopyKey {
+                ProjectWorkingCopy.markSaved(key: savedWorkingCopyKey)
+            }
+            completionHandler(error)
+        }
     }
 
     /// The project's format pack must be ACTIVE before its package may be rewritten. Anything other
@@ -135,7 +205,9 @@ final class VideoProject: NSDocument {
     /// reshape the project.
     @MainActor
     private func packUnavailable(savingTo url: URL) -> Error? {
-        switch ProjectPackGate.evaluate(projectURL: fileURL ?? url) {
+        switch ProjectPackGate.evaluate(
+            projectURL: editorViewModel.workingRoot ?? fileURL ?? url
+        ) {
         case .satisfied:
             return nil
         case .missing(let id), .needsRestart(let id):
@@ -156,9 +228,13 @@ final class VideoProject: NSDocument {
                 snapshotSourceProjectURL = fileURL
             }
         }
+        if let snapshotCaptureError {
+            throw snapshotCaptureError
+        }
         defer {
             snapshotPreparedForWrite = false
             snapshotSourceProjectURL = nil
+            snapshotMintNewIdentity = false
         }
         guard let data = snapshotTimeline else {
             Log.project.error("save: snapshotTimeline missing at write()")
@@ -172,7 +248,8 @@ final class VideoProject: NSDocument {
                 generationLog: snapshotGenerationLog,
                 thumbnail: snapshotThumbnail,
                 chatSessionFiles: snapshotChatSessionFiles,
-                workingCopyKey: snapshotWorkingCopyKey
+                workingCopyKey: snapshotWorkingCopyKey,
+                mintNewIdentity: snapshotMintNewIdentity
             ),
             to: url,
             sourceURL: snapshotSourceProjectURL
@@ -180,20 +257,58 @@ final class VideoProject: NSDocument {
     }
 
     private func captureSaveSnapshot() {
-        snapshotTimeline = try? JSONEncoder().encode(editorViewModel.timeline)
-        snapshotManifest = try? JSONEncoder().encode(editorViewModel.mediaManifest)
-        snapshotGenerationLog = try? JSONEncoder().encode(editorViewModel.generationLog)
-        snapshotThumbnail = captureThumbnail()
-        snapshotChatSessionFiles = editorViewModel.agentService.sessions
-            .filter { !$0.messages.isEmpty }
-            .compactMap { session in
-                ChatSessionStore.encodeSession(session).map { (name: "\(session.id.uuidString).json", data: $0) }
+        do {
+            snapshotTimeline = try JSONEncoder().encode(editorViewModel.timeline)
+            snapshotManifest = try JSONEncoder().encode(editorViewModel.mediaManifest)
+            snapshotGenerationLog = try JSONEncoder().encode(editorViewModel.generationLog)
+            var chatFiles: [(name: String, data: Data)] = []
+            for session in editorViewModel.agentService.sessions where !session.messages.isEmpty {
+                guard let data = ChatSessionStore.encodeSession(session) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                chatFiles.append((name: "\(session.id.uuidString).json", data: data))
             }
-        // The copy we've been WRITING into, not a key re-derived from the package: during a save the
-        // package is being rewritten, and a re-read that misses `ngv.json` mints a new identity — the
-        // pipeline then gets persisted from a directory that doesn't exist, silently.
-        snapshotWorkingCopyKey = editorViewModel.openWorkingCopyKey ?? editorViewModel.workingCopyKey
+            snapshotChatSessionFiles = chatFiles
+            snapshotThumbnail = captureThumbnail()
+            snapshotCaptureError = nil
+        } catch {
+            snapshotCaptureError = error
+        }
+        snapshotWorkingCopyKey = editorViewModel.openWorkingCopyKey
+        if snapshotWorkingCopyKey == nil, editorViewModel.projectURL != nil {
+            snapshotCaptureError = ProjectWorkingCopy.PersistError.noWorkingCopy(
+                key: editorViewModel.workingCopyKey ?? "unknown"
+            )
+        }
         snapshotPreparedForWrite = true
+    }
+
+    private func checkpointWorkingCopy() {
+        guard let key = editorViewModel.openWorkingCopyKey else { return }
+        do {
+            var chatFiles: [(name: String, data: Data)] = []
+            for session in editorViewModel.agentService.sessions where !session.messages.isEmpty {
+                guard let data = ChatSessionStore.encodeSession(session) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                chatFiles.append((name: "\(session.id.uuidString).json", data: data))
+            }
+            let snapshot = ProjectWorkingCopy.Checkpoint(
+                timeline: try JSONEncoder().encode(editorViewModel.timeline),
+                manifest: try JSONEncoder().encode(editorViewModel.mediaManifest),
+                generationLog: try JSONEncoder().encode(editorViewModel.generationLog),
+                thumbnail: cachedThumbnail,
+                chatSessionFiles: chatFiles
+            )
+            try ProjectWorkingCopy.checkpoint(key: key, snapshot: snapshot)
+            checkpointFailurePresented = false
+        } catch {
+            Log.project.error("working-copy checkpoint failed: \(error.localizedDescription)")
+            if !checkpointFailurePresented {
+                checkpointFailurePresented = true
+                presentError(error)
+            }
+        }
     }
 
     private nonisolated static func requiredData(_ name: String, in packageURL: URL) throws -> Data {
@@ -212,45 +327,71 @@ final class VideoProject: NSDocument {
     }
 
     private nonisolated static func writeProjectPackage(_ snapshot: ProjectPackageSnapshot, to packageURL: URL, sourceURL: URL?) throws {
+        if let key = snapshot.workingCopyKey {
+            try ProjectWorkingCopy.checkpoint(
+                key: key,
+                snapshot: ProjectWorkingCopy.Checkpoint(
+                    timeline: snapshot.timeline,
+                    manifest: snapshot.manifest,
+                    generationLog: snapshot.generationLog,
+                    thumbnail: snapshot.thumbnail,
+                    chatSessionFiles: snapshot.chatSessionFiles
+                )
+            )
+            try ProjectWorkingCopy.persist(
+                key: key,
+                to: packageURL,
+                mintNewIdentity: snapshot.mintNewIdentity
+            )
+            return
+        }
+
         let fm = FileManager.default
-        try createPackageDirectory(at: packageURL, fm: fm)
-        try snapshot.timeline.write(to: packageURL.appendingPathComponent(Project.timelineFilename), options: .atomic)
+        let parent = packageURL.deletingLastPathComponent()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+        let staging = parent.appendingPathComponent(
+            ".\(packageURL.lastPathComponent).save-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? fm.removeItem(at: staging) }
+        if let sourceURL, !sameFile(sourceURL, packageURL) {
+            try fm.copyItem(at: sourceURL, to: staging)
+            try ProjectWorkingCopy.sanitizePackageStaging(staging, fm: fm)
+        } else {
+            try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        }
+        try snapshot.timeline.write(
+            to: staging.appendingPathComponent(Project.timelineFilename),
+            options: .atomic
+        )
         if let manifest = snapshot.manifest {
-            try manifest.write(to: packageURL.appendingPathComponent(Project.manifestFilename), options: .atomic)
+            try manifest.write(
+                to: staging.appendingPathComponent(Project.manifestFilename),
+                options: .atomic
+            )
         }
         if let log = snapshot.generationLog {
-            try log.write(to: packageURL.appendingPathComponent(Project.generationLogFilename), options: .atomic)
+            try log.write(
+                to: staging.appendingPathComponent(Project.generationLogFilename),
+                options: .atomic
+            )
         }
         if let thumbnail = snapshot.thumbnail {
-            try thumbnail.write(to: packageURL.appendingPathComponent(Project.thumbnailFilename), options: .atomic)
-        } else {
-            try copyPreservedFile(Project.thumbnailFilename, from: sourceURL, to: packageURL, fm: fm)
+            try thumbnail.write(
+                to: staging.appendingPathComponent(Project.thumbnailFilename),
+                options: .atomic
+            )
         }
-        try writeChatDirectory(snapshot.chatSessionFiles, to: packageURL, fm: fm)
-        try copyMediaDirectoryIfNeeded(from: sourceURL, to: packageURL, fm: fm)
-        // Carry the active-format marker (ngv.json) across Save As / swap, else a copied pack project
-        // reopens as generic while still holding its pack-specific pipeline data.
-        try copyPreservedFile(ProjectPluginSettings.filename, from: sourceURL, to: packageURL, fm: fm)
-        // A Save As / swap COPIES the project — the carried ngv.json still names the source's UUID. Give
-        // the copy its own identity so the two projects can't share a working copy or caches.
-        if let sourceURL, !sameFile(sourceURL, packageURL) {
-            ProjectIdentity.regenerate(at: packageURL)
+        try writeChatDirectory(snapshot.chatSessionFiles, to: staging, fm: fm)
+        if snapshot.mintNewIdentity {
+            let oldKey = ProjectIdentity.existingKey(for: staging)
+            try ProjectIdentity.regenerate(at: staging)
+            guard let newKey = ProjectIdentity.existingKey(for: staging),
+                  newKey != oldKey else {
+                throw ProjectWorkingCopy.PersistError.identityNotRegenerated
+            }
         }
-        // Sync the engine's live working copy (bible, shotlist, renders, …) into the package so the
-        // project is self-contained. Handles "Save As"/swap too: the pipeline lands in whatever
-        // package URL NSDocument is writing to, not just an in-place save.
-        if let key = snapshot.workingCopyKey {
-            try ProjectWorkingCopy.persist(key: key, to: packageURL)
-        }
-    }
-
-    private nonisolated static func createPackageDirectory(at url: URL, fm: FileManager) throws {
-        var isDirectory = ObjCBool(false)
-        if fm.fileExists(atPath: url.path, isDirectory: &isDirectory) {
-            if isDirectory.boolValue { return }
-            try fm.removeItem(at: url)
-        }
-        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        try ProjectWorkingCopy.commitStagedPackage(staging, to: packageURL, fm: fm)
     }
 
     private nonisolated static func writeChatDirectory(_ files: [(name: String, data: Data)], to packageURL: URL, fm: FileManager) throws {
@@ -264,28 +405,6 @@ final class VideoProject: NSDocument {
         }
     }
 
-    private nonisolated static func copyPreservedFile(_ name: String, from sourceURL: URL?, to packageURL: URL, fm: FileManager) throws {
-        guard let sourceURL, !sameFile(sourceURL, packageURL) else { return }
-        let source = sourceURL.appendingPathComponent(name, isDirectory: false)
-        guard fm.fileExists(atPath: source.path) else { return }
-        let destination = packageURL.appendingPathComponent(name, isDirectory: false)
-        if fm.fileExists(atPath: destination.path) {
-            try fm.removeItem(at: destination)
-        }
-        try fm.copyItem(at: source, to: destination)
-    }
-
-    private nonisolated static func copyMediaDirectoryIfNeeded(from sourceURL: URL?, to packageURL: URL, fm: FileManager) throws {
-        guard let sourceURL, !sameFile(sourceURL, packageURL) else { return }
-        let source = sourceURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
-        let destination = packageURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
-        if fm.fileExists(atPath: destination.path) {
-            try fm.removeItem(at: destination)
-        }
-        guard fm.fileExists(atPath: source.path) else { return }
-        try fm.copyItem(at: source, to: destination)
-    }
-
     private nonisolated static func sameFile(_ lhs: URL, _ rhs: URL) -> Bool {
         lhs.standardizedFileURL.path == rhs.standardizedFileURL.path
     }
@@ -293,6 +412,9 @@ final class VideoProject: NSDocument {
     override func updateChangeCount(_ change: NSDocument.ChangeType) {
         super.updateChangeCount(change)
         editorViewModel.isDocumentEdited = isDocumentEdited
+        if change == .changeDone || change == .changeUndone || change == .changeRedone {
+            checkpointWorkingCopy()
+        }
     }
 
     override func updateChangeCount(withToken changeCountToken: Any, for saveOperation: NSDocument.SaveOperationType) {
@@ -323,7 +445,13 @@ final class VideoProject: NSDocument {
                     // discard nothing — the live copy stays under the unchanged UUID key.
                     let oldKey = ProjectIdentity.existingKey(for: oldURL)
                     editorViewModel.projectURL = newURL
-                    if let oldKey, oldKey != editorViewModel.workingCopyKey {
+                    editorViewModel.agentService.loadSessions(
+                        from: editorViewModel.workingCopyHome
+                    )
+                    if let oldKey,
+                       let activeKey = editorViewModel.openWorkingCopyKey,
+                       activeKey == editorViewModel.workingCopyKey,
+                       oldKey != activeKey {
                         ProjectWorkingCopy.discard(key: oldKey)
                     }
                 }
@@ -364,23 +492,33 @@ final class VideoProject: NSDocument {
 
     /// Shrink + nudge a window frame so it never exceeds or falls off the visible screen.
     nonisolated static func clampToScreen(_ frame: NSRect, visible: NSRect) -> NSRect {
-        var f = frame
-        f.size.width = min(f.size.width, visible.width)
-        f.size.height = min(f.size.height, visible.height)
-        f.origin.x = min(max(f.origin.x, visible.minX), visible.maxX - f.size.width)
-        f.origin.y = min(max(f.origin.y, visible.minY), visible.maxY - f.size.height)
-        return f
+        WindowGeometry.clampToScreen(frame, visible: visible)
     }
 
     override func makeWindowControllers() {
+        cachedThumbnail = loadedThumbnail
+        loadedThumbnail = nil
         if let loaded = loadedTimeline {
             editorViewModel.timeline = loaded
             loadedTimeline = nil
         }
         editorViewModel.applyDefaultWorkspaceFocus()
         editorViewModel.undoManager = undoManager
-        editorViewModel.projectURL = fileURL
-        editorViewModel.agentService.loadSessions(from: fileURL)
+        if let loadedWorkingCopyKey, let loadedWorkingCopy, let fileURL {
+            editorViewModel.adoptWorkingCopy(
+                loadedWorkingCopy,
+                key: loadedWorkingCopyKey,
+                packageURL: fileURL
+            )
+            self.loadedWorkingCopyKey = nil
+            self.loadedWorkingCopy = nil
+        } else {
+            editorViewModel.projectURL = fileURL
+        }
+        editorViewModel.agentService.loadSessions(from: editorViewModel.workingCopyHome)
+        editorViewModel.onWorkingCopyReset = { [weak self] home in
+            self?.reloadEditableContents(from: home)
+        }
         editorViewModel.agentService.onSessionsChanged = { [weak self] in
             self?.updateChangeCount(.changeDone)
         }
@@ -413,14 +551,10 @@ final class VideoProject: NSDocument {
         window.minSize = NSSize(width: min(AppTheme.Window.projectMin.width, visible.width),
                                 height: min(AppTheme.Window.projectMin.height, visible.height))
         if restored {
-            // Grow a stale frame back to at least the declared minimum — `minSize` only constrains what
-            // the USER can drag to, it never resizes an already-restored frame, so a too-short frame
-            // saved by an older build would otherwise survive every launch. Then clamp: a frame from a
-            // since-changed (larger) display must never exceed this desktop.
-            var frame = window.frame
-            frame.size.width = max(frame.size.width, window.minSize.width)
-            frame.size.height = max(frame.size.height, window.minSize.height)
-            window.setFrame(Self.clampToScreen(frame, visible: visible), display: false)
+            window.setFrame(
+                WindowGeometry.restoredFrame(window.frame, minimum: window.minSize, visible: visible),
+                display: false
+            )
         } else {
             window.setContentSize(Self.defaultProjectContentSize(visible: visible))
             window.center()
@@ -463,6 +597,30 @@ final class VideoProject: NSDocument {
             category: "project",
             data: editorViewModel.telemetrySnapshot()
         )
+    }
+
+    private func reloadEditableContents(from home: URL) {
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try Self.readEditableContents(at: home) }
+            }.value
+            guard let self, self.editorViewModel.workingCopyHome == home else { return }
+            switch result {
+            case .success(let contents):
+                self.editorViewModel.timeline = contents.timeline
+                self.editorViewModel.mediaManifest = contents.manifest ?? MediaManifest()
+                self.editorViewModel.generationLog = contents.generationLog ?? GenerationLog()
+                self.cachedThumbnail = contents.thumbnail
+                self.editorViewModel.agentService.loadSessions(from: home)
+                self.editorViewModel.mediaAssets.removeAll()
+                self.restoreAssetsFromManifest()
+            case .failure(let error):
+                Log.project.error(
+                    "discard recovery reload failed: \(error.localizedDescription)"
+                )
+                self.presentError(error)
+            }
+        }
     }
 
     // MARK: - Thumbnail
@@ -525,8 +683,11 @@ final class VideoProject: NSDocument {
 
         guard let data else { return }
         cachedThumbnail = data
-        guard let packageURL = fileURL else { return }
-        let thumbURL = packageURL.appendingPathComponent(Project.thumbnailFilename, isDirectory: false)
+        guard let workingCopyHome = editorViewModel.workingCopyHome else { return }
+        let thumbURL = workingCopyHome.appendingPathComponent(
+            Project.thumbnailFilename,
+            isDirectory: false
+        )
         try? await Task.detached(priority: .utility) {
             try data.write(to: thumbURL, options: .atomic)
         }.value

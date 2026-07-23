@@ -6,7 +6,7 @@ name: Release (signed + notarized)
 #
 # Secrets (repo): MACOS_CERTIFICATE_P12_BASE64, MACOS_CERTIFICATE_PASSWORD, MACOS_NOTARY_KEY_ID,
 # MACOS_NOTARY_ISSUER_ID, MACOS_NOTARY_KEY_P8_BASE64, SPARKLE_ED_PRIVATE_KEY (base64 of the DER
-# Ed25519 private key; if absent, Sparkle signing + appcast are skipped).
+# Ed25519 private key; required for a published release, optional for a dry run).
 
 concurrency:
   group: release-${{ github.ref }}
@@ -30,13 +30,57 @@ on:
   # `pull_request:` here: correctness of the app is verified by ci.yml (build + test) on every PR;
   # this workflow only produces and publishes artifacts, and that is a deliberate act.
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - name: Reject open release blockers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh label view release-blocker --repo "$GITHUB_REPOSITORY" >/dev/null
+          BLOCKERS="$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --label release-blocker \
+            --limit 100 \
+            --json number,title \
+            --jq '.[] | "#\(.number) \(.title)"')"
+          if [ -n "$BLOCKERS" ]; then
+            echo "::error::Release blocked before macOS runner allocation"
+            echo "$BLOCKERS"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Release source preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REL_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          CATALOG_DIR="$RUNNER_TEMP/plugin-channel"
+          mkdir -p "$CATALOG_DIR"
+          gh release download plugins \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern catalog.json \
+            --dir "$CATALOG_DIR"
+          python3 scripts/release_preflight.py "$REL_VERSION" "$CATALOG_DIR/catalog.json"
+
   release:
+    needs: release-gate
     runs-on: macos-26
     timeout-minutes: 90
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -98,7 +142,29 @@ jobs:
           if [ -n "${SPARKLE_PRIV_B64:-}" ]; then
             printf '%s' "$SPARKLE_PRIV_B64" | base64 --decode > "$RUNNER_TEMP/sparkle_priv.der"
             echo "SPARKLE_PRIV_DER=$RUNNER_TEMP/sparkle_priv.der" >> "$GITHUB_ENV"
+          elif [ "$REL_DRY" = "false" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY is required for a published release"
+            exit 1
           fi
+
+      - name: Validate release credentials and DMG tooling
+        run: |
+          set -euo pipefail
+          xcrun notarytool history \
+            --key "$NOTARY_KEY_FILE" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER" >/dev/null
+          if [ -n "${SPARKLE_PRIV_DER:-}" ]; then
+            openssl pkey -inform DER -in "$SPARKLE_PRIV_DER" -noout
+          fi
+          DMG_VENV="$RUNNER_TEMP/dmgvenv"
+          python3 -m venv "$DMG_VENV"
+          "$DMG_VENV/bin/pip" install \
+            --quiet \
+            --disable-pip-version-check \
+            "dmgbuild==1.6.7"
+          [ -x "$DMG_VENV/bin/dmgbuild" ]
+          echo "DMGBUILD_BIN=$DMG_VENV/bin/dmgbuild" >> "$GITHUB_ENV"
 
       - name: Bump version
         run: |
@@ -110,17 +176,11 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW" "$PLIST"
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
-      - name: Build, sign, notarize, staple (DMG)
-        run: scripts/bundle.sh release --dist
+      - name: Test the exact release configuration
+        run: swift test -c release
 
-      - name: Verify signature + notarization
-        run: |
-          set -euo pipefail
-          codesign --verify --strict --verbose=2 .build/NexGenVideo.app
-          codesign --verify --strict --verbose=2 .build/NexGenVideo.app/Contents/Frameworks/libNexGenEngine.dylib
-          xcrun stapler validate .build/NexGenVideo.app
-          xcrun stapler validate .build/NexGenVideo.dmg
-          spctl -a -vvv -t install .build/NexGenVideo.dmg || true
+      - name: Build and sign app
+        run: scripts/bundle.sh release --sign
 
       - name: Assemble format packs (.ngvpack + catalog entry)
         run: |
@@ -129,6 +189,50 @@ jobs:
           # runs); the assemble script falls back to ad-hoc otherwise.
           scripts/assemble_ngvpack.sh plugins/musicvideo.json release .build/plugins "${SIGN_IDENTITY:-}"
           ls -la .build/plugins
+
+      - name: Notarize and staple downloadable format packs
+        run: |
+          set -euo pipefail
+          for PACK_ZIP in .build/plugins/*.ngvpack.zip; do
+            [ -f "$PACK_ZIP" ] \
+              || { echo "::error::no format-pack ZIP was assembled"; exit 1; }
+            PACK_BUNDLE="${PACK_ZIP%.zip}"
+            PACK_ID="$(basename "$PACK_BUNDLE" .ngvpack)"
+            PACK_ENTRY=".build/plugins/${PACK_ID}.entry.json"
+            [ -d "$PACK_BUNDLE" ] \
+              || { echo "::error::missing bundle for $PACK_ZIP"; exit 1; }
+            [ -f "$PACK_ENTRY" ] \
+              || { echo "::error::missing catalog entry for $PACK_ZIP"; exit 1; }
+
+            echo "notarizing $PACK_ZIP"
+            xcrun notarytool submit "$PACK_ZIP" \
+              --key "$NOTARY_KEY_FILE" \
+              --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER" \
+              --wait
+
+            # Apple can notarize a ZIP but cannot staple the ZIP itself. Staple the nested bundle,
+            # then rebuild the exact archive that users download and refresh its catalog checksum.
+            xcrun stapler staple "$PACK_BUNDLE"
+            xcrun stapler validate "$PACK_BUNDLE"
+            codesign --verify --strict --verbose=2 "$PACK_BUNDLE"
+            rm -f "$PACK_ZIP"
+            /usr/bin/ditto -c -k --keepParent "$PACK_BUNDLE" "$PACK_ZIP"
+            PACK_SHA="$(shasum -a 256 "$PACK_ZIP" | awk '{print $1}')"
+            python3 - "$PACK_ENTRY" "$PACK_SHA" <<'PY'
+          import json
+          import sys
+
+          path, sha = sys.argv[1:]
+          with open(path, encoding="utf-8") as handle:
+              entry = json.load(handle)
+          entry["sha256"] = sha
+          with open(path, "w", encoding="utf-8") as handle:
+              json.dump(entry, handle, indent=2)
+              handle.write("\n")
+          PY
+            echo "notarized ${PACK_ID}.ngvpack sha256=$PACK_SHA"
+          done
 
       - name: Verify pack links the SHARED engine (guards the PackEntry-cast regression)
         run: |
@@ -156,7 +260,7 @@ jobs:
           # This is the check that was MISSING here: release.yml published the pack the app reads
           # without ever loading it, so the 0.7.6-class rpath regression (twice in the field) could ship
           # inside a signed DMG. It runs BEFORE the publish step, so a pack that can't load aborts the
-          # whole release before anything reaches the `plugins` channel.
+          # whole release before DMG creation, notarization, or publishing.
           #
           # Stronger than ci.yml's ad-hoc run: pack AND app are Developer-ID signed here, so loading the
           # pack into the hardened-runtime app also exercises LIBRARY VALIDATION (same Team ID) — a
@@ -166,39 +270,100 @@ jobs:
           # resolve to the host's Contents/Frameworks via @executable_path/../Frameworks. The real app
           # binary loads it (gate → Bundle.load() → principalClass cast → makePack()) and exits 0 only on
           # success.
-          PACK_BIN="$(ls .build/plugins/*.ngvpack/Contents/MacOS/* | head -1)"
+          PACK_ZIP="$(ls .build/plugins/*.ngvpack.zip | head -1)"
+          PACK_EXTRACT="$(mktemp -d)"
+          /usr/bin/ditto -x -k "$PACK_ZIP" "$PACK_EXTRACT"
+          PACK_BUNDLE="$(ls -d "$PACK_EXTRACT"/*.ngvpack 2>/dev/null | head -1 || true)"
+          [ -n "$PACK_BUNDLE" ] \
+            || { echo "::error::published pack ZIP does not contain an .ngvpack bundle"; exit 1; }
+          codesign --verify --strict --verbose=2 "$PACK_BUNDLE"
+          xcrun stapler validate "$PACK_BUNDLE"
+          PACK_BIN="$(ls "$PACK_BUNDLE"/Contents/MacOS/* 2>/dev/null | head -1 || true)"
+          [ -n "$PACK_BIN" ] \
+            || { echo "::error::published pack ZIP has no executable"; exit 1; }
           otool -l "$PACK_BIN" | grep -q 'path @executable_path/../Frameworks' \
             || { echo "::error::pack is missing the @executable_path/../Frameworks rpath — it can't reach the host engine"; exit 1; }
-          EXTDIR="$(mktemp -d)/packs"; mkdir -p "$EXTDIR"
-          cp -R .build/plugins/musicvideo.ngvpack "$EXTDIR/"
-          echo "loading $EXTDIR/musicvideo.ngvpack with the real signed app binary…"
-          NGV_SELFTEST_PACK="$EXTDIR/musicvideo.ngvpack" .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
-          echo "OK: the signed app loaded the signed pack from an external directory"
+          QUARANTINE="0083;$(printf '%x' "$(date +%s)");GitHub Actions;${{ github.server_url }}"
+          /usr/bin/xattr -r -w com.apple.quarantine "$QUARANTINE" "$PACK_BUNDLE"
+          /usr/bin/xattr -p com.apple.quarantine "$PACK_BUNDLE"
+          echo "loading the notarized, quarantined archive with the real signed app binary…"
+          NGV_SELFTEST_PACK="$PACK_BUNDLE" .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
+          echo "OK: the signed app loaded the notarized pack under download quarantine"
+
+      - name: Notarize app and build signed, notarized DMG
+        run: scripts/bundle.sh release --package
+
+      - name: Verify the exact DMG users install
+        run: |
+          set -euo pipefail
+          codesign --verify --strict --verbose=2 .build/NexGenVideo.app
+          codesign --verify --strict --verbose=2 .build/NexGenVideo.app/Contents/Frameworks/libNexGenEngine.dylib
+          codesign --verify --verbose=2 .build/NexGenVideo.dmg
+          xcrun stapler validate .build/NexGenVideo.app
+          xcrun stapler validate .build/NexGenVideo.dmg
+          hdiutil verify .build/NexGenVideo.dmg
+
+          MOUNT_POINT="$(mktemp -d)"
+          hdiutil attach .build/NexGenVideo.dmg -nobrowse -readonly -mountpoint "$MOUNT_POINT"
+          cleanup_mount() {
+            hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true
+            rmdir "$MOUNT_POINT" >/dev/null 2>&1 || true
+          }
+          trap cleanup_mount EXIT
+
+          [ -d "$MOUNT_POINT/NexGenVideo.app" ] \
+            || { echo "::error::DMG does not contain NexGenVideo.app"; exit 1; }
+          [ -L "$MOUNT_POINT/Applications" ] \
+            || { echo "::error::DMG does not contain the Applications symlink"; exit 1; }
+          [ "$(readlink "$MOUNT_POINT/Applications")" = "/Applications" ] \
+            || { echo "::error::DMG Applications symlink has the wrong target"; exit 1; }
+
+          INSTALL_CHECK="$(mktemp -d)"
+          INSTALL_APP="$INSTALL_CHECK/NexGenVideo.app"
+          ditto "$MOUNT_POINT/NexGenVideo.app" "$INSTALL_APP"
+          codesign --verify --strict --verbose=2 "$INSTALL_APP"
+          codesign --verify --strict --verbose=2 "$INSTALL_APP/Contents/Frameworks/libNexGenEngine.dylib"
+          xcrun stapler validate "$INSTALL_APP"
+          spctl -a -vvv -t exec "$INSTALL_APP"
+
+          PACK_ZIP="$(ls .build/plugins/*.ngvpack.zip | head -1)"
+          PACK_EXTRACT="$(mktemp -d)"
+          /usr/bin/ditto -x -k "$PACK_ZIP" "$PACK_EXTRACT"
+          PACK_BUNDLE="$(ls -d "$PACK_EXTRACT"/*.ngvpack 2>/dev/null | head -1 || true)"
+          [ -n "$PACK_BUNDLE" ] \
+            || { echo "::error::published pack ZIP does not contain an .ngvpack bundle"; exit 1; }
+          xcrun stapler validate "$PACK_BUNDLE"
+          QUARANTINE="0083;$(printf '%x' "$(date +%s)");GitHub Actions;${{ github.server_url }}"
+          /usr/bin/xattr -r -w com.apple.quarantine "$QUARANTINE" "$PACK_BUNDLE"
+          NGV_SELFTEST_PACK="$PACK_BUNDLE" \
+            "$INSTALL_APP/Contents/MacOS/NexGenVideo"
+          echo "OK: mounted DMG layout, copied app, Gatekeeper assessment, and quarantined pack load"
 
       - name: Publish packs to the stable plugin channel
+        if: ${{ env.REL_DRY == 'false' }}
         # The `plugins` release is the channel the app reads. It is NEVER deleted (unlike dev-latest,
-        # which is delete+recreated on every build) and only ever appended to, and BOTH the dev-latest
-        # and the versioned-release path publish here — so a versioned release can no longer ship a
-        # pack fix the app never sees (#168).
+        # which used to be delete+recreated) and only ever appended to. Versioned releases publish here,
+        # so a release can no longer ship a pack fix the app never sees (#168).
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/plugins"
-          gh release view plugins >/dev/null 2>&1 || gh release create plugins \
+          gh release view plugins --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create plugins --repo "$GITHUB_REPOSITORY" \
             --prerelease --title "NexGenVideo — plugin channel" \
             --notes "The stable catalog the app reads. Append-only: every published pack version stays, so an older app keeps finding its last compatible pack. Not tied to the app release cycle."
           # Merge into what's already published — absent on the very first run.
-          gh release download plugins -p catalog.json -D .build 2>/dev/null || true
+          gh release download plugins --repo "$GITHUB_REPOSITORY" -p catalog.json -D .build 2>/dev/null || true
           python3 scripts/publish_plugin_catalog.py .build/plugins "$BASE" .build/plugins/catalog.json \
             --existing .build/catalog.json
           # Version-stamped assets, so a published version's URL keeps addressing that version.
-          gh release upload plugins .build/plugins/*-*.ngvpack.zip --clobber
+          gh release upload plugins --repo "$GITHUB_REPOSITORY" .build/plugins/*-*.ngvpack.zip --clobber
           if compgen -G ".build/plugins/*-*.badge.png" >/dev/null; then
-            gh release upload plugins .build/plugins/*-*.badge.png --clobber
+            gh release upload plugins --repo "$GITHUB_REPOSITORY" .build/plugins/*-*.badge.png --clobber
           fi
           # The catalog goes last: it only ever advertises assets that are already uploaded.
-          gh release upload plugins .build/plugins/catalog.json --clobber
+          gh release upload plugins --repo "$GITHUB_REPOSITORY" .build/plugins/catalog.json --clobber
 
       - name: EdDSA-sign DMG for Sparkle
         if: ${{ env.SPARKLE_PRIV_DER != '' }}
@@ -211,19 +376,16 @@ jobs:
             echo "DMG_LENGTH=$(stat -f%z .build/NexGenVideo.dmg)"
           } >> "$GITHUB_ENV"
 
-      - name: Publish signed build to rolling dev-latest
-        # dev-latest is the rolling APP download only — packs live on the `plugins` channel (#168).
+      - name: Upload dry-run candidate for manual verification
         if: ${{ env.REL_DRY == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release delete dev-latest --cleanup-tag --yes 2>/dev/null || true
-          gh release create dev-latest \
-            .build/NexGenVideo.dmg \
-            --prerelease \
-            --title "NexGenVideo — latest dev build" \
-            --notes "Signed with our Developer ID (high5 ventures GmbH) and notarized by Apple — open the DMG and drag NexGenVideo to Applications. No Gatekeeper workaround needed. Format packs (.ngvpack) are fetched on demand from the \`plugins\` channel. Auto-built from \`${{ github.sha }}\`."
+        uses: actions/upload-artifact@v4
+        with:
+          name: NexGenVideo-${{ env.REL_VERSION }}-dry-run
+          path: |
+            .build/NexGenVideo.dmg
+            .build/plugins/*.ngvpack.zip
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Publish GitHub release + appcast
         if: ${{ env.REL_DRY == 'false' }}
@@ -245,7 +407,7 @@ jobs:
           # Packs are NOT attached here: they went to the `plugins` channel above, which is what the
           # app actually reads. Attaching them to the version tag is what created the illusion that a
           # release shipped a pack fix (#168).
-          gh release create "$TAG" \
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
             .build/NexGenVideo.dmg \
             --title "NexGenVideo $TAG" \
             --notes "NexGenVideo $REL_VERSION (build ${BUILD_NUMBER})." \

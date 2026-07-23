@@ -171,7 +171,7 @@ enum EditSubmitter {
                     folderId: asset.folderId,
                     buildParams: { _ in .video(params) },
                     fileExtension: "mp4",
-                    projectURL: editor.projectURL,
+                    projectURL: editor.workingRoot,
                     editor: editor,
                     onComplete: onComplete,
                     onFailure: onFailure
@@ -205,7 +205,7 @@ enum EditSubmitter {
                 buildParams: { _ in .video(params) },
                 snapshotRefs: { _, _ in },
                 fileExtension: "mp4",
-                projectURL: editor.projectURL,
+                projectURL: editor.workingRoot,
                 editor: editor,
                 onComplete: onComplete,
                 onFailure: onFailure
@@ -248,7 +248,7 @@ enum EditSubmitter {
                     ))
                 },
                 fileExtension: "jpg",
-                projectURL: editor.projectURL,
+                projectURL: editor.workingRoot,
                 editor: editor,
                 onComplete: onComplete,
                 onFailure: onFailure
@@ -291,7 +291,7 @@ enum EditSubmitter {
                 folderId: asset.folderId,
                 buildParams: { _ in .audio(params) },
                 fileExtension: "mp3",
-                projectURL: editor.projectURL,
+                projectURL: editor.workingRoot,
                 editor: editor,
                 onComplete: onComplete,
                 onFailure: onFailure
@@ -318,7 +318,7 @@ enum EditSubmitter {
                     ))
                 },
                 fileExtension: isImage ? "jpg" : "mp4",
-                projectURL: editor.projectURL,
+                projectURL: editor.workingRoot,
                 editor: editor,
                 onComplete: onComplete,
                 onFailure: onFailure

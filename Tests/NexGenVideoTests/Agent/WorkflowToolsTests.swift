@@ -84,6 +84,33 @@ struct WorkflowToolsTests {
         #expect(result.isError)
     }
 
+    @Test("init_project redirects an open saved package to its working copy")
+    func initProjectCannotBypassWorkingCopy() async throws {
+        let cleanup = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wf-init-working-\(UUID().uuidString)", isDirectory: true)
+        let savedHome = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
+        try Fixtures.prepareProjectPackage(at: savedHome)
+        let h = ToolHarness()
+        h.editor.projectURL = savedHome
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let liveHome = try #require(h.editor.workingRoot)
+
+        _ = try await h.runOK("init_project", args: [
+            "home_dir": savedHome.path,
+            "name": "working-project",
+        ])
+
+        #expect(FileManager.default.fileExists(
+            atPath: liveHome.appendingPathComponent("pipeline/project.yaml").path
+        ))
+        #expect(!FileManager.default.fileExists(
+            atPath: savedHome.appendingPathComponent("pipeline/project.yaml").path
+        ))
+    }
+
     // MARK: - list_phases / get_ui_contract
 
     @Test("list_phases returns the ordered core pipeline")
@@ -247,6 +274,35 @@ struct WorkflowToolsTests {
 
     // MARK: - Ledger set / lock / remove
 
+    @Test("an explicit saved-package path is redirected to the open working copy")
+    func savedProjectDirCannotBypassWorkingCopy() async throws {
+        let (h, savedDataRoot, cleanup) = try scaffold()
+        let home = FrameInventory.projectHome(of: savedDataRoot)
+        try Fixtures.prepareProjectPackage(at: home)
+        h.editor.projectURL = home
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let liveDataRoot = try #require(
+            h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+
+        _ = try await h.runOK("set_ledger_attribute", args: [
+            "project_dir": savedDataRoot.path,
+            "kind": "look",
+            "key": "palette",
+            "tag": "working only",
+        ])
+
+        #expect(FileManager.default.fileExists(
+            atPath: liveDataRoot.appendingPathComponent(PipelineLayout.ledgerFile).path
+        ))
+        #expect(!FileManager.default.fileExists(
+            atPath: savedDataRoot.appendingPathComponent(PipelineLayout.ledgerFile).path
+        ))
+    }
+
     @Test("ledger set, lock, and remove round-trip; a locked attribute refuses removal")
     func ledgerRoundTrip() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
@@ -289,6 +345,26 @@ struct WorkflowToolsTests {
             "project_dir": dataRoot.path, "kind": "character", "key": "wardrobe", "tag": "red jacket",
         ])
         #expect(result.isError)
+    }
+
+    @Test("ledger mutation refuses and preserves a corrupt ledger")
+    func corruptLedgerIsNotOverwritten() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let ledgerURL = PipelineLayout.url(PipelineLayout.ledgerFile, in: dataRoot)
+        let corrupt = Data("objects: [broken".utf8)
+        try corrupt.write(to: ledgerURL)
+
+        let result = await h.runRaw("set_ledger_attribute", args: [
+            "project_dir": dataRoot.path,
+            "kind": "look",
+            "key": "palette",
+            "tag": "warm amber",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("Nothing was written"))
+        #expect(try Data(contentsOf: ledgerURL) == corrupt)
     }
 
     // MARK: - resolve_model
@@ -384,6 +460,38 @@ struct WorkflowToolsTests {
         // s001 rendered → next_render_shot reports done.
         let next = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
         #expect(next?["done"] as? Bool == true)
+    }
+
+    @Test("render tools refuse and preserve a corrupt manifest")
+    func corruptRenderManifestIsNotOverwritten() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try minimalShotlist(), to: dataRoot)
+        let manifestURL = PipelineLayout.url(
+            PipelineLayout.renderManifestFile(phase: "preview"),
+            in: dataRoot
+        )
+        try FileManager.default.createDirectory(
+            at: manifestURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let corrupt = Data("{\"entries\":".utf8)
+        try corrupt.write(to: manifestURL)
+
+        let next = await h.runRaw("next_render_shot", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+        ])
+        let record = await h.runRaw("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s001",
+            "output": "s001.png",
+        ])
+
+        #expect(next.isError)
+        #expect(record.isError)
+        #expect(try Data(contentsOf: manifestURL) == corrupt)
     }
 
     @Test("next_render_shot surfaces the first unrendered shot's prompt")
@@ -573,6 +681,37 @@ struct WorkflowToolsTests {
         let audioDir = URL(fileURLWithPath: try #require(swapped["audio_dir"] as? String))
         #expect(FileManager.default.fileExists(atPath: audioDir.appendingPathComponent("second.wav").path))
         #expect(FileManager.default.fileExists(atPath: audioDir.appendingPathComponent("first.wav").path) == false)
+    }
+
+    @Test("attach_song preserves the current song when replacement staging fails")
+    func attachSongFailedReplacementPreservesCurrentSong() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let first = cleanup.appendingPathComponent("first.wav")
+        let second = cleanup.appendingPathComponent("second.wav")
+        try writeStub(first, bytes: "current-song")
+        try writeStub(second, bytes: "replacement-song")
+        _ = try await h.runOK("attach_song", args: [
+            "project_dir": dataRoot.path,
+            "path": first.path,
+        ])
+        let audioDir = dataRoot.appendingPathComponent("audio", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: audioDir.appendingPathComponent("second.wav", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        let result = await h.runRaw("attach_song", args: [
+            "project_dir": dataRoot.path,
+            "path": second.path,
+            "replace": true,
+        ])
+
+        #expect(result.isError)
+        #expect(try String(
+            contentsOf: audioDir.appendingPathComponent("first.wav"),
+            encoding: .utf8
+        ) == "current-song")
     }
 
     @Test("attach_song requires exactly one of media or path")

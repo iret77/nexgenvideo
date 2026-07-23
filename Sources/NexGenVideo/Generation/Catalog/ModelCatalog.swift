@@ -68,8 +68,7 @@ final class ModelCatalog {
     func configure() {
         guard !didConfigure else { return }
         didConfigure = true
-        // Convex model-list subscription removed; the BYO-provider layer will
-        // populate the catalog via `apply(_:)`. Until then it stays empty.
+        // App startup loads the provider registry seed, then refreshes remote and discovered entries.
     }
 
     func load(entries: [CatalogEntry]) {

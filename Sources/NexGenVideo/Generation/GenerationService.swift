@@ -225,7 +225,7 @@ final class GenerationService {
     /// the move fails — staging is a convenience, never a hard dependency of the download.
     @MainActor
     private static func stageDownload(_ downloaded: URL, ext: String, editor: EditorViewModel) -> URL {
-        guard let key = editor.workingCopyKey else { return downloaded }
+        guard let key = editor.openWorkingCopyKey else { return downloaded }
         let dir = AppPaths.ensure(AppPaths.projectStaging(projectId: key))
         let dest = dir.appendingPathComponent(UUID().uuidString)
             .appendingPathExtension(ext.isEmpty ? "bin" : ext)
@@ -258,7 +258,7 @@ final class GenerationService {
                 asset.url = asset.url.deletingPathExtension().appendingPathExtension(realExt)
             }
             // Stage the freshly downloaded bytes in the project's Caches-tier scratch (purgeable,
-            // per-project) before finalizing into the durable package media/. Falls back to the
+            // per-project) before finalizing into the working media store. Falls back to the
             // system temp URL when no project is open.
             let tempURL = Self.stageDownload(downloadURL, ext: asset.url.pathExtension, editor: editor)
             try? FileManager.default.removeItem(at: asset.url)

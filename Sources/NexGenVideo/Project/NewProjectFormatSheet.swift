@@ -34,9 +34,10 @@ struct NewProjectFormatSheet: View {
                 }
                 .padding(.vertical, AppTheme.Spacing.xxs)
             }
-            // Tall enough that the usual one-or-few packs (Generic + installed packs) show their
-            // cards in full; only a long list scrolls.
-            .frame(maxHeight: 600)
+            .frame(
+                minHeight: AppTheme.ComponentSize.formatSheetCardListMinHeight,
+                maxHeight: AppTheme.ComponentSize.formatSheetCardListMaxHeight
+            )
 
             HStack {
                 Button("Cancel") { dismiss() }
@@ -49,7 +50,7 @@ struct NewProjectFormatSheet: View {
             }
         }
         .padding(AppTheme.Spacing.xl)
-        .frame(width: 500)
+        .frame(width: AppTheme.ComponentSize.formatSheetWidth)
     }
 
     /// Native banner aspect (728×193) — the hero frame matches it so a badge fills the full

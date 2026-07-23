@@ -266,7 +266,7 @@ struct ExportView: View {
         for entry in editor.mediaManifest.entries {
             let url: URL? = switch entry.source {
             case .external(let path): URL(fileURLWithPath: path)
-            case .project(let rel): editor.projectURL?.appendingPathComponent(rel)
+            case .project(let rel): editor.workingRoot?.appendingPathComponent(rel)
             }
             guard let url, FileManager.default.fileExists(atPath: url.path) else { missing += 1; continue }
             if case .external = entry.source { collect += 1 }
@@ -339,7 +339,7 @@ struct ExportView: View {
                     timeline: editor.timeline,
                     manifest: editor.mediaManifest,
                     generationLog: editor.generationLog,
-                    sourceProjectURL: editor.projectURL,
+                    sourceProjectURL: editor.workingRoot,
                     outputURL: url
                 )
                 guard let report, service.error == nil else { return }

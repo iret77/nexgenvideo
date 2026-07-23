@@ -22,7 +22,12 @@ final class MediaResolver: @unchecked Sendable {
             return URL(fileURLWithPath: absolutePath)
         case .project(let relativePath):
             guard let base = projectURL() else { return nil }
-            return base.appendingPathComponent(relativePath)
+            let root = base.standardizedFileURL.resolvingSymlinksInPath()
+            let candidate = base.appendingPathComponent(relativePath)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard candidate.path.hasPrefix(root.path + "/") else { return nil }
+            return candidate
         }
     }
 
@@ -41,7 +46,17 @@ final class MediaResolver: @unchecked Sendable {
             case .external(let absolutePath):
                 path = absolutePath
             case .project(let relativePath):
-                path = projectPath.map { ($0 as NSString).appendingPathComponent(relativePath) }
+                path = projectPath.flatMap { projectPath in
+                    let root = URL(fileURLWithPath: projectPath, isDirectory: true)
+                        .standardizedFileURL
+                        .resolvingSymlinksInPath()
+                    let candidate = root.appendingPathComponent(relativePath)
+                        .standardizedFileURL
+                        .resolvingSymlinksInPath()
+                    return candidate.path.hasPrefix(root.path + "/")
+                        ? candidate.path
+                        : nil
+                }
             }
             guard let path, FileManager.default.fileExists(atPath: path) else {
                 missing.insert(entry.id)

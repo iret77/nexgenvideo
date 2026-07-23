@@ -11,12 +11,10 @@ OpenArt, Higgsfield, ElevenLabs, …) bound via BYO API keys, Claude orchestrati
 architecture, generation/provider, or de-Palmier-ization work — it supersedes the "Palmier-Integration"
 section of `musicvideo/docs/v1-studio-plan.md`.
 
-## Build
+## Verification
 
-```bash
-swift build
-swift run
-```
+Never build, test, or launch the app locally. GitHub Actions on `macos-26` is the
+only verification surface; do not run `scripts/dev.sh` or start a local dev server.
 
 ## Code style
 
@@ -101,8 +99,9 @@ release or a wasted CI cycle.
 - **Verify API facts with a live call.** Research has been wrong every single time; model lists are
   free. A 400 proves only the request envelope, never availability. Never probe a *generation* with a
   deliberately invalid field — an invalid value has been accepted and billed.
-- **Never propose the Anthropic API-key mode as an alternative** to the embedded `claude -p` runtime.
-  It stays in the code but is not an option for this project. Fix the embedded runtime instead.
+- **Anthropic API-key mode is a supported secondary backend** alongside the embedded `claude -p`
+  runtime. Keep both functional; never use the API-key path to hide an embedded-runtime defect. OpenAI
+  may offer the same choice once embedded Codex CLI support exists.
 
 ### Working in this repo
 
@@ -117,4 +116,3 @@ release or a wasted CI cycle.
 - **No quick wins.** Partial fixes and shortcuts are not robust enough to ship; implement the
   complete, correct solution.
 - The wordmark is **NexGenVideo**, one word — never "NexGen Video" in any shown copy.
-

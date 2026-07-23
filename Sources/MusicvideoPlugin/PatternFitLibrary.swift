@@ -13,15 +13,7 @@ public enum PatternFitError: Swift.Error, Sendable, Equatable {
     case noProjectInput
 }
 
-/// Loads the frozen policy and the scored part of the Pattern library.
-///
-/// A pattern is OPTIONAL: without one, a music video's structure comes from the analysis, the
-/// user's intent and the agent-moderated process. So an unauthored pattern is not a defect — it is
-/// simply not a candidate, and ranking the ones that ARE authored is exactly the useful answer
-/// ("does this pattern fit, yes or no"). Refusing to rank until all 23 are authored would withhold
-/// a working answer over a pattern nobody is required to take.
-///
-/// A profile that EXISTS but fails validation is different: that is a defect and stays loud.
+/// Loads valid authored profiles while keeping invalid profiles visible as defects.
 public enum PatternFitLibrary {
     /// Decode the committed scoring policy from the bundled resource. Weights are
     /// never hardcoded — they come from here.
@@ -44,8 +36,7 @@ public enum PatternFitLibrary {
         return sha256Hex(data)
     }
 
-    /// How much of the library can currently be ranked. Reported alongside every result so the
-    /// agent never presents a 1-of-23 ranking as if it were the whole field.
+    /// The explicit scored, unscored, and invalid portions of the library.
     public struct LibraryCoverage: Sendable, Equatable {
         /// Patterns carrying a valid `fit_profile` — the candidates.
         public var scored: [String]
@@ -57,18 +48,68 @@ public enum PatternFitLibrary {
         public var total: Int { scored.count + unscored.count + invalid.count }
     }
 
+    private struct RecommendationRecord: Decodable {
+        let id: String
+        let name: String
+        let profile: PatternFitProfile?
+        let profileDecodeIssue: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case id, name, description, references
+            case fitProfile = "fit_profile"
+            case sectionArc = "section_arc"
+            case framingMix = "framing_mix"
+            case aslRange = "asl_range"
+            case cameraVocabulary = "camera_vocabulary"
+            case lightingSignature = "lighting_signature"
+            case approximationBasis = "approximation_basis"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            name = try container.decode(String.self, forKey: .name)
+            _ = try container.decode(String.self, forKey: .description)
+            _ = try container.decode([PatternReference].self, forKey: .references)
+            _ = try container.decode([SectionArcStep].self, forKey: .sectionArc)
+            _ = try container.decode(FramingMix.self, forKey: .framingMix)
+            _ = try container.decode(AslRange.self, forKey: .aslRange)
+            _ = try container.decode([String].self, forKey: .cameraVocabulary)
+            _ = try container.decode(String.self, forKey: .lightingSignature)
+            _ = try container.decode(String.self, forKey: .approximationBasis)
+
+            if !container.contains(.fitProfile) || (try container.decodeNil(forKey: .fitProfile)) {
+                profile = nil
+                profileDecodeIssue = nil
+            } else {
+                do {
+                    profile = try container.decode(PatternFitProfile.self, forKey: .fitProfile)
+                    profileDecodeIssue = nil
+                } catch {
+                    profile = nil
+                    profileDecodeIssue = "fit_profile decode failed: \(String(describing: error))"
+                }
+            }
+        }
+    }
+
     /// The scored part of the library, plus what it doesn't cover. Never throws over an unauthored
     /// pattern: it is not a candidate, and a pattern is optional anyway.
     public static func loadRecommendableLibrary() throws
         -> (library: [(profile: PatternFitProfile, name: String)], coverage: LibraryCoverage)
     {
-        let patterns = try Patterns.loadAllPatterns()
         var recommendable: [(PatternFitProfile, String)] = []
         var scored: [String] = []
         var unscored: [String] = []
         var invalid: [String: [String]] = [:]
-        for pattern in patterns {
-            guard let profile = pattern.fitProfile else {
+        for url in PackKnowledge.patternLibraryURLs().sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let yaml = try String(contentsOf: url, encoding: .utf8)
+            let pattern = try recommendationRecord(yaml: yaml, fileName: url.lastPathComponent)
+            if let issue = pattern.profileDecodeIssue {
+                invalid[pattern.id] = [issue]
+                continue
+            }
+            guard let profile = pattern.profile else {
                 unscored.append(pattern.id)
                 continue
             }
@@ -82,6 +123,18 @@ public enum PatternFitLibrary {
         }
         return (recommendable, LibraryCoverage(
             scored: scored.sorted(), unscored: unscored.sorted(), invalid: invalid))
+    }
+
+    static func recommendationRecord(
+        yaml: String,
+        fileName: String
+    ) throws -> (id: String, name: String, profile: PatternFitProfile?, profileDecodeIssue: String?) {
+        do {
+            let record = try YAMLCoding.decode(RecommendationRecord.self, from: yaml)
+            return (record.id, record.name, record.profile, record.profileDecodeIssue)
+        } catch {
+            throw PatternLibraryError.decodingFailed(file: fileName, underlying: String(describing: error))
+        }
     }
 
     /// Structural validation beyond JSON Schema: evidence references resolve,

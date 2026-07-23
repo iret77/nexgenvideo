@@ -61,10 +61,18 @@ struct FolderReadTests {
         let e = editor()
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("folder-import-\(UUID().uuidString)", isDirectory: true)
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("folder-import-project-\(UUID().uuidString).ngv", isDirectory: true)
         let nested = root.appendingPathComponent("Nested", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
 
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
         try Data().write(to: root.appendingPathComponent("root.mp4"))
         try Data().write(to: nested.appendingPathComponent("child.wav"))
         try Data().write(to: nested.appendingPathComponent("ignored.zip"))
@@ -76,6 +84,7 @@ struct FolderReadTests {
 
         #expect(summary.assetCount == 3)
         #expect(summary.folderCount == 2)
+        #expect(summary.failure == nil)
         let rootFolder = try #require(e.folders.first { $0.name == root.lastPathComponent })
         let nestedFolder = try #require(e.folders.first { $0.name == "Nested" })
         #expect(nestedFolder.parentFolderId == rootFolder.id)
@@ -83,7 +92,7 @@ struct FolderReadTests {
         #expect(e.assetsIn(folderId: nestedFolder.id).map(\.name).sorted() == ["child", "script"])
     }
 
-    @Test func importFinderItemsDoesNotCreateRootFolderWhenDirectoryCannotBeRead() async throws {
+    @Test func importFinderItemsFailsWithoutPartialImportWhenDirectoryCannotBeRead() async throws {
         let e = editor()
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("folder-import-denied-\(UUID().uuidString)", isDirectory: true)
@@ -98,7 +107,180 @@ struct FolderReadTests {
 
         #expect(summary.assetCount == 0)
         #expect(summary.folderCount == 0)
+        #expect(summary.failure?.contains("contents couldn't be read") == true)
         #expect(e.folders.isEmpty)
+        #expect(e.mediaAssets.isEmpty)
+    }
+}
+
+@Suite("EditorViewModel — durable media import")
+@MainActor
+struct DurableMediaImportTests {
+
+    @Test func unsavedProjectRejectsImportWithoutRegisteringAsset() throws {
+        let e = editor()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unsaved-import-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try Data("source".utf8).write(to: source)
+
+        let imported = e.addMediaAsset(from: source)
+
+        #expect(imported == nil)
+        #expect(e.mediaAssets.isEmpty)
+        #expect(e.mediaManifest.entries.isEmpty)
+        #expect(e.mediaPanelToast?.message == "Save the project before importing media.")
+        #expect(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test func copyFailureDoesNotRegisterAsset() throws {
+        let e = editor()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("failed-import-\(UUID().uuidString).mp4")
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("failed-import-project-\(UUID().uuidString).ngv", isDirectory: true)
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        try Data("source".utf8).write(to: source)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        try Data("blocked".utf8).write(
+            to: projectURL.appendingPathComponent(Project.mediaDirectoryName)
+        )
+        e.projectURL = projectURL
+
+        let imported = e.addMediaAsset(from: source)
+
+        #expect(imported == nil)
+        #expect(e.mediaAssets.isEmpty)
+        #expect(e.mediaManifest.entries.isEmpty)
+        #expect(e.mediaPanelToast?.message.contains("project media folder couldn't be prepared") == true)
+        #expect(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test func successfulImportCopiesIntoWorkingCopyAndPersistsRelativeSource() throws {
+        let e = editor()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("durable-import-\(UUID().uuidString).mp4")
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("durable-import-project-\(UUID().uuidString).ngv", isDirectory: true)
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        let contents = Data("source".utf8)
+        try contents.write(to: source)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
+
+        let imported = try #require(e.addMediaAsset(from: source))
+        let entry = try #require(e.mediaManifest.entries.first { $0.id == imported.id })
+        let workingRoot = try #require(e.workingRoot)
+
+        #expect(imported.url.path.hasPrefix(workingRoot.path + "/media/"))
+        #expect(!imported.url.path.hasPrefix(projectURL.path + "/media/"))
+        #expect(try Data(contentsOf: imported.url) == contents)
+        switch entry.source {
+        case .project(let relativePath):
+            #expect(relativePath == "media/\(imported.url.lastPathComponent)")
+        case .external:
+            Issue.record("new imports must not persist an external source")
+        }
+    }
+
+    @Test func folderImportRollsBackPreparedCopiesWhenALaterSourceFails() async throws {
+        let e = editor()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rollback-import-\(UUID().uuidString)", isDirectory: true)
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rollback-import-project-\(UUID().uuidString).ngv", isDirectory: true)
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        try Data("source".utf8).write(to: root.appendingPathComponent("a-valid.mp4"))
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("z-missing.mp4"),
+            withDestinationURL: root.appendingPathComponent("missing-target.mp4")
+        )
+        e.projectURL = projectURL
+
+        let summary = await e.importFinderItems([root], into: nil)
+
+        #expect(summary.failure != nil)
+        #expect(e.mediaAssets.isEmpty)
+        #expect(e.mediaManifest.entries.isEmpty)
+        #expect(e.mediaManifest.folders.isEmpty)
+        let mediaDir = try #require(e.workingRoot).appendingPathComponent(
+            Project.mediaDirectoryName
+        )
+        let remaining = (try? FileManager.default.contentsOfDirectory(atPath: mediaDir.path)) ?? []
+        #expect(remaining.isEmpty)
+    }
+
+    @Test func manifestDoesNotTreatPrefixSiblingAsProjectMedia() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("containment-\(UUID().uuidString).ngv", isDirectory: true)
+        let sibling = URL(fileURLWithPath: root.path + "-copy", isDirectory: true)
+            .appendingPathComponent("clip.mp4")
+        let entry = MediaAsset(url: sibling, type: .video, name: "clip")
+            .toManifestEntry(projectURL: root)
+
+        switch entry.source {
+        case .project:
+            Issue.record("a path-prefix sibling is outside the project package")
+        case .external(let absolutePath):
+            #expect(absolutePath == sibling.path)
+        }
+    }
+
+    @Test func relinkCopiesReplacementIntoWorkingCopy() throws {
+        let e = editor()
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("relink-project-\(UUID().uuidString).ngv", isDirectory: true)
+        let replacement = FileManager.default.temporaryDirectory
+            .appendingPathComponent("replacement-\(UUID().uuidString).mp4")
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: projectURL)
+            try? FileManager.default.removeItem(at: replacement)
+        }
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        try Data("replacement".utf8).write(to: replacement)
+        e.projectURL = projectURL
+        let workingRoot = try #require(e.workingRoot)
+        let missing = workingRoot.appendingPathComponent("media/missing.mp4")
+        let asset = MediaAsset(id: "relink", url: missing, type: .video, name: "Missing")
+        e.mediaAssets = [asset]
+        e.mediaManifest.entries = [
+            MediaManifestEntry(
+                id: asset.id,
+                name: asset.name,
+                type: asset.type,
+                source: .project(relativePath: "media/missing.mp4"),
+                duration: 1
+            )
+        ]
+
+        e.relinkAsset(id: asset.id, to: replacement)
+
+        #expect(asset.url.path.hasPrefix(workingRoot.path + "/media/"))
+        #expect(try Data(contentsOf: asset.url) == Data("replacement".utf8))
+        #expect(!FileManager.default.fileExists(
+            atPath: projectURL.appendingPathComponent("media")
+                .appendingPathComponent(asset.url.lastPathComponent).path
+        ))
+        if case .project(let relativePath) = e.mediaManifest.entries[0].source {
+            #expect(relativePath == "media/\(asset.url.lastPathComponent)")
+        } else {
+            Issue.record("relinked media must remain project-relative")
+        }
     }
 }
 

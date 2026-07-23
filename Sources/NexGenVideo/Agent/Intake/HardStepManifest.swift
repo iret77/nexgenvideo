@@ -76,6 +76,10 @@ struct HardStepManifest: Sendable, Equatable {
         return try? decode(data)
     }
 
+    static func load(bundleURL: URL) -> HardStepManifest? {
+        load(inBundle: bundleURL)
+    }
+
     /// The manifest of the pack active for this project. Located from the INSTALLED bundle the loader
     /// recorded — the host already knows where every pack lives, so nothing crosses the host↔pack
     /// binary boundary for this (a protocol member would; see #251).
@@ -86,7 +90,7 @@ struct HardStepManifest: Sendable, Equatable {
     @MainActor
     static func load(pack: Pack) -> HardStepManifest? {
         if let bundleURL = PluginLoader.installed.first(where: { $0.id == pack.name })?.bundleURL,
-           let found = load(inBundle: bundleURL) {
+           let found = load(bundleURL: bundleURL) {
             return found
         }
         if let badge = pack.manifest.badgeURL,

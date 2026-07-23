@@ -104,6 +104,7 @@ enum GenerationRequestError: LocalizedError {
     case optionsInvalid(String)
     case compile(String)
     case gate(String)
+    case storage(String)
 
     var errorDescription: String? {
         switch self {
@@ -111,6 +112,7 @@ enum GenerationRequestError: LocalizedError {
         case .optionsInvalid(let m): return m
         case .compile(let m): return m
         case .gate(let m): return m
+        case .storage(let m): return m
         }
     }
 }
@@ -173,6 +175,14 @@ enum GenerationController {
             return .failure(error)
         } catch {
             return .failure(.compile(error.localizedDescription))
+        }
+
+        if editor.workingRoot != nil {
+            do {
+                _ = try editor.prepareWorkingMediaDirectory()
+            } catch {
+                return .failure(.storage(error.localizedDescription))
+            }
         }
 
         // (c) SUBMIT — the adapter's existing provider submission, with the compiled prompt injected.
@@ -248,7 +258,7 @@ enum GenerationController {
         onFailure: (@MainActor () -> Void)?
     ) -> String {
         let service = editor.generationService
-        let projectURL = editor.projectURL
+        let projectURL = editor.workingRoot
 
         switch request.submission {
         case .video(let make):
@@ -376,7 +386,7 @@ enum GenerationController {
             do {
                 try await submission.run(
                     service: editor.generationService,
-                    projectURL: editor.projectURL,
+                    projectURL: editor.workingRoot,
                     editor: editor,
                     onPhase: { progress?.onPhase?($0) },
                     onFinished: { progress?.onFinished?() },

@@ -41,10 +41,22 @@ final class ToolExecutor {
             data: ["tool": tool.rawValue, "projectId": editor.projectId ?? "unknown"]
         )
         do {
+            guard let schema = ToolDefinitions.all.first(where: { $0.name == tool })?.inputSchema else {
+                throw ToolError("Tool schema unavailable: \(tool.rawValue)")
+            }
+            try validateToolInput(args, against: schema, path: tool.rawValue)
             let resolved = try expandingIdPrefixes(in: args, editor: editor)
             // HARD GATE: a tool that does phase-N work is refused until every earlier phase is approved.
             if enforceHardGates, let phase = tool.advancingPhase(args: resolved) {
                 try guardFrontier(phase: phase, args: resolved, editor: editor)
+            }
+            if tool.isDurableWrite, editor.projectURL != nil {
+                guard let key = editor.openWorkingCopyKey else {
+                    throw ToolError(
+                        "The project working copy is unavailable. Reopen the project before writing."
+                    )
+                }
+                try ProjectWorkingCopy.markDirty(key: key)
             }
             result = try await run(tool, editor, resolved)
             // Record any edit that actually changed the timeline so `undo` can revert it.
@@ -59,7 +71,7 @@ final class ToolExecutor {
         }
         // A successful pipeline write diverges the working copy from the saved package — mark the
         // document edited so ⌘S persists it and the user is warned before closing without saving.
-        if !result.isError, tool.isPipelineWrite {
+        if !result.isError, tool.isDurableWrite {
             editor.onPipelineChanged?()
         }
         feedbackState.record(result, for: tool)
@@ -217,6 +229,124 @@ final class ToolExecutor {
         }
         return try work()
     }
+}
+
+private func validateToolInput(
+    in value: Any,
+    against schema: [String: Any],
+    path: String
+) throws {
+    let type = schema["type"] as? String
+    switch type {
+    case "object":
+        guard let object = value as? [String: Any] else {
+            throw ToolError("\(path): expected object")
+        }
+        let properties = objectSchemaProperties(schema["properties"])
+        let additional = schema["additionalProperties"]
+        let required = Set(schema["required"] as? [String] ?? [])
+        let missing = required.subtracting(object.keys)
+        if let key = missing.sorted().first {
+            throw ToolError("\(path): missing required field '\(key)'")
+        }
+
+        for key in object.keys.sorted() {
+            let childPath = path.isEmpty ? key : "\(path).\(key)"
+            let childValue = object[key]!
+            if let childSchema = properties[key] {
+                try validateToolInput(in: childValue, against: childSchema, path: childPath)
+            } else if let allowsAdditional = additional as? Bool {
+                if !allowsAdditional {
+                    throw ToolError("\(path): unknown field '\(key)'")
+                }
+            } else if let additionalSchema = additional as? [String: Any] {
+                try validateToolInput(
+                    in: childValue,
+                    against: additionalSchema,
+                    path: childPath
+                )
+            } else {
+                throw ToolError("\(path): object schema has no additionalProperties policy")
+            }
+        }
+    case "array":
+        guard let values = value as? [Any] else {
+            throw ToolError("\(path): expected array")
+        }
+        if let minimum = schema["minItems"] as? Int, values.count < minimum {
+            throw ToolError("\(path): expected at least \(minimum) item(s)")
+        }
+        if let maximum = schema["maxItems"] as? Int, values.count > maximum {
+            throw ToolError("\(path): expected at most \(maximum) item(s)")
+        }
+        guard let itemSchema = schema["items"] as? [String: Any] else {
+            throw ToolError("\(path): array schema has no items policy")
+        }
+        for (index, item) in values.enumerated() {
+            try validateToolInput(
+                in: item,
+                against: itemSchema,
+                path: "\(path)[\(index)]"
+            )
+        }
+    case "string":
+        guard value is String else { throw ToolError("\(path): expected string") }
+    case "integer":
+        guard isJSONNumber(value, integerOnly: true) else {
+            throw ToolError("\(path): expected integer")
+        }
+        try validateNumericBounds(value, schema: schema, path: path)
+    case "number":
+        guard isJSONNumber(value, integerOnly: false) else {
+            throw ToolError("\(path): expected number")
+        }
+        try validateNumericBounds(value, schema: schema, path: path)
+    case "boolean":
+        guard value is Bool else { throw ToolError("\(path): expected boolean") }
+    case nil:
+        break
+    default:
+        throw ToolError("\(path): unsupported schema type '\(type ?? "?")'")
+    }
+
+    if let allowed = schema["enum"] as? [String] {
+        guard let string = value as? String, allowed.contains(string) else {
+            throw ToolError("\(path): expected one of \(allowed.joined(separator: ", "))")
+        }
+    }
+}
+
+private func isJSONNumber(_ value: Any, integerOnly: Bool) -> Bool {
+    guard !(value is Bool), let number = value as? NSNumber else { return false }
+    let double = number.doubleValue
+    guard double.isFinite else { return false }
+    if !integerOnly { return true }
+    return double.isFinite && double.rounded(.towardZero) == double
+}
+
+private func validateNumericBounds(
+    _ value: Any,
+    schema: [String: Any],
+    path: String
+) throws {
+    guard let number = value as? NSNumber else { return }
+    let double = number.doubleValue
+    if let minimum = schema["minimum"] as? NSNumber,
+       double < minimum.doubleValue {
+        throw ToolError("\(path): expected at least \(minimum)")
+    }
+    if let maximum = schema["maximum"] as? NSNumber,
+       double > maximum.doubleValue {
+        throw ToolError("\(path): expected at most \(maximum)")
+    }
+}
+
+private func objectSchemaProperties(_ value: Any?) -> [String: [String: Any]] {
+    if let properties = value as? [String: [String: Any]] {
+        return properties
+    }
+    guard let properties = value as? [String: Any] else { return [:] }
+    return properties.compactMapValues { $0 as? [String: Any] }
 }
 
 private extension Duration {

@@ -233,7 +233,12 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         window.minSize = NSSize(width: min(AppTheme.Window.homeMin.width, visible.width),
                                 height: min(AppTheme.Window.homeMin.height, visible.height))
-        if !restored {
+        if restored {
+            window.setFrame(
+                WindowGeometry.restoredFrame(window.frame, minimum: window.minSize, visible: visible),
+                display: false
+            )
+        } else {
             window.setContentSize(Self.defaultContentSize(visible: visible))
             window.center()
         }

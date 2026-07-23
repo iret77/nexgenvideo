@@ -99,6 +99,25 @@ struct HardStepIntakeTests {
         #expect(HardStepManifest.load(packResourceDir: dir) == nil)
     }
 
+    @Test("finds a manifest inside the assembled pack resource bundle")
+    func findsManifestInAssembledPack() throws {
+        let bundle = try makeDataRoot().appendingPathComponent("musicvideo.ngvpack", isDirectory: true)
+        let json = """
+        {"phases": [{"phase": "analysis", "steps": [
+          {"id": "analysis.song", "attachAs": "song", "title": "Track",
+           "required": true, "accept": ["audio"]}
+        ]}]}
+        """
+        try write(
+            "Contents/Resources/MusicvideoPlugin_MusicvideoPlugin.bundle/MusicvideoPack/hardsteps.json",
+            in: bundle,
+            contents: json
+        )
+
+        let manifest = try #require(HardStepManifest.load(bundleURL: bundle))
+        #expect(manifest.steps(for: "analysis").first?.kind == .song)
+    }
+
     // MARK: - Satisfaction
 
     @Test("every kind reads unsatisfied against an empty data root")

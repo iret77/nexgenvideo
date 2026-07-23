@@ -45,6 +45,8 @@ struct AgentInputBox<LeadingTools: View>: View {
     @State private var mentionScrollTick: Int = 0
     @State private var isDropTargeted = false
     @State private var textEditorID = UUID()
+    @State private var showReferencePicker = false
+    @State private var attachmentError: String?
     @Namespace private var sendStopNamespace
 
     /// User-set input height (drag the top edge), persisted across sessions.
@@ -64,6 +66,10 @@ struct AgentInputBox<LeadingTools: View>: View {
             ?? editor.mediaAssets
         let matched = q.isEmpty ? typed : typed.filter { $0.mentionDisplayName.lowercased().contains(q) }
         return Array(matched.prefix(50))
+    }
+
+    private var pickableLibraryAssets: [MediaAsset] {
+        editor.agentPickableMediaAssets
     }
 
     var body: some View {
@@ -92,14 +98,14 @@ struct AgentInputBox<LeadingTools: View>: View {
                 .strokeBorder(
                     isDropTargeted ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.strong)
                         : focused ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium)
-                        : Color.white.opacity(AppTheme.Opacity.hint),
+                        : AppTheme.Border.subtleColor,
                     lineWidth: (focused || isDropTargeted) ? AppTheme.BorderWidth.thin : AppTheme.BorderWidth.hairline
                 )
                 .allowsHitTesting(false)
         }
         .overlay(alignment: .top) { resizeHandle }
-        .animation(.easeOut(duration: 0.15), value: focused)
-        .animation(.easeOut(duration: 0.15), value: isDropTargeted)
+        .animation(.easeOut(duration: AppTheme.Anim.hover), value: focused)
+        .animation(.easeOut(duration: AppTheme.Anim.hover), value: isDropTargeted)
         .onDrop(of: [.fileURL], isTargeted: blocked ? nil : $isDropTargeted, perform: handleDrop)
         .onChange(of: editor.agentService.focusInputRequestTick) { _, _ in
             Task { @MainActor in focused = true }
@@ -107,7 +113,19 @@ struct AgentInputBox<LeadingTools: View>: View {
         // A dialog card opened above: the composer is locked, so drop the mention popover and clear
         // any hover-drop highlight — no second input surface competes with the card.
         .onChange(of: blocked) { _, isBlocked in
-            if isBlocked { mentionQuery = nil; isDropTargeted = false }
+            if isBlocked {
+                mentionQuery = nil
+                isDropTargeted = false
+                showReferencePicker = false
+            }
+        }
+        .alert("Couldn't attach media", isPresented: Binding(
+            get: { attachmentError != nil },
+            set: { if !$0 { attachmentError = nil } }
+        )) {
+            Button("OK") { attachmentError = nil }
+        } message: {
+            Text(attachmentError ?? "The media couldn't be attached.")
         }
     }
 
@@ -183,7 +201,7 @@ struct AgentInputBox<LeadingTools: View>: View {
     private var bottomBar: some View {
         VStack(spacing: 0) {
             Rectangle()
-                .fill(Color.white.opacity(AppTheme.Opacity.hint))
+                .fill(AppTheme.Border.subtleColor)
                 .frame(height: AppTheme.BorderWidth.hairline)
             HStack(spacing: AppTheme.Spacing.md) {
                 attachButton
@@ -203,7 +221,7 @@ struct AgentInputBox<LeadingTools: View>: View {
         if isSending {
             Button(action: onCancel) {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .bold))
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.bold))
                     .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
             }
             .buttonStyle(.glass)
@@ -216,7 +234,7 @@ struct AgentInputBox<LeadingTools: View>: View {
         } else {
             Button(action: onSend) {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: AppTheme.FontSize.sm, weight: .bold))
+                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.bold))
                     .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
             }
             .buttonStyle(.glassProminent)
@@ -230,22 +248,54 @@ struct AgentInputBox<LeadingTools: View>: View {
         }
     }
 
-    /// The reliable way to bring a local file (a song, a clip, a still) into the chat — a real file
-    /// picker, since dropping onto the text area is eaten by the text editor and the agent can't open
-    /// one itself. Imports each pick as a media asset and @mentions it, exactly like drop/paste.
     private var attachButton: some View {
-        Button(action: presentAttachPanel) {
+        Menu {
+            Button {
+                showReferencePicker = true
+            } label: {
+                Label(
+                    pickableLibraryAssets.isEmpty
+                        ? "Reference asset — No available assets"
+                        : "Reference asset",
+                    systemImage: "at"
+                )
+            }
+            .disabled(pickableLibraryAssets.isEmpty)
+            .help(pickableLibraryAssets.isEmpty ? "No available assets" : "Reference a library asset")
+
+            Button(action: presentAttachPanel) {
+                Label("Import new asset…", systemImage: "square.and.arrow.down")
+            }
+        } label: {
             Image(systemName: "paperclip")
-                .font(.system(size: AppTheme.FontSize.md, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
                 .contentShape(Rectangle())
         }
+        .menuStyle(.button)
         .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .focusable(false)
         .disabled(blocked)
-        .opacity(blocked ? AppTheme.Opacity.strong : 1)
-        .help("Attach a file — song, video, or image")
+        .opacity(blocked ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
+        .help("Attach media")
+        .popover(isPresented: $showReferencePicker, arrowEdge: .bottom) {
+            LibraryAssetPicker(
+                assets: pickableLibraryAssets,
+                showsSearch: true,
+                showsTypeTabs: true,
+                scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight,
+                pinnedId: editor.selectedMediaAssetIds.first,
+                onPick: { asset in
+                    editor.agentService.attachMention(for: asset)
+                    showReferencePicker = false
+                }
+            )
+            .frame(width: AppTheme.ComponentSize.agentAssetPickerWidth)
+            .padding(AppTheme.Spacing.sm)
+        }
     }
 
     private func presentAttachPanel() {
@@ -255,12 +305,18 @@ struct AgentInputBox<LeadingTools: View>: View {
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.audio, .movie, .image]
         panel.prompt = "Attach"
-        panel.message = "Choose a song, video, or image to bring into the project."
+        panel.message = "Choose media to copy into the project. Originals stay in place."
         guard panel.runModal() == .OK else { return }
         for url in panel.urls {
-            if let asset = editor.addMediaAsset(from: url) {
-                editor.agentService.attachMention(for: asset)
-            }
+            importAndMention(url)
+        }
+    }
+
+    private func importAndMention(_ url: URL) {
+        if let asset = editor.addMediaAsset(from: url) {
+            editor.agentService.attachMention(for: asset)
+        } else {
+            attachmentError = editor.mediaPanelToast?.message ?? "The media couldn't be imported."
         }
     }
 
@@ -370,9 +426,7 @@ struct AgentInputBox<LeadingTools: View>: View {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url else { return }
                 Task { @MainActor in
-                    if let asset = editor.addMediaAsset(from: url) {
-                        editor.agentService.attachMention(for: asset)
-                    }
+                    importAndMention(url)
                 }
             }
         }
@@ -382,14 +436,16 @@ struct AgentInputBox<LeadingTools: View>: View {
     private func handlePaste(_: [NSItemProvider]) {
         let pb = NSPasteboard.general
         if let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL], !urls.isEmpty {
-            urls.compactMap { editor.addMediaAsset(from: $0) }
-                .forEach { editor.agentService.attachMention(for: $0) }
+            urls.forEach { importAndMention($0) }
             return
         }
         for (type, ext) in [(NSPasteboard.PasteboardType.png, "png"), (.tiff, "tiff")] {
-            if let data = pb.data(forType: type),
-               let asset = editor.importPastedImageData(data, fileExtension: ext) {
-                editor.agentService.attachMention(for: asset)
+            if let data = pb.data(forType: type) {
+                if let asset = editor.importPastedImageData(data, fileExtension: ext) {
+                    editor.agentService.attachMention(for: asset)
+                } else {
+                    attachmentError = editor.mediaPanelToast?.message ?? "The image couldn't be imported."
+                }
                 return
             }
         }

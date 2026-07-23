@@ -30,9 +30,17 @@ struct AudioImportTests {
         let e = editor()
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("aifc-import-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aifc-import-project-\(UUID().uuidString).ngv", isDirectory: true)
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
 
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
         try Data().write(to: root.appendingPathComponent("voice.aifc"))
 
         let summary = await e.importFinderItems([root], into: nil)
