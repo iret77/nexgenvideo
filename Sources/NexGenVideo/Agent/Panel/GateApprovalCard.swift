@@ -4,8 +4,17 @@ import SwiftUI
 struct GateApprovalCard: View {
     let approval: GateApproval
     let error: String?
+    let surface: String?
     let onApprove: () -> Void
     let onDecline: () -> Void
+
+    private var reviewHint: String? {
+        switch surface ?? "" {
+        case "review": "Read it in the Review tab first."
+        case "prose": "Read it in the Story tab first."
+        default: nil
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
@@ -49,7 +58,7 @@ struct GateApprovalCard: View {
 
     private var summary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-            Text("The agent finished \(approval.phaseLabel) and is asking you to approve it.")
+            Text("The agent is asking you to approve \(approval.phaseLabel).")
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -59,9 +68,11 @@ struct GateApprovalCard: View {
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Review it in the Story / Review tab first.")
-                .font(.system(size: AppTheme.FontSize.xxs))
-                .foregroundStyle(AppTheme.Text.mutedColor)
+            if let reviewHint {
+                Text(reviewHint)
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+            }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: AppTheme.FontSize.xxs))

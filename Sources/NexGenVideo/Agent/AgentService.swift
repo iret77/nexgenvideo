@@ -458,10 +458,17 @@ final class AgentService {
         }
         editor.onPipelineChanged?()
         anchorSongOnTimeline(dest, editor: editor)
+        let routing: String
+        if let next = editor.projectState?.nextPhaseName, next != "analysis" {
+            routing = "The pipeline is still on \"\(next)\" — settle that and get it approved first; "
+                + "analysis is gated behind it."
+        } else {
+            routing = "Run run_phase(\"analysis\") to measure it."
+        }
         sendDialogResponse(
             dialog,
             result: result,
-            agentContext: "Song placed in audio/ (\(src.lastPathComponent)). Now run run_phase(\"analysis\") to measure it."
+            agentContext: "Song placed in audio/ (\(src.lastPathComponent)). \(routing)"
         )
     }
 
@@ -487,9 +494,12 @@ final class AgentService {
             let trackIndex = editor.timeline.tracks.firstIndex { $0.type == .audio }
                 ?? editor.insertTrack(at: editor.timeline.tracks.count, type: .audio)
             let frames = max(1, Int((asset.duration * Double(editor.timeline.fps)).rounded()))
+            let wasEmpty = editor.timeline.totalFrames == 0
             _ = editor.placeClip(
                 asset: asset, trackIndex: trackIndex, startFrame: 0,
                 durationFrames: frames, addLinkedAudio: false)
+            // First layout happens before the spine exists, so fit the initial track explicitly.
+            if wasEmpty { editor.zoomScale = editor.minZoomScale }
         }
     }
 
