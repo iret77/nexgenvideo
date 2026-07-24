@@ -328,7 +328,8 @@ struct ProjectWorkingCopyTests {
             atPath: restored.appendingPathComponent(Project.mediaDirectoryName)
                 .appendingPathComponent("saved.mov").path
         ))
-        #expect(!ProjectWorkingCopy.open(key: key, packageURL: pkg).recoveredUnsaved)
+        let reopened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        #expect(!reopened.recoveredUnsaved)
     }
 
     @Test("Save As copies the complete working state and mints an independent identity")

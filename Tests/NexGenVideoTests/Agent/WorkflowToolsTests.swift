@@ -817,8 +817,12 @@ struct WorkflowToolsTests {
 
         #expect(manifest.songAnchorAssetId == anchorId)
         #expect(manifest.entries.contains { $0.id == anchorId })
-        #expect(timeline.tracks.filter { $0.type == .audio }.flatMap(\.clips)
-            .filter { $0.mediaRef == anchorId && $0.startFrame == 0 }.count == 1)
+        let audioTracks = timeline.tracks.filter { $0.type == .audio }
+        let audioClips = audioTracks.flatMap(\.clips)
+        let anchoredClips = audioClips.filter {
+            $0.mediaRef == anchorId && $0.startFrame == 0
+        }
+        #expect(anchoredClips.count == 1)
     }
 
     @Test("attach_song requires exactly one of media or path")
