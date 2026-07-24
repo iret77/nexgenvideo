@@ -1,8 +1,7 @@
 import Foundation
 import NexGenEngine
 
-/// The complete live editing copy of a project. The package is read-only while it is open; every
-/// editor, media, chat, and pipeline write lands here until Save replaces the package.
+/// Owns the live Recovery copy that atomically replaces the package on Save.
 enum ProjectWorkingCopy {
     private static let pipelineDir = DataRootResolver.pipelineDirname   // "pipeline"
     private static let completeSentinel = ".ngv-materialized"

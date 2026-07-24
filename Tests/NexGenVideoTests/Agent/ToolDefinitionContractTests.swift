@@ -119,7 +119,7 @@ struct ToolDefinitionContractTests {
             .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
             .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
-            .setGateState, .cropToAspect, .assembleTimeline,
+            .cropToAspect, .assembleTimeline,
         ]
 
         #expect(Set(ToolName.allCases.filter(\.isDurableWrite)) == expected)

@@ -515,6 +515,9 @@ extension ToolExecutor {
             ))
             return try gateApprovalPendingResult(request, requestedPhase: phase)
         }
+        if let key = editor.openWorkingCopyKey {
+            try ProjectWorkingCopy.markDirty(key: key)
+        }
         let gates = try mutateGates(dataRoot: root) { GatesOperations.setState(&$0, phase: phase, state: state, notes: notes) }
         editor.onPipelineChanged?()
         let gate = gates.get(phase)
@@ -1816,12 +1819,7 @@ extension ToolExecutor {
 
     // MARK: - Attach song (WRITES)
 
-    /// Copy the song into the project's `audio/` folder — the one place the musicvideo `analysis`
-    /// runner reads from (import_media only reaches the media library). Source is either a
-    /// media-library asset (`media`, resolved to its backing file like the other media tools) or an
-    /// absolute `path`; exactly one. Enforces the runner's one-song contract: a different existing
-    /// audio file is an error unless `replace` is set, in which case the complete audio directory is
-    /// swapped atomically. Returns `{filename, audio_dir}`.
+    /// Attaches one durable project song and synchronizes its timeline anchor.
     func attachSongTool(
         _ editor: EditorViewModel,
         _ args: [String: Any]

@@ -79,8 +79,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case copyProjectFile = "copy_project_file"
     case writeBrief = "write_brief"
 
-    /// Tools with filesystem side effects inside the live project. Timeline-only mutations are
-    /// undo-tracked and checkpoint themselves through NSDocument.
+    /// Filesystem writers that must dirty the live project before execution.
     var isDurableWrite: Bool {
         switch self {
         // Approving gate tools defer their write to the user's later click.
@@ -88,7 +87,7 @@ enum ToolName: String, CaseIterable, Sendable {
              .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
-             .setGateState, .cropToAspect, .assembleTimeline:
+             .cropToAspect, .assembleTimeline:
             return true
         default:
             return false

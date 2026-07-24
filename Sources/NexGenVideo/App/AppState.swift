@@ -157,9 +157,7 @@ final class AppState {
                     if let format, !format.isEmpty {
                         try ProjectPluginSettings.setActivePlugin(format, projectURL: url)
                     }
-                    // Stamp a brand-new identity so this project can never share a working copy with a
-                    // deleted namesake that once lived at the same path — the whole class of "new project
-                    // inherited an old analysis" bug is closed at the source by a unique UUID.
+                    // A fresh UUID prevents a new project from inheriting a namesake's recovery data.
                     try ProjectIdentity.regenerate(at: url)
                 } catch {
                     NSDocumentController.shared.removeDocument(doc)

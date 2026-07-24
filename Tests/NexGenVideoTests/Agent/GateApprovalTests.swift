@@ -128,6 +128,43 @@ struct GateApprovalTests {
         #expect(phases.first { $0["phase"] as? String == "project_init" }?["state"] as? String == "pending")
     }
 
+    @Test("set_gate_state approval request does not mark the project edited")
+    func setStateApprovalRequestDoesNotDirty() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        var dirtied = 0
+        h.editor.onPipelineChanged = { dirtied += 1 }
+
+        let result = await h.runRaw("set_gate_state", args: [
+            "project_dir": dataRoot.path,
+            "phase": "project_init",
+            "state": "approved",
+        ])
+        let payload = try JSONSerialization.jsonObject(
+            with: Data(ToolHarness.textOf(result).utf8)
+        ) as? [String: Any]
+
+        #expect(payload?["status"] as? String == "approval_pending")
+        #expect(dirtied == 0)
+    }
+
+    @Test("set_gate_state immediate write marks the project edited once")
+    func setStateImmediateWriteDirtiesOnce() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        var dirtied = 0
+        h.editor.onPipelineChanged = { dirtied += 1 }
+
+        let result = await h.runRaw("set_gate_state", args: [
+            "project_dir": dataRoot.path,
+            "phase": "project_init",
+            "state": "needs_revision",
+        ])
+
+        #expect(result.isError == false)
+        #expect(dirtied == 1)
+    }
+
     @Test("A failed host write leaves the card open with the real reason")
     func failedWriteKeepsCard() {
         let editor = EditorViewModel()

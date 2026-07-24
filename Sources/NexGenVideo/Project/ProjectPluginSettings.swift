@@ -1,7 +1,6 @@
 import Foundation
 
-/// Per-project production settings stored in `ngv.json`. An open project writes the working copy;
-/// Save carries it into the package. Project creation may seed the package before it is opened.
+/// Persists per-project format settings in the package or live working copy.
 enum ProjectPluginSettings {
     static let filename = "ngv.json"
 
