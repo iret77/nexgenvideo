@@ -2,9 +2,10 @@
 
 ## Objective
 
-Ship one consolidated NexGenVideo 1.0 release candidate. Never build locally. Do not merge, open a
-release PR, dispatch CI or `release.yml`, or publish without the owner's explicit in-the-moment
-approval.
+Ship one consolidated NexGenVideo 1.0 release candidate. Never build locally. A successful dry-run
+was tested on-device and exposed an OAuth callback crash; the corrective candidate is prepared.
+Do not run the next CI/DMG build, merge, open a release PR or publish without the owner's explicit
+in-the-moment approval.
 
 ## Prepared state
 
@@ -12,8 +13,19 @@ approval.
 - Base: `origin/main`
 - App/changelog version: `1.0.0`
 - Musicvideo pack candidate: `0.0.5` (stable catalog currently `0.0.4`)
-- No local build or test was run; macOS 26 GitHub Actions is the only verification surface.
-- No PR, CI run, DMG build, merge, tag, issue closure, or release was triggered.
+- Last green dry-run commit: `081a1f015c9074da50c9637aa90983dc598c22e1`
+- Green release workflow: `30064697840`
+- The run passed the full test suite, signing, app and pack notarization/stapling, external signed-pack
+  loading, DMG verification, Sparkle signing and artifact upload.
+- The dry-run artifact `NexGenVideo-1.0.0-dry-run` contains the DMG and both publication names of the
+  same musicvideo pack. Stable release, appcast and catalog publication were skipped.
+- On-device testing found a `SIGTRAP` after a successful Higgsfield browser login. AuthenticationServices
+  called `presentationAnchor(for:)` on its SafariLaunchAgent XPC queue while the old implementation
+  asserted main-actor isolation.
+- The corrective patch captures the `NSWindow` on the main actor before starting authentication,
+  retains a dedicated presentation context and serves the immutable anchor without an actor assertion.
+  A regression test invokes this witness from a detached task.
+- No local build or test was run; macOS 26 GitHub Actions remains the only verification surface.
 
 The release-blocker implementations for #279–#287 are present:
 
@@ -27,7 +39,7 @@ The release-blocker implementations for #279–#287 are present:
 - #286: central pre-dispatch monetary ledger and hard budget guard.
 - #287: notarized downloadable packs plus quarantined runtime load verification.
 
-The issues stay open until the consolidated macOS CI run proves their acceptance criteria.
+The issues stay open until the corrected candidate passes CI and final on-device verification.
 
 ## Review and static verification
 
@@ -45,6 +57,9 @@ The issues stay open until the consolidated macOS CI run proves their acceptance
 - The owner explicitly approved the locked `docs/PATTERN_FIT_CONTRACT.md` partial-library change on
   2026-07-24. A targeted Gemini 3.1 Pro High re-review then passed the contract, implementation,
   tool projection and tests with no findings.
+- Gemini 3.1 Pro High reviewed the OAuth correction, weak-provider lifetime and off-main regression
+  test. After receiving the complete actor-isolation context, it approved the final patch with no
+  release blocker.
 - `git diff --check` passes.
 - All workflow YAML parses.
 - All 31 workflow `run:` blocks and release shell scripts pass `bash -n`.
@@ -53,10 +68,11 @@ The issues stay open until the consolidated macOS CI run proves their acceptance
 
 ## Remaining gates
 
-1. Obtain the owner's explicit in-the-moment `build now`.
-2. Run one consolidated macOS 26 CI verification and review every #279–#287 acceptance criterion.
-3. Only after green CI: close verified blockers and prepare the release PR.
-4. Production merge, `release.yml` dispatch and publication each remain separate explicit actions.
+1. Obtain the owner's explicit in-the-moment `build now` for a new dry-run.
+2. Run the macOS 26 release workflow and verify the OAuth regression test plus all existing gates.
+3. Test Higgsfield sign-in from the new notarized DMG on-device.
+4. Only after that succeeds: close verified blockers and prepare the release PR.
+5. Production merge and publication remain separate explicit actions.
 
 ## Release workflow
 

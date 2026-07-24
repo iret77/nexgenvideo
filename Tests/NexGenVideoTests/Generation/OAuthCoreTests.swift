@@ -1,3 +1,5 @@
+import AppKit
+import AuthenticationServices
 import Foundation
 import Testing
 @testable import NexGenVideo
@@ -59,6 +61,25 @@ struct OAuthCoreTests {
         #expect(OAuthCore.authorizationCode(from: ok, expectedState: "WRONG") == nil)
         let err = URL(string: "nexgenvideo://oauth-callback?error=access_denied&state=xyz")!
         #expect(OAuthCore.authorizationCode(from: err, expectedState: "xyz") == nil)
+    }
+
+    @Test("presentation anchor is safe on the browser callback queue")
+    @MainActor
+    func presentationAnchorOffMain() async {
+        let anchor = ASPresentationAnchor()
+        let context = OAuthPresentationContext(anchor: anchor)
+        let session = ASWebAuthenticationSession(
+            url: URL(string: "https://auth.example.com/authorize")!,
+            callbackURLScheme: "nexgenvideo"
+        ) { _, _ in }
+        nonisolated(unsafe) let callbackContext = context
+        nonisolated(unsafe) let callbackSession = session
+        nonisolated(unsafe) let expectedAnchor = anchor
+
+        let matches = await Task.detached {
+            callbackContext.presentationAnchor(for: callbackSession) === expectedAnchor
+        }.value
+        #expect(matches)
     }
 
     // MARK: - Metadata decode

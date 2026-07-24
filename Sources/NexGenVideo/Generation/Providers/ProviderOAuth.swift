@@ -138,6 +138,7 @@ final class ProviderOAuth: NSObject {
     /// Held for the duration of the flow — ASWebAuthenticationSession is deallocated (and the sign-in
     /// silently aborts) if nothing retains it.
     private var authSession: ASWebAuthenticationSession?
+    private var presentationContext: OAuthPresentationContext?
 
     func signIn(_ provider: GenerationProvider) async throws {
         guard let cap = provider.mcpCapability, cap.auth == .oauth else { throw OAuthError.notOAuth }
@@ -161,7 +162,13 @@ final class ProviderOAuth: NSObject {
     }
 
     private func presentAuth(url: URL) async throws -> URL {
-        defer { authSession = nil }
+        defer {
+            authSession = nil
+            presentationContext = nil
+        }
+        let context = OAuthPresentationContext(
+            anchor: NSApp.keyWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
+        )
         return try await withCheckedThrowingContinuation { cont in
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "nexgenvideo") { callback, error in
                 if let callback { cont.resume(returning: callback) }
@@ -171,8 +178,9 @@ final class ProviderOAuth: NSObject {
                     cont.resume(throwing: OAuthError.tokenExchangeFailed(error?.localizedDescription ?? "unknown"))
                 }
             }
-            session.presentationContextProvider = self
-            authSession = session   // retain for the duration of the flow
+            session.presentationContextProvider = context
+            presentationContext = context
+            authSession = session
             if !session.start() { cont.resume(throwing: OAuthError.tokenExchangeFailed("couldn't open the sign-in window")) }
         }
     }
@@ -184,11 +192,15 @@ final class ProviderOAuth: NSObject {
     }
 }
 
-extension ProviderOAuth: ASWebAuthenticationPresentationContextProviding {
-    // The system calls this on the main thread; assume the isolation to read NSApp.
+final class OAuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextProviding {
+    private nonisolated(unsafe) let anchor: ASPresentationAnchor
+
+    @MainActor
+    init(anchor: ASPresentationAnchor) {
+        self.anchor = anchor
+    }
+
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        MainActor.assumeIsolated {
-            NSApp.keyWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
-        }
+        anchor
     }
 }
