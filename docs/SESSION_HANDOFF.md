@@ -42,6 +42,9 @@ The issues stay open until the consolidated macOS CI run proves their acceptance
   security, generation/budget, model integrity, agent/chat/UI and the app design system. Its claimed
   `bundle.sh` initialization defect was rejected after direct source verification: `RESOURCES` is
   assigned before `package_release` can run.
+- The owner explicitly approved the locked `docs/PATTERN_FIT_CONTRACT.md` partial-library change on
+  2026-07-24. A targeted Gemini 3.1 Pro High re-review then passed the contract, implementation,
+  tool projection and tests with no findings.
 - `git diff --check` passes.
 - All workflow YAML parses.
 - All 31 workflow `run:` blocks and release shell scripts pass `bash -n`.
@@ -50,16 +53,10 @@ The issues stay open until the consolidated macOS CI run proves their acceptance
 
 ## Remaining gates
 
-1. Resolve the locked-spec gate: this branch changes `docs/PATTERN_FIT_CONTRACT.md` to make partial
-   authored libraries shippable. `AGENTS.md` requires explicit owner approval for any change to that
-   locked file. Do not infer approval; either record it or revert the contract and dependent code.
-2. Re-run the targeted Gemini spec scope after that decision. The standard `spec-check` Codex
-   reviewer remains unavailable under the managed host policy; the user explicitly approved Gemini
-   3.1 Pro via AGY as the fallback.
-3. Obtain the owner's explicit in-the-moment `build now`.
-4. Run one consolidated macOS 26 CI verification and review every #279–#287 acceptance criterion.
-5. Only after green CI: close verified blockers and prepare the release PR.
-6. Production merge, `release.yml` dispatch and publication each remain separate explicit actions.
+1. Obtain the owner's explicit in-the-moment `build now`.
+2. Run one consolidated macOS 26 CI verification and review every #279–#287 acceptance criterion.
+3. Only after green CI: close verified blockers and prepare the release PR.
+4. Production merge, `release.yml` dispatch and publication each remain separate explicit actions.
 
 ## Release workflow
 
