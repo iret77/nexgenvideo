@@ -134,6 +134,7 @@ enum EditSubmitter {
         var gen = stored
         gen.createdAt = nil
         let modelId = gen.model
+        let modelKind = ModelCatalog.shared.modelKindForRerun(id: modelId)
         // Recompile the ORIGINAL intent against the CURRENT ledger — a lock added or changed since the
         // first render now applies. Three cases (#114 gate):
         //   (a) no stored intent (pre-#114 asset, or upscale) → nil → replay the stored compiled prompt
@@ -146,7 +147,7 @@ enum EditSubmitter {
         }
         let preUploaded = gen.imageURLs
 
-        if let videoModel = VideoModelConfig.allModels.first(where: { $0.id == modelId }) {
+        if case .video(let videoModel)? = modelKind {
             if let err = videoModel.validate(
                 duration: gen.duration, aspectRatio: gen.aspectRatio, resolution: gen.resolution
             ) {
@@ -235,7 +236,7 @@ enum EditSubmitter {
             )
         }
 
-        if let imageModel = ImageModelConfig.allModels.first(where: { $0.id == modelId }) {
+        if case .image(let imageModel)? = modelKind {
             let count = min(imageModel.maxImages, max(1, gen.numImages ?? 1))
             // A provider that takes its references inline (#212) never persists hosted URLs, so
             // `imageURLs` is empty for it and the durable record is `imageURLAssetIds`. Replaying
@@ -286,7 +287,7 @@ enum EditSubmitter {
             )
         }
 
-        if let audioModel = AudioModelConfig.allModels.first(where: { $0.id == modelId }) {
+        if case .audio(let audioModel)? = modelKind {
             let sourceVideoURL = audioModel.inputs.contains(.video) ? preUploaded?.first : nil
             let expectsVideoSource = audioModel.inputs.contains(.video)
                 && (!audioModel.inputs.contains(.text)
@@ -337,7 +338,7 @@ enum EditSubmitter {
             )
         }
 
-        if UpscaleModelConfig.allModels.contains(where: { $0.id == modelId }) {
+        if case .upscale? = modelKind {
             guard let source = preUploaded?.first else { throw RerunError.missingSource }
             let isImage = asset.type == .image
             let authorization = try await authorizeRerun(

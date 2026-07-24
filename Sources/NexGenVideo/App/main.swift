@@ -9,7 +9,7 @@ PackSelfTest.runIfRequested()
 Telemetry.start()
 BundledFonts.register()
 ModelCatalog.shared.configure()
-ModelCatalog.shared.load(entries: FalModelRegistry.entries + MarbleModelRegistry.entries + RunwayModelRegistry.entries)
+ModelCatalog.shared.load(entries: ModelCatalog.launchEntries)
 // Then refresh from the hosted catalog (models + ranking cards without an app release); the
 // registries above are the offline fallback and first-run seed.
 Task { @MainActor in await RemoteCatalog.refresh() }

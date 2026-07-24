@@ -369,7 +369,28 @@ jobs:
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
       - name: Test the exact release configuration
-        run: swift test -c release
+        run: |
+          set +e
+          export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
+          attempts=3
+          for i in $(seq 1 "$attempts"); do
+            swift test -c release 2>&1 | tee "release-test-attempt-$i.log"
+            code=${PIPESTATUS[0]}
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            if grep -qE "✘ Test|recorded an issue" "release-test-attempt-$i.log"; then
+              echo "::error::Release tests failed on attempt $i"
+              exit "$code"
+            fi
+            if grep -q "unexpected signal code" "release-test-attempt-$i.log"; then
+              echo "::warning::SwiftPM test runner crashed on attempt $i — retrying"
+              continue
+            fi
+            exit "$code"
+          done
+          echo "::error::SwiftPM test runner crashed on all $attempts attempts"
+          exit 1
 
       - name: Build and sign app
         run: scripts/bundle.sh release --sign

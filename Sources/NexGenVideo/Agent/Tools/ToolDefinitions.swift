@@ -276,6 +276,7 @@ enum ToolDefinitions {
                     "startFrame": ["type": "integer", "description": "Optional. Only return words ending after this project frame. Use with the returned nextStartFrame to page a long timeline."],
                     "endFrame": ["type": "integer", "description": "Optional. Only return words starting before this project frame."],
                     "clipId": ["type": "string", "description": "Scope the transcript to a single clip — returns only what that clip says, in project frames. Answers \"what's in clip X?\" without scanning the whole timeline."],
+                    "wordTimestamps": ["type": "boolean", "description": "Compatibility input accepted from inspect_media-style calls. Timeline transcripts always return word timestamps."],
                 ]
             )
         ),
@@ -458,7 +459,20 @@ enum ToolDefinitions {
                     "keyframes": [
                         "type": "array",
                         "description": "Replacement keyframe rows. Empty array clears the track. Row shape depends on property — see tool description.",
-                        "items": ["type": "array"],
+                        "items": [
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 6,
+                            "items": [
+                                "anyOf": [
+                                    ["type": "number"] as [String: Any],
+                                    [
+                                        "type": "string",
+                                        "enum": ["linear", "hold", "smooth"],
+                                    ] as [String: Any],
+                                ],
+                            ],
+                        ],
                     ],
                 ],
                 required: ["clipId", "property", "keyframes"]

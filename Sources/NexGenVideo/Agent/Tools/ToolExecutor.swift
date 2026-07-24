@@ -47,12 +47,12 @@ final class ToolExecutor {
             guard let schema = ToolDefinitions.all.first(where: { $0.name == tool })?.inputSchema else {
                 throw ToolError("Tool schema unavailable: \(tool.rawValue)")
             }
+            // HARD GATE: a tool that does phase-N work is refused until every earlier phase is approved.
+            if enforceHardGates, let phase = tool.advancingPhase(args: args) {
+                try guardFrontier(phase: phase, args: args, editor: editor)
+            }
             try validateToolInput(in: args, against: schema, path: tool.rawValue)
             let resolved = try expandingIdPrefixes(in: args, editor: editor)
-            // HARD GATE: a tool that does phase-N work is refused until every earlier phase is approved.
-            if enforceHardGates, let phase = tool.advancingPhase(args: resolved) {
-                try guardFrontier(phase: phase, args: resolved, editor: editor)
-            }
             if tool.isDurableWrite, editor.projectURL != nil {
                 guard let key = editor.openWorkingCopyKey else {
                     throw ToolError(
@@ -239,6 +239,28 @@ private func validateToolInput(
     against schema: [String: Any],
     path: String
 ) throws {
+    if let alternatives = schema["anyOf"] as? [[String: Any]] {
+        var firstError: ToolError?
+        var matchingTypeError: ToolError?
+        var matches = false
+        for alternative in alternatives {
+            do {
+                try validateToolInput(in: value, against: alternative, path: path)
+                matches = true
+                break
+            } catch let error as ToolError {
+                firstError = firstError ?? error
+                if schemaTypeMatches(value, type: alternative["type"] as? String) {
+                    matchingTypeError = matchingTypeError ?? error
+                }
+            }
+        }
+        if !matches {
+            throw matchingTypeError ?? firstError
+                ?? ToolError("\(path): does not match any allowed schema")
+        }
+    }
+
     let type = schema["type"] as? String
     switch type {
     case "object":
@@ -301,6 +323,10 @@ private func validateToolInput(
         try validateNumericBounds(value, schema: schema, path: path)
     case "number":
         guard isJSONNumber(value, integerOnly: false) else {
+            if !(value is Bool), let number = value as? NSNumber,
+               !number.doubleValue.isFinite {
+                throw ToolError("\(path): expected finite number")
+            }
             throw ToolError("\(path): expected number")
         }
         try validateNumericBounds(value, schema: schema, path: path)
@@ -316,6 +342,18 @@ private func validateToolInput(
         guard let string = value as? String, allowed.contains(string) else {
             throw ToolError("\(path): expected one of \(allowed.joined(separator: ", "))")
         }
+    }
+}
+
+private func schemaTypeMatches(_ value: Any, type: String?) -> Bool {
+    switch type {
+    case "object": return value is [String: Any]
+    case "array": return value is [Any]
+    case "string": return value is String
+    case "integer", "number": return !(value is Bool) && value is NSNumber
+    case "boolean": return value is Bool
+    case nil: return true
+    default: return false
     }
 }
 
