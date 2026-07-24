@@ -186,8 +186,8 @@ private struct SettingsDetail: View {
 private extension PluginSettingsAttention {
     var systemImage: String {
         switch self {
-        case .updateAvailable: return "arrow.down.circle.fill"
-        case .restartRequired: return "arrow.clockwise.circle.fill"
+        case .updateAvailable: return "arrow.clockwise.circle"
+        case .restartRequired: return "exclamationmark.circle.fill"
         }
     }
 
