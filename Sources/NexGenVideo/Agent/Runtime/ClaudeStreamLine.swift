@@ -27,21 +27,27 @@ enum ClaudeStreamEvent: Sendable {
 
     var requiresAuthentication: Bool {
         guard case .turnFinished(true, let text?, _) = self else { return false }
-        return Self.isAuthenticationFailure(text)
+        return Self.isAuthenticationFailure(text, requireLoginInstructionForSignedOut: false)
     }
 
     var isAuthenticationMessageCandidate: Bool {
         guard case .assistantBlock(_, .text(let text)) = self else { return false }
-        return Self.isAuthenticationFailure(text)
+        return Self.isAuthenticationFailure(text, requireLoginInstructionForSignedOut: true)
     }
 
-    private static func isAuthenticationFailure(_ text: String) -> Bool {
+    private static func isAuthenticationFailure(
+        _ text: String,
+        requireLoginInstructionForSignedOut: Bool
+    ) -> Bool {
         let normalized = text.lowercased()
         return normalized.contains("failed to authenticate")
             || normalized.contains("oauth session expired")
             || normalized.contains("oauth token revoked")
             || normalized.contains("oauth token has expired")
-            || normalized.contains("not logged in")
+            || (
+                normalized.contains("not logged in")
+                && (!requireLoginInstructionForSignedOut || normalized.contains("/login"))
+            )
     }
 }
 

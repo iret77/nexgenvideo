@@ -34,7 +34,6 @@ struct AgentPane: View {
         .onReceive(NotificationCenter.default.publisher(for: .claudeCodeStatusChanged)) { notification in
             guard let status = notification.object as? ClaudeCodeLocator.Status else { return }
             claudeStatus = status
-            isCheckingClaude = false
         }
     }
 

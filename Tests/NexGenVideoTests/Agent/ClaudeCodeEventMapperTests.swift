@@ -137,12 +137,14 @@ struct ClaudeCodeEventMapperTests {
         let resultLine = #"{"type":"result","subtype":"success","is_error":true,"result":"Failed to authenticate: OAuth session expired and could not be refreshed"}"#
         let revokedLine = #"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["OAuth token revoked · Please run /login"]}"#
         let assistantLine = #"{"type":"assistant","message":{"id":"m-auth","content":[{"type":"text","text":"The service says you are not logged in."}]}}"#
+        let signedOutLine = #"{"type":"assistant","message":{"id":"m-auth","content":[{"type":"text","text":"Not logged in · Please run /login"}]}}"#
         let unrelatedLine = #"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Model is temporarily unavailable"]}"#
 
         #expect(ClaudeStreamDecoder.decode(line: resultLine).contains(where: \.requiresAuthentication))
         #expect(ClaudeStreamDecoder.decode(line: revokedLine).contains(where: \.requiresAuthentication))
         #expect(!ClaudeStreamDecoder.decode(line: assistantLine).contains(where: \.requiresAuthentication))
-        #expect(ClaudeStreamDecoder.decode(line: assistantLine).contains(where: \.isAuthenticationMessageCandidate))
+        #expect(!ClaudeStreamDecoder.decode(line: assistantLine).contains(where: \.isAuthenticationMessageCandidate))
+        #expect(ClaudeStreamDecoder.decode(line: signedOutLine).contains(where: \.isAuthenticationMessageCandidate))
         #expect(!ClaudeStreamDecoder.decode(line: unrelatedLine).contains(where: \.requiresAuthentication))
     }
 
