@@ -1,4 +1,3 @@
-import AppKit
 import AuthenticationServices
 import Foundation
 import Testing
@@ -63,23 +62,74 @@ struct OAuthCoreTests {
         #expect(OAuthCore.authorizationCode(from: err, expectedState: "xyz") == nil)
     }
 
-    @Test("presentation anchor is safe on the browser callback queue")
+    @Test("browser callback preserves task cancellation")
     @MainActor
-    func presentationAnchorOffMain() async {
-        let anchor = ASPresentationAnchor()
-        let context = OAuthPresentationContext(anchor: anchor)
-        let session = ASWebAuthenticationSession(
-            url: URL(string: "https://auth.example.com/authorize")!,
-            callbackURLScheme: "nexgenvideo"
-        ) { _, _ in }
-        nonisolated(unsafe) let callbackContext = context
-        nonisolated(unsafe) let callbackSession = session
-        nonisolated(unsafe) let expectedAnchor = anchor
+    func browserCallbackCancellation() async {
+        await #expect(throws: CancellationError.self) {
+            _ = try await ProviderOAuth.browserCallback(
+                URL(string: "https://auth.example.com/authorize")!
+            ) { _ in
+                throw CancellationError()
+            }
+        }
+    }
 
-        let matches = await Task.detached {
-            callbackContext.presentationAnchor(for: callbackSession) === expectedAnchor
-        }.value
-        #expect(matches)
+    @Test("browser callback preserves OAuth errors")
+    @MainActor
+    func browserCallbackOAuthError() async {
+        do {
+            _ = try await ProviderOAuth.browserCallback(
+                URL(string: "https://auth.example.com/authorize")!
+            ) { _ in
+                throw OAuthError.userCancelled
+            }
+            Issue.record("Expected the OAuth error to be rethrown")
+        } catch OAuthError.userCancelled {
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("browser callback maps system cancellation to user cancellation")
+    @MainActor
+    func browserCallbackSystemCancellation() async {
+        let cancellation = NSError(
+            domain: ASWebAuthenticationSessionErrorDomain,
+            code: ASWebAuthenticationSessionError.Code.canceledLogin.rawValue
+        )
+        do {
+            _ = try await ProviderOAuth.browserCallback(
+                URL(string: "https://auth.example.com/authorize")!
+            ) { _ in
+                throw cancellation
+            }
+            Issue.record("Expected user cancellation")
+        } catch OAuthError.userCancelled {
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("browser callback maps unknown errors to token exchange errors")
+    @MainActor
+    func browserCallbackUnknownError() async {
+        let underlying = NSError(
+            domain: "OAuthCoreTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "fixture failure"]
+        )
+        do {
+            _ = try await ProviderOAuth.browserCallback(
+                URL(string: "https://auth.example.com/authorize")!
+            ) { _ in
+                throw underlying
+            }
+            Issue.record("Expected a token exchange error")
+        } catch OAuthError.tokenExchangeFailed(let message) {
+            #expect(message == "fixture failure")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
     // MARK: - Metadata decode

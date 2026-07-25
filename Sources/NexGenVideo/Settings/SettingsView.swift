@@ -63,27 +63,16 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        HStack(spacing: AppTheme.Spacing.none) {
+        SettingsWindowShell {
             SettingsSidebar(
                 selectedTab: $selectedTab,
                 visibleTabs: visibleTabs,
                 pluginManager: pluginManager
             )
-                .frame(width: AppTheme.ComponentSize.settingsSidebarWidth)
-
+        } detail: {
             SettingsDetail(tab: selectedTab, pluginManager: pluginManager)
-                .id(selectedTab)  // fresh view tree per tab — stale layers ghosted through the material
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.medium))
+                .id(selectedTab)
         }
-        .frame(
-            minWidth: AppTheme.Window.settingsMin.width,
-            idealWidth: AppTheme.Window.settingsDefault.width,
-            minHeight: AppTheme.Window.settingsMin.height,
-            idealHeight: AppTheme.Window.settingsDefault.height
-        )
-        .background(.ultraThinMaterial)
-        .focusEffectDisabled()
         .onAppear {
             if !visibleTabs.contains(selectedTab) {
                 selectedTab = visibleTabs.first ?? .general
@@ -95,6 +84,40 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .pluginInstallationChanged)) { _ in
             pluginManager.reloadInstalled()
         }
+    }
+}
+
+struct SettingsWindowShell<Sidebar: View, Detail: View>: View {
+    let sidebar: Sidebar
+    let detail: Detail
+
+    init(
+        @ViewBuilder sidebar: () -> Sidebar,
+        @ViewBuilder detail: () -> Detail
+    ) {
+        self.sidebar = sidebar()
+        self.detail = detail()
+    }
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.none) {
+            sidebar
+                .frame(width: AppTheme.ComponentSize.settingsSidebarWidth)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(AppTheme.Background.surfaceColor)
+
+            detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.medium))
+        }
+        .frame(
+            minWidth: AppTheme.Window.settingsMin.width,
+            idealWidth: AppTheme.Window.settingsDefault.width,
+            minHeight: AppTheme.Window.settingsMin.height,
+            idealHeight: AppTheme.Window.settingsDefault.height
+        )
+        .background(.ultraThinMaterial)
+        .focusEffectDisabled()
     }
 }
 
@@ -141,13 +164,51 @@ private struct SettingsDetail: View {
     let pluginManager: PluginManager
 
     var body: some View {
+        SettingsPage(title: tab.label, subtitle: tab.subtitle) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+                switch tab {
+                case .general:
+                    NotificationsPane()
+                    PrivacyPane()
+                case .models:
+                    ModelsPane()
+                case .agent:
+                    AgentPane()
+                case .plugins:
+                    PluginsPane(manager: pluginManager)
+                case .providers:
+                    ProvidersPane()
+                case .storage:
+                    StoragePane()
+                }
+            }
+        }
+    }
+}
+
+struct SettingsPage<Content: View>: View {
+    let title: String
+    let subtitle: String
+    let content: Content
+
+    init(
+        title: String,
+        subtitle: String,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.content = content()
+    }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text(tab.label)
+                Text(title)
                     .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
                     .tracking(AppTheme.Tracking.tight)
                     .foregroundStyle(AppTheme.Text.primaryColor)
-                Text(tab.subtitle)
+                Text(subtitle)
                     .font(.system(size: AppTheme.FontSize.smMd))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
@@ -158,23 +219,8 @@ private struct SettingsDetail: View {
             .padding(.bottom, AppTheme.Spacing.lgXl)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                    switch tab {
-                    case .general:
-                        NotificationsPane()
-                        PrivacyPane()
-                    case .models:
-                        ModelsPane()
-                    case .agent:
-                        AgentPane()
-                    case .plugins:
-                        PluginsPane(manager: pluginManager)
-                    case .providers:
-                        ProvidersPane()
-                    case .storage:
-                        StoragePane()
-                    }
-                }
+                content
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, AppTheme.Spacing.xlXxl)
                 .padding(.bottom, AppTheme.Spacing.xlXxl)
             }
@@ -240,9 +286,11 @@ struct SettingsSection<Content: View>: View {
 }
 
 struct SettingsCard<Content: View>: View {
+    let minHeight: CGFloat?
     let content: Content
 
-    init(@ViewBuilder content: () -> Content) {
+    init(minHeight: CGFloat? = nil, @ViewBuilder content: () -> Content) {
+        self.minHeight = minHeight
         self.content = content()
     }
 
@@ -250,7 +298,7 @@ struct SettingsCard<Content: View>: View {
         VStack(spacing: AppTheme.Spacing.none) {
             content
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                 .fill(AppTheme.Background.raisedColor)

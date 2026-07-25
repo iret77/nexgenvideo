@@ -1,10 +1,10 @@
-# Session handoff — 2026-07-24
+# Session handoff — 2026-07-25
 
 ## Objective
 
-Ship one consolidated NexGenVideo 1.0 release candidate. Never build locally. A successful dry-run
-was tested on-device and exposed an OAuth callback crash; the corrective candidate and final Settings
-composition pass are prepared.
+Ship one consolidated NexGenVideo 1.0 release candidate. Never build locally. The latest successful
+dry-run was tested on-device and exposed a second Higgsfield OAuth crash plus three Settings/Help
+composition defects; the corrective candidate is prepared.
 Do not run the next CI/DMG build, merge, open a release PR or publish without the owner's explicit
 in-the-moment approval.
 
@@ -14,26 +14,33 @@ in-the-moment approval.
 - Base: `origin/main`
 - App/changelog version: `1.0.0`
 - Musicvideo pack candidate: `0.0.5` (stable catalog currently `0.0.4`)
-- Last green dry-run commit: `081a1f015c9074da50c9637aa90983dc598c22e1`
-- Green release workflow: `30064697840`
+- Last green dry-run commit: `38d644efb917fe96ff89fe8943cfac6df344e482`
+- Green release workflow: `30138553162`
 - The run passed the full test suite, signing, app and pack notarization/stapling, external signed-pack
   loading, DMG verification, Sparkle signing and artifact upload.
 - The dry-run artifact `NexGenVideo-1.0.0-dry-run` contains the DMG and both publication names of the
   same musicvideo pack. Stable release, appcast and catalog publication were skipped.
-- On-device testing found a `SIGTRAP` after a successful Higgsfield browser login. AuthenticationServices
-  called `presentationAnchor(for:)` on its SafariLaunchAgent XPC queue while the old implementation
-  asserted main-actor isolation.
-- The corrective patch captures the `NSWindow` on the main actor before starting authentication,
-  retains a dedicated presentation context and serves the immutable anchor without an actor assertion.
-  A regression test invokes this witness from a detached task.
+- The first on-device Higgsfield failure was an AuthenticationServices XPC-queue `SIGTRAP`. The
+  subsequent candidate passed the callback but then crashed on the main thread in SwiftUI's
+  AttributeGraph/`NSHostingView.updateConstraints` after successful authentication.
+- The new correction removes the manually retained `ASWebAuthenticationSession`, presentation context
+  and unsafe AppKit anchor entirely. SwiftUI's macOS 26 `webAuthenticationSession` environment owns the
+  browser lifecycle; one provider snapshot replaces four piecemeal state dictionaries, and the login
+  task is cancelled when the page leaves the view tree.
+- Browser callback tests cover task cancellation, provider errors, system login cancellation and
+  generic failure mapping.
 - No local build or test was run; macOS 26 GitHub Actions remains the only verification surface.
 
-The Settings release pass is now also present but not yet CI-verified:
+The Settings release pass is present but the latest correction is not yet CI-verified:
 
 - all six pages share one hierarchy of page context, sections, cards, rows, status badges and notices;
 - General, Format Packs, Providers, Models and Storage show only actionable, accurately named controls;
 - Format Packs shows a right-aligned sidebar indicator for available updates and restart-required updates;
 - Providers uses honest transport states and an adaptive one-/two-column layout;
+- Provider cards now share one header/body geometry in every normal state; error rows alone may expand.
+- Agent keeps `Check again` in the Claude status row instead of spending a separate row.
+- Help/MCP uses the same window size, sidebar, page header, scroll insets, sections, cards and visible
+  control labels as Settings.
 - Agent selects exactly one runtime, verifies Claude Code installation and authentication, fixes
   headless permissions to `bypassPermissions`, and restricts built-in Claude tools to `Read`;
 - Claude Code makes the loopback MCP bridge mandatory, while API mode retains the user's MCP choice;
@@ -88,6 +95,13 @@ The issues stay open until the corrected candidate passes CI and final on-device
   backend-change notification. Claimed missing MCP awaits, missing main-actor isolation and ignored
   allowed tools were rejected against the actual source. The brief Claude-status loading state and
   stale-result fencing were tightened during verification.
+- Gemini 3.1 Pro High reviewed the new SwiftUI-owned OAuth flow and UI correction. Two claimed blockers
+  were rejected against Apple's macOS 26 API and the actual `.onAppear` implementation. Its valid
+  lifecycle, narrow-layout and error-preservation findings were fixed.
+- Claude Opus 4.6 Thinking then found no critical release blocker. Its cancellation-notification,
+  browser-error-test, duplicate-sidebar-layer and copy-feedback lifecycle findings were fixed.
+- The renderable release specification `docs/ui/settings-consistency.html` was rendered headlessly and
+  visually passed with the compact Agent row, equal provider cards and unified Help/MCP shell.
 - Gemini 3.1 Pro High and Claude Opus 4.6 Thinking reviewed the AppTheme gate. Their valid findings
   were fixed: the linter now understands Swift strings/comments and multiline modifiers, native menu
   dividers retain menu semantics, and timeline snap, razor, playhead and badge colors remain distinct.
@@ -100,9 +114,9 @@ The issues stay open until the corrected candidate passes CI and final on-device
 
 ## Remaining gates
 
-1. Obtain the owner's explicit in-the-moment `build now` for a new dry-run containing the OAuth and
-   Settings corrections.
-2. Run the macOS 26 release workflow and verify the OAuth regression test plus all existing gates.
+1. Obtain the owner's explicit in-the-moment `build now` for a new dry-run containing the corrected
+   SwiftUI-owned OAuth flow and Settings/Help consistency pass.
+2. Run the macOS 26 release workflow and verify the browser-callback tests plus all existing gates.
 3. Test Higgsfield sign-in and the revised Settings pages from the new notarized DMG on-device.
 4. Only after that succeeds: close verified blockers and prepare the release PR.
 5. Production merge and publication remain separate explicit actions.

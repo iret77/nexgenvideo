@@ -140,29 +140,30 @@ struct AgentPane: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: AppTheme.Spacing.lg)
-                SettingsStatusBadge(text: claudeStatusLabel, tone: claudeStatusTone)
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    SettingsStatusBadge(text: claudeStatusLabel, tone: claudeStatusTone)
+                    Button("Check again") {
+                        Task { await checkClaude() }
+                    }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+                    .disabled(isCheckingClaude)
+                }
             }
             .padding(.horizontal, AppTheme.Spacing.mdLg)
             .padding(.vertical, AppTheme.Spacing.md)
 
-            SettingsDivider()
-
-            HStack(spacing: AppTheme.Spacing.sm) {
-                if claudeStatus?.found != true {
+            if !isCheckingClaude && claudeStatus?.found == false {
+                SettingsDivider()
+                HStack {
                     Button("Installation guide") { NSWorkspace.shared.open(installationURL) }
                         .buttonStyle(.capsule(.secondary, size: .regular))
                         .controlSize(.small)
+                    Spacer(minLength: AppTheme.Spacing.lg)
                 }
-                Spacer(minLength: AppTheme.Spacing.lg)
-                Button("Check again") {
-                    Task { await checkClaude() }
-                }
-                .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
-                .disabled(isCheckingClaude)
+                .padding(.horizontal, AppTheme.Spacing.mdLg)
+                .padding(.vertical, AppTheme.Spacing.smMd)
             }
-            .padding(.horizontal, AppTheme.Spacing.mdLg)
-            .padding(.vertical, AppTheme.Spacing.smMd)
 
             SettingsDivider()
             SettingsNotice(

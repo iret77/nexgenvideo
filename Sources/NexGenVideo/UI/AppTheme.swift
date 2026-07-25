@@ -314,6 +314,10 @@ enum AppTheme {
         static let packInstallProgressWindow = CGSize(width: 320, height: 80)
         static let settingsSidebarWidth: CGFloat = 220
         static let settingsProviderCardMinWidth: CGFloat = 320
+        static let settingsProviderHeaderMinHeight: CGFloat = 58
+        static let settingsProviderControlMinHeight: CGFloat = 96
+        static let settingsClientCardMinWidth: CGFloat = 280
+        static let settingsClientCardMinHeight: CGFloat = 104
         static let chatHistoryWidth: CGFloat = 280
         static let chatHistoryMaxHeight: CGFloat = 360
         static let mentionPopoverWidth: CGFloat = 260
@@ -343,9 +347,6 @@ enum AppTheme {
         static let feedbackTextHeight: CGFloat = 160
         static let feedbackWindowMin = CGSize(width: 480, height: 420)
         static let feedbackWindowIdeal = CGSize(width: 480, height: 480)
-        static let helpSidebarWidth: CGFloat = 220
-        static let helpWindowMin = CGSize(width: 820, height: 520)
-        static let helpWindowIdeal = CGSize(width: 900, height: 560)
         static let mcpInstructionsWindow = CGSize(width: 680, height: 560)
         static let shortcutsWindow = CGSize(width: 700, height: 520)
         static let shortcutKeyColumnWidth: CGFloat = 118
@@ -588,6 +589,7 @@ enum AppTheme {
         static let pulse: Double = 0.25
         static let cardSpringResponse: Double = 0.3
         static let cardSpringDamping: Double = 0.7
+        static let copyConfirmation: Double = 1.4
         static let splashHold: Double = 2.4
         static let splashFade: Double = 0.35
     }

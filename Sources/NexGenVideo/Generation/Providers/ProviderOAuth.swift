@@ -1,4 +1,3 @@
-import AppKit
 import AuthenticationServices
 import Foundation
 import Security
@@ -131,16 +130,13 @@ enum ProviderOAuthStore {
     }
 }
 
-/// Drives the browser step of the MCP OAuth flow. Verified on-device — a browser round-trip against a
-/// live auth server can't run in CI; the deterministic protocol logic is in `OAuthCore` (tested).
+/// Drives provider OAuth around a browser callback supplied by SwiftUI's `webAuthenticationSession`.
 @MainActor
-final class ProviderOAuth: NSObject {
-    /// Held for the duration of the flow — ASWebAuthenticationSession is deallocated (and the sign-in
-    /// silently aborts) if nothing retains it.
-    private var authSession: ASWebAuthenticationSession?
-    private var presentationContext: OAuthPresentationContext?
-
-    func signIn(_ provider: GenerationProvider) async throws {
+enum ProviderOAuth {
+    static func signIn(
+        _ provider: GenerationProvider,
+        authenticate: (URL) async throws -> URL
+    ) async throws {
         guard let cap = provider.mcpCapability, cap.auth == .oauth else { throw OAuthError.notOAuth }
         let endpoint = ProviderMCP.resolvedEndpoint(provider) ?? cap.defaultURL
 
@@ -153,7 +149,7 @@ final class ProviderOAuth: NSObject {
             scope: server.scopesSupported?.joined(separator: " "), state: state, pkce: pkce, resource: endpoint)
         else { throw OAuthError.discoveryFailed("bad authorization endpoint") }
 
-        let callback = try await presentAuth(url: authURL)
+        let callback = try await browserCallback(authURL, authenticate: authenticate)
         guard let code = OAuthCore.authorizationCode(from: callback, expectedState: state) else {
             throw OAuthError.tokenExchangeFailed("no authorization code returned")
         }
@@ -161,27 +157,21 @@ final class ProviderOAuth: NSObject {
         NotificationCenter.default.post(name: .providerKeysChanged, object: nil)
     }
 
-    private func presentAuth(url: URL) async throws -> URL {
-        defer {
-            authSession = nil
-            presentationContext = nil
-        }
-        let context = OAuthPresentationContext(
-            anchor: NSApp.keyWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
-        )
-        return try await withCheckedThrowingContinuation { cont in
-            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "nexgenvideo") { callback, error in
-                if let callback { cont.resume(returning: callback) }
-                else if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
-                    cont.resume(throwing: OAuthError.userCancelled)
-                } else {
-                    cont.resume(throwing: OAuthError.tokenExchangeFailed(error?.localizedDescription ?? "unknown"))
-                }
+    static func browserCallback(
+        _ authorizationURL: URL,
+        authenticate: (URL) async throws -> URL
+    ) async throws -> URL {
+        do {
+            return try await authenticate(authorizationURL)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as OAuthError {
+            throw error
+        } catch {
+            if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
+                throw OAuthError.userCancelled
             }
-            session.presentationContextProvider = context
-            presentationContext = context
-            authSession = session
-            if !session.start() { cont.resume(throwing: OAuthError.tokenExchangeFailed("couldn't open the sign-in window")) }
+            throw OAuthError.tokenExchangeFailed(error.localizedDescription)
         }
     }
 
@@ -189,18 +179,5 @@ final class ProviderOAuth: NSObject {
         var data = Data(count: bytes)
         _ = data.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, bytes, $0.baseAddress!) }
         return OAuthCore.base64URL(data)
-    }
-}
-
-final class OAuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextProviding {
-    private nonisolated(unsafe) let anchor: ASPresentationAnchor
-
-    @MainActor
-    init(anchor: ASPresentationAnchor) {
-        self.anchor = anchor
-    }
-
-    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        anchor
     }
 }

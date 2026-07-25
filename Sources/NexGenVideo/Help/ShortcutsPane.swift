@@ -58,14 +58,9 @@ struct ShortcutsPane: View {
     private static let rightColumn = Array(allShortcuts.dropFirst(4))
 
     var body: some View {
-        ScrollView {
-            HStack(alignment: .top, spacing: AppTheme.Spacing.xlXxl) {
-                shortcutColumn(groups: Self.leftColumn)
-                shortcutColumn(groups: Self.rightColumn)
-            }
-            .padding(.horizontal, AppTheme.Spacing.xl)
-            .padding(.vertical, AppTheme.Spacing.xl)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+        HStack(alignment: .top, spacing: AppTheme.Spacing.xlXxl) {
+            shortcutColumn(groups: Self.leftColumn)
+            shortcutColumn(groups: Self.rightColumn)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

@@ -56,87 +56,84 @@ struct MCPInstructionsPane: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xlXxl) {
-                overviewSection
-
-                urlSection
-
-                cursorSection
-
-                claudeDesktopSection
-
-                claudeCodeSection
-
-                codexSection
-            }
-            .padding(.horizontal, AppTheme.Spacing.xlXxl)
-            .padding(.vertical, AppTheme.Spacing.xl)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            serverSection
+            clientSection
         }
     }
 
-    // MARK: - Sections
-
-    private var overviewSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-            sectionHeading("Overview")
-            Text("NexGenVideo exposes your open project as an MCP server. Connect any MCP clients to let it be your AI assistant.")
-                .font(.system(size: AppTheme.FontSize.smMd))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var urlSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            sectionHeading("Server URL")
-            HStack(spacing: AppTheme.Spacing.smMd) {
+    private var serverSection: some View {
+        SettingsSection(
+            "Server",
+            subtitle: "NexGenVideo exposes the open project on this Mac only."
+        ) {
+            SettingsCard {
+                SettingsRow(
+                    title: "Server URL",
+                    subtitle: "Use this endpoint when a client asks for an MCP server address."
+                ) {
+                    CopyButton(value: mcpEndpoint)
+                }
+                SettingsDivider()
                 Text(mcpEndpoint)
                     .font(.system(size: AppTheme.FontSize.md, design: .monospaced))
                     .foregroundStyle(AppTheme.Text.primaryColor)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, AppTheme.Spacing.mdLg)
                     .padding(.vertical, AppTheme.Spacing.smMd)
-                    .background(
-                        RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-                            .fill(.ultraThinMaterial)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-                            .stroke(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
-                    )
-
-                CopyButton(value: mcpEndpoint)
-                Spacer()
             }
         }
     }
 
-    private var cursorSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            sectionHeading("Connect from Cursor", prominent: true)
-            installButton(label: "Install in Cursor", systemImage: "arrow.down.circle") {
-                if let url = cursorDeepLink {
-                    NSWorkspace.shared.open(url, configuration: .init(), completionHandler: nil)
+    private var clientSection: some View {
+        SettingsSection(
+            "Client Setup",
+            subtitle: "Choose the client you want to connect."
+        ) {
+            LazyVGrid(
+                columns: [
+                    GridItem(
+                        .adaptive(minimum: AppTheme.ComponentSize.settingsClientCardMinWidth),
+                        spacing: AppTheme.Spacing.smMd
+                    ),
+                ],
+                alignment: .leading,
+                spacing: AppTheme.Spacing.smMd
+            ) {
+                installClientCard(
+                    title: "Cursor",
+                    subtitle: "Install the NexGenVideo MCP connection.",
+                    buttonLabel: "Install",
+                    manualIntro: "Add this to ~/.cursor/mcp.json in your project:",
+                    manualCode: cursorJSONConfig
+                ) {
+                    if let url = cursorDeepLink {
+                        NSWorkspace.shared.open(url, configuration: .init(), completionHandler: nil)
+                    }
                 }
-            }
-            manualFallback(
-                intro: "Add this to ~/.cursor/mcp.json in your project:",
-                code: cursorJSONConfig
-            )
-        }
-    }
 
-    private var claudeDesktopSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            sectionHeading("Connect from Claude Desktop", prominent: true)
-            installButton(label: "Install in Claude Desktop", systemImage: "arrow.down.circle") {
-                openClaudeDesktopBundle()
+                installClientCard(
+                    title: "Claude Desktop",
+                    subtitle: "Install the bundled NexGenVideo connector.",
+                    buttonLabel: "Install",
+                    manualIntro: "Open Settings → Developer → Edit Config, then merge this into mcpServers:",
+                    manualCode: claudeDesktopJSONConfig,
+                    action: openClaudeDesktopBundle
+                )
+
+                commandClientCard(
+                    title: "Claude Code",
+                    subtitle: "Run once in Terminal.",
+                    command: claudeCodeCommand
+                )
+
+                commandClientCard(
+                    title: "Codex",
+                    subtitle: "Run once in Terminal.",
+                    command: codexCommand
+                )
             }
-            manualFallback(
-                intro: "Open Claude Desktop → Settings → Developer → Edit Config, then merge this into mcpServers:",
-                code: claudeDesktopJSONConfig
-            )
         }
     }
 
@@ -147,61 +144,46 @@ struct MCPInstructionsPane: View {
         NSWorkspace.shared.open(url, configuration: .init(), completionHandler: nil)
     }
 
-    private var claudeCodeSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            sectionHeading("Connect from Claude Code", prominent: true)
-            Text("Run this once in your terminal:")
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-            CodeBlockView(content: claudeCodeCommand)
-        }
-    }
-
-    private var codexSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            sectionHeading("Connect from Codex", prominent: true)
-            Text("Run this once in your terminal:")
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-            CodeBlockView(content: codexCommand)
-        }
-    }
-
-    // MARK: - Helpers
-
-    private func sectionHeading(_ text: String, prominent: Bool = false) -> some View {
-        Text(text)
-            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
-            .foregroundStyle(prominent ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-            .textCase(.uppercase)
-            .tracking(AppTheme.Tracking.subtle)
-    }
-
-    private func installButton(label: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                Image(systemName: systemImage)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
-                Text(label)
-                    .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.medium))
+    private func installClientCard(
+        title: String,
+        subtitle: String,
+        buttonLabel: String,
+        manualIntro: String,
+        manualCode: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        SettingsCard(minHeight: AppTheme.ComponentSize.settingsClientCardMinHeight) {
+            SettingsRow(title: title, subtitle: subtitle) {
+                Button(buttonLabel, action: action)
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
             }
-            .foregroundStyle(AppTheme.Text.primaryColor)
-            .padding(.horizontal, AppTheme.Spacing.mdLg)
-            .padding(.vertical, AppTheme.Spacing.smMd)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-                    .fill(AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-                    .stroke(AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin)
-            )
+            SettingsDivider()
+            ManualFallback(intro: manualIntro, code: manualCode)
+                .padding(.horizontal, AppTheme.Spacing.mdLg)
+                .padding(.vertical, AppTheme.Spacing.smMd)
         }
-        .buttonStyle(.plain)
     }
 
-    private func manualFallback(intro: String, code: String) -> some View {
-        ManualFallback(intro: intro, code: code)
+    private func commandClientCard(
+        title: String,
+        subtitle: String,
+        command: String
+    ) -> some View {
+        SettingsCard(minHeight: AppTheme.ComponentSize.settingsClientCardMinHeight) {
+            SettingsRow(title: title, subtitle: subtitle) {
+                CopyButton(value: command)
+            }
+            SettingsDivider()
+            Text(command)
+                .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, AppTheme.Spacing.mdLg)
+                .padding(.vertical, AppTheme.Spacing.smMd)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
@@ -274,17 +256,20 @@ private struct ManualFallback: View {
 private struct CopyButton: View {
     let value: String
     @State private var copied = false
+    @State private var resetTask: Task<Void, Never>?
 
     var body: some View {
         Button(action: copy) {
-            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                 .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(copied ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.IconSize.lg, height: AppTheme.IconSize.lg)
-                .hoverHighlight()
         }
-        .buttonStyle(.plain)
-        .help(copied ? "Copied" : "Copy")
+        .buttonStyle(.capsule(.secondary, size: .regular))
+        .controlSize(.small)
+        .onDisappear {
+            resetTask?.cancel()
+            resetTask = nil
+        }
     }
 
     private func copy() {
@@ -292,9 +277,12 @@ private struct CopyButton: View {
         pb.clearContents()
         pb.setString(value, forType: .string)
         copied = true
-        Task {
-            try? await Task.sleep(nanoseconds: 1_400_000_000)
+        resetTask?.cancel()
+        resetTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(AppTheme.Anim.copyConfirmation))
+            guard !Task.isCancelled else { return }
             copied = false
+            resetTask = nil
         }
     }
 }
