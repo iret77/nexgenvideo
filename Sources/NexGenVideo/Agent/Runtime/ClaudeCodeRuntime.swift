@@ -27,6 +27,7 @@ final class ClaudeCodeRuntime {
     /// the exact id. The app clears the stored id so the chat isn't poisoned into resuming a dead id.
     /// Deliberately narrow — a transient failure (not logged in) neither errors on our id nor is matched.
     private let onResumeFailed: (@MainActor () -> Void)?
+    private let onAuthenticationRequired: (@MainActor () -> Void)?
     private let onUpdate: @MainActor ([AgentMessage], _ isStreaming: Bool) -> Void
 
     private var mapper = ClaudeCodeEventMapper()
@@ -47,6 +48,7 @@ final class ClaudeCodeRuntime {
         resolveWorkingDirectory: @MainActor @escaping () -> URL?,
         onSessionId: (@MainActor (String) -> Void)? = nil,
         onResumeFailed: (@MainActor () -> Void)? = nil,
+        onAuthenticationRequired: (@MainActor () -> Void)? = nil,
         onUpdate: @MainActor @escaping ([AgentMessage], Bool) -> Void
     ) {
         self.pluginDirectories = pluginDirectories
@@ -56,6 +58,7 @@ final class ClaudeCodeRuntime {
         self.resolveWorkingDirectory = resolveWorkingDirectory
         self.onSessionId = onSessionId
         self.onResumeFailed = onResumeFailed
+        self.onAuthenticationRequired = onAuthenticationRequired
         self.onUpdate = onUpdate
         if !seedMessages.isEmpty { mapper.seed(seedMessages) }
     }
@@ -138,11 +141,25 @@ final class ClaudeCodeRuntime {
 
     private func consume(_ stream: AsyncThrowingStream<String, Error>, generation gen: Int) async {
         var sawOutput = false
+        var authenticationEvents = ClaudeCodeAuthenticationEventBuffer()
         do {
             for try await line in stream {
                 guard gen == generation else { return }   // stopped / rotated before this line: don't ingest or publish
-                let events = ClaudeStreamDecoder.decode(line: line)
-                if !events.isEmpty { sawOutput = true }
+                let decoded = ClaudeStreamDecoder.decode(line: line)
+                if !decoded.isEmpty { sawOutput = true }
+                let events: [ClaudeStreamEvent]
+                switch authenticationEvents.receive(decoded) {
+                case .waiting:
+                    continue
+                case .authenticationRequired:
+                    process?.terminate()
+                    process = nil
+                    onAuthenticationRequired?()
+                    onUpdate(mapper.messages, false)
+                    return
+                case .events(let ready):
+                    events = ready
+                }
                 for event in events { mapper.ingest(event) }
                 if !reportedSessionId, let sid = mapper.sessionId {
                     reportedSessionId = true
@@ -167,6 +184,7 @@ final class ClaudeCodeRuntime {
             mapper.appendNote("Claude Code stream error: \(error.localizedDescription)")
         }
         guard gen == generation else { return }
+        for event in authenticationEvents.flush() { mapper.ingest(event) }
         // A session that ends with no parseable output almost always means claude exited early
         // (not logged in, a rejected flag/MCP config, a missing plugin venv, …). Surface its stderr
         // so the failure isn't silent.

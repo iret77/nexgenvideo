@@ -57,6 +57,9 @@ final class AgentService {
                 self.claudeStatusGeneration &+= 1
                 self.claudeStatus = status
                 self.isCheckingClaude = false
+                if status.isAuthenticated, case .authenticationRequired? = self.streamError {
+                    self.streamError = nil
+                }
             }
         }
         if backend == .claudeCode {
@@ -1320,6 +1323,9 @@ final class AgentService {
             onResumeFailed: { [weak self] in
                 self?.clearClaudeSessionId(for: boundSessionId)
             },
+            onAuthenticationRequired: { [weak self] in
+                self?.requireClaudeAuthentication(for: boundSessionId)
+            },
             onUpdate: { [weak self] messages, isStreaming in
                 guard let self, self.currentSessionId == boundSessionId else { return }
                 self.messages = messages
@@ -1328,6 +1334,21 @@ final class AgentService {
         )
         _claudeRuntime = runtime
         return runtime
+    }
+
+    private func requireClaudeAuthentication(for sessionId: UUID?) {
+        guard currentSessionId == sessionId else { return }
+        let status = ClaudeCodeLocator.Status(
+            executableURL: claudeStatus?.executableURL,
+            version: claudeStatus?.version,
+            isAuthenticated: false
+        )
+        claudeStatusGeneration &+= 1
+        claudeStatus = status
+        isCheckingClaude = false
+        streamError = .authenticationRequired
+        _claudeRuntime = nil
+        NotificationCenter.default.post(name: .claudeCodeStatusChanged, object: status)
     }
 
     /// Persist `claude`'s confirmed session id onto its chat so a later tab switch / reload can resume it.

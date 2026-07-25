@@ -291,6 +291,11 @@ struct AgentPanelView: View {
         AgentTranscriptProjection.entries(messages: service.messages, isStreaming: service.isStreaming)
     }
 
+    private var showsAuthenticationError: Bool {
+        if case .authenticationRequired? = service.streamError { return true }
+        return false
+    }
+
     private var messageList: some View {
         Group {
             if transcriptEntries.isEmpty && !service.isStreaming {
@@ -409,6 +414,11 @@ struct AgentPanelView: View {
         switch error {
         case .upstream:
             return nil
+        case .authenticationRequired:
+            return ErrorCTA(
+                title: "Agent settings",
+                action: { SettingsWindowController.shared.show(tab: .agent) }
+            )
         }
     }
 
@@ -447,7 +457,7 @@ struct AgentPanelView: View {
                 }
             }
             .onAppear { refreshDiscoveredPlugins() }
-        } else {
+        } else if !showsAuthenticationError {
             missingKeyState
         }
     }
@@ -507,7 +517,7 @@ struct AgentPanelView: View {
     private var footer: some View {
         @Bindable var service = editor.agentService
         return VStack(spacing: AppTheme.Spacing.sm) {
-            if !service.canStream && !service.messages.isEmpty {
+            if !service.canStream && !service.messages.isEmpty && !showsAuthenticationError {
                 missingKeyState
             }
             if let fn = service.pendingFunction {
