@@ -140,12 +140,24 @@ struct ClaudeCodeEventMapperTests {
         let signedOutLine = #"{"type":"assistant","message":{"id":"m-auth","content":[{"type":"text","text":"Not logged in · Please run /login"}]}}"#
         let unrelatedLine = #"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Model is temporarily unavailable"]}"#
 
-        #expect(ClaudeStreamDecoder.decode(line: resultLine).contains(where: \.requiresAuthentication))
-        #expect(ClaudeStreamDecoder.decode(line: revokedLine).contains(where: \.requiresAuthentication))
-        #expect(!ClaudeStreamDecoder.decode(line: assistantLine).contains(where: \.requiresAuthentication))
-        #expect(!ClaudeStreamDecoder.decode(line: assistantLine).contains(where: \.isAuthenticationMessageCandidate))
-        #expect(ClaudeStreamDecoder.decode(line: signedOutLine).contains(where: \.isAuthenticationMessageCandidate))
-        #expect(!ClaudeStreamDecoder.decode(line: unrelatedLine).contains(where: \.requiresAuthentication))
+        let resultRequiresAuthentication = ClaudeStreamDecoder.decode(line: resultLine)
+            .contains { $0.requiresAuthentication }
+        let revokedRequiresAuthentication = ClaudeStreamDecoder.decode(line: revokedLine)
+            .contains { $0.requiresAuthentication }
+        let assistantEvents = ClaudeStreamDecoder.decode(line: assistantLine)
+        let assistantRequiresAuthentication = assistantEvents.contains { $0.requiresAuthentication }
+        let assistantIsCandidate = assistantEvents.contains { $0.isAuthenticationMessageCandidate }
+        let signedOutIsCandidate = ClaudeStreamDecoder.decode(line: signedOutLine)
+            .contains { $0.isAuthenticationMessageCandidate }
+        let unrelatedRequiresAuthentication = ClaudeStreamDecoder.decode(line: unrelatedLine)
+            .contains { $0.requiresAuthentication }
+
+        #expect(resultRequiresAuthentication)
+        #expect(revokedRequiresAuthentication)
+        #expect(!assistantRequiresAuthentication)
+        #expect(!assistantIsCandidate)
+        #expect(signedOutIsCandidate)
+        #expect(!unrelatedRequiresAuthentication)
     }
 
     @Test("auth-like assistant prose is discarded only after a failed result confirms it")
