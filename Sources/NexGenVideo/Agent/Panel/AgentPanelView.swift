@@ -87,9 +87,12 @@ struct AgentPanelView: View {
                     externalSelections: $service.dialogChoiceSelections,
                     accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
                     libraryAssets: editor.agentPickableMediaAssets,
+                    submissionError: service.dialogSubmissionError,
+                    isSubmitting: service.submittingDialogID == dialog.id,
                     onSubmit: { result in service.submitDialog(dialog, result: result) },
                     onCancel: { service.cancelDialog() }
                 )
+                .id(dialog.id)
                 .padding(.bottom, AppTheme.Spacing.xs)
             }
             footer
@@ -199,6 +202,7 @@ struct AgentPanelView: View {
             }
             .buttonStyle(.plain)
             .focusable(false)
+            .disabled(service.isComposerBlocked || service.isStreaming)
             .help("Workflows")
             .popover(isPresented: $showPluginLauncher, arrowEdge: .top) {
                 PluginLauncherPopover(plugins: discoveredPlugins) { command in
@@ -213,9 +217,7 @@ struct AgentPanelView: View {
         if command.requiresArgument {
             service.prefillInput(command.command + " ")
         } else {
-            // A pack command/starter the user tapped — its prompt is auto-generated, so seed the agent
-            // hidden rather than dropping the raw instruction into the chat as a fake user message.
-            service.send(text: command.command, mentions: [], hidden: true)
+            editor.runActivePackStarter(command.command)
         }
     }
 
@@ -424,7 +426,9 @@ struct AgentPanelView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if service.canStream {
+        if service.isComposerBlocked {
+            EmptyView()
+        } else if service.canStream {
             VStack(spacing: AppTheme.Spacing.smMd) {
                 Text("Ask anything, or start with:")
                     .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.medium))
@@ -440,11 +444,7 @@ struct AgentPanelView: View {
                                 prompt: command.command
                             )
                             AgentStarterPromptButton(starterPrompt: starter) {
-                                // A pack entry command from the empty chat IS the production kickoff, so
-                                // disable every "Start production" CTA at once (the agent, not the button,
-                                // does the scaffolding here).
-                                editor.markProductionStarting()
-                                runStarter(starter)
+                                editor.runActivePackStarter(starter.prompt)
                             }
                         }
                     } else {

@@ -30,21 +30,18 @@ enum PackSelfTest {
         guard let manifest = HardStepManifest.load(bundleURL: record.bundleURL) else {
             return "required hardsteps.json is missing or malformed"
         }
-        guard let song = manifest.steps(for: "analysis").first(where: { $0.kind == .song }),
+        let startup = manifest.steps(for: "project_init")
+        guard let song = startup.first(where: { $0.kind == .song }),
               song.required,
               song.accept.contains("audio") else {
-            return "analysis has no required audio song intake"
+            return "project_init has no required audio song intake"
         }
-        let expectedByPhase: [String: Set<String>] = [
-            "project_init": ["script", "character", "location", "style"],
-            "analysis": ["song", "lyrics"],
-        ]
-        for (phase, expected) in expectedByPhase {
-            let present = Set(manifest.steps(for: phase).map(\.kind.rawValue))
-            let missing = expected.subtracting(present)
-            guard missing.isEmpty else {
-                return "\(phase) hard steps are missing: \(missing.sorted().joined(separator: ", "))"
-            }
+        let expected: [HardStep.Kind] = [.song, .lyrics, .script, .character, .location, .style]
+        guard startup.map(\.kind) == expected else {
+            return "project_init hard-step order is not track, lyrics, script, character, location, style"
+        }
+        guard manifest.steps(for: "analysis").isEmpty else {
+            return "analysis duplicates startup intake"
         }
         return nil
     }

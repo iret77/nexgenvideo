@@ -83,20 +83,16 @@ def validate_hardsteps() -> None:
             if not isinstance(step.get("title"), str) or not step["title"].strip():
                 fail(f"hard step {step_id} needs a title")
 
-    analysis = by_phase.get("analysis", [])
-    songs = [step for step in analysis if step.get("attachAs") == "song"]
+    startup = by_phase.get("project_init", [])
+    songs = [step for step in startup if step.get("attachAs") == "song"]
     if len(songs) != 1 or songs[0].get("required") is not True or "audio" not in songs[0].get("accept", []):
-        fail("analysis must contain exactly one required song step accepting audio")
+        fail("project_init must contain exactly one required song step accepting audio")
 
-    expected_by_phase = {
-        "project_init": {"script", "character", "location", "style"},
-        "analysis": {"song", "lyrics"},
-    }
-    for phase, expected in expected_by_phase.items():
-        present = {step.get("attachAs") for step in by_phase.get(phase, [])}
-        missing = expected - present
-        if missing:
-            fail(f"{phase} hard steps are missing: {', '.join(sorted(missing))}")
+    expected = ["song", "lyrics", "script", "character", "location", "style"]
+    if [step.get("attachAs") for step in startup] != expected:
+        fail("project_init hard steps must be ordered: song, lyrics, script, character, location, style")
+    if by_phase.get("analysis"):
+        fail("analysis must not duplicate the startup intake")
 
 
 def validate_release_assets() -> None:

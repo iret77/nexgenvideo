@@ -29,9 +29,9 @@ final class IntakeCoordinator {
     private var offered: (step: HardStep, fingerprint: Int, dialogID: String)?
     private var manifestCache: [String: HardStepManifest] = [:]
 
-    /// Called whenever the app re-reads engine state — i.e. whenever the pipeline may have advanced.
-    /// Cheap and idempotent: every exit below leaves the dock exactly as it found it.
-    func advance(editor: EditorViewModel) {
+    /// Returns true only when the current phase has no unresolved host-owned intake.
+    @discardableResult
+    func advance(editor: EditorViewModel) -> Bool {
         let service = editor.agentService
         // Our card displaced by someone else's dialog: drop the offer WITHOUT recording a decline.
         // Otherwise the agent's own dialog gets answered, our material count is unchanged, and the
@@ -42,15 +42,15 @@ final class IntakeCoordinator {
         // Exactly one card owns the dock.
         guard service.pendingDialog == nil,
               service.pendingSpendApproval == nil,
-              service.pendingGateApproval == nil else { return }
+              service.pendingGateApproval == nil else { return false }
         // Mid-turn refreshes come from tool calls; the turn-end refresh (isStreaming true→false, which
         // fires AFTER the flag clears) picks the step up instead, so nothing is lost by waiting.
-        guard !service.isStreaming else { return }
-        guard let packName = editor.activePluginName,
-              let workingRoot = editor.workingRoot,
+        guard !service.isStreaming else { return false }
+        guard let workingRoot = editor.workingRoot,
               let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
-              let phase = editor.projectState?.nextPhaseName
-        else { return }
+              let state = editor.projectState else { return false }
+        guard let phase = state.nextPhaseName else { return true }
+        guard let packName = editor.activePluginName else { return true }
         // Resolve the outstanding offer FIRST — before any phase-dependent exit below, so an offer can
         // never outlive the phase it was made in and get answered against a later one's files.
         var ledger = IntakeLedger.load(dataRoot: dataRoot)
@@ -67,16 +67,17 @@ final class IntakeCoordinator {
             }
         }
 
-        guard let manifest = manifest(packName: packName) else { return }
+        guard let manifest = manifest(packName: packName) else { return true }
         // One identity per dialog: keep offering until the user turns the next one down.
         if let repeatStep {
             present(repeatStep, isRepeat: true, dataRoot: dataRoot, editor: editor)
-            return
+            return false
         }
         guard let step = IntakePlanner.next(manifest.steps(for: phase), dataRoot: dataRoot, ledger: ledger) else {
-            return
+            return true
         }
         present(step, isRepeat: false, dataRoot: dataRoot, editor: editor)
+        return false
     }
 
     /// Forget in-flight state when the open project changes — a step offered in the previous project
@@ -119,7 +120,8 @@ extension AgentDialog {
                 attachAs: step.attachAs,
                 namePrompt: step.namePrompt,
                 required: step.required
-            )
+            ),
+            purpose: .workflowIntake
         )
     }
 }

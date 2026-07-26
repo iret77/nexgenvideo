@@ -5,6 +5,34 @@
       "phase": "project_init",
       "steps": [
         {
+          "id": "project_init.song",
+          "attachAs": "song",
+          "accept": ["audio"],
+          "multiple": false,
+          "required": true,
+          "title": "Track",
+          "intro": "The track is the source of truth for the entire production.",
+          "prompt": "Drop your track or choose a file — .wav / .mp3 / .m4a / .aiff / .flac / .aac",
+          "symbol": "waveform",
+          "confirmLabel": "Attach track"
+        },
+        {
+          "id": "project_init.lyrics",
+          "attachAs": "lyrics",
+          "accept": ["text"],
+          "multiple": false,
+          "required": false,
+          "title": "Lyrics",
+          "intro": "Lyrics label the measured sections. They never move the measured boundaries.",
+          "prompt": "Drop the lyrics (.txt) — optional, sharpens the section labels",
+          "symbol": "text.quote",
+          "confirmLabel": "Continue",
+          "textField": {
+            "placeholder": "…or paste the lyrics here",
+            "multiline": true
+          }
+        },
+        {
           "id": "project_init.script",
           "attachAs": "script",
           "accept": ["text"],
@@ -61,39 +89,6 @@
           "prompt": "Drop any style / mood references — optional",
           "symbol": "photo.on.rectangle.angled",
           "confirmLabel": "Continue"
-        }
-      ]
-    },
-    {
-      "phase": "analysis",
-      "steps": [
-        {
-          "id": "analysis.song",
-          "attachAs": "song",
-          "accept": ["audio"],
-          "multiple": false,
-          "required": true,
-          "title": "Track",
-          "intro": "Without the song there is no analysis.",
-          "prompt": "Drop your track or choose a file — .wav / .mp3 / .m4a / .aiff / .flac / .aac",
-          "symbol": "waveform",
-          "confirmLabel": "Attach track"
-        },
-        {
-          "id": "analysis.lyrics",
-          "attachAs": "lyrics",
-          "accept": ["text"],
-          "multiple": false,
-          "required": false,
-          "title": "Lyrics",
-          "intro": "Lyrics label the measured sections. They never move the measured boundaries.",
-          "prompt": "Drop the lyrics (.txt) — optional, sharpens the section labels",
-          "symbol": "text.quote",
-          "confirmLabel": "Continue",
-          "textField": {
-            "placeholder": "…or paste the lyrics here",
-            "multiline": true
-          }
         }
       ]
     }

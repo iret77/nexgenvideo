@@ -22,6 +22,8 @@ struct AgentDialogCard: View {
     /// the native picker (#254 stage 2). The card filters these to the intake's accept types and routes
     /// a tap through the SAME `pickedFiles` path as drop/choose — no second import logic.
     var libraryAssets: [MediaAsset] = []
+    var submissionError: String?
+    var isSubmitting = false
     let onSubmit: (AgentDialogResult) -> Void
     let onCancel: () -> Void
 
@@ -49,6 +51,12 @@ struct AgentDialogCard: View {
                 Text(intro)
                     .font(.system(size: AppTheme.FontSize.xs))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let submissionError {
+                Text(submissionError)
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(dialog.sections) { section in
@@ -79,7 +87,6 @@ struct AgentDialogCard: View {
                 isTargeted: dialog.fileIntake != nil ? $isDropTargeted : nil,
                 perform: handleFileDrop)
         .onAppear(perform: seedDefaults)
-        .id(dialog.id)
     }
 
     private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -107,14 +114,16 @@ struct AgentDialogCard: View {
                 .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.sm)
-            Button(action: onCancel) {
-                Image(systemName: "xmark")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+            if canDismiss {
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Dismiss (Esc)")
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-            .help("Dismiss (Esc)")
         }
     }
 
@@ -330,6 +339,10 @@ struct AgentDialogCard: View {
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
             Spacer()
+            if isSubmitting {
+                ProgressView()
+                    .controlSize(.small)
+            }
             Button(dialog.confirmLabel) { submit() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.small)
@@ -341,13 +354,18 @@ struct AgentDialogCard: View {
     /// if it also has a textField (paste-OR-upload, e.g. lyrics) a file OR non-empty text suffices;
     /// otherwise a file is required, plus the identity name when the intake asks for one.
     private var canSubmit: Bool {
+        guard !isSubmitting else { return false }
         guard let intake = dialog.fileIntake else { return true }
-        if !intake.required { return true }  // optional intake: confirm even with nothing (an explicit skip)
         let hasText = !direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if intake.namePrompt != nil, !pickedFiles.isEmpty, !hasText { return false }
+        if !intake.required { return true }
         if dialog.textField != nil { return !pickedFiles.isEmpty || hasText }
         if pickedFiles.isEmpty { return false }
-        if intake.namePrompt != nil, !hasText { return false }
         return true
+    }
+
+    private var canDismiss: Bool {
+        !isSubmitting && !(dialog.purpose == .workflowIntake && dialog.fileIntake?.required == true)
     }
 
     // MARK: - State

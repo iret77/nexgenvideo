@@ -229,6 +229,7 @@ final class EditorViewModel {
             guard projectURL != oldValue else { return }
             activePluginName = ProjectPluginSettings.activePlugin(projectURL: projectURL)
             intakeCoordinator.reset()
+            workflowHandoffPending = false
             // Identity is the package UUID (travels with the file), resolved once here so the working
             // copy, caches, and telemetry all key off the same stable id.
             projectId = projectURL.flatMap { ProjectIdentity.existingUUID(for: $0) }
@@ -453,27 +454,16 @@ final class EditorViewModel {
     /// production — no plugin required. Composes a deterministic agent command (concrete paths, no
     /// guessing) that initializes the engine pipeline inside the working copy, then hands off to
     /// assisted brief drafting. Plugins later SPECIALIZE this generic baseline; they never gate it.
-    /// True while a production start is in flight — drives the CTA's "Starting…" state and blocks the
-    /// repeat taps that happened when nothing visibly changed. Cleared when the engine state reloads
-    /// (agent turn finished) in `refreshEngineState()`.
+    /// True until the host scaffold becomes visible or fails.
     private(set) var productionStarting = false
+    @ObservationIgnored private var workflowHandoffPending = false
 
-    /// Production has been kicked off via ANY path — the button-driven scaffold (`productionStarting`)
-    /// or the agent scaffolding it itself (the pipeline now exists, `hasProductionPipeline`). Every
-    /// "Start production" affordance disables on this so a second start can't fire.
+    /// Whether every production-start affordance must be disabled.
     var productionStarted: Bool { productionStarting || hasProductionPipeline }
 
-    /// Mark production as kicking off WITHOUT the in-process scaffold — for when the agent starts it
-    /// from a chat starter instead of the button, so every "Start production" CTA disables at once. The
-    /// flag clears after the turn (`refreshEngineState`); if a pipeline now exists, `productionStarted`
-    /// stays true via `hasProductionPipeline`, otherwise the CTA correctly re-enables.
-    func markProductionStarting() {
-        guard !productionStarting, !hasProductionPipeline else { return }
-        productionStarting = true
-    }
-
     func startProduction() {
-        guard let url = projectURL, let key = openWorkingCopyKey, !productionStarting else { return }
+        guard let url = projectURL, let key = openWorkingCopyKey,
+              !productionStarting, !hasProductionPipeline else { return }
         // The pipeline is scaffolded into the WORKING COPY (not the package); ⌘S syncs it back. The
         // cockpit reads the working copy via `workingRoot`, so it finds the freshly-created pipeline.
         let home = ProjectWorkingCopy.home(key)
@@ -481,10 +471,12 @@ final class EditorViewModel {
         let name = url.deletingPathExtension().lastPathComponent
         let extraDirs = PackCatalog.projectDirs(activePack: activePluginName)
         productionStarting = true
+        workflowHandoffPending = true
         do {
             try ProjectWorkingCopy.markDirty(key: key)
         } catch {
             productionStarting = false
+            workflowHandoffPending = false
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             return
         }
@@ -502,24 +494,36 @@ final class EditorViewModel {
                 catch { return error }
             }.value
             guard let self else { return }
-            await self.refreshEngineState()
             if let scaffoldError {
                 self.productionStarting = false
+                self.workflowHandoffPending = false
                 self.mediaPanelToast = MediaPanelToast(
                     message: "Couldn't set up the production pipeline: \(scaffoldError.localizedDescription)")
                 return
             }
+            await self.refreshEngineState()
             // The pipeline now exists in the working copy — mark the document edited so a save persists
             // it into the `.ngv` package (and the user is warned before closing without saving).
             self.onPipelineChanged?()
-            // Genuine dialogue handoff — the pipeline is up. A pack whose workflow starts differently
-            // (musicvideo: song → analysis gate → brief) supplies its own starter; the generic
-            // brief-drafting kickoff is only right for no-pack projects. The kickoff is HIDDEN — the
-            // user never typed it, so it seeds the agent's first turn without a fake user bubble; the
-            // agent's own first reply is what the user sees.
-            let kickoff = PackCatalog.pack(named: self.activePluginName)?.starters.first?.prompt
-                ?? "The production pipeline is initialized. Walk me through drafting the brief — ask me about the video's direction first."
-            self.agentService.send(text: kickoff, mentions: [], hidden: true)
+        }
+    }
+
+    func runActivePackStarter(_ prompt: String) {
+        guard activePluginName != nil else { return }
+        guard !productionStarting else { return }
+        if hasProductionPipeline {
+            let intakeComplete = intakeCoordinator.advance(editor: self)
+            if !intakeComplete {
+                if agentService.pendingDialog?.purpose == .workflowIntake {
+                    workflowHandoffPending = true
+                }
+                return
+            }
+            guard !agentService.isComposerBlocked, !agentService.isStreaming else { return }
+            workflowHandoffPending = false
+            agentService.send(text: prompt, mentions: [], hidden: true)
+        } else {
+            startProduction()
         }
     }
 
@@ -675,9 +679,8 @@ final class EditorViewModel {
         // Re-probe the durable pipeline marker FIRST — a just-finished scaffold now exists on disk, so
         // the format lock stays closed the instant `productionStarting` clears below (no reopen gap).
         refreshProductionPipelineMarker()
-        // The agent turn that a Start-production tap kicked off has finished; release the CTA lock so
-        // it reflects the (now initialized, or still-empty) reality.
-        productionStarting = false
+        // Release the CTA lock once the scaffolded state is visible.
+        if hasProductionPipeline { productionStarting = false }
         guard let dir = workingRoot else {
             bible = nil
             shotlist = nil
@@ -716,7 +719,22 @@ final class EditorViewModel {
         engineStateRevision += 1
         // The pipeline may have advanced into a phase whose intake isn't collected yet. Asking is the
         // workflow's job, not the agent's (#254) — and this is the one point every path funnels through.
-        intakeCoordinator.advance(editor: self)
+        let intakeComplete = intakeCoordinator.advance(editor: self)
+        if !intakeComplete, agentService.pendingDialog?.purpose == .workflowIntake {
+            workflowHandoffPending = true
+        }
+        guard intakeComplete, workflowHandoffPending else { return }
+        workflowHandoffPending = false
+        let progress = projectState.map {
+            PackProgress(
+                nextPhase: $0.nextPhaseName,
+                approvedPhases: $0.phases.filter(\.approved).count,
+                totalPhases: $0.phases.count
+            )
+        } ?? .untouched
+        let kickoff = PackCatalog.pack(named: activePluginName)?.starters(for: progress).first?.prompt
+            ?? "The production pipeline is initialized. Continue from the next unapproved phase."
+        agentService.send(text: kickoff, mentions: [], hidden: true)
     }
 
     var keyframesPanelVisible: Bool = {

@@ -352,6 +352,11 @@ extension ToolExecutor {
     }
 
     func showDialog(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        guard editor.agentService.pendingDialog == nil,
+              editor.agentService.pendingSpendApproval == nil,
+              editor.agentService.pendingGateApproval == nil else {
+            throw ToolError("The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user.")
+        }
         let dialog = try AgentDialog.parse(args)
         editor.agentService.pendingDialog = dialog
         editor.agentPanelVisible = true

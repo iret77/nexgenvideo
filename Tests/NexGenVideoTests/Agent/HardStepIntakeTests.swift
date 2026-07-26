@@ -266,12 +266,67 @@ struct HardStepIntakeTests {
         #expect(first.fileIntake?.attachAs == "character")
         #expect(first.fileIntake?.allowsMultiple == true)
         #expect(first.fileIntake?.namePrompt == "Character name")
+        #expect(first.purpose == .workflowIntake)
         // Optional ⇒ confirmable with nothing, which is the user's "no, I don't have one".
         #expect(first.fileIntake?.required == false)
 
         let repeated = AgentDialog(hardStep: characters, isRepeat: true)
         #expect(repeated.intro == "Another one?")
         #expect(repeated.id != first.id)
+    }
+
+    @Test("a workflow hard step completes locally without creating an agent turn")
+    @MainActor
+    func workflowStepDoesNotBecomeChat() async throws {
+        let package = FileManager.default.temporaryDirectory
+            .appendingPathComponent("workflow-intake-\(UUID().uuidString).ngv", isDirectory: true)
+        let editor = EditorViewModel()
+        defer {
+            editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: package)
+        }
+        try Fixtures.prepareProjectPackage(at: package)
+        editor.projectURL = package
+
+        let dialog = AgentDialog(
+            hardStep: step("project_init.script", phase: "project_init", kind: .script),
+            isRepeat: false
+        )
+        editor.agentService.pendingDialog = dialog
+        let messageCount = editor.agentService.messages.count
+        editor.agentService.submitDialog(
+            dialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: ""
+            )
+        )
+
+        #expect(editor.agentService.pendingDialog == nil)
+        #expect(editor.agentService.messages.count == messageCount)
+        #expect(!editor.agentService.isStreaming)
+        await Task.yield()
+    }
+
+    @Test("required track intake cannot advance without a file")
+    @MainActor
+    func requiredTrackStaysOpen() async {
+        let editor = EditorViewModel()
+        let dialog = AgentDialog(
+            hardStep: step("project_init.song", phase: "project_init", kind: .song, required: true),
+            isRepeat: false
+        )
+        editor.agentService.pendingDialog = dialog
+        editor.agentService.submitDialog(
+            dialog,
+            result: AgentDialogResult(selectedLabels: [:], toggles: [:], direction: "")
+        )
+        await Task.yield()
+
+        #expect(editor.agentService.pendingDialog?.id == dialog.id)
+        #expect(editor.agentService.dialogSubmissionError == "Choose a track before continuing.")
+        #expect(!editor.agentService.isStreaming)
     }
 
     @Test("the SHIPPED manifest decodes and keeps every step it declares")
@@ -297,23 +352,25 @@ struct HardStepIntakeTests {
         }
     }
 
-    @Test("the song stays a REQUIRED step of the analysis phase")
+    @Test("startup begins with required track, then optional lyrics")
     func songStepSurvivesShipped() throws {
-        // The one step whose loss is silent and costly: without it the analysis phase would start with
-        // no song, which is the failure the whole hard-step mechanism exists to prevent.
         let url = try #require(PackKnowledge.hardStepManifestURL())
         let manifest = try HardStepManifest.decode(try Data(contentsOf: url))
-        let song = try #require(manifest.steps(for: "analysis").first { $0.kind == .song })
+        let startup = manifest.steps(for: "project_init")
+        #expect(startup.prefix(2).map(\.kind) == [.song, .lyrics])
+        let song = try #require(startup.first { $0.kind == .song })
         #expect(song.required)
         #expect(song.accept.contains("audio"))
+        #expect(manifest.steps(for: "analysis").isEmpty)
     }
 
-    @Test("the shipped project-init steps cover script, characters and locations")
+    @Test("the shipped startup has one canonical material order")
     func projectInitStepsSurviveShipped() throws {
         let url = try #require(PackKnowledge.hardStepManifestURL())
         let manifest = try HardStepManifest.decode(try Data(contentsOf: url))
-        let kinds = Set(manifest.steps(for: "project_init").map(\.kind))
-        // These are the ones the agent skipped in the field — the reason the mechanism exists.
-        #expect(kinds.isSuperset(of: [.script, .character, .location]))
+        #expect(
+            manifest.steps(for: "project_init").map(\.kind)
+                == [.song, .lyrics, .script, .character, .location, .style]
+        )
     }
 }

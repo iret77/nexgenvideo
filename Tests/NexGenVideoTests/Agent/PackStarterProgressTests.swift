@@ -5,9 +5,7 @@ import MusicvideoPlugin
 
 @testable import NexGenVideo
 
-/// The starter chip must speak to the project the user actually has open. Reopening a half-finished
-/// project and being offered only "Start the music video" — whose prompt says "begin by asking me for
-/// the track" — sends the agent back to the beginning of a pipeline that is already two phases in.
+/// The starter chip must speak to the project the user actually has open.
 @Suite("pack starters follow project progress")
 struct PackStarterProgressTests {
 
@@ -18,6 +16,8 @@ struct PackStarterProgressTests {
         let starters = pack.starters(for: .untouched)
         #expect(starters.first?.id == "start")
         #expect(starters.first?.title == "Start the music video")
+        #expect(starters.first?.prompt.contains("host initialized") == true)
+        #expect(starters.first?.prompt.lowercased().contains("asking me for the track") == false)
     }
 
     @Test("a project with approved phases is offered CONTINUE, naming the next phase")

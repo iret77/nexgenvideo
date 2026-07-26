@@ -199,8 +199,12 @@ final class AgentService {
         didSet {
             guard oldValue?.id != pendingDialog?.id else { return }
             dialogChoiceSelections = [:]
+            dialogSubmissionError = nil
+            submittingDialogID = nil
         }
     }
+    private(set) var dialogSubmissionError: String?
+    private(set) var submittingDialogID: String?
 
     /// Choice selection for the pending dialog, shared so the compact card AND the canvas projection
     /// (A3, #124 — highlighted timeline ranges) read and write the SAME state: a click on a projected
@@ -245,10 +249,13 @@ final class AgentService {
     /// generation handler (the music-shaping dialog is this purpose — its bespoke path collapses into
     /// this one). Kept on `AgentService` so no surface re-implements dialog submission.
     func submitDialog(_ dialog: AgentDialog, result: AgentDialogResult) {
-        pendingDialog = nil
-        // Pipeline inputs (not media clips) are written deterministically into the project by the host,
-        // then the agent is briefed — rather than importing to the media library. Unknown/absent
-        // attachAs falls through to the normal media-asset path.
+        guard pendingDialog?.id == dialog.id, submittingDialogID == nil else { return }
+        submittingDialogID = dialog.id
+        dialogSubmissionError = nil
+        if dialog.purpose != .workflowIntake {
+            pendingDialog = nil
+        }
+        // Host workflow inputs never become individual chat turns.
         switch dialog.fileIntake?.attachAs {
         case "lyrics", "script":
             attachTextSidecar(dialog.fileIntake!.attachAs!, dialog: dialog, result: result)
@@ -292,13 +299,12 @@ final class AgentService {
                     agentContext: imported.failureContext
                 )
             }
+        case .workflowIntake:
+            completeWorkflowIntake(dialog)
         }
     }
 
-    /// Write a text-sidecar intake (lyrics / story script) deterministically into the project (copied,
-    /// never moved), then brief the agent on what arrived — so the pipeline works FROM the user's
-    /// material (brownfield) instead of inventing it. Kept host-side and deterministic, matching the
-    /// hard-gate philosophy: the file placement is a fact, not something the agent narrates.
+    /// Write a copied text-sidecar intake into its deterministic project location.
     private func attachTextSidecar(_ kind: String, dialog: AgentDialog, result: AgentDialogResult) {
         // Resolve the pipeline DATA ROOT the same way the workflow tools do (workingRoot may be the
         // package home; the sidecar dirs live under <home>/pipeline). No project ⇒ don't drop the answer.
@@ -312,8 +318,7 @@ final class AgentService {
             )
             return
         }
-        // Accept EITHER an uploaded file OR pasted text (the dialog's textField). Neither ⇒ the user
-        // skipped this optional step; tell the agent so it moves on instead of waiting forever.
+        // Accept either an uploaded file or pasted text; neither means the optional step was skipped.
         let content: String
         if let src = result.fileURLs.first {
             guard let text = try? String(contentsOf: src, encoding: .utf8) else {
@@ -470,10 +475,10 @@ final class AgentService {
         result: AgentDialogResult
     ) async {
         guard let src = result.fileURLs.first else {
-            sendDialogResponse(
+            sendDialogFailure(
                 dialog,
                 result: result,
-                agentContext: "No song was provided. Ask the user to choose an audio file."
+                notice: "Choose a track before continuing."
             )
             return
         }
@@ -730,6 +735,10 @@ final class AgentService {
         userNotice: String? = nil,
         agentContext: String? = nil
     ) {
+        if dialog.purpose == .workflowIntake {
+            completeWorkflowIntake(dialog)
+            return
+        }
         let response = Self.dialogResponse(
             from: dialog,
             result: result,
@@ -750,6 +759,11 @@ final class AgentService {
         notice: String,
         agentContext: String? = nil
     ) {
+        if dialog.purpose == .workflowIntake {
+            submittingDialogID = nil
+            dialogSubmissionError = notice
+            return
+        }
         sendDialogResponse(
             dialog,
             result: result,
@@ -757,6 +771,15 @@ final class AgentService {
             userNotice: notice,
             agentContext: agentContext ?? "The host couldn't complete the requested file attachment."
         )
+    }
+
+    private func completeWorkflowIntake(_ dialog: AgentDialog) {
+        guard pendingDialog?.id == dialog.id else { return }
+        submittingDialogID = nil
+        pendingDialog = nil
+        Task { @MainActor [weak self] in
+            await self?.editor?.refreshEngineState()
+        }
     }
 
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
@@ -771,6 +794,14 @@ final class AgentService {
     /// A dismissed chat-clarification dialog tells the agent it was skipped so it can move on.
     func cancelDialog() {
         let dialog = pendingDialog
+        if let dialog, dialog.purpose == .workflowIntake {
+            guard dialog.fileIntake?.required != true, submittingDialogID == nil else { return }
+            pendingDialog = nil
+            Task { @MainActor [weak self] in
+                await self?.editor?.refreshEngineState()
+            }
+            return
+        }
         pendingDialog = nil
         if let dialog, dialog.purpose == .chatClarification {
             send(
@@ -916,7 +947,7 @@ final class AgentService {
             }
         }
         pendingGateFollowUp = nil
-        send(text: followUp.text, mentions: [], hidden: true)
+        send(text: followUp.text, mentions: [], hidden: true, allowWhileBlocked: true)
     }
 
     private func abandonGateApproval() {
@@ -1198,8 +1229,10 @@ final class AgentService {
         text: String,
         mentions: [AgentMention],
         hidden: Bool = false,
-        presentation: AgentUserPresentation? = nil
+        presentation: AgentUserPresentation? = nil,
+        allowWhileBlocked: Bool = false
     ) {
+        guard allowWhileBlocked || !isComposerBlocked else { return }
         if claudeRuntimeEnabled {
             guard canStream else {
                 streamError = .upstream(setupPrompt + " Agent settings.")

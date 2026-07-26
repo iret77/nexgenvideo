@@ -82,15 +82,11 @@ struct AgentControlTurn: Equatable, Sendable {
 
 struct AgentDialog: Identifiable, Equatable, Sendable {
 
-    /// What submitting the dialog does (audit #3). A single dialog type, two purposes, routed by ONE
-    /// handler so no surface re-implements dialog submission:
-    /// - `.chatClarification` composes a structured chat message (the agent's `show_dialog` default).
-    /// - `.generationIntent` builds a generation and runs it through `GenerationController` — the
-    ///   music-shaping dialog is this purpose. Presenter-agnostic: the panel that owns a generation
-    ///   dialog supplies the builder; the agent panel only ever composes a message.
+    /// Routes every dialog through the single submission handler.
     enum Purpose: Equatable, Sendable {
         case chatClarification
         case generationIntent
+        case workflowIntake
     }
 
     struct Choice: Identifiable, Equatable, Sendable {
@@ -181,17 +177,13 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         }
     }
 
-    /// The dialog's single free-text field. Explicit (the agent declares it) rather than an always-on
-    /// input, and sized to its job — `multiline` for lyrics/notes, single-line for a short direction.
+    /// The dialog's single free-text field. Explicit rather than always-on and sized to its job.
     struct DialogTextField: Equatable, Sendable {
         let placeholder: String
         let multiline: Bool
     }
 
-    /// Turns the dialog into a file intake: the card replaces its free-text field with a drop zone +
-    /// a native file picker, so the user drops or chooses the file(s) and never types a path. Picked
-    /// files come back in `AgentDialogResult.fileURLs`; the host imports each as a media asset and
-    /// references it to the agent as an @mention (e.g. `attach_song media:<id>`).
+    /// File intake shown as a drop zone and native picker.
     struct FileIntake: Equatable, Sendable {
         /// Accepted tokens — a kind ("audio", "video"/"movie", "image", "text") or a bare extension
         /// ("mp3", "txt"). Empty ⇒ any file.
@@ -208,9 +200,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         /// the `character`/`location` intakes so the host can name the destination folder. The name
         /// arrives in `AgentDialogResult.direction`.
         let namePrompt: String?
-        /// Whether a file (or, with a textField, text) is REQUIRED to confirm. Optional intakes (lyrics,
-        /// script) can be confirmed with nothing — that's an explicit "skip", reported to the agent so
-        /// it moves on instead of the user being forced to dismiss.
+        /// Whether a file or text is required. Empty optional workflow intake is an explicit skip.
         let required: Bool
     }
 
@@ -309,7 +299,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             }
         }
         let textField = parseTextField(args)
-        let fileIntake = parseFileIntake(args["fileIntake"] as? [String: Any])
+        let fileIntake = try parseFileIntake(args["fileIntake"] as? [String: Any])
         guard !sections.isEmpty || fileIntake != nil || textField != nil else {
             throw ToolError("show_dialog: give it structure — at least one section, a textField, or a fileIntake; a bare question belongs in prose.")
         }
@@ -347,7 +337,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         return nil
     }
 
-    private static func parseFileIntake(_ raw: [String: Any]?) -> FileIntake? {
+    private static func parseFileIntake(_ raw: [String: Any]?) throws -> FileIntake? {
         guard let raw else { return nil }
         let accept = ((raw["accept"] as? [Any]) ?? [])
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }
@@ -355,9 +345,11 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         let prompt = (raw["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachAs = ((raw["attachAs"] as? String)?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 }
         let namePrompt = (raw["namePrompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Optional intakes (lyrics/script text sidecars, style refs) default to skippable — the user
-        // can confirm-to-skip. The agent can force required:true; other intakes (the song) require input.
-        let defaultRequired = !(attachAs == "lyrics" || attachAs == "script" || attachAs == "style")
+        guard attachAs == nil, namePrompt == nil else {
+            throw ToolError("show_dialog: workflow file intake is host-owned; omit attachAs/namePrompt and wait for the pack's intake card.")
+        }
+        // Workflow optionality belongs only to the pack manifest.
+        let defaultRequired = true
         return FileIntake(
             accept: accept,
             prompt: (prompt?.isEmpty == false) ? prompt : nil,

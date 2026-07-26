@@ -92,4 +92,9 @@ struct PreflightTests {
         let result = Preflight.run(projectDir: dir)
         #expect(!result.hasAudio)
     }
+
+    @Test("preflight accepts every audio type the canonical layout accepts")
+    func preflightUsesCanonicalAudioTypes() {
+        #expect(Preflight.audioExtensions == AudioProjectLayout.audioExtensions)
+    }
 }

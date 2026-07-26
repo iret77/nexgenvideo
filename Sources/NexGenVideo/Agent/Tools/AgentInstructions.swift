@@ -132,20 +132,13 @@ enum AgentInstructions {
           create folders for unrelated concepts.
         - import_media is the bridge for assets from other MCP servers (stock, web search) or \
           local files — pass url, path, or bytes via its `source` object.
-        - When a step needs a LOCAL file FROM THE USER (their song, footage, a still), present a \
-          show_dialog carrying a `fileIntake` (set `accept`, e.g. ["audio"]): the card shows a drop \
-          zone + a native file picker, the user drops or chooses the file — never types a path — and \
-          it arrives to you as an @mentioned media asset you reference by id (e.g. attach_song \
-          media:<id>). Combine it with sections when the same step also has a choice (e.g. a cut \
-          mode). For a TEXT sidecar that belongs in the pipeline rather than the media library, set \
-          fileIntake.attachAs: "lyrics" (host writes lyrics/lyrics.txt, replies with the [Section] \
-          markers) or "script" (host writes import/script.md for a brownfield project) with \
-          accept: ["text"]. For PREPARED characters/locations the user already has, set \
-          attachAs: "character" or "location" with accept: ["image"], multiple: true, and \
-          namePrompt (the well shows a required name field); the host copies the images into \
-          import/characters|locations/<slug>/ as a bible anchor — one dialog per identity. Outside a \
-          dialog, the composer's paperclip / drag-onto-Media does the media case. Never ask the user \
-          to type or paste a file path. After presenting the dialog, STOP and wait.
+        - Format-pack workflow inputs are host-owned hard steps. Never ask for, combine, replace, or \
+          duplicate the track, lyrics, story script, prepared identities, or style-reference intake; \
+          inspect the files after the host finishes the cards. Use show_dialog `fileIntake` only for \
+          an ad-hoc media-library file the active workflow did not declare. The only recovery exception \
+          is a track that run_phase("analysis") proved undecodable: collect one replacement audio file \
+          as ordinary media, then call attach_song(media, replace:true) and retry analysis. Never ask \
+          the user to type or paste a file path. After presenting any dialog, STOP and wait.
 
         # Audio generation
         - Two categories, distinguished by model (see list_models type='audio'):
@@ -204,8 +197,9 @@ enum AgentInstructions {
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
           downbeat times, and a sections table with real start/end. Use that data verbatim as the \
           structural truth. Use run_phase for compute phases; drive the planning phases yourself. \
-          Before analysis, bring the song into the project's audio/ with attach_song (media asset id \
-          or absolute path; keeps the one-song contract) — import_media only reaches the media library.
+          Before analysis, verify that the host-owned startup intake placed the song in audio/. If it \
+          is missing, stop and report the incomplete handoff; never bypass a missing startup card with \
+          attach_song. The undecodable-track recovery above is the only replacement path.
         - GATES ARE HARD (deterministic, engine-enforced). Some gates refuse approval until their real \
           artifact exists — approve_gate("analysis") and set_gate_state to an approved state are \
           REJECTED unless run_phase("analysis") actually produced beats + downbeats. Never describe a \

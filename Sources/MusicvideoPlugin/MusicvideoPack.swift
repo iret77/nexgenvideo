@@ -56,21 +56,16 @@ public struct MusicvideoPack: Pack {
         accentHex: "#FF2D55"
     )
 
-    /// One honest starter. The prompt is USER-VISIBLE — it lands in the transcript as if the user
-    /// typed it, so it reads as a natural first-person request, NOT an agent-facing instruction wall.
-    /// The tool choreography (attach_song, run_phase, show_blocks) lives in the agent manual, tool
-    /// descriptions, and phase docs — never in this line.
+    /// Hidden host-to-agent handoff after the ordered startup intake completes.
     public let starters = [
         PackStarter(
             id: "start",
             title: "Start the music video",
-            prompt: "Let's make a music video from my song. Start the pipeline and take me through it step by step — begin by asking me for the track."
+            prompt: "The host initialized this music-video pipeline and completed its declared startup intake. Inspect the current project state and files, then guide the user through the next unapproved phase. Never ask for or present a file-intake dialog for a pack hard step."
         )
     ]
 
-    /// A half-finished project must never be offered "begin by asking me for the track" — the track is
-    /// long since attached and analysed, and taking that chip sends the agent back to the start. Once
-    /// anything is approved the chip names the phase that is actually next.
+    /// Once anything is approved the chip names the phase that is actually next.
     public func starters(for progress: PackProgress) -> [PackStarter] {
         guard progress.hasStarted else { return starters }
         if let next = progress.nextPhase {
@@ -166,8 +161,7 @@ public struct MusicvideoPack: Pack {
                 chordRecognizer: registry.chordRecognizer)
         }
         // #174: the one-song contract is load-bearing — analysis is meaningless without exactly one
-        // song in audio/. Pin it to the engine so a missing/duplicate song blocks the phase upfront
-        // with an actionable message, regardless of whether the agent established it via attach_song.
+        // song in audio/. Pin it to the engine so a missing/duplicate song blocks the phase upfront.
         // Runs before the heavy DSP; defense-in-depth with the runner's own locateSong.
         registry.registerDeterministicStep(
             "one_song_contract", phase: "analysis",

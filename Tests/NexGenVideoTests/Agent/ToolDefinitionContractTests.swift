@@ -88,6 +88,57 @@ struct ToolDefinitionContractTests {
         #expect(ToolHarness.textOf(empty).contains("expected at least 1 item"))
     }
 
+    @Test("agent dialogs cannot claim or replace host workflow intake")
+    @MainActor
+    func hostWorkflowIntakeIsExclusive() async {
+        let harness = ToolHarness()
+        let claimed = await harness.runRaw("show_dialog", args: [
+            "title": "Bring in your track",
+            "fileIntake": [
+                "accept": ["audio"],
+                "attachAs": "song",
+            ],
+        ])
+        #expect(claimed.isError)
+        #expect(ToolHarness.textOf(claimed).contains("unknown field 'attachAs'"))
+
+        let hostDialog = AgentDialog(
+            id: "hardstep.project_init.song",
+            title: "Track",
+            symbol: "waveform",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Attach track",
+            textField: nil,
+            sections: [],
+            fileIntake: .init(
+                accept: ["audio"],
+                prompt: nil,
+                allowsMultiple: false,
+                attachAs: "song",
+                namePrompt: nil,
+                required: true
+            ),
+            purpose: .workflowIntake
+        )
+        harness.editor.agentService.pendingDialog = hostDialog
+        let replacement = await harness.runRaw("show_dialog", args: [
+            "title": "Choose cut mode",
+            "sections": [[
+                "id": "mode",
+                "label": "Cut mode",
+                "type": "choices",
+                "options": [
+                    ["id": "beat", "label": "Beat"],
+                    ["id": "section", "label": "Section"],
+                ],
+            ]],
+        ])
+        #expect(replacement.isError)
+        #expect(harness.editor.agentService.pendingDialog?.id == hostDialog.id)
+        #expect(ToolHarness.textOf(replacement).contains("Do not replace or duplicate"))
+    }
+
     @Test("suggest_patterns advertises partial ranking and coverage, never a completeness gate")
     func patternFitDescriptionMatchesContract() throws {
         let tool = try #require(ToolDefinitions.all.first { $0.name == .suggestPatterns })

@@ -81,6 +81,10 @@ struct ComposerBlockedTests {
             id: "t", title: "Track", symbol: "waveform", intro: nil, costHint: nil,
             confirmLabel: "Attach", textField: nil, sections: [])
         #expect(service.isComposerBlocked)
+        let messageCount = service.messages.count
+        service.send(text: "Bypass the card", mentions: [], hidden: true)
+        #expect(service.messages.count == messageCount)
+        #expect(service.streamError == nil)
 
         service.pendingDialog = nil
         #expect(service.isComposerBlocked == false)
