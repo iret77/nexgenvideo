@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import MusicvideoPlugin
 @testable import NexGenVideo
+import NexGenEngine
 
 @Suite("Hard-step intake")
 struct HardStepIntakeTests {
