@@ -275,7 +275,7 @@ struct HardStepIntakeTests {
         #expect(repeated.id != first.id)
     }
 
-    @Test("a workflow hard step completes locally and only advances host intake")
+    @Test("a workflow hard step completes locally without creating an agent turn")
     @MainActor
     func workflowStepDoesNotBecomeChat() async throws {
         let package = FileManager.default.temporaryDirectory
@@ -286,6 +286,7 @@ struct HardStepIntakeTests {
             try? FileManager.default.removeItem(at: package)
         }
         try Fixtures.prepareProjectPackage(at: package)
+        _ = try ProjectScaffold.initProject(home: package, name: "workflow-intake", mode: .beat)
         editor.projectURL = package
 
         let dialog = AgentDialog(
@@ -303,11 +304,7 @@ struct HardStepIntakeTests {
             )
         )
 
-        #expect(editor.agentService.pendingDialog?.id != dialog.id)
-        #expect(
-            editor.agentService.pendingDialog == nil
-                || editor.agentService.pendingDialog?.purpose == .workflowIntake
-        )
+        #expect(editor.agentService.pendingDialog == nil)
         #expect(editor.agentService.messages.count == messageCount)
         #expect(!editor.agentService.isStreaming)
         await Task.yield()
