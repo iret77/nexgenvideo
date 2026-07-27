@@ -568,10 +568,13 @@ struct HardStepIntakeTests {
         )
         #expect(IntakeSatisfaction.isSatisfied(.script, dataRoot: existingStory))
 
-        #expect(AgentInstructions.serverInstructions.contains(
+        let instructions = AgentInstructions.serverInstructions
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        #expect(instructions.contains(
             "A missing story file means greenfield creation from the analyzed song"
         ))
-        #expect(AgentInstructions.serverInstructions.contains(
+        #expect(instructions.contains(
             "preserve that existing story and identity material as source truth"
         ))
     }

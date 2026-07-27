@@ -33,13 +33,14 @@ struct PackStarterProgressTests {
 
         #expect(starter.id == "continue")
         #expect(starter.title.contains("Brief"))
+        let prompt = starter.prompt
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
         // The prompt must not restart the pipeline or re-request the song.
-        #expect(!starter.prompt.lowercased().contains("ask me for the track"))
-        #expect(starter.prompt.contains("Brief"))
-        #expect(starter.prompt.contains("# Phase K1 — Brief"))
-        #expect(starter.prompt.contains(
-            "If it is absent, this is greenfield"
-        ))
+        #expect(!prompt.lowercased().contains("ask me for the track"))
+        #expect(prompt.contains("Brief"))
+        #expect(prompt.contains("# Phase K1 — Brief"))
+        #expect(prompt.contains("If it is absent, this is greenfield"))
     }
 
     @Test("the phase in the chip is the pack's own wording, not the raw key")
