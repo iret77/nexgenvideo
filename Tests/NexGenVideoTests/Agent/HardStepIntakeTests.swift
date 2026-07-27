@@ -349,6 +349,7 @@ struct HardStepIntakeTests {
         ]
 
         await editor.refreshEngineState()
+        _ = editor.pipelineAgentHarness.reconcile(editor: editor)
 
         #expect(editor.projectState?.nextPhaseName == "project_init")
         #expect(editor.agentService.pendingDialog?.title == "Track")
@@ -393,16 +394,18 @@ struct HardStepIntakeTests {
         try liveStore.save(liveGates, to: PipelineLayout.gatesFile)
 
         await editor.refreshEngineState()
+        _ = editor.pipelineAgentHarness.reconcile(editor: editor)
         #expect(editor.projectState?.nextPhaseName == "brief")
         #expect(editor.agentService.pendingDialog?.title == "Existing story")
         #expect(editor.agentService.pendingDialog?.fileIntake?.attachAs == "script")
         let prompt = try editor.pipelineAgentHarness.agentPrompt(
             dataRoot: liveDataRoot
         )
+        let normalizedPrompt = prompt?
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
         #expect(prompt?.contains("# Phase K1 — Brief") == true)
-        #expect(prompt?.contains(
-            "If it is absent, this is greenfield"
-        ) == true)
+        #expect(normalizedPrompt?.contains("If it is absent, this is greenfield") == true)
     }
 
     // MARK: - Dialog construction

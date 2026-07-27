@@ -71,14 +71,9 @@ struct AssembleTimelineTests {
         let workingDataRoot = try #require(
             harness.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
         )
-        let media = FrameInventory.projectHome(of: workingDataRoot)
-            .appendingPathComponent("media", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: media,
-            withIntermediateDirectories: true
-        )
-        let outA = media.appendingPathComponent("s001.mp4")
-        let outB = media.appendingPathComponent("s002.mp4")
+        let projectHome = FrameInventory.projectHome(of: workingDataRoot)
+        let outA = projectHome.appendingPathComponent("s001.mp4")
+        let outB = projectHome.appendingPathComponent("s002.mp4")
         try Data("clipA".utf8).write(to: outA)
         try Data("clipB".utf8).write(to: outB)
         let generationInput = GenerationInput(
@@ -191,6 +186,10 @@ struct AssembleTimelineTests {
         let videoIndex = try #require(result["video_track_index"] as? Int)
         #expect(h.editor.timeline.tracks[videoIndex].type == .video)
         #expect(h.editor.timeline.tracks[videoIndex].clips.count == 2)
+        #expect(
+            Set(h.editor.timeline.tracks[videoIndex].clips.map(\.mediaRef))
+                == ["s001-video", "s002-video"]
+        )
 
         // The song is the sync anchor: one audio clip at frame 0.
         let songTrack = try #require(result["song_track"] as? [String: Any])

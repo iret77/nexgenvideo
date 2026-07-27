@@ -1528,6 +1528,7 @@ extension ToolExecutor {
                     + "provider render manifest. Place its source footage on the timeline."
             )
         }
+        var completedAsset: MediaAsset?
         var updatedFrames: FramesManifest?
         if status == .rendered {
             guard let submitted = output, !submitted.isEmpty else {
@@ -1540,6 +1541,12 @@ extension ToolExecutor {
                 editor: editor,
                 dataRoot: root
             ), FileManager.default.fileExists(atPath: asset.url.path) else {
+                throw ToolError(
+                    "Rendered output '\(submitted)' is not completed media on disk. "
+                        + "Wait for get_media to report it ready, then record it."
+                )
+            }
+            guard asset.generationStatus == .none else {
                 throw ToolError(
                     "Rendered output '\(submitted)' is not completed media on disk. "
                         + "Wait for get_media to report it ready, then record it."
@@ -1565,14 +1572,15 @@ extension ToolExecutor {
                         + "but '\(submitted)' is \(asset.type.rawValue)."
                 )
             }
+            completedAsset = asset
             output = FrameInventory.relativePath(
                 of: assetURL,
                 to: projectHome
             )
-            if phase == "frames", let output {
+            if phase == "frames" {
                 updatedFrames = try updatedFramesManifest(
                     shot: shot,
-                    output: output,
+                    output: asset.id,
                     role: args.string("role"),
                     shotlist: shotlist,
                     editor: editor,
@@ -1592,7 +1600,7 @@ extension ToolExecutor {
             let entryProof = try stampRenderInputs(
                 &manifest,
                 shotId: shotId,
-                output: output,
+                output: completedAsset?.id ?? output,
                 editor: editor,
                 dataRoot: root
             )
@@ -1635,7 +1643,13 @@ extension ToolExecutor {
            status == .rendered,
            let output,
            !output.isEmpty {
-            await recordChainLastFrame(shotId: shotId, output: output, phase: phase, editor: editor, dataRoot: root)
+            await recordChainLastFrame(
+                shotId: shotId,
+                output: completedAsset?.id ?? output,
+                phase: phase,
+                editor: editor,
+                dataRoot: root
+            )
         }
         let entry = manifest.entries[shotId]
         return try jsonResult([
@@ -2733,10 +2747,21 @@ extension ToolExecutor {
     }
 
     private func resolveRenderedAsset(_ output: String, editor: EditorViewModel, dataRoot: URL) -> MediaAsset? {
-        if let asset = editor.mediaAssets.first(where: { $0.id == output }) { return asset }
-        guard let fileURL = renderedFileURL(output, dataRoot: dataRoot) else { return nil }
-        return durableMediaURL(for: fileURL, editor: editor)
-            .flatMap { existingOrImportedAsset($0, editor: editor) }
+        if let asset = editor.mediaAssets.first(where: { $0.id == output }) {
+            return projectLocalRegularURL(
+                asset.url,
+                dataRoot: dataRoot
+            ) == nil ? nil : asset
+        }
+        guard let fileURL = renderedFileURL(output, dataRoot: dataRoot),
+              let target = projectLocalRegularURL(
+                  fileURL,
+                  dataRoot: dataRoot
+              ) else { return nil }
+        if let asset = existingProjectAsset(at: target, editor: editor) {
+            return asset
+        }
+        return editor.addMediaAsset(from: target)
     }
 
     private func requiredRenderedAsset(
@@ -2744,12 +2769,19 @@ extension ToolExecutor {
         editor: EditorViewModel,
         dataRoot: URL
     ) throws -> MediaAsset? {
-        if let asset = editor.mediaAssets.first(where: { $0.id == output }) { return asset }
-        guard let fileURL = renderedFileURL(output, dataRoot: dataRoot) else { return nil }
-        return try requiredDurableAsset(
-            for: fileURL,
+        if let asset = resolveRenderedAsset(
+            output,
             editor: editor,
-            context: "assemble_timeline found \(output) but couldn't register it"
+            dataRoot: dataRoot
+        ) {
+            return asset
+        }
+        guard renderedFileURL(output, dataRoot: dataRoot) != nil else {
+            return nil
+        }
+        throw ToolError(
+            "assemble_timeline found \(output) but couldn't register it "
+                + "as a regular file inside the project"
         )
     }
 
@@ -2765,15 +2797,35 @@ extension ToolExecutor {
         return candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) })
     }
 
-    /// Copy any file outside the live project into its working `media/` and reference that copy.
-    private func durableMediaURL(for fileURL: URL, editor: EditorViewModel) -> URL? {
-        do {
-            return try editor.durableProjectMediaURL(for: fileURL)
-        } catch {
-            editor.mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
-            Log.project.error("media durability failed error=\(error.localizedDescription)")
+    private func projectLocalRegularURL(
+        _ fileURL: URL,
+        dataRoot: URL
+    ) -> URL? {
+        let home = FrameInventory.projectHome(of: dataRoot)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let target = fileURL.standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard target.path.hasPrefix(home.path + "/"),
+              (try? target.resourceValues(
+                  forKeys: [.isRegularFileKey]
+              ).isRegularFile) == true else {
             return nil
         }
+        return target
+    }
+
+    private func existingProjectAsset(
+        at fileURL: URL,
+        editor: EditorViewModel
+    ) -> MediaAsset? {
+        let target = fileURL.standardizedFileURL
+            .resolvingSymlinksInPath()
+        let matches = editor.mediaAssets.reversed().filter {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath()
+                == target
+        }
+        return matches.first
     }
 
     /// The single song in `audio/` as a media asset (imported once, reused after), or nil when there

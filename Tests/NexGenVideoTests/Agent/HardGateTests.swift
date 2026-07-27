@@ -101,13 +101,27 @@ struct HardGateTests {
         return (ToolHarness(enforceHardGates: true), dataRoot.path, tmp)
     }
 
+    private func briefArgs(projectDir: String) -> [String: Any] {
+        [
+            "project_dir": projectDir,
+            "mission": "single_release",
+            "target_platform": "YouTube",
+            "aspect_ratio": "16:9",
+            "project_mode": "section",
+            "concept_type": "narrative",
+            "visual_medium": "live_action_realistic",
+            "figures": "artist_only",
+            "lyrics_integration": "literal",
+        ]
+    }
+
     @Test("a work tool is refused until the earlier gate is approved, then clears it")
     func workToolBlockedUntilPriorApproved() async throws {
         let (h, dir, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
 
         // Fresh project, nothing approved: drafting the brief is refused, naming the first missing gate.
-        let blocked = await h.runRaw("write_brief", args: ["project_dir": dir])
+        let blocked = await h.runRaw("write_brief", args: briefArgs(projectDir: dir))
         #expect(blocked.isError)
         #expect(ToolHarness.textOf(blocked).contains("project_init"))
 
@@ -117,7 +131,7 @@ struct HardGateTests {
 
         // project_init no longer blocks the brief. (It may still fail for other reasons — a later prior
         // gate, or missing content — but never again on project_init.)
-        let after = await h.runRaw("write_brief", args: ["project_dir": dir])
+        let after = await h.runRaw("write_brief", args: briefArgs(projectDir: dir))
         #expect(!ToolHarness.textOf(after).contains("project_init"))
     }
 }

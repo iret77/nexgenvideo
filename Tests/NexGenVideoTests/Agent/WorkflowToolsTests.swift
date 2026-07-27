@@ -31,8 +31,7 @@ struct WorkflowToolsTests {
         // the way the host's PluginLoader does, so the workflow tools resolve it.
         PackCatalog.register(MusicvideoPack())
         let home = FrameInventory.projectHome(of: dataRoot)
-        let data = try JSONSerialization.data(withJSONObject: ["activePlugin": pack], options: [])
-        try data.write(to: home.appendingPathComponent("ngv.json"))
+        try ProjectPluginSettings.setActivePlugin(pack, projectURL: home)
     }
 
     private func minimalShotlist(
@@ -164,6 +163,20 @@ struct WorkflowToolsTests {
             options: [.prettyPrinted, .sortedKeys]
         ).write(to: analysis)
         return analysis
+    }
+
+    private func validBriefArgs(dataRoot: URL) -> [String: Any] {
+        [
+            "project_dir": dataRoot.path,
+            "mission": "single_release",
+            "target_platform": "YouTube",
+            "aspect_ratio": "16:9",
+            "project_mode": "section",
+            "concept_type": "narrative",
+            "visual_medium": "live_action_realistic",
+            "figures": "artist_only",
+            "lyrics_integration": "literal",
+        ]
     }
 
     // MARK: - init_project → get_project_state
@@ -330,6 +343,12 @@ struct WorkflowToolsTests {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
+        try Data("track".utf8).write(
+            to: dataRoot.appendingPathComponent("audio/song.wav")
+        )
+        try Data("lyrics".utf8).write(
+            to: dataRoot.appendingPathComponent("lyrics/lyrics.txt")
+        )
 
         // Approve the predecessor first, so the analysis block is attributable to the ARTIFACT hard
         // gate (no measured beats/downbeats), not merely to ordering.
@@ -354,20 +373,40 @@ struct WorkflowToolsTests {
 
     @Test("Brief work is structurally blocked until its host-owned intake is resolved")
     func briefWaitsForCreativeIntake() async throws {
-        let (_, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let cleanup = FileManager.default.temporaryDirectory
+            .appendingPathComponent("brief-intake-\(UUID().uuidString)", isDirectory: true)
+        let package = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
+        try Fixtures.prepareProjectPackage(at: package)
+        try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
+        PackCatalog.register(MusicvideoPack())
+        let packageDataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "demo",
+            mode: .beat,
+            extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
+        )
 
-        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        let store = YAMLArtifactStore(dataRoot: packageDataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&gates, phase: "project_init")
         GatesOperations.approve(&gates, phase: "analysis")
         try store.save(gates, to: PipelineLayout.gatesFile)
 
         let h = ToolHarness(enforceHardGates: true)
+        h.editor.projectURL = package
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let dataRoot = try #require(
+            h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+        let reconciliation = h.editor.pipelineAgentHarness.reconcile(editor: h.editor)
+        #expect(!reconciliation.isReady)
+        #expect(h.editor.agentService.pendingDialog?.title == "Existing story")
         let blocked = await h.runRaw(
             "write_brief",
-            args: ["project_dir": dataRoot.path]
+            args: validBriefArgs(dataRoot: dataRoot)
         )
 
         #expect(blocked.isError)
@@ -389,9 +428,7 @@ struct WorkflowToolsTests {
             ]
         )
         #expect(blockedDialog.isError)
-        #expect(ToolHarness.textOf(blockedDialog).contains(
-            "host-owned Existing story card"
-        ))
+        #expect(ToolHarness.textOf(blockedDialog).contains("host-owned decision"))
     }
 
     @Test("list_project_files + copy_project_file stage files and refuse to escape the project")
@@ -747,7 +784,7 @@ struct WorkflowToolsTests {
             args: ["project_dir": dataRoot.path]
         )
         #expect(report.isError)
-        #expect(ToolHarness.textOf(report).contains("shotlist"))
+        #expect(ToolHarness.textOf(report).contains("No shot list exists"))
     }
 
     @Test("run_sanity on a minimal shotlist returns findings with the four contract fields")
@@ -942,6 +979,7 @@ struct WorkflowToolsTests {
         _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
         let shot: [String: Any] = [
             "id": "s001",
+            "section": "intro",
             "time_start": 0,
             "time_end": 12,
             "duration_s": 12,
@@ -991,7 +1029,7 @@ struct WorkflowToolsTests {
         let result = await h.runRaw("write_production_design", args: [
             "project_dir": dataRoot.path,
             "visual_medium": "2d_animation",
-            "refs": [["path": "style-link.png"]],
+            "refs": [["path": "style-link.png", "note": "style"]],
             "color_script": [],
         ])
 
@@ -1022,7 +1060,10 @@ struct WorkflowToolsTests {
         let result = await h.runRaw("write_production_design", args: [
             "project_dir": dataRoot.path,
             "visual_medium": "2d_animation",
-            "refs": [["path": "production_design/refs/style.txt"]],
+            "refs": [[
+                "path": "production_design/refs/style.txt",
+                "note": "style",
+            ]],
             "color_script": [],
         ])
 
@@ -1215,6 +1256,51 @@ struct WorkflowToolsTests {
         )
         #expect(staleSummary["rendered"] as? Int == 0)
         #expect(staleSummary["pending"] as? Int == 1)
+    }
+
+    @Test("record_render preserves the submitted asset provenance when URLs collide")
+    func renderManifestUsesSubmittedAssetProvenance() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(
+            try minimalShotlist(keyframeStrategy: .none),
+            to: dataRoot
+        )
+        let video = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("s001.mp4")
+        try Data("current".utf8).write(to: video)
+        h.editor.mediaAssets.append(
+            MediaAsset(
+                id: "stale-video",
+                url: video,
+                type: .video,
+                name: "stale",
+                generationInput: GenerationInput(
+                    prompt: "Stale provider prompt.",
+                    model: "stale-model",
+                    duration: 4,
+                    aspectRatio: "16:9"
+                )
+            )
+        )
+        try addGeneratedVideo("current-video", at: video, to: h)
+
+        _ = try await h.runOK("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s001",
+            "output": "current-video",
+        ])
+
+        let proof = try loadRenderProofManifest(
+            dataRoot: dataRoot,
+            phase: "preview"
+        )
+        #expect(
+            proof.entries["s001"]?.providerPrompt
+                == "Compiled provider prompt for current-video."
+        )
+        #expect(proof.entries["s001"]?.generationModel == "video-model")
     }
 
     @Test("next render shot hands a chained shot the predecessor's exact last frame")
@@ -1503,6 +1589,14 @@ struct WorkflowToolsTests {
         let image = FrameInventory.projectHome(of: dataRoot)
             .appendingPathComponent("manual.png")
         try Data("manual".utf8).write(to: image)
+        h.editor.mediaAssets.append(
+            MediaAsset(
+                id: "manual-image",
+                url: image,
+                type: .image,
+                name: "manual"
+            )
+        )
 
         let result = await h.runRaw("record_render", args: [
             "project_dir": dataRoot.path,
@@ -1529,6 +1623,14 @@ struct WorkflowToolsTests {
         let video = FrameInventory.projectHome(of: dataRoot)
             .appendingPathComponent("manual.mp4")
         try Data("manual".utf8).write(to: video)
+        h.editor.mediaAssets.append(
+            MediaAsset(
+                id: "manual-video",
+                url: video,
+                type: .video,
+                name: "manual"
+            )
+        )
 
         let result = await h.runRaw("record_render", args: [
             "project_dir": dataRoot.path,
@@ -1542,6 +1644,38 @@ struct WorkflowToolsTests {
         let manifest = try loadRenderManifest(
             dataRoot: dataRoot,
             phase: "final"
+        )
+        #expect(manifest.entries.isEmpty)
+    }
+
+    @Test("record_render rejects media that is still rendering")
+    func recordRenderRequiresCompletedMedia() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(
+            try minimalShotlist(keyframeStrategy: .none),
+            to: dataRoot
+        )
+        let video = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("s001.mp4")
+        try addGeneratedVideo("s001-video", at: video, to: h)
+        let asset = try #require(
+            h.editor.mediaAssets.first { $0.id == "s001-video" }
+        )
+        asset.generationStatus = .rendering
+
+        let result = await h.runRaw("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s001",
+            "output": "s001-video",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("not completed media"))
+        let manifest = try loadRenderManifest(
+            dataRoot: dataRoot,
+            phase: "preview"
         )
         #expect(manifest.entries.isEmpty)
     }
@@ -1668,6 +1802,48 @@ struct WorkflowToolsTests {
         #expect(done?["done"] as? Bool == true)
     }
 
+    @Test("next_render_shot rejects an AI-enhanced source that escapes through a symlink")
+    func nextRenderShotRejectsEnhancedSourceSymlinkEscape() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try hybridShotlist(), to: dataRoot)
+        let home = FrameInventory.projectHome(of: dataRoot)
+        let outside = cleanup.appendingPathComponent("outside.mp4")
+        try Data("outside".utf8).write(to: outside)
+        let source = home.appendingPathComponent("media/s003-source.mp4")
+        try FileManager.default.createDirectory(
+            at: source.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: source,
+            withDestinationURL: outside
+        )
+        try addGeneratedVideo(
+            "s002-video",
+            at: home.appendingPathComponent("s002.mp4"),
+            to: h
+        )
+        _ = try await h.runOK("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s002",
+            "output": "s002-video",
+        ])
+
+        let result = await h.runRaw("next_render_shot", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+        ])
+
+        #expect(result.isError)
+        #expect(
+            ToolHarness.textOf(result).contains(
+                "no current project-local source video"
+            )
+        )
+    }
+
     @Test("write_shotlist rejects AI-enhanced shots without a durable source")
     func shotlistWriterRequiresEnhancedSource() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
@@ -1693,6 +1869,7 @@ struct WorkflowToolsTests {
         _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
         let shot: [String: Any] = [
             "id": "s001",
+            "section": "verse",
             "time_start": 0,
             "time_end": 12,
             "duration_s": 12,
