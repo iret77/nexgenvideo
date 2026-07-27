@@ -280,17 +280,26 @@ final class PluginUpdateCenter {
         }
     }
 
-    func restartToApplyUpdates() {
+    @discardableResult
+    func restartToApplyUpdates() -> Bool {
         var targets: [ProjectPackBinding] = []
+        var staleIDs: [String] = []
         for (id, attention) in attentionByID where attention == .restartRequired {
             guard let binding = targetByID[id],
                   PluginLoader.installedInfo(
                       id: id,
                       version: binding.version
-                  ) != nil else { continue }
+                  ) != nil else {
+                staleIDs.append(id)
+                continue
+            }
             targets.append(binding)
         }
-        guard !targets.isEmpty else { return }
+        for id in staleIDs {
+            attentionByID.removeValue(forKey: id)
+            targetByID.removeValue(forKey: id)
+        }
+        guard !targets.isEmpty else { return false }
         AppRelaunch.now {
             for binding in targets {
                 PluginLoader.requestVersionForNextLaunch(
@@ -299,6 +308,7 @@ final class PluginUpdateCenter {
                 )
             }
         }
+        return true
     }
 
     private func apply(record: InstalledPluginRecord, id: String) {

@@ -14,7 +14,12 @@ struct HomeView: View {
 
     @Bindable private var changelog = ChangelogStore.shared
     @Bindable private var packUpdates = PluginUpdateCenter.shared
+    @Bindable private var updater = Updater.shared
     @State private var showFormatSheet = false
+
+    private var hasUpdateNotices: Bool {
+        packUpdates.attention != nil || updater.updateAvailable
+    }
 
     /// New project → choose a format first, unless no packs are installed (then generic, no needless
     /// one-option sheet).
@@ -60,6 +65,13 @@ struct HomeView: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             header
+            if hasUpdateNotices {
+                HomeUpdateNotices(
+                    packAttention: packUpdates.attention,
+                    appUpdateAvailable: updater.updateAvailable,
+                    appUpdateVersion: updater.updateVersion
+                )
+            }
             Text("My Projects")
                 .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -70,45 +82,15 @@ struct HomeView: View {
     }
 
     private var header: some View {
-        HStack(spacing: AppTheme.Spacing.md) {
-            WelcomeTitle()
-
-            UpdateBadgeView()
-
-            if let attention = packUpdates.attention {
-                Button {
-                    if attention == .restartRequired {
-                        packUpdates.restartToApplyUpdates()
-                    } else {
-                        SettingsWindowController.shared.show(tab: .plugins)
-                    }
-                } label: {
-                    Label(
-                        attention == .restartRequired
-                            ? "Format pack restart required"
-                            : "Format pack update available",
-                        systemImage: attention == .restartRequired
-                            ? "exclamationmark.circle.fill"
-                            : "arrow.clockwise.circle"
-                    )
-                    .font(.system(
-                        size: AppTheme.FontSize.xs,
-                        weight: AppTheme.FontWeight.medium
-                    ))
-                    .foregroundStyle(
-                        attention == .restartRequired
-                            ? AppTheme.Status.warningColor
-                            : AppTheme.Accent.primary
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, AppTheme.Spacing.xlXxl)
-        .padding(.top, AppTheme.Spacing.lg)
-        .padding(.bottom, AppTheme.Spacing.xxl)
+        WelcomeTitle()
+            .padding(.horizontal, AppTheme.Spacing.xlXxl)
+            .padding(.top, AppTheme.Spacing.lg)
+            .padding(
+                .bottom,
+                hasUpdateNotices
+                    ? AppTheme.Spacing.lgXl
+                    : AppTheme.Spacing.xxl
+            )
     }
 
     private var projectGrid: some View {
@@ -208,6 +190,233 @@ private struct WelcomeTitle: View {
             .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
             .tracking(AppTheme.Tracking.tight)
             .foregroundStyle(AppTheme.Text.primaryColor)
+    }
+}
+
+private struct HomeUpdateNotices: View {
+    let packAttention: PluginUpdateCenter.Attention?
+    let appUpdateAvailable: Bool
+    let appUpdateVersion: String?
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            noticeStack(layout: .horizontal)
+            noticeStack(layout: .compact)
+        }
+        .padding(.horizontal, AppTheme.Spacing.xlXxl)
+        .padding(.bottom, AppTheme.Spacing.xxl)
+    }
+
+    private func noticeStack(
+        layout: HomeStatusNoticeLayout
+    ) -> some View {
+        VStack(spacing: AppTheme.Spacing.smMd) {
+            if let packAttention {
+                packNotice(packAttention, layout: layout)
+            }
+            if appUpdateAvailable {
+                appNotice(layout: layout)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func packNotice(
+        _ attention: PluginUpdateCenter.Attention,
+        layout: HomeStatusNoticeLayout
+    ) -> some View {
+        switch attention {
+        case .restartRequired:
+            HomeStatusNotice(
+                title: "Restart to finish updating format packs",
+                message: "The update is installed. Restart before creating a project with the updated format.",
+                systemImage: "exclamationmark.circle.fill",
+                tone: .warning,
+                layout: layout
+            ) {
+                Button("Restart NexGenVideo") {
+                    PluginUpdateCenter.shared.restartToApplyUpdates()
+                }
+                .buttonStyle(.capsule(.prominent, size: .regular))
+                .controlSize(.small)
+                .help("Restart NexGenVideo to activate this update.")
+            }
+        case .updateAvailable:
+            HomeStatusNotice(
+                title: "Format pack update available",
+                message: "Review and install the update before starting a project with that format.",
+                systemImage: "arrow.clockwise.circle",
+                tone: .pack,
+                layout: layout
+            ) {
+                Button("Open Format Packs…") {
+                    SettingsWindowController.shared.show(tab: .plugins)
+                }
+                .buttonStyle(.capsule(.prominent, size: .regular))
+                .controlSize(.small)
+                .help("Open Format Packs to install the available update.")
+            }
+        }
+    }
+
+    private func appNotice(
+        layout: HomeStatusNoticeLayout
+    ) -> some View {
+        HomeStatusNotice(
+            title: appUpdateVersion.map {
+                "NexGenVideo \($0) is available"
+            } ?? "A NexGenVideo update is available",
+            message: "Install the update to get the latest fixes and improvements.",
+            systemImage: "arrow.up.circle",
+            tone: .pack,
+            layout: layout
+        ) {
+            HStack(spacing: AppTheme.Spacing.smMd) {
+                Button("Not Now") {
+                    Updater.shared.dismissUpdate()
+                }
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .controlSize(.small)
+                .help("Dismiss this update notice.")
+                Button("Install Update…") {
+                    Updater.shared.checkForUpdates(nil)
+                }
+                .buttonStyle(.capsule(.prominent, size: .regular))
+                .controlSize(.small)
+                .help("Install the available NexGenVideo update.")
+            }
+        }
+    }
+}
+
+private enum HomeStatusNoticeLayout {
+    case horizontal
+    case compact
+}
+
+private struct HomeStatusNotice<Actions: View>: View {
+    enum Tone {
+        case warning
+        case pack
+
+        var color: Color {
+            switch self {
+            case .warning: return AppTheme.Status.warningColor
+            case .pack: return AppTheme.Accent.pack
+            }
+        }
+    }
+
+    let title: String
+    let message: String
+    let systemImage: String
+    let tone: Tone
+    let layout: HomeStatusNoticeLayout
+    let actions: Actions
+
+    init(
+        title: String,
+        message: String,
+        systemImage: String,
+        tone: Tone,
+        layout: HomeStatusNoticeLayout,
+        @ViewBuilder actions: () -> Actions
+    ) {
+        self.title = title
+        self.message = message
+        self.systemImage = systemImage
+        self.tone = tone
+        self.layout = layout
+        self.actions = actions()
+    }
+
+    var body: some View {
+        Group {
+            if layout == .horizontal {
+                HStack(spacing: AppTheme.Spacing.mdLg) {
+                    icon
+                    copy
+                        .frame(
+                            width: AppTheme.ComponentSize.homeNoticeCopyWidth,
+                            alignment: .leading
+                        )
+                    Spacer(minLength: AppTheme.Spacing.md)
+                    actions
+                        .frame(
+                            width: AppTheme.ComponentSize.homeNoticeActionsWidth,
+                            alignment: .trailing
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
+                    HStack(alignment: .top, spacing: AppTheme.Spacing.mdLg) {
+                        icon
+                        copy
+                    }
+                    HStack(spacing: AppTheme.Spacing.none) {
+                        Spacer(minLength: AppTheme.Spacing.none)
+                        actions
+                            .fixedSize()
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, AppTheme.Spacing.lgXl)
+        .padding(.vertical, AppTheme.Spacing.mdLg)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: AppTheme.ComponentSize.homeNoticeMinHeight,
+            alignment: .leading
+        )
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .fill(AppTheme.Background.raisedColor)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                        .fill(tone.color.opacity(AppTheme.Opacity.hint))
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .strokeBorder(
+                    tone.color.opacity(AppTheme.Opacity.moderate),
+                    lineWidth: AppTheme.BorderWidth.thin
+                )
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private var icon: some View {
+        Image(systemName: systemImage)
+            .font(.system(
+                size: AppTheme.FontSize.lgXl,
+                weight: AppTheme.FontWeight.bold
+            ))
+            .foregroundStyle(tone.color)
+            .frame(
+                width: AppTheme.IconSize.lgXl,
+                height: AppTheme.IconSize.lgXl
+            )
+            .background(
+                Circle().fill(tone.color.opacity(AppTheme.Opacity.faint))
+            )
+            .accessibilityHidden(true)
+    }
+
+    private var copy: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            Text(title)
+                .font(.system(
+                    size: AppTheme.FontSize.md,
+                    weight: AppTheme.FontWeight.semibold
+                ))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+            Text(message)
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

@@ -9,7 +9,8 @@
           "heading": "Projects",
           "items": [
             "Unsaved timelines, media, chats, and generation state now recover together.",
-            "Save, Save As, media import, and song replacement now preserve one complete project state."
+            "Save, Save As, media import, and song replacement now preserve one complete project state.",
+            "Home shows update and restart notices in a dedicated actionable region instead of beside the page title."
           ]
         },
         {
