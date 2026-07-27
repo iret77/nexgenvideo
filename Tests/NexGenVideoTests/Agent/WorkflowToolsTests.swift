@@ -1680,13 +1680,13 @@ struct WorkflowToolsTests {
                 targetPlatform: "YouTube",
                 aspectRatio: .landscape16x9,
                 projectMode: "section",
+                budgetEur: 50,
                 conceptType: .narrative,
                 visualMedium: .animation2d,
                 visualMediumNotes: "restrained hand-drawn animation",
                 tone: [.quiet],
                 figures: .none,
-                lyricsIntegration: .metaphorical,
-                budgetEur: 50
+                lyricsIntegration: .metaphorical
             ),
             to: PipelineLayout.briefFile
         )
