@@ -278,7 +278,10 @@ struct ProjectWorkingCopyTests {
     func retargetingDifferentProjectRefreshesDeclaration() throws {
         let first = try tempPackage(pipelineName: nil)
         let second = try tempPackage(pipelineName: nil)
-        try ProjectPluginSettings.setActivePlugin(nil, projectURL: second)
+        try ProjectPluginSettings.setActivePlugin(
+            nil as String?,
+            projectURL: second
+        )
         let editor = EditorViewModel()
         editor.projectURL = first
         let firstKey = try #require(editor.openWorkingCopyKey)
