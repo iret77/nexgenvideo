@@ -611,8 +611,13 @@ struct WorkflowToolsTests {
     func rewindsRejectUnwiredPack() async throws {
         let (h, savedDataRoot, cleanup) = try scaffold()
         let package = FrameInventory.projectHome(of: savedDataRoot)
-        let pack = "unwired-\(UUID().uuidString)"
-        try ProjectPluginSettings.setActivePlugin(pack, projectURL: package)
+        let pack = "unwired-\(UUID().uuidString.lowercased())"
+        let binding = try #require(ProjectPackBinding(
+            id: pack,
+            version: "1.0.0",
+            projectSchema: "\(pack)/1.0.0"
+        ))
+        try ProjectPluginSettings.setActivePlugin(binding, projectURL: package)
         try Fixtures.prepareProjectPackage(at: package)
         h.editor.projectURL = package
         defer {

@@ -49,7 +49,7 @@ struct ProjectDocumentIOTests {
         try Fixtures.prepareProjectPackage(at: package)
         try makePackage(at: package)
         try ProjectPluginSettings.setActivePlugin(
-            "unavailable-\(UUID().uuidString)",
+            try unavailableBinding(),
             projectURL: package
         )
         let before = try Data(contentsOf: package.appendingPathComponent(
@@ -79,7 +79,7 @@ struct ProjectDocumentIOTests {
         try Fixtures.prepareProjectPackage(at: package)
         try makePackage(at: package)
         try ProjectPluginSettings.setActivePlugin(
-            "unavailable-\(UUID().uuidString)",
+            try unavailableBinding(),
             projectURL: package
         )
         let before = try Data(contentsOf: package.appendingPathComponent(
@@ -117,6 +117,15 @@ struct ProjectDocumentIOTests {
         try fm.createDirectory(at: media, withIntermediateDirectories: true)
         try Data("MEDIA".utf8).write(to: media.appendingPathComponent("clip.mp4"))
         try Data("THUMB".utf8).write(to: url.appendingPathComponent(Project.thumbnailFilename))
+    }
+
+    private func unavailableBinding() throws -> ProjectPackBinding {
+        let id = "unavailable-\(UUID().uuidString.lowercased())"
+        return try #require(ProjectPackBinding(
+            id: id,
+            version: "1.0.0",
+            projectSchema: "\(id)/1.0.0"
+        ))
     }
 
     private func configuredDocument(fileURL: URL) -> VideoProject {
