@@ -588,7 +588,7 @@ extension ToolExecutor {
                 "Can't fingerprint the current project track. Re-attach it before analysis: \(error)"
             )
         }
-        guard object["schema"] as? String == analysisSchemaVersion,
+        guard object["schema"] as? String == PipelineArtifactWriteContract.measuredAnalysisSchemaVersion,
               object["project"] as? String == projectName(dataRoot: dataRoot),
               object["song_path"] as? String == expectedPath,
               object["song_sha256"] as? String == expectedHash else {

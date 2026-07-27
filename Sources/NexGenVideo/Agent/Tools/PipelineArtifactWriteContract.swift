@@ -2,7 +2,9 @@ import Foundation
 import NexGenEngine
 
 enum PipelineArtifactWriteContract {
-    static let analysisInterpretationSchema = object(
+    static let measuredAnalysisSchemaVersion = "analysis/v2"
+
+    static var analysisInterpretationSchema: [String: Any] { object(
         [
             "project_dir": projectDir,
             "tempo_multiplier": number,
@@ -31,9 +33,9 @@ enum PipelineArtifactWriteContract {
             "anomalies",
             "overall_character",
         ]
-    )
+    ) }
 
-    static let productionDesignSchema = object(
+    static var productionDesignSchema: [String: Any] { object(
         [
             "project_dir": projectDir,
             "visual_medium": enumeration(VisualMedium.allCases.map(\.rawValue)),
@@ -50,9 +52,9 @@ enum PipelineArtifactWriteContract {
             "notes": string,
         ],
         required: ["visual_medium", "refs", "color_script"]
-    )
+    ) }
 
-    static let treatmentSchema = object(
+    static var treatmentSchema: [String: Any] { object(
         [
             "project_dir": projectDir,
             "origin": enumeration(TreatmentOrigin.allCases.map(\.rawValue)),
@@ -62,9 +64,9 @@ enum PipelineArtifactWriteContract {
             "body_markdown": string,
         ],
         required: ["origin", "summary_oneline", "body_markdown"]
-    )
+    ) }
 
-    static let storyboardSchema = object(
+    static var storyboardSchema: [String: Any] { object(
         [
             "project_dir": projectDir,
             "origin": enumeration([
@@ -78,9 +80,9 @@ enum PipelineArtifactWriteContract {
             "sections": array(storyboardSection),
         ],
         required: ["origin", "summary_oneline", "sections"]
-    )
+    ) }
 
-    static let bibleSchema = object(
+    static var bibleSchema: [String: Any] { object(
         [
             "project_dir": projectDir,
             "look": lookGuide,
@@ -91,32 +93,36 @@ enum PipelineArtifactWriteContract {
             "notes": string,
         ],
         required: ["look", "characters", "ensembles", "props", "locations"]
-    )
+    ) }
 
-    static let shotlistSchema = object(
+    static var shotlistSchema: [String: Any] { object(
         [
             "project_dir": projectDir,
             "shots": array(shot, minimum: 1),
             "notes": string,
         ],
         required: ["shots"]
-    )
+    ) }
 
-    private static let string: [String: Any] = ["type": "string"]
-    private static let number: [String: Any] = ["type": "number"]
-    private static let integer: [String: Any] = ["type": "integer"]
-    private static let boolean: [String: Any] = ["type": "boolean"]
-    private static let confidence: [String: Any] = [
-        "type": "number",
-        "minimum": 0,
-        "maximum": 1,
-    ]
-    private static let projectDir: [String: Any] = [
-        "type": "string",
-        "description": "The project's pipeline data root. Omit to use the open project.",
-    ]
+    private static var string: [String: Any] { ["type": "string"] }
+    private static var number: [String: Any] { ["type": "number"] }
+    private static var integer: [String: Any] { ["type": "integer"] }
+    private static var boolean: [String: Any] { ["type": "boolean"] }
+    private static var confidence: [String: Any] {
+        [
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+        ]
+    }
+    private static var projectDir: [String: Any] {
+        [
+            "type": "string",
+            "description": "The project's pipeline data root. Omit to use the open project.",
+        ]
+    }
 
-    private static let storyboardSection = object(
+    private static var storyboardSection: [String: Any] { object(
         [
             "id": string,
             "label": string,
@@ -136,9 +142,9 @@ enum PipelineArtifactWriteContract {
             "function",
             "steps",
         ]
-    )
+    ) }
 
-    private static let storyboardStep = object(
+    private static var storyboardStep: [String: Any] { object(
         [
             "id": string,
             "function": enumeration(StepFunction.allCases.map(\.rawValue)),
@@ -172,9 +178,9 @@ enum PipelineArtifactWriteContract {
             "camera_setup",
             "character_blocking",
         ]
-    )
+    ) }
 
-    private static let storyboardBlocking = object(
+    private static var storyboardBlocking: [String: Any] { object(
         [
             "character_ref": string,
             "position": string,
@@ -183,39 +189,45 @@ enum PipelineArtifactWriteContract {
             "relation_to_set": string,
         ],
         required: ["character_ref", "position", "pose", "gaze"]
-    )
+    ) }
 
-    private static let lookGuide = object([
-        "style": string,
-        "palette": string,
-        "lighting": string,
-        "lens": string,
-        "film_stock": string,
-        "grain": string,
-        "motion_style": string,
-        "additional": string,
-        "lighting_anchor": string,
-    ])
+    private static var lookGuide: [String: Any] {
+        object([
+            "style": string,
+            "palette": string,
+            "lighting": string,
+            "lens": string,
+            "film_stock": string,
+            "grain": string,
+            "motion_style": string,
+            "additional": string,
+            "lighting_anchor": string,
+        ])
+    }
 
-    private static let character = object(
-        entityProperties,
-        required: entityRequired
-    )
+    private static var character: [String: Any] {
+        object(
+            entityProperties,
+            required: entityRequired
+        )
+    }
 
-    private static let ensemble = object(
+    private static var ensemble: [String: Any] { object(
         entityProperties.merging([
             "member_count": integer,
             "members_description": string,
         ]) { _, new in new },
         required: entityRequired + ["member_count", "members_description"]
-    )
+    ) }
 
-    private static let prop = object(
-        entityProperties,
-        required: entityRequired
-    )
+    private static var prop: [String: Any] {
+        object(
+            entityProperties,
+            required: entityRequired
+        )
+    }
 
-    private static let location = object(
+    private static var location: [String: Any] { object(
         entityProperties.merging([
             "view_purpose": keyValueArray(key: "view", value: "purpose"),
             "floorplan": string,
@@ -224,17 +236,19 @@ enum PipelineArtifactWriteContract {
             "scene3d": scene3d,
         ]) { _, new in new },
         required: entityRequired + ["view_purpose", "zones", "scene3d"]
-    )
+    ) }
 
-    private static let entityProperties: [String: [String: Any]] = [
-        "id": string,
-        "name": string,
-        "visual_prompt": string,
-        "attributes": keyValueArray(key: "key", value: "value"),
-        "hard_recognition_trait": string,
-        "reference_images": stringArray,
-        "sheets": keyValueArray(key: "view", value: "path"),
-    ]
+    private static var entityProperties: [String: [String: Any]] {
+        [
+            "id": string,
+            "name": string,
+            "visual_prompt": string,
+            "attributes": keyValueArray(key: "key", value: "value"),
+            "hard_recognition_trait": string,
+            "reference_images": stringArray,
+            "sheets": keyValueArray(key: "view", value: "path"),
+        ]
+    }
 
     private static let entityRequired = [
         "id",
@@ -246,7 +260,7 @@ enum PipelineArtifactWriteContract {
         "sheets",
     ]
 
-    private static let zone = object(
+    private static var zone: [String: Any] { object(
         [
             "id": string,
             "description": string,
@@ -255,9 +269,9 @@ enum PipelineArtifactWriteContract {
             "established_by_shot": string,
         ],
         required: ["id", "description", "status", "bible_assets"]
-    )
+    ) }
 
-    private static let scene3d = object(
+    private static var scene3d: [String: Any] { object(
         [
             "panorama": string,
             "provider": string,
@@ -272,9 +286,9 @@ enum PipelineArtifactWriteContract {
             )),
         ],
         required: ["panorama", "provider", "povs"]
-    )
+    ) }
 
-    private static let shot = object(
+    private static var shot: [String: Any] { object(
         [
             "id": string,
             "section": string,
@@ -339,9 +353,9 @@ enum PipelineArtifactWriteContract {
             "transition_in",
             "transition_out",
         ]
-    )
+    ) }
 
-    private static let cameraSetup = object(
+    private static var cameraSetup: [String: Any] { object(
         [
             "height": enumeration(CameraHeight.allCases.map(\.rawValue)),
             "angle": enumeration(CameraAngle.allCases.map(\.rawValue)),
@@ -349,9 +363,9 @@ enum PipelineArtifactWriteContract {
             "note": string,
         ],
         required: ["height", "angle", "lens_hint"]
-    )
+    ) }
 
-    private static let characterBlocking = object(
+    private static var characterBlocking: [String: Any] { object(
         [
             "character_ref": string,
             "position": string,
@@ -360,7 +374,7 @@ enum PipelineArtifactWriteContract {
             "relation_to_set": string,
         ],
         required: ["character_ref", "position", "pose", "gaze"]
-    )
+    ) }
 
     private static var stringArray: [String: Any] {
         ["type": "array", "items": string]

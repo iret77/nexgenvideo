@@ -22,6 +22,7 @@ enum IntakePlanner {
     }
 }
 
+@MainActor
 enum PipelinePhaseAccess {
     static func requireCurrentPhaseAndIntake(
         _ phase: String,

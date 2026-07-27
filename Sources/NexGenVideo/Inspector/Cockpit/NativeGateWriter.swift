@@ -5,6 +5,7 @@ import NexGenEngine
 // approve / set_state / rewind, save. No venv, no subprocess, no agent round-trip. Mirrors the
 // engine MCP's approve_gate / set_gate_state / rewind, using the same GatesOperations the Python
 // module functions wrap.
+@MainActor
 enum NativeGateWriter {
 
     enum WriteError: Error, Sendable, Equatable {
