@@ -24,10 +24,6 @@ private let musicDurationBands: [String: (min: Double, max: Double)] = [
 public struct MusicDurationPolicy: DurationPolicy {
     public init() {}
 
-    private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
-        _ = projectURL
-    }
-
     public func band(for mode: Mode, context: [String: String]) -> DurationBand {
         let key = mode.rawValue
         let (lo, hi) = musicDurationBands[key] ?? (4.0, 15.0)
@@ -45,6 +41,10 @@ public struct MusicDurationPolicy: DurationPolicy {
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
     public let version = "0.0.6"
+
+    private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
+        _ = projectURL
+    }
 
     /// Values mirror the retired `plugins/musicvideo/ngv-plugin.json`. The badge ships INSIDE the
     /// pack's resources (self-contained — cut from the owner's badge masters in
