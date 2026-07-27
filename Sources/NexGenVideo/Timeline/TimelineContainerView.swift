@@ -7,7 +7,7 @@ struct TimelineContainerView: NSViewRepresentable {
         let container = NSView()
 
         let headerView = TimelineHeaderView(editor: editor)
-        headerView.frame = NSRect(x: 0, y: 0, width: Layout.trackHeaderWidth, height: 0)
+        headerView.frame = NSRect(x: 0, y: 0, width: AppTheme.Layout.trackHeaderWidth, height: 0)
         headerView.autoresizingMask = [.height]
         container.addSubview(headerView)
 
@@ -23,14 +23,19 @@ struct TimelineContainerView: NSViewRepresentable {
         timelineView.autoresizingMask = []
         scrollView.documentView = timelineView
 
-        scrollView.frame = NSRect(x: Layout.trackHeaderWidth, y: 0, width: 0, height: 0)
+        scrollView.frame = NSRect(x: AppTheme.Layout.trackHeaderWidth, y: 0, width: 0, height: 0)
         scrollView.autoresizingMask = [.width, .height]
         container.addSubview(scrollView)
 
         let border = NSView()
         border.wantsLayer = true
         border.layer?.backgroundColor = AppTheme.Border.primary.cgColor
-        border.frame = NSRect(x: Layout.trackHeaderWidth - 1, y: 0, width: 1, height: 0)
+        border.frame = NSRect(
+            x: AppTheme.Layout.trackHeaderWidth - AppTheme.BorderWidth.thin,
+            y: AppTheme.Spacing.none,
+            width: AppTheme.BorderWidth.thin,
+            height: AppTheme.Spacing.none
+        )
         border.autoresizingMask = [.height]
         container.addSubview(border)
 
@@ -80,7 +85,7 @@ struct TimelineContainerView: NSViewRepresentable {
             let geo = timelineView.geometry
             let playheadX = geo.xForFrame(editor.activeFrame)
             let visibleRect = scrollView.contentView.bounds
-            let margin: CGFloat = 60
+            let margin = AppTheme.Timeline.playbackFollowMargin
 
             if playheadX < visibleRect.origin.x + margin ||
                playheadX > visibleRect.origin.x + visibleRect.width - margin {

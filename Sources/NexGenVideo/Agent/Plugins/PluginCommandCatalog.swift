@@ -6,9 +6,7 @@ import NexGenEngine
 // `commands/*.md` scan: a pack's starters (plain-language instructions, not slash-commands) come from
 // its `PackStarter` list on the Swift `Pack` (see PackCatalog / MusicvideoPack).
 //
-// A starter maps to a one-tap chip whose action sends the starter's `prompt` as ordinary agent text,
-// so it works under either backend. Everything degrades gracefully: a pack with no starters just
-// yields no commands.
+// Untouched projects route through host startup; started projects send a continuation.
 enum PluginCommandCatalog {
 
     struct PluginInfo: Identifiable, Equatable {

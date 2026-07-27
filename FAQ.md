@@ -6,7 +6,7 @@ An open-source, AI-native video editor for macOS. You and your agent work on the
 
 **Is it free?**
 
-The editor is free and open source (GPLv3). Generative features use your own provider API keys (fal.ai, Runway, ElevenLabs, Marble) — you pay those providers directly, only for what you generate. The in-app agent runs on your Anthropic API key, or through Claude Code on your Claude subscription.
+The editor is free and open source (GPLv3). Generative features use your own provider API keys (fal.ai, Runway, ElevenLabs, Marble) — you pay those providers directly, only for what you generate. The in-app agent normally runs through Claude Code on your Claude subscription; direct use with your own Anthropic API key is also supported.
 
 **How does the AI integration work?**
 
@@ -18,7 +18,7 @@ Three surfaces:
 
 **Which generation models are supported?**
 
-The catalog is curated in code: image (FLUX family, Recraft, Ideogram, Imagen, Runway Gen-4 Image, …), video (Kling, Seedance, Veo, Runway Gen-4.5, …), audio (ElevenLabs TTS/SFX/Music, Stable Audio), upscaling (Clarity, Topaz), and 3D worlds (Marble). A model is available once its provider's key is set in Settings → Providers.
+The catalog covers image, video, audio, upscaling, and 3D-world models. It shows only models available through providers you activated in Settings → Providers, whether by API key, sign-in, or MCP.
 
 **Do I need an account?**
 

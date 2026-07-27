@@ -22,59 +22,6 @@ enum LayoutPreset: String, CaseIterable {
     }
 }
 
-enum Layout {
-    // Media panel
-    static let mediaPanelDefault: CGFloat = 500
-    static let mediaPanelMin: CGFloat = 280
-
-    // Inspector
-    static let inspectorDefault: CGFloat = 260
-    static let inspectorMin: CGFloat = 150
-
-    // Agent panel
-    static let agentPanelMin: CGFloat = 240
-    static let agentPanelMax: CGFloat = 640
-    static let chatColumnMax: CGFloat = 640
-
-    // Headers & toolbars
-    static let panelHeaderHeight: CGFloat = 28
-    static let toolbarHeight: CGFloat = 38
-    static let titleBarChromeHeight: CGFloat = 36
-    static let trafficLightInset: CGFloat = 70
-
-    static let panelGap: CGFloat = 5
-
-    // Timeline
-    static let timelineMinHeight: CGFloat = 100
-    static let timelineMaxHeight: CGFloat = 700
-    /// Produce focus: minimum height of the resizable timeline strip — toolbar (38) + ruler (24) +
-    /// drop zone (60) + one track lane (50), so at least one row of clips is always visible.
-    static let produceTimelineStripHeight: CGFloat = 180
-    /// Produce focus: the timeline strip's default opened height (drag to taste; persists per split).
-    static let produceTimelineStripDefault: CGFloat = 280
-    /// Produce focus: minimum height of the docked preview in the right column.
-    static let producePreviewMinHeight: CGFloat = 180
-    /// Produce focus: default width of the right column (preview over inspector).
-    static let producePreviewDefaultWidth: CGFloat = 360
-    static let trackHeight: CGFloat = 50
-    static let rulerHeight: CGFloat = 24
-    static let trackHeaderWidth: CGFloat = 100
-    static let dropZoneHeight: CGFloat = 60
-    static let insertThreshold: CGFloat = 10
-    static let dragThreshold: CGFloat = 3
-
-    // Preview
-    static let previewMinWidth: CGFloat = 400
-    static let previewMinHeight: CGFloat = 320
-
-    // Finish focus: a large, dominant player stacked over the review gallery. The player takes the
-    // bulk of the window so QC detail is visible; the review strip stays comfortably usable.
-    static let finishPreviewMinHeight: CGFloat = 280
-    static let finishReviewMinHeight: CGFloat = 200
-    /// Finish focus: the player's share of the vertical split by default (drag to taste; persists).
-    static let finishPreviewFraction: CGFloat = 0.68
-}
-
 enum Defaults {
     static let pixelsPerFrame: Double = 4.0
     static let imageDurationSeconds: Double = 5.0
@@ -88,12 +35,6 @@ enum Snap {
     static let thresholdPixels: Double = 8.0
     static let stickyMultiplier: Double = 1.5
     static let playheadMultiplier: Double = 1.5
-}
-
-enum TrackSize {
-    static let minHeight: CGFloat = 32
-    static let maxHeight: CGFloat = 200
-    static let resizeHandleZone: CGFloat = 6
 }
 
 enum Zoom {
@@ -113,11 +54,6 @@ enum TimelineAutoScroll {
     static let minStep: CGFloat = 4
     static let maxStep: CGFloat = 28
     static let interval: TimeInterval = 1.0 / 60.0
-}
-
-enum Trim {
-    static let handleWidth: CGFloat = 4.0
-    static let clipCornerRadius: CGFloat = 3.0
 }
 
 enum Project {

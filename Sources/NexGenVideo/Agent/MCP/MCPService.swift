@@ -22,17 +22,23 @@ final class MCPService {
     }
 
     private(set) var isRunning: Bool = false
+    private(set) var lastError: String?
 
     @ObservationIgnored
     private let toolExecutor: ToolExecutor
     @ObservationIgnored
     private var httpServer: MCPHTTPServer?
+    @ObservationIgnored
+    private var startGeneration = 0
 
     init(editorProvider: @escaping () -> EditorViewModel?) {
         self.toolExecutor = ToolExecutor(editorProvider: editorProvider)
     }
 
     func start() {
+        startGeneration &+= 1
+        let generation = startGeneration
+        lastError = nil
         let httpServer = MCPHTTPServer(port: Self.port) { [weak self] in
             let server = Server(
                 name: "nexgen",
@@ -51,22 +57,44 @@ final class MCPService {
         Task { @MainActor [weak self] in
             do {
                 try await httpServer.start()
+                guard self?.startGeneration == generation else {
+                    await httpServer.stop()
+                    return
+                }
                 Log.mcp.notice("http server started port=\(Self.port)")
                 self?.isRunning = true
             } catch {
+                guard self?.startGeneration == generation else { return }
                 Log.mcp.error("http server failed to start: \(error.localizedDescription)")
                 self?.isRunning = false
+                self?.lastError = error.localizedDescription
             }
         }
     }
 
     func stop() {
+        startGeneration &+= 1
         if let server = httpServer {
             Task { await server.stop() }
         }
         httpServer = nil
         isRunning = false
+        lastError = nil
         Log.mcp.notice("http server stopped")
+    }
+
+    func restart() {
+        startGeneration &+= 1
+        let server = httpServer
+        httpServer = nil
+        isRunning = false
+        lastError = nil
+        Task { @MainActor [weak self] in
+            if let server {
+                await server.stop()
+            }
+            self?.start()
+        }
     }
 
     private func registerTools(on server: Server) async {

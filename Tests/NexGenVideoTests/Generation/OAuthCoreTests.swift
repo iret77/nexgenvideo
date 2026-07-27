@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 import Testing
 @testable import NexGenVideo
@@ -59,6 +60,76 @@ struct OAuthCoreTests {
         #expect(OAuthCore.authorizationCode(from: ok, expectedState: "WRONG") == nil)
         let err = URL(string: "nexgenvideo://oauth-callback?error=access_denied&state=xyz")!
         #expect(OAuthCore.authorizationCode(from: err, expectedState: "xyz") == nil)
+    }
+
+    @Test("browser callback preserves task cancellation")
+    @MainActor
+    func browserCallbackCancellation() async {
+        await #expect(throws: CancellationError.self) {
+            _ = try await ProviderOAuth.browserCallback(
+                URL(string: "https://auth.example.com/authorize")!
+            ) { _ in
+                throw CancellationError()
+            }
+        }
+    }
+
+    @Test("browser callback preserves OAuth errors")
+    @MainActor
+    func browserCallbackOAuthError() async {
+        do {
+            _ = try await ProviderOAuth.browserCallback(
+                URL(string: "https://auth.example.com/authorize")!
+            ) { _ in
+                throw OAuthError.userCancelled
+            }
+            Issue.record("Expected the OAuth error to be rethrown")
+        } catch OAuthError.userCancelled {
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("browser callback maps system cancellation to user cancellation")
+    @MainActor
+    func browserCallbackSystemCancellation() async {
+        let cancellation = NSError(
+            domain: ASWebAuthenticationSessionErrorDomain,
+            code: ASWebAuthenticationSessionError.Code.canceledLogin.rawValue
+        )
+        do {
+            _ = try await ProviderOAuth.browserCallback(
+                URL(string: "https://auth.example.com/authorize")!
+            ) { _ in
+                throw cancellation
+            }
+            Issue.record("Expected user cancellation")
+        } catch OAuthError.userCancelled {
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("browser callback maps unknown errors to token exchange errors")
+    @MainActor
+    func browserCallbackUnknownError() async {
+        let underlying = NSError(
+            domain: "OAuthCoreTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "fixture failure"]
+        )
+        do {
+            _ = try await ProviderOAuth.browserCallback(
+                URL(string: "https://auth.example.com/authorize")!
+            ) { _ in
+                throw underlying
+            }
+            Issue.record("Expected a token exchange error")
+        } catch OAuthError.tokenExchangeFailed(let message) {
+            #expect(message == "fixture failure")
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
     }
 
     // MARK: - Metadata decode

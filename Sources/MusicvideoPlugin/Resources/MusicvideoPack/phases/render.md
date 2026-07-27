@@ -22,12 +22,13 @@ repeat until `next_render_shot` reports `done`.
 
 ## Inputs
 
-- Gate `frames` approved (for `keyframe`-mode shots; check via
-  `get_project_state(project_dir)`).
+- Gate `frames` approved (check via `get_project_state(project_dir)`).
 - Bible sheets present for every `reference`-mode shot — they are
   imported as references and bound in the prompt.
-- `shotlist/current.yaml`, the bible (`get_bible`), `brief.yaml`, and
-  the frames manifest (`get_render_manifest(project_dir, "frames")`).
+- The latest versioned shot list via
+  `show_artifact(project_dir, "shotlist")`, the bible (`get_bible`),
+  `brief.yaml`, and the role-aware Frames artifact
+  (`get_frames_manifest(project_dir)`).
 - The render manifest for this phase (`get_render_manifest(project_dir,
   "<preview|final>")`), if any — drives the resume behavior.
 
@@ -36,8 +37,9 @@ repeat until `next_render_shot` reports `done`.
 - Rendered clips brought into the project, one per shot. Each is logged
   via `record_render(project_dir, "<preview|final>", shot_id, output,
   cost_eur)`.
-- The render manifest, updated incrementally per shot (the engine
-  persists it on every `record_render`).
+- The render manifest and its render-proof sidecar, updated incrementally
+  per shot. The proof binds the exact video bytes to the compiled provider
+  prompt and generation model; a missing or replaced file is pending again.
 - Gate: the pipeline has ONE terminal gate, `render`. R1 (preview) is a
   quality pass, not a separate pipeline gate — don't approve anything for
   it. When R2 (final) is done, close the pipeline:
@@ -53,10 +55,15 @@ repeat until `next_render_shot` reports `done`.
 You are re-spawned fresh on every `/continue`. Before re-rendering any
 video (`generate_video` calls are expensive, often several EUR per shot):
 
+- Call `run_phase(project_dir, "render")`. Its engine-owned
+  `prepare_final_render_manifest` step reconciles the terminal manifest
+  and proof with the current shot list, including the valid empty-manifest
+  case.
 - Call `get_render_manifest(project_dir, "<phase>")`. Reconcile per
-  shot: rendered + approved / rendered + pending / marked-for-redo /
-  missing.
-  - All rendered + approved → set gate `videos_<phase>`, done.
+  shot using `current_output`: rendered / failed or pending /
+  marked-for-redo / missing. A status alone never proves completion.
+  - Preview complete → continue to the final pass; no preview gate exists.
+  - Final complete → continue to the terminal `render` gate review.
   - Pending or missing shots → `show_dialog`: "Continue in the
     approval mode, or redo individual shots?" Never re-render rendered
     shots unless the user explicitly asks.
@@ -76,7 +83,8 @@ Not every shot is provider-rendered. Each shot carries a `source_mode`:
 - `imported` — the user shoots it. `next_render_shot` **skips** these
   automatically (they never appear in the loop) and they cost 0 in
   `estimate_cost`. Do not `generate_video` for them; they are shot to the
-  directorial spec in `shotlist/current.yaml` and cut in on the timeline.
+  directorial spec in the latest versioned shot list and cut in on the
+  timeline.
 - `ai_enhanced` — imported footage carried through a **video-to-video**
   pass. `next_render_shot` **does** return these (its response includes
   `source_mode`); route them through the edit path — the source clip is
@@ -84,8 +92,8 @@ Not every shot is provider-rendered. Each shot carries a `source_mode`:
   than a from-scratch text/keyframe generation. Bill them like generated
   shots.
 
-Check the `source_mode` field on the returned shot (and in
-`shotlist/current.yaml`) before building the call.
+Check the `source_mode` field on the returned shot and the latest
+versioned shot list before building the call.
 
 ### 2. Provider routing
 
@@ -134,10 +142,12 @@ from the reference path; the authoring spec is in
   prompt WITHOUT `@ImageN` tags. Write tags instead of names ("@Image2
   waves while @Image1 watches"). Escape: `ref_tags_ok:`.
 
-On `warn` findings: patch the shotlist and re-run `run_sanity` **before**
-the batch render starts — these findings are the most common quality
-gain per render euro. A missing bible ID or unset bible is an **error**
-and hard-blocks; fix it before rendering.
+On `warn` findings: call `rewind(target_phase="<owning phase>")`,
+repair through that phase's canonical writer, re-approve its gate, then
+run and approve Sanity and Frames again
+**before** the batch render starts. The harness invalidates that entire
+downstream chain automatically. A missing bible ID or unset bible is an
+**error** and hard-blocks; fix it before rendering.
 
 ### 4. Content-block pre-flight: 1 test shot before the batch (binding)
 
@@ -160,8 +170,9 @@ but they delay the batch and produce half-failed manifests.
    - **Content-policy fail** → do NOT batch. First apply the workaround
      table from `phases/shotlist.md` rule 3 (reliable: (a)
      single-char shot/reverse-shot, or (c) still frame via `generate_image`
-     + Ken Burns/pan-zoom on the timeline), patch the shotlist, render a
-     new test shot, then batch.
+     + Ken Burns/pan-zoom on the timeline), call
+     `rewind(target_phase="shotlist")`, rewrite and re-approve the
+     dependent chain, render a new test shot, then batch.
    - **Other errors** (credits, model unavailable, timeout) → resolve
      normally, then repeat the test shot.
 
@@ -189,9 +200,12 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    sheets + inherited identity-anchor frames, each a `{media_ref, …}`
    already resolved for you), `reference_warnings`, and — for a chained
    shot — `chain_start_frame_media_ref`. `imported` shots are already
-   filtered out. Read the full shot from `shotlist/current.yaml` for the
+   filtered out. Read the full shot from the latest versioned shot list for the
    remaining fields. If `source_mode` is `ai_enhanced`, route it through
    the video-to-video edit path (step 1a), not a from-scratch generation.
+   The tool supplies `source_video_media_ref` and `source_video_path`
+   from the approved Shot List; use that exact media ref and never choose
+   or substitute a source yourself.
 2. **Determine the model** (step 2) and confirm it via `list_models`.
 3. **Build the clip prompt** from `shot.visual_prompt` + `shot.motion`
    (Subject → Action → Environment → Camera → Style → Constraints, kept
@@ -206,12 +220,15 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    **never** append freehand extra style tags ("cinematic, ARRI ALEXA")
    and never quality killers ("epic / stunning / amazing").
 4. **Keyframe / reference selection:**
-   - `keyframe_strategy ∈ {start, start_end}`: image-to-video. Import
-     the approved frame(s) (`frames/<shot>-start.png`, and `-end.png`
-     for `start_end`) via `import_media(source={path:...})`, then pass
-     the mediaRefs as `startFrameMediaRef` (+ `endFrameMediaRef`). If
-     the expected frame is missing → STOP with a clear error; **no
-     silent fallback to text_to_video** (that ruins pilots).
+   - `source_mode=ai_enhanced`: pass the exact
+     `source_video_media_ref` as `sourceVideoMediaRef`. Pass no start/end
+     frames or references.
+   - `keyframe_strategy ∈ {start, start_end}`: image-to-video. Pass the
+     exact current `media_ref` values from `get_frames_manifest` as
+     `startFrameMediaRef` (+ `endFrameMediaRef`). Require
+     `audit.current_image=true` for each role. If the expected frame or
+     current audit is missing → STOP with a clear error; **no silent
+     fallback to text_to_video**.
    - `seedance_input_mode=reference`: pass the `media_ref`s from
      `next_render_shot`'s `reference_images` as `referenceImageMediaRefs`
      in the given order (`@Image1` = the first entry, …). That list is
@@ -221,27 +238,39 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
      `chain_start_frame_media_ref` (the predecessor clip's extracted last
      frame, already imported) as this shot's `startFrameMediaRef`. If it
      is absent, the predecessor hasn't rendered yet — render it first.
+     This is the shot's sole start condition: the Shot List must use
+     `keyframe_strategy=none`, and no separately generated Frames start
+     image or reference-image set may be substituted.
    - Otherwise (`keyframe_strategy=none`, NO bible refs): text-to-video
      (no start frame). Sanity has already blocked the other case
      (`MISSING_BIBLE_ANCHOR_FOR_T2V`).
-5. **Render:** `generate_video(prompt=<built>, model=<model>,
+5. **Render:** `generate_video(prompt=<compiledPrompt>,
+   compileToken=<compileToken>, model=<model>,
    duration=<shot.duration_s>, aspectRatio=<brief aspect>,
    resolution=<brief.final_resolution for final / a cheaper res for
    preview>, startFrameMediaRef=..., endFrameMediaRef=...,
    referenceImageMediaRefs=[...])`. It returns an async placeholder
    asset; wait until `get_media` shows the asset ready (or failed).
+   For `ai_enhanced`, call the same tool with
+   `sourceVideoMediaRef=<source_video_media_ref>` and omit frame/reference
+   arguments.
 6. **Record:** `record_render(project_dir, "<phase>", shot_id,
-   output=<the rendered clip's in-project ref / path>,
+   output=<the ready rendered clip's media asset id>,
    cost_eur=<shot cost>, status="rendered")`. On a provider failure mark
    it `status="failed"` and keep the loop going.
+   The host fingerprints the output and every actual submission input.
+   A generated shot passes only with its planned frames/reference set;
+   an AI-enhanced shot passes only with the exact `source_path` declared
+   by its approved Shot List.
 7. **Budget check** after every shot via `estimate_cost(project_dir)`.
    If `over_budget` would flip true, abort the batch and escalate to the
    user before further `generate_video` calls.
 
 **Crash tolerance + resume semantics:** every `record_render` persists
-the manifest incrementally, so a crash mid-batch leaves a consistent
-manifest. On resume, `next_render_shot` skips already-rendered shots and
-hands you only the missing / failed ones.
+the manifest and proof incrementally. A crash between the two writes is
+fail-closed: their mismatch makes that shot pending again. On resume,
+`next_render_shot` skips only exact, currently proven renders and hands
+you the missing / stale / failed ones.
 
 **Insufficient generation budget / unavailable model** is a controlled
 abort: mark the current shot `status="failed"`, give the user a clear
@@ -257,7 +286,8 @@ When the user asks to redo a single shot:
 2. Keep the old clip as history.
 3. Re-record via `record_render` (the new entry replaces the old).
 4. Deduct the budget via `estimate_cost`; do **not** reset the
-   `render` gate (one shot, not the whole project).
+   preview pass. Re-recording a final shot automatically invalidates the
+   terminal `render` gate; review and approve it again after the replacement.
 
 ### 8. Review in the chosen mode (video-review duty)
 
@@ -267,8 +297,8 @@ frames + the rendered clip** — the user needs the before/after evidence
 to judge whether the video model actually executed the anchor logic or
 hallucinated along the way.
 
-**Spec block in chat** (compact, from `shotlist/current.yaml` for this
-shot):
+**Spec block in chat** (compact, from the latest versioned shot list for
+this shot):
 
 ```
 Shot s00X · Section: <name> · Lyrics: "<line>" (if present)
@@ -279,14 +309,13 @@ action: <action text>
 camera: <camera block>
 ```
 
-**Anchor frames as evidence** (mandatory — the user compares the
-before/after state against the rendered clip):
+**Anchor frames as evidence** (mandatory — use each role's current
+`media_ref` from `get_frames_manifest`):
 
-- `start` strategy: `Read frames/<shot>-start.png` (the approved source).
-- `start_end` strategy: `Read frames/<shot>-start.png` AND directly
-  below `Read frames/<shot>-end.png` as a pair. The user then sees: the
-  model started at A and was supposed to land at B — did it deliver, or
-  hallucinate along the way?
+- `start` strategy: `inspect_media` for the start asset.
+- `start_end` strategy: `inspect_media` for start and end as a pair.
+  The user then sees: the model started at A and was supposed to land at
+  B — did it deliver, or hallucinate along the way?
 
 **Present the clip.** Claude Code does not render videos inline. The
 rendered clip is in the host media library (`get_media` lists it) and on
@@ -305,8 +334,9 @@ call-out the path just floats in the answer and the user never views it.
 - Collect the feedback (pacing? identity drift? anchor miss? action
   misinterpreted?).
 - Decide: prompt adjustment (re-render with the same anchors) OR anchor
-  adjustment (back to the frame phase F — new frame, then re-render). On
-  identity drift, the frame is usually at fault, not the video prompt.
+  adjustment (`rewind(target_phase="frames")`, rebuild and re-approve
+  Frames, then return and re-render). On identity drift, the frame is
+  usually at fault, not the video prompt.
 - Re-render the shot, keep the old clip as history, re-record via
   `record_render`.
 
@@ -369,15 +399,16 @@ pan-zoom).
   frames + clip, always together (step 8).
 - The render loop is driven by `next_render_shot` →
   build prompt → `generate_video` → `record_render`, repeated until
-  `done`. Budget is checked via `estimate_cost` after every shot; the
-  terminal gate is `render` (closed after the final pass) via `approve_gate`.
+  `done`. `done` means current file hash plus generation provenance, not
+  merely `status=rendered`. Budget is checked via `estimate_cost` after
+  every shot; the terminal gate is `render` (closed after the final pass)
+  via `approve_gate`.
 - **What you do NOT do:**
   - No final cut. The user does the editing on the host timeline.
   - No audio rendering (clips come mute). The user lays the song over it.
   - No shotlist changes (that is the shotlist agent's job).
-  - No shell calls by the user — every interaction runs through the
-    agent. (The agent may use `Bash` ffmpeg internally for last-frame
-    extraction.)
+  - No shell calls. `record_render` performs durable registration and
+    the host extracts any chain-continuity frame it needs.
 
 ## Failure modes & escalation
 
@@ -390,8 +421,10 @@ pan-zoom).
 - **Budget exceeded (`estimate_cost` over_budget):** abort; this is a
   deliberate brake, never bypass it silently.
 - **Content-policy fail:** do not batch. Apply the workaround table from
-  `phases/shotlist.md` rule 3, patch the shotlist, re-run the
-  test shot (step 4). If a single shot still will not pass: still-only
+  `phases/shotlist.md` rule 3, call
+  `rewind(target_phase="shotlist")`, rewrite and re-approve the
+  dependent chain, then re-run the test shot (step 4). If a single shot
+  still will not pass: still-only
   workaround (the user animates a `generate_image` still on the timeline).
 - **Generation unavailable** (model missing from `list_models`, or
   `loaded=false`): surface it; keys/credits are bound in the
@@ -417,8 +450,9 @@ instead of as a video. Strict discipline (same as shotlist rule 3):
 
 **Marker:** `Shot.notes` contains `still_only_approved: <justification +
 user quote>`. The render loop skips this shot (no `generate_video`); the
-user generates the still via `generate_image` and animates it on the host
-timeline. Estimate and budget guard exclude the shot.
+user generates the still via the normal `compile_prompt` →
+`generate_image` path and animates it on the host timeline. Estimate and
+budget guard exclude the shot.
 
 **Reporting:** see step 11 — list the still-only shots at the end so the
 user knows which stills to animate.

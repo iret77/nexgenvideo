@@ -25,7 +25,7 @@ struct AgentBlocksView: View {
                         .foregroundStyle(AppTheme.Accent.primary)
                 }
                 Text(text)
-                    .font(.system(size: AppTheme.FontSize.mdLg, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.mdLg, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.primaryColor)
             }
             .padding(.top, AppTheme.Spacing.xs)
@@ -45,7 +45,7 @@ struct AgentBlocksView: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 if let title {
                     Text(title.uppercased())
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                         .tracking(AppTheme.Tracking.wide)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                 }
@@ -56,7 +56,7 @@ struct AgentBlocksView: View {
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .frame(width: AppTheme.ComponentSize.agentBlockLabelWidth, alignment: .leading)
                         Text(row.1)
-                            .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                             .foregroundStyle(AppTheme.Text.secondaryColor)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
@@ -103,7 +103,7 @@ struct AgentBlocksView: View {
                 .font(.system(size: AppTheme.FontSize.xxs))
                 .foregroundStyle(AppTheme.Text.mutedColor)
             Text(badge.value)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .padding(.horizontal, AppTheme.Spacing.sm)

@@ -38,11 +38,11 @@ bible agent and is curated / generated there.
 
 - `production_design/refs/<descriptive_name>.<ext>` — curated style
   refs (copies; originals stay in `import/`).
-- `production_design/color_script.yaml` — optional color script.
 - `production_design/lighting_anchor.png` — optional lighting anchor
   frame.
 - `production_design/production_design.yaml` — manifest (schema
-  `production_design/v1`).
+  `production_design/v1`), including the optional color script. It is
+  written only through `write_production_design`.
 - Gate after user approval:
   `approve_gate(project_dir, "production_design")`. `approve_gate` surfaces
   the approval to the user and writes only after they tap Approve; you're
@@ -59,8 +59,9 @@ You are re-spawned fresh on every `/continue`. Before doing anything:
     color-script status) and ask exactly one `show_dialog`:
     "Production design is already in place. Approve, change individual
     fields, or start over?" On `approve` → set the gate, done. On
-    `change` → re-ask only the affected fields. On `start over` → back
-    up the old file as `.bak`, fresh flow.
+    `change` → re-ask only the affected fields. On `start over` → run a
+    fresh flow through `write_production_design`; the host archives the
+    previous file before replacement.
   - **Yes, but schema-invalid / incomplete** → ask for the missing
     required fields, keep what is already there.
   - **No** → normal flow.
@@ -91,8 +92,10 @@ Read `brief.yaml` — `visual_medium` and `visual_medium_notes` are
 already set. Check whether the notes still fit after seeing the refs.
 If the refs show a clear, specific style (e.g. "Studio Ghibli, soft
 morning light, warm earth tones"), propose a more precise wording of
-`visual_medium_notes` to the user via `show_dialog` — the brief is
-then patched.
+`visual_medium_notes` to the user via `show_dialog`. If accepted, call
+`rewind(target_phase="brief")`, update the Brief through `write_brief`,
+and re-approve it before returning here. Never mutate an approved Brief
+from inside Production Design.
 
 ### 5. Color script (optional, recommended)
 
@@ -108,8 +111,8 @@ bridge:   "dark, dramatic, cold"
 outro:    "soft, golden, evening light"
 ```
 
-Ask the user via free text or propose a variant yourself. Save as YAML
-in `production_design/color_script.yaml`.
+Ask the user via free text or propose a variant yourself. Pass the
+settled entries to `write_production_design.color_script`.
 
 ### 6. Lighting anchor frame (recommended, optional)
 
@@ -144,12 +147,15 @@ Procedure:
    wood floor, calm low-energy mood, anime / Ghibli-style cel shading,
    16:9 framing."
 
-3. Generate it via the host's `nexgen` MCP generation tool
-   `generate_image` (model = `brief.bible_image_model`, the project
-   aspect ratio, your lighting prompt). When the result is ready,
-   bring it into the project as `production_design/lighting_anchor.png`
-   (a single still — no timeline placement is needed here). Confirm
-   availability first via `list_models` with `type="image"`. If
+3. Compile the lighting intent first with
+   `compile_prompt(intent=<lighting prompt>,
+   model=<brief.bible_image_model>, shotId="none")`. Pass its
+   `compiledPrompt` and `compileToken` unchanged to `generate_image`
+   (project aspect ratio). When `get_media` reports the returned asset
+   ready, call `copy_project_file(media=<asset id>,
+   to="production_design/lighting_anchor.png")` (a single still — no
+   timeline placement is needed here). Confirm availability first via
+   `list_models` with `type="image"`. If
    generation is unavailable (`loaded=false`, or the image model is not
    in `models`), fall back to: the user supplies
    `production_design/lighting_anchor.png` themselves.
@@ -160,15 +166,12 @@ Procedure:
    get user approval. On "regenerate": run again with a correction
    hint.
 
-### 7. Write the manifest
+### 7. Write the manifest through the host
 
-`production_design/production_design.yaml` with schema:
+Call `write_production_design` with the semantic fields below. Never
+write YAML or server-owned metadata yourself:
 
 ```yaml
-schema: production_design/v1
-project: <slug>
-generated: <iso8601>
-generator: production-design-agent
 visual_medium: <from the brief>
 visual_medium_notes: <refined if applicable>
 refs:
@@ -192,7 +195,7 @@ permanently as a style reference.
 
 - files written
 - number of curated refs
-- whether `brief.visual_medium_notes` was patched
+- whether a Brief rewind/refinement was completed
 - whether a `color_script` was created
 
 The orchestrator displays this via
@@ -214,8 +217,9 @@ After user approval: `approve_gate(project_dir, "production_design")`.
 - **Never** store scene imports as Bible anchors.
 - Style refs must live in `production_design/refs/`, nowhere else.
 - The lighting-anchor generation goes through the host's `nexgen`
-  `generate_image` tool; the heavy bible-sheet generation is the bible
-  agent's job (Pass 2) via `run_phase`. Never spawn either via the
+  `compile_prompt` → `generate_image` path and is staged with
+  `copy_project_file(media=...)`; the heavy bible-sheet generation is
+  the bible agent's job (Pass 2) via `run_phase`. Never spawn either via the
   `Agent` tool — presenting a structured dialog (`show_dialog`) is a
   main-session UI capability.
 

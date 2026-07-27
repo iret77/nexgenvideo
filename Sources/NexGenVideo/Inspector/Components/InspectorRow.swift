@@ -12,9 +12,9 @@ struct InspectorRow<Trailing: View>: View {
             Image(systemName: icon)
                 .font(.system(size: AppTheme.FontSize.sm))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: 16, alignment: .leading)
+                .frame(width: AppTheme.IconSize.xxs, alignment: .leading)
             Text(label)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             if let labelHelp {
                 Image(systemName: "info.circle")

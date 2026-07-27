@@ -36,12 +36,18 @@ struct CapsuleButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: fontSize, weight: .medium))
+                .font(.system(size: fontSize, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(foreground)
                 .padding(.horizontal, hPadding)
                 .padding(.vertical, vPadding)
                 .background(Capsule(style: .continuous).fill(background))
-                .overlay(Capsule(style: .continuous).fill(.white.opacity(hovered ? AppTheme.Opacity.faint : 0)))
+                .overlay(
+                    Capsule(style: .continuous).fill(
+                        AppTheme.Text.primaryColor.opacity(
+                            hovered ? AppTheme.Opacity.faint : AppTheme.Opacity.transparent
+                        )
+                    )
+                )
                 .opacity(configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
                 .contentShape(Capsule(style: .continuous))
                 .onHover { hovered = $0 }

@@ -33,7 +33,7 @@ struct PluginPickerView: View {
     private var header: some View {
         HStack {
             Text("Format Plugins")
-                .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             if manager.catalogState == .loading {
                 ProgressView().controlSize(.small).padding(.leading, AppTheme.Spacing.xs)
@@ -92,14 +92,14 @@ struct PluginPickerView: View {
     /// pitch, a short benefit line, and the state control pinned to the bottom so cards
     /// in a row stay aligned.
     private func packCard(_ row: PluginRow) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             PluginBadgeView(displayName: row.displayName, badgeURL: row.badgeURL, chrome: false)
                 .frame(maxWidth: .infinity)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     if let pitch = row.pitch {
                         Text(pitch)
-                            .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
+                            .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
                             .foregroundStyle(AppTheme.Text.primaryColor)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -132,12 +132,12 @@ struct PluginPickerView: View {
         switch status {
         case .incompatible(let reason, _), .unavailable(let reason):
             Label(reason, systemImage: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Status.warningColor)
                 .fixedSize(horizontal: false, vertical: true)
         case .updatePendingRestart:
             Label("Update ready — restart to finish. A plugin's code can't be swapped while the app runs.", systemImage: "arrow.clockwise.circle")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Accent.primary)
                 .fixedSize(horizontal: false, vertical: true)
         default:
@@ -150,7 +150,7 @@ struct PluginPickerView: View {
             HStack(spacing: AppTheme.Spacing.xs) {
                 ProgressView().controlSize(.small)
                 Text("Installing…")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
         } else {
@@ -172,7 +172,7 @@ struct PluginPickerView: View {
                 if active {
                     HStack(spacing: AppTheme.Spacing.sm) {
                         Label("Active", systemImage: "checkmark.circle.fill")
-                            .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                             .foregroundStyle(AppTheme.Accent.primary)
                         if let update {
                             Button("Update") { Task { await manager.install(update) } }
@@ -208,7 +208,15 @@ struct PluginPickerView: View {
                 }
 
             case .updatePendingRestart:
-                Button("Restart now") { AppRelaunch.now() }
+                Button(editor.activePluginName == row.id
+                       ? "Upgrade Project"
+                       : "Restart now") {
+                    if editor.activePluginName == row.id {
+                        AppState.shared.upgradeActiveProjectPack()
+                    } else {
+                        PluginUpdateCenter.shared.restartToApplyUpdates()
+                    }
+                }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
                     .help("Relaunch NexGenVideo to activate the updated plugin.")
@@ -256,8 +264,8 @@ struct PluginBadgeView: View {
                     .aspectRatio(AppTheme.ComponentSize.pluginBadgeAspect, contentMode: .fit)
                     .overlay(alignment: .bottomLeading) {
                         Text(displayName)
-                            .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                            .foregroundStyle(AppTheme.Text.primaryColor)
                             .padding(AppTheme.Spacing.md)
                     }
             }

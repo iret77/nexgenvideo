@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
@@ -27,8 +28,12 @@ struct LibraryPickerTests {
     @Test("an image intake accepts images and rejects audio")
     func imageAccept() {
         let it = intake(["image"])
-        #expect(it.accepts(url("frame.png")))
-        #expect(it.accepts(url("frame.jpg")))
+        for ext in ProjectMediaExtensions.images {
+            #expect(it.accepts(url("frame.\(ext)")))
+        }
+        for ext in ["avif", "bmp", "gif", "heif"] {
+            #expect(!it.accepts(url("frame.\(ext)")))
+        }
         #expect(it.accepts(url("song.mp3")) == false)
     }
 
@@ -65,6 +70,103 @@ struct LibraryPickerTests {
         #expect(MentionTab.document.clipType == .document)
         #expect(MentionTab.document.label == "Text")
     }
+
+    @Test("a document assigned as Lyrics is not offered as Existing story")
+    @MainActor
+    func assignedRoleDoesNotLeakIntoAnotherCard() {
+        let lyrics = MediaAsset(
+            id: "lyrics",
+            url: url("lyrics.txt"),
+            type: .document,
+            name: "lyrics"
+        )
+        let story = AgentDialog.FileIntake(
+            accept: ["text"],
+            prompt: nil,
+            allowsMultiple: false,
+            attachAs: "script",
+            namePrompt: nil,
+            required: false
+        )
+
+        #expect(AgentDialogCard.isLibraryCandidate(
+            lyrics,
+            intake: story,
+            assignedRoles: [:]
+        ))
+        #expect(!AgentDialogCard.isLibraryCandidate(
+            lyrics,
+            intake: story,
+            assignedRoles: ["lyrics": "lyrics"]
+        ))
+        let lyricsIntake = AgentDialog.FileIntake(
+            accept: ["text"],
+            prompt: nil,
+            allowsMultiple: false,
+            attachAs: "lyrics",
+            namePrompt: nil,
+            required: false
+        )
+        #expect(AgentDialogCard.isLibraryCandidate(
+            lyrics,
+            intake: lyricsIntake,
+            assignedRoles: ["lyrics": "lyrics"]
+        ))
+        #expect(AgentDialogCard.isLibraryCandidate(
+            lyrics,
+            intake: intake(["text"]),
+            assignedRoles: ["lyrics": "lyrics"]
+        ))
+    }
+
+    @Test("workflow submission rejects an incompatible assigned library role")
+    @MainActor
+    func assignedRoleCannotBypassThePickerFilter() {
+        let editor = EditorViewModel()
+        let lyrics = MediaAsset(
+            id: "lyrics",
+            url: url("lyrics.txt"),
+            type: .document,
+            name: "lyrics"
+        )
+        editor.mediaAssets = [lyrics]
+        editor.mediaManifest.intakeRoleByAssetID[lyrics.id] = "lyrics"
+        let dialog = AgentDialog(
+            id: "hardstep.brief.script",
+            title: "Existing story",
+            symbol: "doc.text",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: [],
+            fileIntake: AgentDialog.FileIntake(
+                accept: ["text"],
+                prompt: nil,
+                allowsMultiple: false,
+                attachAs: "script",
+                namePrompt: nil,
+                required: false
+            ),
+            purpose: .workflowIntake
+        )
+        editor.agentService.pendingDialog = dialog
+
+        editor.agentService.submitDialog(
+            dialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: "",
+                fileURLs: [lyrics.url]
+            )
+        )
+
+        #expect(editor.agentService.pendingDialog?.id == dialog.id)
+        #expect(editor.agentService.dialogSubmissionError?.contains(
+            "already assigned as lyrics"
+        ) == true)
+    }
 }
 
 @MainActor
@@ -81,6 +183,10 @@ struct ComposerBlockedTests {
             id: "t", title: "Track", symbol: "waveform", intro: nil, costHint: nil,
             confirmLabel: "Attach", textField: nil, sections: [])
         #expect(service.isComposerBlocked)
+        let messageCount = service.messages.count
+        service.send(text: "Bypass the card", mentions: [], hidden: true)
+        #expect(service.messages.count == messageCount)
+        #expect(service.streamError == nil)
 
         service.pendingDialog = nil
         #expect(service.isComposerBlocked == false)

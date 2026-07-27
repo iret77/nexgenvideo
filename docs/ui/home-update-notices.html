@@ -1,0 +1,423 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>UI-Spec — Home update notices</title>
+<meta name="ui-spec-viewports" content="1280x960,900x760">
+<style>
+  :root {
+    --page: #0a0a0a;
+    --sidebar: #191c1f;
+    --content: #101113;
+    --raised: #1e1e1e;
+    --prominent: #2c2c2c;
+    --border: rgba(255, 255, 255, .16);
+    --text: #fff;
+    --text-secondary: rgba(255, 255, 255, .80);
+    --text-tertiary: rgba(255, 255, 255, .62);
+    --text-muted: rgba(255, 255, 255, .34);
+    --accent: #f5efe4;
+    --warning: #e89c3e;
+    --info: #c08bff;
+    --space-xs: 4px;
+    --space-sm: 6px;
+    --space-sm-md: 8px;
+    --space-md: 10px;
+    --space-md-lg: 12px;
+    --space-lg: 14px;
+    --space-lg-xl: 16px;
+    --space-xl: 20px;
+    --space-xl-xxl: 24px;
+    --space-xxl: 28px;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-md-lg: 12px;
+    --hairline: 1px;
+    --sidebar-width: 220px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: #050506;
+    color: var(--text);
+    font: 400 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  }
+  body { padding: 30px; }
+  #spec, #mockups { max-width: 1120px; margin: 0 auto; }
+  #spec {
+    padding: var(--space-xl-xxl);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--radius-md);
+    background: #111216;
+  }
+  h1 { margin: 0 0 var(--space-sm-md); font-size: 24px; font-weight: 600; }
+  h2 {
+    margin: var(--space-xl-xxl) 0 var(--space-sm-md);
+    padding-bottom: var(--space-sm);
+    border-bottom: var(--hairline) solid var(--border);
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  p, li { color: var(--text-secondary); }
+  ul { max-width: 88ch; margin: 0; padding-left: var(--space-xl); }
+  li { margin: var(--space-xs) 0; }
+  strong { color: var(--text); }
+  code {
+    color: var(--accent);
+    background: rgba(255, 255, 255, .05);
+    padding: 1px var(--space-xs);
+    border-radius: var(--space-xs);
+  }
+  table { width: 100%; border-collapse: collapse; color: var(--text-secondary); }
+  th, td {
+    padding: var(--space-sm-md) var(--space-md);
+    border-bottom: var(--hairline) solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  th { color: var(--text-tertiary); font-size: 11px; }
+  .mock-title {
+    margin: 32px 0 8px;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .window {
+    display: grid;
+    grid-template-columns: var(--sidebar-width) 1fr;
+    width: 1000px;
+    height: 720px;
+    overflow: hidden;
+    border: var(--hairline) solid rgba(255, 255, 255, .24);
+    border-radius: 15px;
+    background: var(--page);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .50);
+  }
+  .titlebar {
+    position: absolute;
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+  }
+  .traffic { width: 13px; height: 13px; border-radius: 50%; }
+  .traffic.red { background: #ff5f57; }
+  .traffic.yellow { background: #febc2e; }
+  .traffic.green { background: #28c840; }
+  .sidebar {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 42px 12px 14px;
+    background: var(--sidebar);
+  }
+  .side-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 30px;
+    padding: 0 8px;
+    color: var(--text);
+  }
+  .side-row.settings { margin-top: auto; }
+  .side-icon {
+    width: 14px;
+    color: var(--text-tertiary);
+    text-align: center;
+  }
+  .content {
+    position: relative;
+    padding: 45px var(--space-xl-xxl) var(--space-xl-xxl);
+    background: var(--content);
+  }
+  .welcome {
+    margin: 0;
+    color: var(--text);
+    font-size: 28px;
+    font-weight: 300;
+    letter-spacing: -.5px;
+  }
+  .notice-stack {
+    display: grid;
+    gap: var(--space-sm-md);
+    margin-top: var(--space-lg-xl);
+  }
+  .notice {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: var(--space-md-lg);
+    align-items: center;
+    min-height: 70px;
+    padding: var(--space-md-lg) var(--space-lg-xl);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--raised);
+  }
+  .notice.warning {
+    border-color: rgba(232, 156, 62, .35);
+    background: linear-gradient(90deg, rgba(232, 156, 62, .09), var(--raised) 35%);
+  }
+  .notice.info {
+    border-color: rgba(192, 139, 255, .28);
+    background: linear-gradient(90deg, rgba(192, 139, 255, .07), var(--raised) 35%);
+  }
+  .notice-icon {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .warning .notice-icon { color: var(--warning); background: rgba(232, 156, 62, .11); }
+  .info .notice-icon { color: var(--info); background: rgba(192, 139, 255, .10); }
+  .notice-copy { min-width: 0; }
+  .notice-heading { color: var(--text); font-size: 13px; font-weight: 600; }
+  .notice-body {
+    margin-top: 3px;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .actions { display: flex; align-items: center; gap: var(--space-sm-md); }
+  .button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 var(--space-lg);
+    border: var(--hairline) solid var(--border);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    background: var(--prominent);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .button.primary { color: #171513; background: var(--accent); border-color: transparent; }
+  .projects-heading {
+    margin: var(--space-xxl) 0 var(--space-sm);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .project-card {
+    position: relative;
+    width: 150px;
+    height: 120px;
+    overflow: hidden;
+    border: var(--hairline) solid rgba(255, 255, 255, .08);
+    border-radius: var(--radius-md-lg);
+    background: var(--raised);
+  }
+  .project-plus {
+    display: grid;
+    place-items: center;
+    height: 86px;
+    color: var(--text-muted);
+    font-size: 36px;
+    font-weight: 200;
+  }
+  .project-name { padding: 5px 10px; color: var(--text); font-size: 12px; }
+  .version {
+    position: absolute;
+    right: 12px;
+    bottom: 8px;
+    color: var(--text-muted);
+    font-size: 9px;
+  }
+  .window.compact {
+    grid-template-columns: 180px 1fr;
+    width: 760px;
+    height: 680px;
+  }
+  .compact .content { padding-inline: var(--space-xl); }
+  .compact .notice {
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: start;
+  }
+  .compact .actions {
+    grid-column: 2;
+    justify-content: flex-end;
+  }
+  .compact .notice-body { max-width: 44ch; }
+</style>
+
+<section id="spec">
+  <h1>Home update notices</h1>
+  <p>Home keeps its page title semantically pure. App and format-pack updates appear in one dedicated,
+    actionable notice region between the title and project content.</p>
+
+  <h2>Design principles</h2>
+  <ul>
+    <li><strong>Title purity:</strong> “Welcome to NexGenVideo” contains no badges, warnings, update
+      state, buttons, or changing content.</li>
+    <li><strong>Context before chrome:</strong> a startup state that affects project creation belongs
+      in the Home content hierarchy, not in the title, a tooltip, or a modal startup alert.</li>
+    <li><strong>Status plus resolution:</strong> every notice names the state, explains its consequence,
+      and presents a visible verb-led action in the same component.</li>
+    <li><strong>Proportionate prominence:</strong> restart-required is persistent and warning-toned
+      because stale resident pack code blocks new format projects. An available update is informative,
+      not an error.</li>
+    <li><strong>One canonical region:</strong> app updates and pack updates use the same notice anatomy;
+      neither is appended to the page title.</li>
+  </ul>
+
+  <h2>Placement and hierarchy</h2>
+  <ul>
+    <li>The region uses the same leading and trailing inset as the page title and “My Projects”.</li>
+    <li>Order is title → notice stack when nonempty → “My Projects” → project grid.</li>
+    <li>When there is no update state, the notice region does not exist and reserves no blank space.</li>
+    <li>When multiple notices exist, blocking restart-required state appears first.</li>
+  </ul>
+
+  <h2>Notice anatomy</h2>
+  <table>
+    <tr><th>Element</th><th>Rule</th></tr>
+    <tr><td>Icon</td><td>State symbol in a fixed leading frame; never the only explanation.</td></tr>
+    <tr><td>Title</td><td>Specific state, one line where possible.</td></tr>
+    <tr><td>Body</td><td>One calm sentence naming why the user should act or what is blocked.</td></tr>
+    <tr><td>Action</td><td>Visible text label. Restart uses “Restart NexGenVideo”; navigation uses
+      “Open Format Packs…”; app installation uses “Install Update…”.</td></tr>
+    <tr><td>Dismissal</td><td>Restart-required is not dismissible while it blocks format-project creation.
+      A nonblocking app update offers visible “Not Now”.</td></tr>
+  </table>
+
+  <h2>States</h2>
+  <ul>
+    <li><strong>None:</strong> no notice and no reserved space.</li>
+    <li><strong>Pack update available:</strong> informative notice; action opens Settings → Format Packs.</li>
+    <li><strong>Pack restart required:</strong> warning notice; direct restart action.</li>
+    <li><strong>App update available:</strong> informative notice; Install Update… and Not Now.</li>
+    <li><strong>Combined:</strong> restart-required first, app update second.</li>
+    <li><strong>Compact:</strong> below 800 points, actions move below the copy and align trailing;
+      copy and actions never truncate or overlap.</li>
+  </ul>
+
+  <h2>Implementation constraints</h2>
+  <ul>
+    <li>SwiftUI uses only <code>AppTheme</code> spacing, type, radius, border, opacity, icon-size,
+      background, text, status, and animation constants.</li>
+    <li>The notice action calls the existing canonical update/restart state machines; it does not
+      duplicate pack lifecycle logic.</li>
+    <li>Settings’ right-aligned Format Packs attention icon remains a compact secondary route, not
+      a substitute for this launch-critical action.</li>
+  </ul>
+
+  <h2>Acceptance criteria</h2>
+  <ul>
+    <li>No dynamic status view is a sibling of <code>WelcomeTitle</code> inside the title row.</li>
+    <li>Restart-required renders below the title with icon, title, consequence, and a visible
+      “Restart NexGenVideo” button.</li>
+    <li>Pack update available renders below the title with a visible “Open Format Packs…” button.</li>
+    <li>No-update Home matches the existing hierarchy without a blank notice slot.</li>
+    <li>Normal and minimum Home widths preserve title, copy, and action without collision.</li>
+  </ul>
+</section>
+
+<section id="mockups">
+  <div class="mock-title">Restart required — normal Home window</div>
+  <div class="window">
+    <div class="titlebar">
+      <span class="traffic red"></span><span class="traffic yellow"></span><span class="traffic green"></span>
+    </div>
+    <aside class="sidebar">
+      <div class="side-row"><span class="side-icon">＋</span>New Project</div>
+      <div class="side-row"><span class="side-icon">□</span>Open Project</div>
+      <div class="side-row settings"><span class="side-icon">⚙</span>Settings</div>
+    </aside>
+    <main class="content">
+      <h3 class="welcome">Welcome to NexGenVideo</h3>
+      <div class="notice-stack">
+        <div class="notice warning">
+          <div class="notice-icon">!</div>
+          <div class="notice-copy">
+            <div class="notice-heading">Restart to finish updating format packs</div>
+            <div class="notice-body">The update is installed. Restart before creating a project with the updated format.</div>
+          </div>
+          <div class="actions"><span class="button primary">Restart NexGenVideo</span></div>
+        </div>
+      </div>
+      <div class="projects-heading">My Projects</div>
+      <div class="project-card">
+        <div class="project-plus">＋</div>
+        <div class="project-name">Untitled</div>
+      </div>
+      <div class="version">Version 1.0.1</div>
+    </main>
+  </div>
+
+  <div class="mock-title">Combined notices — stable priority and consistent anatomy</div>
+  <div class="window">
+    <div class="titlebar">
+      <span class="traffic red"></span><span class="traffic yellow"></span><span class="traffic green"></span>
+    </div>
+    <aside class="sidebar">
+      <div class="side-row"><span class="side-icon">＋</span>New Project</div>
+      <div class="side-row"><span class="side-icon">□</span>Open Project</div>
+      <div class="side-row settings"><span class="side-icon">⚙</span>Settings</div>
+    </aside>
+    <main class="content">
+      <h3 class="welcome">Welcome to NexGenVideo</h3>
+      <div class="notice-stack">
+        <div class="notice warning">
+          <div class="notice-icon">!</div>
+          <div class="notice-copy">
+            <div class="notice-heading">Restart to finish updating format packs</div>
+            <div class="notice-body">The update is installed. Restart before creating a project with the updated format.</div>
+          </div>
+          <div class="actions"><span class="button primary">Restart NexGenVideo</span></div>
+        </div>
+        <div class="notice info">
+          <div class="notice-icon">↑</div>
+          <div class="notice-copy">
+            <div class="notice-heading">NexGenVideo 1.0.1 is available</div>
+            <div class="notice-body">Install the update to get the latest fixes and improvements.</div>
+          </div>
+          <div class="actions">
+            <span class="button">Not Now</span>
+            <span class="button primary">Install Update…</span>
+          </div>
+        </div>
+      </div>
+      <div class="projects-heading">My Projects</div>
+      <div class="project-card">
+        <div class="project-plus">＋</div>
+        <div class="project-name">Untitled</div>
+      </div>
+      <div class="version">Version 1.0.0</div>
+    </main>
+  </div>
+
+  <div class="mock-title">Restart required — minimum Home width</div>
+  <div class="window compact">
+    <div class="titlebar">
+      <span class="traffic red"></span><span class="traffic yellow"></span><span class="traffic green"></span>
+    </div>
+    <aside class="sidebar">
+      <div class="side-row"><span class="side-icon">＋</span>New Project</div>
+      <div class="side-row"><span class="side-icon">□</span>Open Project</div>
+      <div class="side-row settings"><span class="side-icon">⚙</span>Settings</div>
+    </aside>
+    <main class="content">
+      <h3 class="welcome">Welcome to NexGenVideo</h3>
+      <div class="notice-stack">
+        <div class="notice warning">
+          <div class="notice-icon">!</div>
+          <div class="notice-copy">
+            <div class="notice-heading">Restart to finish updating format packs</div>
+            <div class="notice-body">The update is installed. Restart before creating a project with the updated format.</div>
+          </div>
+          <div class="actions"><span class="button primary">Restart NexGenVideo</span></div>
+        </div>
+      </div>
+      <div class="projects-heading">My Projects</div>
+      <div class="project-card">
+        <div class="project-plus">＋</div>
+        <div class="project-name">Untitled</div>
+      </div>
+      <div class="version">Version 1.0.1</div>
+    </main>
+  </div>
+</section>

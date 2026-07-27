@@ -32,9 +32,9 @@ story-first order, the storyboard phase runs **before** the shotlist.
 
 ## Outputs & gate
 
-- `shotlist/vN.yaml` following schema `shotlist/v1`. Versioning as for
-  the treatment: never overwrite, `current.yaml` is a copy of the
-  newest version.
+- `shotlist/vN.yaml` following the current engine schema. The host writes
+  the next immutable version through `write_shotlist`; the highest vN is
+  current (there is no `current.yaml` mirror).
 - **Revision loop:** on a user revision request, the next shotlist run
   writes a new version file (`vN+1`). No overwriting.
 - **Gate:** on approval, `approve_gate(project_dir, "shotlist")`.
@@ -58,8 +58,8 @@ anything:
 3. If `vN.yaml` exists: load it. Then `show_dialog` with 3 options
    (+ Other):
    - `approve` → set the gate, done.
-   - `revise` → elicit the concrete changes, write `vN+1.yaml`,
-     update `current.yaml`, loop.
+   - `revise` → elicit the concrete changes and call `write_shotlist`
+     for the next vN, then loop.
    - `discard_and_redo` → keep existing versions as history, run a
      fresh pass as `vN+1.yaml`.
 
@@ -99,15 +99,18 @@ The bible IDs are fixed by the bible agent (read them via
   `plausibility_ok:` notes set in `step.notes` are copied 1:1 into
   `shot.notes` — otherwise the sanity checks fire again.
 
-If the storyboard is missing entirely for a section: go back to the
-storyboard agent. Do not guess.
+If the storyboard is missing entirely for a section: call
+`rewind(target_phase="storyboard")`, repair and re-approve the
+Storyboard, then resume the dependent phases. Do not guess or patch it
+from Shot List.
 
-### 3. Know the schema before you write
+### 3. Use the typed writer
 
-The shotlist follows schema `shotlist/v1`. Note required and enum
-fields — the engine validates on save and the later `run_sanity` pass
-covers integrity. On a validation error: fix the named field, don't
-guess.
+Call `write_shotlist` with `shots` and optional notes. The host derives
+schema/project/mode/budget and the complete Song block from the Brief and
+measured analysis; never supply or invent them. The tool validates every
+required and enum field before writing. On a validation error, fix the
+named field and call it again; don't guess.
 
 ### 4. Derive the tempo class from BPM — it determines shot pacing
 
@@ -189,10 +192,18 @@ shot construction (Step 6).
     `start_end` is not set. Escape: `keyframe_end_skip_ok: <reason>` in
     `notes`, e.g. "newly revealed area is pure SKY/GROUND,
     hallucination harmless".
-  - `none` — **only** for completely abstract / world-free visuals
-    (logo insert, color field, lyrics overlay with no world
-    reference). Such shots must then carry NO bible refs. For a
-    justified exception: `text_to_video_ok: <reason>` in `notes`.
+  - `none` — for completely abstract / world-free visuals (logo
+    insert, color field, lyrics overlay with no world reference), or
+    for a generated `chain_with_previous_end=true` shot whose sole
+    start condition is the previous render's extracted last frame.
+    Such shots carry no explicit reference images. For a justified
+    text-to-video exception: `text_to_video_ok: <reason>` in `notes`.
+
+For `chain_with_previous_end=true`, the shot must be generated, follow
+an earlier renderable shot, use `keyframe_strategy=none` and
+`seedance_input_mode=keyframe`, and leave `reference_image_refs` empty.
+Do not create a separate Frames start image: the predecessor's exact
+last frame is the sole continuity anchor.
 
 ### 6a. Source modes — ask early (hybrid production)
 
@@ -200,16 +211,22 @@ NexGenVideo is a full NLE: a music video may be fully AI-generated, shot
 live, or mixed. Each shot carries a `source_mode`:
 
 - `generated` (default) — a provider renders the shot. Everything above
-  (visual_prompt, keyframe_strategy, references) applies.
+  (visual_prompt, keyframe_strategy, references) applies. It carries no
+  `source_path`.
 - `imported` — the user shoots the footage. Do **not** write a
   provider `visual_prompt`; instead give a clear **directorial shooting
   spec** — framing, camera (position + move), lighting, blocking, and
   style references — that the user shoots and cuts in on the timeline.
-  The render phase skips these shots; they cost 0.
+  The render phase skips these shots; they cost 0. Set
+  `keyframe_strategy=none` and `chain_with_previous_end=false`.
 - `ai_enhanced` — the user imports live footage and it goes through a
   **video-to-video** pass (the editor's AI-enhance path). Write the
   prompt as the enhancement direction over the imported clip, not as a
-  from-scratch generation.
+  from-scratch generation. `source_path` is required and must identify
+  the exact project-local source video. Set `keyframe_strategy=none`,
+  `seedance_input_mode=keyframe`, `chain_with_previous_end=false`, and
+  leave `reference_image_refs` empty. The source video is the sole
+  conditioning truth for this mode.
 
 **Ask the user early** which shots are live vs generated — before you
 write prompts, so live shots get shooting specs and enhanced shots route
@@ -222,38 +239,37 @@ the shot is `generated`.
 
 ### 9. Validation — mandatory before EVERY approval
 
-Before you present the shotlist to the user for approval, run the engine
-sanity audit (it covers shotlist integrity + pacing + the structural
-checks below):
+Write the complete candidate through `write_shotlist`. The agent tool and
+the native Shot List editor share one host-owned canonical writer. It validates
+the closed schema, derives all measured song fields itself, and refuses
+invalid timing, IDs, mode fields, blocking references, or duration data
+without changing the current version. For `ai_enhanced`, it also rejects
+a missing, external, substituted, or non-video `source_path`.
 
-```
-run_sanity(project_dir)
-```
-
-It returns `{project, findings:[{level, code, shot_id, message}]}`.
-**Treat every `error`-level finding as a hard block.** In particular
-`NO_BLOCKING_AT_T0` is an error: every shot with
+Then inspect the written artifact before presenting it. In particular,
+every shot with
 `keyframe_strategy ∈ {start, start_end}` must explicitly name the
 starting pose **and** the starting camera position in the
 `visual_prompt` before any frame may be rendered. "Alex arrives" is not
 enough — that is the action arc, not second 0.
 
-If the audit reports `NO_BLOCKING_AT_T0`: go through shot by shot and
-add, in component 1 (Subject + Starting Blocking + Vector), explicitly:
+For every such shot, component 1 (Subject + Starting Blocking + Vector)
+must explicitly contain:
 - starting pose ("standing in the school gate, left leg forward, gaze
   down, bag loose in her right hand")
 - movement intent ("about to walk into the courtyard — t=0 is the
   moment before the first step")
 
-And in component 4 (Camera), explicitly:
+And component 4 (Camera) must explicitly contain:
 - starting framing ("camera at ~3 m distance, slightly elevated, static
   for the first 2 s")
 - movement from the starting framing ("then a slow 1 m pull-back as Alex
   starts walking")
 
-Only when the audit no longer reports any `error`-level finding may the
-shotlist be approved. Otherwise the render runs straight into
-hallucination — you do not want that.
+After the user approves the structurally valid shot list, the dedicated
+Sanity phase runs `run_sanity` over the now-approved plan. Do not call
+`run_sanity` from Shot List: its persisted report and gate belong to the
+next phase.
 
 ### 10. Approval, gate, report
 
@@ -285,8 +301,8 @@ provider):
 - all brief, treatment, and storyboard story fields that you discuss
   in the user chat
 
-**Workflow:** the user chat stays in the user's language; you write the
-YAML provider fields directly in English — without an intermediate
+**Workflow:** the user chat stays in the user's language; you pass the
+provider-facing tool fields directly in English — without an intermediate
 draft in the user's language. That saves a translation loop and
 prevents idioms from slipping through unnoticed.
 
@@ -692,17 +708,19 @@ Escape (in both directions): `pacing_ok: <reason>` in `Shot.notes`.
 
 ## Failure modes & escalation
 
-- **Storyboard missing for a section** → go back to the storyboard
-  agent. Do not guess (Step 2).
+- **Storyboard missing for a section** → call
+  `rewind(target_phase="storyboard")`, repair it through
+  `write_storyboard`, and re-approve before returning. Do not guess
+  (Step 2).
 - **A shot needs a group/entity that is not in the bible** → STOP,
   extend the bible first (or resolve the shot differently). Never write
   the prompt with undefined figures (Rule 6).
 - **Existing shotlist version found at resume** → never silently
   regenerate; run the resume protocol (`approve` / `revise` /
   `discard_and_redo`, Step 1).
-- **`run_sanity` reports errors** → fix before presenting anything to
-  the user. `NO_BLOCKING_AT_T0` is a hard error: the shotlist may only
-  be approved when no shot triggers it anymore (Step 9).
+- **`write_shotlist` rejects the candidate** → fix the exact schema or
+  structural violation and call it again; the previous version remains
+  current.
 - **Content-filter risk:** linter clean ≠ renders through. The
   provider's output moderation also flags pure visual gestalt that no
   token linter sees. The mandatory test-shot-before-batch process is

@@ -83,6 +83,9 @@ extension EditorViewModel {
 
         mediaAssets.removeAll { assetIdsToDelete.contains($0.id) }
         mediaManifest.entries.removeAll { assetIdsToDelete.contains($0.id) }
+        mediaManifest.intakeRoleByAssetID = mediaManifest.intakeRoleByAssetID.filter {
+            !assetIdsToDelete.contains($0.key)
+        }
         mediaManifest.folders.removeAll { allFolderIds.contains($0.id) }
         selectedFolderIds.subtract(allFolderIds)
         selectedMediaAssetIds.subtract(assetIdsToDelete)
@@ -183,6 +186,14 @@ extension EditorViewModel {
 
     func restoreMediaLibraryUndoSnapshot(_ snapshot: MediaLibraryUndoSnapshot, actionName: String) {
         let redo = mediaLibraryUndoSnapshot()
+        applyMediaLibrarySnapshot(snapshot)
+        undoManager?.registerUndo(withTarget: self) { vm in
+            vm.restoreMediaLibraryUndoSnapshot(redo, actionName: actionName)
+        }
+        undoManager?.setActionName(actionName)
+    }
+
+    func applyMediaLibrarySnapshot(_ snapshot: MediaLibraryUndoSnapshot) {
         timeline = snapshot.timeline
         mediaManifest = snapshot.mediaManifest
         mediaAssets = snapshot.mediaAssets
@@ -192,10 +203,6 @@ extension EditorViewModel {
         previewTabs = snapshot.previewTabs
         activePreviewTabId = snapshot.activePreviewTabId
         sourcePlayheadFrame = snapshot.sourcePlayheadFrame
-        undoManager?.registerUndo(withTarget: self) { vm in
-            vm.restoreMediaLibraryUndoSnapshot(redo, actionName: actionName)
-        }
-        undoManager?.setActionName(actionName)
         videoEngine?.activateTab(activePreviewTab)
         refreshMissingMediaCache()
         notifyTimelineChanged()

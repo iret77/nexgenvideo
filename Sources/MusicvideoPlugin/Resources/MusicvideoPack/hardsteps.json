@@ -5,23 +5,56 @@
       "phase": "project_init",
       "steps": [
         {
-          "id": "project_init.script",
+          "id": "project_init.song",
+          "attachAs": "song",
+          "accept": ["audio"],
+          "multiple": false,
+          "required": true,
+          "title": "Track",
+          "intro": "The track is the source of truth for the entire production.",
+          "prompt": "Drop your track or choose a file — .wav / .mp3 / .m4a / .aiff / .flac / .aac",
+          "symbol": "waveform",
+          "confirmLabel": "Attach track"
+        },
+        {
+          "id": "project_init.lyrics",
+          "attachAs": "lyrics",
+          "accept": ["text"],
+          "multiple": false,
+          "required": false,
+          "title": "Lyrics",
+          "intro": "Lyrics label the measured sections. They never move the measured boundaries.",
+          "prompt": "Drop the lyrics (.txt) — optional, sharpens the section labels",
+          "symbol": "text.quote",
+          "confirmLabel": "Continue",
+          "textField": {
+            "placeholder": "…or paste the lyrics here",
+            "multiline": true
+          }
+        }
+      ]
+    },
+    {
+      "phase": "brief",
+      "steps": [
+        {
+          "id": "brief.script",
           "attachAs": "script",
           "accept": ["text"],
           "multiple": false,
           "required": false,
-          "title": "Story script",
-          "intro": "With a script, the pipeline builds the treatment and bible FROM it instead of inventing a story.",
-          "prompt": "Have a script or story outline? Drop it (.txt / .md) — optional",
+          "title": "Existing story",
+          "intro": "Bring in a script or outline if you have one. Otherwise, the story starts from the analyzed song.",
+          "prompt": "Drop an existing script or story outline (.txt / .md) — optional",
           "symbol": "doc.text",
           "confirmLabel": "Continue",
           "textField": {
-            "placeholder": "…or paste the script here",
+            "placeholder": "…or paste existing story material here",
             "multiline": true
           }
         },
         {
-          "id": "project_init.characters",
+          "id": "brief.characters",
           "attachAs": "character",
           "accept": ["image"],
           "multiple": true,
@@ -36,7 +69,7 @@
           "confirmLabel": "Attach"
         },
         {
-          "id": "project_init.locations",
+          "id": "brief.locations",
           "attachAs": "location",
           "accept": ["image"],
           "multiple": true,
@@ -51,7 +84,7 @@
           "confirmLabel": "Attach"
         },
         {
-          "id": "project_init.style",
+          "id": "brief.style",
           "attachAs": "style",
           "accept": ["image"],
           "multiple": true,
@@ -61,39 +94,6 @@
           "prompt": "Drop any style / mood references — optional",
           "symbol": "photo.on.rectangle.angled",
           "confirmLabel": "Continue"
-        }
-      ]
-    },
-    {
-      "phase": "analysis",
-      "steps": [
-        {
-          "id": "analysis.song",
-          "attachAs": "song",
-          "accept": ["audio"],
-          "multiple": false,
-          "required": true,
-          "title": "Track",
-          "intro": "Without the song there is no analysis.",
-          "prompt": "Drop your track or choose a file — .wav / .mp3 / .m4a / .aiff / .flac / .aac",
-          "symbol": "waveform",
-          "confirmLabel": "Attach track"
-        },
-        {
-          "id": "analysis.lyrics",
-          "attachAs": "lyrics",
-          "accept": ["text"],
-          "multiple": false,
-          "required": false,
-          "title": "Lyrics",
-          "intro": "Lyrics label the measured sections. They never move the measured boundaries.",
-          "prompt": "Drop the lyrics (.txt) — optional, sharpens the section labels",
-          "symbol": "text.quote",
-          "confirmLabel": "Continue",
-          "textField": {
-            "placeholder": "…or paste the lyrics here",
-            "multiline": true
-          }
         }
       ]
     }

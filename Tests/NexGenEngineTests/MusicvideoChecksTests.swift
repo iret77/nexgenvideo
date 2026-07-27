@@ -6,6 +6,9 @@ import Testing
 /// Port of `plugins/musicvideo/tests/test_checks.py`.
 @Suite("Musicvideo Checks", .serialized)
 struct MusicvideoChecksTests {
+    static let goodPrompt =
+        "A performer stands center frame in warm side light, holding a measured opening pose."
+
     static func song(bpm: Double = 128.0, tempoMultiplier: Double = 1.0) throws -> Song {
         try Song(
             title: "t", audioPath: "audio/song.wav", analysisPath: "analysis/song.json", bpm: bpm,
@@ -127,6 +130,48 @@ struct MusicvideoChecksTests {
             )
         ]
         #expect(try MusicvideoChecks.pacingCheck(Self.ctx(Self.shotlist(shots))).isEmpty)
+    }
+
+    @Test("a chained shot uses its predecessor frame as the bible anchor")
+    func keyframeAnchorAcceptsChainedContinuity() throws {
+        let first = try Shot(
+            id: "s001",
+            section: "verse",
+            timeStart: 0,
+            timeEnd: 4,
+            durationS: 4,
+            type: .performance,
+            description: "Opening.",
+            visualPrompt: Self.goodPrompt,
+            mood: "restrained",
+            locationRef: "yard",
+            keyframeStrategy: .start
+        )
+        let chained = try Shot(
+            id: "s002",
+            section: "verse",
+            timeStart: 4,
+            timeEnd: 8,
+            durationS: 4,
+            type: .performance,
+            description: "Continue.",
+            visualPrompt: Self.goodPrompt,
+            mood: "restrained",
+            locationRef: "yard",
+            keyframeStrategy: .none,
+            seedanceInputMode: .keyframe,
+            chainWithPreviousEnd: true
+        )
+        let findings = try MusicvideoChecks.keyframeAnchorCheck(
+            Self.ctx(Self.shotlist([first, chained]))
+        )
+
+        #expect(
+            !findings.contains {
+                $0.code == "MISSING_BIBLE_ANCHOR_FOR_T2V"
+                    && $0.shotId == "s002"
+            }
+        )
     }
 
     // MARK: - count_action_beats boundary cases

@@ -13,7 +13,7 @@ struct ChatHistoryList: View {
     }()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             if sessions.isEmpty {
                 Text("No conversations yet")
                     .font(.system(size: AppTheme.FontSize.xs))
@@ -21,17 +21,17 @@ struct ChatHistoryList: View {
                     .padding(AppTheme.Spacing.md)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
                         ForEach(sessions) { session in
                             row(session: session)
                         }
                     }
                 }
                 .scrollIndicators(.never)
-                .frame(maxHeight: 360)
+                .frame(maxHeight: AppTheme.ComponentSize.chatHistoryMaxHeight)
             }
         }
-        .frame(width: 280)
+        .frame(width: AppTheme.ComponentSize.chatHistoryWidth)
         .glassEffect(.clear, in: .rect(cornerRadius: AppTheme.Radius.md))
     }
 
@@ -62,8 +62,8 @@ struct ChatHistoryList: View {
             }
         }
         .padding(.horizontal, AppTheme.Spacing.md)
-        .padding(.vertical, 6)
-        .background(isCurrent ? AppTheme.Accent.primary.opacity(0.15) : .clear)
+        .padding(.vertical, AppTheme.Spacing.sm)
+        .background(isCurrent ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted) : AppTheme.Background.clearColor)
         .contentShape(Rectangle())
         .onTapGesture { onSelect(session.id) }
     }

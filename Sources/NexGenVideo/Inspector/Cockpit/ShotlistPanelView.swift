@@ -20,7 +20,7 @@ struct ShotlistPanelView: View {
     @State private var modeFilter: SourceModeTag?
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -55,7 +55,7 @@ struct ShotlistPanelView: View {
         } else {
             let hybrid = isHybrid(data)
             let shots = filtered(data.shots)
-            VStack(spacing: 0) {
+            VStack(spacing: AppTheme.Spacing.none) {
                 if hybrid {
                     SegmentedTabBar(titles: filterTitles, selected: currentFilterTitle) { title in
                         modeFilter = filterTag(for: title)
@@ -64,7 +64,7 @@ struct ShotlistPanelView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
                         Text("\(shots.count) \(shots.count == 1 ? "shot" : "shots")")
-                            .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                             .tracking(AppTheme.Tracking.wide)
                             .foregroundStyle(AppTheme.Text.mutedColor)
                         ForEach(shots) { shot in
@@ -103,11 +103,11 @@ struct ShotlistPanelView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                 Text(shot.id)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: .semibold).monospaced())
+                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold).monospaced())
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 if let section = shot.section?.trimmingCharacters(in: .whitespaces), !section.isEmpty {
                     Text(section)
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(AppTheme.Text.mutedColor)
                         .lineLimit(1)
                 }
@@ -129,13 +129,13 @@ struct ShotlistPanelView: View {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     ForEach(shot.chips, id: \.self) { chip in
                         Text(chip)
-                            .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .padding(.horizontal, AppTheme.Spacing.sm)
                             .padding(.vertical, AppTheme.Spacing.xxs)
                             .background(
                                 RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                                    .fill(Color.white.opacity(AppTheme.Opacity.subtle))
+                                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
                             )
                     }
                 }
@@ -165,16 +165,16 @@ struct ShotlistPanelView: View {
     private func sourceModeBadge(_ tag: SourceModeTag) -> some View {
         HStack(spacing: AppTheme.Spacing.xxs) {
             Image(systemName: tag.symbol)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
             Text(tag.label)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
         }
         .foregroundStyle(AppTheme.Text.tertiaryColor)
         .padding(.horizontal, AppTheme.Spacing.sm)
         .padding(.vertical, AppTheme.Spacing.xxs)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                .fill(Color.white.opacity(AppTheme.Opacity.subtle))
+                .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
         )
     }
 

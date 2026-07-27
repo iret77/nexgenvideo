@@ -31,6 +31,7 @@ struct MusicGenerationSubmission {
         service: GenerationService,
         projectURL: URL?,
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onPhase: @MainActor (Phase) -> Void = { _ in },
         onFinished: @escaping @MainActor () -> Void = {},
         onSucceeded: @escaping @MainActor () -> Void = {}
@@ -83,6 +84,7 @@ struct MusicGenerationSubmission {
             service: service,
             projectURL: projectURL,
             editor: editor,
+            authorization: authorization,
             onComplete: { asset in
                 editor.finalizeGeneratingClip(placeholderId: asset.id, asset: asset)
                 onSucceeded()

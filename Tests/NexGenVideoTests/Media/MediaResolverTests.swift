@@ -102,6 +102,40 @@ struct MediaResolverTests {
         #expect(resolver.resolveURL(for: "a") == nil)
     }
 
+    @Test func resolveProjectRejectsRelativeAndSymlinkEscapes() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("resolver-root-\(UUID().uuidString)", isDirectory: true)
+        let outside = FileManager.default.temporaryDirectory
+            .appendingPathComponent("resolver-outside-\(UUID().uuidString).mp4")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data().write(to: outside)
+        let link = root.appendingPathComponent("media/link.mp4")
+        try FileManager.default.createDirectory(
+            at: link.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        var manifest = MediaManifest()
+        manifest.entries = [
+            entry(id: "relative", source: .project(relativePath: "../\(outside.lastPathComponent)")),
+            entry(id: "symlink", source: .project(relativePath: "media/link.mp4")),
+        ]
+        let resolver = MediaResolver(manifest: { manifest }, projectURL: { root })
+
+        #expect(resolver.expectedURL(for: "relative") == nil)
+        #expect(resolver.expectedURL(for: "symlink") == nil)
+        #expect(
+            MediaResolver.missingAssetIds(
+                entries: manifest.entries,
+                projectPath: root.path
+            ) == ["relative", "symlink"]
+        )
+    }
+
     // MARK: - Cache behavior
 
     // MARK: - missingAssetIds (off-main-thread offline computation)

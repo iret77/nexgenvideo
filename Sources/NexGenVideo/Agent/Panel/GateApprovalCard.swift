@@ -1,12 +1,9 @@
 import SwiftUI
 
-/// The user's confirmation of an agent-initiated phase-gate approval (HAX G11). Docked in the composer
-/// exactly where the spend card and generative dialog live — never a modal. The agent's approve_gate /
-/// set_gate_state tool-call is suspended until Approve or Not yet; the gate is written only on Approve.
+/// Commits a deferred gate only after the user approves it here.
 struct GateApprovalCard: View {
     let approval: GateApproval
-    /// The phase's surface from the active pack's UI contract — where its work is actually readable.
-    /// A `choice` phase is settled in the chat and has no tab to send the user to.
+    let error: String?
     let surface: String?
     let onApprove: () -> Void
     let onDecline: () -> Void
@@ -45,12 +42,12 @@ struct GateApprovalCard: View {
                 .font(.system(size: AppTheme.FontSize.md))
                 .foregroundStyle(AppTheme.Accent.primary)
             Text("Approve \(approval.phaseLabel)")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.sm)
             Button(action: onDecline) {
                 Image(systemName: "xmark")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .buttonStyle(.plain)
@@ -75,6 +72,13 @@ struct GateApprovalCard: View {
                 Text(reviewHint)
                     .font(.system(size: AppTheme.FontSize.xxs))
                     .foregroundStyle(AppTheme.Text.mutedColor)
+            }
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, AppTheme.Spacing.xxs)
             }
         }
     }

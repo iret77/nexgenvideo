@@ -1,21 +1,32 @@
 import SwiftUI
 
-/// Settings home for format-pack management — reachable regardless of project state (the title-bar
-/// Format chip is format selection/status, not pack updates). Packs auto-update at launch
-/// (PluginAutoUpdate); this is where you see installed packs, apply an available update immediately,
-/// and finish an update that's staged and waiting for a relaunch.
 struct PluginsPane: View {
-    @State private var manager = PluginManager()
+    let manager: PluginManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-            packsSection
+        SettingsSection(
+            "Installed Packs",
+            subtitle: "NexGenVideo checks for updates when it opens. Applying an update may require a restart."
+        ) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
+                if let error = manager.lastError {
+                    SettingsCard {
+                        SettingsNotice(text: error, systemImage: "exclamationmark.triangle", tone: .error)
+                    }
+                } else if manager.catalogState == .offline {
+                    SettingsCard {
+                        SettingsNotice(
+                            text: "Update information is unavailable. Installed packs remain usable.",
+                            systemImage: "wifi.slash",
+                            tone: .neutral
+                        )
+                    }
+                }
+                packsCard
+            }
         }
-        .task { await manager.refresh() }
     }
 
-    /// Installed packs only (catalog-only "available"/"unavailable" rows belong to a project's Format
-    /// picker, not this management list).
     private var installedRows: [PluginRow] {
         manager.rows(activePluginName: nil).filter { row in
             switch row.status {
@@ -25,45 +36,49 @@ struct PluginsPane: View {
         }
     }
 
-    private var packsSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text("Format Packs")
-                    .font(.system(size: AppTheme.FontSize.md, weight: .medium))
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                Text("Installed format packs. They update automatically on the next launch; use Update to apply one now. Pick a project's format in its window before starting production.")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
+    @ViewBuilder
+    private var packsCard: some View {
+        SettingsCard {
             if installedRows.isEmpty {
-                row {
-                    Text("No format packs installed yet")
-                        .font(.system(size: AppTheme.FontSize.sm))
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                    Spacer()
+                SettingsRow(
+                    title: "No format packs installed",
+                    subtitle: "Choose a format when creating or opening a project to install its pack."
+                ) {
+                    EmptyView()
                 }
             } else {
-                ForEach(installedRows) { rowData in
-                    row {
-                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                ForEach(Array(installedRows.enumerated()), id: \.element.id) { index, rowData in
+                    if index > 0 {
+                        SettingsDivider()
+                    }
+                    HStack(alignment: .center, spacing: AppTheme.Spacing.md) {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                             Text(rowData.displayName)
-                                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
-                                .foregroundStyle(AppTheme.Text.secondaryColor)
-                            if let tagline = rowData.tagline {
-                                Text(tagline)
-                                    .font(.system(size: AppTheme.FontSize.xs))
-                                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                .font(.system(size: AppTheme.FontSize.md))
+                                .foregroundStyle(AppTheme.Text.primaryColor)
+                            HStack(spacing: AppTheme.Spacing.sm) {
+                                if let version = installedVersion(rowData.id) {
+                                    Text("Version \(version)")
+                                }
+                                if let tagline = rowData.tagline {
+                                    Text(tagline)
+                                }
                             }
+                            .font(.system(size: AppTheme.FontSize.sm))
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
                         }
-                        Spacer()
+                        Spacer(minLength: AppTheme.Spacing.lg)
                         actions(rowData)
                     }
+                    .padding(.horizontal, AppTheme.Spacing.mdLg)
+                    .padding(.vertical, AppTheme.Spacing.md)
                 }
             }
         }
+    }
+
+    private func installedVersion(_ id: String) -> String? {
+        manager.installed.first { $0.id == id }?.version
     }
 
     @ViewBuilder private func actions(_ rowData: PluginRow) -> some View {
@@ -72,10 +87,26 @@ struct PluginsPane: View {
         } else {
             switch rowData.status {
             case .updatePendingRestart:
-                Button("Restart now") { AppRelaunch.now() }
+                let isActiveProjectPack = AppState.shared.activeProject?
+                    .editorViewModel.activePluginName == rowData.id
+                Button(
+                    isActiveProjectPack
+                        ? "Upgrade Project"
+                        : "Restart now"
+                ) {
+                    if isActiveProjectPack {
+                        AppState.shared.upgradeActiveProjectPack()
+                    } else {
+                        PluginUpdateCenter.shared.restartToApplyUpdates()
+                    }
+                }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
-                    .help("Relaunch NexGenVideo to activate the updated plugin.")
+                    .help(
+                        isActiveProjectPack
+                            ? "Upgrade this project to the installed format-pack update."
+                            : "Restart NexGenVideo to activate this update."
+                    )
             case .installed(_, let update):
                 if let update {
                     Button("Update") { Task { _ = await manager.install(update); await manager.refresh() } }
@@ -101,21 +132,5 @@ struct PluginsPane: View {
                 EmptyView()
             }
         }
-    }
-
-    private func row<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            content()
-        }
-        .padding(.horizontal, AppTheme.Spacing.md)
-        .padding(.vertical, AppTheme.Spacing.smMd)
-        .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .fill(Color.black.opacity(AppTheme.Opacity.muted))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
-        )
     }
 }

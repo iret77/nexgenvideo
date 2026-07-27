@@ -24,8 +24,8 @@ extension EditorSplitViewController {
         case .element(.timelineRuler):
             // The ruler is the top band of the timeline panel, below its toolbar.
             guard let panel = flippedFrame(of: leafItem(for: .timeline)?.viewController.view) else { return nil }
-            return CGRect(x: panel.minX, y: panel.minY + Layout.toolbarHeight,
-                          width: panel.width, height: Layout.rulerHeight)
+            return CGRect(x: panel.minX, y: panel.minY + AppTheme.Layout.toolbarHeight,
+                          width: panel.width, height: AppTheme.Layout.rulerHeight)
         case .element(let id):
             return flippedFrame(of: editor.tour.anchorViews[id]?.value)
         }

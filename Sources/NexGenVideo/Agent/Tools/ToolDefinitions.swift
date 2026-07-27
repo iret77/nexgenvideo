@@ -62,6 +62,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case nextRenderShot = "next_render_shot"
     case recordRender = "record_render"
     case getRenderManifest = "get_render_manifest"
+    case getFramesManifest = "get_frames_manifest"
     case saveFrameAudit = "save_frame_audit"
     case getFrameAudit = "get_frame_audit"
     case cropToAspect = "crop_to_aspect"
@@ -77,19 +78,25 @@ enum ToolName: String, CaseIterable, Sendable {
     case runProviderTool = "run_provider_tool"
     case listProjectFiles = "list_project_files"
     case copyProjectFile = "copy_project_file"
+    case writeAnalysisInterpretation = "write_analysis_interpretation"
     case writeBrief = "write_brief"
+    case writeProductionDesign = "write_production_design"
+    case writeTreatment = "write_treatment"
+    case writeStoryboard = "write_storyboard"
+    case writeBible = "write_bible"
+    case writeShotlist = "write_shotlist"
 
-    /// Tools that write the pipeline data root (not the timeline, which is undo-tracked and already
-    /// marks the document edited). After one of these the working copy diverges from the saved package,
-    /// so the document must be marked edited to prompt a save.
-    var isPipelineWrite: Bool {
+    /// Filesystem writers that must dirty the live project before execution.
+    var isDurableWrite: Bool {
         switch self {
-        // approveGate / setGateState are NOT here: they can return a non-error result WITHOUT writing
-        // (the user declined the confirmation), and a categorical dirty-mark would then prompt a save
-        // for changes that never happened. They fire onPipelineChanged themselves, only on the write.
-        case .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
+        // Approving gate tools defer their write to the user's later click.
+        case .generateVideo, .generateImage, .generateAudio, .upscaleMedia, .importMedia,
+             .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
-             .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief:
+             .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
+             .writeAnalysisInterpretation,
+             .writeProductionDesign, .writeTreatment, .writeStoryboard, .writeBible,
+             .writeShotlist, .cropToAspect, .assembleTimeline, .runSanity:
             return true
         default:
             return false
@@ -103,13 +110,64 @@ enum ToolName: String, CaseIterable, Sendable {
         case .runPhase:
             let p = (args["phase"] as? String)?.trimmingCharacters(in: .whitespaces)
             return (p?.isEmpty == false) ? p : nil
-        case .attachSong, .recordAffect:  return "analysis"
-        case .writeBrief:                 return "brief"
+        case .attachSong,
+             .writeAnalysisInterpretation: return "analysis"
+        case .recordAffect, .writeBrief:  return "brief"
+        case .writeProductionDesign:      return "production_design"
+        case .writeTreatment:             return "treatment"
+        case .writeStoryboard:            return "storyboard"
+        case .writeBible:                 return "bible"
+        case .writeShotlist:              return "shotlist"
+        case .runSanity:                  return "sanity"
         case .extractScene3dPovs:         return "bible"
         case .saveFrameAudit:             return "frames"
-        case .recordRender:               return "render"
+        case .nextRenderShot, .recordRender:
+            return args["phase"] as? String == "frames" ? "frames" : "render"
+        case .assembleTimeline:           return "render"
         default:                          return nil
         }
+    }
+
+    var usesCurrentPipelinePhase: Bool {
+        switch self {
+        case .compilePrompt, .generateVideo, .generateImage, .generateAudio,
+             .upscaleMedia, .importMedia, .runProviderTool, .copyProjectFile,
+             .cropToAspect, .setLedgerAttribute, .lockLedgerAttribute,
+             .removeLedgerAttribute:
+            return true
+        default:
+            return false
+        }
+    }
+
+    func writesPhaseArtifact(args: [String: Any], dataRoot: URL) -> Bool {
+        guard isDurableWrite else { return false }
+        switch self {
+        case .runPhase:
+            guard let phase = advancingPhase(args: args) else { return false }
+            let registry = PackCatalog.registry(
+                activePack: ProjectPluginSettings.activePlugin(
+                    projectURL: FrameInventory.projectHome(of: dataRoot)
+                )
+            )
+            return registry.phases[phase] != nil
+                || !registry.deterministicSteps(forPhase: phase).isEmpty
+        case .recordRender:
+            let phase = args["phase"] as? String
+            return phase == "frames" || phase == "final"
+        case .writeAnalysisInterpretation, .writeBrief,
+             .writeProductionDesign, .writeTreatment, .writeStoryboard,
+             .writeBible, .writeShotlist, .runSanity, .saveFrameAudit:
+            return true
+        default:
+            return false
+        }
+    }
+
+    func invalidatesPhaseState(args: [String: Any], dataRoot: URL) -> Bool {
+        self == .attachSong
+            || self == .recordAffect
+            || writesPhaseArtifact(args: args, dataRoot: dataRoot)
     }
 }
 
@@ -133,7 +191,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showDialog,
-            description: "Present a native structured dialog in the chat composer so the user shapes a step with clicks instead of prose — USE THIS instead of asking multi-option questions in text whenever a step has enumerable choices (styles, sections, modes, candidates). It renders as a self-contained FORM docked above the input (never a modal, never in the transcript); while it is open the chat composer is LOCKED, so the card is the one input surface. Keep each dialog a FOCUSED decision \u{2014} at most 3 sections; split a bigger decision into separate dialogs. For a choice set that isn't exhaustive, set the section's 'allowsCustom' so the user gets an 'Other\u{2026}' field instead of being boxed in. Declare a 'textField' when you need a free-text answer (multiline for lyrics/notes). When the step needs a LOCAL file FROM THE USER (a song, footage, a still), pass 'fileIntake' instead \u{2014} the card then shows a drop zone + a native file picker (no path typing), and the answer carries the chosen file as an @mentioned media asset you attach by id. After calling: STOP. The user's structured answer arrives as the next user message (\u{201C}Dialog \u{2026}\u{201D}); do not proceed with the step until then. Give every option a fitting SF Symbol; include costHint when the confirmed step will spend money.\n\nPROJECTION (when the choices ARE visual objects, show them where they live instead of describing them in prose): pass 'projection'. For choices that are TIMELINE RANGES (a section to trim, a moment to cut, a candidate span), put the spans in projection.timelineRanges (project frames, from get_timeline) and reference each from a choices option via 'rangeRef' \u{2014} the card stays compact and the ranges highlight on the timeline as labeled, clickable candidates; the user's click selects that choice. For choices about a SHOT's generated frames, set projection.reviewShot to the shot id \u{2014} the Review gallery opens focused on that shot. Only project real objects the user can see; keep prose options for abstract choices.",
+            description: "Present a native structured dialog in the chat composer for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
             inputSchema: objectSchema(
                 properties: [
                     "title": ["type": "string", "description": "Short imperative title, e.g. 'Shape the B-roll'."],
@@ -143,22 +201,22 @@ enum ToolDefinitions {
                     "confirmLabel": ["type": "string", "description": "Confirm button label (default 'Continue')."],
                     "textField": [
                         "type": "object",
-                        "description": "The dialog's single free-text field (optional). Declare it only when you need typed input beyond the choices \u{2014} e.g. lyrics to paste, or free notes. It renders inside the card (the composer is locked while the card is open).",
+                        "additionalProperties": false,
+                        "description": "The dialog's single free-text field (optional). Declare it only when a focused decision needs typed notes beyond its choices.",
                         "properties": [
-                            "placeholder": ["type": "string", "description": "Placeholder / label, e.g. 'Paste the lyrics here (optional)'."],
-                            "multiline": ["type": "boolean", "description": "Tall multi-line field for longer text like lyrics. Default false (single line)."],
+                            "placeholder": ["type": "string", "description": "Placeholder / label, e.g. 'Add a note (optional)'."],
+                            "multiline": ["type": "boolean", "description": "Tall multi-line field for longer notes. Default false (single line)."],
                         ],
                     ],
                     "fileIntake": [
                         "type": "object",
-                        "description": "Turn this dialog into a FILE INTAKE: the card shows a drop zone + a native file picker instead of the free-text field, so the user drops or chooses the file(s) and never types a path. Each chosen file is imported as a media asset and returned to you as an @mentioned asset in the answer message \u{2014} attach it by id (e.g. attach_song media:<id>). Use whenever a step needs a LOCAL file FROM THE USER (a song, footage, a still). A dialog may carry ONLY a fileIntake (no sections), or combine it with sections (e.g. a cut-mode choice alongside the track). Optional.",
+                        "additionalProperties": false,
+                        "description": "Ad-hoc MEDIA-LIBRARY intake only. Never use it for a format pack's declared workflow inputs except the bounded undecodable-track recovery described by show_dialog.",
                         "properties": [
                             "accept": ["type": "array", "items": ["type": "string"], "description": "Accepted kinds ('audio', 'video', 'image', 'text') or bare file extensions ('mp3', 'wav', 'txt'). Empty \u{21D2} any file."],
-                            "prompt": ["type": "string", "description": "Short line shown in the drop well, e.g. 'Drop your track or choose a file (.wav / .mp3 / .m4a / .aiff / .flac / .aac)'."],
+                            "prompt": ["type": "string", "description": "Short line shown in the drop well, e.g. 'Choose the source file'."],
                             "multiple": ["type": "boolean", "description": "Allow more than one file. Default false."],
-                            "attachAs": ["type": "string", "description": "Where the file goes. Omit \u{21D2} the media library, returned as an @mention. 'song' \u{21D2} host places the audio straight into audio/ under the one-song contract (accept ['audio']) \u{2014} no separate attach_song step. 'lyrics' \u{21D2} host writes lyrics/lyrics.txt and replies with the parsed [Section] markers. 'script' \u{21D2} host writes import/script.md for a brownfield project (accept ['text'] for both). 'character'/'location' \u{2192} host copies the images into import/characters|locations/<slug>/ as a bible anchor (accept ['image'], set namePrompt, usually multiple:true). 'style' \u{2192} host copies loose mood/style reference images into import/ for the production-design agent (accept ['image'], multiple:true, no namePrompt)."],
-                            "namePrompt": ["type": "string", "description": "For attachAs 'character'/'location': the label of a REQUIRED identity-name field the well shows (e.g. 'Character name'). The typed name becomes the destination folder; confirm stays disabled until it's filled."],
-                            "required": ["type": "boolean", "description": "Whether a file/text is required to confirm. Default true; 'lyrics'/'script' default false (the user can confirm with nothing, an explicit skip the host reports to you). Set false to make any intake skippable via Confirm rather than only by dismissing."],
+                            "required": ["type": "boolean", "description": "Whether a file is required to confirm. Default true."],
                         ],
                     ],
                     "sections": [
@@ -166,9 +224,11 @@ enum ToolDefinitions {
                         "description": "At most 3 focused sections (more is rejected \u{2014} split into separate dialogs).",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "id": ["type": "string"],
-                                "label": ["type": "string"],
+                                "label": ["type": "string", "description": "Question or heading shown in the dialog."],
+                                "shortLabel": ["type": "string", "description": "Compact transcript key without the question/explanation, e.g. 'Cut rhythm' or 'Shots'. Supply this when label is longer than a short heading."],
                                 "type": ["type": "string", "enum": ["choices", "toggle"]],
                                 "multiSelect": ["type": "boolean"],
                                 "allowsCustom": ["type": "boolean", "description": "choices sections only: also show an 'Other\u{2026}' free-text so the user isn't limited to the preset options. Set this whenever the option set isn't exhaustive."],
@@ -177,9 +237,11 @@ enum ToolDefinitions {
                                     "type": "array",
                                     "items": [
                                         "type": "object",
+                                        "additionalProperties": false,
                                         "properties": [
                                             "id": ["type": "string"],
-                                            "label": ["type": "string"],
+                                            "label": ["type": "string", "description": "Text shown on the option chip."],
+                                            "shortLabel": ["type": "string", "description": "Compact selected value without explanatory copy, e.g. 'Phrase'. Supply this when label also explains the option."],
                                             "symbol": ["type": "string", "description": "SF Symbol per option"],
                                             "rangeRef": ["type": "string", "description": "Id of a projection.timelineRanges entry this option represents. The option is then picked by clicking its highlighted range on the timeline; keep the label short (it becomes the range's chip)."],
                                         ],
@@ -190,6 +252,7 @@ enum ToolDefinitions {
                     ],
                     "projection": [
                         "type": "object",
+                        "additionalProperties": false,
                         "description": "Canvas projection for choices that are visual objects (A3). Optional.",
                         "properties": [
                             "timelineRanges": [
@@ -197,6 +260,7 @@ enum ToolDefinitions {
                                 "description": "Candidate spans highlighted on the timeline; reference each from a choices option via rangeRef.",
                                 "items": [
                                     "type": "object",
+                                    "additionalProperties": false,
                                     "properties": [
                                         "id": ["type": "string", "description": "Stable id; a choices option points at it via rangeRef."],
                                         "label": ["type": "string", "description": "Short label drawn as a chip at the range start."],
@@ -223,10 +287,7 @@ enum ToolDefinitions {
                         "minItems": 1,
                         "maxItems": AgentBlocks.maxBlocks,
                         "description": "1–\(AgentBlocks.maxBlocks) blocks, rendered top to bottom.",
-                        "items": [
-                            "type": "object",
-                            "description": "Exactly one of: {type:'headline', text, symbol?} — section header, optional SF Symbol. {type:'text', body} — short prose/caption (markdown ok). {type:'status', badges:[{label, value, symbol?}]} — 1–\(AgentBlocks.maxBadges) compact badges (Mode, Budget, …). {type:'keyvalue', title?, rows:[[label, value], …]} — 1–\(AgentBlocks.maxRows) labeled rows in a box (brief fields etc.). {type:'callout', tone:'info'|'warn'|'success', text} — one emphasized note. No other keys.",
-                        ],
+                        "items": showBlocksItemSchema,
                     ],
                 ],
                 required: ["blocks"]
@@ -273,6 +334,7 @@ enum ToolDefinitions {
                     "startFrame": ["type": "integer", "description": "Optional. Only return words ending after this project frame. Use with the returned nextStartFrame to page a long timeline."],
                     "endFrame": ["type": "integer", "description": "Optional. Only return words starting before this project frame."],
                     "clipId": ["type": "string", "description": "Scope the transcript to a single clip — returns only what that clip says, in project frames. Answers \"what's in clip X?\" without scanning the whole timeline."],
+                    "wordTimestamps": ["type": "boolean", "description": "Compatibility input accepted from inspect_media-style calls. Timeline transcripts always return word timestamps."],
                 ]
             )
         ),
@@ -310,6 +372,7 @@ enum ToolDefinitions {
                         "description": "Clips to add. Each entry is validated up front; one bad entry rejects the whole call with no partial state.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "mediaRef": ["type": "string", "description": "ID of the media asset from get_media"],
                                 "trackIndex": ["type": "integer", "description": "Optional. Track index (0-based). Omit on every entry to auto-create one shared track per asset zone (video/audio)."],
@@ -337,6 +400,7 @@ enum ToolDefinitions {
                         "description": "Clips to insert, placed sequentially from atFrame. Validated up front; one bad entry rejects the whole call.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "mediaRef": ["type": "string", "description": "ID of the media asset from get_media."],
                                 "durationFrames": ["type": "integer", "description": "Optional. Timeline length in project frames. Omit to use the asset's full source duration."],
@@ -388,6 +452,7 @@ enum ToolDefinitions {
                         "description": "Per-clip move requests. At least one of toTrack or toFrame is required per entry.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "clipId": ["type": "string", "description": "The clip ID to move."],
                                 "toTrack": ["type": "integer", "description": "Destination track index (0-based). Omit to keep the clip on its current track."],
@@ -418,6 +483,7 @@ enum ToolDefinitions {
                     "opacity": ["type": "number", "description": "Opacity 0.0-1.0. Clears any existing opacity keyframes."],
                     "transform": [
                         "type": "object",
+                        "additionalProperties": false,
                         "description": "Partial transform. Any combination of centerX, centerY, width, height, flipHorizontal, flipVertical; omitted fields keep their current value.",
                         "properties": [
                             "centerX": ["type": "number"],
@@ -451,7 +517,20 @@ enum ToolDefinitions {
                     "keyframes": [
                         "type": "array",
                         "description": "Replacement keyframe rows. Empty array clears the track. Row shape depends on property — see tool description.",
-                        "items": ["type": "array"],
+                        "items": [
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 6,
+                            "items": [
+                                "anyOf": [
+                                    ["type": "number"] as [String: Any],
+                                    [
+                                        "type": "string",
+                                        "enum": ["linear", "hold", "smooth"],
+                                    ] as [String: Any],
+                                ],
+                            ],
+                        ],
                     ],
                 ],
                 required: ["clipId", "property", "keyframes"]
@@ -533,6 +612,7 @@ enum ToolDefinitions {
                         "description": "Text clips to add. Each entry is independent.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "trackIndex": ["type": "integer", "description": "Optional. Track index (0-based) for an existing non-audio track. Omit on every entry to auto-create one new track for the batch."],
                                 "startFrame": ["type": "integer", "description": "Frame position to place the clip"],
@@ -540,6 +620,7 @@ enum ToolDefinitions {
                                 "content": ["type": "string", "description": "Text to display. Supports \\n for line breaks."],
                                 "transform": [
                                     "type": "object",
+                                    "additionalProperties": false,
                                     "description": "Optional position/size. Omit for center + auto-fit. Pass centerX+centerY only for a specific position with auto-fit size. Pass all four for full override.",
                                     "properties": [
                                         "centerX": ["type": "number", "description": "Horizontal center 0–1 (0=left edge, 1=right edge)"],
@@ -617,7 +698,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .generateImage,
-            description: "Starts an async AI image generation. Returns a placeholder asset ID immediately; generation runs in the background. Costs real money and is not undoable.",
+            description: "Starts an async AI image generation. Returns a placeholder asset ID immediately; generation runs in the background. Costs real money and is not undoable. PROMPT GATE: `prompt` must be the `compiledPrompt` returned by `compile_prompt`, passed together with its `compileToken` — never your own phrasing. Raw prompts work only through the explicit pro escape hatch.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
@@ -671,11 +752,12 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .importMedia,
-            description: "Imports external media into the project's library — the bridge for assets coming from other MCP servers (stock libraries, music services, web search) or local files the user already has. The 'source' object must set exactly one of: url (HTTPS only — downloaded in the background, the dominant case; max 1 GB), path (absolute local file path — referenced in place; may also be a directory, which is imported recursively, mirroring its subfolder structure as media folders), or bytes (base64-encoded inline data — max ~15 MB of base64 ≈ 11 MB binary; use url/path for anything larger). For url, type is inferred from the URL path's file extension unless source.mimeType is set as an override (needed for signed URLs whose path has no usable extension). For bytes, source.mimeType is required.\n\nSupported types and extensions: video (mov, mp4, m4v), audio (mp3, wav, aac, m4a, aiff, aifc, flac), image (png, jpg, jpeg, tiff, heic). Anything else is rejected — the caller must transcode externally.\n\nReturns a placeholder asset id immediately; URL imports run in the background and the asset becomes usable in add_clips once ready (same async pattern as generate_*). Path and bytes imports finalize synchronously. Costs nothing.",
+            description: "Imports external media into the project's library — the bridge for assets coming from other MCP servers (stock libraries, music services, web search) or local files the user already has. The project must be saved first. Every successful import is copied into the project's self-contained working media store and included in the package on Save; source files are never referenced in place. The 'source' object must set exactly one of: url (HTTPS only; max 1 GB), path (absolute local file path; may also be a directory, which is imported recursively, mirroring its subfolder structure as media folders), or bytes (base64-encoded inline data — max ~15 MB of base64 ≈ 11 MB binary; use url/path for anything larger). For url, type is inferred from the URL path's file extension unless source.mimeType is set as an override (needed for signed URLs whose path has no usable extension). For bytes, source.mimeType is required.\n\nSupported types and extensions: video (mov, mp4, m4v), audio (mp3, wav, aac, m4a, aiff, aifc, flac), image (png, jpg, jpeg, tiff, heic). Anything else is rejected — the caller must transcode externally.\n\nURL imports return only after the complete redirect chain, size limit, and decoded media payload have been validated and the asset is available in get_media. Path and bytes imports also finalize before returning. Costs nothing.",
             inputSchema: objectSchema(
                 properties: [
                     "source": [
                         "type": "object",
+                        "additionalProperties": false,
                         "description": "Exactly one of url, path, or bytes must be set. mimeType is required when bytes is set; for url it acts as a type-inference override.",
                         "properties": [
                             "url": ["type": "string", "description": "HTTPS URL. Pre-signed URLs are fine but must not expire mid-download."],
@@ -707,6 +789,7 @@ enum ToolDefinitions {
                         "description": "Folders to create in one undoable action.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "name": ["type": "string", "description": "Folder name."],
                                 "parentFolderId": ["type": "string", "description": "Optional parent folder id; omit for top level."],
@@ -733,6 +816,7 @@ enum ToolDefinitions {
                         "description": "Move operations to apply in one undoable action. Each entry can target a different folder.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "assetIds": [
                                     "type": "array",
@@ -759,6 +843,7 @@ enum ToolDefinitions {
                         "description": "Media assets to rename in one undoable action.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "mediaRef": ["type": "string", "description": "Media asset id from get_media."],
                                 "name": ["type": "string", "description": "New display name."],
@@ -781,6 +866,7 @@ enum ToolDefinitions {
                         "description": "Folders to rename in one undoable action.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "folderId": ["type": "string", "description": "Folder id from list_folders."],
                                 "name": ["type": "string", "description": "New folder name."],
@@ -850,7 +936,11 @@ enum ToolDefinitions {
                         "items": objectSchema(
                             properties: [
                                 "type": ["type": "string", "description": "Effect type id, e.g. stylize.glow (see list above)."],
-                                "params": ["type": "object", "description": "Param values keyed by name. Out-of-range values are clamped; omitted params keep their current/default value."],
+                                "params": [
+                                    "type": "object",
+                                    "additionalProperties": ["type": "number"],
+                                    "description": "Numeric param values keyed by name. Out-of-range values are clamped; omitted params keep their current/default value.",
+                                ],
                                 "enabled": ["type": "boolean", "description": "Default true. false bypasses the effect without removing it."],
                             ],
                             required: ["type"]
@@ -897,6 +987,7 @@ enum ToolDefinitions {
                                   "description": "Blue-channel tone curve, [x,y] points 0–1. Tone-selective: e.g. [[0,0],[0.7,0.7],[1,0.85]] pulls blue only in the highlights (tames a sky) and leaves shadows."],
                     "hueCurves": [
                         "type": "object",
+                        "additionalProperties": false,
                         "description": "Secondary/qualified correction (Resolve-style Hue-vs-Hue/Sat/Lum). Targets replace any existing hue curve. Selectivity is ~±22° around each target hue.",
                         "properties": [
                             "targets": [
@@ -916,6 +1007,7 @@ enum ToolDefinitions {
                     ],
                     "lut": [
                         "type": "object",
+                        "additionalProperties": false,
                         "description": "Apply a .cube 3D LUT (e.g. a film-look pack) on top of the primary grade; replaces any prior LUT. The agent does not author LUT data — pass a real file path.",
                         "properties": [
                             "path": ["type": "string", "description": "Absolute path to a .cube file (~ is expanded). Copied into project storage so it survives saves."],
@@ -944,7 +1036,7 @@ enum ToolDefinitions {
             inputSchema: objectSchema(
                 properties: [
                     "category": ["type": "string", "enum": ["missing_capability", "wrong_result", "confusing_ux", "failure", "suggestion"], "description": "What kind of problem this is."],
-                    "summary": ["type": "string", "description": "One-line paraphrased summary of the issue. Becomes the report's subject."],
+                    "summary": ["type": "string", "description": "One-line paraphrased summary used to identify the local diagnostic entry."],
                     "details": ["type": "string", "description": "Optional. Paraphrased explanation of what the user was trying to do and what went wrong or was missing. No verbatim content."],
                     "severity": ["type": "string", "enum": ["low", "medium", "high"], "description": "Optional. How much this blocked the user."],
                 ],
@@ -973,12 +1065,12 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .runSanity,
-            description: "Run the full consistency audit for the project and return its findings.\n\nLoads the latest shotlist plus any brief/bible, runs every engine-core check AND every active-pack check, and returns `{project, findings:[{level, code, shot_id, message}]}`. If the project has no shotlist yet, returns `{\"error\": \"no shotlist\", ...}` instead of raising. Read-only. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Run and persist the full consistency audit for the current project state. WRITES.\n\nLoads the latest shotlist plus any brief/bible, runs every engine-core check AND every active-pack check, and writes sanity/report.json with an input fingerprint. The sanity gate accepts only a current report with no blocking errors; any later audited-artifact mutation makes it stale. A missing shotlist is an error. Returns `{project, path, input_fingerprint, findings:[{level, code, shot_id, message}]}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: projectDirSchema()
         ),
         AgentTool(
             name: .suggestPatterns,
-            description: "Rank the pack's director/style patterns against the project using the frozen Pattern-fit contract (packs that ship a pattern library, e.g. musicvideo). The pack assembles a project profile from the persisted Brief — you only supply the song's perceived_bpm and, optionally, a match_mode and pattern ids to exclude. Returns a `PatternRecommendationSet`: each result carries a Compatibility Index (0–100, NOT a probability of success), its band, confidence, coverage, per-axis strengths/conflicts and triggered adaptations, plus best_overall/production_efficient/creative_stretch slots and up to three high-impact follow-up questions. If the library is not yet fully authored the tool returns `{available:false, …}` (a fail-closed gate, never a partial ranking). Use at the brief phase to pick a pattern, then set the chosen id as brief.director_pattern so PATTERN_DRIFT holds the shotlist to it. Read-only. Errors if the active pack ships no patterns.",
+            description: "Rank every valid authored director/style pattern against the project using the frozen Pattern-fit contract (packs that ship a pattern library, e.g. musicvideo). The pack assembles a project profile from the persisted Brief — you only supply the song's perceived_bpm and, optionally, a match_mode and pattern ids to exclude. Returns a `PatternRecommendationSet`: each result carries a Compatibility Index (0–100, NOT a probability of success), its band, confidence, coverage, per-axis strengths/conflicts and triggered adaptations, plus best_overall/production_efficient/creative_stretch slots and up to three high-impact follow-up questions. A partially authored library is normal: patterns without a fit_profile are not candidates, valid profiles rank immediately, `library_coverage` names the scored/unscored/total field, and present-but-invalid profiles appear under `invalid_profiles`. There is no whole-library completeness gate. Use at the brief phase to pick a pattern, then set the chosen id as brief.director_pattern so PATTERN_DRIFT holds the shotlist to it. Read-only. Errors if the active pack ships no patterns.",
             inputSchema: objectSchema(
                 properties: [
                     "perceived_bpm": ["type": "number", "description": "The song's perceived BPM (from analysis). Only 3% of total fit — omit if unknown."],
@@ -1000,6 +1092,7 @@ enum ToolDefinitions {
                         "description": "Weighted affect tags you inferred from audio + lyrics. Weights need not sum to 1; they are relative.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "tag": ["type": "string", "enum": AffectTagVocabulary.all,
                                         "description": "One affect from the fixed vocabulary."],
@@ -1013,6 +1106,7 @@ enum ToolDefinitions {
                         "description": "The user's deliberate override, same shape as detected. Omit unless the user corrected or deliberately contradicted the detection.",
                         "items": [
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": [
                                 "tag": ["type": "string", "enum": AffectTagVocabulary.all],
                                 "weight": ["type": "number"],
@@ -1039,9 +1133,39 @@ enum ToolDefinitions {
             )
         ),
         AgentTool(
+            name: .writeAnalysisInterpretation,
+            description: "Write the human/agent interpretation onto the existing measured analysis artifact. Use this after run_phase(\"analysis\") and instead of editing analysis JSON. The host preserves measured timing and detector anomalies, requires exactly one label for every measured section, restricts the perceived-tempo multiplier to 0.5/1/2, mirrors labels onto the measured sections, and writes atomically.",
+            inputSchema: PipelineArtifactWriteContract.analysisInterpretationSchema
+        ),
+        AgentTool(
             name: .writeBrief,
             description: "Write the project's brief (`brief.yaml`) — the mandatory director's input every downstream phase reads. Call this INSTEAD of writing brief.yaml by hand: pass the brief fields and the host validates them against the engine's brief schema and persists the file for you. NEVER hand-author brief.yaml or reverse-engineer its schema — the engine decoder rejects freeform YAML, which is exactly the failure this tool exists to prevent. Required fields: mission, target_platform, aspect_ratio, project_mode, concept_type, visual_medium, figures, lyrics_integration; every other field is optional and takes the engine default when omitted. `visual_medium_notes` is required whenever visual_medium is anything other than live_action_realistic. For an \"Other\" answer, set the enum field to 'other' and put the free text in the matching *_other field. On ANY violation nothing is written and the error names the exact field and its allowed values — fix and re-call. The server owns schema/project/generated/generator; do not pass them.",
             inputSchema: writeBriefSchema()
+        ),
+        AgentTool(
+            name: .writeProductionDesign,
+            description: "Write the validated production-design manifest. Use this instead of authoring production_design.yaml. The host owns schema/project/generated/generator. Carry the Brief's visual_medium and visual_medium_notes exactly; a non-empty color_script must cover every measured analysis section. `refs` use production_design/refs/* and `lighting_anchor`, when set, is production_design/lighting_anchor.png; all paths must already exist in the project.",
+            inputSchema: PipelineArtifactWriteContract.productionDesignSchema
+        ),
+        AgentTool(
+            name: .writeTreatment,
+            description: "Write the next immutable treatment version and update treatment/current.md as an exact mirror. Use this instead of writing Markdown/frontmatter files. The host owns project/version/generated/generator. The body must implement the approved Brief and carry its visual_medium_notes verbatim when present.",
+            inputSchema: PipelineArtifactWriteContract.treatmentSchema
+        ),
+        AgentTool(
+            name: .writeStoryboard,
+            description: "Write the next validated storyboard version and update storyboard/current.yaml as an exact mirror. Use this instead of authoring YAML. The host owns schema/project/version/generated/generator. Provide every measured analysis section in order, with its exact interval/label and 4–12 gaplessly numbered, fully composed steps; every nested field is closed and enum-constrained.",
+            inputSchema: PipelineArtifactWriteContract.storyboardSchema
+        ),
+        AgentTool(
+            name: .writeBible,
+            description: "Write bible/bible.yaml through the engine Bible model. Use this instead of authoring YAML. The host owns schema/project/generated/generator, validates globally unique ids, exact generated-asset provenance, every Storyboard-requested entity/view, and synchronized Production Design style/lighting. The previous manifest is preserved in history.",
+            inputSchema: PipelineArtifactWriteContract.bibleSchema
+        ),
+        AgentTool(
+            name: .writeShotlist,
+            description: "Write the next validated shotlist version. Use this instead of authoring YAML. Supply only shots and notes: the host derives schema, project, mode, budget and the complete Song block from the approved Brief plus measured analysis. Approval requires complete song coverage, valid Storyboard section assignment, existing explicit references, and reference mode without keyframes or chaining.",
+            inputSchema: PipelineArtifactWriteContract.shotlistSchema
         ),
         AgentTool(
             name: .initProject,
@@ -1058,7 +1182,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .approveGate,
-            description: "Approve a production gate so the next phase may run. WRITES.\n\nStamps `phase`'s gate approved (with optional `notes`) and returns the updated `{project, phase, approved, approved_at, approved_by, notes}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Request the user's approval for a production gate. DEFERRED WRITE.\n\nValidates the gate, opens one durable approval card, and returns immediately with `{status: 'approval_pending', request_id, phase}` without writing. End the turn after this result. Never retry while a card is open. The user's click writes the gate in the host; the in-app agent resumes automatically, while external MCP clients re-read the gate in their next turn. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1108,19 +1232,20 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .copyProjectFile,
-            description: "Copy a file from one project-relative path to another WITHIN the project (copy, never move). WRITES. Use this instead of a shell `cp` to stage references — e.g. from `import/characters/<id>/face.png` to `bible/refs/<id>/face.png`. Creates the destination directory. Both paths are data-root-relative and must stay inside the project. Returns `{from, to}`.",
+            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. Returns `{from, media, to, generated_provenance}`.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
                     "from": ["type": "string", "description": "Source path, data-root-relative (e.g. 'import/characters/mouse/face.png')."],
+                    "media": ["type": "string", "description": "Ready media-library asset id to copy into the pipeline. Mutually exclusive with `from`."],
                     "to": ["type": "string", "description": "Destination path, data-root-relative (e.g. 'bible/refs/mouse/face.png')."],
                 ],
-                required: ["from", "to"]
+                required: ["to"]
             )
         ),
         AgentTool(
             name: .runPhase,
-            description: "Run a registered pipeline phase for the project. WRITES.\n\nDispatches to whatever phase runner the active pack registered under `phase` and runs it. For the musicvideo pack, `analysis` decodes the single song in the project's audio/ folder and runs the native audio analysis (beats, downbeats, tempo, structure), writing `analysis/<song>.json` — this takes a few seconds. The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; for those this returns `{phase, runner: null, note: ...}` rather than raising. A failure (no song, several songs, or a decode error) returns `{phase, error: \"phase_failed\", detail}` with an actionable message. On success returns `{phase, ok: true, result}` — for analysis, `result` summarizes bpm, duration_s, beats, downbeats, sections, and the artifact path. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Run a registered pipeline phase for the project. WRITES.\n\nDispatches to whatever phase runner the active pack registered under `phase` and runs it. For the musicvideo pack, `analysis` decodes the single song in the project's audio/ folder and runs the native audio analysis (beats, downbeats, tempo, structure), writing `analysis/<song>.json` — this takes a few seconds. The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; for those this returns `{phase, runner: null, note: ...}`. A deterministic-step or runner failure is a tool error and writes no synthetic success payload. On success returns `{phase, ok: true, result}` — for analysis, `result` summarizes bpm, duration_s, beats, downbeats, sections, and the artifact path. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1131,51 +1256,61 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .attachSong,
-            description: "Place the song into the project's audio/ folder so run_phase(\"analysis\") can decode it. WRITES.\n\nThe musicvideo pipeline keeps exactly ONE song in audio/, and the analysis runner reads it from there — import_media only reaches the media library, not audio/, so use this to bring the song in. Pass exactly one of `media` (a media-library asset id from get_media/search_media) or `path` (an absolute file path). The source must be an audio type the analysis runner accepts (.wav/.mp3/.m4a/.aiff/.flac/.aac); it's copied (the original is untouched). If a DIFFERENT audio file is already in audio/, this errors and names it — pass `replace: true` to first remove the existing audio and honor the one-song contract. Returns `{filename, audio_dir}`. Run run_phase(\"analysis\") next.",
+            description: "Recovery and external-client tool that places a song into the project's audio/ folder. WRITES.\n\nFor the in-app format-pack workflow, the host-owned Track card is the only initial song intake: never call this to bypass, replace, or duplicate that card. Outside that startup flow, pass exactly one of `media` (a media-library asset id from get_media/search_media) or `path` (an absolute file path). The musicvideo pipeline keeps exactly ONE supported song in audio/ (.wav/.mp3/.m4a/.aiff/.flac/.aac); the source is copied and the original is untouched. If a DIFFERENT audio file is already present, this errors and names it — `replace: true` atomically swaps the audio directory. Returns `{filename, audio_dir}`.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
                     "media": ["type": "string", "description": "A media-library asset id (from get_media/search_media) whose file is copied into audio/. Mutually exclusive with `path`."],
                     "path": ["type": "string", "description": "An absolute path to the audio file to copy into audio/. Mutually exclusive with `media`."],
-                    "replace": ["type": "boolean", "description": "Remove any existing audio in audio/ first (the one-song contract). Default false — a different existing song is an error otherwise."],
+                    "replace": ["type": "boolean", "description": "Atomically replace any existing audio in audio/ (the one-song contract). Default false — a different existing song is an error otherwise."],
                 ]
             )
         ),
         AgentTool(
             name: .nextRenderShot,
-            description: "The next shot to render for `phase`, in shotlist order. Read-only.\n\nLoads the latest shotlist (for ordered shot IDs) and the phase's render manifest, then returns the first shot whose entry is missing or not yet `rendered`, with its `visual_prompt` and `framing` so the agent can drive nexgen's own generate_image/generate_video. Returns `{phase, shot_id: null, done: true}` once every shot is rendered (or when there's no shotlist). `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "The next shot artifact to render for `phase`, in shotlist order. Read-only.\n\nFor `frames`, completion is role-aware against the authoritative Frames manifest: a `start_end` shot is returned once with `role=start` and again with `role=end`; missing files or provider-prompt provenance make that role pending again. For video phases, the phase render manifest determines completion per shot. Returns the shot's structured generation context, or `{phase, shot_id:null, done:true}` only when every required artifact exists. A missing, unreadable, or corrupt source artifact is an error. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
-                    "phase": ["type": "string", "description": "The render phase (e.g. preview/final)."],
+                    "phase": ["type": "string", "enum": ["frames", "preview", "final"], "description": "The render phase."],
                 ],
                 required: ["phase"]
             )
         ),
         AgentTool(
             name: .recordRender,
-            description: "Record a shot's render result into the phase manifest. WRITES.\n\nUpserts `shot_id`'s entry (status, `output` path-or-URL, `cost_eur`) into `renders/manifest-<phase>.json`, stamps `updated_at`, and returns the saved entry plus the manifest's running `spent_eur`. `status` is one of rendered/pending/failed. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Record a completed shot artifact into the phase manifest. WRITES.\n\nFor `status=rendered`, `output` must resolve to completed project media on disk produced by a schema-validated generation call: an image for `frames`, a video for `preview`/`final`. Imported shots never enter a provider render manifest; place their source footage on the timeline. The host stores a project-relative path, exact output hash, compiled provider prompt, generation model, shot status/cost, and `updated_at`. For frames, pass `role=start|end`; the host also records the exact compiled provider prompt in `frames/manifest.json`, which the Frames gate binds to a vision audit of the exact file. Reported cost is a production note; provider charges remain the authoritative ledger. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
-                    "phase": ["type": "string", "description": "The render phase."],
+                    "phase": ["type": "string", "enum": ["frames", "preview", "final"], "description": "The render phase."],
                     "shot_id": ["type": "string", "description": "The shot id to record."],
-                    "output": ["type": "string", "description": "Path or URL of the rendered artifact (null if not done)."],
-                    "cost_eur": ["type": "number", "description": "EUR spent on this render (default 0)."],
-                    "status": ["type": "string", "description": "rendered/pending/failed (default rendered)."],
+                    "role": ["type": "string", "enum": ["start", "end"], "description": "Frame role for phase=frames (default start). Omit for video phases."],
+                    "output": ["type": "string", "description": "Completed project media asset id or project path (omit if not done)."],
+                    "cost_eur": ["type": "number", "minimum": 0, "description": "Reported EUR cost for production notes (default 0); not used by the hard budget stop."],
+                    "status": ["type": "string", "enum": ["rendered", "pending", "failed"], "description": "Render status (default rendered)."],
                 ],
                 required: ["phase", "shot_id"]
             )
         ),
         AgentTool(
             name: .getRenderManifest,
-            description: "The phase's render manifest and its progress summary. Read-only.\n\nReturns `{project, phase, entries, summary}` where `entries` maps shot_id → its render record and `summary` is `{total, rendered, pending, failed, spent_eur}` (`total` from the latest shotlist's shot count). `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "A video pass's shot-level render ledger and progress summary. Read-only.\n\nReturns `{project, phase, entries, summary}` where each entry exposes `current_output` plus its generation model and exact output hash; a replaced/missing file or missing generation provenance counts as pending, never rendered. The summary is `{total, rendered, pending, failed, spent_eur}` over provider-rendered shots only. Use `get_frames_manifest` for the role-aware Frames artifact and its exact-file audits; this shot-level ledger cannot represent both start and end roles. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
-                    "phase": ["type": "string", "description": "The render phase."],
+                    "phase": ["type": "string", "enum": ["frames", "preview", "final"], "description": "The render phase."],
                 ],
                 required: ["phase"]
+            )
+        ),
+        AgentTool(
+            name: .getFramesManifest,
+            description: "The authoritative role-aware Frames artifact. Read-only.\n\nReturns every shot's keyframe strategy and start/end entries with project path, media_ref, exact compiled provider prompt, and the stored vision audit. Each audit includes `current_image`, which is true only when its SHA-256 still matches the current frame bytes. Use this for resume, completion, inspection, and pre-gate reconciliation; never infer frame-role completion from get_render_manifest. Returns `{exists:false}` before the first frame is recorded. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                ]
             )
         ),
         AgentTool(
@@ -1232,7 +1367,7 @@ enum ToolDefinitions {
                 properties: [
                     "project_dir": projectDirProperty,
                     "location_id": ["type": "string", "description": "Bible location id the views belong to."],
-                    "panorama": ["type": "string", "description": "Equirectangular panorama (home-relative or absolute). Omit to use the location's recorded scene3d.panorama."],
+                    "panorama": ["type": "string", "description": "Equirectangular panorama, relative to the pipeline data root. Omit to use the location's recorded scene3d.panorama."],
                     "style": ["type": "string", "description": "Restyle target for the clay POVs. Omit to use the bible's look.style. The response's `restyle.instruction` is the ready composition-preserving prompt — use it as-is."],
                     "povs": [
                         "type": "array",
@@ -1247,8 +1382,8 @@ enum ToolDefinitions {
                             required: ["name", "yaw"]
                         ),
                     ],
-                    "width": ["type": "integer", "description": "POV width in px (default 1280)."],
-                    "height": ["type": "integer", "description": "POV height in px (default 720)."],
+                    "width": ["type": "integer", "minimum": 64, "maximum": 4096, "description": "POV width in px (default 1280)."],
+                    "height": ["type": "integer", "minimum": 64, "maximum": 4096, "description": "POV height in px (default 720)."],
                 ],
                 required: ["location_id"]
             )
@@ -1259,7 +1394,7 @@ enum ToolDefinitions {
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
-                    "phase": ["type": "string", "description": "The render phase to assemble (default \"final\")."],
+                    "phase": ["type": "string", "enum": ["preview", "final"], "description": "The render phase to assemble (default \"final\")."],
                 ]
             )
         ),
@@ -1331,7 +1466,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .setGateState,
-            description: "Record the multi-state gate verdict. WRITES.\n\n`state` is one of approved / approved_with_notes / needs_revision / pending. Only the two approve states unblock the pipeline; `needs_revision` keeps the phase blocked and carries the reviewer's notes. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Record the multi-state gate verdict. WRITES.\n\n`state` is one of approved / approved_with_notes / needs_revision / pending. Approving states open one durable user-approval card and return immediately with `approval_pending`; end the turn and never retry while it is open. `needs_revision` and `pending` write immediately. The user's click writes the gate in the host; the in-app agent resumes automatically, while external MCP clients re-read the gate in their next turn. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1350,6 +1485,7 @@ enum ToolDefinitions {
                     "tool": ["type": "string", "description": "Exact tool name to run (as the provider's MCP exposes it). If unsure, the error lists the tools offered by the configured provider MCPs."],
                     "arguments": [
                         "type": "object",
+                        "additionalProperties": ["type": "string"],
                         "description": "Arguments for the tool, as string values (the provider's MCP defines the schema). E.g. { \"image_url\": \"https://…\" }.",
                     ],
                 ],
@@ -1359,11 +1495,12 @@ enum ToolDefinitions {
     ]
 
     /// `save_frame_audit`'s `checks` schema: an object requiring all 10 standard audit keys, each a
-    /// `{status, observed, note}` object with `status` enum-constrained. `expected` is machine-filled
-    /// so it's deliberately absent from the input schema. Extra free keys stay allowed.
+    /// `{status, observed, note}` object with `status` enum-constrained. `expected` is accepted only
+    /// so adversarial or stale callers can be ignored deterministically. Extra free keys stay allowed.
     private static var frameAuditChecksSchema: [String: Any] {
         let checkSchema: [String: Any] = [
             "type": "object",
+            "additionalProperties": false,
             "properties": [
                 "status": [
                     "type": "string", "enum": ["clean", "minor", "blocking", "n/a"],
@@ -1371,6 +1508,7 @@ enum ToolDefinitions {
                 ],
                 "observed": ["type": "string", "description": "What the image shows."],
                 "note": ["type": "string", "description": "Short finding for the user / re-render patch."],
+                "expected": ["type": "string", "description": "Ignored; the executor derives this from the shot spec."],
             ],
             "required": ["status"],
         ]
@@ -1381,7 +1519,54 @@ enum ToolDefinitions {
             "description": "One verdict per audit point. All 10 standard keys are required (\(standardAuditCheckKeys.joined(separator: ", "))); extra keys are allowed. Supply status/observed/note only — expected is filled from the shot spec.",
             "properties": properties,
             "required": standardAuditCheckKeys,
+            "additionalProperties": checkSchema,
         ]
+    }
+
+    private static var showBlocksItemSchema: [String: Any] {
+        var schema = objectSchema(
+            properties: [
+                "type": [
+                    "type": "string",
+                    "enum": ["headline", "text", "status", "keyvalue", "callout"],
+                ],
+                "text": ["type": "string"],
+                "symbol": ["type": "string"],
+                "body": ["type": "string"],
+                "badges": [
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": AgentBlocks.maxBadges,
+                    "items": objectSchema(
+                        properties: [
+                            "label": ["type": "string"],
+                            "value": ["type": "string"],
+                            "symbol": ["type": "string"],
+                        ],
+                        required: ["label", "value"]
+                    ),
+                ],
+                "title": ["type": "string"],
+                "rows": [
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": AgentBlocks.maxRows,
+                    "items": [
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": ["type": "string"],
+                    ],
+                ],
+                "tone": [
+                    "type": "string",
+                    "enum": AgentBlock.CalloutTone.allCases.map(\.rawValue),
+                ],
+            ],
+            required: ["type"]
+        )
+        schema["description"] = "Exactly one supported block shape; the executor enforces its type-specific required fields."
+        return schema
     }
 
     /// Shared `project_dir` property schema for the pipeline tools (optional — defaults to the open
@@ -1425,7 +1610,7 @@ enum ToolDefinitions {
         properties: [String: [String: Any]] = [:],
         required: [String] = []
     ) -> [String: Any] {
-        var dict: [String: Any] = ["type": "object"]
+        var dict: [String: Any] = ["type": "object", "additionalProperties": false]
         if !properties.isEmpty {
             dict["properties"] = properties
         }

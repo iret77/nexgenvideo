@@ -29,16 +29,17 @@ regenerates the Swift tokenizer golden tests.
 
 ## Hosting
 
-The build output (two encoder zips, tokenizer.zip, manifest.json) is uploaded to
-huggingface.co/palmier-io/siglip2-base-coreml.
+The build output (two encoder zips, `tokenizer.zip`, `manifest.json`) is published on
+the NexGenVideo GitHub release channel
+`model-siglip2-base-patch16-256-v1`.
 
 ## Download
 
-The app downloads the artifacts from the repo above on first use and verifies
-them against the sha256s pinned in SearchIndexConfig.swift, which is also where
-the URL lives.
+The app downloads the release artifacts on first use and verifies them against the
+SHA-256 values pinned in `SearchIndexConfig.swift`. That file is the authority for
+the runtime URL and checksums.
 
 ## License
 
 SigLIP 2 weights are Apache 2.0 (Google); our converted artifacts are
-redistributed under the same terms, with attribution in the HF model card.
+redistributed under the same terms, with attribution in `siglip2/MODEL_CARD.md`.

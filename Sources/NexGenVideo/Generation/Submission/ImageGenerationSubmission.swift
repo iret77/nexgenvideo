@@ -35,6 +35,7 @@ struct ImageGenerationSubmission {
         service: GenerationService,
         projectURL: URL?,
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) -> String {
@@ -51,6 +52,7 @@ struct ImageGenerationSubmission {
             fileExtension: "jpg",
             projectURL: projectURL,
             editor: editor,
+            authorization: authorization,
             onComplete: onComplete,
             onFailure: onFailure
         )

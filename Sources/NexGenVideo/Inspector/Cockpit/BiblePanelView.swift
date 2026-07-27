@@ -30,7 +30,7 @@ struct BiblePanelView: View {
     @State private var loadToken = 0
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -108,7 +108,7 @@ struct BiblePanelView: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: AppTheme.Radius.md)
                             .strokeBorder(
-                                isInspected ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium) : Color.clear,
+                                isInspected ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium) : AppTheme.Background.clearColor,
                                 lineWidth: AppTheme.BorderWidth.medium
                             )
                     )
@@ -157,9 +157,9 @@ struct BiblePanelView: View {
     private func keyValueRow(key: String, value: String) -> some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
             Text(key)
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: 76, alignment: .leading)
+                .frame(width: AppTheme.ComponentSize.cockpitLabelWidth, alignment: .leading)
             Text(value)
                 .font(.system(size: AppTheme.FontSize.sm))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -177,7 +177,7 @@ struct BiblePanelView: View {
                 .font(.system(size: AppTheme.FontSize.title1))
                 .foregroundStyle(AppTheme.Text.mutedColor)
             Text(title)
-                .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Text(message)
                 .font(.system(size: AppTheme.FontSize.sm))
@@ -272,13 +272,13 @@ struct BibleEntityCard: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
             Text(entity.name.isEmpty ? entity.id : entity.name)
-                .font(.system(size: AppTheme.FontSize.mdLg, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.mdLg, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(2)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
             Text(entity.id)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium).monospaced())
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .lineLimit(1)
         }
@@ -287,11 +287,11 @@ struct BibleEntityCard: View {
     private func traitRow(_ trait: String) -> some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.xs) {
             Image(systemName: "target")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Accent.timecodeColor)
                 .padding(.top, AppTheme.Spacing.xxs)
             Text(trait)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -312,7 +312,7 @@ struct BibleEntityCard: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 if let count {
                     Text("\(count) members")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
                 if !desc.isEmpty {
@@ -329,9 +329,9 @@ struct BibleEntityCard: View {
     private func attributeRow(key: String, value: String) -> some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
             Text(key)
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: 76, alignment: .leading)
+                .frame(width: AppTheme.ComponentSize.cockpitLabelWidth, alignment: .leading)
             Text(value)
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -359,7 +359,7 @@ struct BibleEntityCard: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             content()
@@ -389,7 +389,7 @@ struct SheetThumbnailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             ZStack {
-                Rectangle().fill(Color.black)
+                Rectangle().fill(AppTheme.Background.overlayColor)
                 if let image {
                     Image(nsImage: image)
                         .resizable()
@@ -405,10 +405,10 @@ struct SheetThumbnailView: View {
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
             .overlay(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .strokeBorder(Color.white.opacity(AppTheme.Opacity.faint), lineWidth: AppTheme.BorderWidth.hairline)
+                    .strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint), lineWidth: AppTheme.BorderWidth.hairline)
             )
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .lineLimit(1)
         }

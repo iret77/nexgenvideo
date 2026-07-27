@@ -5,6 +5,7 @@ import NexGenEngine
 // approve / set_state / rewind, save. No venv, no subprocess, no agent round-trip. Mirrors the
 // engine MCP's approve_gate / set_gate_state / rewind, using the same GatesOperations the Python
 // module functions wrap.
+@MainActor
 enum NativeGateWriter {
 
     enum WriteError: Error, Sendable, Equatable {
@@ -29,23 +30,49 @@ enum NativeGateWriter {
         if state == .approved || state == .approvedWithNotes {
             try enforceRequirement(projectDir: projectDir, phase: phase, declaredPack: declaredPack)
         }
+        let registry = try resolvedRegistry(
+            projectDir: projectDir,
+            declaredPack: declaredPack
+        )
+        let order = PhaseOrder.merged(
+            packPlacements: registry.phasePlacements
+        )
         try mutate(projectDir: projectDir) { gates in
-            GatesOperations.setState(&gates, phase: phase, state: state, notes: notes)
+            let current = order.first {
+                !gates.get($0).approved
+            }
+            guard gates.get(phase).approved || current == phase else {
+                throw GateBlocked(
+                    "Can't revise future phase \"\(phase)\" before reaching it."
+                )
+            }
+            try GatesOperations.setStateAndInvalidateDownstream(
+                &gates,
+                phase: phase,
+                state: state,
+                order: order,
+                notes: notes
+            )
         }
     }
 
     /// Enforce the same deterministic gate rules the agent tool path does — fail-closed pack wiring,
     /// approve in order (all predecessors approved), and the active pack's per-phase artifact
-    /// precondition (nil ⇒ approvable). `declaredPack` is the ground truth from the package.
+    /// precondition (nil ⇒ approvable). `declaredPack` is the trusted session declaration.
     private static func enforceRequirement(projectDir: URL, phase: String, declaredPack: String?) throws {
         guard let root = DataRootResolver.dataRoot(of: projectDir) else { throw WriteError.notInitialized }
-        let resolved = ProjectPluginSettings.activePlugin(projectURL: projectDir)
-        let registry = PackCatalog.registry(activePack: resolved)
+        let registry = try resolvedRegistry(
+            projectDir: projectDir,
+            declaredPack: declaredPack
+        )
         let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
         let gates = (try? YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile))
             ?? Gates(project: "")
-        // FAIL-CLOSED: a declared pack must be wired, or the manual panel can't approve anything either.
-        try GateGuard.requireWiredPack(declared: declaredPack, resolved: resolved, registry: registry)
+        try PipelinePhaseAccess.requireCurrentPhaseAndIntake(
+            phase,
+            dataRoot: root,
+            declaredPack: declaredPack
+        )
         try GateGuard.requirePriorApproved(gates, order: order, phase: phase)
         try GateGuard.checkApprovable(phase: phase, dataRoot: root, requirement: registry.gateRequirements[phase])
     }
@@ -54,12 +81,47 @@ enum NativeGateWriter {
     /// MCP `rewind`. The order is the merged pipeline (core + the active pack's phases at their
     /// declared placement, via `PhaseOrder.merged`) so a pack gate like `analysis` is rewindable and
     /// resets the correct downstream span.
-    static func rewind(projectDir: URL, targetPhase: String) throws {
-        let pack = ProjectPluginSettings.activePlugin(projectURL: projectDir)
-        let order = PhaseOrder.merged(packPlacements: PackCatalog.registry(activePack: pack).phasePlacements)
+    static func rewind(
+        projectDir: URL,
+        targetPhase: String,
+        declaredPack: String?
+    ) throws {
+        let registry = try resolvedRegistry(
+            projectDir: projectDir,
+            declaredPack: declaredPack
+        )
+        let order = PhaseOrder.merged(
+            packPlacements: registry.phasePlacements
+        )
         try mutate(projectDir: projectDir) { gates in
             _ = try GatesOperations.rewindTo(&gates, target: targetPhase, order: order)
         }
+    }
+
+    private static func resolvedRegistry(
+        projectDir: URL,
+        declaredPack: String?
+    ) throws -> EngineRegistry {
+        let resolved: String?
+        do {
+            resolved = try ProjectPluginSettings.resolvedPlugin(
+                projectURL: projectDir,
+                declaredPack: declaredPack
+            )
+        } catch {
+            throw WriteError.failed(error.localizedDescription)
+        }
+        let registry = PackCatalog.registry(activePack: resolved)
+        do {
+            try GateGuard.requireWiredPack(
+                declared: declaredPack,
+                resolved: resolved,
+                registry: registry
+            )
+        } catch let blocked as GateBlocked {
+            throw WriteError.failed(blocked.message)
+        }
+        return registry
     }
 
     /// Load → mutate → save gates.yaml at the project's data root.

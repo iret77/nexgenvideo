@@ -9,7 +9,7 @@ struct UpdateOverlay: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                Color.black.opacity(AppTheme.Opacity.strong)
+                AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.strong)
                     .ignoresSafeArea()
                 card
                     .frame(width: AppTheme.ComponentSize.updateOverlayWidth)
@@ -23,7 +23,7 @@ struct UpdateOverlay: View {
     private var card: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             Text("What's New in v\(entry.version)")
-                .font(.system(size: AppTheme.FontSize.title2, weight: .light))
+                .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
                 .tracking(AppTheme.Tracking.tight)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .fixedSize(horizontal: false, vertical: true)
@@ -76,7 +76,7 @@ struct UpdateOverlay: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             if let heading = section.heading, !heading.isEmpty {
                 Text(heading)
-                    .font(.system(size: AppTheme.FontSize.xl, weight: .light))
+                    .font(.system(size: AppTheme.FontSize.xl, weight: AppTheme.FontWeight.light))
                     .tracking(AppTheme.Tracking.tight)
                     .foregroundStyle(AppTheme.Text.primaryColor)
             }

@@ -9,6 +9,7 @@ import SwiftUI
 /// breadcrumb — three roles, three kinds of chrome (docs/UI_UX_CONCEPT.md §3).
 struct TitleBarView: View {
     @Environment(EditorViewModel.self) private var editor
+    @Bindable private var packUpdates = PluginUpdateCenter.shared
     @State private var showsPluginPicker = false
 
     var body: some View {
@@ -24,10 +25,10 @@ struct TitleBarView: View {
         .sheet(isPresented: $showsPluginPicker) {
             PluginPickerView(editor: editor)
         }
-        .padding(.leading, Layout.trafficLightInset)
+        .padding(.leading, AppTheme.Layout.trafficLightInset)
         .padding(.horizontal, AppTheme.Spacing.lg)
         .frame(maxWidth: .infinity)
-        .frame(height: Layout.titleBarChromeHeight)
+        .frame(height: AppTheme.Layout.titleBarChromeHeight)
         .background(
             // Double-click the bare titlebar to zoom the window (macOS convention). It's a
             // background layer, so the buttons on top take their clicks first — only empty
@@ -62,11 +63,11 @@ struct TitleBarView: View {
     private var projectName: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Text("NexGenVideo")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .regular))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.regular))
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .fixedSize()
             Text(editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -91,7 +92,7 @@ struct TitleBarView: View {
                         .padding(.vertical, AppTheme.Spacing.xxs)
                         .background {
                             RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                                .fill(selected ? AppTheme.Background.surfaceColor : Color.clear)
+                                .fill(selected ? AppTheme.Background.surfaceColor : AppTheme.Background.clearColor)
                         }
                         .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.xs))
                 }
@@ -110,13 +111,40 @@ struct TitleBarView: View {
     /// artifacts (phases/bible/shotlist are format-specific). Generic counts as a started workflow too
     /// once its pipeline exists. Single source of truth: the same gate `setActivePlugin` enforces.
     private var formatLocked: Bool { !editor.canChangeFormat }
+    private var activeProjectBinding: ProjectPackBinding? {
+        guard case .bound(let binding) = ProjectPluginSettings.bindingResolution(
+            projectURL: editor.workingRoot
+        ) else { return nil }
+        return binding
+    }
+    private var activePackAttention: PluginUpdateCenter.Attention? {
+        packUpdates.attention(for: activeProjectBinding)
+    }
 
     /// The Format control. Before production starts it's a tappable picker (choose/change the format —
     /// generic ⇄ pack — safe, no artifacts yet). Once production starts it becomes a plain STATUS pill
     /// (no chevron, not tappable): the workspace shows the running format, but you can't switch it.
     @ViewBuilder
     private var pluginChip: some View {
-        if formatLocked {
+        if formatLocked,
+           activePackAttention != nil,
+           editor.activePluginName != nil {
+            Button {
+                if activePackAttention == .restartRequired {
+                    AppState.shared.upgradeActiveProjectPack()
+                } else {
+                    SettingsWindowController.shared.show(tab: .plugins)
+                }
+            } label: {
+                chipBody(interactive: false)
+            }
+            .buttonStyle(.plain)
+            .help(
+                activePackAttention == .restartRequired
+                    ? "Upgrade this project to the installed format-pack update."
+                    : "Open Format Packs to install the available update."
+            )
+        } else if formatLocked {
             chipBody(interactive: false)
                 .help("Format is set for this project. It's chosen at the start — changing it mid-workflow would strand the pipeline.")
         } else {
@@ -135,18 +163,27 @@ struct TitleBarView: View {
                 .font(.system(size: AppTheme.FontSize.sm))
                 .foregroundStyle(active ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor)
             Text("Format")
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .fixedSize()
             Text(activePluginLabel)
-                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(active ? AppTheme.Accent.primary : AppTheme.Text.secondaryColor)
                 .lineLimit(1)
             // Chevron only when it's actually a picker; the locked status pill carries no affordance.
             if interactive {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.mutedColor)
+            }
+            if let attention = activePackAttention {
+                Image(systemName: attention == .restartRequired
+                      ? "exclamationmark.circle.fill"
+                      : "arrow.clockwise.circle")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(attention == .restartRequired
+                                     ? AppTheme.Status.warningColor
+                                     : AppTheme.Accent.primary)
             }
         }
         .padding(.horizontal, AppTheme.Spacing.smMd)
@@ -154,12 +191,12 @@ struct TitleBarView: View {
         .background(
             Capsule().fill(active
                            ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
-                           : Color.white.opacity(AppTheme.Opacity.subtle))
+                           : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
         )
         .overlay(
             Capsule().strokeBorder(active
                                    ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.moderate)
-                                   : Color.white.opacity(AppTheme.Opacity.faint),
+                                   : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint),
                                    lineWidth: AppTheme.BorderWidth.hairline)
         )
         .contentShape(Capsule())
@@ -181,12 +218,12 @@ struct TitleBarView: View {
                         .font(.system(size: AppTheme.FontSize.xs))
                         .foregroundStyle(state.isComplete ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor)
                     Text(healthText(state))
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                     if state.budgetEur > 0 {
                         Text(String(format: "€%.0f/%.0f", state.budgetSpentEur, state.budgetEur))
-                            .font(.system(size: AppTheme.FontSize.xs, weight: .medium).monospacedDigit())
+                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium).monospacedDigit())
                             .foregroundStyle(state.budgetWarning ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                     }
                 }

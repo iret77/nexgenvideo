@@ -67,4 +67,25 @@ struct CopyFilesUniquelyTests {
         #expect(read(a.appendingPathComponent("ref.jpg")) == "A")             // sources untouched (copy)
         #expect(read(b.appendingPathComponent("ref.jpg")) == "B")
     }
+
+    @Test("rolls back earlier copies when a later source fails")
+    func rollsBackBatch() throws {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent("copy-rollback-\(UUID().uuidString)", isDirectory: true)
+        let source = tmp.appendingPathComponent("source", isDirectory: true)
+        let dest = tmp.appendingPathComponent("dest", isDirectory: true)
+        defer { try? fm.removeItem(at: tmp) }
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+        let valid = source.appendingPathComponent("valid.jpg")
+        try Data("valid".utf8).write(to: valid)
+
+        #expect(throws: (any Error).self) {
+            try AgentService.copyFilesUniquely(
+                [valid, source.appendingPathComponent("missing.jpg")],
+                into: dest
+            )
+        }
+        #expect((try fm.contentsOfDirectory(atPath: dest.path)).isEmpty)
+    }
 }

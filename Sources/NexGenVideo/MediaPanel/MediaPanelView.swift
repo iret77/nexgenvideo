@@ -9,7 +9,7 @@ struct MediaPanelView: View {
 
     var body: some View {
         @Bindable var editor = editor
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             SegmentedTabBar(
                 titles: EditorViewModel.MediaPanelTab.allCases.map(\.rawValue),
                 selected: editor.mediaPanelTab.rawValue
@@ -25,7 +25,7 @@ struct MediaPanelView: View {
                 case .music: MusicTab()
                 }
             }
-            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(minWidth: AppTheme.Spacing.none, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()
         }
     }

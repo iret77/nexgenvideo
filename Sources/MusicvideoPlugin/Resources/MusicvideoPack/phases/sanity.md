@@ -19,7 +19,8 @@ route the result through the gate.
   `get_project_state(project_dir)`).
 - `brief.yaml`
 - The bible (via `get_bible(project_dir)`)
-- `shotlist/current.yaml`
+- The latest versioned shot list via
+  `show_artifact(project_dir, "shotlist")`
 - `analysis/<song>.json` (for the alignment-presence check)
 
 (Project paths are relative to the project data root.)
@@ -31,7 +32,8 @@ route the result through the gate.
   AND every active-pack check.
 - Gate routing:
   - With `error`-level findings: refuse the gate. Output the list, route
-    back to the shotlist / bible / analysis phase.
+    back with `rewind(target_phase="<owning phase>")`, repair through
+    that phase's canonical writer, and re-approve the dependent chain.
   - With only `warning`-level findings + user OK:
     `approve_gate(project_dir, "sanity", notes="warns accepted: ...")`.
   - Clean: `approve_gate(project_dir, "sanity")` directly after a short
@@ -50,7 +52,8 @@ the gate state via `get_project_state(project_dir)`:
 - If the `sanity` gate is already approved → summarize the last run
   compactly and ask exactly one `show_dialog`: "Sanity is already
   approved. Re-audit (the shotlist has changed since), or continue to
-  the frame phase?" On `re-audit` → run `run_sanity` again.
+  the frame phase?" On `re-audit` → run `run_sanity` again; the persisted
+  mutation intentionally reopens Sanity and every downstream gate.
 - Otherwise → normal flow.
 
 Errors always block — also on resume. For warnings the user must confirm
@@ -60,9 +63,9 @@ explicitly every time; no implicit carry-over.
 
 1. Call `run_sanity(project_dir)`. It returns
    `{project, findings:[{level, code, shot_id, message}]}`. If the
-   project has no shotlist yet it returns `{"error": "no shotlist",
-   ...}` — abort with a clear notice (the shotlist gate should never be
-   open without one, so this means something upstream went wrong).
+   project has no shotlist, the tool fails with an actionable error —
+   abort (the shotlist gate should never be open without one, so this
+   means something upstream went wrong).
 2. **Additional analysis-quality checks** (read `analysis/<song>.json`
    and supplement the engine findings — these are surfaced to the user,
    not written into the engine report):
@@ -104,8 +107,9 @@ Present the findings as a table (level / code / shot_id / message).
 
 ### 4. Gate
 
-- With `error`-level findings: refuse the gate. Output the list, route
-  back to the shotlist / bible / analysis phase.
+- With `error`-level findings: refuse the gate. Output the list, call
+  `rewind(target_phase="<owning phase>")`, repair through its canonical
+  writer, and re-approve the dependent chain.
 - With only `warning`-level findings + user OK:
   `approve_gate(project_dir, "sanity", notes="warns accepted: ...")`.
 - Clean: `approve_gate(project_dir, "sanity")` directly after a short
@@ -141,8 +145,9 @@ instead of attempting a render.
 ## Failure modes & escalation
 
 - **Report contains errors:** the gate stays closed. Output the error
-  list and route back to the shotlist / bible / analysis phase; rerun
-  `run_sanity` after the fix.
+  list, call `rewind(target_phase="<owning phase>")`, repair through its
+  canonical writer, and rerun `run_sanity` after re-approving the
+  dependent chain.
 - **`REF_BUDGET_EXCEEDED` for the pilot shot:** the shot shares too many
   bible anchors — escalate to a storyboard adjustment instead of
   attempting a render.

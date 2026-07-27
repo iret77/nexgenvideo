@@ -57,6 +57,8 @@ musicvideo.ngvpack/
 | `NGVPackHeadline` | bold one-line card pitch (optional; card falls back to tagline) |
 | `NGVPackBenefit` | short benefit line under the headline (optional) |
 | `CFBundleShortVersionString` | the pack's own version |
+| `NGVProjectSchema` | project-data contract written by this pack (`<id>/<semver>`) |
+| `NGVMigratesFrom` | project schemas this build can migrate transactionally |
 | `NGVMinAppVersion` | minimum NexGenVideo marketing version required |
 | `NGVEngineContract` | integer — the host↔pack binary contract the pack was BUILT against |
 | `NSPrincipalClass` | the `PackEntry` subclass' ObjC runtime name (entry point) |
@@ -71,9 +73,8 @@ would always pass.
 
 **Bump `EngineContract.current` whenever anything crossing the binary boundary changes
 shape** — a `Pack` protocol requirement, a type in its signatures, `PackEntry`. A pack
-built against the old value has no witness-table entry for a requirement added since;
-dispatching into it jumps to address 0x0 and kills the app (this is exactly how adding
-`Pack.starters(for:)` crashed `PackCatalog.registry(activePack:)` on project open).
+built against a contract below `minimumCompatible` has no safe ABI guarantee and is
+refused. Additive changes may retain the previous floor; incompatible changes raise it.
 
 The bundle is assembled and signed by `scripts/assemble_ngvpack.sh` from
 `plugins/<id>.json` (the pack's shipping metadata) and the SwiftPM build products
@@ -121,10 +122,14 @@ multiple packs never collide on a global symbol (as a `@_cdecl`/`dlsym` factory 
    `NGVMinAppVersion` reads as **incompatible**, never silently as compatible. Only a
    dev/CI *host* with no marketing version at all is treated as always-compatible
    (logged) — that leniency never extends to a malformed pack version.
-4. **Engine contract** — `NGVEngineContract == EngineContract.current`. Absent or not a
-   plist integer reads as `0` (pre-contract) and is refused; there is no leniency on this
-   axis, not even for a dev host. Read from the plist alone, so a pack that fails is never
-   mapped in and never dispatched into.
+4. **Engine contract** —
+   `EngineContract.minimumCompatible ... EngineContract.current` must contain
+   `NGVEngineContract`. Absent or not a plist integer reads as `0` (pre-contract) and is
+   refused; there is no leniency on this axis, not even for a dev host. Compatibility is
+   intentionally asymmetric: a newer host may accept an older pack only while its changes
+   were additive and the explicit floor remains old; an older host still rejects a newer
+   pack. Any incompatible host change raises both current and the floor. The gate reads
+   from the plist alone, so a refused pack is never mapped in or dispatched into.
 5. **Code signature — trust-chain, not self-DR.** The pack is validated against a real
    `SecRequirement`, not merely `SecStaticCodeCheckValidity(code, [], nil)` (a
    self-signed bundle satisfies its OWN designated requirement, so a bare validity
@@ -148,8 +153,8 @@ Incompatible / unsigned packs become a picker row with a calm reason (e.g.
 ## Catalog, install, activation
 
 - **Catalog** — `catalog.json`, an asset on the dedicated **`plugins` channel release**, lists
-  packs `{id, displayName, tagline, headline?, benefit?, version, minAppVersion, url,
-  sha256, badge?}`. The picker (`PluginPickerView`) fetches it; a fetch failure is a
+  packs `{id, displayName, tagline, headline?, benefit?, version, projectSchema,
+  migratesFrom, minAppVersion, url, sha256, badge?}`. The picker (`PluginPickerView`) fetches it; a fetch failure is a
   calm offline state (installed packs keep working). One primary action, `Activate`:
   for a catalog pack it downloads (a hidden step) then binds; there is no separate
   "Install" action.
@@ -162,34 +167,63 @@ Incompatible / unsigned packs become a picker row with a calm reason (e.g.
   is delete+recreated per push and carries the app DMG only — serving the catalog from
   there is what let a released pack fix never reach users (the 0.7.7 "Damaged pack"
   incident, #168).
-- **Install (staged + atomic)** — the pack `url` (and the catalog URL) **must be
+- **Install (staged + atomic, versions coexist)** — the pack `url` (and the catalog URL) **must be
   https**; a non-https or malformed URL is refused with an actionable error and no
   download. The download is checksum-verified (`sha256`), unpacked into a temp dir, and
   run through **every non-executing gate there** (metadata, `NGVMinAppVersion`, code
   signature). Only once all pass is the validated bundle **atomically swapped** into
-  `~/Library/Application Support/NexGenVideo/Plugins/<id>.ngvpack`; the prior install is
-  kept until then, so a bad bundle can never overwrite a working one. Any failure leaves
-  the previous install intact.
+  `~/Library/Application Support/NexGenVideo/Plugins/<id>/<version>.ngvpack`.
+  Installed versions are immutable and coexist; a validated update never overwrites or
+  removes the version pinned by an existing project. Legacy flat
+  `Plugins/<id>.ngvpack` installs remain readable as their declared version.
 - **Update needs a restart.** A dylib already loaded this session can't be safely
   unloaded — its bundle path + principal class keep resolving to the resident (old)
   code. So updating an already-loaded pack installs the new bundle to disk but does
   **not** claim it's live: the record is marked *update-pending-restart* and the picker
   shows "Update installed — restart NexGenVideo to use it" rather than a false "active
   new version". First-time installs of a not-yet-loaded id load live immediately.
-- **Startup** — `PluginLoader.loadInstalled()` (in `main.swift`, before the UI) loads
-  every installed pack from disk.
+- **Startup selection** — only one dylib version per pack id may be resident in a
+  process. `PluginLoader` loads the explicitly requested version for the next launch;
+  otherwise it loads the newest installed compatible version. A version that failed at
+  runtime load is excluded until a verified reinstall replaces it, so a usable older
+  version remains available instead of entering a restart loop. Loading a different
+  version after one is resident is refused and requires a restart.
 - **Activation** — exactly one active pack per project (or none = the generic
-  workflow), persisted as `activePlugin` in `<project>/ngv.json`. The active pack's
+  workflow), persisted in `<project>/ngv.json` as `activePlugin`,
+  `activePluginVersion`, and `activePluginProjectSchema`. The active pack's
   `name` threads into the engine paths that consume it: `run_sanity` adds its checks,
   `get_ui_contract` overlays its entries, `init_project` creates its extra dirs, and
   the agent context line names it.
-- **Opening a project gates on its pack.** Before the document is loaded, `AppState`
-  reads `activePlugin` from `ngv.json` and checks it is actually live (`ProjectPackGate`).
+- **Opening a project gates on its exact binding.** Before the document is loaded,
+  `AppState` reads all three binding fields and checks that exact version/schema is
+  installed and live (`ProjectPackGate`).
   If it isn't, the project **does not open**: an alert offers to install it (missing),
   update it (installed but gate-blocked), or relaunch (staged update). Declining leaves
   the project closed. Opening it degraded would come up on the generic phase set with the
   pack's analysis and gates off — and a save would normalize the project to that shape.
   A project arriving from another machine, or a fresh install, is the normal case here.
+  A legacy id-only project opens with the currently live legacy version and pins that
+  exact binding in its Recovery copy. If no legacy-schema version is available, opening
+  requires explicit approval of a target that declares a migration from `<id>/legacy`.
+  In both cases the package remains untouched until Save.
+- **New-project freshness is a hard gate.** Catalog checking and update staging finish
+  before a selected format project is created. If newer code is already on disk while
+  an older dylib is resident, the Home window and title bar show restart-required state
+  and creation is blocked until restart. The host never creates a project bound to the
+  stale resident version merely because its update arrived after startup.
+- **Project upgrades are explicit and transactional.** An installed pack version never
+  changes an existing project's binding. The user chooses Upgrade; the host verifies
+  both the target bundle's `NGVMigratesFrom` declaration and the loaded pack's matching
+  `registerProjectSchemaMigration(from:to:)` implementation when the project schema
+  changes. A version-only upgrade with the same schema needs no data migration. The host
+  restarts into the target version and applies the upgrade to a staged Recovery-copy
+  clone. The staged directory replaces the working copy only after migration, binding
+  write, and host validation succeed. Failure discards the staging directory. The saved
+  `.ngv` package is the rollback source and changes only on the next Save. The pending
+  upgrade record remains until that Save, so a crash can reopen the migrated Recovery
+  copy; closing without saving cancels the upgrade and restores the source-version pin.
+  `musicvideo/legacy → musicvideo/1.0.0` is intentionally data-identical: legacy describes
+  the same artifacts before binding metadata existed, so the host changes only `ngv.json`.
 
 ## The `Pack` protocol
 
@@ -213,6 +247,8 @@ public protocol Pack: Sendable {
 - `registerUIContract(phase:surface:taskClass:)` — override a phase's default interaction surface / router task class.
 - `registerPhase(_ name:runner:)` — workflow phase runners the pack contributes.
 - `registerLibrary(_ name:_ library:)` — domain reference data.
+- `registerProjectSchemaMigration(from:to:migrate:)` — exact, pack-owned project
+  migration executed only through the host's transactional upgrade coordinator.
 
 ## Knowledge resources
 

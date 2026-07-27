@@ -5,9 +5,7 @@ import MusicvideoPlugin
 
 @testable import NexGenVideo
 
-/// The starter chip must speak to the project the user actually has open. Reopening a half-finished
-/// project and being offered only "Start the music video" — whose prompt says "begin by asking me for
-/// the track" — sends the agent back to the beginning of a pipeline that is already two phases in.
+/// The starter chip must speak to the project the user actually has open.
 @Suite("pack starters follow project progress")
 struct PackStarterProgressTests {
 
@@ -18,6 +16,13 @@ struct PackStarterProgressTests {
         let starters = pack.starters(for: .untouched)
         #expect(starters.first?.id == "start")
         #expect(starters.first?.title == "Start the music video")
+        #expect(starters.first?.prompt.contains("host initialized") == true)
+        #expect(starters.first?.prompt.contains("Track plus optional Lyrics") == true)
+        #expect(starters.first?.prompt.contains("# Phase K0 — Project Init") == true)
+        #expect(starters.first?.prompt.contains(
+            "Do not ask for or develop a story before Audio Analysis is approved."
+        ) == true)
+        #expect(starters.first?.prompt.lowercased().contains("asking me for the track") == false)
     }
 
     @Test("a project with approved phases is offered CONTINUE, naming the next phase")
@@ -28,9 +33,14 @@ struct PackStarterProgressTests {
 
         #expect(starter.id == "continue")
         #expect(starter.title.contains("Brief"))
+        let prompt = starter.prompt
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
         // The prompt must not restart the pipeline or re-request the song.
-        #expect(!starter.prompt.lowercased().contains("ask me for the track"))
-        #expect(starter.prompt.contains("Brief"))
+        #expect(!prompt.lowercased().contains("ask me for the track"))
+        #expect(prompt.contains("Brief"))
+        #expect(prompt.contains("# Phase K1 — Brief"))
+        #expect(prompt.contains("If it is absent, this is greenfield"))
     }
 
     @Test("the phase in the chip is the pack's own wording, not the raw key")

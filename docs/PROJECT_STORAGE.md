@@ -21,6 +21,7 @@ survives a crash. Modeled on Final Cut Pro (self-contained library) and ACE Stud
 |------|----------|
 | A project (timeline, media, chat, thumbnail, generation-log, **and** the engine data root: bible, treatment, storyboard, shotlist, frames, renders, import, `project.yaml`, `gates.yaml`, + active pack dirs) | inside the `.ngv` package |
 | Registry of known projects (`project-registry.json`), app-global config | `~/Library/Application Support/NexGenVideo/` |
+| Installed format-pack versions | `~/Library/Application Support/NexGenVideo/Plugins/<id>/<version>.ngvpack` |
 | Render scratch, decode caches, preview proxies, in-flight generation staging, thumbnails/waveforms | `~/Library/Caches/NexGenVideo/…` and `NSTemporaryDirectory()` |
 | Live working copy of the open project (unsaved work) | Recovery store: `~/Library/Application Support/NexGenVideo/Recovery/<projectId>/` |
 
@@ -91,3 +92,24 @@ until ⌘S — a migration the user never saves is discarded with the copy.
 - **Never migrates down.** A project written by a NEWER engine is a hard stop
   (`projectAheadOfEngine`); the file is left alone rather than stripped of fields this build
   doesn't know.
+
+### Format-pack binding and schema
+
+`ngv.json` pins `activePlugin`, `activePluginVersion`, and
+`activePluginProjectSchema`. Updating the global pack library does not change an
+existing project. Old and new pack versions remain installed in parallel, and open/save
+fail closed unless the exact project binding is live.
+
+An id-only legacy project is pinned to the live legacy-schema version in its Recovery
+copy. If only a newer schema is installed, the user must explicitly approve its declared
+legacy migration.
+A cross-schema pack upgrade requires an explicit user action and a migration declared in
+both bundle metadata and the loaded pack runtime; a version-only upgrade on the same
+schema updates only the binding. The host copies the complete Recovery working copy to a
+transaction directory, runs the pack migration, writes the new binding, validates the
+host-owned project files, and atomically replaces the working copy only when every step
+succeeds. The source `.ngv` is the rollback source and stays byte-for-byte untouched
+until Save. Upgrade intent remains durable until Save; a crash resumes the target
+Recovery copy, while closing without saving cancels the upgrade.
+The first Music Video schema adoption is a binding-only restamp: `musicvideo/legacy`
+and `musicvideo/1.0.0` own identical pack artifacts.

@@ -33,7 +33,9 @@ struct PluginPickerModelTests {
     ) -> InstalledPluginRecord {
         InstalledPluginRecord(
             id: id, displayName: "Music Video Studio", tagline: "structured",
-            headline: headline, benefit: benefit, version: version, minAppVersion: "0.1.0",
+            headline: headline, benefit: benefit, version: version,
+            projectSchema: "\(id)/legacy", migratesFrom: [],
+            minAppVersion: "0.1.0",
             bundleURL: URL(fileURLWithPath: "/tmp/\(id).ngvpack"), state: state)
     }
 
@@ -74,6 +76,18 @@ struct PluginPickerModelTests {
 
     private func status(of rows: [PluginRow], id: String) -> PluginRow.Status? {
         rows.first { $0.id == id }?.status
+    }
+
+    private func row(id: String, status: PluginRow.Status) -> PluginRow {
+        PluginRow(
+            id: id,
+            displayName: id,
+            tagline: nil,
+            headline: nil,
+            benefit: nil,
+            badgeURL: nil,
+            status: status
+        )
     }
 
     /// A compatible catalog pack that isn't installed → the single primary `Activate`.
@@ -157,6 +171,28 @@ struct PluginPickerModelTests {
         guard case .updatePendingRestart = status(of: rows, id: "musicvideo") else {
             Issue.record("expected .updatePendingRestart"); return
         }
+    }
+
+    @Test func settingsAttentionShowsAvailableUpdate() {
+        let rows = [
+            row(id: "musicvideo", status: .installed(active: false, update: entry(version: "0.0.2"))),
+        ]
+        #expect(PluginSettingsAttention.resolve(rows) == .updateAvailable)
+    }
+
+    @Test func settingsAttentionPrioritizesRestart() {
+        let rows = [
+            row(id: "musicvideo", status: .installed(active: false, update: entry(version: "0.0.2"))),
+            row(id: "documentary", status: .updatePendingRestart),
+        ]
+        #expect(PluginSettingsAttention.resolve(rows) == .restartRequired)
+    }
+
+    @Test func settingsAttentionIgnoresUninstalledCatalogPacks() {
+        let rows = [
+            row(id: "musicvideo", status: .available(entry())),
+        ]
+        #expect(PluginSettingsAttention.resolve(rows) == nil)
     }
 
     /// buildRows carries headline/benefit onto the row so the card can show the real pitch.

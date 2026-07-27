@@ -198,14 +198,7 @@ public struct AslRange: Codable, Sendable, Equatable {
     }
 }
 
-/// Director pattern: a positive compose backbone for the shotlist. Port of
-/// `patterns_schema.py::Pattern`.
-///
-/// The unshipped integer `triggers` scorer was removed in the pattern-fit
-/// cutover (`docs/PATTERN_FIT_CONTRACT.md`). Recommendation now runs off the
-/// mandatory `fit_profile` block via `PatternFitScorer`; the fields below stay
-/// as the compose backbone (`framing_mix`, `asl_range`, camera vocabulary,
-/// lighting signature, section arc) that the storyboard and PATTERN_DRIFT read.
+/// Director-pattern backbone for shot composition and deterministic fit recommendations.
 public struct Pattern: Codable, Sendable, Equatable {
     /// Slug id, e.g. "narrative-folk-static-long-takes".
     public var id: String
@@ -213,9 +206,7 @@ public struct Pattern: Codable, Sendable, Equatable {
     public var name: String
     /// 1-3 sentences describing what distinguishes this pattern (for user display).
     public var description: String
-    /// The mandatory Pattern-fit block, or nil until it is authored. A nil or
-    /// invalid profile keeps the pattern out of recommendations (fail-closed);
-    /// the compose/style path via `get`/`PATTERN_DRIFT` still works without it.
+    /// Optional while unauthored; only present, valid profiles are recommendable.
     public var fitProfile: PatternFitProfile?
     /// Verifiable references with sources — at least one.
     public var references: [PatternReference]

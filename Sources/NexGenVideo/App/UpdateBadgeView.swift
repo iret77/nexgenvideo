@@ -5,12 +5,12 @@ struct UpdateBadgeView: View {
 
     var body: some View {
         if updater.updateAvailable {
-            HStack(spacing: 0) {
+            HStack(spacing: AppTheme.Spacing.none) {
                 Button {
                     updater.checkForUpdates(nil)
                 } label: {
                     Text(badgeLabel)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(AppTheme.Text.primaryColor)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
@@ -26,7 +26,7 @@ struct UpdateBadgeView: View {
                     updater.dismissUpdate()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: .bold))
+                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.bold))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .padding(.leading, AppTheme.Spacing.xxs)
                         .padding(.trailing, AppTheme.Spacing.xs)

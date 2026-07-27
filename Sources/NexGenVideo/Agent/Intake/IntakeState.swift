@@ -7,7 +7,7 @@ import NexGenEngine
 enum IntakeSatisfaction {
 
     /// Loose style references live directly in `import/` (subdirs are identity anchors).
-    static let styleReferenceExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "avif", "heic", "heif", "gif", "tiff"]
+    static let styleReferenceExtensions = ProjectMediaExtensions.images
 
     static func isSatisfied(_ kind: HardStep.Kind, dataRoot: URL) -> Bool {
         fingerprint(kind, dataRoot: dataRoot) > 0
@@ -72,10 +72,18 @@ struct IntakeLedger: Equatable, Sendable {
 
     static let filename = "intake.json"
     private static let schema = "intake/1.0"
+    private static let migratedStepIDs = [
+        "project_init.script": "brief.script",
+        "project_init.characters": "brief.characters",
+        "project_init.locations": "brief.locations",
+        "project_init.style": "brief.style",
+    ]
 
     private(set) var declined: Set<String>
 
-    init(declined: Set<String> = []) { self.declined = declined }
+    init(declined: Set<String> = []) {
+        self.declined = Set(declined.map { Self.migratedStepIDs[$0] ?? $0 })
+    }
 
     func isDeclined(_ stepId: String) -> Bool { declined.contains(stepId) }
 
@@ -93,20 +101,26 @@ struct IntakeLedger: Equatable, Sendable {
     /// Records a turned-down step. A REQUIRED step is never recordable — taking the step itself rather
     /// than its id makes "required steps can't be declined" structural instead of a caller's duty.
     @discardableResult
-    static func recordDecline(_ step: HardStep, dataRoot: URL) -> IntakeLedger {
+    static func recordDecline(
+        _ step: HardStep,
+        dataRoot: URL
+    ) throws -> IntakeLedger {
         var ledger = load(dataRoot: dataRoot)
         guard !step.required else { return ledger }
         ledger.declined.insert(step.id)
-        ledger.save(dataRoot: dataRoot)
+        try ledger.save(dataRoot: dataRoot)
         return ledger
     }
 
-    func save(dataRoot: URL) {
+    func save(dataRoot: URL) throws {
         let file = File(schema: Self.schema, declined: declined.sorted())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(file) else { return }
-        try? data.write(to: Self.url(dataRoot: dataRoot), options: .atomic)
+        let data = try encoder.encode(file)
+        try data.write(
+            to: Self.url(dataRoot: dataRoot),
+            options: .atomic
+        )
     }
 
     private struct File: Codable {

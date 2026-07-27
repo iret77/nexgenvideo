@@ -9,25 +9,25 @@ extension InspectorView {
         let kfVisible = single != nil && editor.keyframesPanelVisible
 
         if let clip = single, kfVisible {
-            HStack(alignment: .top, spacing: 0) {
+            HStack(alignment: .top, spacing: AppTheme.Spacing.none) {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
                     // Match the kf panel's ruler+strip header height so Volume aligns with its lane.
                     sectionTitleLabel(title: "Levels")
-                        .frame(height: KeyframesMetrics.headerHeight, alignment: .bottomLeading)
+                        .frame(height: AppTheme.Timeline.keyframeHeaderHeight, alignment: .bottomLeading)
                     volumeRow(audios: audios)
                     fadeRow(label: "Fade In", clips: audios, edge: .left)
-                        .padding(.trailing, KeyframesMetrics.controlsColumnWidth + AppTheme.Spacing.sm)
+                        .padding(.trailing, AppTheme.Timeline.keyframeControlsColumnWidth + AppTheme.Spacing.sm)
                     fadeRow(label: "Fade Out", clips: audios, edge: .right)
-                        .padding(.trailing, KeyframesMetrics.controlsColumnWidth + AppTheme.Spacing.sm)
+                        .padding(.trailing, AppTheme.Timeline.keyframeControlsColumnWidth + AppTheme.Spacing.sm)
                     if nonTextVisualClips.isEmpty {
                         speedSection(clips: audios)
-                            .padding(.trailing, KeyframesMetrics.controlsColumnWidth + AppTheme.Spacing.sm)
+                            .padding(.trailing, AppTheme.Timeline.keyframeControlsColumnWidth + AppTheme.Spacing.sm)
                             .padding(.top, AppTheme.Spacing.md)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.trailing, AppTheme.Spacing.sm)
-                Divider()
+                AppDivider()
                 KeyframesPanel(clip: clip)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, AppTheme.Spacing.sm)
@@ -101,6 +101,6 @@ extension InspectorView {
                 }
             }
         }
-        .frame(height: KeyframesMetrics.rowHeight)
+        .frame(height: AppTheme.Timeline.keyframeRowHeight)
     }
 }

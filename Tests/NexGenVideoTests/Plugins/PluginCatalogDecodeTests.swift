@@ -30,9 +30,23 @@ struct PluginCatalogDecodeTests {
         #expect(entry.id == "musicvideo")
         #expect(entry.displayName == "Music Video Studio")
         #expect(entry.version == "0.0.1")
+        #expect(entry.projectSchema == "musicvideo/legacy")
+        #expect(entry.migratesFrom.isEmpty)
         #expect(entry.minAppVersion == "0.1.0")
         #expect(entry.sha256 == "abc123")
         #expect(entry.url.lastPathComponent == "musicvideo-0.0.1.ngvpack.zip")
+    }
+
+    @Test func decodesProjectSchemaAndMigrationContract() throws {
+        let catalog = try PluginCatalogService.decode("""
+        {"plugins":[{"id":"musicvideo","displayName":"MV","tagline":"t","version":"0.0.6",
+          "projectSchema":"musicvideo/2.0.0",
+          "migratesFrom":["musicvideo/legacy","musicvideo/1.0.0"],
+          "minAppVersion":"1.0.0","url":"https://ex.com/mv.ngvpack.zip","sha256":"abc"}]}
+        """.data(using: .utf8)!)
+        let entry = try #require(catalog.plugins.first)
+        #expect(entry.projectSchema == "musicvideo/2.0.0")
+        #expect(entry.migratesFrom == ["musicvideo/legacy", "musicvideo/1.0.0"])
     }
 
     /// #168: the app must read the STABLE `plugins` channel. `dev-latest` is delete+recreated on
@@ -43,6 +57,24 @@ struct PluginCatalogDecodeTests {
         #expect(url.scheme == "https")
         #expect(!url.absoluteString.contains("dev-latest"))
         #expect(url.absoluteString.hasSuffix("/releases/download/plugins/catalog.json"))
+    }
+
+    @Test func signedBundleCanSelectAnIsolatedPreviewCatalog() {
+        let preview = PluginCatalogService.resolvedCatalogURL(
+            configuredValue: "https://github.com/iret77/nexgenvideo/releases/download/preview-123/catalog.json"
+        )
+        #expect(preview.absoluteString.hasSuffix("/releases/download/preview-123/catalog.json"))
+    }
+
+    @Test func invalidConfiguredCatalogFallsBackToStable() {
+        #expect(
+            PluginCatalogService.resolvedCatalogURL(configuredValue: "http://example.com/catalog.json")
+                == PluginCatalogService.stableCatalogURL
+        )
+        #expect(
+            PluginCatalogService.resolvedCatalogURL(configuredValue: nil)
+                == PluginCatalogService.stableCatalogURL
+        )
     }
 
     /// The channel lists SEVERAL versions per pack; decoding must keep them all (the app, not the

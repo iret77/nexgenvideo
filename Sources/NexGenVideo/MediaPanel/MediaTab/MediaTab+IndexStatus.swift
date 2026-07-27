@@ -44,7 +44,7 @@ extension MediaTab {
                 Image(systemName: icon)
                 Text(label)
             }
-            .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
             .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .buttonStyle(.plain)

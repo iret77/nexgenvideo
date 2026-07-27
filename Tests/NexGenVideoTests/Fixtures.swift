@@ -42,4 +42,26 @@ enum Fixtures {
         t.tracks = tracks
         return t
     }
+
+    @discardableResult
+    static func prepareProjectPackage(
+        at url: URL,
+        timeline: Timeline = Timeline()
+    ) throws -> URL {
+        try FileManager.default.createDirectory(
+            at: url,
+            withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(timeline).write(
+            to: url.appendingPathComponent(Project.timelineFilename)
+        )
+        try JSONEncoder().encode(MediaManifest()).write(
+            to: url.appendingPathComponent(Project.manifestFilename)
+        )
+        try JSONEncoder().encode(GenerationLog()).write(
+            to: url.appendingPathComponent(Project.generationLogFilename)
+        )
+        _ = try ProjectIdentity.uuid(for: url)
+        return url
+    }
 }

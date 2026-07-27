@@ -37,8 +37,8 @@ struct ProjectCockpitView: View {
         let packSelected = editor.cockpitPackSurfaceID != nil && packSurface != nil
         let selectedTitle = packSelected ? (packSurface?.title ?? "") : editor.cockpitTab.rawValue
 
-        return VStack(spacing: 0) {
-            HStack(spacing: 0) {
+        return VStack(spacing: AppTheme.Spacing.none) {
+            HStack(spacing: AppTheme.Spacing.none) {
                 SegmentedTabBar(
                     titles: titles,
                     selected: selectedTitle,
@@ -165,7 +165,7 @@ struct ProjectSettingsView: View {
     private var pluginSection: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("FORMAT PLUGIN")
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             if let active = InstalledPack.named(editor.activePluginName) {
@@ -186,7 +186,7 @@ struct ProjectSettingsView: View {
     private func missingPluginRow(name: String) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Label("The \"\(name)\" plugin isn't installed", systemImage: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Status.warningColor)
                 .fixedSize(horizontal: false, vertical: true)
             Text("This project was built with it. Open the plugin library to add it, or remove it to continue generically.")
@@ -254,7 +254,7 @@ struct ProjectSettingsView: View {
                     HStack(spacing: AppTheme.Spacing.xs) {
                         ProgressView().controlSize(.small)
                         Text("Starting…")
-                            .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
                 } else if editor.hasProductionPipeline {
@@ -291,7 +291,7 @@ struct ProjectSettingsView: View {
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text(title.uppercased())
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             VStack(spacing: AppTheme.Spacing.sm) { content() }
@@ -332,7 +332,7 @@ struct ProjectSettingsView: View {
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
                         .foregroundStyle(AppTheme.Text.mutedColor)
                 }
                 .padding(.horizontal, AppTheme.Spacing.xs)

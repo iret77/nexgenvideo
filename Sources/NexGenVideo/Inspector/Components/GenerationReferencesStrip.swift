@@ -65,7 +65,7 @@ struct GenerationReferencesStrip: View {
     private func thumbnail(label: String, asset: MediaAsset) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             ZStack {
-                Rectangle().fill(Color.black)
+                Rectangle().fill(AppTheme.Background.overlayColor)
                 if let thumb = asset.thumbnail {
                     Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fit)
                 } else {
@@ -74,12 +74,12 @@ struct GenerationReferencesStrip: View {
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
             }
-            .frame(width: 72, height: 41)
+            .frame(width: AppTheme.ComponentSize.generationReferenceWidth, height: AppTheme.ComponentSize.generationReferenceHeight)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
             .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .strokeBorder(Color.white.opacity(AppTheme.Opacity.faint), lineWidth: AppTheme.BorderWidth.hairline))
+                .strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint), lineWidth: AppTheme.BorderWidth.hairline))
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .lineLimit(1)
         }

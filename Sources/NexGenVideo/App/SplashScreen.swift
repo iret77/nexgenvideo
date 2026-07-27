@@ -52,7 +52,7 @@ final class SplashScreenController {
         self.window = nil
         NSAnimationContext.runAnimationGroup { context in
             context.duration = AppTheme.Anim.splashFade
-            window.animator().alphaValue = 0
+            window.animator().alphaValue = AppTheme.Opacity.transparent
         }
         Task {
             try? await Task.sleep(for: .seconds(AppTheme.Anim.splashFade))
@@ -82,7 +82,7 @@ private struct SplashView: View {
             if let version = AppVersion.marketing {
                 Text("Version \(version)")
                     .font(.system(size: AppTheme.FontSize.xs))
-                    .foregroundStyle(.white.opacity(AppTheme.Opacity.prominent))
+                    .foregroundStyle(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.prominent))
                     .shadow(AppTheme.Shadow.sm)
                     .padding(AppTheme.Spacing.md)
             }

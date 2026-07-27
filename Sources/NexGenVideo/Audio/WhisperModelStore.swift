@@ -5,9 +5,39 @@ import Foundation
 /// large-v3-turbo), so they ship OUTSIDE the app and download once, on the first analysis that needs
 /// transcription. Hugging Face is a public, free model host — no NexGen-run infrastructure involved.
 enum WhisperModelStore {
+    struct ModelSpec: Equatable {
+        let filename: String
+        let revision: String
+        let sha256: String
+        let size: Int
+    }
+
+    private static let repository = "ggerganov/whisper.cpp"
+    private static let revision = "5359861c739e955e79d9a303bcbc70fb988958b1"
+    static let specifications: [String: ModelSpec] = [
+        "large-v3-turbo": ModelSpec(
+            filename: "ggml-large-v3-turbo.bin",
+            revision: revision,
+            sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+            size: 1_624_555_275
+        ),
+        "medium": ModelSpec(
+            filename: "ggml-medium.bin",
+            revision: revision,
+            sha256: "6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208",
+            size: 1_533_763_059
+        ),
+        "small": ModelSpec(
+            filename: "ggml-small.bin",
+            revision: revision,
+            sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+            size: 487_601_967
+        ),
+    ]
+
     /// Default model: `large-v3-turbo` — near-large-v3 quality (the bar the old pipeline set) at a
     /// fraction of the runtime, and robust on sung vocals where Apple Speech failed. Overridable via
-    /// the `NGV_WHISPER_MODEL` environment variable (e.g. "medium", "small").
+    /// `NGV_WHISPER_MODEL` with one of the pinned model names.
     static var defaultModel: String {
         ProcessInfo.processInfo.environment["NGV_WHISPER_MODEL"].flatMap { $0.isEmpty ? nil : $0 }
             ?? "large-v3-turbo"
@@ -15,59 +45,38 @@ enum WhisperModelStore {
 
     enum ModelError: LocalizedError {
         case downloadFailed(String)
+        case unsupportedModel(String)
         var errorDescription: String? {
             switch self {
             case .downloadFailed(let m): return "Couldn't download the on-device speech model: \(m)"
+            case .unsupportedModel(let model):
+                return "Unsupported on-device speech model '\(model)'. Choose "
+                    + WhisperModelStore.specifications.keys.sorted().joined(separator: ", ") + "."
             }
         }
     }
 
-    static func modelsDir() throws -> URL {
-        let base = try FileManager.default.url(
-            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        let dir = base.appendingPathComponent("NexGenVideo/models/whisper", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    /// The local model file, downloading it (blocking) if absent. Call off the main thread — the
-    /// analysis phase runner already runs on a detached task. Idempotent: a present, non-empty file
-    /// is returned as-is.
-    static func ensureModel(_ model: String) throws -> URL {
-        let filename = "ggml-\(model).bin"
-        let dest = try modelsDir().appendingPathComponent(filename)
-        if FileManager.default.fileExists(atPath: dest.path),
-            let size = try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int, size > 0 {
-            return dest
+    static func ensureModel(
+        _ model: String,
+        storeRoot: URL? = nil,
+        downloader: HFModelStore.Downloader? = nil
+    ) throws -> URL {
+        guard let spec = specifications[model] else {
+            throw ModelError.unsupportedModel(model)
         }
-        guard let url = URL(string:
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(filename)?download=true") else {
-            throw ModelError.downloadFailed("bad model URL for \(filename)")
+        do {
+            return try HFModelStore.ensure(
+                repo: repository,
+                revision: spec.revision,
+                file: spec.filename,
+                subdir: "whisper",
+                minBytes: spec.size,
+                expectedSHA256: spec.sha256,
+                storeRoot: storeRoot,
+                downloader: downloader
+            )
+        } catch {
+            throw ModelError.downloadFailed(error.localizedDescription)
         }
-        try downloadSync(from: url, to: dest)
-        return dest
-    }
-
-    /// Synchronous download to `dest` (atomic move from URLSession's temp file). URLSession runs on
-    /// its own queue, so blocking the caller here never starves it.
-    private static func downloadSync(from url: URL, to dest: URL) throws {
-        let sem = DispatchSemaphore(value: 0)
-        var thrown: Error?
-        let task = URLSession.shared.downloadTask(with: url) { tmp, response, err in
-            defer { sem.signal() }
-            if let err { thrown = err; return }
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            guard let tmp, (200..<300).contains(code) else {
-                thrown = ModelError.downloadFailed("HTTP \(code)")
-                return
-            }
-            do {
-                try? FileManager.default.removeItem(at: dest)
-                try FileManager.default.moveItem(at: tmp, to: dest)
-            } catch { thrown = error }
-        }
-        task.resume()
-        sem.wait()
-        if let thrown { throw thrown }
     }
 }

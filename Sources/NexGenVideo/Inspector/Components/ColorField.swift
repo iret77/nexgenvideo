@@ -15,7 +15,7 @@ struct ColorField: View {
                 .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.xs)
                 .overlay(
                     RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                        .stroke(Color.white.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin)
+                        .stroke(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin)
                 )
         }
         .buttonStyle(.plain)

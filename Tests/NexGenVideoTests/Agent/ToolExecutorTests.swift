@@ -33,27 +33,11 @@ final class ToolHarness {
         await executor.execute(name: name, args: args)
     }
 
-    /// Drive a gate tool that now suspends on the user's confirmation (approve_gate, or an approving
-    /// set_gate_state). Stands in for the user tapping the dock card: resolves the approval the moment
-    /// it is surfaced. A tool that errors BEFORE requesting approval (hard-gate block, unknown state)
-    /// never surfaces one — the resolver simply never fires and the tool's own result is returned.
+    /// Completes the host-owned decision after a deferred gate request.
     func runGate(_ name: String, args: [String: Any] = [:], decision: GateDecision = .approved) async -> ToolResult {
-        // Start the resolver FIRST (it captures only the Sendable editor + decision), then await the
-        // tool directly on this MainActor. When the tool suspends on requestGateApproval, the MainActor
-        // is free to run the resolver, which taps the card. A tool that errors before requesting one
-        // never sets pendingGateApproval — the resolver just idles and is cancelled.
-        let resolver = Task { [editor] in
-            while !Task.isCancelled {
-                if editor.agentService.pendingGateApproval != nil {
-                    editor.agentService.resolveGate(decision)
-                    return
-                }
-                await Task.yield()
-            }
-        }
-        let result = await executor.execute(name: name, args: args)
-        resolver.cancel()
-        return result
+        let pending = await executor.execute(name: name, args: args)
+        guard !pending.isError, editor.agentService.pendingGateApproval != nil else { return pending }
+        return editor.agentService.resolveGate(decision) ?? pending
     }
 
     /// `runGate` (default: approve) + decode the .ok JSON payload — the approval must have been granted.
@@ -455,8 +439,7 @@ struct ToolExecutorReadOnlyTests {
 
     // MARK: - list_models
 
-    /// ModelCatalog populates from Convex over the network — empty in tests. These verify
-    /// shape and filter contract regardless of whether the catalog has any entries.
+    /// App startup loads the catalog; this isolated harness deliberately does not.
 
     @Test func listModelsReturnsWrappedShape() async throws {
         let h = ToolHarness()
@@ -466,8 +449,7 @@ struct ToolExecutorReadOnlyTests {
     }
 
     @Test func listModelsReportsCatalogNotLoadedInTestEnvironment() async throws {
-        // No Convex connection → catalog stays unloaded. Agents must use this to disambiguate
-        // empty results from "catalog not synced yet".
+        // Agents must distinguish an unloaded catalog from a loaded catalog with no runnable models.
         let h = ToolHarness()
         let body = try await h.runOK("list_models") as? [String: Any]
         #expect(body?["loaded"] as? Bool == false)

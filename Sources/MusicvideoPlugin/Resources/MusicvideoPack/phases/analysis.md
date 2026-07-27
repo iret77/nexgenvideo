@@ -19,8 +19,8 @@ All file paths below are relative to the **project data root**.
 ## Inputs
 
 - Audio file in `audio/` (mandatory before the A1 run)
-- Optional: `lyrics/lyrics.txt` (collected by the app as a hard step —
-  read it, don't offer it; see A1 step 3)
+- Optional: `lyrics/lyrics.txt` (collected during the host-owned startup
+  intake — read it, don't offer it; see A1 step 3)
 - For A2: `analysis/<song>.json` — written by the A1 run with
   `schema=analysis/v2`, carrying **measured** `beats`, `downbeats`,
   `bpm`, downbeat-snapped `sections`, `structure_candidates`,
@@ -52,7 +52,8 @@ for timing; do not describe the song's structure from "listening".
 
 ## Outputs & gate
 
-- `analysis/<song>.json` extended with:
+- `analysis/<song>.json` extended by
+  `write_analysis_interpretation(project_dir, ...)` with:
   - top-level field `tempo_multiplier` (default 1.0); `perceived_bpm`
     (= `bpm × tempo_multiplier`) is derived from it — consumers (sanity
     tempo cap, storyboard/shotlist agent) use that.
@@ -61,8 +62,8 @@ for timing; do not describe the song's structure from "listening".
 - **Gate (HARD — enforced by the engine).** `approve_gate("analysis")` is
   **rejected** unless (a) a real analysis artifact exists with non-empty
   `beats` AND `downbeats` (you ran it — didn't imagine it), AND (b) A2 is
-  done: `interpretation.section_labels` is written (the measured sections are
-  labeled). Run the DSP for real, THEN interpret, THEN approve — approving
+  done: `interpretation.section_labels` is written through the typed tool (the
+  measured sections are labeled). Run the DSP for real, THEN interpret, THEN approve — approving
   right after the DSP run is refused. After writing the interpretation, give a
   summary (BPM, section labels, anomalies) and request approval via
   show_dialog ("approve / change a label / re-analyze"). On approval:
@@ -79,18 +80,21 @@ actually present.
 
 **Step 1 — Preflight (plain agent check, no shell):**
 
-The song and the lyrics are hard steps the pack declares in
-`hardsteps.json`: the app asks for them in the composer dock when this
-phase opens, and writes them into `audio/` and `lyrics/lyrics.txt` itself.
-Asking is not your job — inspect the result.
+The song and lyrics are the first two hard steps in `hardsteps.json`. The
+host collects them before Project Init and writes them into `audio/` and
+`lyrics/lyrics.txt`. Asking is not your job — inspect the result.
+
+Existing story, identity, and style material is intentionally not collected
+until this analysis is approved. Do not ask about or begin developing a
+story in this phase; first establish the measured and interpreted song
+context that the Brief needs.
 
 Is there an audio file in `audio/`?
 
 - **Present** → continue directly with step 2.
-- **Missing** → the user hasn't answered the track intake yet. **HARD
-  STOP**: "No audio file in `audio/` — without the song there is no
-  analysis." Then wait; the dock is already asking. Don't open your own
-  song dialog and don't ask for a path.
+- **Missing** → the host startup handoff is incomplete. **HARD STOP**:
+  "No audio file in `audio/` — without the song there is no analysis."
+  Don't open your own song dialog and don't ask for a path.
 
 **Step 2 — Run the analysis:**
 
@@ -104,9 +108,9 @@ for a clean track. **Do not proceed to A2 or approve the gate on a failed run.**
 
 **Step 3 — Use the lyrics if they arrived (optional, improves labeling):**
 
-The lyrics intake is a hard step too — the app already offered it and the
-user either supplied lyrics or turned them down. Read `lyrics/lyrics.txt`;
-do not offer your own lyrics dialog.
+The host already offered the lyrics directly after the track; the user
+either supplied them or skipped them. Read `lyrics/lyrics.txt`; do not
+offer your own lyrics dialog.
 
 - **Present** → lyrics are **preferred over guessing** for section labels:
   map the `[Section]` markers onto the measured sections in order. They do
@@ -132,8 +136,9 @@ You are spawned fresh on every `/continue`. Before doing any work:
   `overall_character`? → show_dialog: "An interpretation already
   exists. Approve it (set the gate), change it (which field), or
   regenerate?" On `approve` → set the gate, done. On `change` → re-ask
-  / rewrite only the affected field. On `regenerate` → overwrite the
-  old `interpretation` block.
+  / rewrite only the affected field by calling
+  `write_analysis_interpretation` with the complete revised interpretation.
+  On `regenerate` → call the same tool with the replacement interpretation.
 - If `interpretation` is missing → normal flow, generate it fresh.
 
 ### A2 — Tempo multiplier (MANDATORY decision, early)
@@ -152,14 +157,14 @@ Workflow:
    - **`×1` (confirmed)** — measured ≈ felt, multiplier 1.0.
    - **`×0.5` (halved)** — the track feels half as fast.
    - **`×2` (doubled)** — the track feels twice as fast.
-3. Write the result as the top-level field `tempo_multiplier` into
-   `analysis.json` (default 1.0).
+3. Carry the selected value into the mandatory
+   `write_analysis_interpretation` call below. Never edit the JSON directly.
 4. Confirm to the user in chat: "Perceived tempo: <perceived> BPM
    (= <bpm> × <multiplier>)."
 
 ### A2 — Write the interpretation
 
-Add the top-level key `interpretation` to the analysis.json:
+Call `write_analysis_interpretation` exactly once with:
 
 - `section_labels`: list of `{index, label, confidence, note}`, one per
   entry in the measured `sections`.
@@ -174,6 +179,11 @@ Add the top-level key `interpretation` to the analysis.json:
   observations.
 - `overall_character`: 2-3 sentences from the tempo-curve dynamics and
   the structure.
+
+The tool owns the JSON mutation. It preserves detector anomalies, validates
+one unique label for every measured section, mirrors those labels onto the
+measured section rows, and rejects any tempo multiplier except 0.5, 1, or 2.
+Never hand-edit or rewrite the measured analysis artifact.
 
 ### Orientation on the (v2) fields
 
@@ -202,11 +212,14 @@ Add the top-level key `interpretation` to the analysis.json:
 
 ## Failure modes & escalation
 
-- Preflight: no audio → hard stop, offer the upload dialog, wait for the
-  user. Never approve the gate anyway.
+- Preflight: no audio → hard stop and report the incomplete host handoff.
+  Never open an upload dialog or approve the gate.
 - `run_phase` returns `{"error": "phase_failed"}` → the song couldn't be
-  decoded. Surface the detail, ask for a clean audio file, re-run. Do not
-  proceed on a failed run.
+  decoded. Surface the detail, then use one recovery path: `show_dialog`
+  with a required audio `fileIntake` and no `attachAs`; after the user
+  chooses the replacement, call `attach_song(media, replace=true)` with
+  the returned media reference and re-run analysis. Do not proceed on a
+  failed run and never ask for a file path.
 - Instrumental track / no lyrics → label sections conservatively from the
   measured boundaries and flag low confidence; never invent labels as fact.
 - `boundary_divergence` flagged by the consolidator → surface it to the

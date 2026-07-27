@@ -9,7 +9,7 @@ extension MediaTab {
     var searchResults: some View {
         let nameMatches = sortAndFilter(editor.mediaAssets)
         return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
                 if !visualHits.isEmpty {
                     momentHeader("Moments", icon: "sparkle.magnifyingglass", count: visualHits.count, collapsible: true)
                     if !collapsedSearchSections.contains("Moments") {
@@ -65,13 +65,13 @@ extension MediaTab {
             HStack(spacing: AppTheme.Spacing.xs) {
                 if collapsible {
                     Image(systemName: "chevron.down")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                         .rotationEffect(.degrees(isCollapsed ? -90 : 0))
                 }
                 Image(systemName: icon)
                     .font(.system(size: AppTheme.FontSize.xs))
                 Text(title)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 Text("\(count)")
                     .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
@@ -113,7 +113,7 @@ extension MediaTab {
         }
         .draggable(payload) {
             momentThumb(asset, time: hit.time)
-                .frame(width: 80, height: 45)
+                .frame(width: AppTheme.ComponentSize.searchThumbnailWidth, height: AppTheme.ComponentSize.searchThumbnailHeight)
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
         }
         .onTapGesture { previewMoment(assetID: hit.assetID, atSeconds: range.lowerBound) }
@@ -123,7 +123,7 @@ extension MediaTab {
     private func momentThumb(_ asset: MediaAsset?, time: Double) -> some View {
         if asset?.type == .image {
             ZStack {
-                Rectangle().fill(Color.black)
+                Rectangle().fill(AppTheme.Background.overlayColor)
                 if let thumb = asset?.thumbnail {
                     Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fit)
                 } else {
@@ -160,7 +160,7 @@ extension MediaTab {
         .contentShape(Rectangle())
         .draggable(MediaTab.assetDragString(forAssetId: hit.assetID, segment: range)) {
             MomentThumbnail(url: asset?.url, time: hit.start)
-                .frame(width: 80, height: 45)
+                .frame(width: AppTheme.ComponentSize.searchThumbnailWidth, height: AppTheme.ComponentSize.searchThumbnailHeight)
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
         }
         .onTapGesture { previewMoment(assetID: hit.assetID, atSeconds: range.lowerBound) }
@@ -169,7 +169,7 @@ extension MediaTab {
     private func fileCard(_ asset: MediaAsset) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
             ZStack {
-                Rectangle().fill(Color.black)
+                Rectangle().fill(AppTheme.Background.overlayColor)
                 if let thumb = asset.thumbnail {
                     Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fit)
                 } else {
@@ -235,7 +235,7 @@ private struct MomentThumbnail: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(Color.black)
+            Rectangle().fill(AppTheme.Background.overlayColor)
             if let image {
                 Image(decorative: image, scale: 1)
                     .resizable()

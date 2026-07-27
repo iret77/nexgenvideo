@@ -11,10 +11,10 @@ final class SnapIndicatorOverlay {
 
     init(view: TimelineView) {
         self.view = view
-        layer.strokeColor = NSColor.systemYellow.cgColor
+        layer.strokeColor = AppTheme.Timeline.snapGuide.cgColor
         layer.fillColor = nil
-        layer.lineWidth = 1
-        layer.lineDashPattern = [4, 4]
+        layer.lineWidth = AppTheme.BorderWidth.thin
+        layer.lineDashPattern = AppTheme.Border.regularDash.map { NSNumber(value: Double($0)) }
         layer.zPosition = 90
         layer.isHidden = true
         view.layer?.addSublayer(layer)

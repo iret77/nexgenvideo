@@ -26,14 +26,20 @@ struct BeatThisDetector: AudioBeatDetecting {
     private static let chunkSize = 1500
     private static let border = 6
     private static let fps: Double = 50            // sr / hop
-    private static let modelURL = "https://raw.githubusercontent.com/mosynthkey/beat_this_cpp/main/onnx/beat_this.onnx"
+    private static let modelURL = "https://raw.githubusercontent.com/mosynthkey/beat_this_cpp/07ab790a9ec2eda8093d52d249e3ec4f0510ee72/onnx/beat_this.onnx"
+    private static let modelSHA256 = "c5c1466e08abdb03fdeb50668a06f244b787d564c212490482231a9cfbe9ccbd"
 
     func detectBeats(_ audio: URL, stems: SeparatedStems?) throws -> DetectedBeatGrid? {
         let mono = try Self.loadMono22k(audio)
         guard mono.count > Self.nFFT else { return nil }
         let mel = Self.melSpectrogram(mono)
         guard mel.count > 2 * Self.border else { return nil }
-        let modelPath = try HFModelStore.ensure(urlString: Self.modelURL, file: "beat_this.onnx", subdir: "beatthis")
+        let modelPath = try HFModelStore.ensure(
+            urlString: Self.modelURL,
+            file: "beat_this.onnx",
+            subdir: "beatthis",
+            expectedSHA256: Self.modelSHA256
+        )
         let (beatLogits, downLogits) = try Self.runChunked(mel, modelPath: modelPath.path)
         let (beats, downbeats) = Self.postprocess(beat: beatLogits, downbeat: downLogits)
         // Plausibility guard: a real grid is several strictly-increasing beats. Anything else → let the

@@ -3,10 +3,10 @@ import SwiftUI
 struct ClipGeneratingOverlay: View {
     var body: some View {
         ZStack {
-            Color.black.opacity(0.55)
+            AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.strong)
             GeneratingOverlay()
         }
-        .clipShape(RoundedRectangle(cornerRadius: Trim.clipCornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Timeline.clipCornerRadius))
         .allowsHitTesting(false)
     }
 }

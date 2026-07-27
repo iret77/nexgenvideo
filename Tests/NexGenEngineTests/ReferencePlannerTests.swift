@@ -73,6 +73,42 @@ struct ReferencePlannerTests {
         #expect(plan.dropped.isEmpty)
     }
 
+    @Test("explicit shot references participate in the deterministic plan")
+    func explicitReferencesArePlanned() throws {
+        let dir = try Self.fixtureDir([
+            "explicit/board.png",
+            "b/front.png",
+        ])
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let character = try Character(
+            id: "hero",
+            name: "Hero",
+            visualPrompt: "p",
+            sheets: ["front": "b/front.png"]
+        )
+        let bible = try Bible(
+            project: "p",
+            generated: "t",
+            generator: "g",
+            characters: [character]
+        )
+        let plan = ReferencePlanner.planShotRefs(
+            projectDir: dir,
+            bible: bible,
+            characterRefs: ["hero"],
+            locationRef: nil,
+            propRefs: [],
+            characterViews: [:],
+            locationView: nil,
+            propViews: [:],
+            referenceImageRefs: ["explicit/board.png"],
+            maxRefs: 1
+        )
+
+        #expect(plan.refs.map(\.path) == ["explicit/board.png"])
+        #expect(plan.dropped.map(\.path) == ["b/front.png"])
+    }
+
     static func briefWith(_ model: FrameImageModel) throws -> Brief {
         try Brief(project: "p", generated: "t", mission: .demo, targetPlatform: "web",
                   aspectRatio: .landscape16x9, projectMode: "beat", frameImageModel: model,

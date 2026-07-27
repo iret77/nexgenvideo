@@ -80,7 +80,7 @@ final class TextLayerController {
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: renderSize)
         parent.isGeometryFlipped = true
-        parent.backgroundColor = NSColor.clear.cgColor
+        parent.backgroundColor = AppTheme.Background.clearNSColor.cgColor
         parent.beginTime = AVCoreAnimationBeginTimeAtZero
 
         let videoLayer = CALayer()

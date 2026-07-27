@@ -34,7 +34,7 @@ class PaddedDividerSplitViewController: NSSplitViewController {
         forDrawnRect drawnRect: NSRect,
         ofDividerAt dividerIndex: Int
     ) -> NSRect {
-        let pad = Layout.panelGap / 2
+        let pad = AppTheme.Layout.panelGap / 2
         return splitView.isVertical
             ? drawnRect.insetBy(dx: -pad, dy: 0)
             : drawnRect.insetBy(dx: 0, dy: -pad)
@@ -258,26 +258,26 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
         let centerSplit = makeChildSplit(isVertical: false, autosave: SplitAutosave.produceCenter)
         let cockpitItem = NSSplitViewItem(viewController: cockpitHC)
-        cockpitItem.minimumThickness = Layout.previewMinHeight
+        cockpitItem.minimumThickness = AppTheme.Layout.previewMinHeight
         centerSplit.addSplitViewItem(cockpitItem)
         cockpitSplitItem = cockpitItem
         let stripItem = makeTimelineItem()
         // Resizable: a usable min (toolbar + ruler + a track lane), no fixed max — drag it taller.
-        stripItem.minimumThickness = Layout.produceTimelineStripHeight
+        stripItem.minimumThickness = AppTheme.Layout.produceTimelineStripHeight
         centerSplit.addSplitViewItem(stripItem)
 
         let rightSplit = makeChildSplit(isVertical: false, autosave: SplitAutosave.produceRight)
         let previewItem = makePreviewItem()
-        previewItem.minimumThickness = Layout.producePreviewMinHeight
+        previewItem.minimumThickness = AppTheme.Layout.producePreviewMinHeight
         rightSplit.addSplitViewItem(previewItem)
         rightSplit.addSplitViewItem(makeInspectorItem())
 
         target.addSplitViewItem(makeMediaItem())
         let centerItem = NSSplitViewItem(viewController: centerSplit)
-        centerItem.minimumThickness = Layout.previewMinWidth
+        centerItem.minimumThickness = AppTheme.Layout.previewMinWidth
         target.addSplitViewItem(centerItem)
         let rightItem = NSSplitViewItem(viewController: rightSplit)
-        rightItem.minimumThickness = Layout.inspectorMin
+        rightItem.minimumThickness = AppTheme.Layout.inspectorMin
         target.addSplitViewItem(rightItem)
 
         applyAfterLayout { [weak self, weak target, weak rightSplit, weak centerSplit] in
@@ -285,13 +285,13 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
             let targetW = target.view.bounds.width
             let rightH = rightSplit.view.bounds.height
             self.positionIfUnsaved(target) {
-                $0.setPosition(Layout.mediaPanelDefault, ofDividerAt: 0)
-                $0.setPosition(targetW - Layout.producePreviewDefaultWidth, ofDividerAt: 1)
+                $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
+                $0.setPosition(targetW - AppTheme.Layout.producePreviewDefaultWidth, ofDividerAt: 1)
             }
             self.positionIfUnsaved(rightSplit) { $0.setPosition(round(rightH * 0.35), ofDividerAt: 0) }
             let centerH = centerSplit.view.bounds.height
             self.positionIfUnsaved(centerSplit) {
-                $0.setPosition(max(0, centerH - Layout.produceTimelineStripDefault), ofDividerAt: 0)
+                $0.setPosition(max(0, centerH - AppTheme.Layout.produceTimelineStripDefault), ofDividerAt: 0)
             }
         }
     }
@@ -305,14 +305,14 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         target.splitView.isVertical = false
 
         let previewItem = NSSplitViewItem(viewController: previewHC)
-        previewItem.minimumThickness = Layout.finishPreviewMinHeight
+        previewItem.minimumThickness = AppTheme.Layout.finishPreviewMinHeight
         previewSplitItem = previewItem
         target.addSplitViewItem(previewItem)
 
         // The Review gallery reuses `.project` identity: only one of cockpit/review is ever mounted,
         // so maximize (backtick) and focus routing keep working through cockpitSplitItem.
         let reviewItem = NSSplitViewItem(viewController: reviewHC)
-        reviewItem.minimumThickness = Layout.finishReviewMinHeight
+        reviewItem.minimumThickness = AppTheme.Layout.finishReviewMinHeight
         cockpitSplitItem = reviewItem
         target.addSplitViewItem(reviewItem)
 
@@ -320,7 +320,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
             guard let self, let target else { return }
             let targetH = target.view.bounds.height
             self.positionIfUnsaved(target) {
-                $0.setPosition(round(targetH * Layout.finishPreviewFraction), ofDividerAt: 0)
+                $0.setPosition(round(targetH * AppTheme.Layout.finishPreviewFraction), ofDividerAt: 0)
             }
         }
     }
@@ -336,7 +336,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         hSplit.addSplitViewItem(makeInspectorItem())
 
         let upper = NSSplitViewItem(viewController: hSplit)
-        upper.minimumThickness = Layout.previewMinHeight
+        upper.minimumThickness = AppTheme.Layout.previewMinHeight
         target.addSplitViewItem(upper)
         target.addSplitViewItem(makeTimelineItem())
 
@@ -348,8 +348,8 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
             let hW = hSplit.view.bounds.width
             self.positionIfUnsaved(target) { $0.setPosition(round(targetH * 0.7), ofDividerAt: 0) }
             self.positionIfUnsaved(hSplit) {
-                $0.setPosition(Layout.mediaPanelDefault, ofDividerAt: 0)
-                $0.setPosition(hW - Layout.inspectorDefault, ofDividerAt: 1)
+                $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0)
+                $0.setPosition(hW - AppTheme.Layout.inspectorDefault, ofDividerAt: 1)
             }
         }
     }
@@ -366,7 +366,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
         let rightSplit = makeChildSplit(isVertical: false, autosave: SplitAutosave.mediaRight)
         let topItem = NSSplitViewItem(viewController: topSplit)
-        topItem.minimumThickness = Layout.previewMinHeight
+        topItem.minimumThickness = AppTheme.Layout.previewMinHeight
         rightSplit.addSplitViewItem(topItem)
         rightSplit.addSplitViewItem(makeTimelineItem())
 
@@ -380,7 +380,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
             let topW = topSplit.view.bounds.width
             self.positionIfUnsaved(target) { $0.setPosition(round(targetW * 0.3), ofDividerAt: 0) }
             self.positionIfUnsaved(rightSplit) { $0.setPosition(round(rightH * 0.55), ofDividerAt: 0) }
-            self.positionIfUnsaved(topSplit) { $0.setPosition(topW - Layout.inspectorDefault, ofDividerAt: 0) }
+            self.positionIfUnsaved(topSplit) { $0.setPosition(topW - AppTheme.Layout.inspectorDefault, ofDividerAt: 0) }
         }
     }
 
@@ -407,7 +407,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
             let leftH = leftSplit.view.bounds.height
             self.positionIfUnsaved(target) { $0.setPosition(round(targetW * 0.5), ofDividerAt: 0) }
             self.positionIfUnsaved(leftSplit) { $0.setPosition(round(leftH * 0.55), ofDividerAt: 0) }
-            self.positionIfUnsaved(topSplit) { $0.setPosition(Layout.mediaPanelDefault, ofDividerAt: 0) }
+            self.positionIfUnsaved(topSplit) { $0.setPosition(AppTheme.Layout.mediaPanelDefault, ofDividerAt: 0) }
         }
     }
 
@@ -429,7 +429,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     private func makeMediaItem() -> NSSplitViewItem {
         let item = NSSplitViewItem(viewController: mediaHC)
-        item.minimumThickness = Layout.mediaPanelMin
+        item.minimumThickness = AppTheme.Layout.mediaPanelMin
         item.canCollapse = false
         item.isCollapsed = !editor.mediaPanelVisible
         mediaSplitItem = item
@@ -438,14 +438,14 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     private func makePreviewItem() -> NSSplitViewItem {
         let item = NSSplitViewItem(viewController: previewHC)
-        item.minimumThickness = Layout.previewMinWidth
+        item.minimumThickness = AppTheme.Layout.previewMinWidth
         previewSplitItem = item
         return item
     }
 
     private func makeInspectorItem() -> NSSplitViewItem {
         let item = NSSplitViewItem(viewController: inspectorHC)
-        item.minimumThickness = Layout.inspectorMin
+        item.minimumThickness = AppTheme.Layout.inspectorMin
         item.canCollapse = false
         item.isCollapsed = !editor.inspectorPanelVisible
         inspectorSplitItem = item
@@ -454,18 +454,18 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
 
     private func makeTimelineItem() -> NSSplitViewItem {
         let item = NSSplitViewItem(viewController: timelineHC)
-        item.minimumThickness = Layout.timelineMinHeight
+        item.minimumThickness = AppTheme.Layout.timelineMinHeight
         timelineSplitItem = item
         return item
     }
 
     private func makeHosting<V: View>(_ content: V, panel: EditorViewModel.FocusedPanel) -> NSHostingController<some View> {
-        let inset = Layout.panelGap / 2
+        let inset = AppTheme.Layout.panelGap / 2
         let panelShell = RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
         let hc = NSHostingController(
             rootView: content
                 .environment(editor)
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .frame(minWidth: AppTheme.Spacing.none, maxWidth: .infinity, minHeight: AppTheme.Spacing.none, maxHeight: .infinity)
                 .background(AppTheme.Background.surfaceColor)
                 .clipShape(panelShell)
                 .padding(inset)
@@ -519,8 +519,8 @@ private struct TimelinePanel: View {
     @Environment(EditorViewModel.self) private var editor
 
     var body: some View {
-        VStack(spacing: 0) {
-            ToolbarView().frame(height: Layout.toolbarHeight)
+        VStack(spacing: AppTheme.Spacing.none) {
+            ToolbarView().frame(height: AppTheme.Layout.toolbarHeight)
             TimelineContainerView()
         }
     }
@@ -539,7 +539,7 @@ private struct PanelFocusRing: View {
         // workspace — with the full-height sidebar a prominent ring reads as broken chrome.
         RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
             .strokeBorder(AppTheme.Accent.primary, lineWidth: AppTheme.BorderWidth.thin)
-            .opacity(isFocused ? AppTheme.Opacity.muted : 0)
+            .opacity(isFocused ? AppTheme.Opacity.muted : AppTheme.Opacity.transparent)
             .animation(.easeOut(duration: AppTheme.Anim.transition), value: isFocused)
     }
 }

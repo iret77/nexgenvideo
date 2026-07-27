@@ -132,6 +132,77 @@ struct ClaudeCodeEventMapperTests {
         #expect(mapper.sessionId == nil)
     }
 
+    @Test("Claude authentication failures are classified before they reach the transcript")
+    func authenticationFailuresRequireSignIn() {
+        let resultLine = #"{"type":"result","subtype":"success","is_error":true,"result":"Failed to authenticate: OAuth session expired and could not be refreshed"}"#
+        let revokedLine = #"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["OAuth token revoked · Please run /login"]}"#
+        let assistantLine = #"{"type":"assistant","message":{"id":"m-auth","content":[{"type":"text","text":"The service says you are not logged in."}]}}"#
+        let signedOutLine = #"{"type":"assistant","message":{"id":"m-auth","content":[{"type":"text","text":"Not logged in · Please run /login"}]}}"#
+        let unrelatedLine = #"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Model is temporarily unavailable"]}"#
+
+        let resultRequiresAuthentication = ClaudeStreamDecoder.decode(line: resultLine)
+            .contains { $0.requiresAuthentication }
+        let revokedRequiresAuthentication = ClaudeStreamDecoder.decode(line: revokedLine)
+            .contains { $0.requiresAuthentication }
+        let assistantEvents = ClaudeStreamDecoder.decode(line: assistantLine)
+        let assistantRequiresAuthentication = assistantEvents.contains { $0.requiresAuthentication }
+        let assistantIsCandidate = assistantEvents.contains { $0.isAuthenticationMessageCandidate }
+        let signedOutIsCandidate = ClaudeStreamDecoder.decode(line: signedOutLine)
+            .contains { $0.isAuthenticationMessageCandidate }
+        let unrelatedRequiresAuthentication = ClaudeStreamDecoder.decode(line: unrelatedLine)
+            .contains { $0.requiresAuthentication }
+
+        #expect(resultRequiresAuthentication)
+        #expect(revokedRequiresAuthentication)
+        #expect(!assistantRequiresAuthentication)
+        #expect(!assistantIsCandidate)
+        #expect(signedOutIsCandidate)
+        #expect(!unrelatedRequiresAuthentication)
+    }
+
+    @Test("auth-like assistant prose is discarded only after a failed result confirms it")
+    func authenticationMessageWaitsForResult() {
+        let assistant = ClaudeStreamDecoder.decode(
+            line: #"{"type":"assistant","message":{"id":"m-auth","content":[{"type":"text","text":"Failed to authenticate: OAuth session expired and could not be refreshed"}]}}"#
+        )
+        let failed = ClaudeStreamDecoder.decode(
+            line: #"{"type":"result","subtype":"success","is_error":true,"result":"Failed to authenticate: OAuth session expired and could not be refreshed"}"#
+        )
+        let succeeded = ClaudeStreamDecoder.decode(
+            line: #"{"type":"result","subtype":"success","is_error":false,"result":"Done"}"#
+        )
+
+        var failedBuffer = ClaudeCodeAuthenticationEventBuffer()
+        guard case .waiting = failedBuffer.receive(assistant) else {
+            Issue.record("expected auth-like assistant text to wait for the result")
+            return
+        }
+        guard case .authenticationRequired = failedBuffer.receive(failed) else {
+            Issue.record("expected the failed result to confirm authentication")
+            return
+        }
+        let trailing = failedBuffer.flush()
+        #expect(trailing.isEmpty)
+
+        var successfulBuffer = ClaudeCodeAuthenticationEventBuffer()
+        guard case .waiting = successfulBuffer.receive(assistant) else {
+            Issue.record("expected auth-like assistant prose to wait for the result")
+            return
+        }
+        guard case .events(let released) = successfulBuffer.receive(succeeded) else {
+            Issue.record("expected a successful result to release the assistant prose")
+            return
+        }
+        #expect(released.count == 2)
+
+        var combinedBuffer = ClaudeCodeAuthenticationEventBuffer()
+        guard case .events(let combined) = combinedBuffer.receive(assistant + succeeded) else {
+            Issue.record("expected a completed non-error batch to pass through immediately")
+            return
+        }
+        #expect(combined.count == 2)
+    }
+
     @Test func endToEndImportTurn() {
         var mapper = ClaudeCodeEventMapper()
         mapper.ingest(line: #"{"type":"system","subtype":"init","session_id":"s1"}"#)

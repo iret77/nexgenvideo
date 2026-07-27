@@ -18,7 +18,7 @@ struct SanityPanelView: View {
     @State private var loadToken = 0
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -74,7 +74,7 @@ struct SanityPanelView: View {
                 .font(.system(size: AppTheme.FontSize.sm))
                 .foregroundStyle(accent)
             Text(data.summary)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: 0)
         }
@@ -100,18 +100,18 @@ struct SanityPanelView: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Text(finding.code)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .semibold).monospaced())
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold).monospaced())
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                     if let shot = targetShot {
                         Text(shot)
-                            .font(.system(size: AppTheme.FontSize.xxs, weight: .medium).monospaced())
+                            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                     Spacer(minLength: 0)
                     if targetShot != nil {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
+                            .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                 }

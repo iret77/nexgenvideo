@@ -22,34 +22,48 @@ struct ProjectIdentityTests {
     func stableAcrossCalls() throws {
         let pkg = try tempPackage()
         defer { try? FileManager.default.removeItem(at: pkg) }
-        let a = ProjectIdentity.uuid(for: pkg)
-        let b = ProjectIdentity.uuid(for: pkg)
+        let a = try ProjectIdentity.uuid(for: pkg)
+        let b = try ProjectIdentity.uuid(for: pkg)
         #expect(a == b)
-        #expect(ProjectIdentity.key(for: pkg) == "p-" + a)
+        #expect(try ProjectIdentity.key(for: pkg) == "p-" + a)
     }
 
     @Test("distinct packages get distinct identities")
     func distinctPackages() throws {
         let a = try tempPackage(); let b = try tempPackage()
         defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
-        #expect(ProjectIdentity.uuid(for: a) != ProjectIdentity.uuid(for: b))
+        #expect(try ProjectIdentity.uuid(for: a) != ProjectIdentity.uuid(for: b))
     }
 
     @Test("migration: a pre-UUID package keeps its active plugin and gains an id")
     func migratesPreservingPlugin() throws {
         let pkg = try tempPackage(ngvJSON: ["activePlugin": "musicvideo"])
         defer { try? FileManager.default.removeItem(at: pkg) }
-        _ = ProjectIdentity.uuid(for: pkg)   // triggers migration write
+        _ = try ProjectIdentity.uuid(for: pkg)   // triggers migration write
         #expect(ProjectPluginSettings.activePlugin(projectURL: pkg) == "musicvideo")
-        #expect(ProjectIdentity.uuid(for: pkg).isEmpty == false)
+        #expect(try ProjectIdentity.uuid(for: pkg).isEmpty == false)
     }
 
     @Test("regenerate assigns a fresh identity (the Save-As / duplicate case)")
     func regenerateChangesId() throws {
         let pkg = try tempPackage()
         defer { try? FileManager.default.removeItem(at: pkg) }
-        let before = ProjectIdentity.uuid(for: pkg)
-        ProjectIdentity.regenerate(at: pkg)
-        #expect(ProjectIdentity.uuid(for: pkg) != before)
+        let before = try ProjectIdentity.uuid(for: pkg)
+        try ProjectIdentity.regenerate(at: pkg)
+        #expect(try ProjectIdentity.uuid(for: pkg) != before)
+    }
+
+    @Test("a malformed metadata file is never overwritten during identity migration")
+    func malformedMetadataIsPreserved() throws {
+        let pkg = try tempPackage()
+        defer { try? FileManager.default.removeItem(at: pkg) }
+        let url = pkg.appendingPathComponent(ProjectPluginSettings.filename)
+        let malformed = Data("{broken".utf8)
+        try malformed.write(to: url)
+
+        #expect(throws: (any Error).self) {
+            _ = try ProjectIdentity.uuid(for: pkg)
+        }
+        #expect(try Data(contentsOf: url) == malformed)
     }
 }

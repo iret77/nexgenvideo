@@ -8,7 +8,7 @@ import SwiftUI
 /// Apply after the frame has been set on the label:
 ///
 ///     Image(systemName: "xmark")
-///         .frame(width: 24, height: 24)
+///         .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
 ///         .hoverHighlight()
 struct HoverHighlight: ViewModifier {
     var cornerRadius: CGFloat = AppTheme.Radius.sm
@@ -30,10 +30,10 @@ struct HoverHighlight: ViewModifier {
 
     private var fill: Color {
         switch (isActive, isHovered) {
-        case (true, true): Color.white.opacity(AppTheme.Opacity.muted)
-        case (true, false): Color.white.opacity(AppTheme.Opacity.soft)
-        case (false, true): Color.white.opacity(AppTheme.Opacity.faint)
-        case (false, false): .clear
+        case (true, true): AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted)
+        case (true, false): AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.soft)
+        case (false, true): AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint)
+        case (false, false): AppTheme.Background.clearColor
         }
     }
 }

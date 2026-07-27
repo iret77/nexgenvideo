@@ -15,9 +15,9 @@ enum TimelineRuler {
 
         // Bottom separator
         context.setStrokeColor(AppTheme.Border.primary.cgColor)
-        context.setLineWidth(1)
-        context.move(to: CGPoint(x: rect.minX, y: rect.maxY - 0.5))
-        context.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - 0.5))
+        context.setLineWidth(AppTheme.BorderWidth.thin)
+        context.move(to: CGPoint(x: rect.minX, y: rect.maxY - AppTheme.BorderWidth.hairline))
+        context.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - AppTheme.BorderWidth.hairline))
         context.strokePath()
 
         // Tick math divides by pixelsPerFrame and casts to Int — NaN/±Inf would trap.
@@ -31,7 +31,7 @@ enum TimelineRuler {
         let endFrame = Int((scrollOffsetX + rect.width) / pixelsPerFrame) + framesPerMajor
 
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: AppTheme.FontSize.xs, weight: .regular),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: AppTheme.FontSize.xs, weight: AppTheme.AppKitFontWeight.regular),
             .foregroundColor: AppTheme.Text.tertiary,
         ]
 
@@ -41,8 +41,10 @@ enum TimelineRuler {
 
         // Draw minor ticks first (so major ticks draw on top)
         if framesPerMinor > 0 {
-            context.setStrokeColor(AppTheme.Text.muted.withAlphaComponent(0.4).cgColor)
-            context.setLineWidth(0.5)
+            context.setStrokeColor(
+                AppTheme.Text.muted.withAlphaComponent(AppTheme.Opacity.settingsWindow).cgColor
+            )
+            context.setLineWidth(AppTheme.BorderWidth.hairline)
             var minorFrame = (startFrame / framesPerMinor) * framesPerMinor
             while minorFrame <= endFrame {
                 if minorFrame % framesPerMajor != 0 {
@@ -50,7 +52,10 @@ enum TimelineRuler {
                     if localX >= 0 && localX <= Double(rect.width) {
                         let x = Double(rect.minX) + localX
                         let isMidpoint = minorCount % 2 == 0 && minorFrame % (framesPerMajor / 2) == 0
-                        let tickHeight: Double = isMidpoint ? 6 : 4
+                        let tickHeight =
+                            isMidpoint
+                                ? Double(AppTheme.Spacing.sm)
+                                : Double(AppTheme.Spacing.xs)
                         context.move(to: CGPoint(x: x, y: Double(rect.maxY) - tickHeight))
                         context.addLine(to: CGPoint(x: x, y: Double(rect.maxY)))
                         context.strokePath()
@@ -69,15 +74,25 @@ enum TimelineRuler {
 
             // Major tick
             context.setStrokeColor(AppTheme.Text.muted.cgColor)
-            context.setLineWidth(1)
-            context.move(to: CGPoint(x: x, y: Double(rect.maxY) - 8))
+            context.setLineWidth(AppTheme.BorderWidth.thin)
+            context.move(
+                to: CGPoint(
+                    x: x,
+                    y: Double(rect.maxY) - Double(AppTheme.Spacing.smMd)
+                )
+            )
             context.addLine(to: CGPoint(x: x, y: Double(rect.maxY)))
             context.strokePath()
 
             // Time label
             let label = formatTimecode(frame: frame, fps: fps)
             let str = NSAttributedString(string: label, attributes: attrs)
-            str.draw(at: NSPoint(x: x + 3, y: rect.minY + 2))
+            str.draw(
+                at: NSPoint(
+                    x: x + AppTheme.Timeline.rulerLabelLeadingInset,
+                    y: rect.minY + AppTheme.Spacing.xxs
+                )
+            )
 
             frame += framesPerMajor
         }
@@ -85,7 +100,7 @@ enum TimelineRuler {
 
     /// Choose a tick interval that keeps major ticks ~80px apart.
     private static func tickInterval(pixelsPerFrame: Double, fps: Int) -> Int {
-        let targetPixels = 80.0
+        let targetPixels = AppTheme.Timeline.rulerMajorTickTargetPixels
         let rawFrames = targetPixels / pixelsPerFrame
 
         // Round to "nice" intervals: 1s, 2s, 5s, 10s, 30s, 1m, 5m, 10m, 20m, 30m, 1h
@@ -98,7 +113,7 @@ enum TimelineRuler {
         let majorPixels = Double(framesPerMajor) * pixelsPerFrame
         // Try 10, 5, 4, 2 subdivisions — pick the first where each minor tick is >= 12px apart
         for divisions in [10, 5, 4, 2] {
-            if majorPixels / Double(divisions) >= 12 {
+            if majorPixels / Double(divisions) >= AppTheme.Timeline.rulerMinimumMinorTickSpacing {
                 return divisions
             }
         }

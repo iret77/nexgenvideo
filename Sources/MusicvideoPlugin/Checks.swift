@@ -286,12 +286,13 @@ public enum MusicvideoChecks {
     /// MISSING_BIBLE_ANCHOR_FOR_T2V (error): a `keyframe_strategy=none` (pure text-to-video) shot that
     /// still references bible entities has no visual anchor, so the video model invents the world —
     /// inconsistent with image-to-video shots of the same location/character. Reference-mode on fal is
-    /// exempt (the bible refs ARE the anchor). Escape `text_to_video_ok:` in notes. Port of
-    /// `sanity/checks/keyframe_anchor.py`.
+    /// exempt (the bible refs ARE the anchor), as is a chained shot whose predecessor frame is its
+    /// anchor. Escape `text_to_video_ok:` in notes. Port of `sanity/checks/keyframe_anchor.py`.
     public static let keyframeAnchorCheck: SanityCheck = { ctx in
         var out: [Finding] = []
         for shot in ctx.shotlist.shots {
             guard shot.keyframeStrategy == .none else { continue }
+            if shot.chainWithPreviousEnd { continue }
             var refs: [String] = []
             if let loc = shot.locationRef, !loc.isEmpty { refs.append("location_ref=\(loc)") }
             if !shot.characterRefs.isEmpty { refs.append("character_refs=\(shot.characterRefs)") }

@@ -26,6 +26,8 @@ struct ChordRecognizer: AudioChordRecognizing {
     // (pipeline unaffected), exactly like a missing model.
     private static let modelURL = "https://github.com/iret77/nexgenvideo/releases/download/chord-model-v1/btc_chord.onnx"
     private static let metaURL = "https://github.com/iret77/nexgenvideo/releases/download/chord-model-v1/btc_chord_meta.json"
+    private static let modelSHA256 = "4d1446b3db22f31c9f4cf309fe4572a4443fbfceea4ebf661598d9f2796a4b12"
+    private static let metaSHA256 = "7cfcd3c6fb86c16ebc47f055fe979862c43eed98aff1f6b005a1da4ec22cbd6b"
 
     /// Model sidecar: the vocabulary + geometry the Swift side needs to turn logits into chords.
     private struct Meta: Decodable {
@@ -43,9 +45,19 @@ struct ChordRecognizer: AudioChordRecognizing {
         let modelPath: URL
         let meta: Meta
         do {
-            modelPath = try HFModelStore.ensure(urlString: Self.modelURL, file: "btc_chord.onnx", subdir: "chord")
+            modelPath = try HFModelStore.ensure(
+                urlString: Self.modelURL,
+                file: "btc_chord.onnx",
+                subdir: "chord",
+                expectedSHA256: Self.modelSHA256
+            )
             let metaPath = try HFModelStore.ensure(
-                urlString: Self.metaURL, file: "btc_chord_meta.json", subdir: "chord", minBytes: 1)
+                urlString: Self.metaURL,
+                file: "btc_chord_meta.json",
+                subdir: "chord",
+                minBytes: 1,
+                expectedSHA256: Self.metaSHA256
+            )
             meta = try JSONDecoder().decode(Meta.self, from: Data(contentsOf: metaPath))
         } catch {
             return nil   // no model hosted / offline → keep an empty chord progression

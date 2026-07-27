@@ -1,6 +1,6 @@
 public enum EngineContract {
-    /// Bump whenever anything crossing the host↔pack binary boundary changes shape — a `Pack`
-    /// protocol requirement, a type in its signatures, `PackEntry`. A pack built against a
-    /// different value is refused at load; it cannot be called safely.
-    public static let current = 2
+    /// Current host-pack binary contract; bump when any boundary type changes shape.
+    public static let current = 3
+    /// Oldest contract accepted after additive ABI changes.
+    public static let minimumCompatible = 2
 }

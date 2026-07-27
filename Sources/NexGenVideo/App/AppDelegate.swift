@@ -37,11 +37,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         AppNotifications.configure()
 
-        AppState.shared.startMCPService()
+        AppState.shared.reconcileMCPService()
     }
 
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    @MainActor
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        let urls = filenames.map(URL.init(fileURLWithPath:))
+        Task {
+            let reply = await AppState.shared.openProjectsFromSystem(urls)
+            sender.reply(toOpenOrPrint: reply)
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

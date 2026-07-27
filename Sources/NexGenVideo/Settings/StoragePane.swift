@@ -10,82 +10,103 @@ struct StoragePane: View {
     @AppStorage(Project.projectsFolderKey) private var projectsFolder = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             projectsFolderSection
-
-            Divider()
-                .overlay(AppTheme.Border.subtleColor)
-
-            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                    Text("Cache")
-                        .font(.system(size: AppTheme.FontSize.md))
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                    Text("Saved playback previews, waveforms, and filmstrip thumbnails. Safe to clear; they'll rebuild as needed.")
-                        .font(.system(size: AppTheme.FontSize.sm))
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: AppTheme.Spacing.sm) {
-                        Text(displayPath)
-                            .font(.system(size: AppTheme.FontSize.xs).monospaced())
-                            .foregroundStyle(AppTheme.Text.tertiaryColor)
-                            .textSelection(.enabled)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text(formattedSize)
-                            .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
-                            .foregroundStyle(AppTheme.Text.secondaryColor)
-                    }
-                    .padding(.top, AppTheme.Spacing.xs)
-                }
-
-                Spacer(minLength: AppTheme.Spacing.lg)
-
-                Button("Clear cache") {
-                    clear()
-                }
-                .controlSize(.small)
-                .disabled(isClearing || cacheBytes == 0)
-            }
-
-            Divider()
-                .overlay(AppTheme.Border.subtleColor)
-
+            cacheSection
             searchIndexSection
         }
         .task { await refresh() }
     }
 
     private var projectsFolderSection: some View {
-        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text("Projects folder")
-                    .font(.system(size: AppTheme.FontSize.md))
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                Text("Where new projects are created. Existing projects stay wherever they already live.")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(Project.storageDirectory.path)
-                    .font(.system(size: AppTheme.FontSize.xs).monospaced())
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.top, AppTheme.Spacing.xs)
-            }
-
-            Spacer(minLength: AppTheme.Spacing.lg)
-
-            HStack(spacing: AppTheme.Spacing.sm) {
-                if !projectsFolder.isEmpty {
-                    Button("Reset") {
-                        projectsFolder = ""
+        SettingsSection("Projects") {
+            SettingsCard {
+                SettingsRow(
+                    title: "Projects folder",
+                    subtitle: "New projects are created here. Existing projects stay in their current locations."
+                ) {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        if !projectsFolder.isEmpty {
+                            Button("Reset") {
+                                projectsFolder = ""
+                            }
+                            .controlSize(.small)
+                        }
+                        Button("Choose…") { chooseProjectsFolder() }
+                            .controlSize(.small)
                     }
-                    .controlSize(.small)
                 }
-                Button("Choose…") { chooseProjectsFolder() }
-                    .controlSize(.small)
+                SettingsDivider()
+                storageDetailRow(label: "Location", value: Project.storageDirectory.path)
+            }
+        }
+    }
+
+    private var cacheSection: some View {
+        SettingsSection("Temporary Files") {
+            SettingsCard {
+                SettingsRow(
+                    title: "Playback cache",
+                    subtitle: "Previews, waveforms, and filmstrip thumbnails rebuild automatically."
+                ) {
+                    Button("Clear cache") { clear() }
+                        .controlSize(.small)
+                        .disabled(isClearing || cacheBytes == 0)
+                }
+                SettingsDivider()
+                storageDetailRow(label: "Location", value: displayPath, trailing: formattedSize)
+            }
+        }
+    }
+
+    private var searchIndexSection: some View {
+        SettingsSection("Media Search") {
+            SettingsCard {
+                SettingsToggleRow(
+                    title: "Index imported media",
+                    subtitle: "Builds an on-device visual index so media can be searched by content.",
+                    isOn: $searchEnabled
+                )
+                .onChange(of: searchEnabled) { _, newValue in
+                    VisualModelLoader.shared.setEnabled(newValue)
+                }
+                SettingsDivider()
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    Text("Search index")
+                        .font(.system(size: AppTheme.FontSize.sm))
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    Spacer(minLength: AppTheme.Spacing.lg)
+                    Text(ByteCountFormatter.string(fromByteCount: indexBytes, countStyle: .file))
+                        .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    Button("Clear index") { clearIndex() }
+                        .controlSize(.small)
+                        .disabled(indexBytes == 0)
+                }
+                .padding(.horizontal, AppTheme.Spacing.mdLg)
+                .padding(.vertical, AppTheme.Spacing.smMd)
+
+                if modelBytes > 0 {
+                    SettingsDivider()
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                            Text("Search model")
+                                .font(.system(size: AppTheme.FontSize.sm))
+                                .foregroundStyle(AppTheme.Text.secondaryColor)
+                            Text(SearchIndexConfig.manifest.model)
+                                .font(.system(size: AppTheme.FontSize.xs).monospaced())
+                                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        }
+                        Spacer(minLength: AppTheme.Spacing.lg)
+                        Text(ByteCountFormatter.string(fromByteCount: modelBytes, countStyle: .file))
+                            .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        Button("Remove model") { removeModel() }
+                            .controlSize(.small)
+                    }
+                    .padding(.horizontal, AppTheme.Spacing.mdLg)
+                    .padding(.vertical, AppTheme.Spacing.smMd)
+                }
             }
         }
     }
@@ -104,54 +125,26 @@ struct StoragePane: View {
         }
     }
 
-    private var searchIndexSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                    Text("Media search")
-                        .font(.system(size: AppTheme.FontSize.md))
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                    Text("Indexes media on import so you can search it. Runs on-device.")
-                        .font(.system(size: AppTheme.FontSize.sm))
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: AppTheme.Spacing.lg)
-                Toggle("", isOn: $searchEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .onChange(of: searchEnabled) { _, newValue in
-                        VisualModelLoader.shared.setEnabled(newValue)
-                    }
-            }
-
-            HStack(spacing: AppTheme.Spacing.sm) {
-                Text("Index")
-                    .font(.system(size: AppTheme.FontSize.xs))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                Text(ByteCountFormatter.string(fromByteCount: indexBytes, countStyle: .file))
+    private func storageDetailRow(label: String, value: String, trailing: String? = nil) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Text(label)
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+            Text(value)
+                .font(.system(size: AppTheme.FontSize.xs).monospaced())
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: AppTheme.Spacing.lg)
+            if let trailing {
+                Text(trailing)
                     .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
                     .foregroundStyle(AppTheme.Text.secondaryColor)
-                Button("Clear index") { clearIndex() }
-                    .controlSize(.small)
-                    .disabled(indexBytes == 0)
-            }
-            .padding(.top, AppTheme.Spacing.xs)
-
-            if modelBytes > 0 {
-                HStack(spacing: AppTheme.Spacing.sm) {
-                    Text("Model")
-                        .font(.system(size: AppTheme.FontSize.xs))
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    Text("\(SearchIndexConfig.manifest.model) · \(ByteCountFormatter.string(fromByteCount: modelBytes, countStyle: .file))")
-                        .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                    Button("Remove model") { removeModel() }
-                        .controlSize(.small)
-                }
             }
         }
+        .padding(.horizontal, AppTheme.Spacing.mdLg)
+        .padding(.vertical, AppTheme.Spacing.smMd)
     }
 
     private nonisolated static let caches = [ImageVideoGenerator.cache, MediaVisualCache.diskCache]

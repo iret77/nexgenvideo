@@ -1,3 +1,5 @@
+import AVFoundation
+import CryptoKit
 import Foundation
 import Testing
 @testable import NexGenVideo
@@ -29,20 +31,152 @@ struct WorkflowToolsTests {
         // the way the host's PluginLoader does, so the workflow tools resolve it.
         PackCatalog.register(MusicvideoPack())
         let home = FrameInventory.projectHome(of: dataRoot)
-        let data = try JSONSerialization.data(withJSONObject: ["activePlugin": pack], options: [])
-        try data.write(to: home.appendingPathComponent("ngv.json"))
+        try ProjectPluginSettings.setActivePlugin(pack, projectURL: home)
     }
 
-    private func minimalShotlist(project: String = "demo") throws -> Shotlist {
+    private func minimalShotlist(
+        project: String = "demo",
+        keyframeStrategy: KeyframeStrategy = .start
+    ) throws -> Shotlist {
         let shot = try Shot(
             id: "s001", section: "verse", timeStart: 0.0, timeEnd: 4.0, durationS: 4.0,
-            type: .performance, description: "d", visualPrompt: "p", mood: "m"
+            type: .performance, description: "d", visualPrompt: "p", mood: "m",
+            keyframeStrategy: keyframeStrategy
         )
         let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 4.0)
         return try Shotlist(
             schema_: shotlistSchemaVersion, mode: .section, project: project, song: song,
             generated: "2026-01-01", generator: "test", shots: [shot]
         )
+    }
+
+    private func addGeneratedVideo(
+        _ id: String,
+        at url: URL,
+        to harness: ToolHarness,
+        model: String = "video-model",
+        sourceVideoAssetId: String? = nil
+    ) throws {
+        try Data(id.utf8).write(to: url)
+        var input = GenerationInput(
+            prompt: "Compiled provider prompt for \(id).",
+            model: model,
+            duration: 4,
+            aspectRatio: "16:9"
+        )
+        input.sourceVideoAssetId = sourceVideoAssetId
+        harness.editor.mediaAssets.append(
+            MediaAsset(
+                id: id,
+                url: url,
+                type: .video,
+                name: id,
+                generationInput: input
+            )
+        )
+    }
+
+    private func addSourceVideo(
+        _ id: String,
+        at url: URL,
+        to harness: ToolHarness
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(id.utf8).write(to: url)
+        harness.editor.mediaAssets.append(
+            MediaAsset(
+                id: id,
+                url: url,
+                type: .video,
+                name: id
+            )
+        )
+    }
+
+    private func addGeneratedImage(
+        _ id: String,
+        at url: URL,
+        to harness: ToolHarness
+    ) throws {
+        try Data(id.utf8).write(to: url)
+        let input = GenerationInput(
+            prompt: "Compiled provider prompt for \(id).",
+            model: "image-model",
+            duration: 0,
+            aspectRatio: "1:1"
+        )
+        harness.editor.mediaAssets.append(
+            MediaAsset(
+                id: id,
+                url: url,
+                type: .image,
+                name: id,
+                generationInput: input
+            )
+        )
+    }
+
+    private func writeMeasuredAnalysis(dataRoot: URL) throws -> URL {
+        let audio = dataRoot.appendingPathComponent("audio/song.wav")
+        try FileManager.default.createDirectory(
+            at: audio.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("stub".utf8).write(to: audio)
+        let songHash = SHA256.hash(data: try Data(contentsOf: audio))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let analysis = dataRoot.appendingPathComponent("analysis/song.json")
+        try FileManager.default.createDirectory(
+            at: analysis.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let object: [String: Any] = [
+            "schema": "analysis/v2",
+            "project": "demo",
+            "song_path": "audio/song.wav",
+            "song_sha256": songHash,
+            "sample_rate": 44_100,
+            "duration_s": 12,
+            "bpm": 160,
+            "beats": [0.0, 0.5, 1.0],
+            "downbeats": [0.0, 2.0, 4.0],
+            "sections": [
+                ["index": 0, "start": 0.0, "end": 4.0, "cluster": 0],
+                ["index": 1, "start": 4.0, "end": 12.0, "cluster": 1],
+            ],
+            "interpretation": [
+                "section_labels": [],
+                "anomalies": [[
+                    "kind": "boundary_divergence",
+                    "time": "4.000",
+                    "detail": "librosa vs essentia",
+                ]],
+                "overall_character": "",
+            ],
+        ]
+        try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .sortedKeys]
+        ).write(to: analysis)
+        return analysis
+    }
+
+    private func validBriefArgs(dataRoot: URL) -> [String: Any] {
+        [
+            "project_dir": dataRoot.path,
+            "mission": "single_release",
+            "target_platform": "YouTube",
+            "aspect_ratio": "16:9",
+            "project_mode": "section",
+            "concept_type": "narrative",
+            "visual_medium": "live_action_realistic",
+            "figures": "artist_only",
+            "lyrics_integration": "literal",
+        ]
     }
 
     // MARK: - init_project → get_project_state
@@ -82,6 +216,33 @@ struct WorkflowToolsTests {
         _ = try await h.runOK("init_project", args: ["home_dir": home.path, "name": "x"])
         let result = await h.runRaw("init_project", args: ["home_dir": home.path, "name": "x"])
         #expect(result.isError)
+    }
+
+    @Test("init_project redirects an open saved package to its working copy")
+    func initProjectCannotBypassWorkingCopy() async throws {
+        let cleanup = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wf-init-working-\(UUID().uuidString)", isDirectory: true)
+        let savedHome = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
+        try Fixtures.prepareProjectPackage(at: savedHome)
+        let h = ToolHarness()
+        h.editor.projectURL = savedHome
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let liveHome = try #require(h.editor.workingRoot)
+
+        _ = try await h.runOK("init_project", args: [
+            "home_dir": savedHome.path,
+            "name": "working-project",
+        ])
+
+        #expect(FileManager.default.fileExists(
+            atPath: liveHome.appendingPathComponent("pipeline/project.yaml").path
+        ))
+        #expect(!FileManager.default.fileExists(
+            atPath: savedHome.appendingPathComponent("pipeline/project.yaml").path
+        ))
     }
 
     // MARK: - list_phases / get_ui_contract
@@ -164,8 +325,13 @@ struct WorkflowToolsTests {
         _ = try await h.runGateOK("approve_gate", args: ["project_dir": dir, "phase": "brief"])
         _ = try await h.runGateOK("approve_gate", args: ["project_dir": dir, "phase": "production_design"])
         _ = try await h.runGateOK("approve_gate", args: ["project_dir": dir, "phase": "treatment"])
+        var rewindMarkedProjectChanged = false
+        h.editor.onPipelineChanged = {
+            rewindMarkedProjectChanged = true
+        }
         let rewound = try await h.runOK("rewind", args: ["project_dir": dir, "target_phase": "brief"]) as? [String: Any]
         #expect(rewound?["target"] as? String == "brief")
+        #expect(rewindMarkedProjectChanged)
         let reset = try #require(rewound?["reset_phases"] as? [String])
         #expect(reset.first == "brief")
         #expect(reset.contains("treatment"))
@@ -177,6 +343,20 @@ struct WorkflowToolsTests {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
+        try FileManager.default.createDirectory(
+            at: dataRoot.appendingPathComponent("audio"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: dataRoot.appendingPathComponent("lyrics"),
+            withIntermediateDirectories: true
+        )
+        try Data("track".utf8).write(
+            to: dataRoot.appendingPathComponent("audio/song.wav")
+        )
+        try Data("lyrics".utf8).write(
+            to: dataRoot.appendingPathComponent("lyrics/lyrics.txt")
+        )
 
         // Approve the predecessor first, so the analysis block is attributable to the ARTIFACT hard
         // gate (no measured beats/downbeats), not merely to ordering.
@@ -197,6 +377,66 @@ struct WorkflowToolsTests {
         ])
         #expect(blocked2.isError == true)
         #expect(ToolHarness.textOf(blocked2).contains("run_phase"))
+    }
+
+    @Test("Brief work is structurally blocked until its host-owned intake is resolved")
+    func briefWaitsForCreativeIntake() async throws {
+        let cleanup = FileManager.default.temporaryDirectory
+            .appendingPathComponent("brief-intake-\(UUID().uuidString)", isDirectory: true)
+        let package = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
+        try Fixtures.prepareProjectPackage(at: package)
+        try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
+        PackCatalog.register(MusicvideoPack())
+        let packageDataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "demo",
+            mode: .beat,
+            extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
+        )
+
+        let store = YAMLArtifactStore(dataRoot: packageDataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&gates, phase: "project_init")
+        GatesOperations.approve(&gates, phase: "analysis")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+
+        let h = ToolHarness(enforceHardGates: true)
+        h.editor.projectURL = package
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let dataRoot = try #require(
+            h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+        let reconciliation = h.editor.pipelineAgentHarness.reconcile(editor: h.editor)
+        #expect(!reconciliation.isReady)
+        #expect(h.editor.agentService.pendingDialog?.title == "Existing story")
+        let blocked = await h.runRaw(
+            "write_brief",
+            args: validBriefArgs(dataRoot: dataRoot)
+        )
+
+        #expect(blocked.isError)
+        #expect(ToolHarness.textOf(blocked).contains("host-owned Existing story card"))
+
+        let blockedDialog = await h.runRaw(
+            "show_dialog",
+            args: [
+                "title": "Choose a story direction",
+                "sections": [[
+                    "id": "direction",
+                    "label": "Direction",
+                    "type": "choices",
+                    "options": [
+                        ["id": "one", "label": "One"],
+                        ["id": "two", "label": "Two"],
+                    ],
+                ]],
+            ]
+        )
+        #expect(blockedDialog.isError)
+        #expect(ToolHarness.textOf(blockedDialog).contains("host-owned decision"))
     }
 
     @Test("list_project_files + copy_project_file stage files and refuse to escape the project")
@@ -226,6 +466,20 @@ struct WorkflowToolsTests {
         ])
         #expect(escape.isError == true)
 
+        let canonicalArtifact = await h.runRaw("copy_project_file", args: [
+            "project_dir": dataRoot.path,
+            "from": "import/characters/mouse/face.png",
+            "to": PipelineLayout.bibleFile,
+        ])
+        #expect(canonicalArtifact.isError == true)
+
+        let canonicalSource = await h.runRaw("copy_project_file", args: [
+            "project_dir": dataRoot.path,
+            "from": PipelineLayout.gatesFile,
+            "to": "bible/refs/mouse/gates.png",
+        ])
+        #expect(canonicalSource.isError == true)
+
         // A symlink escaping the project is refused too.
         let outside = cleanup.appendingPathComponent("outside", isDirectory: true)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
@@ -237,6 +491,64 @@ struct WorkflowToolsTests {
         #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("stolen.png").path))
     }
 
+    @Test("copy_project_file stages generated media with exact pipeline provenance")
+    func projectMediaCopyRecordsProvenance() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let source = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("sheet.png")
+        try addGeneratedImage("sheet-media", at: source, to: h)
+
+        let result = try #require(try await h.runOK(
+            "copy_project_file",
+            args: [
+                "project_dir": dataRoot.path,
+                "media": "sheet-media",
+                "to": "bible/mouse/front.png",
+            ]
+        ) as? [String: Any])
+        #expect(result["generated_provenance"] as? Bool == true)
+
+        let proof = try loadPipelineAssetProof(
+            dataRoot: dataRoot,
+            scope: "bible"
+        )
+        let entry = try #require(
+            proof.entries["bible/mouse/front.png"]
+        )
+        let staged = dataRoot.appendingPathComponent(
+            "bible/mouse/front.png"
+        )
+        #expect(entry.sha256 == (try FileDigest.sha256(of: staged)))
+        #expect(entry.generationModel == "image-model")
+        #expect(entry.sourceMediaId == "sheet-media")
+    }
+
+    @Test("Scene3D extraction refuses path-bearing identifiers and external panoramas")
+    func scene3dExtractionStaysInsidePipeline() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+
+        let identifierEscape = await h.runRaw(
+            "extract_scene3d_povs",
+            args: [
+                "project_dir": dataRoot.path,
+                "location_id": "../../outside",
+            ]
+        )
+        #expect(identifierEscape.isError)
+
+        let panoramaEscape = await h.runRaw(
+            "extract_scene3d_povs",
+            args: [
+                "project_dir": dataRoot.path,
+                "location_id": "studio",
+                "panorama": "../outside.png",
+            ]
+        )
+        #expect(panoramaEscape.isError)
+    }
+
     @Test("set_gate_state rejects an unknown state")
     func setGateStateBadValue() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
@@ -245,7 +557,147 @@ struct WorkflowToolsTests {
         #expect(result.isError)
     }
 
+    @Test("rewind rejects unreadable live format settings")
+    func rewindRejectsUnreadableFormatSettings() async throws {
+        let (h, savedDataRoot, cleanup) = try scaffold()
+        try activatePack("musicvideo", dataRoot: savedDataRoot)
+        let package = FrameInventory.projectHome(of: savedDataRoot)
+        try Fixtures.prepareProjectPackage(at: package)
+        h.editor.projectURL = package
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(h.editor.workingRoot)
+        let workingDataRoot = try #require(
+            DataRootResolver.dataRoot(of: workingHome)
+        )
+        let gatesURL = workingDataRoot.appendingPathComponent(
+            PipelineLayout.gatesFile
+        )
+        let gatesBefore = try Data(contentsOf: gatesURL)
+        try Data("{broken".utf8).write(
+            to: workingHome.appendingPathComponent("ngv.json"),
+            options: .atomic
+        )
+
+        let result = await h.runRaw("rewind", args: [
+            "project_dir": workingDataRoot.path,
+            "target_phase": "project_init",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("unreadable"))
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+
+        let mismatchedSettings = try JSONSerialization.data(
+            withJSONObject: ["activePlugin": "other"]
+        )
+        try mismatchedSettings.write(
+            to: workingHome.appendingPathComponent("ngv.json"),
+            options: .atomic
+        )
+        let mismatch = await h.runRaw("rewind", args: [
+            "project_dir": workingDataRoot.path,
+            "target_phase": "project_init",
+        ])
+        #expect(mismatch.isError)
+        #expect(ToolHarness.textOf(mismatch).contains("musicvideo"))
+        #expect(ToolHarness.textOf(mismatch).contains("other"))
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+    }
+
+    @Test("agent and native rewinds reject a declared but unwired pack")
+    func rewindsRejectUnwiredPack() async throws {
+        let (h, savedDataRoot, cleanup) = try scaffold()
+        let package = FrameInventory.projectHome(of: savedDataRoot)
+        let pack = "unwired-\(UUID().uuidString.lowercased())"
+        let binding = try #require(ProjectPackBinding(
+            id: pack,
+            version: "1.0.0",
+            projectSchema: "\(pack)/1.0.0"
+        ))
+        try ProjectPluginSettings.setActivePlugin(binding, projectURL: package)
+        try Fixtures.prepareProjectPackage(at: package)
+        h.editor.projectURL = package
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(h.editor.workingRoot)
+        let workingDataRoot = try #require(
+            DataRootResolver.dataRoot(of: workingHome)
+        )
+        let gatesURL = workingDataRoot.appendingPathComponent(
+            PipelineLayout.gatesFile
+        )
+        let gatesBefore = try Data(contentsOf: gatesURL)
+
+        let agentResult = await h.runRaw("rewind", args: [
+            "project_dir": workingDataRoot.path,
+            "target_phase": "project_init",
+        ])
+        #expect(agentResult.isError)
+        #expect(ToolHarness.textOf(agentResult).contains("isn't wired"))
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+
+        let agentStateResult = await h.runRaw("set_gate_state", args: [
+            "project_dir": workingDataRoot.path,
+            "phase": "project_init",
+            "state": "needs_revision",
+        ])
+        #expect(agentStateResult.isError)
+        #expect(ToolHarness.textOf(agentStateResult).contains("isn't wired"))
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+
+        #expect(throws: NativeGateWriter.WriteError.self) {
+            try NativeGateWriter.rewind(
+                projectDir: workingHome,
+                targetPhase: "project_init",
+                declaredPack: pack
+            )
+        }
+        #expect(throws: NativeGateWriter.WriteError.self) {
+            try NativeGateWriter.setState(
+                projectDir: workingHome,
+                phase: "project_init",
+                state: .needsRevision,
+                declaredPack: pack
+            )
+        }
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+    }
+
     // MARK: - Ledger set / lock / remove
+
+    @Test("an explicit saved-package path is redirected to the open working copy")
+    func savedProjectDirCannotBypassWorkingCopy() async throws {
+        let (h, savedDataRoot, cleanup) = try scaffold()
+        let home = FrameInventory.projectHome(of: savedDataRoot)
+        try Fixtures.prepareProjectPackage(at: home)
+        h.editor.projectURL = home
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let liveDataRoot = try #require(
+            h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+
+        _ = try await h.runOK("set_ledger_attribute", args: [
+            "project_dir": savedDataRoot.path,
+            "kind": "look",
+            "key": "palette",
+            "tag": "working only",
+        ])
+
+        #expect(FileManager.default.fileExists(
+            atPath: liveDataRoot.appendingPathComponent(PipelineLayout.ledgerFile).path
+        ))
+        #expect(!FileManager.default.fileExists(
+            atPath: savedDataRoot.appendingPathComponent(PipelineLayout.ledgerFile).path
+        ))
+    }
 
     @Test("ledger set, lock, and remove round-trip; a locked attribute refuses removal")
     func ledgerRoundTrip() async throws {
@@ -291,6 +743,26 @@ struct WorkflowToolsTests {
         #expect(result.isError)
     }
 
+    @Test("ledger mutation refuses and preserves a corrupt ledger")
+    func corruptLedgerIsNotOverwritten() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let ledgerURL = PipelineLayout.url(PipelineLayout.ledgerFile, in: dataRoot)
+        let corrupt = Data("objects: [broken".utf8)
+        try corrupt.write(to: ledgerURL)
+
+        let result = await h.runRaw("set_ledger_attribute", args: [
+            "project_dir": dataRoot.path,
+            "kind": "look",
+            "key": "palette",
+            "tag": "warm amber",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("Nothing was written"))
+        #expect(try Data(contentsOf: ledgerURL) == corrupt)
+    }
+
     // MARK: - resolve_model
 
     @Test("resolve_model returns the task-class floor and one-step escalation")
@@ -316,12 +788,16 @@ struct WorkflowToolsTests {
 
     // MARK: - run_sanity on a minimal shotlist
 
-    @Test("run_sanity on a project with no shotlist returns the no-shotlist marker")
+    @Test("run_sanity refuses a project with no shotlist")
     func sanityNoShotlist() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        let report = try await h.runOK("run_sanity", args: ["project_dir": dataRoot.path]) as? [String: Any]
-        #expect(report?["error"] as? String == "no shotlist")
+        let report = await h.runRaw(
+            "run_sanity",
+            args: ["project_dir": dataRoot.path]
+        )
+        #expect(report.isError)
+        #expect(ToolHarness.textOf(report).contains("No shot list exists"))
     }
 
     @Test("run_sanity on a minimal shotlist returns findings with the four contract fields")
@@ -332,6 +808,14 @@ struct WorkflowToolsTests {
 
         let report = try await h.runOK("run_sanity", args: ["project_dir": dataRoot.path]) as? [String: Any]
         #expect(report?["project"] as? String == "demo")
+        #expect(report?["path"] as? String == PipelineLayout.sanityReportFile)
+        #expect((report?["input_fingerprint"] as? String)?.isEmpty == false)
+        #expect(FileManager.default.fileExists(
+            atPath: PipelineLayout.url(
+                PipelineLayout.sanityReportFile,
+                in: dataRoot
+            ).path
+        ))
         let findings = try #require(report?["findings"] as? [[String: Any]])
         // The "p" prompt is too short → PROMPT_TOO_SHORT proves core checks ran.
         #expect(findings.contains { ($0["code"] as? String) == "PROMPT_TOO_SHORT" })
@@ -358,15 +842,387 @@ struct WorkflowToolsTests {
         #expect(cost?.keys.contains("next_phase") == true)
     }
 
+    @Test("typed planning writers persist engine-valid artifacts")
+    func typedPlanningWritersPersistArtifacts() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+
+        _ = try await h.runOK("write_production_design", args: [
+            "project_dir": dataRoot.path,
+            "visual_medium": "2d_animation",
+            "refs": [],
+            "color_script": [[
+                "section": "intro",
+                "description": "Muted blue dawn.",
+            ]],
+        ])
+        let design = try YAMLArtifactStore(dataRoot: dataRoot).load(
+            ProductionDesign.self,
+            at: "production_design/production_design.yaml"
+        )
+        #expect(design.project == "demo")
+        #expect(design.colorScript["intro"] == "Muted blue dawn.")
+
+        _ = try await h.runOK("write_treatment", args: [
+            "project_dir": dataRoot.path,
+            "origin": "agent_proposal",
+            "summary_oneline": "A quiet dawn begins the film.",
+            "body_markdown": "The empty yard holds until the performer arrives.",
+        ])
+        let treatment = try TreatmentStore.load(dataRoot: dataRoot)
+        #expect(treatment.meta.project == "demo")
+        #expect(treatment.meta.version == 1)
+
+        let storyboardSteps: [[String: Any]] = (1...4).map { index in
+            [
+                "id": "intro.\(String(format: "%02d", index))",
+                "function": index == 1 ? "transition" : "story",
+                "source_mode": "generated",
+                "subject": "The empty yard waits before sunrise.",
+                "camera": "Wide static frame.",
+                "setting_hint": "yard, from the gate",
+                "location_view_request": "wide",
+                "character_view_request": [],
+                "prop_request": [],
+                "framing": "wide",
+                "visible_zones": ["yard_main"],
+                "zone_introduces": index == 1 ? ["yard_main"] : [],
+                "camera_setup": [
+                    "height": "eye_level",
+                    "angle": "frontal",
+                    "lens_hint": "wide",
+                ],
+                "character_blocking": [],
+            ]
+        }
+        _ = try await h.runOK("write_storyboard", args: [
+            "project_dir": dataRoot.path,
+            "origin": "agent_proposal",
+            "summary_oneline": "The yard wakes.",
+            "sections": [[
+                "id": "intro",
+                "label": "intro",
+                "time_start": 0,
+                "time_end": 12,
+                "energy": "low",
+                "function": "aufbau",
+                "steps": storyboardSteps,
+            ]],
+        ])
+        let storyboard = try #require(
+            try StoryboardStore.load(
+                dataRoot: dataRoot,
+                version: .current
+            )
+        )
+        #expect(storyboard.sections.first?.steps.first?.framing == "wide")
+
+        let anchor = dataRoot.appendingPathComponent("bible/yard-wide.png")
+        try FileManager.default.createDirectory(
+            at: anchor.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("anchor".utf8).write(to: anchor)
+        try savePipelineAssetProof(
+            PipelineAssetProof(
+                project: "demo",
+                scope: "bible",
+                entries: [
+                    "bible/yard-wide.png": PipelineAssetProofEntry(
+                        path: "bible/yard-wide.png",
+                        sha256: try FileDigest.sha256(of: anchor),
+                        providerPrompt: "Compiled provider prompt",
+                        generationModel: "image-model",
+                        sourceMediaId: "yard-wide"
+                    ),
+                ]
+            ),
+            dataRoot: dataRoot
+        )
+        let location: [String: Any] = [
+            "id": "yard",
+            "name": "Schoolyard",
+            "visual_prompt": "A quiet hand-drawn schoolyard at blue hour.",
+            "attributes": [],
+            "hard_recognition_trait": "red gate",
+            "reference_images": [],
+            "sheets": [["view": "wide", "path": "bible/yard-wide.png"]],
+            "view_purpose": [["view": "wide", "purpose": "establishing"]],
+            "floorplan": "",
+            "zones": [[
+                "id": "yard_main",
+                "description": "Main yard",
+                "status": "clean",
+                "bible_assets": ["bible/yard-wide.png"],
+            ]],
+            "scene3d": [
+                "panorama": "",
+                "provider": "",
+                "povs": [],
+            ],
+        ]
+        _ = try await h.runOK("write_bible", args: [
+            "project_dir": dataRoot.path,
+            "look": ["style": "restrained hand-drawn animation"],
+            "characters": [],
+            "ensembles": [],
+            "props": [],
+            "locations": [location],
+        ])
+        let bible = try #require(try loadBible(dataRoot: dataRoot))
+        #expect(bible.locations.first?.sheets["wide"] == "bible/yard-wide.png")
+
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            try Brief(
+                project: "demo",
+                generated: "2026-07-26T00:00:00Z",
+                mission: .demo,
+                targetPlatform: "YouTube",
+                aspectRatio: .landscape16x9,
+                projectMode: "section",
+                budgetEur: 50,
+                conceptType: .narrative,
+                visualMedium: .animation2d,
+                visualMediumNotes: "restrained hand-drawn animation",
+                figures: .none,
+                lyricsIntegration: .metaphorical
+            ),
+            to: PipelineLayout.briefFile
+        )
+        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        let shot: [String: Any] = [
+            "id": "s001",
+            "section": "intro",
+            "time_start": 0,
+            "time_end": 12,
+            "duration_s": 12,
+            "type": "performance",
+            "source_mode": "generated",
+            "description": "The performer enters the yard.",
+            "visual_prompt": "At t=0 the empty hand-drawn yard waits in a wide blue-hour frame.",
+            "mood": "restrained",
+            "character_refs": [],
+            "character_views": [],
+            "keyframe_strategy": "start",
+            "visible_zones": ["yard_main"],
+            "zone_introduces": [],
+            "character_blocking": [],
+            "prop_refs": [],
+            "prop_views": [],
+            "redo": false,
+            "scene_video_provider": "fal",
+            "seedance_input_mode": "keyframe",
+            "reference_image_refs": [],
+            "chain_with_previous_end": false,
+            "transition_in": "hard_cut",
+            "transition_out": "hard_cut",
+        ]
+        _ = try await h.runOK("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [shot],
+        ])
+        let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
+        #expect(shotlist.project == "demo")
+        #expect(shotlist.song.bpm == 160)
+        #expect(shotlist.shots.map(\.id) == ["s001"])
+    }
+
+    @Test("planning writers reject project-path symlink escapes")
+    func planningWriterRejectsSymlinkEscape() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let outside = cleanup.appendingPathComponent("outside.png")
+        try Data("outside".utf8).write(to: outside)
+        let link = dataRoot.appendingPathComponent("style-link.png")
+        try FileManager.default.createSymbolicLink(
+            at: link,
+            withDestinationURL: outside
+        )
+
+        let result = await h.runRaw("write_production_design", args: [
+            "project_dir": dataRoot.path,
+            "visual_medium": "2d_animation",
+            "refs": [["path": "style-link.png", "note": "style"]],
+            "color_script": [],
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("inside the project"))
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: dataRoot.appendingPathComponent(
+                    "production_design/production_design.yaml"
+                ).path
+            )
+        )
+    }
+
+    @Test("planning writers reject non-image reference files")
+    func planningWriterRejectsNonImageReference() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let reference = dataRoot.appendingPathComponent(
+            "production_design/refs/style.txt"
+        )
+        try FileManager.default.createDirectory(
+            at: reference.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("not an image".utf8).write(to: reference)
+
+        let result = await h.runRaw("write_production_design", args: [
+            "project_dir": dataRoot.path,
+            "visual_medium": "2d_animation",
+            "refs": [[
+                "path": "production_design/refs/style.txt",
+                "note": "style",
+            ]],
+            "color_script": [],
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("must name an image"))
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: dataRoot.appendingPathComponent(
+                    "production_design/production_design.yaml"
+                ).path
+            )
+        )
+    }
+
+    @Test("native shot source edits use the canonical pipeline data root")
+    func nativeShotSourceEditUsesPipelineDataRoot() async throws {
+        let cleanup = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "shot-source-root-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let package = cleanup.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let packageDataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "demo",
+            mode: .beat
+        )
+        _ = try saveShotlist(try minimalShotlist(), to: packageDataRoot)
+        let store = YAMLArtifactStore(dataRoot: packageDataRoot)
+        var gates = try store.load(
+            Gates.self,
+            at: PipelineLayout.gatesFile
+        )
+        for phase in coreGatePhases.prefix(while: { $0 != "shotlist" }) {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+
+        let harness = ToolHarness()
+        harness.editor.projectURL = package
+        defer {
+            harness.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(harness.editor.workingRoot)
+        let workingDataRoot = try #require(
+            DataRootResolver.dataRoot(of: workingHome)
+        )
+
+        let changed = await harness.editor.setShotSourceMode(
+            shotId: "s001",
+            to: .imported
+        )
+
+        #expect(changed)
+        let shotlist = try #require(
+            try loadShotlist(dataRoot: workingDataRoot)
+        )
+        #expect(shotlist.shots.first?.sourceMode == .imported)
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: workingHome.appendingPathComponent(
+                    "shotlist",
+                    isDirectory: true
+                ).path
+            )
+        )
+        #expect(latestShotlistVersion(dataRoot: workingDataRoot) == 2)
+
+        let invalidEnhancement = await harness.editor.setShotSourceMode(
+            shotId: "s001",
+            to: .aiEnhanced
+        )
+        #expect(!invalidEnhancement)
+        #expect(latestShotlistVersion(dataRoot: workingDataRoot) == 2)
+    }
+
+    @Test("native shot source edits cannot bypass the current pipeline phase")
+    func nativeShotSourceEditRequiresCurrentPhase() async throws {
+        let cleanup = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "shot-source-phase-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let package = cleanup.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let packageDataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "demo",
+            mode: .beat
+        )
+        try activatePack("musicvideo", dataRoot: packageDataRoot)
+        _ = try saveShotlist(try minimalShotlist(), to: packageDataRoot)
+
+        let harness = ToolHarness()
+        harness.editor.projectURL = package
+        defer {
+            harness.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingDataRoot = try #require(
+            harness.editor.workingRoot.flatMap {
+                DataRootResolver.dataRoot(of: $0)
+            }
+        )
+
+        let changed = await harness.editor.setShotSourceMode(
+            shotId: "s001",
+            to: .imported
+        )
+
+        #expect(!changed)
+        #expect(latestShotlistVersion(dataRoot: workingDataRoot) == 1)
+        let shotlist = try #require(
+            try loadShotlist(dataRoot: workingDataRoot)
+        )
+        #expect(shotlist.shots.first?.sourceMode == .generated)
+    }
+
     @Test("record_render then get_render_manifest / next_render_shot reflect the entry")
     func renderManifestRoundTrip() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try saveShotlist(try minimalShotlist(), to: dataRoot)
+        _ = try saveShotlist(
+            try minimalShotlist(keyframeStrategy: .none),
+            to: dataRoot
+        )
         let dir = dataRoot.path
+        let video = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("s001.mp4")
+        try addGeneratedVideo(
+            "s001-video",
+            at: video,
+            to: h
+        )
 
         let recorded = try await h.runOK("record_render", args: [
-            "project_dir": dir, "phase": "preview", "shot_id": "s001", "output": "s001.png", "cost_eur": 1.5,
+            "project_dir": dir, "phase": "preview", "shot_id": "s001",
+            "output": "s001-video", "cost_eur": 1.5,
         ]) as? [String: Any]
         #expect(recorded?["shot_id"] as? String == "s001")
         #expect(recorded?["status"] as? String == "rendered")
@@ -380,10 +1236,497 @@ struct WorkflowToolsTests {
         #expect(summary["total"] as? Int == 1)
         #expect(summary["rendered"] as? Int == 1)
         #expect(summary["spent_eur"] as? Double == 1.5)
+        let proof = try loadRenderProofManifest(
+            dataRoot: dataRoot,
+            phase: "preview"
+        )
+        let entryProof = try #require(proof.entries["s001"])
+        #expect(entryProof.output == "s001.mp4")
+        #expect(entryProof.generationModel == "video-model")
+        #expect(
+            entryProof.providerPrompt
+                == "Compiled provider prompt for s001-video."
+        )
+        #expect(entryProof.outputSha256 == (try FileDigest.sha256(of: video)))
 
         // s001 rendered → next_render_shot reports done.
         let next = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
         #expect(next?["done"] as? Bool == true)
+
+        try Data("replaced-outside-the-render-path".utf8).write(to: video)
+        let stale = try await h.runOK(
+            "next_render_shot",
+            args: ["project_dir": dir, "phase": "preview"]
+        ) as? [String: Any]
+        #expect(stale?["done"] as? Bool == false)
+        #expect(stale?["shot_id"] as? String == "s001")
+        let staleManifest = try #require(try await h.runOK(
+            "get_render_manifest",
+            args: ["project_dir": dir, "phase": "preview"]
+        ) as? [String: Any])
+        let staleSummary = try #require(
+            staleManifest["summary"] as? [String: Any]
+        )
+        #expect(staleSummary["rendered"] as? Int == 0)
+        #expect(staleSummary["pending"] as? Int == 1)
+    }
+
+    @Test("record_render preserves the submitted asset provenance when URLs collide")
+    func renderManifestUsesSubmittedAssetProvenance() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(
+            try minimalShotlist(keyframeStrategy: .none),
+            to: dataRoot
+        )
+        let video = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("s001.mp4")
+        try Data("current".utf8).write(to: video)
+        h.editor.mediaAssets.append(
+            MediaAsset(
+                id: "stale-video",
+                url: video,
+                type: .video,
+                name: "stale",
+                generationInput: GenerationInput(
+                    prompt: "Stale provider prompt.",
+                    model: "stale-model",
+                    duration: 4,
+                    aspectRatio: "16:9"
+                )
+            )
+        )
+        try addGeneratedVideo("current-video", at: video, to: h)
+
+        _ = try await h.runOK("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s001",
+            "output": "current-video",
+        ])
+
+        let proof = try loadRenderProofManifest(
+            dataRoot: dataRoot,
+            phase: "preview"
+        )
+        #expect(
+            proof.entries["s001"]?.providerPrompt
+                == "Compiled provider prompt for current-video."
+        )
+        #expect(proof.entries["s001"]?.generationModel == "video-model")
+    }
+
+    @Test("next render shot hands a chained shot the predecessor's exact last frame")
+    func nextRenderShotResolvesChainStart() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let song = try Song(
+            title: "Track",
+            audioPath: "audio/song.wav",
+            analysisPath: "analysis/song.json",
+            bpm: 120,
+            durationS: 8
+        )
+        let first = try Shot(
+            id: "s001",
+            section: "verse",
+            timeStart: 0,
+            timeEnd: 4,
+            durationS: 4,
+            type: .performance,
+            description: "Opening.",
+            visualPrompt: "A measured opening composition.",
+            mood: "restrained",
+            keyframeStrategy: .none
+        )
+        let chained = try Shot(
+            id: "s002",
+            section: "verse",
+            timeStart: 4,
+            timeEnd: 8,
+            durationS: 4,
+            type: .performance,
+            description: "Continue.",
+            visualPrompt: "The previous composition continues.",
+            mood: "restrained",
+            keyframeStrategy: .none,
+            seedanceInputMode: .keyframe,
+            chainWithPreviousEnd: true
+        )
+        _ = try saveShotlist(
+            try Shotlist(
+                schema_: shotlistSchemaVersion,
+                mode: .section,
+                project: "demo",
+                song: song,
+                generated: "2026-07-26T00:00:00Z",
+                generator: "test",
+                shots: [first, chained]
+            ),
+            to: dataRoot
+        )
+        let home = FrameInventory.projectHome(of: dataRoot)
+        let firstVideo = home.appendingPathComponent("s001.mp4")
+        let lastFrame = home.appendingPathComponent("s001-last.png")
+        try addGeneratedVideo("s001-video", at: firstVideo, to: h)
+        try addGeneratedImage("s001-last", at: lastFrame, to: h)
+        var manifest = RenderManifest(project: "demo", phase: "preview")
+        record(
+            &manifest,
+            shotId: "s001",
+            output: "s001.mp4",
+            costEur: 1,
+            phase: "preview",
+            lastFramePath: "s001-last.png"
+        )
+        try saveRenderManifest(manifest, dataRoot: dataRoot)
+        try saveRenderProofManifest(
+            RenderProofManifest(
+                project: "demo",
+                phase: "preview",
+                entries: [
+                    "s001": RenderProofEntry(
+                        shotId: "s001",
+                        output: "s001.mp4",
+                        outputSha256: try FileDigest.sha256(
+                            of: firstVideo
+                        ),
+                        providerPrompt: "Compiled provider prompt.",
+                        generationModel: "video-model"
+                    ),
+                ]
+            ),
+            dataRoot: dataRoot
+        )
+
+        let next = try await h.runOK(
+            "next_render_shot",
+            args: [
+                "project_dir": dataRoot.path,
+                "phase": "preview",
+            ]
+        ) as? [String: Any]
+
+        #expect(next?["shot_id"] as? String == "s002")
+        #expect(next?["chain_with_previous_end"] as? Bool == true)
+        #expect(
+            next?["chain_start_frame_media_ref"] as? String
+                == "s001-last"
+        )
+        #expect(
+            next?["chain_start_frame_path"] as? String
+                == "s001-last.png"
+        )
+    }
+
+    @Test("get_frames_manifest exposes role-aware prompt and exact-file audit state")
+    func framesManifestReadSurface() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let image = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("s001.png")
+        try Data("frame-v1".utf8).write(to: image)
+        try saveFramesManifest(
+            FramesManifest(
+                project: "demo",
+                generated: "2026-07-26T00:00:00Z",
+                shots: [
+                    ShotFrames(
+                        shotId: "s001",
+                        keyframeStrategy: "start",
+                        frames: [
+                            FrameEntry(
+                                role: "start",
+                                path: "s001.png",
+                                runwayModel: "image-model",
+                                providerPrompt: "Compiled provider prompt"
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+            dataRoot: dataRoot
+        )
+        let digest = SHA256.hash(data: try Data(contentsOf: image))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let checks = Dictionary(uniqueKeysWithValues: standardAuditCheckKeys.map {
+            ($0, AuditCheck(status: .clean))
+        })
+        try saveFrameAudit(
+            try FrameAudit(
+                shotId: "s001",
+                renderPath: "s001.png",
+                renderSha256: digest,
+                generated: "2026-07-26T00:00:00Z",
+                auditor: "test",
+                checks: checks,
+                overall: .clean
+            ),
+            dataRoot: dataRoot
+        )
+
+        let current = try #require(
+            try await h.runOK(
+                "get_frames_manifest",
+                args: ["project_dir": dataRoot.path]
+            ) as? [String: Any]
+        )
+        let shots = try #require(current["shots"] as? [[String: Any]])
+        let frames = try #require(shots.first?["frames"] as? [[String: Any]])
+        #expect(frames.first?["provider_prompt"] as? String == "Compiled provider prompt")
+        let audit = try #require(frames.first?["audit"] as? [String: Any])
+        #expect(audit["current_image"] as? Bool == true)
+
+        try Data("frame-v2".utf8).write(to: image)
+        let stale = try #require(
+            try await h.runOK(
+                "get_frames_manifest",
+                args: ["project_dir": dataRoot.path]
+            ) as? [String: Any]
+        )
+        let staleShots = try #require(stale["shots"] as? [[String: Any]])
+        let staleFrames = try #require(staleShots.first?["frames"] as? [[String: Any]])
+        let staleAudit = try #require(staleFrames.first?["audit"] as? [String: Any])
+        #expect(staleAudit["current_image"] as? Bool == false)
+    }
+
+    @Test("Frames queue requires and records every start_end role")
+    func framesQueueIsRoleAware() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let shot = try Shot(
+            id: "s001",
+            section: "verse",
+            timeStart: 0,
+            timeEnd: 4,
+            durationS: 4,
+            type: .performance,
+            description: "d",
+            visualPrompt: "p",
+            mood: "m",
+            keyframeStrategy: .startEnd
+        )
+        let song = try Song(
+            title: "t",
+            audioPath: "a.wav",
+            analysisPath: "an.json",
+            bpm: 120,
+            durationS: 4
+        )
+        _ = try saveShotlist(
+            try Shotlist(
+                schema_: shotlistSchemaVersion,
+                mode: .section,
+                project: "demo",
+                song: song,
+                generated: "2026-07-26",
+                generator: "test",
+                shots: [shot]
+            ),
+            to: dataRoot
+        )
+
+        let first = try #require(
+            try await h.runOK(
+                "next_render_shot",
+                args: ["project_dir": dataRoot.path, "phase": "frames"]
+            ) as? [String: Any]
+        )
+        #expect(first["shot_id"] as? String == "s001")
+        #expect(first["role"] as? String == "start")
+
+        let home = FrameInventory.projectHome(of: dataRoot)
+        func addGeneratedFrame(_ id: String) throws {
+            let url = home.appendingPathComponent("\(id).png")
+            try Data(id.utf8).write(to: url)
+            var input = GenerationInput(
+                prompt: "Compiled \(id)",
+                model: "image-model",
+                duration: 0,
+                aspectRatio: "16:9"
+            )
+            input.intent = "Frame \(id)"
+            h.editor.mediaAssets.append(
+                MediaAsset(
+                    id: id,
+                    url: url,
+                    type: .image,
+                    name: id,
+                    generationInput: input
+                )
+            )
+        }
+
+        try addGeneratedFrame("start-frame")
+        _ = try await h.runOK("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "frames",
+            "shot_id": "s001",
+            "role": "start",
+            "output": "start-frame",
+        ])
+        let second = try #require(
+            try await h.runOK(
+                "next_render_shot",
+                args: ["project_dir": dataRoot.path, "phase": "frames"]
+            ) as? [String: Any]
+        )
+        #expect(second["shot_id"] as? String == "s001")
+        #expect(second["role"] as? String == "end")
+
+        try addGeneratedFrame("end-frame")
+        _ = try await h.runOK("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "frames",
+            "shot_id": "s001",
+            "role": "end",
+            "output": "end-frame",
+        ])
+        let done = try #require(
+            try await h.runOK(
+                "next_render_shot",
+                args: ["project_dir": dataRoot.path, "phase": "frames"]
+            ) as? [String: Any]
+        )
+        #expect(done["done"] as? Bool == true)
+        let manifest = try loadFramesManifest(dataRoot: dataRoot)
+        #expect(Set(manifest.shot("s001")?.frames.map(\.role) ?? []) == ["start", "end"])
+    }
+
+    @Test("Frames recording rejects images without generation provenance")
+    func framesRecordRequiresGenerationProvenance() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try minimalShotlist(), to: dataRoot)
+        let image = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("manual.png")
+        try Data("manual".utf8).write(to: image)
+        h.editor.mediaAssets.append(
+            MediaAsset(
+                id: "manual-image",
+                url: image,
+                type: .image,
+                name: "manual"
+            )
+        )
+
+        let result = await h.runRaw("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "frames",
+            "shot_id": "s001",
+            "role": "start",
+            "output": "manual.png",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("no generation provenance"))
+        let framesURL = PipelineLayout.url(
+            PipelineLayout.framesManifestFile,
+            in: dataRoot
+        )
+        #expect(!FileManager.default.fileExists(atPath: framesURL.path))
+    }
+
+    @Test("video recording rejects files without generation provenance")
+    func videoRecordRequiresGenerationProvenance() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try minimalShotlist(), to: dataRoot)
+        let video = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("manual.mp4")
+        try Data("manual".utf8).write(to: video)
+        h.editor.mediaAssets.append(
+            MediaAsset(
+                id: "manual-video",
+                url: video,
+                type: .video,
+                name: "manual"
+            )
+        )
+
+        let result = await h.runRaw("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "final",
+            "shot_id": "s001",
+            "output": "manual.mp4",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("no generation provenance"))
+        let manifest = try loadRenderManifest(
+            dataRoot: dataRoot,
+            phase: "final"
+        )
+        #expect(manifest.entries.isEmpty)
+    }
+
+    @Test("record_render rejects media that is still rendering")
+    func recordRenderRequiresCompletedMedia() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(
+            try minimalShotlist(keyframeStrategy: .none),
+            to: dataRoot
+        )
+        let video = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("s001.mp4")
+        try addGeneratedVideo("s001-video", at: video, to: h)
+        let asset = try #require(
+            h.editor.mediaAssets.first { $0.id == "s001-video" }
+        )
+        asset.generationStatus = .rendering
+
+        let result = await h.runRaw("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s001",
+            "output": "s001-video",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("not completed media"))
+        let manifest = try loadRenderManifest(
+            dataRoot: dataRoot,
+            phase: "preview"
+        )
+        #expect(manifest.entries.isEmpty)
+    }
+
+    @Test("render tools refuse and preserve a corrupt manifest")
+    func corruptRenderManifestIsNotOverwritten() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try minimalShotlist(), to: dataRoot)
+        let manifestURL = PipelineLayout.url(
+            PipelineLayout.renderManifestFile(phase: "preview"),
+            in: dataRoot
+        )
+        try FileManager.default.createDirectory(
+            at: manifestURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let corrupt = Data("{\"entries\":".utf8)
+        try corrupt.write(to: manifestURL)
+        try Data("render".utf8).write(
+            to: FrameInventory.projectHome(of: dataRoot)
+                .appendingPathComponent("s001.mp4")
+        )
+
+        let next = await h.runRaw("next_render_shot", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+        ])
+        let record = await h.runRaw("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s001",
+            "output": "s001.mp4",
+        ])
+
+        #expect(next.isError)
+        #expect(record.isError)
+        #expect(try Data(contentsOf: manifestURL) == corrupt)
     }
 
     @Test("next_render_shot surfaces the first unrendered shot's prompt")
@@ -403,7 +1746,11 @@ struct WorkflowToolsTests {
         func shot(_ id: String, _ start: Double, _ mode: SourceMode) throws -> Shot {
             try Shot(
                 id: id, section: "verse", timeStart: start, timeEnd: start + 4.0, durationS: 4.0,
-                type: .performance, sourceMode: mode, description: "d", visualPrompt: "p", mood: "m"
+                type: .performance, sourceMode: mode, description: "d",
+                visualPrompt: "p", mood: "m", keyframeStrategy: .none,
+                sourcePath: mode == .aiEnhanced
+                    ? "media/s003-source.mp4"
+                    : nil
             )
         }
         let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 12.0)
@@ -424,6 +1771,24 @@ struct WorkflowToolsTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         _ = try saveShotlist(try hybridShotlist(), to: dataRoot)
         let dir = dataRoot.path
+        let home = FrameInventory.projectHome(of: dataRoot)
+        try addSourceVideo(
+            "s003-source",
+            at: home.appendingPathComponent("media/s003-source.mp4"),
+            to: h
+        )
+        try addGeneratedVideo(
+            "s002-video",
+            at: home.appendingPathComponent("s002.mp4"),
+            to: h
+        )
+        try addGeneratedVideo(
+            "s003-video",
+            at: home.appendingPathComponent("s003.mp4"),
+            to: h,
+            model: "runway/aleph2",
+            sourceVideoAssetId: "s003-source"
+        )
 
         // s001 is imported → skipped; the first render shot is the generated s002.
         let first = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
@@ -432,18 +1797,156 @@ struct WorkflowToolsTests {
 
         // Record s002 → the enhanced s003 is next (enhanced shots ARE queued).
         _ = try await h.runOK("record_render", args: [
-            "project_dir": dir, "phase": "preview", "shot_id": "s002", "output": "s002.mp4", "cost_eur": 1.0,
+            "project_dir": dir, "phase": "preview", "shot_id": "s002",
+            "output": "s002-video", "cost_eur": 1.0,
         ])
         let second = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
         #expect(second?["shot_id"] as? String == "s003")
         #expect(second?["source_mode"] as? String == "ai_enhanced")
+        #expect(second?["source_video_media_ref"] as? String == "s003-source")
+        #expect(second?["source_video_path"] as? String == "media/s003-source.mp4")
 
         // Record s003 → done. s001 (imported) never appears, so the queue is empty.
         _ = try await h.runOK("record_render", args: [
-            "project_dir": dir, "phase": "preview", "shot_id": "s003", "output": "s003.mp4", "cost_eur": 1.0,
+            "project_dir": dir, "phase": "preview", "shot_id": "s003",
+            "output": "s003-video", "cost_eur": 1.0,
         ])
         let done = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
         #expect(done?["done"] as? Bool == true)
+    }
+
+    @Test("next_render_shot rejects an AI-enhanced source that escapes through a symlink")
+    func nextRenderShotRejectsEnhancedSourceSymlinkEscape() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try hybridShotlist(), to: dataRoot)
+        let home = FrameInventory.projectHome(of: dataRoot)
+        let outside = cleanup.appendingPathComponent("outside.mp4")
+        try Data("outside".utf8).write(to: outside)
+        let source = home.appendingPathComponent("media/s003-source.mp4")
+        try FileManager.default.createDirectory(
+            at: source.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: source,
+            withDestinationURL: outside
+        )
+        try addGeneratedVideo(
+            "s002-video",
+            at: home.appendingPathComponent("s002.mp4"),
+            to: h
+        )
+        _ = try await h.runOK("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s002",
+            "output": "s002-video",
+        ])
+
+        let result = await h.runRaw("next_render_shot", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+        ])
+
+        #expect(result.isError)
+        #expect(
+            ToolHarness.textOf(result).contains(
+                "no current project-local source video"
+            )
+        )
+    }
+
+    @Test("write_shotlist rejects AI-enhanced shots without a durable source")
+    func shotlistWriterRequiresEnhancedSource() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            try Brief(
+                project: "demo",
+                generated: "2026-07-26T00:00:00Z",
+                mission: .demo,
+                targetPlatform: "YouTube",
+                aspectRatio: .landscape16x9,
+                projectMode: "section",
+                budgetEur: 50,
+                conceptType: .narrative,
+                visualMedium: .animation2d,
+                visualMediumNotes: "restrained hand-drawn animation",
+                tone: [.quiet],
+                figures: .none,
+                lyricsIntegration: .metaphorical
+            ),
+            to: PipelineLayout.briefFile
+        )
+        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        let shot: [String: Any] = [
+            "id": "s001",
+            "section": "verse",
+            "time_start": 0,
+            "time_end": 12,
+            "duration_s": 12,
+            "type": "performance",
+            "source_mode": "ai_enhanced",
+            "description": "Enhance the imported performance.",
+            "visual_prompt": "Preserve the performance and restyle the surface.",
+            "mood": "restrained",
+            "character_refs": [],
+            "character_views": [],
+            "keyframe_strategy": "none",
+            "visible_zones": [],
+            "zone_introduces": [],
+            "character_blocking": [],
+            "prop_refs": [],
+            "prop_views": [],
+            "redo": false,
+            "scene_video_provider": "runway",
+            "seedance_input_mode": "keyframe",
+            "reference_image_refs": [],
+            "chain_with_previous_end": false,
+            "transition_in": "hard_cut",
+            "transition_out": "hard_cut",
+        ]
+
+        let result = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [shot],
+        ])
+
+        #expect(result.isError)
+        #expect(
+            ToolHarness.textOf(result).contains(
+                "exactly one project-local source video"
+            )
+        )
+        #expect(try loadShotlist(dataRoot: dataRoot) == nil)
+    }
+
+    @Test("record_render never admits imported shots into a provider manifest")
+    func renderManifestRejectsImportedShots() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(try hybridShotlist(), to: dataRoot)
+
+        let result = await h.runRaw("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "final",
+            "shot_id": "s001",
+            "status": "failed",
+        ])
+
+        #expect(result.isError)
+        #expect(
+            ToolHarness.textOf(result).contains(
+                "does not belong in a provider render manifest"
+            )
+        )
+        #expect(
+            (try loadRenderManifest(
+                dataRoot: dataRoot,
+                phase: "final"
+            )).entries.isEmpty
+        )
     }
 
     @Test("get_bible returns null on a fresh project")
@@ -465,6 +1968,131 @@ struct WorkflowToolsTests {
         #expect((result?["note"] as? String)?.contains("agent-driven") == true)
     }
 
+    @Test("write_analysis_interpretation preserves measurements and detector anomalies")
+    func writeAnalysisInterpretation() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+
+        let result = try await h.runOK(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 0.5,
+                "section_labels": [
+                    [
+                        "index": 0,
+                        "label": "intro",
+                        "confidence": 0.8,
+                        "note": "low-energy opening",
+                    ],
+                    [
+                        "index": 1,
+                        "label": "chorus1",
+                        "confidence": 0.9,
+                    ],
+                ],
+                "anomalies": [[
+                    "kind": "low_label_confidence",
+                    "time": 4.0,
+                    "detail": "No lyrics were supplied.",
+                ]],
+                "overall_character": "Half-time pulse with a restrained opening and a broad release.",
+            ]
+        ) as? [String: Any]
+        #expect(result?["tempo_multiplier"] as? Double == 0.5)
+        #expect(result?["perceived_bpm"] as? Double == 80)
+
+        let persisted = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: analysisURL)
+            ) as? [String: Any]
+        )
+        #expect(persisted["bpm"] as? Double == 160)
+        let sections = try #require(persisted["sections"] as? [[String: Any]])
+        #expect(sections[0]["start"] as? Double == 0)
+        #expect(sections[0]["end"] as? Double == 4)
+        #expect(sections[0]["label"] as? String == "intro")
+        #expect(sections[1]["label"] as? String == "chorus1")
+        let interpretation = try #require(
+            persisted["interpretation"] as? [String: Any]
+        )
+        let anomalies = try #require(
+            interpretation["anomalies"] as? [[String: Any]]
+        )
+        #expect(anomalies.contains {
+            $0["kind"] as? String == "boundary_divergence"
+        })
+        #expect(anomalies.contains {
+            $0["kind"] as? String == "low_label_confidence"
+        })
+    }
+
+    @Test("write_analysis_interpretation rejects incomplete coverage without changing analysis")
+    func writeAnalysisInterpretationRejectsPartialCoverage() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        let before = try Data(contentsOf: analysisURL)
+
+        let result = await h.runRaw(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [[
+                    "index": 0,
+                    "label": "intro",
+                    "confidence": 0.8,
+                ]],
+                "anomalies": [],
+                "overall_character": "Incomplete on purpose.",
+            ]
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("exactly one entry"))
+        #expect(try Data(contentsOf: analysisURL) == before)
+    }
+
+    @Test("write_analysis_interpretation rejects analysis for replaced track without changing it")
+    func writeAnalysisInterpretationRejectsReplacedTrack() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        let before = try Data(contentsOf: analysisURL)
+        try Data("replacement".utf8).write(
+            to: dataRoot.appendingPathComponent("audio/song.wav"),
+            options: .atomic
+        )
+
+        let result = await h.runRaw(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [
+                    [
+                        "index": 0,
+                        "label": "intro",
+                        "confidence": 0.8,
+                    ],
+                    [
+                        "index": 1,
+                        "label": "chorus",
+                        "confidence": 0.9,
+                    ],
+                ],
+                "anomalies": [],
+                "overall_character": "Should never be persisted.",
+            ]
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("current project track"))
+        #expect(try Data(contentsOf: analysisURL) == before)
+    }
+
     @Test("run_phase reaches the active pack's engine-pinned analysis machinery (resolved from home)")
     func runPhaseReachesPackRunner() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
@@ -475,20 +2103,50 @@ struct WorkflowToolsTests {
         // (#174) fires and blocks analysis upfront with its actionable message — proving the pack
         // resolved (only a wired pack registers that step), NOT the "no code runner" shape the pre-fix
         // nil-pack resolution gave.
-        let result = try #require(try await h.runOK("run_phase", args: ["project_dir": dataRoot.path, "phase": "analysis"]) as? [String: Any])
-        #expect(result["phase"] as? String == "analysis")
-        #expect(result["note"] == nil)  // the no-runner branch never fired
-        #expect(result["error"] as? String == "deterministic_step_failed")
-        #expect(result["step"] as? String == "one_song_contract")
-        #expect((result["detail"] as? String)?.contains("audio/") == true)
+        let result = await h.runRaw(
+            "run_phase",
+            args: ["project_dir": dataRoot.path, "phase": "analysis"]
+        )
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("one_song_contract"))
+        #expect(ToolHarness.textOf(result).contains("audio/"))
     }
 
     // MARK: - attach_song
 
-    /// Write a tiny non-empty stub file at `url` (content is irrelevant — attach_song only copies).
-    private func writeStub(_ url: URL, bytes: String = "stub-audio") throws {
+    private func writeStub(_ url: URL, frequency: Double = 440) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(bytes.utf8).write(to: url)
+        guard AudioProjectLayout.audioExtensions.contains(
+            url.pathExtension.lowercased()
+        ) else {
+            try Data("not-audio".utf8).write(to: url)
+            return
+        }
+        let format = try #require(
+            AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: 44_100,
+                channels: 1,
+                interleaved: false
+            )
+        )
+        let file = try AVAudioFile(
+            forWriting: url,
+            settings: format.settings,
+            commonFormat: format.commonFormat,
+            interleaved: format.isInterleaved
+        )
+        let frames: AVAudioFrameCount = 4_410
+        let buffer = try #require(
+            AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)
+        )
+        buffer.frameLength = frames
+        for index in 0..<Int(frames) {
+            buffer.floatChannelData![0][index] = Float(
+                0.25 * sin(2 * Double.pi * frequency * Double(index) / 44_100)
+            )
+        }
+        try file.write(from: buffer)
     }
 
     @Test("attach_song copies an absolute-path song into audio/ and returns filename + audio_dir")
@@ -507,24 +2165,31 @@ struct WorkflowToolsTests {
         #expect(FileManager.default.fileExists(atPath: copied.path))
         // The original is untouched (a copy, not a move).
         #expect(FileManager.default.fileExists(atPath: song.path))
+        let anchorRef = try #require(out["asset_id"] as? String)
+        let anchorId = try #require(
+            h.editor.mediaAssets.first { $0.id.hasPrefix(anchorRef) }?.id
+        )
+        #expect(h.editor.mediaManifest.songAnchorAssetId == anchorId)
+        #expect(h.editor.mediaManifest.intakeRoleByAssetID[anchorId] == "song")
 
-        // The runner now locates exactly this song — the no-song blocker is gone.
-        try activatePack("musicvideo", dataRoot: dataRoot)
-        let phase = try #require(try await h.runOK("run_phase", args: [
-            "project_dir": dataRoot.path, "phase": "analysis",
+        let repeated = try #require(try await h.runOK("attach_song", args: [
+            "project_dir": dataRoot.path, "path": song.path,
         ]) as? [String: Any])
-        // A song is present, so it's no longer the "add the song" blocker; whatever the decode does,
-        // the detail (if any) must not be the missing-audio message.
-        if let detail = phase["detail"] as? String {
-            #expect(detail.contains("Add the song") == false)
-        }
+        #expect(repeated["asset_id"] as? String == anchorRef)
+        let anchorClips = h.editor.timeline.tracks
+            .filter { $0.type == .audio }
+            .flatMap(\.clips)
+            .filter { $0.mediaRef == anchorId }
+        #expect(anchorClips.count == 1)
+        #expect(anchorClips.first?.startFrame == 0)
+
     }
 
     @Test("attach_song copies a media-library asset's file into audio/")
     func attachSongFromMedia() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        let song = cleanup.appendingPathComponent("track.mp3")
+        let song = cleanup.appendingPathComponent("track.wav")
         try writeStub(song)
         let asset = MediaAsset(id: UUID().uuidString, url: song, type: .audio, name: "track")
         h.editor.mediaAssets.append(asset)
@@ -534,9 +2199,9 @@ struct WorkflowToolsTests {
         let out = try #require(try await h.runOK("attach_song", args: [
             "project_dir": dataRoot.path, "media": ref,
         ]) as? [String: Any])
-        #expect(out["filename"] as? String == "track.mp3")
+        #expect(out["filename"] as? String == "track.wav")
         let audioDir = try #require(out["audio_dir"] as? String)
-        #expect(FileManager.default.fileExists(atPath: URL(fileURLWithPath: audioDir).appendingPathComponent("track.mp3").path))
+        #expect(FileManager.default.fileExists(atPath: URL(fileURLWithPath: audioDir).appendingPathComponent("track.wav").path))
     }
 
     @Test("attach_song rejects a non-audio source")
@@ -556,10 +2221,17 @@ struct WorkflowToolsTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let first = cleanup.appendingPathComponent("first.wav")
         let second = cleanup.appendingPathComponent("second.wav")
-        try writeStub(first)
-        try writeStub(second)
+        try writeStub(first, frequency: 220)
+        try writeStub(second, frequency: 880)
 
-        _ = try await h.runOK("attach_song", args: ["project_dir": dataRoot.path, "path": first.path])
+        let firstResult = try #require(try await h.runOK(
+            "attach_song",
+            args: ["project_dir": dataRoot.path, "path": first.path]
+        ) as? [String: Any])
+        let firstRef = try #require(firstResult["asset_id"] as? String)
+        let firstId = try #require(
+            h.editor.mediaAssets.first { $0.id.hasPrefix(firstRef) }?.id
+        )
 
         // A different song without replace → actionable error naming the existing one.
         let refused = await h.runRaw("attach_song", args: ["project_dir": dataRoot.path, "path": second.path])
@@ -573,6 +2245,120 @@ struct WorkflowToolsTests {
         let audioDir = URL(fileURLWithPath: try #require(swapped["audio_dir"] as? String))
         #expect(FileManager.default.fileExists(atPath: audioDir.appendingPathComponent("second.wav").path))
         #expect(FileManager.default.fileExists(atPath: audioDir.appendingPathComponent("first.wav").path) == false)
+        let secondRef = try #require(swapped["asset_id"] as? String)
+        let secondId = try #require(
+            h.editor.mediaAssets.first { $0.id.hasPrefix(secondRef) }?.id
+        )
+        #expect(secondRef != firstRef)
+        #expect(h.editor.mediaManifest.songAnchorAssetId == secondId)
+        #expect(h.editor.mediaManifest.intakeRoleByAssetID[secondId] == "song")
+        #expect(h.editor.mediaManifest.intakeRoleByAssetID[firstId] == nil)
+        #expect(h.editor.mediaAssets.contains { $0.id == firstId } == false)
+        let audioClips = h.editor.timeline.tracks
+            .filter { $0.type == .audio }
+            .flatMap(\.clips)
+        #expect(audioClips.filter { $0.mediaRef == firstId }.isEmpty)
+        #expect(audioClips.filter { $0.mediaRef == secondId && $0.startFrame == 0 }.count == 1)
+    }
+
+    @Test("attach_song preserves the current song when replacement staging fails")
+    func attachSongFailedReplacementPreservesCurrentSong() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let first = cleanup.appendingPathComponent("first.wav")
+        let second = cleanup.appendingPathComponent("second.wav")
+        try writeStub(first, frequency: 220)
+        try Data("not-audio".utf8).write(to: second)
+        _ = try await h.runOK("attach_song", args: [
+            "project_dir": dataRoot.path,
+            "path": first.path,
+        ])
+        let audioDir = dataRoot.appendingPathComponent("audio", isDirectory: true)
+        let before = try Data(contentsOf: audioDir.appendingPathComponent("first.wav"))
+        let result = await h.runRaw("attach_song", args: [
+            "project_dir": dataRoot.path,
+            "path": second.path,
+            "replace": true,
+        ])
+
+        #expect(result.isError)
+        #expect(try Data(contentsOf: audioDir.appendingPathComponent("first.wav")) == before)
+    }
+
+    @Test("the explicit song anchor survives save and recovery reopen")
+    func attachSongSurvivesSaveAndReopen() async throws {
+        let cleanup = FileManager.default.temporaryDirectory
+            .appendingPathComponent("song-reopen-\(UUID().uuidString)", isDirectory: true)
+        let package = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
+        let source = cleanup.appendingPathComponent("spine.wav")
+        try Fixtures.prepareProjectPackage(at: package)
+        _ = try ProjectScaffold.initProject(
+            home: package,
+            name: "reopen",
+            mode: .beat
+        )
+        try writeStub(source)
+        let h = ToolHarness()
+        h.editor.projectURL = package
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let dataRoot = try #require(
+            h.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+        let attached = try #require(try await h.runOK(
+            "attach_song",
+            args: ["project_dir": dataRoot.path, "path": source.path]
+        ) as? [String: Any])
+        let anchorRef = try #require(attached["asset_id"] as? String)
+        let anchorId = try #require(
+            h.editor.mediaAssets.first { $0.id.hasPrefix(anchorRef) }?.id
+        )
+        let key = try #require(h.editor.openWorkingCopyKey)
+
+        try ProjectWorkingCopy.checkpoint(
+            key: key,
+            snapshot: .init(
+                timeline: try JSONEncoder().encode(h.editor.timeline),
+                manifest: try JSONEncoder().encode(h.editor.mediaManifest),
+                generationLog: try JSONEncoder().encode(h.editor.generationLog),
+                thumbnail: nil,
+                chatSessionFiles: []
+            )
+        )
+        try ProjectWorkingCopy.persist(key: key, to: package)
+        ProjectWorkingCopy.discard(key: key)
+        let reopened = try ProjectWorkingCopy.open(
+            key: key,
+            packageURL: package
+        )
+        let manifest = try JSONDecoder().decode(
+            MediaManifest.self,
+            from: Data(
+                contentsOf: reopened.home.appendingPathComponent(
+                    Project.manifestFilename
+                )
+            )
+        )
+        let timeline = try JSONDecoder().decode(
+            Timeline.self,
+            from: Data(
+                contentsOf: reopened.home.appendingPathComponent(
+                    Project.timelineFilename
+                )
+            )
+        )
+
+        #expect(manifest.songAnchorAssetId == anchorId)
+        #expect(manifest.intakeRoleByAssetID[anchorId] == "song")
+        #expect(manifest.entries.contains { $0.id == anchorId })
+        let audioTracks = timeline.tracks.filter { $0.type == .audio }
+        let audioClips = audioTracks.flatMap(\.clips)
+        let anchoredClips = audioClips.filter {
+            $0.mediaRef == anchorId && $0.startFrame == 0
+        }
+        #expect(anchoredClips.count == 1)
     }
 
     @Test("attach_song requires exactly one of media or path")

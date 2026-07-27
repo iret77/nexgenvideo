@@ -15,13 +15,11 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     var pluginMcpServers: [String: String]
     /// NexGenVideo's local MCP server port.
     var mcpPort: Int
-    /// e.g. "bypassPermissions", "acceptEdits", "dontAsk", "default".
-    var permissionMode: String
     /// Comma-separated setting sources (user/project/local). "project,local" keeps the session
     /// hermetic — drops the user's global CLAUDE.md / hooks / settings — while keeping subscription
     /// auth (verified against claude v2.1.191). Empty → omit the flag (load all sources).
     var settingSources: String
-    /// Optional allowlist (e.g. ["mcp__nexgen"]). Empty → rely on permissionMode alone.
+    /// Optional MCP-tool allowlist. Empty uses the fixed headless permission configuration.
     var allowedTools: [String]
     /// Model alias or full id; nil = user default.
     var model: String?
@@ -38,7 +36,6 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         pluginDirectories: [URL] = [],
         pluginMcpServers: [String: String] = [:],
         mcpPort: Int = 19789,
-        permissionMode: String = "bypassPermissions",
         settingSources: String = "project,local",
         allowedTools: [String] = [],
         model: String? = nil,
@@ -50,7 +47,6 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         self.pluginDirectories = pluginDirectories
         self.pluginMcpServers = pluginMcpServers
         self.mcpPort = mcpPort
-        self.permissionMode = permissionMode
         self.settingSources = settingSources
         self.allowedTools = allowedTools
         self.model = model
@@ -85,7 +81,8 @@ enum ClaudeCodeLaunch {
             "--verbose",
             "--mcp-config", mcpConfigJSON(port: cfg.mcpPort, pluginServers: cfg.pluginMcpServers),
             "--strict-mcp-config",
-            "--permission-mode", cfg.permissionMode,
+            "--permission-mode", "bypassPermissions",
+            "--tools", "Read",
             "--add-dir", cfg.workingDirectory.path,
         ]
         for dir in cfg.pluginDirectories {

@@ -52,7 +52,7 @@ struct CaptionTab: View {
 
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
+            VStack(spacing: AppTheme.Spacing.none) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
                         sourceSection
@@ -94,7 +94,7 @@ struct CaptionTab: View {
                 Menu {
                     Button("Auto") { locale = nil }
                     if !supportedLocales.isEmpty {
-                        Divider()
+                        Divider() // app-theme: native-menu-divider
                         ForEach(supportedLocales, id: \.identifier) { loc in
                             Button(languageName(loc)) { locale = loc }
                         }
@@ -113,7 +113,7 @@ struct CaptionTab: View {
                 Label(automaticSourceSummary, systemImage: selectedTrackId == nil ? "checkmark" : "")
             }
 
-            Divider()
+            Divider() // app-theme: native-menu-divider
 
             if captionTrackIndices.isEmpty {
                 Text("No Tracks")
@@ -299,7 +299,7 @@ struct CaptionTab: View {
                     .font(Font(style.resolvedFont(size: CGFloat(style.fontSize * style.fontScale) * scale)))
                     .foregroundStyle(style.color.swiftUIColor)
                     .frame(width: boxWidth, height: boxHeight)
-                    .background(style.background.enabled ? style.background.color.swiftUIColor : Color.clear)
+                    .background(style.background.enabled ? style.background.color.swiftUIColor : AppTheme.Background.clearColor)
                     .overlay {
                         if style.border.enabled {
                             Rectangle().stroke(style.border.color.swiftUIColor, lineWidth: AppTheme.BorderWidth.thin * scale)

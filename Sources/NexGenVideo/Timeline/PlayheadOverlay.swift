@@ -1,9 +1,6 @@
 import AppKit
 
 enum Playhead {
-    static let color: NSColor = .systemRed
-    static let triangleSize: CGFloat = 8
-
     static func appendPath(
         _ path: CGMutablePath,
         x: CGFloat,
@@ -14,10 +11,10 @@ enum Playhead {
         path.move(to: CGPoint(x: x, y: top))
         path.addLine(to: CGPoint(x: x, y: bottom))
         if triangle {
-            let half = triangleSize / 2
+            let half = AppTheme.Timeline.playheadTriangleSize / 2
             path.move(to: CGPoint(x: x, y: top))
-            path.addLine(to: CGPoint(x: x - half, y: top - triangleSize))
-            path.addLine(to: CGPoint(x: x + half, y: top - triangleSize))
+            path.addLine(to: CGPoint(x: x - half, y: top - AppTheme.Timeline.playheadTriangleSize))
+            path.addLine(to: CGPoint(x: x + half, y: top - AppTheme.Timeline.playheadTriangleSize))
             path.closeSubpath()
         }
     }
@@ -33,10 +30,10 @@ final class PlayheadOverlay {
     init(view: TimelineView, editor: EditorViewModel) {
         self.view = view
         self.editor = editor
-        let cg = Playhead.color.cgColor
+        let cg = AppTheme.Timeline.playhead.cgColor
         layer.fillColor = cg
         layer.strokeColor = cg
-        layer.lineWidth = 1
+        layer.lineWidth = AppTheme.BorderWidth.thin
         layer.zPosition = 100
         view.layer?.addSublayer(layer)
         observe()

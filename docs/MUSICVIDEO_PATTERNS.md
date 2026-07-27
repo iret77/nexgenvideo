@@ -11,8 +11,10 @@
 > **⚠️ Auswahl-Mechanismus abgelöst:** Die Pattern-**Auswahl/Empfehlung** folgt jetzt
 > normativ [docs/PATTERN_FIT_CONTRACT.md](PATTERN_FIT_CONTRACT.md) (`pattern-fit/1.0`):
 > deterministischer Fit-Scorer über eine eingefrorene Policy, `fit_profile`-Pflichtblock
-> je Pattern-YAML, harter Cutover ohne Trigger-Scorer/Fallback, fail-closed bis alle 23
-> Profile existieren. Die unten beschriebenen Trigger-/`scorePatterns`-Abschnitte sind
+> je empfehlbarem Pattern, harter Cutover ohne Trigger-Scorer/Fallback. Alle gültig
+> ausgearbeiteten Profile ranken sofort; fehlende Profile sind keine Kandidaten, vorhandene
+> ungültige Profile bleiben als Defekt sichtbar, und `library_coverage` weist die Teilmenge aus.
+> Die Bibliothek hat keine feste Größe. Die unten beschriebenen Trigger-/`scorePatterns`-Abschnitte sind
 > historisch — sie beschreiben den entfernten Integer-Scorer, nicht mehr das Verhalten.
 
 ## 1. Zweck & Einordnung
@@ -41,7 +43,7 @@ Zwei eiserne Regeln verhindern strukturell ein „Fassaden-Feature":
 
 ## 2. Ist-Zustand (Regression — siehe Issue #185)
 
-Die 23 Pattern-YAMLs + das Schema wurden aus dem Vorgängerrepo `iret77/musicvideo`
+Die damaligen Pattern-YAMLs + das Schema wurden aus dem Vorgängerrepo `iret77/musicvideo`
 **byte-identisch/schema-treu** übernommen. Der **Wirkmechanismus** wurde beim
 Pack-Split jedoch nicht mit portiert → im laufenden App-Flow ist das Feature eine
 Fassade:
@@ -53,9 +55,8 @@ Fassade:
 
 Vollständige Belege und Fix-Richtung: **Issue #185**.
 
-Inhaltliche Prüfung: Referenzen sind **real und recherchiert** (14 Regisseur-, 5
-Archetyp-, 4 Hybrid-Stile; 148 Quellen, ~90 Domains). Schwäche: `framing_mix`/
-`asl_range` sind **geschätzt, nicht gemessen** (runde 5er-Schritte, `ms_pct` in ~19/23
+Inhaltliche Prüfung: Referenzen sind **real und recherchiert**. Schwäche: `framing_mix`/
+`asl_range` sind **geschätzt, nicht gemessen** (runde 5er-Schritte, `ms_pct` häufig
 dominant); einzelne Patterns dünn zitiert (cartoon-adult-swim, punk-diy,
 lyric-typography, tiny-desk). Nit: „Khalil" statt korrekt „Kahlil" Joseph.
 
@@ -71,8 +72,8 @@ lyric-typography, tiny-desk). Nit: „Khalil" statt korrekt „Kahlil" Joseph.
   Step-Printing, anamorph 2.40:1, single hard key/deep shadows, practical neon als
   key). Das ist der faktenbasierte Kern, der direkt in `visual_prompt`/Bible/Lighting
   übersetzt.
-- **Nur hebel-gebundene Direktiven** im Schema (R1). Rückwärtskompatibel: bestehende
-  Felder bleiben; die neuen sind additiv.
+- **Nur hebel-gebundene Direktiven** im Schema (R1). Der Wechsel ist ein harter Cutover:
+  keine Alt-Felder, Adapter oder parallele Score-Semantik bleiben erhalten.
 
 ### 3.2 Mechanismus (echte Wirkung — behebt die Regression, Issue #185)
 

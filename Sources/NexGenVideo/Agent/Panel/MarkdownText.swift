@@ -11,7 +11,7 @@ struct MarkdownText: View {
                 switch block {
                 case .prose(let attr):
                     Text(attr)
-                        .font(.body)
+                        .font(.system(size: AppTheme.FontSize.md))
                         .foregroundStyle(AppTheme.Text.primaryColor)
                         .lineSpacing(AppTheme.Spacing.xs)
                         .textSelection(.enabled)
@@ -22,7 +22,7 @@ struct MarkdownText: View {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                         if let language, !language.isEmpty {
                             Text(language)
-                                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium, design: .monospaced))
+                                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium, design: .monospaced))
                                 .foregroundStyle(AppTheme.Text.mutedColor)
                                 .textCase(.uppercase)
                         }
@@ -34,7 +34,7 @@ struct MarkdownText: View {
                             .padding(AppTheme.Spacing.md)
                             .background(
                                 RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                                    .fill(Color.black.opacity(AppTheme.Opacity.moderate))
+                                    .fill(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.moderate))
                             )
                     }
 
@@ -43,18 +43,18 @@ struct MarkdownText: View {
                         GridRow {
                             ForEach(Array(header.enumerated()), id: \.offset) { idx, cell in
                                 Text(cell)
-                                    .font(.body.weight(.semibold))
+                                    .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
                                     .foregroundStyle(AppTheme.Text.primaryColor)
                                     .textSelection(.enabled)
                                     .gridColumnAlignment(columnAlign(alignments, at: idx))
                             }
                         }
-                        Divider()
+                        AppDivider()
                         ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                             GridRow {
                                 ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
                                     Text(cell)
-                                        .font(.body)
+                                        .font(.system(size: AppTheme.FontSize.md))
                                         .foregroundStyle(AppTheme.Text.primaryColor)
                                         .textSelection(.enabled)
                                 }
@@ -64,7 +64,7 @@ struct MarkdownText: View {
                     .padding(AppTheme.Spacing.md)
                     .background(
                         RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                            .fill(Color.black.opacity(AppTheme.Opacity.muted))
+                            .fill(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.muted))
                     )
                 }
             }

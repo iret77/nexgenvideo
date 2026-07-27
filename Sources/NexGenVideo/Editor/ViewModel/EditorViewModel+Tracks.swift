@@ -102,7 +102,7 @@ extension EditorViewModel {
     func setTrackHeight(trackIndex: Int, height: CGFloat) {
         guard timeline.tracks.indices.contains(trackIndex) else { return }
         let prev = timeline.tracks[trackIndex].displayHeight
-        timeline.tracks[trackIndex].displayHeight = max(TrackSize.minHeight, min(TrackSize.maxHeight, height))
+        timeline.tracks[trackIndex].displayHeight = max(AppTheme.Timeline.trackMinHeight, min(AppTheme.Timeline.trackMaxHeight, height))
         undoManager?.registerUndo(withTarget: self) { vm in
             vm.setTrackHeight(trackIndex: trackIndex, height: prev)
         }

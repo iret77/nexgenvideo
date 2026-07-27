@@ -12,6 +12,13 @@ struct ClaudeCodeLocator {
         var found: Bool { executableURL != nil }
     }
 
+    struct Status: Sendable, Equatable {
+        var executableURL: URL?
+        var version: String?
+        var isAuthenticated: Bool
+        var found: Bool { executableURL != nil }
+    }
+
     /// Candidate locations in priority order: explicit local install, PATH entries, Homebrew prefixes.
     static func candidatePaths(home: String, path: String?) -> [String] {
         var out: [String] = ["\(home)/.claude/local/claude"]
@@ -63,6 +70,18 @@ struct ClaudeCodeLocator {
         return Result(executableURL: url, version: readVersion(executableURL: url))
     }
 
+    static func status(environment: [String: String] = ProcessInfo.processInfo.environment) -> Status {
+        let result = resolve(environment: environment)
+        guard let executableURL = result.executableURL else {
+            return Status(executableURL: nil, version: nil, isAuthenticated: false)
+        }
+        return Status(
+            executableURL: executableURL,
+            version: result.version,
+            isAuthenticated: readAuthentication(executableURL: executableURL)
+        )
+    }
+
     private static func readVersion(executableURL: URL) -> String? {
         let process = Process()
         process.executableURL = executableURL
@@ -77,6 +96,21 @@ struct ClaudeCodeLocator {
             return parseVersion(String(decoding: data, as: UTF8.self))
         } catch {
             return nil
+        }
+    }
+
+    private static func readAuthentication(executableURL: URL) -> Bool {
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = ["auth", "status", "--json"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
         }
     }
 }

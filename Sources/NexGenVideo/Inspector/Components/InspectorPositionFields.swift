@@ -11,7 +11,7 @@ struct InspectorPositionFields: View {
         let xShared = sharedClipValue(clips) { $0.topLeftAt(frame: frame).x }
         let yShared = sharedClipValue(clips) { $0.topLeftAt(frame: frame).y }
 
-        HStack(spacing: 4) {
+        HStack(spacing: AppTheme.Spacing.xs) {
             ScrubbableNumberField(
                 value: xShared,
                 range: -10...10,

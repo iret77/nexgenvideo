@@ -1,14 +1,8 @@
 import Foundation
+import NexGenEngine
 import UniformTypeIdentifiers
 
-/// A generative dialog the agent presents via the `show_dialog` tool (Epic #98 / #96). Placement is
-/// the LOCKED architecture: rendered natively as a state of the composer dock — never a modal (it
-/// would cover the material the user decides on), never an interactive card in the transcript (it
-/// would rot there). Exactly one pending dialog; the user's structured answer flows back as the
-/// next user message; the free-text field is the existing input, scoped to this dialog.
-/// The user's answer to a presented dialog — selected labels per section, toggle states, and the
-/// dialog-scoped free-text direction. Presenter-agnostic: the agent panel turns it into a chat
-/// message; a generation panel turns it into a compiled prompt.
+/// The user's structured answer to a presented dialog.
 struct AgentDialogResult: Sendable, Equatable {
     var selectedLabels: [String: [String]]
     var toggles: [String: Bool]
@@ -32,33 +26,98 @@ struct AgentDialogResult: Sendable, Equatable {
     }
 }
 
+/// User-operated controls rendered separately from typed prose.
+struct AgentChoiceRecord: Codable, Equatable, Sendable {
+    struct Selection: Codable, Equatable, Sendable {
+        let label: String
+        let values: [String]
+    }
+
+    let selections: [Selection]
+    let attachmentNames: [String]
+    let confirmed: Bool
+
+    var summary: String {
+        var parts = selections.map { "\($0.label): \($0.values.joined(separator: ", "))" }
+        if !attachmentNames.isEmpty {
+            parts.append("\(attachmentNames.count == 1 ? "File" : "Files"): \(attachmentNames.joined(separator: ", "))")
+        }
+        if parts.isEmpty, confirmed { return "Confirmed" }
+        return parts.joined(separator: " · ")
+    }
+}
+
+struct AgentUserPresentation: Codable, Equatable, Sendable {
+    let choiceRecord: AgentChoiceRecord?
+    let typedText: String?
+    let notice: String?
+
+    init(choiceRecord: AgentChoiceRecord?, typedText: String?, notice: String? = nil) {
+        self.choiceRecord = choiceRecord
+        self.typedText = typedText
+        self.notice = notice
+    }
+}
+
+struct AgentControlTurn: Equatable, Sendable {
+    let command: String
+    let presentation: AgentUserPresentation
+
+    init(
+        command: String,
+        selections: [AgentChoiceRecord.Selection] = [],
+        typedText: String? = nil
+    ) {
+        self.command = command
+        let record = selections.isEmpty ? nil : AgentChoiceRecord(
+            selections: selections,
+            attachmentNames: [],
+            confirmed: false
+        )
+        self.presentation = AgentUserPresentation(
+            choiceRecord: record,
+            typedText: typedText?.isEmpty == false ? typedText : nil
+        )
+    }
+}
+
 struct AgentDialog: Identifiable, Equatable, Sendable {
 
-    /// What submitting the dialog does (audit #3). A single dialog type, two purposes, routed by ONE
-    /// handler so no surface re-implements dialog submission:
-    /// - `.chatClarification` composes a structured chat message (the agent's `show_dialog` default).
-    /// - `.generationIntent` builds a generation and runs it through `GenerationController` — the
-    ///   music-shaping dialog is this purpose. Presenter-agnostic: the panel that owns a generation
-    ///   dialog supplies the builder; the agent panel only ever composes a message.
+    /// Routes every dialog through the single submission handler.
     enum Purpose: Equatable, Sendable {
         case chatClarification
         case generationIntent
+        case workflowIntake
     }
 
     struct Choice: Identifiable, Equatable, Sendable {
         let id: String
         let label: String
+        /// Compact transcript value without explanatory copy.
+        let shortLabel: String
         /// SF Symbol name (Workstream B folds in here — every element carries a semantic icon).
         let symbol: String?
         /// When the choice IS a projected timeline range, its `TimelineRangeCandidate.id` — the card
         /// stays compact and the range is picked on the canvas instead (A3).
         let rangeRef: String?
 
-        init(id: String, label: String, symbol: String? = nil, rangeRef: String? = nil) {
+        init(
+            id: String,
+            label: String,
+            shortLabel: String? = nil,
+            symbol: String? = nil,
+            rangeRef: String? = nil
+        ) {
             self.id = id
             self.label = label
+            self.shortLabel = Self.compactLabel(shortLabel, fallback: label)
             self.symbol = symbol
             self.rangeRef = rangeRef
+        }
+
+        private static func compactLabel(_ explicit: String?, fallback: String) -> String {
+            let value = explicit?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return value.isEmpty ? AgentDialog.compactTranscriptLabel(fallback) : value
         }
     }
 
@@ -88,30 +147,44 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         }
         let id: String
         let label: String
+        /// Compact transcript key, e.g. "Shots" for "How shots are sourced".
+        let shortLabel: String
         let kind: Kind
         /// For a choices section: also render a system "Other…" free-text so the user isn't boxed into
         /// the preset options. The typed value comes back in `AgentDialogResult.customValues[id]`.
         let allowsCustom: Bool
 
-        init(id: String, label: String, kind: Kind, allowsCustom: Bool = false) {
+        init(
+            id: String,
+            label: String,
+            shortLabel: String? = nil,
+            kind: Kind,
+            allowsCustom: Bool = false
+        ) {
             self.id = id
             self.label = label
+            let value = shortLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            self.shortLabel = value.isEmpty ? AgentDialog.compactTranscriptLabel(label) : value
             self.kind = kind
             self.allowsCustom = allowsCustom
         }
+
+        func transcriptValue(for selectedLabel: String) -> String {
+            if case .choices(let options, _) = kind,
+               let choice = options.first(where: { $0.label == selectedLabel }) {
+                return choice.shortLabel
+            }
+            return AgentDialog.compactTranscriptLabel(selectedLabel)
+        }
     }
 
-    /// The dialog's single free-text field. Explicit (the agent declares it) rather than an always-on
-    /// input, and sized to its job — `multiline` for lyrics/notes, single-line for a short direction.
+    /// The dialog's single free-text field. Explicit rather than always-on and sized to its job.
     struct DialogTextField: Equatable, Sendable {
         let placeholder: String
         let multiline: Bool
     }
 
-    /// Turns the dialog into a file intake: the card replaces its free-text field with a drop zone +
-    /// a native file picker, so the user drops or chooses the file(s) and never types a path. Picked
-    /// files come back in `AgentDialogResult.fileURLs`; the host imports each as a media asset and
-    /// references it to the agent as an @mention (e.g. `attach_song media:<id>`).
+    /// File intake shown as a drop zone and native picker.
     struct FileIntake: Equatable, Sendable {
         /// Accepted tokens — a kind ("audio", "video"/"movie", "image", "text") or a bare extension
         /// ("mp3", "txt"). Empty ⇒ any file.
@@ -128,9 +201,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         /// the `character`/`location` intakes so the host can name the destination folder. The name
         /// arrives in `AgentDialogResult.direction`.
         let namePrompt: String?
-        /// Whether a file (or, with a textField, text) is REQUIRED to confirm. Optional intakes (lyrics,
-        /// script) can be confirmed with nothing — that's an explicit "skip", reported to the agent so
-        /// it moves on instead of the user being forced to dismiss.
+        /// Whether a file or text is required. Empty optional workflow intake is an explicit skip.
         let required: Bool
     }
 
@@ -169,6 +240,24 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         self.purpose = purpose
     }
 
+    /// Derives a compact label when the dialog omits `shortLabel`.
+    static func compactTranscriptLabel(_ label: String) -> String {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let separators = [" — ", " – ", "\n"]
+        let head = separators.compactMap { trimmed.range(of: $0)?.lowerBound }
+            .min()
+            .map { String(trimmed[..<$0]) } ?? trimmed
+        let words = head.split(whereSeparator: \.isWhitespace).map(String.init)
+        if words.first?.lowercased() == "how",
+           let auxiliary = words.indices.dropFirst().first(where: {
+               ["is", "are", "was", "were", "will", "should", "can"].contains(words[$0].lowercased())
+           }), auxiliary > 1 {
+            let subject = words[1..<auxiliary].joined(separator: " ")
+            return subject.prefix(1).uppercased() + String(subject.dropFirst())
+        }
+        return head.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Parse the `show_dialog` tool args. Throws with actionable messages so the agent can repair.
     static func parse(_ args: [String: Any]) throws -> AgentDialog {
         guard let title = (args["title"] as? String)?.trimmingCharacters(in: .whitespaces), !title.isEmpty else {
@@ -184,15 +273,17 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         for (index, raw) in rawSections.enumerated() {
             let id = (raw["id"] as? String) ?? "section\(index)"
             let label = (raw["label"] as? String) ?? id
+            let shortLabel = raw["shortLabel"] as? String
             switch (raw["type"] as? String) ?? "choices" {
             case "toggle":
-                sections.append(Section(id: id, label: label,
+                sections.append(Section(id: id, label: label, shortLabel: shortLabel,
                                         kind: .toggle(defaultOn: (raw["defaultOn"] as? Bool) ?? false)))
             case "choices":
                 let options: [Choice] = ((raw["options"] as? [[String: Any]]) ?? []).enumerated().compactMap { i, opt in
                     guard let optLabel = opt["label"] as? String else { return nil }
                     return Choice(id: (opt["id"] as? String) ?? "option\(i)",
                                   label: optLabel,
+                                  shortLabel: opt["shortLabel"] as? String,
                                   symbol: opt["symbol"] as? String,
                                   rangeRef: opt["rangeRef"] as? String)
                 }
@@ -200,7 +291,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
                 guard options.count >= 2, options.count <= Self.maxOptionsPerSection else {
                     throw ToolError("show_dialog: choices section '\(id)' needs 2…\(Self.maxOptionsPerSection) options (set allowsCustom for an open 'Other…' field).")
                 }
-                sections.append(Section(id: id, label: label,
+                sections.append(Section(id: id, label: label, shortLabel: shortLabel,
                                         kind: .choices(options: options,
                                                        multiSelect: (raw["multiSelect"] as? Bool) ?? false),
                                         allowsCustom: (raw["allowsCustom"] as? Bool) ?? false))
@@ -209,7 +300,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             }
         }
         let textField = parseTextField(args)
-        let fileIntake = parseFileIntake(args["fileIntake"] as? [String: Any])
+        let fileIntake = try parseFileIntake(args["fileIntake"] as? [String: Any])
         guard !sections.isEmpty || fileIntake != nil || textField != nil else {
             throw ToolError("show_dialog: give it structure — at least one section, a textField, or a fileIntake; a bare question belongs in prose.")
         }
@@ -247,7 +338,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         return nil
     }
 
-    private static func parseFileIntake(_ raw: [String: Any]?) -> FileIntake? {
+    private static func parseFileIntake(_ raw: [String: Any]?) throws -> FileIntake? {
         guard let raw else { return nil }
         let accept = ((raw["accept"] as? [Any]) ?? [])
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespaces) }
@@ -255,9 +346,11 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         let prompt = (raw["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachAs = ((raw["attachAs"] as? String)?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 }
         let namePrompt = (raw["namePrompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Optional intakes (lyrics/script text sidecars, style refs) default to skippable — the user
-        // can confirm-to-skip. The agent can force required:true; other intakes (the song) require input.
-        let defaultRequired = !(attachAs == "lyrics" || attachAs == "script" || attachAs == "style")
+        guard attachAs == nil, namePrompt == nil else {
+            throw ToolError("show_dialog: workflow file intake is host-owned; omit attachAs/namePrompt and wait for the pack's intake card.")
+        }
+        // Workflow optionality belongs only to the pack manifest.
+        let defaultRequired = true
         return FileIntake(
             accept: accept,
             prompt: (prompt?.isEmpty == false) ? prompt : nil,
@@ -307,7 +400,12 @@ extension AgentDialog.FileIntake {
             switch token.lowercased() {
             case "audio": types.append(.audio)
             case "video", "movie": types.append(.movie)
-            case "image": types.append(.image)
+            case "image":
+                types.append(
+                    contentsOf: ProjectMediaExtensions.images.compactMap {
+                        UTType(filenameExtension: $0)
+                    }
+                )
             case "text":
                 // Plain text plus the known document extensions — NOT the broad `public.text` supertype,
                 // which would also admit .json/.csv/.html. Stays in sync with ClipType.documentExtensions.

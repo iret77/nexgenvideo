@@ -20,8 +20,6 @@ final class TimelineInputController {
         case end
     }
 
-    private static let timelineRangeEdgeHitSlop: CGFloat = 8
-
     init(editor: EditorViewModel, view: TimelineView) {
         self.editor = editor
         self.view = view
@@ -143,7 +141,7 @@ final class TimelineInputController {
             } else if allowsEditChrome, isCommand, clip.mediaType == .audio,
                       addVolumeKeyframeOnClick(at: point, clip: clip, clipRect: rect) {
                 dragState = .idle
-            } else if allowsEditChrome, !isOption, localX <= Trim.handleWidth {
+            } else if allowsEditChrome, !isOption, localX <= AppTheme.Timeline.trimHandleWidth {
                 dragState = .trimLeft(DragState.TrimDrag(
                     clipId: clip.id,
                     trackIndex: hit.trackIndex,
@@ -154,7 +152,7 @@ final class TimelineInputController {
                     hasNoSourceMedia: clip.mediaType == .image || clip.mediaType == .text,
                     propagateToLinked: linkedOn
                 ))
-            } else if allowsEditChrome, !isOption, localX >= rect.width - Trim.handleWidth {
+            } else if allowsEditChrome, !isOption, localX >= rect.width - AppTheme.Timeline.trimHandleWidth {
                 dragState = .trimRight(DragState.TrimDrag(
                     clipId: clip.id,
                     trackIndex: hit.trackIndex,
@@ -365,7 +363,7 @@ final class TimelineInputController {
                 width: abs(point.x - marq.origin.x),
                 height: abs(point.y - marq.origin.y)
             )
-            if marq.current.width > Layout.dragThreshold || marq.current.height > Layout.dragThreshold,
+            if marq.current.width > AppTheme.Layout.dragThreshold || marq.current.height > AppTheme.Layout.dragThreshold,
                editor.selectedGap != nil {
                 editor.selectedGap = nil
             }
@@ -570,7 +568,7 @@ final class TimelineInputController {
     }
 
     private static func isOnTrimZone(localX: CGFloat, clipWidth: CGFloat) -> Bool {
-        localX <= Trim.handleWidth || localX >= clipWidth - Trim.handleWidth
+        localX <= AppTheme.Timeline.trimHandleWidth || localX >= clipWidth - AppTheme.Timeline.trimHandleWidth
     }
 
     // MARK: - Fade cursor
@@ -805,7 +803,7 @@ final class TimelineInputController {
         let endDistance = abs(point.x - endX)
         let nearestDistance = min(startDistance, endDistance)
 
-        guard nearestDistance <= Self.timelineRangeEdgeHitSlop else { return nil }
+        guard nearestDistance <= AppTheme.Timeline.rangeEdgeHitSlop else { return nil }
         return startDistance <= endDistance ? .start : .end
     }
 

@@ -112,7 +112,7 @@ extension MediaTab {
             .onChange(of: orderedIds) { _, ids in publishOrderedIds(ids) }
             .onChange(of: editor.mediaPanelScrollTarget) { _, target in
                 guard let target else { return }
-                withAnimation(.easeOut(duration: 0.15)) {
+                withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
                     proxy.scrollTo(target, anchor: .center)
                 }
                 editor.mediaPanelScrollTarget = nil
@@ -219,7 +219,7 @@ extension MediaTab {
                 .onChange(of: orderedIds) { _, ids in publishOrderedIds(ids) }
                 .onChange(of: editor.mediaPanelScrollTarget) { _, target in
                     guard let target else { return }
-                    withAnimation(.easeOut(duration: 0.15)) {
+                    withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
                         proxy.scrollTo(target, anchor: .center)
                     }
                     editor.mediaPanelScrollTarget = nil
@@ -248,13 +248,13 @@ extension MediaTab {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    withAnimation(.easeInOut(duration: AppTheme.Anim.selection)) {
                         if isCollapsed { collapsedGroupedKeys.remove(sectionKey) }
                         else { collapsedGroupedKeys.insert(sectionKey) }
                     }
                 } label: {
                     Image(systemName: "chevron.down")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .rotationEffect(.degrees(isCollapsed ? -90 : 0))
                         .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
@@ -271,7 +271,7 @@ extension MediaTab {
                         HStack(spacing: AppTheme.Spacing.xs) {
                             Image(systemName: "folder.fill")
                                 .font(.system(size: AppTheme.FontSize.xs))
-                                .foregroundStyle(AppTheme.Accent.primary.opacity(0.85))
+                                .foregroundStyle(AppTheme.Accent.primary.opacity(AppTheme.Opacity.emphasis))
                             groupedSectionTitle(title)
                         }
                         .padding(.horizontal, AppTheme.Spacing.xs)
@@ -285,7 +285,7 @@ extension MediaTab {
                         Button("Open") {
                             openFolder(id: folderId)
                         }
-                        Divider()
+                        Divider() // app-theme: native-menu-divider
                         Button("Delete", role: .destructive) {
                             editor.deleteFolders(ids: [folderId])
                         }
@@ -303,7 +303,7 @@ extension MediaTab {
             if !isCollapsed {
                 Rectangle()
                     .fill(AppTheme.Border.subtleColor)
-                    .frame(height: 0.5)
+                    .frame(height: AppTheme.BorderWidth.hairline)
 
                 if assets.isEmpty {
                     Text("Empty")
@@ -325,11 +325,11 @@ extension MediaTab {
         .padding(AppTheme.Spacing.xs)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .fill(isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint) : .clear)
+                .fill(isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .strokeBorder(isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.strong) : .clear, lineWidth: AppTheme.BorderWidth.thin)
+                .strokeBorder(isTargeted.wrappedValue ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.strong) : AppTheme.Background.clearColor, lineWidth: AppTheme.BorderWidth.thin)
         )
         .contentShape(Rectangle())
         .onDrop(of: [.fileURL, .text], isTargeted: isTargeted) { providers in
@@ -344,7 +344,7 @@ extension MediaTab {
         let segments = path.components(separatedBy: " / ")
         if segments.count <= 1 {
             Text(path)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
         } else {
             HStack(spacing: AppTheme.Spacing.xs) {
@@ -459,7 +459,7 @@ extension MediaTab {
                     editor.moveAssetsToFolder(assetIds: targetIds, folderId: nil)
                 }
             }
-            Divider()
+            Divider() // app-theme: native-menu-divider
             ForEach(editor.folders, id: \.id) { folder in
                 Button(folder.name) {
                     editor.moveAssetsToFolder(assetIds: targetIds, folderId: folder.id)
@@ -470,7 +470,7 @@ extension MediaTab {
 
     func assetFrameReader(for id: String) -> some View {
         GeometryReader { geo in
-            Color.clear.preference(
+            AppTheme.Background.clearColor.preference(
                 key: AssetFramePreferenceKey.self,
                 value: [id: geo.frame(in: .named("mediaGrid"))]
             )
@@ -494,12 +494,12 @@ private struct FolderDragPreview: View {
             Image(systemName: "folder.fill")
                 .foregroundStyle(AppTheme.Accent.primary)
             Text(name)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                 .lineLimit(1)
         }
         .padding(.horizontal, AppTheme.Spacing.smMd)
         .padding(.vertical, AppTheme.Spacing.sm)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
-        .shadow(color: .black.opacity(AppTheme.Opacity.medium), radius: 4, y: 2)
+        .shadow(AppTheme.Shadow.floating)
     }
 }

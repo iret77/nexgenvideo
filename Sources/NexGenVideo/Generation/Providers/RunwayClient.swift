@@ -18,17 +18,16 @@ actor RunwayClient {
     // MARK: - Generation
 
     /// POST /v1/image_to_video — promptImage is REQUIRED for every Runway video model.
-    func imageToVideo(
+    func createImageToVideo(
         model: String, promptImage: String, promptText: String, ratio: String, duration: Int
-    ) async throws -> [String] {
-        let taskId = try await createTask(path: "image_to_video", body: [
+    ) async throws -> String {
+        try await createTask(path: "image_to_video", body: [
             "model": model,
             "promptImage": promptImage,
             "promptText": promptText,
             "ratio": ratio,
             "duration": duration,
         ])
-        return try await waitForOutput(taskId: taskId)
     }
 
     /// POST /v1/video_to_video — the Aleph restyle pass (#223). `videoUri` is the source clip; the
@@ -37,26 +36,28 @@ actor RunwayClient {
     /// Body shape verified LIVE against the API: a probe with an unreachable `videoUri` is rejected
     /// only on that field (`path: ["videoUri"]`), i.e. model / promptText / ratio all validate — for
     /// `aleph2` and its sunset predecessor alike.
-    func videoToVideo(
+    func createVideoToVideo(
         model: String, videoUri: String, promptText: String, ratio: String
-    ) async throws -> [String] {
-        let taskId = try await createTask(path: "video_to_video", body: [
+    ) async throws -> String {
+        try await createTask(path: "video_to_video", body: [
             "model": model,
             "videoUri": videoUri,
             "promptText": promptText,
             "ratio": ratio,
         ])
-        return try await waitForOutput(taskId: taskId)
     }
 
     /// POST /v1/text_to_image.
-    func textToImage(model: String, promptText: String, ratio: String) async throws -> [String] {
-        let taskId = try await createTask(path: "text_to_image", body: [
+    func createTextToImage(model: String, promptText: String, ratio: String) async throws -> String {
+        try await createTask(path: "text_to_image", body: [
             "model": model,
             "promptText": promptText,
             "ratio": ratio,
         ])
-        return try await waitForOutput(taskId: taskId)
+    }
+
+    func output(taskId: String) async throws -> [String] {
+        try await waitForOutput(taskId: taskId)
     }
 
     // MARK: - Reference hosting

@@ -4,7 +4,7 @@ struct TransformOverlayView: View {
     @Environment(EditorViewModel.self) var editor
 
     private let handleSize: CGFloat = AppTheme.Spacing.smMd
-    private let borderColor = Color.white.opacity(AppTheme.Opacity.strong)
+    private let borderColor = AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong)
 
     var body: some View {
         GeometryReader { geo in
@@ -20,7 +20,7 @@ struct TransformOverlayView: View {
 
                 let hit = rotatedHitTarget(clipRect.size, degrees: rotation)
                 Rectangle()
-                    .fill(Color.white.opacity(0.001))
+                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.interactionTarget))
                     .frame(width: hit.frame.width, height: hit.frame.height)
                     .contentShape(hit.shape)
                     .position(x: clipRect.midX, y: clipRect.midY)
@@ -46,14 +46,14 @@ struct TransformOverlayView: View {
             if centerGuideX {
                 Rectangle()
                     .fill(centerGuideColor)
-                    .frame(width: 1, height: videoRect.height)
+                    .frame(width: AppTheme.BorderWidth.thin, height: videoRect.height)
                     .position(x: videoRect.midX, y: videoRect.midY)
                     .allowsHitTesting(false)
             }
             if centerGuideY {
                 Rectangle()
                     .fill(centerGuideColor)
-                    .frame(width: videoRect.width, height: 1)
+                    .frame(width: videoRect.width, height: AppTheme.BorderWidth.thin)
                     .position(x: videoRect.midX, y: videoRect.midY)
                     .allowsHitTesting(false)
             }
@@ -69,7 +69,7 @@ struct TransformOverlayView: View {
     @State private var centerGuideX: Bool = false
     @State private var centerGuideY: Bool = false
 
-    private let centerGuideColor = Color(red: 1.0, green: 0.2, blue: 0.6).opacity(AppTheme.Opacity.prominent)
+    private let centerGuideColor = AppTheme.Accent.transformGuide.opacity(AppTheme.Opacity.prominent)
 
     private func moveGesture(clip: Clip, videoRect: CGRect) -> some Gesture {
         DragGesture()

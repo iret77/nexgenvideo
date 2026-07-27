@@ -2,8 +2,24 @@ import Foundation
 
 /// Append-only record of every AI generation in the project. Persisted as `generation-log.json`
 struct GenerationLog: Codable, Sendable, Equatable {
-    var version: Int = 1
+    var version: Int = 2
     var entries: [GenerationLogEntry] = []
+    var spendEvents: [GenerationSpendEvent] = []
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        entries = try c.decodeIfPresent([GenerationLogEntry].self, forKey: .entries) ?? []
+        spendEvents = try c.decodeIfPresent([GenerationSpendEvent].self, forKey: .spendEvents) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case entries
+        case spendEvents
+    }
 }
 
 /// One row in the Project Activity log.
@@ -12,9 +28,20 @@ struct GenerationLogEntry: Codable, Sendable, Equatable, Identifiable {
     let model: String
     let costCredits: Int?
     let createdAt: Date?
+    let spendTransactionId: String?
 
-    init(id: String = UUID().uuidString, model: String, costCredits: Int?, createdAt: Date?) {
-        self.id = id; self.model = model; self.costCredits = costCredits; self.createdAt = createdAt
+    init(
+        id: String = UUID().uuidString,
+        model: String,
+        costCredits: Int?,
+        createdAt: Date?,
+        spendTransactionId: String? = nil
+    ) {
+        self.id = id
+        self.model = model
+        self.costCredits = costCredits
+        self.createdAt = createdAt
+        self.spendTransactionId = spendTransactionId
     }
 
     private enum LegacyKeys: String, CodingKey { case cost }
@@ -24,6 +51,7 @@ struct GenerationLogEntry: Codable, Sendable, Equatable, Identifiable {
         self.id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         self.model = try c.decode(String.self, forKey: .model)
         self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
+        self.spendTransactionId = try c.decodeIfPresent(String.self, forKey: .spendTransactionId)
         if let credits = try c.decodeIfPresent(Int.self, forKey: .costCredits) {
             self.costCredits = credits
         } else {
@@ -76,8 +104,10 @@ extension EditorViewModel {
         generationLog.entries.append(GenerationLogEntry(
             model: gen.model,
             costCredits: CostEstimator.cost(for: gen),
-            createdAt: gen.createdAt
+            createdAt: gen.createdAt,
+            spendTransactionId: gen.spendTransactionId
         ))
+        try? persistGenerationLog()
     }
 
     /// For old projects saved before the persistent log existed:
@@ -91,5 +121,53 @@ extension EditorViewModel {
                 createdAt: gen.createdAt
             )
         }
+    }
+
+    func recordSpendEvent(
+        authorization: GenerationAuthorization,
+        kind: GenerationSpendEvent.Kind,
+        providerRequestId: String? = nil,
+        money: GenerationMoney? = nil,
+        note: String? = nil
+    ) throws {
+        guard let transactionId = authorization.transactionId else { return }
+        let previousLog = generationLog
+        generationLog.version = 2
+        generationLog.spendEvents.append(GenerationSpendEvent(
+            transactionId: transactionId,
+            kind: kind,
+            model: authorization.target.modelId,
+            provider: authorization.target.provider,
+            transport: authorization.target.transport,
+            endpoint: authorization.target.endpoint,
+            providerRequestId: providerRequestId,
+            money: money,
+            note: note
+        ))
+        do {
+            _ = try GenerationBudgetGuard.verifiedSpend(
+                log: generationLog,
+                generatedAssets: mediaAssets,
+                requireCompleteMoney: false
+            )
+            try persistGenerationLog()
+        } catch {
+            generationLog = previousLog
+            throw error
+        }
+    }
+
+    func persistGenerationLog() throws {
+        guard let workingRoot else { return }
+        guard let key = openWorkingCopyKey else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try ProjectWorkingCopy.markDirty(key: key)
+        let data = try JSONEncoder().encode(generationLog)
+        try data.write(
+            to: workingRoot.appendingPathComponent(Project.generationLogFilename),
+            options: .atomic
+        )
+        onPipelineChanged?()
     }
 }

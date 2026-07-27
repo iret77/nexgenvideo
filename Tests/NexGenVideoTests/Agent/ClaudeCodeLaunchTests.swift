@@ -36,19 +36,20 @@ struct ClaudeCodeLaunchTests {
         #expect(args.contains("--verbose"))   // required by --print + stream-json, else claude exits silently
         #expect(args.contains("--strict-mcp-config"))
         #expect(valueAfter("--permission-mode", args) == "bypassPermissions")
+        #expect(valueAfter("--tools", args) == "Read")
         #expect(valueAfter("--setting-sources", args) == "project,local")
         #expect(valueAfter("--add-dir", args) == "/tmp/proj")
         #expect(valueAfter("--mcp-config", args)?.contains("19789") == true)
     }
 
-    @Test func permissionModeAndSettingSourcesConfigurable() {
+    @Test func settingSourcesRemainConfigurable() {
         let cfg = ClaudeCodeLaunchConfig(
             workingDirectory: URL(fileURLWithPath: "/tmp/proj"),
-            permissionMode: "acceptEdits",
             settingSources: "user,project,local"
         )
         let args = ClaudeCodeLaunch.arguments(cfg)
-        #expect(valueAfter("--permission-mode", args) == "acceptEdits")
+        #expect(valueAfter("--permission-mode", args) == "bypassPermissions")
+        #expect(valueAfter("--tools", args) == "Read")
         #expect(valueAfter("--setting-sources", args) == "user,project,local")
     }
 
@@ -173,5 +174,20 @@ struct ClaudeCodeLocatorTests {
 
     @Test func locateExecutableReturnsNilWhenNoneExist() {
         #expect(ClaudeCodeLocator.locateExecutable(candidates: ["/no/such/claude"]) == nil)
+    }
+}
+
+@Suite("Agent backend preference")
+struct AgentBackendPreferenceTests {
+    @Test func explicitPreferenceAndLegacyValueResolveDeterministically() throws {
+        let suite = "AgentBackendPreferenceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        #expect(AgentBackendPreference.selected(in: defaults) == .anthropicAPI)
+        defaults.set(true, forKey: AgentBackendPreference.legacyKey)
+        #expect(AgentBackendPreference.selected(in: defaults) == .claudeCode)
+        defaults.set(AgentBackend.anthropicAPI.rawValue, forKey: AgentBackendPreference.key)
+        #expect(AgentBackendPreference.selected(in: defaults) == .anthropicAPI)
     }
 }

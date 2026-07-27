@@ -42,6 +42,20 @@ extension ToolExecutor {
                 throw ToolError("'\(match.name)' takes a creative prompt \u{2014} that's generation. Route it through generate_video / generate_image / generate_audio so the prompt engine runs. run_provider_tool is for prompt-free workflow tools only.")
             }
 
+            let authorization: GenerationAuthorization
+            do {
+                authorization = try GenerationBudgetGuard.authorizeUnknownPaidOperation(
+                    modelId: match.name,
+                    provider: provider,
+                    transport: .mcp,
+                    endpoint: match.name,
+                    editor: editor
+                )
+            } catch {
+                await client.disconnect()
+                throw ToolError(error.localizedDescription)
+            }
+
             // Paid, provider-side action → the user's final word (Cost-Guard), same as any render.
             // Cost is unknown for an arbitrary provider tool, so this always asks.
             let approval = SpendApproval(
@@ -49,11 +63,22 @@ extension ToolExecutor {
                 providerLabel: provider.displayName, credits: nil, alternatives: [],
                 actionLabel: "Run \(match.name)")
             if case .declined = await editor.agentService.requestSpendApproval(approval) {
+                try? editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .released,
+                    note: "User declined the provider tool."
+                )
                 await client.disconnect()
                 throw ToolError("Tool call declined — the user did not approve running '\(match.name)'.")
             }
 
             do {
+                try editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .submitted,
+                    providerRequestId: UUID().uuidString,
+                    money: authorization.estimate
+                )
                 let texts = try await client.callTool(name: match.name, arguments: arguments)
                 await client.disconnect()
                 let body = texts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)

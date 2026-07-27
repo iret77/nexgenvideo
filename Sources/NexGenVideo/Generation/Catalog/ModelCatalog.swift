@@ -41,6 +41,8 @@ enum ModelRegistry {
 @MainActor
 final class ModelCatalog {
     static let shared = ModelCatalog()
+    static let launchEntries =
+        FalModelRegistry.entries + MarbleModelRegistry.entries + RunwayModelRegistry.entries
 
     private(set) var video: [VideoModelConfig] = []
     private(set) var image: [ImageModelConfig] = []
@@ -68,8 +70,7 @@ final class ModelCatalog {
     func configure() {
         guard !didConfigure else { return }
         didConfigure = true
-        // Convex model-list subscription removed; the BYO-provider layer will
-        // populate the catalog via `apply(_:)`. Until then it stays empty.
+        // App startup loads the provider registry seed, then refreshes remote and discovered entries.
     }
 
     func load(entries: [CatalogEntry]) {
@@ -136,6 +137,19 @@ final class ModelCatalog {
     /// Map an LLM-supplied logical id back to the internal catalog id. Falls back to the input, so a
     /// caller that already passes an internal id still resolves.
     func internalId(forLogical logical: String) -> String { internalByLogical[logical] ?? logical }
+
+    func modelKindForRerun(id: String) -> ModelKind? {
+        if let current = byId[id] { return current }
+        guard !isLoaded, let entry = Self.launchEntries.first(where: { $0.id == id }) else {
+            return nil
+        }
+        switch entry.uiCapabilities {
+        case .video(let caps): return .video(VideoModelConfig(entry: entry, caps: caps))
+        case .image(let caps): return .image(ImageModelConfig(entry: entry, caps: caps))
+        case .audio(let caps): return .audio(AudioModelConfig(entry: entry, caps: caps))
+        case .upscale(let caps): return .upscale(UpscaleModelConfig(entry: entry, caps: caps))
+        }
+    }
 
     private func apply(_ entries: [CatalogEntry]) {
         var newVideo: [VideoModelConfig] = []

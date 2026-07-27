@@ -13,10 +13,10 @@ struct ExportView: View {
     @State private var ngvSummary: (collect: Int, missing: Int, bytes: Int64) = (0, 0, 0)
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
+            HStack(spacing: AppTheme.Spacing.none) {
                 settingsPanel
-                    .frame(width: 360)
+                    .frame(width: AppTheme.ComponentSize.exportSidebarWidth)
                 previewPanel
                     .frame(maxWidth: .infinity)
             }
@@ -24,9 +24,9 @@ struct ExportView: View {
 
             bottomBar
         }
-        .frame(width: 860, height: 560)
+        .frame(width: AppTheme.ComponentSize.exportWindow.width, height: AppTheme.ComponentSize.exportWindow.height)
         .presentationBackground {
-            AppTheme.Background.surfaceColor.opacity(0.85)
+            AppTheme.Background.surfaceColor.opacity(AppTheme.Opacity.emphasis)
                 .background(.ultraThinMaterial)
         }
         .task {
@@ -37,7 +37,7 @@ struct ExportView: View {
 
     private func panelHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: AppTheme.FontSize.title2, weight: .light))
+            .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
             .tracking(AppTheme.Tracking.tight)
             .foregroundStyle(AppTheme.Text.primaryColor)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -55,7 +55,7 @@ struct ExportView: View {
                     .aspectRatio(contentMode: .fit)
             } else {
                 Image(systemName: "film")
-                    .font(.system(size: AppTheme.FontSize.title2, weight: .light))
+                    .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
         }
@@ -68,12 +68,12 @@ struct ExportView: View {
     // MARK: - Settings (left)
 
     private var settingsPanel: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             panelHeader("Export")
 
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             // Settings rows
-            VStack(spacing: 0) {
+            VStack(spacing: AppTheme.Spacing.none) {
                 settingRow(label: "Format") {
                     Picker("", selection: $mode) {
                         ForEach(ExportMode.allCases) { m in
@@ -83,7 +83,7 @@ struct ExportView: View {
                     .labelsHidden()
                 }
 
-                Divider().opacity(0.2)
+                AppDivider().opacity(AppTheme.Opacity.dim)
 
                 switch mode {
                 case .video:
@@ -96,7 +96,7 @@ struct ExportView: View {
                         .labelsHidden()
                     }
 
-                    Divider().opacity(0.2)
+                    AppDivider().opacity(AppTheme.Opacity.dim)
 
                     settingRow(label: "Resolution") {
                         Picker("", selection: $resolution) {
@@ -107,7 +107,7 @@ struct ExportView: View {
                         .labelsHidden()
                     }
 
-                    Divider().opacity(0.2)
+                    AppDivider().opacity(AppTheme.Opacity.dim)
 
                     settingRow(label: "Frame Rate") {
                         Text("\(editor.timeline.fps) fps")
@@ -163,14 +163,14 @@ struct ExportView: View {
 
             if let error = service.error {
                 Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                    .font(.system(size: AppTheme.FontSize.smMd))
+                    .foregroundStyle(AppTheme.Status.errorColor)
                     .padding(.top, AppTheme.Spacing.sm)
             }
 
             if let ngvResult {
                 Text(ngvResult)
-                    .font(.caption)
+                    .font(.system(size: AppTheme.FontSize.smMd))
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .padding(.top, AppTheme.Spacing.sm)
             }
@@ -266,7 +266,7 @@ struct ExportView: View {
         for entry in editor.mediaManifest.entries {
             let url: URL? = switch entry.source {
             case .external(let path): URL(fileURLWithPath: path)
-            case .project(let rel): editor.projectURL?.appendingPathComponent(rel)
+            case .project(let rel): editor.workingRoot?.appendingPathComponent(rel)
             }
             guard let url, FileManager.default.fileExists(atPath: url.path) else { missing += 1; continue }
             if case .external = entry.source { collect += 1 }
@@ -339,7 +339,7 @@ struct ExportView: View {
                     timeline: editor.timeline,
                     manifest: editor.mediaManifest,
                     generationLog: editor.generationLog,
-                    sourceProjectURL: editor.projectURL,
+                    sourceProjectURL: editor.workingRoot,
                     outputURL: url
                 )
                 guard let report, service.error == nil else { return }

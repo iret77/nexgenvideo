@@ -54,4 +54,33 @@ struct WindowSizingTests {
         let ok = NSRect(x: 100, y: 100, width: 1200, height: 800)
         #expect(VideoProject.clampToScreen(ok, visible: visible) == ok)
     }
+
+    @Test func restoredHomeFrameGrowsToCurrentMinimum() {
+        let visible = NSRect(x: 0, y: 0, width: 1440, height: 812)
+        let stale = NSRect(x: 120, y: 100, width: 760, height: 500)
+        let restored = WindowGeometry.restoredFrame(
+            stale, minimum: AppTheme.Window.homeMin, visible: visible
+        )
+        #expect(restored.width == AppTheme.Window.homeMin.width)
+        #expect(restored.height == AppTheme.Window.homeMin.height)
+    }
+
+    @Test func restoredUserSizeIsPreservedWhenItFits() {
+        let visible = NSRect(x: 0, y: 0, width: 1920, height: 1080)
+        let chosen = NSRect(x: 200, y: 120, width: 1100, height: 780)
+        #expect(WindowGeometry.restoredFrame(
+            chosen, minimum: AppTheme.Window.homeMin, visible: visible
+        ) == chosen)
+    }
+
+    @Test func restoredHomeFrameNeverExceedsTinyScreen() {
+        let visible = NSRect(x: 0, y: 0, width: 700, height: 600)
+        let stale = NSRect(x: 900, y: 800, width: 600, height: 400)
+        let restored = WindowGeometry.restoredFrame(
+            stale, minimum: AppTheme.Window.homeMin, visible: visible
+        )
+        #expect(restored.width <= visible.width)
+        #expect(restored.height <= visible.height)
+        #expect(visible.contains(restored))
+    }
 }

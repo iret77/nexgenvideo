@@ -14,7 +14,9 @@ struct DemucsStemSeparator: AudioStemSeparating {
     private static let sourceCount = 4              // drums, bass, other, vocals
     private static let vocalsIndex = 3
     private static let modelRepo = "StemSplitio/htdemucs-ft-vocals-onnx"
+    private static let modelRevision = "2ef0d757d3e226d0da85fb8c71514f464fcabdd0"
     private static let modelFile = "htdemucs_ft_vocals.onnx"
+    private static let modelSHA256 = "8c5d5e2da1f27050240bb80236673307ee3b40d4b064066d9350f4d64bfd544d"
 
     enum SeparateError: LocalizedError {
         case audioLoadFailed(String)
@@ -30,7 +32,13 @@ struct DemucsStemSeparator: AudioStemSeparating {
     func separateStems(_ audio: URL, into dir: URL) throws -> SeparatedStems {
         let mix = try Self.loadStereo44k(audio)
         guard mix.left.count > 0 else { return SeparatedStems() }
-        let modelPath = try HFModelStore.ensure(repo: Self.modelRepo, file: Self.modelFile, subdir: "demucs")
+        let modelPath = try HFModelStore.ensure(
+            repo: Self.modelRepo,
+            revision: Self.modelRevision,
+            file: Self.modelFile,
+            subdir: "demucs",
+            expectedSHA256: Self.modelSHA256
+        )
         let vocals = try Self.separateVocals(left: mix.left, right: mix.right, modelPath: modelPath.path)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let vocalsURL = dir.appendingPathComponent("vocals.wav")

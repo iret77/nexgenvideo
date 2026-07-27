@@ -5,13 +5,13 @@ struct ThinkingDots: View {
     private let timer = Timer.publish(every: 0.28, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: AppTheme.Spacing.xsSm) {
             ForEach(0..<3, id: \.self) { i in
                 Circle()
                     .fill(AppTheme.Text.tertiaryColor)
-                    .frame(width: 5, height: 5)
-                    .opacity(phase == i ? 1 : 0.25)
-                    .animation(.easeInOut(duration: 0.25), value: phase)
+                    .frame(width: AppTheme.ComponentSize.thinkingDotDiameter, height: AppTheme.ComponentSize.thinkingDotDiameter)
+                    .opacity(phase == i ? AppTheme.Opacity.opaque : AppTheme.Opacity.moderate)
+                    .animation(.easeInOut(duration: AppTheme.Anim.pulse), value: phase)
             }
         }
         .onReceive(timer) { _ in phase = (phase + 1) % 3 }

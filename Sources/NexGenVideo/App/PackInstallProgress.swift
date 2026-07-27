@@ -33,7 +33,10 @@ final class PackInstallProgress {
         content.addSubview(stack)
 
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 80),
+            contentRect: NSRect(
+                origin: .zero,
+                size: AppTheme.ComponentSize.packInstallProgressWindow
+            ),
             styleMask: [.titled, .fullSizeContentView],
             backing: .buffered,
             defer: false

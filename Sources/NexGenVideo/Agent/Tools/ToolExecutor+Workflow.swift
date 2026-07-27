@@ -16,19 +16,34 @@ extension ToolExecutor {
     /// The data root to operate on: the `project_dir` arg if given, else the open project's pipeline
     /// dir — resolved through DataRootResolver so either a home or a `pipeline` dir works. Throws a
     /// clear error when neither is available or the path isn't a project.
-    private func resolveDataRoot(_ args: [String: Any], editor: EditorViewModel) throws -> URL {
-        let dir: URL
-        if let path = args.string("project_dir") {
-            dir = URL(fileURLWithPath: path)
-        } else if let open = editor.workingRoot {
-            dir = open
-        } else {
+    func resolveDataRoot(_ args: [String: Any], editor: EditorViewModel) throws -> URL {
+        let explicit = args.string("project_dir").map { URL(fileURLWithPath: $0) }
+        let openRoot = editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        if editor.projectURL != nil, openRoot == nil {
+            throw ToolError(
+                "The project working copy is unavailable. Reopen the project before accessing its pipeline."
+            )
+        }
+        guard explicit != nil || openRoot != nil else {
             throw ToolError("No project is open and no project_dir was given.")
         }
-        guard let root = DataRootResolver.dataRoot(of: dir) else {
-            throw ToolError("Not a project (no pipeline/project.yaml): \(dir.path). Run init_project first.")
+        guard let explicit else { return openRoot! }
+        guard let explicitRoot = DataRootResolver.dataRoot(of: explicit) else {
+            throw ToolError(
+                "Not a project (no pipeline/project.yaml): \(explicit.path). Run init_project first."
+            )
         }
-        return root
+        guard let openRoot else { return explicitRoot }
+        let requested = explicitRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let live = openRoot.standardizedFileURL.resolvingSymlinksInPath()
+        if requested == live {
+            return openRoot
+        }
+        if let savedRoot = editor.projectURL.flatMap({ DataRootResolver.dataRoot(of: $0) }),
+           requested == savedRoot.standardizedFileURL.resolvingSymlinksInPath() {
+            return openRoot
+        }
+        throw ToolError("project_dir must name the open project's working copy.")
     }
 
     /// The active format pack for a project given its DATA ROOT. `ngv.json` lives in the project
@@ -46,8 +61,102 @@ extension ToolExecutor {
         return PhaseOrder.merged(packPlacements: placements)
     }
 
+    private func readGates(dataRoot: URL) throws -> Gates {
+        do {
+            return try YAMLArtifactStore(dataRoot: dataRoot).load(
+                Gates.self,
+                at: PipelineLayout.gatesFile
+            )
+        } catch {
+            throw ToolError(
+                "Couldn't read gates.yaml. Repair or restore the project before continuing: \(error)"
+            )
+        }
+    }
+
+    private func readShotlist(dataRoot: URL) throws -> Shotlist? {
+        do {
+            return try loadShotlist(dataRoot: dataRoot)
+        } catch {
+            throw ToolError(
+                "Couldn't read the shotlist. Repair or restore it before continuing: \(error)"
+            )
+        }
+    }
+
+    private func readRenderManifest(dataRoot: URL, phase: String) throws -> RenderManifest {
+        do {
+            return try loadRenderManifest(dataRoot: dataRoot, phase: phase)
+        } catch {
+            throw ToolError(
+                "Couldn't read the \(phase) render manifest. Repair or restore it before continuing: \(error)"
+            )
+        }
+    }
+
+    private func readRenderProof(
+        dataRoot: URL,
+        phase: String
+    ) throws -> RenderProofManifest {
+        do {
+            let proof = try loadRenderProofManifest(
+                dataRoot: dataRoot,
+                phase: phase
+            )
+            let project = try YAMLArtifactStore(dataRoot: dataRoot).load(
+                ProjectMeta.self,
+                at: PipelineLayout.projectFile
+            )
+            guard proof.schema == renderProofSchemaVersion,
+                  proof.project == project.project,
+                  proof.phase == phase else {
+                throw ToolError(
+                    "The \(phase) render provenance has invalid identity."
+                )
+            }
+            return proof
+        } catch let error as ToolError {
+            throw error
+        } catch {
+            throw ToolError(
+                "Couldn't read the \(phase) render provenance. Repair or restore "
+                    + "it before continuing: \(error)"
+            )
+        }
+    }
+
+    private func readFrameAudit(
+        dataRoot: URL,
+        shotId: String,
+        role: String
+    ) throws -> FrameAudit? {
+        do {
+            return try loadFrameAudit(dataRoot: dataRoot, shotId: shotId, role: role)
+        } catch {
+            throw ToolError(
+                "Couldn't read the frame audit for \(shotId)-\(role). "
+                    + "Repair or restore it before continuing: \(error)"
+            )
+        }
+    }
+
+    private func readBriefIfPresent(dataRoot: URL) throws -> Brief? {
+        let url = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        do {
+            return try YAMLArtifactStore(dataRoot: dataRoot).load(
+                Brief.self,
+                at: PipelineLayout.briefFile
+            )
+        } catch {
+            throw ToolError(
+                "Couldn't read brief.yaml. Repair or restore it before continuing: \(error)"
+            )
+        }
+    }
+
     /// JSON `.ok` result from a Foundation object graph.
-    private func jsonResult(_ object: Any) throws -> ToolResult {
+    func jsonResult(_ object: Any) throws -> ToolResult {
         let data = try NativeCockpitReader.serialize(object)
         return .ok(String(decoding: data, as: UTF8.self))
     }
@@ -81,8 +190,28 @@ extension ToolExecutor {
 
     func runSanityTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
-        let data = try NativeCockpitReader.sanityJSON(dataRoot: root, activePack: activePluginFor(dataRoot: root))
-        return .ok(String(decoding: data, as: UTF8.self))
+        guard let report = NativeCockpitReader.sanityReport(
+            dataRoot: root,
+            activePack: activePluginFor(dataRoot: root)
+        ) else {
+            throw ToolError("No shot list exists. Write and approve the shot list before running sanity.")
+        }
+        let artifact: SanityArtifact
+        do {
+            artifact = try SanityArtifactStore.save(report: report, dataRoot: root)
+        } catch {
+            throw ToolError("Couldn't persist the sanity report: \(error.localizedDescription)")
+        }
+        let data = try NativeCockpitReader.sanityJSON(report)
+        guard var object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ToolError("The sanity report could not be encoded.")
+        }
+        object["schema"] = artifact.schema
+        object["generated"] = artifact.generated
+        object["input_fingerprint"] = artifact.inputFingerprint
+        object["path"] = PipelineLayout.sanityReportFile
+        let persisted = try NativeCockpitReader.serialize(object)
+        return .ok(String(decoding: persisted, as: UTF8.self))
     }
 
     func estimateCostTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
@@ -206,10 +335,68 @@ extension ToolExecutor {
         } catch let e as Brief.ValidationError {
             throw ToolError("brief rejected — " + briefValidationViolation(e) + " Nothing was written; fix and re-call.")
         }
+        let mode: Mode
+        guard let parsedMode = Mode(rawValue: brief.projectMode) else {
+            throw ToolError(
+                "brief rejected — project_mode '\(brief.projectMode)' is unsupported."
+            )
+        }
+        mode = parsedMode
+        let store = YAMLArtifactStore(dataRoot: root)
+        let project: ProjectMeta
         do {
-            try YAMLArtifactStore(dataRoot: root).save(brief, to: PipelineLayout.briefFile)
+            project = try store.load(
+                ProjectMeta.self,
+                at: PipelineLayout.projectFile
+            )
         } catch {
-            throw ToolError("Couldn't write brief.yaml: \(error.localizedDescription)")
+            throw ToolError(
+                "Couldn't synchronize the brief with project.yaml: \(error)"
+            )
+        }
+        guard project.project == brief.project else {
+            throw ToolError(
+                "brief rejected — project.yaml belongs to '\(project.project)', "
+                    + "not '\(brief.project)'."
+            )
+        }
+        let synchronizedProject = ProjectMeta(
+            project: project.project,
+            mode: mode,
+            budgetEur: brief.budgetEur,
+            created: project.created
+        )
+        do {
+            try synchronizedProject.validate()
+        } catch {
+            throw ToolError(
+                "brief rejected — project metadata would be invalid: \(error)"
+            )
+        }
+        let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: root)
+        let previousBrief = try? Data(contentsOf: briefURL)
+        try archiveExisting(PipelineLayout.briefFile, dataRoot: root)
+        do {
+            try store.save(brief, to: PipelineLayout.briefFile)
+            try store.save(synchronizedProject, to: PipelineLayout.projectFile)
+        } catch {
+            do {
+                if let previousBrief {
+                    try previousBrief.write(to: briefURL, options: .atomic)
+                } else if FileManager.default.fileExists(atPath: briefURL.path) {
+                    try FileManager.default.removeItem(at: briefURL)
+                }
+            } catch let rollbackError {
+                throw ToolError(
+                    "Couldn't synchronize brief.yaml and project.yaml "
+                        + "(\(error.localizedDescription)); restoring the prior brief "
+                        + "also failed (\(rollbackError.localizedDescription))."
+                )
+            }
+            throw ToolError(
+                "Couldn't synchronize brief.yaml and project.yaml: "
+                    + error.localizedDescription
+            )
         }
         return try jsonResult([
             "written": true,
@@ -298,7 +485,23 @@ extension ToolExecutor {
         // home_dir still works for out-of-band scaffolding.
         let home: URL
         if let hd = args.string("home_dir"), !hd.isEmpty {
-            home = URL(fileURLWithPath: hd)
+            let explicit = URL(fileURLWithPath: hd)
+            if let projectURL = editor.projectURL {
+                guard let working = editor.workingRoot else {
+                    throw ToolError(
+                        "The project working copy is unavailable. Reopen the project before scaffolding."
+                    )
+                }
+                let requested = explicit.standardizedFileURL.resolvingSymlinksInPath()
+                let live = working.standardizedFileURL.resolvingSymlinksInPath()
+                let saved = projectURL.standardizedFileURL.resolvingSymlinksInPath()
+                guard requested == live || requested == saved else {
+                    throw ToolError("home_dir must name the open project's working copy.")
+                }
+                home = working
+            } else {
+                home = explicit
+            }
         } else if let working = editor.workingRoot {
             home = working
         } else {
@@ -347,6 +550,47 @@ extension ToolExecutor {
         return target
     }
 
+    private static func requirePipelineAssetCopyPath(
+        _ relativePath: String,
+        source: Bool
+    ) throws {
+        let path = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path == relativePath,
+              !path.isEmpty,
+              !NSString(string: path).isAbsolutePath,
+              !path.hasSuffix("/"),
+              !path.split(separator: "/", omittingEmptySubsequences: false)
+                .contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
+            throw ToolError("Pipeline asset paths must be normalized project-relative file paths.")
+        }
+        if source {
+            guard path.hasPrefix("import/") else {
+                throw ToolError(
+                    "copy_project_file can stage uploaded files only from import/. "
+                        + "Use `media` for a generated result."
+                )
+            }
+        } else {
+            let productionDesignAsset = path.hasPrefix(
+                "production_design/refs/"
+            ) || path == "production_design/lighting_anchor.png"
+            let bibleAsset = path.hasPrefix("bible/")
+                && path != PipelineLayout.bibleFile
+                && path != PipelineLayout.assetProofFile(scope: "bible")
+            guard productionDesignAsset || bibleAsset else {
+                throw ToolError(
+                    "copy_project_file writes only Production Design or Bible image assets; "
+                        + "canonical pipeline artifacts are host-owned."
+                )
+            }
+        }
+        guard ClipType(fileExtension: URL(
+            fileURLWithPath: path
+        ).pathExtension.lowercased()) == .image else {
+            throw ToolError("copy_project_file stages image assets only.")
+        }
+    }
+
     func listProjectFilesTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let subdir = try args.requireString("subdir")
@@ -362,12 +606,45 @@ extension ToolExecutor {
 
     func copyProjectFileTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
-        let fromRel = try args.requireString("from")
+        let fromRel = args.string("from")
+        let mediaID = args.string("media")
+        guard (fromRel == nil) != (mediaID == nil) else {
+            throw ToolError("Pass exactly one source: `from` or `media`.")
+        }
         let toRel = try args.requireString("to")
-        let from = try Self.resolveInside(root, fromRel)
+        try Self.requirePipelineAssetCopyPath(toRel, source: false)
+        if let fromRel {
+            try Self.requirePipelineAssetCopyPath(fromRel, source: true)
+        }
         let to = try Self.resolveInside(root, toRel)
-        guard FileManager.default.fileExists(atPath: from.path) else {
-            throw ToolError("Source not found: '\(fromRel)'.")
+        let sourceAsset = try mediaID.map {
+            try asset($0, editor: editor)
+        }
+        let from: URL
+        if let sourceAsset {
+            guard sourceAsset.type == .image else {
+                throw ToolError("copy_project_file stages image assets only.")
+            }
+            let home = FrameInventory.projectHome(of: root)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            from = sourceAsset.url.standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard from.path.hasPrefix(home.path + "/"),
+                  (try? from.resourceValues(
+                    forKeys: [.isRegularFileKey]
+                  ).isRegularFile) == true else {
+                throw ToolError(
+                    "Media '\(sourceAsset.id)' is not a ready regular file in the open project."
+                )
+            }
+        } else {
+            from = try Self.resolveInside(root, fromRel!)
+            guard (try? from.resourceValues(
+                forKeys: [.isRegularFileKey]
+            ).isRegularFile) == true else {
+                throw ToolError("Source not found or not a regular file: '\(fromRel!)'.")
+            }
         }
         do {
             try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -376,9 +653,129 @@ extension ToolExecutor {
                 try FileManager.default.copyItem(at: from, to: to)
             }
         } catch {
-            throw ToolError("Couldn't copy '\(fromRel)' → '\(toRel)': \(error.localizedDescription)")
+            throw ToolError(
+                "Couldn't copy '\(fromRel ?? mediaID ?? "?")' → '\(toRel)': "
+                    + error.localizedDescription
+            )
         }
-        return try jsonResult(["from": fromRel, "to": toRel])
+        let proofRecorded = try updatePipelineAssetProof(
+            sourceAsset: sourceAsset,
+            sourceRelativePath: fromRel,
+            destinationRelativePath: toRel,
+            destinationURL: to,
+            dataRoot: root
+        )
+        return try jsonResult([
+            "from": fromRel.map { $0 as Any } ?? NSNull(),
+            "media": mediaID.map { $0 as Any } ?? NSNull(),
+            "to": toRel,
+            "generated_provenance": proofRecorded,
+        ])
+    }
+
+    private func updatePipelineAssetProof(
+        sourceAsset: MediaAsset?,
+        sourceRelativePath: String?,
+        destinationRelativePath: String,
+        destinationURL: URL,
+        dataRoot: URL
+    ) throws -> Bool {
+        guard let scope = ["production_design", "bible"].first(where: {
+            destinationRelativePath == $0
+                || destinationRelativePath.hasPrefix($0 + "/")
+        }) else { return false }
+        var proof: PipelineAssetProof
+        do {
+            proof = try loadPipelineAssetProof(
+                dataRoot: dataRoot,
+                scope: scope
+            )
+        } catch {
+            throw ToolError(
+                "Couldn't read \(scope) generation provenance: \(error)"
+            )
+        }
+        guard proof.schema == pipelineAssetProofSchemaVersion,
+              proof.scope == scope,
+              proof.project == (FrameInventory.projectName(of: dataRoot)
+                ?? dataRoot.lastPathComponent) else {
+            throw ToolError(
+                "\(scope) generation provenance has the wrong project, scope, or schema."
+            )
+        }
+        let entry: PipelineAssetProofEntry?
+        if let sourceAsset,
+           let input = sourceAsset.generationInput {
+            let prompt = input.prompt.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            let model = input.model.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            guard !prompt.isEmpty, !model.isEmpty else {
+                throw ToolError(
+                    "Generated media '\(sourceAsset.id)' has incomplete prompt provenance."
+                )
+            }
+            entry = PipelineAssetProofEntry(
+                path: destinationRelativePath,
+                sha256: try FileDigest.sha256(of: destinationURL),
+                providerPrompt: prompt,
+                generationModel: model,
+                sourceMediaId: sourceAsset.id
+            )
+        } else if let sourceRelativePath {
+            entry = try pipelineAssetProofEntry(
+                for: sourceRelativePath,
+                copiedTo: destinationRelativePath,
+                destinationURL: destinationURL,
+                dataRoot: dataRoot
+            )
+        } else {
+            entry = nil
+        }
+        if let entry {
+            proof.entries[destinationRelativePath] = entry
+        } else {
+            proof.entries.removeValue(forKey: destinationRelativePath)
+        }
+        do {
+            try savePipelineAssetProof(proof, dataRoot: dataRoot)
+        } catch {
+            throw ToolError(
+                "Couldn't save \(scope) generation provenance: \(error)"
+            )
+        }
+        return entry != nil
+    }
+
+    private func pipelineAssetProofEntry(
+        for sourceRelativePath: String,
+        copiedTo destinationRelativePath: String,
+        destinationURL: URL,
+        dataRoot: URL
+    ) throws -> PipelineAssetProofEntry? {
+        for sourceScope in ["production_design", "bible"] {
+            let sourceProof = try loadPipelineAssetProof(
+                dataRoot: dataRoot,
+                scope: sourceScope
+            )
+            guard let source = sourceProof.entries[sourceRelativePath],
+                  let sourceURL = try? Self.resolveInside(
+                      dataRoot,
+                      sourceRelativePath
+                  ),
+                  (try? FileDigest.sha256(of: sourceURL)) == source.sha256
+            else { continue }
+            return PipelineAssetProofEntry(
+                path: destinationRelativePath,
+                sha256: try FileDigest.sha256(of: destinationURL),
+                providerPrompt: source.providerPrompt,
+                generationModel: source.generationModel,
+                sourceMediaId: source.sourceMediaId
+            )
+        }
+        return nil
     }
 
     // MARK: - Gates (WRITES)
@@ -387,30 +784,17 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let notes = args.string("notes")
+        let declaredPack = editor.declaredPluginName
         // Hard preconditions FIRST — never ask the user to approve something that can't be approved.
-        try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: editor.activePluginName)
-        // A phase gate is the USER's decision (HAX G11): surface the request in the composer and suspend
-        // until they decide. On a decline nothing is written — the agent stays on this phase.
-        let decision = await editor.agentService.requestGateApproval(GateApproval(phase: phase, notes: notes))
-        guard decision == .approved else {
-            return .ok("The user did not approve \(PhaseDisplay.label(phase)) — keep working on this phase. "
-                + "Do NOT proceed to the next phase, and do NOT claim it was approved.")
-        }
-        // The turn may have been cancelled (tab switch/new chat) while the card was up — never write
-        // the gate on a cancelled turn even if an approval slipped through. Same guard as confirmSpend.
-        try Task.checkCancellation()
-        let gates = try mutateGates(dataRoot: root) { GatesOperations.approve(&$0, phase: phase, notes: notes) }
-        editor.onPipelineChanged?()  // real write — a declined approval returned above and marks nothing
-        let gate = gates.get(phase)
-        return try jsonResult([
-            "project": gates.project,
-            "phase": phase,
-            "approved": gate.approved,
-            "state": gate.state.rawValue,
-            "approved_at": gate.approvedAt.map { $0 as Any } ?? NSNull(),
-            "approved_by": gate.approvedBy.map { $0 as Any } ?? NSNull(),
-            "notes": gate.notes.map { $0 as Any } ?? NSNull(),
-        ])
+        try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: declaredPack)
+        let request = editor.agentService.requestGateApproval(GateApproval(
+            phase: phase,
+            notes: notes,
+            dataRoot: root,
+            action: .approve,
+            declaredPack: declaredPack
+        ))
+        return try gateApprovalPendingResult(request, requestedPhase: phase)
     }
 
     func setGateStateTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
@@ -421,20 +805,64 @@ extension ToolExecutor {
             throw ToolError("Unknown state '\(stateRaw)'. Expected approved/approved_with_notes/needs_revision/pending.")
         }
         let notes = args.string("notes")
-        // Only the approving states are the user's decision to make: enforce the same hard-gate guard as
-        // approve_gate, then surface a user confirmation and suspend until they decide. needs_revision /
-        // pending are not approvals — they write straight through, unchanged.
-        if GateApproval.isApproval(state) {
-            try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: editor.activePluginName)
-            let decision = await editor.agentService.requestGateApproval(GateApproval(phase: phase, notes: notes))
-            guard decision == .approved else {
-                return .ok("The user did not approve \(PhaseDisplay.label(phase)) — keep working on this phase. "
-                    + "Do NOT mark it approved or move on.")
-            }
-            try Task.checkCancellation()
+        let declaredPack = editor.declaredPluginName
+        let resolvedPack: String?
+        do {
+            resolvedPack = try ProjectPluginSettings.resolvedPlugin(
+                projectURL: FrameInventory.projectHome(of: root),
+                declaredPack: declaredPack
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
         }
-        let gates = try mutateGates(dataRoot: root) { GatesOperations.setState(&$0, phase: phase, state: state, notes: notes) }
-        editor.onPipelineChanged?()  // real write; a declined approval returned above without marking
+        let registry = PackCatalog.registry(activePack: resolvedPack)
+        do {
+            try GateGuard.requireWiredPack(
+                declared: declaredPack,
+                resolved: resolvedPack,
+                registry: registry
+            )
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message)
+        }
+        // Approving states defer their write to the durable user card.
+        if GateApproval.isApproval(state) {
+            try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: declaredPack)
+            let request = editor.agentService.requestGateApproval(GateApproval(
+                phase: phase,
+                notes: notes,
+                dataRoot: root,
+                action: .setState(state),
+                declaredPack: declaredPack
+            ))
+            return try gateApprovalPendingResult(request, requestedPhase: phase)
+        }
+        let order = PhaseOrder.merged(
+            packPlacements: registry.phasePlacements
+        )
+        let existing = try readGates(dataRoot: root)
+        let current = order.first {
+            !existing.get($0).approved
+        }
+        guard existing.get(phase).approved || current == phase else {
+            throw ToolError(
+                "Can't mark future phase \"\(phase)\" as \(state.rawValue). "
+                    + "Reach it by completing the earlier phases first."
+            )
+        }
+        if let key = editor.openWorkingCopyKey {
+            try ProjectWorkingCopy.markDirty(key: key)
+        }
+        let gates = try mutateGates(dataRoot: root) {
+            try GatesOperations.setStateAndInvalidateDownstream(
+                &$0,
+                phase: phase,
+                state: state,
+                order: order,
+                notes: notes
+            )
+        }
+        editor.onPipelineChanged?()
         let gate = gates.get(phase)
         return try jsonResult([
             "project": gates.project,
@@ -445,36 +873,114 @@ extension ToolExecutor {
         ])
     }
 
-    /// Deterministic hard-gate check shared by approve_gate and set_gate_state: consult the active
-    /// pack's registered precondition for `phase` and surface a `GateBlocked` as an actionable tool
-    /// error. No requirement registered (prose phases) ⇒ approvable on the user's judgement.
+    private func gateApprovalPendingResult(
+        _ request: GateApprovalRequest,
+        requestedPhase: String
+    ) throws -> ToolResult {
+        let pending = request.approval
+        let message: String
+        if request.isNew {
+            message = "The approval card is open. End this turn and wait for the user's decision."
+        } else if request.matchesRequestedApproval {
+            message = "This approval is already pending. End this turn; do not retry while the card is open."
+        } else {
+            message = "Another approval is already pending for \(pending.phaseLabel). End this turn and wait for it."
+        }
+        return try jsonResult([
+            "status": "approval_pending",
+            "request_id": pending.id,
+            "phase": pending.phase,
+            "requested_phase": requestedPhase,
+            "new_request": request.isNew,
+            "message": message,
+        ])
+    }
+
+    /// Revalidates and commits a durable approval after the user acts.
+    func commitGateApproval(_ approval: GateApproval) throws -> String {
+        guard let editor else { throw ToolError("Editor not available") }
+        guard let root = approval.dataRoot else {
+            throw ToolError("The approval request no longer identifies its project data root.")
+        }
+        do {
+            _ = try ProjectPluginSettings.resolvedPlugin(
+                projectURL: FrameInventory.projectHome(of: root),
+                declaredPack: approval.declaredPack
+            )
+        } catch {
+            throw ToolError(
+                "The project format changed while this approval was open: "
+                    + error.localizedDescription
+            )
+        }
+        try enforceGateRequirement(
+            phase: approval.phase,
+            dataRoot: root,
+            declaredPack: approval.declaredPack
+        )
+        if let key = editor.openWorkingCopyKey {
+            try ProjectWorkingCopy.markDirty(key: key)
+        }
+        let gates = try mutateGates(dataRoot: root) { gates in
+            switch approval.action {
+            case .approve:
+                GatesOperations.approve(&gates, phase: approval.phase, notes: approval.notes)
+            case .setState(let state):
+                GatesOperations.setState(
+                    &gates,
+                    phase: approval.phase,
+                    state: state,
+                    notes: approval.notes
+                )
+            }
+        }
+        editor.onPipelineChanged?()
+        let gate = gates.get(approval.phase)
+        guard let payload = Self.jsonString([
+            "request_id": approval.id,
+            "project": gates.project,
+            "phase": approval.phase,
+            "approved": gate.approved,
+            "state": gate.state.rawValue,
+            "approved_at": gate.approvedAt.map { $0 as Any } ?? NSNull(),
+            "approved_by": gate.approvedBy.map { $0 as Any } ?? NSNull(),
+            "notes": gate.notes.map { $0 as Any } ?? NSNull(),
+        ]) else {
+            throw ToolError("The updated gate could not be encoded.")
+        }
+        return payload
+    }
+
+    /// Deterministic hard-gate check shared by approve_gate and set_gate_state.
     private func enforceGateRequirement(phase: String, dataRoot: URL, declaredPack: String?) throws {
-        let resolved = activePluginFor(dataRoot: dataRoot)
+        let resolved: String?
+        do {
+            resolved = try ProjectPluginSettings.resolvedPlugin(
+                projectURL: FrameInventory.projectHome(of: dataRoot),
+                declaredPack: declaredPack
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
+        }
         let registry = PackCatalog.registry(activePack: resolved)
-        let gates = (try? YAMLArtifactStore(dataRoot: dataRoot).load(Gates.self, at: PipelineLayout.gatesFile))
-            ?? Gates(project: "")
+        let gates = try readGates(dataRoot: dataRoot)
         do {
             // FAIL-CLOSED first: a project that declares a pack must have it wired, or NO step approves.
             try GateGuard.requireWiredPack(declared: declaredPack, resolved: resolved, registry: registry)
+            try PipelinePhaseAccess.requireCurrentPhaseAndIntake(
+                phase,
+                dataRoot: dataRoot,
+                declaredPack: declaredPack
+            )
             // In order (no approving a phase before its predecessors), then the phase's own artifact.
-            try GateGuard.requirePriorApproved(gates, order: mergedPhaseOrder(dataRoot: dataRoot), phase: phase)
+            try GateGuard.requirePriorApproved(
+                gates,
+                order: PhaseOrder.merged(
+                    packPlacements: registry.phasePlacements
+                ),
+                phase: phase
+            )
             try GateGuard.checkApprovable(phase: phase, dataRoot: dataRoot, requirement: registry.gateRequirements[phase])
-        } catch let blocked as GateBlocked {
-            throw ToolError(blocked.message)
-        }
-    }
-
-    /// HARD GATE for work tools: refuse a phase's work until every PRIOR phase's gate is approved — so
-    /// the agent can't run analysis, draft the brief, etc. while an earlier gate is still unapproved.
-    /// Only the prior-approval check (NOT `checkApprovable`: the artifact this tool is about to WRITE
-    /// doesn't exist yet). Applied centrally in `execute` via `ToolName.advancingPhase`; read-only tools
-    /// never reach it. Not `private` — `execute` (in ToolExecutor.swift) calls it.
-    func guardFrontier(phase: String, args: [String: Any], editor: EditorViewModel) throws {
-        let root = try resolveDataRoot(args, editor: editor)
-        let gates = (try? YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile))
-            ?? Gates(project: "")
-        do {
-            try GateGuard.requirePriorApproved(gates, order: mergedPhaseOrder(dataRoot: root), phase: phase)
         } catch let blocked as GateBlocked {
             throw ToolError(blocked.message)
         }
@@ -483,9 +989,30 @@ extension ToolExecutor {
     func rewindTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let target = try args.requireString("target_phase")
+        let resolvedPack: String?
+        do {
+            resolvedPack = try ProjectPluginSettings.resolvedPlugin(
+                projectURL: FrameInventory.projectHome(of: root),
+                declaredPack: editor.declaredPluginName
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
+        }
+        let registry = PackCatalog.registry(activePack: resolvedPack)
+        do {
+            try GateGuard.requireWiredPack(
+                declared: editor.declaredPluginName,
+                resolved: resolvedPack,
+                registry: registry
+            )
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message)
+        }
         // Rewind over the merged order (core + pack, at declared placement) so a pack phase like
         // `analysis` is a valid target and resets its correct downstream span.
-        let order = mergedPhaseOrder(dataRoot: root)
+        let order = PhaseOrder.merged(
+            packPlacements: registry.phasePlacements
+        )
         var reset: [String] = []
         _ = try mutateGates(dataRoot: root) { reset = try GatesOperations.rewindTo(&$0, target: target, order: order) }
         return try jsonResult(["target": target, "reset_phases": reset])
@@ -564,7 +1091,19 @@ extension ToolExecutor {
     /// yields (the mutated attribute), surfacing LedgerError as a ToolError.
     private func mutateLedger<T>(dataRoot: URL, _ body: (inout Ledger) throws -> T) throws -> T {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
-        var ledger = (try? store.load(Ledger.self, at: PipelineLayout.ledgerFile)) ?? Ledger()
+        let ledgerURL = PipelineLayout.url(PipelineLayout.ledgerFile, in: dataRoot)
+        var ledger: Ledger
+        if FileManager.default.fileExists(atPath: ledgerURL.path) {
+            do {
+                ledger = try store.load(Ledger.self, at: PipelineLayout.ledgerFile)
+            } catch {
+                throw ToolError(
+                    "Couldn't read ledger.yaml. Nothing was written; repair or restore it first: \(error)"
+                )
+            }
+        } else {
+            ledger = Ledger()
+        }
         do {
             let result = try body(&ledger)
             try store.save(ledger, to: PipelineLayout.ledgerFile)
@@ -581,11 +1120,7 @@ extension ToolExecutor {
     func resolveModelTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let taskClass = try args.requireString("task_class")
         let escalate = args.bool("escalate") ?? false
-        // Optional project override; resolve loosely (a missing/unopened project just means no override).
-        let dataRoot: URL? = {
-            if let path = args.string("project_dir") { return DataRootResolver.dataRoot(of: URL(fileURLWithPath: path)) }
-            return editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
-        }()
+        let dataRoot = try? resolveDataRoot(args, editor: editor)
         do {
             let r = try ModelRouter.resolve(taskClass, escalate: escalate, dataRoot: dataRoot)
             return try jsonResult([
@@ -605,62 +1140,112 @@ extension ToolExecutor {
     func nextRenderShotTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
-        let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil
-        // live_action shots are never provider-rendered — the user shoots and cuts them, so they're
-        // excluded from the render queue. ai_enhanced shots ARE returned: they need a provider pass
-        // (video-to-video) over the imported footage.
-        let ordered = shotlist?.shots.filter { $0.sourceMode != .imported }.map(\.id) ?? []
-        let manifest = (try? loadRenderManifest(dataRoot: root, phase: phase)) ?? RenderManifest(project: shotlist?.project ?? "", phase: phase)
-        guard let shotId = nextUnrendered(orderedShotIds: ordered, manifest: manifest) else {
+        guard let shotlist = try readShotlist(dataRoot: root) else {
+            throw ToolError("No shotlist yet. Plan and approve the shots before rendering.")
+        }
+        let renderManifest = phase == "frames"
+            ? nil
+            : try readRenderManifest(dataRoot: root, phase: phase)
+        let renderProof = phase == "frames"
+            ? nil
+            : try readRenderProof(dataRoot: root, phase: phase)
+        let shot: Shot?
+        let frameRole: String?
+        if phase == "frames" {
+            let framesURL = PipelineLayout.url(
+                PipelineLayout.framesManifestFile,
+                in: root
+            )
+            let frames: FramesManifest?
+            if FileManager.default.fileExists(atPath: framesURL.path) {
+                do {
+                    frames = try loadFramesManifest(dataRoot: root)
+                } catch {
+                    throw ToolError(
+                        "Couldn't read frames/manifest.json. Repair or restore it "
+                            + "before continuing: \(error)"
+                    )
+                }
+            } else {
+                frames = nil
+            }
+            let pending = nextFrameRole(
+                shotlist: shotlist,
+                manifest: frames,
+                editor: editor,
+                dataRoot: root
+            )
+            shot = pending?.shot
+            frameRole = pending?.role
+        } else {
+            guard let renderManifest else {
+                throw ToolError("The \(phase) render manifest is unavailable.")
+            }
+            let ordered = shotlist.shots
+                .filter { $0.sourceMode != .imported }
+            let frames = try? loadFramesManifest(dataRoot: root)
+            let pending = ordered.first {
+                !isCurrentVideoRender(
+                    renderManifest.entries[$0.id],
+                    proof: renderProof?.entries[$0.id],
+                    shot: $0,
+                    shotlist: shotlist,
+                    manifest: renderManifest,
+                    frames: frames,
+                    dataRoot: root
+                )
+            }
+            shot = pending
+            frameRole = nil
+        }
+        guard let shot else {
             return try jsonResult(["phase": phase, "shot_id": NSNull(), "done": true])
         }
-        let shot = shotlist?.shots.first { $0.id == shotId }
-
-        // #198 — the OPTIONAL hard spending stop. Enforced here, at the tool boundary that hands a
-        // shot out for rendering: the last point before money is spent, and the same seam the
-        // consistency machinery uses. No stop set → nothing is blocked, only reported.
-        if let verdict = budgetStopVerdict(dataRoot: root, phase: phase, shotId: shotId, shotlist: shotlist),
-           verdict.overBudget {
-            throw ToolError(
-                "Budget stop reached — render refused. This shot's estimated "
-                + String(format: "€%.2f", verdict.newRunEur)
-                + " would take the project to " + String(format: "€%.2f", verdict.projectTotalEur)
-                + ", over the user's limit of " + String(format: "€%.2f", verdict.budgetEur)
-                + " (already spent: " + String(format: "€%.2f", verdict.alreadySpentEur) + "). "
-                + "Do NOT work around this: tell the user, and let them raise the limit, drop shots, "
-                + "or pick a cheaper model.")
-        }
+        let shotId = shot.id
 
         var body: [String: Any] = [
             "phase": phase,
             "shot_id": shotId,
             "done": false,
-            "source_mode": shot.map { $0.sourceMode.rawValue as Any } ?? (NSNull() as Any),
-            "visual_prompt": shot.map { $0.visualPrompt as Any } ?? (NSNull() as Any),
-            "framing": shot?.framing.map { $0.rawValue as Any } ?? (NSNull() as Any),
-            // #166: the structured camera triplet projected into ready prose, so the shot's declared
-            // camera is compiled from the spec (deterministic), not reconstructed by the agent.
-            "camera": shot?.cameraSetup.map { $0.promptProse() as Any } ?? (NSNull() as Any),
-            "chain_with_previous_end": shot?.chainWithPreviousEnd ?? false,
+            "source_mode": shot.sourceMode.rawValue,
+            "visual_prompt": shot.visualPrompt,
+            "framing": shot.framing.map { $0.rawValue as Any } ?? NSNull(),
+            "camera": shot.cameraSetup.map { $0.promptProse() as Any } ?? NSNull(),
+            "chain_with_previous_end": shot.chainWithPreviousEnd,
         ]
+        if let frameRole { body["role"] = frameRole }
+        if phase != "frames", shot.sourceMode == .aiEnhanced {
+            guard let sourcePath = shot.sourcePath,
+                  let source = resolveRenderedAsset(
+                      sourcePath,
+                      editor: editor,
+                      dataRoot: root
+                  ) else {
+                throw ToolError(
+                    "\(shot.id) has no current project-local source video. "
+                        + "Rewind to Shot List and assign source_path before rendering."
+                )
+            }
+            body["source_video_media_ref"] = source.id
+            body["source_video_path"] = sourcePath
+        }
         // #213: cut handles as content. When the plan puts a fade/crossfade on a side (or the global
         // override forces it), the shot renders overlap material there — so the agent orders the GROSS
         // duration from the model and trims the timeline clip to the NET window. Hard-cut shots carry no
         // handle (gross == net) and are unchanged. The temporal structure is composed into the prompt by
         // compile_prompt(shotId); here the agent gets the durations to order and to place.
-        if let shot {
-            let forceHandles = (try? YAMLArtifactStore(dataRoot: root).load(Brief.self, at: PipelineLayout.briefFile))?
-                .cutHandlesMode == .withOverlap
+        if phase != "frames" {
+            let forceHandles = (try? YAMLArtifactStore(dataRoot: root).load(
+                Brief.self,
+                at: PipelineLayout.briefFile
+            ))?.cutHandlesMode == .withOverlap
             let h = CutHandles.handles(for: shot, forceAll: forceHandles)
-            // Only a HANDLED shot gets a render_duration_s. A hard-cut shot is ordered exactly as it was
-            // before this change — emitting a rounded duration for it too would tell the agent to order
-            // a second the estimate doesn't price, re-opening the same under-estimation against the
-            // pre-flight budget stop. Rounding a bare fractional net is an older question, not this one's.
             if h.pre > 0 || h.post > 0 {
                 body["net_duration_s"] = shot.durationS
-                // Already a whole second — ordered as-is. Rounding happens here, not as a prose plea:
-                // a beat-derived net is often fractional and would otherwise be unorderable.
-                body["render_duration_s"] = CutHandles.orderableGrossDuration(for: shot, forceAll: forceHandles)
+                body["render_duration_s"] = CutHandles.orderableGrossDuration(
+                    for: shot,
+                    forceAll: forceHandles
+                )
                 body["handle_pre_s"] = h.pre
                 body["handle_post_s"] = h.post
                 body["handle_note"] = "Order render_duration_s from the model exactly as given (it is "
@@ -672,9 +1257,10 @@ extension ToolExecutor {
         // #196: when this shot chains off its predecessor, hand the agent the predecessor's extracted
         // last frame (recorded by record_render) as the start-frame condition — pass it straight to the
         // generate tool's startFrameMediaRef. Absent until the predecessor has rendered.
-        if let shotlist, let shot, shot.chainWithPreviousEnd,
+        if phase != "frames",
+           shot.chainWithPreviousEnd,
            let predId = ChainContinuity.chainPredecessor(shotlist, shotId: shotId),
-           let lastFrame = manifest.entries[predId]?.lastFramePath,
+           let lastFrame = renderManifest?.entries[predId]?.lastFramePath,
            let asset = resolveRenderedAsset(lastFrame, editor: editor, dataRoot: root) {
             body["chain_start_frame_media_ref"] = asset.id
             body["chain_start_frame_path"] = lastFrame
@@ -683,7 +1269,8 @@ extension ToolExecutor {
         // plus inherited identity-anchor frames stacked on top (multi-shot character consistency). Each
         // planned ref is resolved to a media_ref the agent passes straight to the generate tool's
         // referenceImageMediaRefs, so the ported planner drives the render instead of the agent guessing.
-        if let plan = PackCatalog.registry(activePack: activePluginFor(dataRoot: root))
+        if shot.sourceMode == .generated,
+           let plan = PackCatalog.registry(activePack: activePluginFor(dataRoot: root))
             .referencePlanProvider?.planReferences(dataRoot: root, shotId: shotId) {
             var refImages: [[String: Any]] = []
             for ref in plan.refs {
@@ -699,40 +1286,371 @@ extension ToolExecutor {
         return try jsonResult(body)
     }
 
+    private func isCurrentVideoRender(
+        _ entry: RenderEntry?,
+        proof: RenderProofEntry?,
+        shot: Shot,
+        shotlist: Shotlist,
+        manifest: RenderManifest,
+        frames: FramesManifest?,
+        dataRoot: URL
+    ) -> Bool {
+        guard let entry,
+              let proof,
+              entry.status == .rendered,
+              let output = entry.output,
+              entry.shotId == proof.shotId,
+              output == proof.output,
+              let url = renderedFileURL(output, dataRoot: dataRoot),
+              ProjectMediaExtensions.videos.contains(
+                  url.pathExtension.lowercased()
+              ),
+              !proof.providerPrompt.trimmingCharacters(
+                in: .whitespacesAndNewlines
+              ).isEmpty,
+              !proof.generationModel.trimmingCharacters(
+                in: .whitespacesAndNewlines
+              ).isEmpty,
+              (try? FileDigest.sha256(of: url)) == proof.outputSha256 else {
+            return false
+        }
+        let inputsAreCurrent = [
+            proof.sourceVideo,
+            proof.startFrame,
+            proof.endFrame,
+        ].compactMap { $0 }.allSatisfy {
+            isCurrentRenderInput($0, dataRoot: dataRoot)
+        }
+            && (
+                proof.referenceImages
+                    + proof.referenceVideos
+                    + proof.referenceAudio
+            ).allSatisfy {
+                isCurrentRenderInput($0, dataRoot: dataRoot)
+            }
+        guard inputsAreCurrent,
+              proof.referenceVideos.isEmpty,
+              proof.referenceAudio.isEmpty else {
+            return false
+        }
+        if shot.sourceMode == .aiEnhanced {
+            guard let sourcePath = shot.sourcePath,
+                  let source = proof.sourceVideo else {
+                return false
+            }
+            return sameCurrentRenderInputPath(
+                source.path,
+                sourcePath,
+                dataRoot: dataRoot
+            )
+                && proof.startFrame == nil
+                && proof.endFrame == nil
+                && proof.referenceImages.isEmpty
+        }
+        guard proof.sourceVideo == nil else { return false }
+        if shot.seedanceInputMode == .reference {
+            guard proof.startFrame == nil,
+                  proof.endFrame == nil,
+                  let plan = PackCatalog.registry(
+                    activePack: activePluginFor(dataRoot: dataRoot)
+                  ).referencePlanProvider?.planReferences(
+                    dataRoot: dataRoot,
+                    shotId: shot.id
+                  ) else {
+                return false
+            }
+            return exactCurrentRenderReferences(
+                proof.referenceImages,
+                expected: plan.refs.map(\.path),
+                dataRoot: dataRoot
+            )
+        }
+        guard proof.referenceImages.isEmpty else { return false }
+        let expectedStart: String?
+        if shot.chainWithPreviousEnd {
+            guard let predecessor = ChainContinuity.chainPredecessor(
+                shotlist,
+                shotId: shot.id
+            ) else {
+                return false
+            }
+            expectedStart = manifest.entries[predecessor]?.lastFramePath
+        } else {
+            expectedStart = frames?.shot(shot.id)?.frames.first {
+                $0.role == "start"
+            }?.path
+        }
+        let expectedEnd = frames?.shot(shot.id)?.frames.first {
+            $0.role == "end"
+        }?.path
+        switch shot.keyframeStrategy {
+        case .none:
+            if shot.chainWithPreviousEnd {
+                guard let expectedStart,
+                      let actualStart = proof.startFrame else {
+                    return false
+                }
+                return sameCurrentRenderInputPath(
+                    actualStart.path,
+                    expectedStart,
+                    dataRoot: dataRoot
+                ) && proof.endFrame == nil
+            }
+            return proof.startFrame == nil && proof.endFrame == nil
+        case .start:
+            guard let expectedStart,
+                  let actualStart = proof.startFrame else {
+                return false
+            }
+            return sameCurrentRenderInputPath(
+                actualStart.path,
+                expectedStart,
+                dataRoot: dataRoot
+            ) && proof.endFrame == nil
+        case .startEnd:
+            guard let expectedStart,
+                  let expectedEnd,
+                  let actualStart = proof.startFrame,
+                  let actualEnd = proof.endFrame else {
+                return false
+            }
+            return sameCurrentRenderInputPath(
+                actualStart.path,
+                expectedStart,
+                dataRoot: dataRoot
+            ) && sameCurrentRenderInputPath(
+                actualEnd.path,
+                expectedEnd,
+                dataRoot: dataRoot
+            )
+        }
+    }
+
+    private func isCurrentRenderInput(
+        _ proof: RenderInputProof,
+        dataRoot: URL
+    ) -> Bool {
+        let home = FrameInventory.projectHome(of: dataRoot)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard !proof.path.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty,
+        !NSString(string: proof.path).isAbsolutePath,
+        !proof.path.split(separator: "/").contains("..") else {
+            return false
+        }
+        for base in [dataRoot, home] {
+            let url = base.appendingPathComponent(proof.path)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard url.path.hasPrefix(home.path + "/") else { continue }
+            if (try? FileDigest.sha256(of: url)) == proof.sha256 {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func sameCurrentRenderInputPath(
+        _ lhs: String,
+        _ rhs: String,
+        dataRoot: URL
+    ) -> Bool {
+        let home = FrameInventory.projectHome(of: dataRoot)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        func file(_ path: String) -> URL? {
+            guard !path.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty,
+            !NSString(string: path).isAbsolutePath,
+            !path.split(separator: "/").contains("..") else {
+                return nil
+            }
+            for base in [dataRoot, home] {
+                let url = base.appendingPathComponent(path)
+                    .standardizedFileURL
+                    .resolvingSymlinksInPath()
+                if url.path.hasPrefix(home.path + "/"),
+                   FileManager.default.fileExists(atPath: url.path) {
+                    return url
+                }
+            }
+            return nil
+        }
+        guard let left = file(lhs), let right = file(rhs) else {
+            return false
+        }
+        return left == right
+    }
+
+    private func exactCurrentRenderReferences(
+        _ actual: [RenderInputProof],
+        expected: [String],
+        dataRoot: URL
+    ) -> Bool {
+        guard Set(actual.map(\.path)).count == actual.count,
+              actual.count == expected.count else {
+            return false
+        }
+        return expected.allSatisfy { expectedPath in
+            actual.contains {
+                sameCurrentRenderInputPath(
+                    $0.path,
+                    expectedPath,
+                    dataRoot: dataRoot
+                )
+            }
+        }
+    }
+
     func recordRenderTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let shotId = try args.requireString("shot_id")
-        let output = args.string("output")
+        var output = args.string("output")
         let costEur = args.double("cost_eur") ?? 0.0
         let statusRaw = args.string("status") ?? "rendered"
         guard let status = RenderStatus(rawValue: statusRaw) else {
             throw ToolError("Unknown status '\(statusRaw)'. Expected rendered/pending/failed.")
         }
-        var manifest = (try? loadRenderManifest(dataRoot: root, phase: phase)) ?? RenderManifest(project: "", phase: phase)
+        guard let shotlist = try readShotlist(dataRoot: root),
+              let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
+            throw ToolError(
+                "No shot '\(shotId)' in the current shotlist. "
+                    + "Use the shot id returned by next_render_shot."
+            )
+        }
+        if phase != "frames", shot.sourceMode == .imported {
+            throw ToolError(
+                "\(shot.id) uses source_mode=imported and does not belong in a "
+                    + "provider render manifest. Place its source footage on the timeline."
+            )
+        }
+        var completedAsset: MediaAsset?
+        var updatedFrames: FramesManifest?
+        if status == .rendered {
+            guard let submitted = output, !submitted.isEmpty else {
+                throw ToolError(
+                    "A rendered result needs output pointing to completed project media."
+                )
+            }
+            guard let asset = resolveRenderedAsset(
+                submitted,
+                editor: editor,
+                dataRoot: root
+            ), FileManager.default.fileExists(atPath: asset.url.path) else {
+                throw ToolError(
+                    "Rendered output '\(submitted)' is not completed media on disk. "
+                        + "Wait for get_media to report it ready, then record it."
+                )
+            }
+            guard asset.generationStatus == .none else {
+                throw ToolError(
+                    "Rendered output '\(submitted)' is not completed media on disk. "
+                        + "Wait for get_media to report it ready, then record it."
+                )
+            }
+            let projectHome = FrameInventory.projectHome(of: root)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            let assetURL = asset.url.standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard assetURL.path.hasPrefix(projectHome.path + "/"),
+                  (try? assetURL.resourceValues(
+                    forKeys: [.isRegularFileKey]
+                  ).isRegularFile) == true else {
+                throw ToolError(
+                    "Rendered output must be a regular file in the open project."
+                )
+            }
+            let expectedType: ClipType = phase == "frames" ? .image : .video
+            guard asset.type == expectedType else {
+                throw ToolError(
+                    "\(phase) output must be \(expectedType.rawValue) media, "
+                        + "but '\(submitted)' is \(asset.type.rawValue)."
+                )
+            }
+            completedAsset = asset
+            output = FrameInventory.relativePath(
+                of: assetURL,
+                to: projectHome
+            )
+            if phase == "frames" {
+                updatedFrames = try updatedFramesManifest(
+                    shot: shot,
+                    output: asset.id,
+                    role: args.string("role"),
+                    shotlist: shotlist,
+                    editor: editor,
+                    dataRoot: root
+                )
+            }
+        }
+        var manifest = try readRenderManifest(dataRoot: root, phase: phase)
+        var proof = phase == "frames"
+            ? nil
+            : try readRenderProof(dataRoot: root, phase: phase)
         record(&manifest, shotId: shotId, output: output, costEur: costEur, status: status, phase: phase)
         // #231: stamp what this render was ACTUALLY conditioned on, so `plan_adherence` can audit it
         // against what `next_render_shot` planned. Read off the submitted GenerationInput — the record
         // of the real submission — not off the agent's say-so.
         if status == .rendered, let output, !output.isEmpty {
-            stampRenderInputs(&manifest, shotId: shotId, output: output, editor: editor, dataRoot: root)
+            let entryProof = try stampRenderInputs(
+                &manifest,
+                shotId: shotId,
+                output: output,
+                assetId: completedAsset?.id,
+                editor: editor,
+                dataRoot: root
+            )
+            proof?.entries[shotId] = entryProof
+        } else {
+            proof?.entries.removeValue(forKey: shotId)
         }
         do {
             try saveRenderManifest(manifest, dataRoot: root)
         } catch {
             throw ToolError("Couldn't save render manifest: \(error)")
         }
-        // A recorded keyframe render also lands in the frames manifest with its exact
-        // compiled provider prompt (for the frame_ratio / frame_size / builder_bypass
-        // checks). Best-effort sidecar — never fail the render record over it.
-        if phase == "frames", status == .rendered, let output, !output.isEmpty {
-            recordFrameManifest(shotId: shotId, output: output, role: args.string("role"), editor: editor, dataRoot: root)
+        if let proof {
+            do {
+                try saveRenderProofManifest(proof, dataRoot: root)
+            } catch {
+                throw ToolError("Couldn't save render provenance: \(error)")
+            }
+        }
+        if let updatedFrames {
+            do {
+                try saveFramesManifest(updatedFrames, dataRoot: root)
+            } catch {
+                try? editor.pipelineAgentHarness.recordPhaseMutation(
+                    phase: "frames",
+                    dataRoot: root,
+                    captureLineage: false,
+                    declaredPack: editor.declaredPluginName
+                )
+                throw ToolError(
+                    "The shot render was recorded, but the authoritative Frames "
+                        + "manifest could not be saved: \(error)"
+                )
+            }
         }
         // #196: if the shot immediately after this one chains off it (`chain_with_previous_end`), extract
         // this clip's last frame now and record it on the entry — `next_render_shot` feeds it as the
         // successor's start frame. Best-effort — never fail the render record over it.
-        if status == .rendered, let output, !output.isEmpty {
-            await recordChainLastFrame(shotId: shotId, output: output, phase: phase, editor: editor, dataRoot: root)
+        if phase != "frames",
+           status == .rendered,
+           let output,
+           !output.isEmpty {
+            await recordChainLastFrame(
+                shotId: shotId,
+                output: completedAsset?.id ?? output,
+                phase: phase,
+                editor: editor,
+                dataRoot: root
+            )
         }
         let entry = manifest.entries[shotId]
         return try jsonResult([
@@ -749,32 +1667,167 @@ extension ToolExecutor {
     func getRenderManifestTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
-        let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil
-        let ordered = shotlist?.shots.map(\.id) ?? []
-        let manifest = (try? loadRenderManifest(dataRoot: root, phase: phase)) ?? RenderManifest(project: shotlist?.project ?? "", phase: phase)
+        let shotlist = try readShotlist(dataRoot: root)
+        let ordered = shotlist?.shots
+            .filter {
+                phase == "frames"
+                    ? $0.sourceMode == .generated
+                        && $0.keyframeStrategy != .none
+                    : $0.sourceMode != .imported
+            }
+            .map(\.id) ?? []
+        let manifest = try readRenderManifest(dataRoot: root, phase: phase)
+        let proof = phase == "frames"
+            ? nil
+            : try readRenderProof(dataRoot: root, phase: phase)
+        let frames = phase == "frames"
+            ? nil
+            : try? loadFramesManifest(dataRoot: root)
         var entries: [String: Any] = [:]
         for (sid, e) in manifest.entries {
+            let entryProof = proof?.entries[sid]
+            let currentOutput = phase == "frames"
+                ? e.status == .rendered
+                : shotlist?.shots.first(where: { $0.id == sid }).map {
+                    isCurrentVideoRender(
+                        e,
+                        proof: entryProof,
+                        shot: $0,
+                        shotlist: shotlist!,
+                        manifest: manifest,
+                        frames: frames,
+                        dataRoot: root
+                    )
+                } ?? false
             entries[sid] = [
                 "shot_id": e.shotId,
                 "phase": e.phase,
                 "status": e.status.rawValue,
                 "output": e.output.map { $0 as Any } ?? NSNull(),
+                "current_output": currentOutput,
                 "cost_eur": e.costEur,
                 "updated_at": e.updatedAt.map { $0 as Any } ?? NSNull(),
+                "generation_model": entryProof
+                    .map { $0.generationModel as Any } ?? NSNull(),
+                "output_sha256": entryProof
+                    .map { $0.outputSha256 as Any } ?? NSNull(),
             ]
         }
-        let s = summary(orderedShotIds: ordered, manifest: manifest)
+        var rendered = 0
+        var failed = 0
+        var pending = 0
+        for shotID in ordered {
+            let entry = manifest.entries[shotID]
+            let currentOutput = phase == "frames"
+                ? entry?.status == .rendered
+                : shotlist?.shots.first(where: {
+                    $0.id == shotID
+                }).map {
+                    isCurrentVideoRender(
+                        entry,
+                        proof: proof?.entries[shotID],
+                        shot: $0,
+                        shotlist: shotlist!,
+                        manifest: manifest,
+                        frames: frames,
+                        dataRoot: root
+                    )
+                } ?? false
+            if currentOutput {
+                rendered += 1
+            } else if entry?.status == .failed {
+                failed += 1
+            } else {
+                pending += 1
+            }
+        }
         return try jsonResult([
             "project": manifest.project,
             "phase": phase,
             "entries": entries,
             "summary": [
-                "total": s.total,
-                "rendered": s.rendered,
-                "pending": s.pending,
-                "failed": s.failed,
-                "spent_eur": s.spentEur,
+                "total": ordered.count,
+                "rendered": rendered,
+                "pending": pending,
+                "failed": failed,
+                "spent_eur": spent(manifest),
             ],
+        ])
+    }
+
+    func getFramesManifestTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+        let root = try resolveDataRoot(args, editor: editor)
+        let url = PipelineLayout.url(PipelineLayout.framesManifestFile, in: root)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return try jsonResult(["exists": false, "shots": []])
+        }
+        let manifest: FramesManifest
+        do {
+            manifest = try loadFramesManifest(dataRoot: root)
+        } catch {
+            throw ToolError(
+                "Couldn't read frames/manifest.json. Repair or restore it before continuing: \(error)"
+            )
+        }
+        let home = FrameInventory.projectHome(of: root)
+        let shots: [[String: Any]] = try manifest.shots.map { shot in
+            let frames: [[String: Any]] = try shot.frames.map { frame in
+                let resolved = resolveAuditedFrame(
+                    shotId: shot.shotId,
+                    role: frame.role,
+                    explicitPath: frame.path,
+                    home: home,
+                    dataRoot: root
+                )
+                let digest = resolved.flatMap { item -> String? in
+                    guard let data = try? Data(contentsOf: item.fileURL) else { return nil }
+                    return SHA256.hash(data: data)
+                        .map { String(format: "%02x", $0) }
+                        .joined()
+                }
+                let audit = try readFrameAudit(
+                    dataRoot: root,
+                    shotId: shot.shotId,
+                    role: frame.role
+                )
+                let mediaRef = resolved.flatMap { item in
+                    editor.mediaAssets.first {
+                        $0.url.standardizedFileURL.resolvingSymlinksInPath()
+                            == item.fileURL.standardizedFileURL
+                                .resolvingSymlinksInPath()
+                    }?.id
+                }
+                var body: [String: Any] = [
+                    "role": frame.role,
+                    "path": frame.path,
+                    "media_ref": mediaRef.map { $0 as Any } ?? NSNull(),
+                    "prompt": frame.prompt,
+                    "provider_prompt": frame.providerPrompt,
+                    "model": frame.runwayModel,
+                ]
+                if let audit {
+                    var auditBody = frameAuditJSON(audit, exists: true)
+                    auditBody["current_image"] = digest == audit.renderSha256
+                        && resolved != nil
+                    body["audit"] = auditBody
+                } else {
+                    body["audit"] = ["exists": false, "current_image": false]
+                }
+                return body
+            }
+            return [
+                "shot_id": shot.shotId,
+                "keyframe_strategy": shot.keyframeStrategy,
+                "frames": frames,
+            ]
+        }
+        return try jsonResult([
+            "exists": true,
+            "schema": manifest.schema,
+            "project": manifest.project,
+            "generated": manifest.generated,
+            "approval_mode": manifest.approvalMode,
+            "shots": shots,
         ])
     }
 
@@ -815,9 +1868,12 @@ extension ToolExecutor {
         let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 
         // Expected per standard check comes from the shot spec, never the model.
-        let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil
+        let shotlist = try readShotlist(dataRoot: root)
         let shot = shotlist?.shots.first { $0.id == shotId }
-        let expected = frameAuditExpected(for: shot, brief: loadBriefIfAny(dataRoot: root))
+        let expected = frameAuditExpected(
+            for: shot,
+            brief: try readBriefIfPresent(dataRoot: root)
+        )
 
         guard let rawChecks = args["checks"] as? [String: Any] else {
             throw ToolError("`checks` must be an object mapping each audit key to {status, observed, note}.")
@@ -848,7 +1904,7 @@ extension ToolExecutor {
         // auto_rerender_attempt is machine-owned: bump only when a PRIOR blocking audit is being
         // replaced by a genuinely different render (new sha). Same sha, or a non-blocking prior,
         // preserves the counter. The model never touches it.
-        let prior = (try? loadFrameAudit(dataRoot: root, shotId: shotId, role: role)) ?? nil
+        let prior = try readFrameAudit(dataRoot: root, shotId: shotId, role: role)
         let attempt: Int = {
             guard let prior else { return 0 }
             let reRendered = prior.hasBlocking && prior.renderSha256 != sha
@@ -876,7 +1932,11 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let shotId = try args.requireString("shot_id")
         let role = args.string("role") ?? "start"
-        guard let audit = (try? loadFrameAudit(dataRoot: root, shotId: shotId, role: role)) ?? nil else {
+        guard let audit = try readFrameAudit(
+            dataRoot: root,
+            shotId: shotId,
+            role: role
+        ) else {
             return try jsonResult(["exists": false, "shot_id": shotId, "role": role])
         }
         return try jsonResult(frameAuditJSON(audit, exists: true))
@@ -891,25 +1951,28 @@ extension ToolExecutor {
     func extractScene3dPovsTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let locationId = try args.requireString("location_id")
-        let home = FrameInventory.projectHome(of: root)
+        try requirePipelineIdentifier(locationId, label: "location_id")
 
-        // The panorama: explicit, else whatever the bible recorded for this location.
-        let panorama: URL
-        if let path = args.string("panorama"), !path.isEmpty {
-            panorama = path.hasPrefix("/") ? URL(fileURLWithPath: path) : home.appendingPathComponent(path)
-        } else if let recorded = recordedPanorama(locationId: locationId, dataRoot: root) {
-            panorama = recorded.hasPrefix("/")
-                ? URL(fileURLWithPath: recorded) : home.appendingPathComponent(recorded)
-        } else {
+        let panoramaPath = args.string("panorama")?.nilIfEmpty
+            ?? recordedPanorama(locationId: locationId, dataRoot: root)
+        guard let panoramaPath else {
             throw ToolError("No panorama for location '\(locationId)'. Generate one with a `marble/` "
                 + "model from a style-neutral clay wide, then pass `panorama` or record it as the "
                 + "location's `scene3d.panorama` in the Bible.")
         }
+        let panorama = try projectPipelineImage(
+            panoramaPath,
+            dataRoot: root,
+            label: "panorama"
+        )
 
         let povs = try parsePovSpecs(args["povs"])
         let width = args.int("width") ?? defaultPovSize.width
         let height = args.int("height") ?? defaultPovSize.height
-        let outDir = home
+        guard (64...4096).contains(width), (64...4096).contains(height) else {
+            throw ToolError("POV width and height must each be between 64 and 4096 pixels.")
+        }
+        let outDir = root
             .appendingPathComponent("bible/\(locationId)/scene3d/povs_clay", isDirectory: true)
 
         let written: [String: URL]
@@ -924,7 +1987,7 @@ extension ToolExecutor {
         // stay filenames-on-disk the way the old free-form map did (#166).
         let specs = povs ?? defaultFourWallPovs
         let extracted = specs.filter { written[$0.name] != nil }
-        let panoramaRel = FrameInventory.relativePath(of: panorama, to: home)
+        let panoramaRel = FrameInventory.relativePath(of: panorama, to: root)
 
         // #223's profile, reused exactly as intended — built once, used twice. The clay POV is
         // style-neutral; restyling it into the project's look is a COMPOSITION-PRESERVING pass (the
@@ -935,7 +1998,7 @@ extension ToolExecutor {
         var body: [String: Any] = [
             "location_id": locationId,
             "panorama": panoramaRel,
-            "povs": written.mapValues { FrameInventory.relativePath(of: $0, to: home) },
+            "povs": written.mapValues { FrameInventory.relativePath(of: $0, to: root) },
             "size": ["width": width, "height": height],
             // Record THIS verbatim as the location's scene3d in the bible.
             "scene3d": [
@@ -981,48 +2044,76 @@ extension ToolExecutor {
     /// Custom camera set from the tool args; nil → the four cardinal walls.
     private func parsePovSpecs(_ raw: Any?) throws -> [PovSpec]? {
         guard let entries = raw as? [[String: Any]], !entries.isEmpty else { return nil }
+        var seen: Set<String> = []
         return try entries.map { entry in
             guard let name = entry["name"] as? String, !name.trimmingCharacters(in: .whitespaces).isEmpty
             else { throw ToolError("Every pov needs a non-empty `name` — it becomes the sheet key.") }
+            try requirePipelineIdentifier(name, label: "pov.name")
+            guard seen.insert(name).inserted else {
+                throw ToolError("POV names must be unique.")
+            }
             guard let yaw = (entry["yaw"] as? NSNumber)?.doubleValue else {
                 throw ToolError("pov '\(name)' needs a numeric `yaw`.")
+            }
+            let pitch = (entry["pitch"] as? NSNumber)?.doubleValue ?? -5
+            let fov = (entry["fov_h"] as? NSNumber)?.doubleValue ?? 75
+            guard yaw.isFinite,
+                  pitch.isFinite,
+                  (-89...89).contains(pitch),
+                  fov.isFinite,
+                  (1...179).contains(fov) else {
+                throw ToolError(
+                    "pov '\(name)' needs finite yaw, pitch from -89 to 89, "
+                        + "and fov_h from 1 to 179."
+                )
             }
             return PovSpec(
                 name: name,
                 yawDegrees: yaw,
-                pitchDegrees: (entry["pitch"] as? NSNumber)?.doubleValue ?? -5,
-                fovHorizontalDegrees: (entry["fov_h"] as? NSNumber)?.doubleValue ?? 75)
+                pitchDegrees: pitch,
+                fovHorizontalDegrees: fov)
         }
     }
 
-    /// The optional budget stop (#198), evaluated for the shot about to be handed out.
-    ///
-    /// `nil` when the user set no limit — the overwhelmingly common case, and deliberately the
-    /// default: without an amount there is only cost INFO, never a block. `Brief.budgetEur` is NOT
-    /// used for this; it defaults to 50 on every project, so gating on it would impose a limit
-    /// nobody chose.
-    ///
-    /// The check is pre-flight: this shot's ESTIMATE plus what the project already spent, against
-    /// the limit — so the stop lands before the money is gone rather than one shot after.
-    private func budgetStopVerdict(
-        dataRoot: URL, phase: String, shotId: String, shotlist: Shotlist?
-    ) -> CostGuardVerdict? {
-        let store = YAMLArtifactStore(dataRoot: dataRoot)
-        guard let brief = try? store.load(Brief.self, at: PipelineLayout.briefFile),
-              let stop = brief.budgetStopEur, stop > 0,
-              let shotlist, let phaseValue = Phase(rawValue: phase)
-        else { return nil }
-        // The bundled prices — the same source the rest of the cost machinery uses (Checks,
-        // ExpandingCamera); there is no per-project costs.yaml in this port.
-        let costs = CostsConfig.bundledDefault
-        let projected = estimate(
-            shotlist: shotlist, costs: costs, phase: phaseValue,
-            finalResolution: brief.finalResolution.rawValue,
-            forceHandles: brief.cutHandlesMode == .withOverlap)
-        let shotEur = projected.shotEstimates.first { $0.shotId == shotId }?.eur ?? 0
-        return costGuardCheck(
-            dataRoot: dataRoot, estimateEur: shotEur, phase: phaseValue, budgetEur: stop,
-            guard: costs.costGuard)
+    private func requirePipelineIdentifier(
+        _ value: String,
+        label: String
+    ) throws {
+        let stripped = value.replacingOccurrences(of: "_", with: "")
+        guard !value.isEmpty,
+              !stripped.isEmpty,
+              stripped.allSatisfy({ $0.isLetter || $0.isNumber }) else {
+            throw ToolError("\(label) must contain only letters, numbers, and underscores.")
+        }
+    }
+
+    private func projectPipelineImage(
+        _ relativePath: String,
+        dataRoot: URL,
+        label: String
+    ) throws -> URL {
+        let path = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path == relativePath,
+              !path.isEmpty,
+              !NSString(string: path).isAbsolutePath,
+              !path.split(separator: "/", omittingEmptySubsequences: false)
+                .contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
+            throw ToolError("\(label) must be a normalized pipeline-relative image path.")
+        }
+        let root = dataRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let candidate = dataRoot.appendingPathComponent(path)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard candidate.path.hasPrefix(root.path + "/"),
+              (try? candidate.resourceValues(
+                forKeys: [.isRegularFileKey]
+              ).isRegularFile) == true,
+              ClipType(
+                fileExtension: candidate.pathExtension.lowercased()
+              ) == .image else {
+            throw ToolError("\(label) must be a regular image inside the pipeline data root.")
+        }
+        return candidate
     }
 
     func cropToAspectTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
@@ -1037,6 +2128,10 @@ extension ToolExecutor {
             throw ToolError("No source image for crop_to_aspect. Pass `path`, or a `shot_id` whose frame "
                 + "is recorded in the frames manifest.")
         }
+        let sourceInput = editor.mediaAssets.first {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath()
+                == masterURL.standardizedFileURL.resolvingSymlinksInPath()
+        }?.generationInput
         let mediaDir = home.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         let dest = mediaDir.appendingPathComponent(
             "\(masterURL.deletingPathExtension().lastPathComponent)-crop-\(aspect.replacingOccurrences(of: ":", with: "x")).png")
@@ -1046,9 +2141,14 @@ extension ToolExecutor {
         } catch {
             throw ToolError("crop_to_aspect failed: \(error)")
         }
-        let asset = existingOrImportedAsset(durableMediaURL(for: dest, editor: editor), editor: editor)
+        let asset = try requiredDurableAsset(
+            for: dest,
+            editor: editor,
+            context: "crop_to_aspect created the crop but couldn't register it"
+        )
+        asset.generationInput = sourceInput
         return try jsonResult([
-            "asset_id": asset.map { $0.id as Any } ?? NSNull(),
+            "asset_id": asset.id,
             "output": FrameInventory.relativePath(of: dest, to: home),
             "aspect": aspect,
             "anchor": anchor.rawValue,
@@ -1062,17 +2162,37 @@ extension ToolExecutor {
     private func resolveAuditedFrame(
         shotId: String, role: String, explicitPath: String?, home: URL, dataRoot: URL
     ) -> (fileURL: URL, renderPath: String)? {
-        if let p = explicitPath {
-            if p.hasPrefix("/") {
-                let url = URL(fileURLWithPath: p)
-                return (url, FrameInventory.relativePath(of: url, to: home))
+        let canonicalHome = home.standardizedFileURL.resolvingSymlinksInPath()
+        func projectImage(_ rawPath: String) -> (fileURL: URL, renderPath: String)? {
+            let path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !path.isEmpty,
+                  !path.split(separator: "/").contains("..") else { return nil }
+            let candidates = path.hasPrefix("/")
+                ? [URL(fileURLWithPath: path)]
+                : [
+                    home.appendingPathComponent(path),
+                    dataRoot.appendingPathComponent(path),
+                ]
+            for candidate in candidates {
+                let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
+                guard resolved.path.hasPrefix(canonicalHome.path + "/"),
+                      FileManager.default.fileExists(atPath: resolved.path),
+                      ClipType(fileExtension: resolved.pathExtension.lowercased()) == .image
+                else { continue }
+                return (
+                    resolved,
+                    FrameInventory.relativePath(of: resolved, to: canonicalHome)
+                )
             }
-            return (home.appendingPathComponent(p), p)
+            return nil
+        }
+        if let p = explicitPath {
+            return projectImage(p)
         }
         guard let manifest = try? loadFramesManifest(dataRoot: dataRoot),
               let frame = manifest.shot(shotId)?.frames.first(where: { $0.role == role }),
               !frame.path.isEmpty else { return nil }
-        return (home.appendingPathComponent(frame.path), frame.path)
+        return projectImage(frame.path)
     }
 
     /// Machine-derived `expected` per standard audit key, from the shot spec. Port of the Python
@@ -1101,12 +2221,6 @@ extension ToolExecutor {
             "anchor_at_t0": "exact t=0 state: subject in start pose, no objects from later in the shot already visible",
             "proportion_anchor_match": "match figure-to-set scale of proportion_anchor_shot if set",
         ]
-    }
-
-    /// The brief if one is saved, else nil (audit works without it — forbidden_elements just assumes
-    /// text overlays are disallowed).
-    private func loadBriefIfAny(dataRoot: URL) -> Brief? {
-        try? YAMLArtifactStore(dataRoot: dataRoot).load(Brief.self, at: PipelineLayout.briefFile)
     }
 
     private func frameAuditJSON(_ a: FrameAudit, exists: Bool) -> [String: Any] {
@@ -1166,8 +2280,7 @@ extension ToolExecutor {
         // Hard gate (terminal backstop): no assembly on an unapproved plan. Every phase up to and
         // including shotlist — which, for musicvideo, includes the analysis gate that itself requires
         // real measured beats/downbeats — must be approved before rendered shots hit the timeline.
-        let gates = (try? YAMLArtifactStore(dataRoot: root).load(Gates.self, at: PipelineLayout.gatesFile))
-            ?? Gates(project: "")
+        let gates = try readGates(dataRoot: root)
         do {
             try GateGuard.requireChain(gates, order: mergedPhaseOrder(dataRoot: root), through: "shotlist")
         } catch let blocked as GateBlocked {
@@ -1177,11 +2290,10 @@ extension ToolExecutor {
         guard let grid = BeatAssembly.loadBeatGrid(dataRoot: root), !grid.beats.isEmpty else {
             throw ToolError("Run analysis first: no beat analysis found (expected analysis/<song>.json with beats). Run run_phase(\"analysis\").")
         }
-        guard let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil else {
+        guard let shotlist = try readShotlist(dataRoot: root) else {
             throw ToolError("No shotlist yet. Plan the shots before assembling.")
         }
-        let manifest = (try? loadRenderManifest(dataRoot: root, phase: phase))
-            ?? RenderManifest(project: shotlist.project, phase: phase)
+        let manifest = try readRenderManifest(dataRoot: root, phase: phase)
 
         let fps = editor.timeline.fps
         let tolerance = grid.bpm > 0 ? (60.0 / grid.bpm) / 2.0 : 0.25
@@ -1204,7 +2316,7 @@ extension ToolExecutor {
                 skipped.append((shot.id, "not rendered yet"))
                 continue
             }
-            guard let asset = resolveRenderedAsset(output, editor: editor, dataRoot: root) else {
+            guard let asset = try requiredRenderedAsset(output, editor: editor, dataRoot: root) else {
                 skipped.append((shot.id, "rendered output not found on disk: \(output)"))
                 continue
             }
@@ -1219,13 +2331,13 @@ extension ToolExecutor {
         }
 
         let placements = BeatAssembly.plan(beats: grid.beats, downbeats: grid.downbeats, fps: fps, shots: planInputs)
-        let song = resolveSongAsset(dataRoot: root, editor: editor)
-        var sidecar = loadAssemblySidecar(dataRoot: root)
+        let song = try resolveSongAsset(dataRoot: root, editor: editor)
+        var sidecar = try loadAssemblySidecar(dataRoot: root)
 
         var placedCount = 0
         var songPlacedNow = false
         var songAlreadyPresent = false
-        editor.withTimelineSwap(actionName: "Assemble Timeline (Agent)") {
+        try editor.withTimelineSwap(actionName: "Assemble Timeline (Agent)") {
             // Dedicated assembly video track — reused across runs, cleared before each rebuild.
             let videoTrackId = ensureAssemblyTrack(editor, existingId: sidecar.videoTrackId, type: .video)
             sidecar.videoTrackId = videoTrackId
@@ -1244,8 +2356,24 @@ extension ToolExecutor {
 
             // Song is the sync anchor at frame 0 — placed only when not already on an audio track.
             if let song {
-                songAlreadyPresent = editor.timeline.tracks.contains { track in
-                    track.type == .audio && track.clips.contains { $0.mediaRef == song.id && $0.startFrame == 0 }
+                let songClips = editor.timeline.tracks
+                    .filter { $0.type == .audio }
+                    .flatMap(\.clips)
+                    .filter { $0.mediaRef == song.id }
+                songAlreadyPresent = songClips.count == 1
+                    && songClips[0].startFrame == 0
+                if songAlreadyPresent {
+                    sidecar.audioTrackId = editor.timeline.tracks.first {
+                        $0.type == .audio
+                            && $0.clips.contains { $0.mediaRef == song.id }
+                    }?.id
+                } else {
+                    for index in editor.timeline.tracks.indices
+                    where editor.timeline.tracks[index].type == .audio {
+                        editor.timeline.tracks[index].clips.removeAll {
+                            $0.mediaRef == song.id
+                        }
+                    }
                 }
                 if !songAlreadyPresent {
                     let audioTrackId = ensureAssemblyTrack(editor, existingId: sidecar.audioTrackId, type: .audio)
@@ -1260,8 +2388,8 @@ extension ToolExecutor {
                     }
                 }
             }
+            try saveAssemblySidecar(sidecar, dataRoot: root)
         }
-        saveAssemblySidecar(sidecar, dataRoot: root)
 
         let videoTrackIndex = sidecar.videoTrackId.flatMap { id in
             editor.timeline.tracks.firstIndex(where: { $0.id == id })
@@ -1317,81 +2445,287 @@ extension ToolExecutor {
         return editor.timeline.tracks[index].id
     }
 
-    /// Resolve a render-manifest output into a placeable media asset. Accepts an in-library asset id,
-    /// an absolute path, or a path relative to the project home / data root / media dir. Reuses an
-    /// existing asset for the same file so re-runs don't pile up duplicate library entries. Returns
-    /// nil for a remote URL or a file that isn't on disk (the caller skips that shot).
-    /// Capture a recorded keyframe render in the frames manifest with the EXACT compiled
-    /// provider prompt (pulled off the resolved asset's `GenerationInput`), so the frame
-    /// sanity checks have real data. Frame `path` is project-home-relative (where the media
-    /// library lives). `role` defaults to "start" — `record_render` is per-shot-per-phase,
-    /// so a start_end shot's end frame only differentiates if the tool passes `role`.
-    /// Silent on any miss: the audit sidecar must never break recording a render.
-    private func recordFrameManifest(shotId: String, output: String, role: String?, editor: EditorViewModel, dataRoot: URL) {
-        guard let asset = resolveRenderedAsset(output, editor: editor, dataRoot: dataRoot),
-              let gi = asset.generationInput else { return }
+    private func nextFrameRole(
+        shotlist: Shotlist,
+        manifest: FramesManifest?,
+        editor: EditorViewModel,
+        dataRoot: URL
+    ) -> (shot: Shot, role: String)? {
+        for shot in shotlist.shots where shot.sourceMode == .generated {
+            let roles: [String]
+            switch shot.keyframeStrategy {
+            case .none: continue
+            case .start: roles = ["start"]
+            case .startEnd: roles = ["start", "end"]
+            }
+            let recorded = manifest?.shot(shot.id)
+            for role in roles {
+                guard recorded?.keyframeStrategy == shot.keyframeStrategy.rawValue,
+                      let frame = recorded?.frames.first(where: { $0.role == role }),
+                      !frame.providerPrompt
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !frame.runwayModel
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      resolveRenderedAsset(
+                          frame.path,
+                          editor: editor,
+                          dataRoot: dataRoot
+                      ) != nil else {
+                    return (shot, role)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func updatedFramesManifest(
+        shot: Shot,
+        output: String,
+        role requestedRole: String?,
+        shotlist: Shotlist,
+        editor: EditorViewModel,
+        dataRoot: URL
+    ) throws -> FramesManifest {
+        guard shot.sourceMode == .generated,
+              shot.keyframeStrategy != .none else {
+            throw ToolError(
+                "\(shot.id) does not require provider-rendered keyframes."
+            )
+        }
+        let role = requestedRole ?? "start"
+        let roles = shot.keyframeStrategy == .startEnd
+            ? ["start", "end"]
+            : ["start"]
+        guard roles.contains(role) else {
+            throw ToolError(
+                "\(shot.id) uses keyframe_strategy=\(shot.keyframeStrategy.rawValue); "
+                    + "role '\(role)' is not valid for it."
+            )
+        }
+        guard let asset = resolveRenderedAsset(
+            output,
+            editor: editor,
+            dataRoot: dataRoot
+        ), let gi = asset.generationInput else {
+            throw ToolError(
+                "The frame has no generation provenance. Record the completed result "
+                    + "returned by a schema-validated generate_image call."
+            )
+        }
+        guard !gi.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ToolError(
+                "The frame has no compiled provider prompt and cannot enter the "
+                    + "authoritative Frames manifest."
+            )
+        }
         let home = FrameInventory.projectHome(of: dataRoot)
         let entry = FrameEntry(
-            role: role ?? "start",
+            role: role,
             path: FrameInventory.relativePath(of: asset.url, to: home),
             prompt: gi.intent ?? "",
             runwayModel: gi.model,
             approved: false,
             providerPrompt: gi.prompt,
             multiRefHints: [])
-        let ks = ((try? loadShotlist(dataRoot: dataRoot)) ?? nil)?
-            .shots.first { $0.id == shotId }?.keyframeStrategy.rawValue ?? "start"
-        let manifest = ((try? loadFramesManifest(dataRoot: dataRoot))
-            ?? FramesManifest(project: FrameInventory.projectName(of: dataRoot) ?? "", generated: currentTimestamp()))
-            .upserting(shotId: shotId, keyframeStrategy: ks, frame: entry)
-        try? saveFramesManifest(manifest, dataRoot: dataRoot)
+        let manifestURL = PipelineLayout.url(PipelineLayout.framesManifestFile, in: dataRoot)
+        var existing: FramesManifest
+        if FileManager.default.fileExists(atPath: manifestURL.path) {
+            do {
+                existing = try loadFramesManifest(dataRoot: dataRoot)
+            } catch {
+                throw ToolError(
+                    "Couldn't read frames/manifest.json. Repair or restore it "
+                        + "before recording another frame: \(error)"
+                )
+            }
+        } else {
+            existing = FramesManifest(
+                project: FrameInventory.projectName(of: dataRoot)
+                    ?? shotlist.project,
+                generated: currentTimestamp()
+            )
+        }
+        let reconciled: FramesManifest
+        do {
+            reconciled = try existing.reconciled(with: shotlist)
+        } catch {
+            throw ToolError(
+                "Couldn't reconcile the Frames manifest with the current "
+                    + "shot list: \(error)"
+            )
+        }
+        return reconciled.upserting(
+            shotId: shot.id,
+            keyframeStrategy: shot.keyframeStrategy.rawValue,
+            frame: entry
+        )
     }
 
     /// #231 — record the render's actual conditioning (start frame + image references) on the manifest
     /// entry, as project-home-relative paths, so a pure file-level check can compare them against the
     /// deterministic plan. Read off the submitted `GenerationInput` — the record of the real submission.
     ///
-    /// `imageURLAssetIds` is overloaded across the three submission shapes, so it cannot be read
-    /// blindly: only text-to-video puts frame slots there. Getting this wrong doesn't lose the audit, it
-    /// INVERTS it — a render that used every planned reference would be stamped as having used none and
-    /// then reported as ignoring the plan. Silent on any miss: the audit trail must never break
-    /// recording a render.
+    /// Semantic slots are authoritative; model lookup is only for older generated media.
     private func stampRenderInputs(
-        _ manifest: inout RenderManifest, shotId: String, output: String, editor: EditorViewModel,
+        _ manifest: inout RenderManifest, shotId: String, output: String,
+        assetId: String?, editor: EditorViewModel,
         dataRoot: URL
-    ) {
+    ) throws -> RenderProofEntry {
         guard var entry = manifest.entries[shotId],
-              let asset = resolveRenderedAsset(output, editor: editor, dataRoot: dataRoot),
-              let gi = asset.generationInput else { return }
+              let asset = resolveRenderedAsset(
+                  assetId ?? output,
+                  editor: editor,
+                  dataRoot: dataRoot
+              ),
+              let gi = asset.generationInput else {
+            throw ToolError(
+                "The rendered video has no generation provenance. Record the completed "
+                    + "result returned by a schema-validated generate_video call."
+            )
+        }
+        let providerPrompt = gi.prompt.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let generationModel = gi.model.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !providerPrompt.isEmpty, !generationModel.isEmpty else {
+            throw ToolError(
+                "The rendered video has no compiled provider prompt or generation model."
+            )
+        }
+        let outputDigest: String
+        do {
+            outputDigest = try FileDigest.sha256(of: asset.url)
+        } catch {
+            throw ToolError(
+                "The rendered video could not be fingerprinted: \(error)"
+            )
+        }
         let home = FrameInventory.projectHome(of: dataRoot)
-        func paths(_ assetIds: [String]) -> [String] {
-            assetIds.compactMap { id in
-                editor.mediaAssets.first { $0.id == id }
-                    .map { FrameInventory.relativePath(of: $0.url, to: home) }
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        func inputProofs(
+            _ assetIds: [String],
+            label: String
+        ) throws -> [RenderInputProof] {
+            try assetIds.map { id in
+                guard let source = editor.mediaAssets.first(where: {
+                    $0.id == id
+                }) else {
+                    throw ToolError(
+                        "\(label) '\(id)' is no longer in the open project's media library."
+                    )
+                }
+                let url = source.url.standardizedFileURL
+                    .resolvingSymlinksInPath()
+                guard url.path.hasPrefix(home.path + "/"),
+                      (try? url.resourceValues(
+                        forKeys: [.isRegularFileKey]
+                      ).isRegularFile) == true else {
+                    throw ToolError(
+                        "\(label) '\(source.name)' must be a regular file in the open project."
+                    )
+                }
+                let digest: String
+                do {
+                    digest = try FileDigest.sha256(of: url)
+                } catch {
+                    throw ToolError(
+                        "\(label) '\(source.name)' could not be fingerprinted: \(error)"
+                    )
+                }
+                return RenderInputProof(
+                    path: FrameInventory.relativePath(of: url, to: home),
+                    sha256: digest
+                )
             }
         }
         let imageURLIds = gi.imageURLAssetIds ?? []
-        // Branch on the MODEL, never on whether `referenceImageAssetIds` happens to be nil: it is nil
-        // both for a source-video edit AND for a text-to-video render that simply had no refs, and those
-        // two need opposite readings of `imageURLAssetIds`.
-        switch VideoModelConfig.allModels.first(where: { $0.id == gi.model }) {
-        case .some(let model) where model.requiresSourceVideo:
-            // Edit / v2v: `imageURLAssetIds` is [sourceVideo] + imageRefs. The source video is not a
-            // start frame — stamping it as one would mis-fire the chain check too.
-            entry.startFramePath = nil
-            entry.referencePaths = paths(Array(imageURLIds.dropFirst()))
-        case .some:
-            // Text-to-video / image-to-video: `imageURLAssetIds` is the frame slots, start frame first;
-            // image refs are kept separate.
-            entry.startFramePath = paths(Array(imageURLIds.prefix(1))).first
-            entry.referencePaths = paths(gi.referenceImageAssetIds ?? [])
-        case .none:
-            // Not a video model → image generation (`ImageGenerationSubmission.make`), i.e. the `frames`
-            // phase: every reference rides in `imageURLAssetIds`, and there is no start frame.
-            entry.startFramePath = nil
-            entry.referencePaths = paths(imageURLIds)
+        var sourceVideo: RenderInputProof?
+        var startFrame: RenderInputProof?
+        var endFrame: RenderInputProof?
+        var referenceImages: [RenderInputProof] = []
+        let hasSemanticVideoSlots = gi.sourceVideoAssetId != nil
+            || gi.startFrameAssetId != nil
+            || gi.endFrameAssetId != nil
+            || gi.referenceImageAssetIds != nil
+            || gi.referenceVideoAssetIds != nil
+            || gi.referenceAudioAssetIds != nil
+        if hasSemanticVideoSlots {
+            sourceVideo = try inputProofs(
+                gi.sourceVideoAssetId.map { [$0] } ?? [],
+                label: "Source video"
+            ).first
+            startFrame = try inputProofs(
+                gi.startFrameAssetId.map { [$0] } ?? [],
+                label: "Video start frame"
+            ).first
+            endFrame = try inputProofs(
+                gi.endFrameAssetId.map { [$0] } ?? [],
+                label: "Video end frame"
+            ).first
+            referenceImages = try inputProofs(
+                gi.referenceImageAssetIds ?? [],
+                label: "Video image reference"
+            )
+            entry.startFramePath = startFrame?.path
+            entry.referencePaths = referenceImages.map(\.path)
+        } else {
+            switch VideoModelConfig.allModels.first(where: { $0.id == gi.model }) {
+            case .some(let model) where model.requiresSourceVideo:
+                entry.startFramePath = nil
+                let inputs = try inputProofs(
+                    imageURLIds,
+                    label: "Video-edit input"
+                )
+                sourceVideo = inputs.first
+                referenceImages = Array(inputs.dropFirst())
+                entry.referencePaths = referenceImages.map(\.path)
+            case .some:
+                let frames = try inputProofs(
+                    imageURLIds,
+                    label: "Video frame input"
+                )
+                startFrame = frames.first
+                endFrame = frames.dropFirst().first
+                referenceImages = try inputProofs(
+                    gi.referenceImageAssetIds ?? [],
+                    label: "Video image reference"
+                )
+                entry.startFramePath = startFrame?.path
+                entry.referencePaths = referenceImages.map(\.path)
+            case .none:
+                entry.startFramePath = nil
+                referenceImages = try inputProofs(
+                    imageURLIds,
+                    label: "Image reference"
+                )
+                entry.referencePaths = referenceImages.map(\.path)
+            }
         }
+        let referenceVideos = try inputProofs(
+            gi.referenceVideoAssetIds ?? [],
+            label: "Video reference"
+        )
+        let referenceAudio = try inputProofs(
+            gi.referenceAudioAssetIds ?? [],
+            label: "Audio reference"
+        )
         manifest.entries[shotId] = entry
+        return RenderProofEntry(
+            shotId: shotId,
+            output: output,
+            outputSha256: outputDigest,
+            providerPrompt: providerPrompt,
+            generationModel: generationModel,
+            sourceVideo: sourceVideo,
+            startFrame: startFrame,
+            endFrame: endFrame,
+            referenceImages: referenceImages,
+            referenceVideos: referenceVideos,
+            referenceAudio: referenceAudio
+        )
     }
 
     /// #196 — when the next shot in render order chains off this one, extract this rendered clip's last
@@ -1419,37 +2753,126 @@ extension ToolExecutor {
     }
 
     private func resolveRenderedAsset(_ output: String, editor: EditorViewModel, dataRoot: URL) -> MediaAsset? {
-        if let asset = editor.mediaAssets.first(where: { $0.id == output }) { return asset }
+        if let asset = editor.mediaAssets.first(where: { $0.id == output }) {
+            return projectLocalRegularURL(
+                asset.url,
+                dataRoot: dataRoot
+            ) == nil ? nil : asset
+        }
+        guard let fileURL = renderedFileURL(output, dataRoot: dataRoot),
+              let target = projectLocalRegularURL(
+                  fileURL,
+                  dataRoot: dataRoot
+              ) else { return nil }
+        if let asset = existingProjectAsset(at: target, editor: editor) {
+            return asset
+        }
+        return editor.addMediaAsset(from: target)
+    }
+
+    private func requiredRenderedAsset(
+        _ output: String,
+        editor: EditorViewModel,
+        dataRoot: URL
+    ) throws -> MediaAsset? {
+        if let asset = resolveRenderedAsset(
+            output,
+            editor: editor,
+            dataRoot: dataRoot
+        ) {
+            return asset
+        }
+        guard renderedFileURL(output, dataRoot: dataRoot) != nil else {
+            return nil
+        }
+        throw ToolError(
+            "assemble_timeline found \(output) but couldn't register it "
+                + "as a regular file inside the project"
+        )
+    }
+
+    private func renderedFileURL(_ output: String, dataRoot: URL) -> URL? {
         let home = FrameInventory.projectHome(of: dataRoot)
-        let candidates: [URL]
-        if output.hasPrefix("/") {
-            candidates = [URL(fileURLWithPath: output)]
-        } else {
-            candidates = [
+        let candidates = output.hasPrefix("/")
+            ? [URL(fileURLWithPath: output)]
+            : [
                 home.appendingPathComponent(output),
                 dataRoot.appendingPathComponent(output),
                 home.appendingPathComponent(Project.mediaDirectoryName).appendingPathComponent(output),
             ]
-        }
-        guard let fileURL = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
-            return nil
-        }
-        return existingOrImportedAsset(durableMediaURL(for: fileURL, editor: editor), editor: editor)
+        return candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) })
     }
 
-    /// A render lives in the ephemeral working copy (Recovery), which is deleted on a clean close — a
-    /// timeline clip referencing it there would go offline on reopen. Copy any file outside the package
-    /// into the package's `media/` (the durable, self-contained media home) and reference that copy.
-    private func durableMediaURL(for fileURL: URL, editor: EditorViewModel) -> URL {
-        editor.durableProjectMediaURL(for: fileURL)
+    private func projectLocalRegularURL(
+        _ fileURL: URL,
+        dataRoot: URL
+    ) -> URL? {
+        let home = FrameInventory.projectHome(of: dataRoot)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let target = fileURL.standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard target.path.hasPrefix(home.path + "/"),
+              (try? target.resourceValues(
+                  forKeys: [.isRegularFileKey]
+              ).isRegularFile) == true else {
+            return nil
+        }
+        return target
+    }
+
+    private func existingProjectAsset(
+        at fileURL: URL,
+        editor: EditorViewModel
+    ) -> MediaAsset? {
+        let target = fileURL.standardizedFileURL
+            .resolvingSymlinksInPath()
+        let matches = editor.mediaAssets.reversed().filter {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath()
+                == target
+        }
+        return matches.first
     }
 
     /// The single song in `audio/` as a media asset (imported once, reused after), or nil when there
     /// isn't exactly one song to anchor to.
-    private func resolveSongAsset(dataRoot: URL, editor: EditorViewModel) -> MediaAsset? {
+    private func resolveSongAsset(dataRoot: URL, editor: EditorViewModel) throws -> MediaAsset? {
         let songs = AudioProjectLayout.songFiles(dataRoot: dataRoot)
         guard songs.count == 1, let songURL = songs.first else { return nil }
-        return existingOrImportedAsset(durableMediaURL(for: songURL, editor: editor), editor: editor)
+        if let anchorId = editor.mediaManifest.songAnchorAssetId,
+           let anchored = editor.mediaAssets.first(where: { $0.id == anchorId }) {
+            return anchored
+        }
+        let idsBefore = Set(editor.mediaAssets.map(\.id))
+        let asset = try requiredDurableAsset(
+            for: songURL,
+            editor: editor,
+            context: "assemble_timeline found the project song but couldn't register it"
+        )
+        editor.mediaManifest.songAnchorAssetId = asset.id
+        editor.mediaManifest.songAnchorOwnsAsset = !idsBefore.contains(asset.id)
+        editor.mediaManifest.intakeRoleByAssetID[asset.id] = "song"
+        return asset
+    }
+
+    private func requiredDurableAsset(
+        for fileURL: URL,
+        editor: EditorViewModel,
+        context: String
+    ) throws -> MediaAsset {
+        let durableURL: URL
+        do {
+            durableURL = try editor.durableProjectMediaURL(for: fileURL)
+        } catch {
+            editor.mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            Log.project.error("media durability failed error=\(error.localizedDescription)")
+            throw ToolError("\(context): \(error.localizedDescription)")
+        }
+        guard let asset = existingOrImportedAsset(durableURL, editor: editor) else {
+            let reason = editor.mediaPanelToast?.message ?? "the copied media could not be imported"
+            throw ToolError("\(context): \(reason)")
+        }
+        return asset
     }
 
     /// Reuse the library asset already backed by `fileURL`, else import it.
@@ -1474,10 +2897,14 @@ extension ToolExecutor {
         dataRoot.appendingPathComponent("assembly.json")
     }
 
-    private func loadAssemblySidecar(dataRoot: URL) -> AssemblySidecar {
-        guard let data = try? Data(contentsOf: assemblySidecarURL(dataRoot: dataRoot)),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+    private func loadAssemblySidecar(dataRoot: URL) throws -> AssemblySidecar {
+        let url = assemblySidecarURL(dataRoot: dataRoot)
+        guard FileManager.default.fileExists(atPath: url.path) else {
             return AssemblySidecar()
+        }
+        let data = try Data(contentsOf: url)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CocoaError(.fileReadCorruptFile)
         }
         return AssemblySidecar(
             videoTrackId: obj["video_track_id"] as? String,
@@ -1485,12 +2912,15 @@ extension ToolExecutor {
         )
     }
 
-    private func saveAssemblySidecar(_ sidecar: AssemblySidecar, dataRoot: URL) {
+    private func saveAssemblySidecar(_ sidecar: AssemblySidecar, dataRoot: URL) throws {
         var obj: [String: Any] = [:]
         if let v = sidecar.videoTrackId { obj["video_track_id"] = v }
         if let a = sidecar.audioTrackId { obj["audio_track_id"] = a }
-        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) else { return }
-        try? data.write(to: assemblySidecarURL(dataRoot: dataRoot), options: .atomic)
+        let data = try JSONSerialization.data(
+            withJSONObject: obj,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try data.write(to: assemblySidecarURL(dataRoot: dataRoot), options: .atomic)
     }
 
     // MARK: - Phase runner
@@ -1530,10 +2960,9 @@ extension ToolExecutor {
             do {
                 try step.run(root)
             } catch {
-                return try jsonResult([
-                    "phase": phase, "error": "deterministic_step_failed",
-                    "step": step.id, "detail": String(describing: error),
-                ])
+                throw ToolError(
+                    "\(phase) blocked by deterministic step '\(step.id)': \(error)"
+                )
             }
         }
         let engineSteps: [[String: Any]] = steps.map { ["id": $0.id, "summary": $0.summary] }
@@ -1563,7 +2992,7 @@ extension ToolExecutor {
         withExtendedLifetime(registry) {}
 
         if let failure {
-            return try jsonResult(["phase": phase, "error": "phase_failed", "detail": failure])
+            throw ToolError("\(phase) failed: \(failure)")
         }
         return try jsonResult([
             "phase": phase, "ok": true, "engine_steps": engineSteps,
@@ -1612,13 +3041,11 @@ extension ToolExecutor {
 
     // MARK: - Attach song (WRITES)
 
-    /// Copy the song into the project's `audio/` folder — the one place the musicvideo `analysis`
-    /// runner reads from (import_media only reaches the media library). Source is either a
-    /// media-library asset (`media`, resolved to its backing file like the other media tools) or an
-    /// absolute `path`; exactly one. Enforces the runner's one-song contract: a different existing
-    /// audio file is an error unless `replace` is set, in which case the existing audio is cleared
-    /// first. Returns `{filename, audio_dir}`.
-    func attachSongTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    /// Attaches one durable project song and synchronizes its timeline anchor.
+    func attachSongTool(
+        _ editor: EditorViewModel,
+        _ args: [String: Any]
+    ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
 
         let mediaRef = args.string("media")
@@ -1639,12 +3066,17 @@ extension ToolExecutor {
             guard let url = editor.mediaResolver.resolveURL(for: asset.id) ?? (FileManager.default.fileExists(atPath: asset.url.path) ? asset.url : nil) else {
                 throw ToolError("Asset \(asset.id) has no file on disk yet (still importing/generating?). Poll get_media and retry once its generationStatus is 'none'.")
             }
-            sourceURL = url
+            sourceURL = url.resolvingSymlinksInPath()
         } else {
-            sourceURL = URL(fileURLWithPath: path!)
+            sourceURL = URL(fileURLWithPath: path!).resolvingSymlinksInPath()
             guard FileManager.default.fileExists(atPath: sourceURL.path) else {
                 throw ToolError("File not found: \(sourceURL.path)")
             }
+        }
+        guard (try? sourceURL.resourceValues(
+            forKeys: [.isRegularFileKey]
+        ).isRegularFile) == true else {
+            throw ToolError("Song source is not a regular file: \(sourceURL.path)")
         }
 
         let ext = sourceURL.pathExtension.lowercased()
@@ -1653,76 +3085,23 @@ extension ToolExecutor {
             throw ToolError("'\(sourceURL.lastPathComponent)' isn't an audio type the analysis runner accepts (\(accepted)).")
         }
 
-        let audioDir = root.appendingPathComponent("audio", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
-        } catch {
-            throw ToolError("Couldn't prepare audio/: \(error.localizedDescription)")
-        }
-
-        let destURL = audioDir.appendingPathComponent(sourceURL.lastPathComponent)
         let replace = args.bool("replace") ?? false
-
-        // The song may ALREADY be the file in audio/ — never delete-then-copy onto the source.
-        let alreadyInPlace = sourceURL.standardizedFileURL.resolvingSymlinksInPath()
-            == destURL.standardizedFileURL.resolvingSymlinksInPath()
-
-        // The runner keeps exactly one song in audio/. A different existing audio file blocks unless
-        // `replace` is set. VALIDATE up front (fail with no side effects), but don't delete the old
-        // song yet — the new one is copied into place first, so a failed copy never leaves audio/ empty.
-        let others = existingAudioFiles(in: audioDir)
-            .filter { $0.lastPathComponent != destURL.lastPathComponent }
-        if !others.isEmpty, !replace {
-            let names = others.map(\.lastPathComponent).sorted().joined(separator: ", ")
-            throw ToolError("audio/ already holds a different song (\(names)). Pass replace: true to swap it — the analysis runner keeps exactly one song.")
+        let attached: SongAnchorResult
+        do {
+            attached = try await editor.attachProjectSong(
+                from: sourceURL,
+                dataRoot: root,
+                replace: replace
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
         }
-
-        if !alreadyInPlace {
-            // A same-NAMED file in audio/ is still a DIFFERENT song when the source is another
-            // file — overwriting it without consent breaks the tool contract just like the
-            // different-name case above.
-            if !replace, FileManager.default.fileExists(atPath: destURL.path) {
-                throw ToolError("audio/ already holds \(destURL.lastPathComponent). Pass replace: true to overwrite it — the analysis runner keeps exactly one song.")
-            }
-            // Stage next to the destination, then swap in — a failed copy never destroys an
-            // existing same-named song. replaceItemAt requires an existing destination, so the
-            // first attach into an empty audio/ is a plain move.
-            let staging = audioDir.appendingPathComponent(".attach-\(UUID().uuidString).\(sourceURL.pathExtension)")
-            do {
-                try FileManager.default.copyItem(at: sourceURL, to: staging)
-                if FileManager.default.fileExists(atPath: destURL.path) {
-                    _ = try FileManager.default.replaceItemAt(destURL, withItemAt: staging)
-                } else {
-                    try FileManager.default.moveItem(at: staging, to: destURL)
-                }
-            } catch {
-                try? FileManager.default.removeItem(at: staging)
-                throw ToolError("Couldn't copy the song into audio/: \(error.localizedDescription)")
-            }
-        }
-
-        // The new song is safely in place — now retire the other old songs (validated above). A
-        // leftover would block analysis later while this call reported success.
-        for url in others {
-            do { try FileManager.default.removeItem(at: url) }
-            catch { throw ToolError("Couldn't remove \(url.lastPathComponent) from audio/: \(error.localizedDescription)") }
-        }
-
-        // Same anchor as the dialog path — how the song arrived must not decide whether the user can
-        // hear it. Idempotent: assemble_timeline reuses this asset and skips its own placement.
-        editor.agentService.anchorSongOnTimeline(destURL, editor: editor)
-        return try jsonResult(["filename": destURL.lastPathComponent, "audio_dir": audioDir.path])
-    }
-
-    /// Audio files already sitting in `audioDir` (by the runner's accepted extensions).
-    private func existingAudioFiles(in audioDir: URL) -> [URL] {
-        let entries = (try? FileManager.default.contentsOfDirectory(
-            at: audioDir, includingPropertiesForKeys: [.isRegularFileKey]
-        )) ?? []
-        return entries.filter {
-            let isFile = (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile ?? false
-            return isFile && AudioProjectLayout.audioExtensions.contains($0.pathExtension.lowercased())
-        }
+        return try jsonResult([
+            "filename": attached.filename,
+            "audio_dir": root.appendingPathComponent("audio").path,
+            "asset_id": attached.assetId,
+            "replaced": attached.replaced,
+        ])
     }
 }
 

@@ -17,6 +17,7 @@ struct AudioGenerationSubmission {
         service: GenerationService,
         projectURL: URL?,
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) -> String {
@@ -39,6 +40,7 @@ struct AudioGenerationSubmission {
             fileExtension: "mp3",
             projectURL: projectURL,
             editor: editor,
+            authorization: authorization,
             onComplete: onComplete,
             onFailure: onFailure
         )

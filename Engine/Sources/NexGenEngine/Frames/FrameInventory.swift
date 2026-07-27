@@ -10,7 +10,7 @@ import Yams
 /// approval state is invented — the engine records none today; selection
 /// happens through the agent workflow.
 public enum FrameInventory {
-    public static let imageSuffixes: Set<String> = ["png", "jpg", "jpeg", "webp"]
+    public static let imageSuffixes = ProjectMediaExtensions.images
     public static let auditFilename = "_frame_audit.yaml"
 
     public enum InventoryError: Swift.Error, Sendable, Equatable {

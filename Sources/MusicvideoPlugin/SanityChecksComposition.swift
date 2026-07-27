@@ -14,18 +14,19 @@ extension MusicvideoChecks {
         if let bible = ctx.bible {
             var locById: [String: Location] = [:]
             for loc in bible.locations { locById[loc.id] = loc }
+            var establishedByLocation: [String: [String: String]] = [:]
             for shot in shots {
-                guard let framing = shot.framing else {
+                if let framing = shot.framing {
+                    if compRequiresVisibleZones(framing) && shot.visibleZones.isEmpty {
+                        out.append(Finding(level: .warn, code: "VISIBLE_ZONES_MISSING", shotId: shot.id,
+                            message: "framing=\(framing.rawValue) (bg_coverage=\(compBgCoverage(framing))) "
+                                + "requires visible_zones, but it's empty. List the visible location zones "
+                                + "explicitly."))
+                    }
+                } else {
                     out.append(Finding(level: .warn, code: "FRAMING_MISSING", shotId: shot.id,
                         message: "no framing set — image crop undefined. Choose "
                             + "WIDE/MS/MCU/CU/ECU/OTS/POV/INSERT/AERIAL."))
-                    continue
-                }
-                if compRequiresVisibleZones(framing) && shot.visibleZones.isEmpty {
-                    out.append(Finding(level: .warn, code: "VISIBLE_ZONES_MISSING", shotId: shot.id,
-                        message: "framing=\(framing.rawValue) (bg_coverage=\(compBgCoverage(framing))) "
-                            + "requires visible_zones, but it's empty. List the visible location zones "
-                            + "explicitly."))
                 }
                 if let locRef = shot.locationRef, let loc = locById[locRef], !shot.visibleZones.isEmpty {
                     var zoneById: [String: Zone] = [:]
@@ -37,17 +38,26 @@ extension MusicvideoChecks {
                                     + "\"\(loc.id)\".zones. Fix the zone inventory or the visible_zones."))
                             continue
                         }
-                        if zone.status == .dirty {
-                            let est = zone.establishedByShot ?? "?"
+                        let established = zone.status == .dirty
+                            ? (zone.establishedByShot ?? "?")
+                            : establishedByLocation[locRef]?[zid]
+                        if let established {
                             out.append(Finding(level: .error, code: "DIRTY_ZONE_VISIBLE", shotId: shot.id,
-                                message: "visible_zone \"\(zid)\" is dirty (established in shot \(est)). A "
+                                message: "visible_zone \"\(zid)\" is already established in shot "
+                                    + "\(established). A "
                                     + "follow-up shot would break consistency. Change framing to drop the "
-                                    + "zone, or pull the establishing frame (\(est)) in as a reference."))
-                        } else if zone.status == .undefined {
+                                    + "zone, or pull the establishing frame (\(established)) in as a reference."))
+                        } else if zone.status == .undefined,
+                                  !shot.zoneIntroduces.contains(zid) {
                             out.append(Finding(level: .warn, code: "ZONE_UNCOVERED", shotId: shot.id,
                                 message: "visible_zone \"\(zid)\" is undefined — the model hallucinates the "
-                                    + "area freely. Mark it dirty after approval or add the bible asset."))
+                                    + "area freely. Declare it in zone_introduces or add a bible asset."))
                         }
+                    }
+                }
+                if let locRef = shot.locationRef {
+                    for zoneID in shot.zoneIntroduces {
+                        establishedByLocation[locRef, default: [:]][zoneID] = shot.id
                     }
                 }
             }

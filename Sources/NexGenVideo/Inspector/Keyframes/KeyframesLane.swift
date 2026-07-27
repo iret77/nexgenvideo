@@ -2,15 +2,6 @@ import AppKit
 import SwiftUI
 
 enum KeyframesMetrics {
-    static let rulerHeight: CGFloat = 18
-    static let stripHeight: CGFloat = 14
-    static let headerHeight: CGFloat = rulerHeight + stripHeight
-    static let rowHeight: CGFloat = 22
-    static let stampButtonWidth: CGFloat = 22
-    static let navButtonWidth: CGFloat = 6
-    static let controlsColumnWidth: CGFloat = navButtonWidth * 2 + stampButtonWidth
-    static let diamondSize: CGFloat = 8
-
     /// Map a timeline frame into the lane's local x. Inverse of `frameAt(...)`.
     static func xForFrame(_ f: Int, clipStart: Int, span: Int, width: CGFloat) -> CGFloat {
         let t = Double(f - clipStart) / Double(max(1, span))
@@ -36,19 +27,19 @@ struct ClipRulerBlock: View {
 
     var body: some View {
         GeometryReader { proxy in
-            VStack(spacing: 0) {
+            VStack(spacing: AppTheme.Spacing.none) {
                 RulerView(clipStart: clip.startFrame, span: span, fps: editor.timeline.fps)
-                    .frame(height: KeyframesMetrics.rulerHeight)
+                    .frame(height: AppTheme.Timeline.keyframeRulerHeight)
                 RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
                     .fill(tint.opacity(AppTheme.Opacity.medium))
                     .overlay(alignment: .leading) {
                         Text(editor.clipDisplayLabel(for: clip))
-                            .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.95))
+                            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                            .foregroundStyle(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.nearOpaque))
                             .padding(.horizontal, AppTheme.Spacing.sm)
                             .lineLimit(1)
                     }
-                    .frame(height: KeyframesMetrics.stripHeight)
+                    .frame(height: AppTheme.Timeline.keyframeStripHeight)
             }
             .contentShape(Rectangle())
             .gesture(
@@ -57,7 +48,7 @@ struct ClipRulerBlock: View {
                     .onEnded { v in seek(at: v.location.x, width: proxy.size.width) }
             )
         }
-        .frame(height: KeyframesMetrics.rulerHeight + KeyframesMetrics.stripHeight)
+        .frame(height: AppTheme.Timeline.keyframeRulerHeight + AppTheme.Timeline.keyframeStripHeight)
     }
 
     private func seek(at x: CGFloat, width: CGFloat) {
@@ -82,16 +73,14 @@ struct KeyframesLaneRow: View {
         var currentFrame: Int
     }
 
-    private static let hitTolerance: CGFloat = 7
-    private static let snapThresholdPixels: Double = 4
     private var span: Int { max(1, clip.endFrame - clip.startFrame) }
 
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Rectangle().fill(.white.opacity(AppTheme.Opacity.subtle))
+                Rectangle().fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
                 Canvas { ctx, size in
-                    let half = KeyframesMetrics.diamondSize / 2
+                    let half = AppTheme.Timeline.keyframeDiamondSize / 2
                     let y = size.height / 2
                     for f in displayedFrames() {
                         let x = KeyframesMetrics.xForFrame(f, clipStart: clip.startFrame, span: span, width: size.width)
@@ -102,16 +91,23 @@ struct KeyframesLaneRow: View {
                         d.addLine(to: CGPoint(x: x - half, y: y))
                         d.closeSubpath()
                         ctx.fill(d, with: .color(tint))
-                        ctx.stroke(d, with: .color(.black.opacity(0.4)), lineWidth: AppTheme.BorderWidth.hairline)
+                        ctx.stroke(
+                            d,
+                            with: .color(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.settingsWindow)),
+                            lineWidth: AppTheme.BorderWidth.hairline
+                        )
                     }
                 }
 
                 // Per-kf invisible hit areas for right-click context menus.
                 ForEach(frames, id: \.self) { kf in
                     let x = KeyframesMetrics.xForFrame(kf, clipStart: clip.startFrame, span: span, width: proxy.size.width)
-                    Color.clear
-                        .frame(width: Self.hitTolerance * 2, height: KeyframesMetrics.rowHeight)
-                        .position(x: x, y: KeyframesMetrics.rowHeight / 2)
+                    AppTheme.Background.clearColor
+                        .frame(
+                            width: AppTheme.Timeline.keyframeHitTolerance * 2,
+                            height: AppTheme.Timeline.keyframeRowHeight
+                        )
+                        .position(x: x, y: AppTheme.Timeline.keyframeRowHeight / 2)
                         .contextMenu { contextMenu(for: kf) }
                 }
             }
@@ -181,7 +177,7 @@ struct KeyframesLaneRow: View {
             position: raw,
             targets: targets,
             state: &snapState,
-            baseThreshold: Self.snapThresholdPixels,
+            baseThreshold: AppTheme.Timeline.keyframeSnapThresholdPixels,
             pixelsPerFrame: pxPerFrame
         ) {
             candidate = snap.frame
@@ -222,7 +218,8 @@ struct KeyframesLaneRow: View {
         for f in frames {
             let kx = KeyframesMetrics.xForFrame(f, clipStart: clip.startFrame, span: span, width: width)
             let dx = abs(x - kx)
-            if dx <= Self.hitTolerance, dx < (best?.dx ?? .greatestFiniteMagnitude) {
+            if dx <= AppTheme.Timeline.keyframeHitTolerance,
+               dx < (best?.dx ?? .greatestFiniteMagnitude) {
                 best = (f, dx)
             }
         }
@@ -247,7 +244,7 @@ struct KeyframesLaneRow: View {
         Button { editor.setInterpolation(clipId: clip.id, property: property, frame: frame, interpolation: .hold) } label: {
             Label("Hold", systemImage: current == .hold ? "checkmark" : "")
         }
-        Divider()
+        Divider() // app-theme: native-menu-divider
         Button("Delete Keyframe", role: .destructive) {
             editor.removeKeyframe(clipId: clip.id, property: property, at: frame)
         }
@@ -290,7 +287,7 @@ struct KeyframesPanel: View {
                         tint: tint,
                         snapX: $snapX
                     )
-                    .frame(height: KeyframesMetrics.rowHeight)
+                    .frame(height: AppTheme.Timeline.keyframeRowHeight)
                 }
             }
             playheadOverlay
@@ -306,7 +303,14 @@ struct KeyframesPanel: View {
                 var p = Path()
                 p.move(to: CGPoint(x: x, y: 0))
                 p.addLine(to: CGPoint(x: x, y: size.height))
-                ctx.stroke(p, with: .color(.yellow), style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thin, dash: [4, 4]))
+                ctx.stroke(
+                    p,
+                    with: .color(AppTheme.Timeline.snapGuideColor),
+                    style: StrokeStyle(
+                        lineWidth: AppTheme.BorderWidth.thin,
+                        dash: AppTheme.Border.regularDash
+                    )
+                )
             }
             .allowsHitTesting(false)
         }
@@ -320,8 +324,8 @@ struct KeyframesPanel: View {
                 let x = KeyframesMetrics.xForFrame(frame, clipStart: clip.startFrame, span: span, width: proxy.size.width)
                 Canvas { ctx, size in
                     let path = CGMutablePath()
-                    Playhead.appendPath(path, x: x, top: Playhead.triangleSize, bottom: size.height, triangle: true)
-                    let color = Color(nsColor: Playhead.color)
+                    Playhead.appendPath(path, x: x, top: AppTheme.Timeline.playheadTriangleSize, bottom: size.height, triangle: true)
+                    let color = Color(nsColor: AppTheme.Timeline.playhead)
                     ctx.fill(Path(path), with: .color(color))
                     ctx.stroke(Path(path), with: .color(color), lineWidth: AppTheme.BorderWidth.thin)
                 }

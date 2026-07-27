@@ -248,7 +248,7 @@ struct AIEditTab: View {
                 .frame(width: AppTheme.Spacing.lgXl, alignment: .center)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text(title)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                     .foregroundStyle(isEnabled ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
                 Text(disabledReason ?? description)
                     .font(.system(size: AppTheme.FontSize.xs))

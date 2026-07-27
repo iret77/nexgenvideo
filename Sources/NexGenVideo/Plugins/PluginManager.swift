@@ -1,6 +1,34 @@
 import Foundation
 import Observation
 
+extension Notification.Name {
+    static let pluginInstallationChanged = Notification.Name("pluginInstallationChanged")
+}
+
+enum PluginSettingsAttention: Equatable {
+    case updateAvailable
+    case restartRequired
+
+    static func resolve(_ rows: [PluginRow]) -> Self? {
+        if rows.contains(where: {
+            if case .updatePendingRestart = $0.status { return true }
+            return false
+        }) {
+            return .restartRequired
+        }
+        if rows.contains(where: {
+            switch $0.status {
+            case .installed(_, let update): return update != nil
+            case .incompatible(_, let reinstall): return reinstall != nil
+            case .available, .updatePendingRestart, .unavailable: return false
+            }
+        }) {
+            return .updateAvailable
+        }
+        return nil
+    }
+}
+
 /// One picker row — a pack merged from its installed record (if any) and its
 /// catalog entry (if any), reduced to a single actionable status.
 struct PluginRow: Identifiable {
@@ -77,6 +105,10 @@ final class PluginManager {
         }
     }
 
+    func reloadInstalled() {
+        installed = PluginLoader.loadInstalled()
+    }
+
     func isBusy(_ id: String) -> Bool { busyIDs.contains(id) }
 
     /// Install (or reinstall/update) a catalog entry, then refresh installed. Returns
@@ -91,6 +123,8 @@ final class PluginManager {
         do {
             _ = try await PluginInstaller.install(entry, appVersion: appVersion)
             installed = PluginLoader.installed
+            PluginUpdateCenter.shared.refreshInstalledAttention()
+            NotificationCenter.default.post(name: .pluginInstallationChanged, object: entry.id)
             return true
         } catch {
             lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

@@ -6,7 +6,7 @@ final class TimelineHeaderView: NSView {
 
     private static let headerBg = AppTheme.Background.surface.cgColor
     private static let labelAttrs: [NSAttributedString.Key: Any] = [
-        .font: NSFont.systemFont(ofSize: AppTheme.FontSize.sm, weight: .medium),
+        .font: NSFont.systemFont(ofSize: AppTheme.FontSize.sm, weight: AppTheme.AppKitFontWeight.medium),
         .foregroundColor: AppTheme.Text.secondary,
     ]
 
@@ -34,20 +34,31 @@ final class TimelineHeaderView: NSView {
         ctx.setFillColor(Self.headerBg)
         ctx.fill(bounds)
 
-        let rulerBottom = bounds.origin.y + Layout.rulerHeight - 0.5
+        let rulerBottom =
+            bounds.origin.y + AppTheme.Layout.rulerHeight - AppTheme.BorderWidth.hairline
         ctx.setFillColor(AppTheme.Border.primary.cgColor)
-        ctx.fill(NSRect(x: 0, y: rulerBottom, width: bounds.width, height: 1))
+        ctx.fill(
+            NSRect(
+                x: AppTheme.Spacing.none,
+                y: rulerBottom,
+                width: bounds.width,
+                height: AppTheme.BorderWidth.thin
+            )
+        )
 
         // Clip drawing below the ruler so headers don't overlap it when scrolled
-        let clipTop = bounds.origin.y + Layout.rulerHeight
+        let clipTop = bounds.origin.y + AppTheme.Layout.rulerHeight
         ctx.clip(to: NSRect(x: bounds.origin.x, y: clipTop, width: bounds.width, height: bounds.height))
 
         muteButtonRects.removeAll()
         hideButtonRects.removeAll()
         syncLockButtonRects.removeAll()
-        let stripWidth: CGFloat = 3
-        let iconSize: CGFloat = 14
-        let iconConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        let stripWidth = AppTheme.Timeline.headerTypeStripWidth
+        let iconSize = AppTheme.Timeline.headerIconSize
+        let iconConfig = NSImage.SymbolConfiguration(
+            pointSize: AppTheme.FontSize.sm,
+            weight: AppTheme.AppKitFontWeight.regular
+        )
         let headerWidth = bounds.width
 
         let geo = TimelineGeometry(editor: editor, bounds: bounds)
@@ -58,18 +69,18 @@ final class TimelineHeaderView: NSView {
 
             // Color-coded left border strip
             ctx.setFillColor(track.type.themeColor.cgColor)
-            ctx.fill(NSRect(x: 0, y: y, width: stripWidth, height: h))
+            ctx.fill(NSRect(x: AppTheme.Spacing.none, y: y, width: stripWidth, height: h))
 
             // Track label
             let str = NSAttributedString(string: editor.timelineTrackDisplayLabel(at: i), attributes: Self.labelAttrs)
             let labelSize = str.size()
             let labelY = y + (h - labelSize.height) / 2
-            str.draw(at: NSPoint(x: stripWidth + 6, y: labelY))
+            str.draw(at: NSPoint(x: stripWidth + AppTheme.Spacing.sm, y: labelY))
 
 
             let iconY = y + (h - iconSize) / 2
-            let rightmostX = headerWidth - iconSize - 6
-            let syncX = rightmostX - iconSize - 4
+            let rightmostX = headerWidth - iconSize - AppTheme.Spacing.sm
+            let syncX = rightmostX - iconSize - AppTheme.Spacing.xs
 
             syncLockButtonRects[i] = drawToggleIcon(
                 x: syncX, y: iconY, size: iconSize, config: iconConfig, context: ctx,
@@ -90,11 +101,25 @@ final class TimelineHeaderView: NSView {
             // White border at top of first track and bottom of every track
             if i == 0 {
                 ctx.setFillColor(AppTheme.Border.primary.cgColor)
-                ctx.fill(NSRect(x: 0, y: y, width: headerWidth, height: 1))
+                ctx.fill(
+                    NSRect(
+                        x: AppTheme.Spacing.none,
+                        y: y,
+                        width: headerWidth,
+                        height: AppTheme.BorderWidth.thin
+                    )
+                )
             }
-            let handleY = y + h - 1
+            let handleY = y + h - AppTheme.BorderWidth.thin
             ctx.setFillColor(AppTheme.Border.primary.cgColor)
-            ctx.fill(NSRect(x: 0, y: handleY, width: headerWidth, height: 1))
+            ctx.fill(
+                NSRect(
+                    x: AppTheme.Spacing.none,
+                    y: handleY,
+                    width: headerWidth,
+                    height: AppTheme.BorderWidth.thin
+                )
+            )
         }
 
         // Thick divider between the video zone and the audio zone,
@@ -102,7 +127,14 @@ final class TimelineHeaderView: NSView {
         if z.videoTrackCount > 0, z.audioTrackCount > 0 {
             let dividerY = geo.trackY(at: z.firstAudioIndex)
             ctx.setFillColor(AppTheme.Border.divider.cgColor)
-            ctx.fill(NSRect(x: 0, y: dividerY - 1, width: headerWidth, height: 2))
+            ctx.fill(
+                NSRect(
+                    x: AppTheme.Spacing.none,
+                    y: dividerY - AppTheme.BorderWidth.thin,
+                    width: headerWidth,
+                    height: AppTheme.BorderWidth.thick
+                )
+            )
         }
     }
 
@@ -113,9 +145,11 @@ final class TimelineHeaderView: NSView {
         active: Bool, onSymbol: String, offSymbol: String
     ) -> NSRect {
         let rect = NSRect(x: x, y: y, width: size, height: size)
-        let tint = active ? AppTheme.Text.secondary : AppTheme.Text.secondary.withAlphaComponent(0.3)
+        let tint = active
+            ? AppTheme.Text.secondary
+            : AppTheme.Text.secondary.withAlphaComponent(AppTheme.Opacity.shadow)
         drawSymbol(active ? onSymbol : offSymbol, in: rect, tint: tint, config: config, context: context)
-        return rect.insetBy(dx: -4, dy: -4)
+        return rect.insetBy(dx: -AppTheme.Spacing.xs, dy: -AppTheme.Spacing.xs)
     }
 
     private func drawSymbol(_ name: String, in rect: NSRect, tint: NSColor, config: NSImage.SymbolConfiguration, context: CGContext) {
@@ -140,7 +174,7 @@ final class TimelineHeaderView: NSView {
         let geo = TimelineGeometry(editor: editor, bounds: bounds)
         for i in editor.timeline.tracks.indices {
             let trackBottom = geo.trackY(at: i) + geo.trackHeight(at: i)
-            if abs(point.y - trackBottom) <= TrackSize.resizeHandleZone {
+            if abs(point.y - trackBottom) <= AppTheme.Timeline.trackResizeHandleZone {
                 return i
             }
         }
@@ -182,7 +216,7 @@ final class TimelineHeaderView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         let geo = TimelineGeometry(editor: editor, bounds: bounds)
         let trackTop = geo.trackY(at: drag.trackIndex)
-        let newHeight = max(TrackSize.minHeight, min(TrackSize.maxHeight, point.y - trackTop))
+        let newHeight = max(AppTheme.Timeline.trackMinHeight, min(AppTheme.Timeline.trackMaxHeight, point.y - trackTop))
         if editor.timeline.tracks[drag.trackIndex].displayHeight != newHeight {
             editor.timeline.tracks[drag.trackIndex].displayHeight = newHeight
             needsDisplay = true

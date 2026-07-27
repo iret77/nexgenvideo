@@ -20,15 +20,15 @@ struct FontPickerField: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .padding(.horizontal, AppTheme.Spacing.smMd)
             .padding(.vertical, AppTheme.Spacing.xs)
-            .frame(maxWidth: 160, alignment: .trailing)
+            .frame(maxWidth: AppTheme.ComponentSize.fontPickerMaxWidth, alignment: .trailing)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(Color.white.opacity(AppTheme.Opacity.hint))
+                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.hint))
             )
         }
         .buttonStyle(.plain)

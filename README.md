@@ -37,8 +37,9 @@ Connects your Claude/Codex/Cursor via MCP, or use the in-app agent to work on th
 NexGenVideo ships with the editor, the generation providers, and a native generic
 production engine (`NexGenEngine`, compiled into the app). **Format packs** add
 structured, end-to-end workflows on top — the first is `musicvideo` (analysis →
-treatment → storyboard → shotlist → render). Packs are built in; activate one per
-project in Project settings.
+treatment → storyboard → shotlist → render). Packs ship as signed `.ngvpack`
+bundles outside the app. Activating a catalog pack downloads it on demand and binds
+it to that project.
 
 Learn how packs plug in — and how to add your own — in the
 **[format pack standard](docs/PLUGIN_STANDARD.md)**.

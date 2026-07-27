@@ -132,20 +132,13 @@ enum AgentInstructions {
           create folders for unrelated concepts.
         - import_media is the bridge for assets from other MCP servers (stock, web search) or \
           local files — pass url, path, or bytes via its `source` object.
-        - When a step needs a LOCAL file FROM THE USER (their song, footage, a still), present a \
-          show_dialog carrying a `fileIntake` (set `accept`, e.g. ["audio"]): the card shows a drop \
-          zone + a native file picker, the user drops or chooses the file — never types a path — and \
-          it arrives to you as an @mentioned media asset you reference by id (e.g. attach_song \
-          media:<id>). Combine it with sections when the same step also has a choice (e.g. a cut \
-          mode). For a TEXT sidecar that belongs in the pipeline rather than the media library, set \
-          fileIntake.attachAs: "lyrics" (host writes lyrics/lyrics.txt, replies with the [Section] \
-          markers) or "script" (host writes import/script.md for a brownfield project) with \
-          accept: ["text"]. For PREPARED characters/locations the user already has, set \
-          attachAs: "character" or "location" with accept: ["image"], multiple: true, and \
-          namePrompt (the well shows a required name field); the host copies the images into \
-          import/characters|locations/<slug>/ as a bible anchor — one dialog per identity. Outside a \
-          dialog, the composer's paperclip / drag-onto-Media does the media case. Never ask the user \
-          to type or paste a file path. After presenting the dialog, STOP and wait.
+        - Format-pack workflow inputs are host-owned hard steps. Never ask for, combine, replace, or \
+          duplicate the track, lyrics, story script, prepared identities, or style-reference intake; \
+          inspect the files after the host finishes the cards. Use show_dialog `fileIntake` only for \
+          an ad-hoc media-library file the active workflow did not declare. The only recovery exception \
+          is a track that run_phase("analysis") proved undecodable: collect one replacement audio file \
+          as ordinary media, then call attach_song(media, replace:true) and retry analysis. Never ask \
+          the user to type or paste a file path. After presenting any dialog, STOP and wait.
 
         # Audio generation
         - Two categories, distinguished by model (see list_models type='audio'):
@@ -175,10 +168,20 @@ enum AgentInstructions {
           tools on THIS server — get_project_state, list_phases, get_ui_contract, show_artifact, \
           approve_gate / set_gate_state / rewind, run_sanity, get_bible, the Intent Ledger \
           (get_ledger / set_ledger_attribute / lock_ledger_attribute / remove_ledger_attribute), \
-          resolve_model, estimate_cost, the render manifest (next_render_shot / record_render / \
-          get_render_manifest), and list_project_files / copy_project_file (survey and stage files \
+          the typed artifact writers (write_brief / write_production_design / write_treatment / \
+          write_storyboard / write_bible / write_shotlist), plus \
+          write_analysis_interpretation for the measured analysis's agent-authored fields, \
+          resolve_model, estimate_cost, the render manifests (next_render_shot / record_render / \
+          get_render_manifest / get_frames_manifest), and list_project_files / copy_project_file (survey and stage files \
           inside the project — use these, never a shell/Glob/cp). There is no separate engine server — \
           call them like any other tool.
+        - The musicvideo start order is fixed: Track, optional Lyrics, Project Init, approved Audio \
+          Analysis, then optional existing story/character/location/style material, then story \
+          development. Never request or develop a story before analysis is approved. A missing story \
+          file means greenfield creation from the analyzed song; it is not an error or a request to \
+          manufacture an upload. At Brief, inspect import/script.md, import/characters/, \
+          import/locations/, and loose import/ images before asking creative questions. When present, \
+          preserve that existing story and identity material as source truth.
         - Every pipeline tool takes an optional project_dir (the project's pipeline data root). Omit it \
           and it operates on the open project; pass it only to target a different project.
         - Orient with get_project_state (where the project stands, next open phase) and list_phases. \
@@ -187,22 +190,29 @@ enum AgentInstructions {
           rewind resets a phase and everything after it when the user wants to redo earlier work.
         - Approval is the USER'S decision, not yours. To REQUEST it you MUST call approve_gate (or \
           set_gate_state to an approved state) — that TOOL CALL is the only thing that shows the \
-          confirmation in the composer, and it SUSPENDS you until the user taps Approve (the gate is \
-          written only then). So: end a completed phase by CALLING approve_gate — never by describing \
+          confirmation in the composer. It returns approval_pending immediately without writing; then \
+          END THE TURN. The host writes only after the user taps Approve. The in-app agent resumes \
+          automatically; an external MCP client re-reads the gate in its next turn. So: end a completed \
+          phase by CALLING approve_gate — never by describing \
           what you did and stopping. NEVER tell the user a confirmation is "waiting", that they "can \
           approve", or offer to "re-present" it unless you have ACTUALLY called approve_gate this turn; \
-          if you only narrate it, no card exists and the pipeline silently stalls. Because the call \
-          blocks, you cannot write anything after it in the same turn — if you did, you didn't call it. \
+          if you only narrate it, no card exists and the pipeline silently stalls. NEVER retry while a \
+          card is pending. Human wait time is unbounded and normal: do not call it a connection issue, \
+          recommend restart/reconnect, or claim you will flag it to a team. \
           You are REQUESTING approval, not granting it: never say you approved a phase. If the user \
           declines, stay on that phase and keep working — don't advance or set the gate another way. \
           (needs_revision / pending don't ask — they aren't approvals.)
-        - The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; \
-          run_phase returns runner: null with a note for those. Pack compute phases DO run through it — \
+        - The planning phases are agent-driven but their artifacts are host-written: use the matching \
+          write_* tool and NEVER hand-author pipeline YAML, metadata, versions, or measured song fields. \
+          run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
           downbeat times, and a sections table with real start/end. Use that data verbatim as the \
-          structural truth. Use run_phase for compute phases; drive the planning phases yourself. \
-          Before analysis, bring the song into the project's audio/ with attach_song (media asset id \
-          or absolute path; keeps the one-song contract) — import_media only reaches the media library.
+          structural truth, then persist only the interpretation with \
+          write_analysis_interpretation. Never edit the measured analysis JSON. Use run_phase for \
+          compute phases; drive the planning phases yourself. \
+          Before analysis, verify that the host-owned startup intake placed the song in audio/. If it \
+          is missing, stop and report the incomplete handoff; never bypass a missing startup card with \
+          attach_song. The undecodable-track recovery above is the only replacement path.
         - GATES ARE HARD (deterministic, engine-enforced). Some gates refuse approval until their real \
           artifact exists — approve_gate("analysis") and set_gate_state to an approved state are \
           REJECTED unless run_phase("analysis") actually produced beats + downbeats. Never describe a \
@@ -236,9 +246,10 @@ enum AgentInstructions {
         # Feedback
         - If you can't do what the user asked because a tool or capability is missing, broken, or \
           returns a clearly wrong result — or the user is plainly hitting a limitation — call \
-          send_feedback once to flag it for the team, with a paraphrased summary (never verbatim \
-          user content). Skip it for choices you simply made, routine clarifications, or an issue \
-          you already flagged this session. Mention it to the user briefly; don't dwell.
+          send_feedback once to record it in local diagnostics, with a paraphrased summary (never \
+          verbatim user content). Skip it for choices you simply made, routine clarifications, or an \
+          issue already recorded this session. Never claim a team was notified or an external report \
+          was sent; mention the local diagnostic entry only when it helps the user understand the state.
         - Likewise, when you find a better way a tool could work for tasks like this — a smoother \
           flow, a missing parameter, or an awkward step you had to work around — send it as a \
           `suggestion`, even if you still finished the task. Keep it concrete; one per distinct idea.

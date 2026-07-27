@@ -7,7 +7,7 @@ struct ProjectSettingsMismatchView: View {
     var body: some View {
         VStack(spacing: AppTheme.Spacing.xl) {
             Text("Clip Settings Mismatch")
-                .font(.system(size: AppTheme.FontSize.xl, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xl, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
 
             Text("The clip you're adding has different settings than the current project.")
@@ -19,10 +19,10 @@ struct ProjectSettingsMismatchView: View {
                 GridRow {
                     Text("")
                     Text("Project")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Text("Clip")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
                 GridRow {
@@ -34,7 +34,11 @@ struct ProjectSettingsMismatchView: View {
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Text("\(mismatch.clipFPS)")
                         .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
-                        .foregroundStyle(mismatch.clipFPS != editor.timeline.fps ? .orange : AppTheme.Text.primaryColor)
+                        .foregroundStyle(
+                            mismatch.clipFPS != editor.timeline.fps
+                                ? AppTheme.Status.warningColor
+                                : AppTheme.Text.primaryColor
+                        )
                 }
                 GridRow {
                     Text("Resolution")
@@ -45,7 +49,9 @@ struct ProjectSettingsMismatchView: View {
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Text("\(mismatch.clipWidth) x \(mismatch.clipHeight)")
                         .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
-                        .foregroundStyle(resolutionMismatch ? .orange : AppTheme.Text.primaryColor)
+                        .foregroundStyle(
+                            resolutionMismatch ? AppTheme.Status.warningColor : AppTheme.Text.primaryColor
+                        )
                 }
             }
 
@@ -69,7 +75,7 @@ struct ProjectSettingsMismatchView: View {
             }
         }
         .padding(AppTheme.Spacing.xl + AppTheme.Spacing.md)
-        .frame(width: 360)
+        .frame(width: AppTheme.ComponentSize.projectMismatchWidth)
     }
 
     private func dismiss() {

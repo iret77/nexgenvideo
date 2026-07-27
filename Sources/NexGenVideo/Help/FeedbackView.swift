@@ -49,7 +49,7 @@ struct FeedbackView: View {
         }
         .padding(.horizontal, AppTheme.Spacing.xlXxl)
         .padding(.vertical, AppTheme.Spacing.xlXxl)
-        .frame(minWidth: 480, idealWidth: 480, minHeight: 420, idealHeight: 480)
+        .frame(minWidth: AppTheme.ComponentSize.feedbackWindowMin.width, idealWidth: AppTheme.ComponentSize.feedbackWindowIdeal.width, minHeight: AppTheme.ComponentSize.feedbackWindowMin.height, idealHeight: AppTheme.ComponentSize.feedbackWindowIdeal.height)
         .background(.ultraThinMaterial)
         .focusEffectDisabled()
     }
@@ -73,7 +73,7 @@ struct FeedbackView: View {
             if let errorText {
                 Text(errorText)
                     .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppTheme.Status.errorColor)
             }
 
             footer
@@ -89,7 +89,7 @@ struct FeedbackView: View {
                 .scrollContentBackground(.hidden)
                 .padding(.horizontal, AppTheme.Spacing.smMd)
                 .padding(.vertical, AppTheme.Spacing.smMd)
-                .frame(height: 160)
+                .frame(height: AppTheme.ComponentSize.feedbackTextHeight)
                 .background(
                     RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                         .fill(AppTheme.Background.surfaceColor)
@@ -148,13 +148,13 @@ struct FeedbackView: View {
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 88, height: 56)
+                    .frame(width: AppTheme.ComponentSize.feedbackPreview.width, height: AppTheme.ComponentSize.feedbackPreview.height)
                     .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.xsSm))
                     .overlay(
                         RoundedRectangle(cornerRadius: AppTheme.Radius.xsSm)
                             .stroke(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
                     )
-                    .opacity(includeScreenshot ? 1.0 : AppTheme.Opacity.medium)
+                    .opacity(includeScreenshot ? AppTheme.Opacity.opaque : AppTheme.Opacity.medium)
             }
         }
     }
@@ -208,7 +208,7 @@ struct FeedbackView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(AppTheme.Accent.primary)
                 Text("Thanks for the feedback.")
-                    .font(.system(size: AppTheme.FontSize.md, weight: .medium))
+                    .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
                     .foregroundStyle(AppTheme.Text.primaryColor)
             }
             Text(successDetailText)
@@ -240,7 +240,7 @@ struct FeedbackView: View {
 
     private func fieldLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+            .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
             .foregroundStyle(AppTheme.Text.secondaryColor)
     }
 
@@ -283,11 +283,17 @@ final class FeedbackWindowController: NSWindowController {
         let initialView = FeedbackView(screenshot: nil).tint(AppTheme.Accent.primary)
         let hosting = NSHostingController(rootView: AnyView(initialView))
         let window = NSWindow(contentViewController: hosting)
-        window.setContentSize(NSSize(width: 480, height: 480))
-        window.minSize = NSSize(width: 480, height: 420)
+        window.setContentSize(NSSize(
+            width: AppTheme.ComponentSize.feedbackWindowIdeal.width,
+            height: AppTheme.ComponentSize.feedbackWindowIdeal.height
+        ))
+        window.minSize = NSSize(
+            width: AppTheme.ComponentSize.feedbackWindowMin.width,
+            height: AppTheme.ComponentSize.feedbackWindowMin.height
+        )
         window.title = "Send feedback"
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = AppTheme.Background.base.withAlphaComponent(0.4)
+        window.backgroundColor = AppTheme.Background.base.withAlphaComponent(AppTheme.Opacity.settingsWindow)
         window.isOpaque = false
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true

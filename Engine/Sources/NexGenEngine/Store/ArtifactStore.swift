@@ -18,6 +18,7 @@ public enum PipelineLayout {
 
     public static let projectFile = "project.yaml"
     public static let gatesFile = "gates.yaml"
+    public static let lineageFile = "lineage.json"
     public static let briefFile = "brief.yaml"
     public static let ledgerFile = "ledger.yaml"
     public static let bibleFile = "bible/bible.yaml"
@@ -30,6 +31,8 @@ public enum PipelineLayout {
     public static let shotlistDir = "shotlist"
     public static let framesDir = "frames"
     public static let framesManifestFile = "frames/manifest.json"
+    public static let sanityDir = "sanity"
+    public static let sanityReportFile = "sanity/report.json"
     public static let rendersDir = "renders"
 
     /// Format-neutral data-root subdirs created at init — exact order and names
@@ -40,6 +43,7 @@ public enum PipelineLayout {
         "storyboard",
         "bible",
         "shotlist",
+        "sanity",
         "frames",
         "renders",
         "import",
@@ -77,6 +81,14 @@ public enum PipelineLayout {
     /// `renders/manifest-<phase>.json` — render/manifest.py's `manifest_path`.
     public static func renderManifestFile(phase: String) -> String {
         "\(rendersDir)/manifest-\(phase).json"
+    }
+
+    public static func renderProofFile(phase: String) -> String {
+        "\(rendersDir)/proof-\(phase).json"
+    }
+
+    public static func assetProofFile(scope: String) -> String {
+        "\(scope)/provenance.json"
     }
 }
 

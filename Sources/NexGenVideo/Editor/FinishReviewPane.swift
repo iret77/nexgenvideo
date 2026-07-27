@@ -7,7 +7,7 @@ struct FinishReviewPane: View {
     @Environment(EditorViewModel.self) private var editor
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             header
             // SEAM — the AI-enhance ops (issues #153-157: reframe, background removal, inpaint, LUT,
             // upscale) will slot in here as a per-shot/per-clip action row over the reviewed frames.
@@ -21,7 +21,7 @@ struct FinishReviewPane: View {
         HStack(spacing: AppTheme.Spacing.md) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Review and deliver")
-                    .font(.system(size: AppTheme.FontSize.sm, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Text("Check the cut, then export the deliverable.")
                     .font(.system(size: AppTheme.FontSize.xs))
@@ -33,7 +33,7 @@ struct FinishReviewPane: View {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: AppTheme.FontSize.xs))
                     Text("Export")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 }
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
@@ -42,7 +42,7 @@ struct FinishReviewPane: View {
         }
         .padding(.horizontal, AppTheme.Spacing.lg)
         .frame(maxWidth: .infinity)
-        .frame(height: Layout.toolbarHeight)
+        .frame(height: AppTheme.Layout.toolbarHeight)
         .background(AppTheme.Background.raisedColor)
         .overlay(alignment: .bottom) {
             Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.thin)

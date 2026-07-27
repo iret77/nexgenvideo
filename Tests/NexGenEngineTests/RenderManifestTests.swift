@@ -24,6 +24,43 @@ struct RenderManifestTests {
         #expect(decoded.phase == "frames")
     }
 
+    @Test("render proof round-trips exact generation provenance")
+    func proofRoundTrip() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let proof = RenderProofManifest(
+            project: "proj",
+            phase: "final",
+            entries: [
+                "s001": RenderProofEntry(
+                    shotId: "s001",
+                    output: "media/s001.mp4",
+                    outputSha256: "abc123",
+                    providerPrompt: "Compiled provider prompt.",
+                    generationModel: "video-model",
+                    startFrame: RenderInputProof(
+                        path: "media/start.png",
+                        sha256: "start-hash"
+                    ),
+                    referenceImages: [
+                        RenderInputProof(
+                            path: "bible/front.png",
+                            sha256: "front-hash"
+                        ),
+                    ]
+                ),
+            ]
+        )
+
+        try saveRenderProofManifest(proof, dataRoot: root)
+
+        #expect(
+            try loadRenderProofManifest(dataRoot: root, phase: "final")
+                == proof
+        )
+    }
+
     // MARK: - Legacy-mirror-keys wire format
 
     @Test("encodes both shots and results arrays with dual-mirror-key rows")

@@ -49,12 +49,12 @@ struct SpendApprovalCard: View {
                 .font(.system(size: AppTheme.FontSize.md))
                 .foregroundStyle(AppTheme.Accent.primary)
             Text("Approve spend")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.sm)
             Button(action: onDecline) {
                 Image(systemName: "xmark")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .buttonStyle(.plain)
@@ -85,7 +85,7 @@ struct SpendApprovalCard: View {
     private var alternatives: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Text("CHEAPER OPTIONS")
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: AppTheme.Spacing.xs)],
@@ -101,7 +101,7 @@ struct SpendApprovalCard: View {
     private func modelChip(id: String, name: String, credits: Int?) -> some View {
         let isOn = selectedModelId == id
         return Button { selectedModelId = id } label: {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.micro) {
                 Text(name)
                     .font(.system(size: AppTheme.FontSize.xs, weight: isOn ? .semibold : .regular))
                     .lineLimit(1)
@@ -116,7 +116,7 @@ struct SpendApprovalCard: View {
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm).fill(isOn
                     ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
-                    : Color.white.opacity(AppTheme.Opacity.subtle))
+                    : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm).strokeBorder(

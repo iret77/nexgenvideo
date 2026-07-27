@@ -37,9 +37,9 @@ struct HueCurveEditorView: View {
                     Canvas { ctx, _ in
                         if hueHist.count > 1 {
                             ctx.fill(histogramPath(hueHist, size),
-                                     with: .color(.white.opacity(AppTheme.Opacity.muted)))
+                                     with: .color(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted)))
                             ctx.stroke(histogramLine(hueHist, size),
-                                       with: .color(.white.opacity(AppTheme.Opacity.prominent)),
+                                       with: .color(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.prominent)),
                                        lineWidth: AppTheme.BorderWidth.thin)
                         }
                         var grid = Path()
@@ -54,7 +54,7 @@ struct HueCurveEditorView: View {
                         mid.move(to: CGPoint(x: 0, y: size.height / 2))
                         mid.addLine(to: CGPoint(x: size.width, y: size.height / 2))
                         ctx.stroke(mid, with: .color(AppTheme.Border.subtleColor),
-                                   style: .init(lineWidth: AppTheme.BorderWidth.hairline, dash: [3, 3]))
+                                   style: .init(lineWidth: AppTheme.BorderWidth.hairline, dash: AppTheme.Border.shortDash))
                         let border = Path(CGRect(origin: .zero, size: size))
                         ctx.stroke(border, with: .color(AppTheme.Border.subtleColor),
                                    lineWidth: AppTheme.BorderWidth.hairline)

@@ -9,7 +9,7 @@ struct EditorWindowContentView: View {
 
     var body: some View {
         @Bindable var editor = editor
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             if !editor.theaterActive {
                 TitleBarView()
             }
@@ -61,11 +61,11 @@ private struct PackWiringBanner: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(AppTheme.Text.primaryColor)
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.red.opacity(AppTheme.Opacity.prominent))
+        .background(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.prominent))
     }
 }
 
@@ -78,7 +78,7 @@ struct TheaterOverlayView: View {
     var body: some View {
         if editor.theaterActive {
             ZStack {
-                Color.clear.allowsHitTesting(false)
+                AppTheme.Background.clearColor.allowsHitTesting(false)
                 exitButton
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(AppTheme.Spacing.lg)
@@ -92,10 +92,10 @@ struct TheaterOverlayView: View {
     private var exitButton: some View {
         Button { editor.theaterActive = false } label: {
             Image(systemName: "xmark")
-                .font(.system(size: AppTheme.FontSize.sm, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .frame(width: AppTheme.IconSize.lg, height: AppTheme.IconSize.lg)
-                .background(Circle().fill(Color.black.opacity(AppTheme.Opacity.strong)))
+                .background(Circle().fill(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.strong)))
         }
         .buttonStyle(.plain)
         .help("Exit theater (Esc)")
@@ -119,7 +119,7 @@ struct TheaterOverlayView: View {
         }
         .padding(.horizontal, AppTheme.Spacing.xl)
         .padding(.vertical, AppTheme.Spacing.md)
-        .background(Capsule().fill(Color.black.opacity(AppTheme.Opacity.strong)))
+        .background(Capsule().fill(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.strong)))
     }
 
     private func timecode(_ frame: Int, fps: Int, color: Color) -> some View {
@@ -143,7 +143,7 @@ struct TheaterOverlayView: View {
         GeometryReader { geo in
             let progress = duration > 0 ? CGFloat(editor.playheadState.timelineFrame) / CGFloat(duration) : 0
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(AppTheme.Opacity.moderate))
+                Capsule().fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.moderate))
                     .frame(height: AppTheme.Slider.trackHeight)
                 Capsule().fill(AppTheme.Accent.primary)
                     .frame(width: max(0, geo.size.width * progress), height: AppTheme.Slider.trackHeight)

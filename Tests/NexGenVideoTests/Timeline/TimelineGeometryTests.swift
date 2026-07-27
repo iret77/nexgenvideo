@@ -45,7 +45,7 @@ struct TimelineGeometryTests {
 
     @Test func trackYOutOfBoundsReturnsRulerHeight() {
         let g = geometry()
-        #expect(g.trackY(at: 99) == Layout.rulerHeight)
+        #expect(g.trackY(at: 99) == AppTheme.Layout.rulerHeight)
     }
 
     // MARK: - Clip rect

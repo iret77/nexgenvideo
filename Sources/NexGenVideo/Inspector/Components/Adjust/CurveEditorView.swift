@@ -67,7 +67,7 @@ struct CurveEditorView: View {
                         diag.move(to: point(CurvePoint(x: 0, y: 0), size))
                         diag.addLine(to: point(CurvePoint(x: 1, y: 1), size))
                         ctx.stroke(diag, with: .color(AppTheme.Border.subtleColor),
-                                   style: .init(lineWidth: AppTheme.BorderWidth.hairline, dash: [3, 3]))
+                                   style: .init(lineWidth: AppTheme.BorderWidth.hairline, dash: AppTheme.Border.shortDash))
                         var line = Path()
                         for i in stride(from: 0.0, through: 1.0, by: 0.02) {
                             let p = point(CurvePoint(x: i, y: GradeCurve.eval(activePoints, i)), size)

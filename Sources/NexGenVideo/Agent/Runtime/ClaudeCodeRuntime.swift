@@ -15,7 +15,6 @@ final class ClaudeCodeRuntime {
 
     private let pluginDirectories: [URL]
     private let mcpPort: Int
-    private let permissionMode: String
     /// When set, the session is launched with `--resume <id>` so `claude` restores this chat's memory.
     private let resumeSessionId: String?
     private let resolveExecutable: () -> URL?
@@ -28,6 +27,7 @@ final class ClaudeCodeRuntime {
     /// the exact id. The app clears the stored id so the chat isn't poisoned into resuming a dead id.
     /// Deliberately narrow — a transient failure (not logged in) neither errors on our id nor is matched.
     private let onResumeFailed: (@MainActor () -> Void)?
+    private let onAuthenticationRequired: (@MainActor () -> Void)?
     private let onUpdate: @MainActor ([AgentMessage], _ isStreaming: Bool) -> Void
 
     private var mapper = ClaudeCodeEventMapper()
@@ -42,23 +42,23 @@ final class ClaudeCodeRuntime {
     init(
         pluginDirectories: [URL] = [],
         mcpPort: Int = 19789,
-        permissionMode: String = "bypassPermissions",
         resumeSessionId: String? = nil,
         seedMessages: [AgentMessage] = [],
         resolveExecutable: @escaping () -> URL? = { ClaudeCodeLocator.resolve().executableURL },
         resolveWorkingDirectory: @MainActor @escaping () -> URL?,
         onSessionId: (@MainActor (String) -> Void)? = nil,
         onResumeFailed: (@MainActor () -> Void)? = nil,
+        onAuthenticationRequired: (@MainActor () -> Void)? = nil,
         onUpdate: @MainActor @escaping ([AgentMessage], Bool) -> Void
     ) {
         self.pluginDirectories = pluginDirectories
         self.mcpPort = mcpPort
-        self.permissionMode = permissionMode
         self.resumeSessionId = resumeSessionId
         self.resolveExecutable = resolveExecutable
         self.resolveWorkingDirectory = resolveWorkingDirectory
         self.onSessionId = onSessionId
         self.onResumeFailed = onResumeFailed
+        self.onAuthenticationRequired = onAuthenticationRequired
         self.onUpdate = onUpdate
         if !seedMessages.isEmpty { mapper.seed(seedMessages) }
     }
@@ -67,8 +67,14 @@ final class ClaudeCodeRuntime {
 
     /// `context` (e.g. the user's current selection) is prepended to the payload sent to the model but
     /// never shown in the transcript — the user sees exactly what they typed.
-    func send(text: String, context: String? = nil, imageBlocks: [[String: Any]] = [], hidden: Bool = false) {
-        mapper.appendUserText(text, hidden: hidden)
+    func send(
+        text: String,
+        context: String? = nil,
+        imageBlocks: [[String: Any]] = [],
+        hidden: Bool = false,
+        presentation: AgentUserPresentation? = nil
+    ) {
+        mapper.appendUserText(text, hidden: hidden, presentation: presentation)
         let payload = context.map { "\($0)\n\n\(text)" } ?? text
         if process == nil {
             guard startSession(firstMessage: payload, imageBlocks: imageBlocks) else { return }  // failure path already published
@@ -91,7 +97,7 @@ final class ClaudeCodeRuntime {
     /// (a note is appended and published before returning).
     private func startSession(firstMessage: String, imageBlocks: [[String: Any]] = []) -> Bool {
         guard let executable = resolveExecutable() else {
-            fail("Claude Code CLI not found. Install it, or set its path in Settings → Agent.")
+            fail("Claude Code CLI not found. Install it, then check Settings → Agent.")
             return false
         }
         guard let workingDirectory = resolveWorkingDirectory() else {
@@ -103,9 +109,8 @@ final class ClaudeCodeRuntime {
             workingDirectory: workingDirectory,
             pluginDirectories: pluginDirectories,
             pluginMcpServers: Self.loadPluginMcpServers(pluginDirectories)
-                .merging(ExternalMcpServers.all()) { existing, _ in existing },
+                .merging(Self.externalMcpServers()) { existing, _ in existing },
             mcpPort: mcpPort,
-            permissionMode: permissionMode,
             // #201: hand `claude -p` the FULL operating manual as a hard --append-system-prompt (it
             // already ends with the presentation contract), at parity with the API-key agent which gets
             // serverInstructions as its `system:` prompt. The MCP-advertised `instructions` field is a
@@ -136,11 +141,25 @@ final class ClaudeCodeRuntime {
 
     private func consume(_ stream: AsyncThrowingStream<String, Error>, generation gen: Int) async {
         var sawOutput = false
+        var authenticationEvents = ClaudeCodeAuthenticationEventBuffer()
         do {
             for try await line in stream {
                 guard gen == generation else { return }   // stopped / rotated before this line: don't ingest or publish
-                let events = ClaudeStreamDecoder.decode(line: line)
-                if !events.isEmpty { sawOutput = true }
+                let decoded = ClaudeStreamDecoder.decode(line: line)
+                if !decoded.isEmpty { sawOutput = true }
+                let events: [ClaudeStreamEvent]
+                switch authenticationEvents.receive(decoded) {
+                case .waiting:
+                    continue
+                case .authenticationRequired:
+                    process?.terminate()
+                    process = nil
+                    onAuthenticationRequired?()
+                    onUpdate(mapper.messages, false)
+                    return
+                case .events(let ready):
+                    events = ready
+                }
                 for event in events { mapper.ingest(event) }
                 if !reportedSessionId, let sid = mapper.sessionId {
                     reportedSessionId = true
@@ -165,6 +184,7 @@ final class ClaudeCodeRuntime {
             mapper.appendNote("Claude Code stream error: \(error.localizedDescription)")
         }
         guard gen == generation else { return }
+        for event in authenticationEvents.flush() { mapper.ingest(event) }
         // A session that ends with no parseable output almost always means claude exited early
         // (not logged in, a rejected flag/MCP config, a missing plugin venv, …). Surface its stderr
         // so the failure isn't silent.
@@ -208,6 +228,14 @@ final class ClaudeCodeRuntime {
         return result
     }
 
+    private static func externalMcpServers() -> [String: String] {
+        #if DEBUG
+        return ExternalMcpServers.all()
+        #else
+        return [:]
+        #endif
+    }
+
     private static let providerEnvNames: [(GenerationProvider, String)] = [
         (.fal, "FAL_KEY"),
         (.runway, "RUNWAYML_API_SECRET"),
@@ -234,11 +262,7 @@ final class ClaudeCodeRuntime {
         for (provider, name) in providerEnvNames {
             if let key = ProviderKeychain.load(provider) { env[name] = key }
         }
-        // Human-in-the-loop tools SUSPEND until the user acts: approve_gate / set_gate_state / the spend
-        // confirmation pop a card in the composer and don't return until the user taps it. claude's
-        // default MCP tool timeout would fire first — the card is torn down before the user responds and
-        // the pipeline silently stalls. Give it a 30-min ceiling (both the overall and idle timeouts);
-        // the app resolves the card on tab-close / new-chat / cancel, so abandonment is still handled.
+        // Spend approval still suspends; gate approval no longer depends on this timeout.
         env["MCP_TOOL_TIMEOUT"] = "1800000"
         env["MCP_TOOL_IDLE_TIMEOUT"] = "1800000"
         return env

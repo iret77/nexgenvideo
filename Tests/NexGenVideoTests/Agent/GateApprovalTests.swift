@@ -3,11 +3,7 @@ import Testing
 @testable import NexGenVideo
 import NexGenEngine
 
-/// A phase gate is the USER's decision, not the agent's (HAX G11). The agent's approve_gate /
-/// set_gate_state tools now SURFACE a confirmation in the composer dock and write the gate only after
-/// the user approves. The async continuation + the SwiftUI card aren't unit-testable, so these cover
-/// the pure logic (the model + the "does this state need confirmation" decision), the request/resolve
-/// seam in isolation (mirroring the spend-approval tests), and the tool's approve-vs-decline outcome.
+/// Covers durable user-gate requests and host-owned decisions.
 @MainActor
 @Suite("Gate approval — the user's decision (HAX G11)")
 struct GateApprovalTests {
@@ -34,32 +30,216 @@ struct GateApprovalTests {
         #expect(GateApproval.isApproval(.pending) == false)
     }
 
-    // MARK: - Request / resolve seam (isolated, like the spend-approval tests)
+    // MARK: - Request / resolve seam
 
-    @Test("requestGateApproval suspends until the user resolves it")
-    func requestSuspendsUntilResolved() async {
+    @Test("requestGateApproval returns immediately and leaves one durable card")
+    func requestReturnsPending() {
         let editor = EditorViewModel()
         let service = editor.agentService
 
-        async let decision = service.requestGateApproval(GateApproval(phase: "brief"))
-        for _ in 0..<20 where service.pendingGateApproval == nil { await Task.yield() }
+        let request = service.requestGateApproval(GateApproval(phase: "brief"))
+        #expect(request.isNew)
         #expect(service.pendingGateApproval?.phase == "brief")
+    }
 
-        service.resolveGate(.approved)
-        #expect(await decision == .approved)
+    @Test("A retry preserves the original card and request id")
+    func retryIsIdempotent() {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+
+        let first = service.requestGateApproval(GateApproval(phase: "brief"))
+        let retry = service.requestGateApproval(GateApproval(phase: "brief"))
+
+        #expect(retry.isNew == false)
+        #expect(retry.matchesRequestedApproval)
+        #expect(retry.approval.id == first.approval.id)
+        #expect(service.pendingGateApproval?.id == first.approval.id)
+    }
+
+    @Test("A competing request cannot replace the open card")
+    func competingRequestKeepsFirstCard() {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+
+        let first = service.requestGateApproval(GateApproval(phase: "brief"))
+        let competing = service.requestGateApproval(GateApproval(phase: "analysis"))
+
+        #expect(competing.isNew == false)
+        #expect(competing.matchesRequestedApproval == false)
+        #expect(competing.approval.id == first.approval.id)
+        #expect(service.pendingGateApproval?.phase == "brief")
+    }
+
+    @Test("Cancelling the model transport does not decide or remove the gate")
+    func transportCancellationKeepsCard() {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+
+        _ = service.requestGateApproval(GateApproval(phase: "brief"))
+        service.cancel()
+
+        #expect(service.pendingGateApproval?.phase == "brief")
+    }
+
+    @Test("Declining is an explicit decision and clears the card")
+    func declineClears() {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+
+        _ = service.requestGateApproval(GateApproval(phase: "brief"))
+        let result = service.resolveGate(.declined)
+
+        #expect(result?.isError == false)
         #expect(service.pendingGateApproval == nil)
     }
 
-    @Test("Declining resolves to .declined and clears the card")
-    func declineResolvesAndClears() async {
+    @Test("An external MCP approval does not start an unrelated in-app turn")
+    func externalApprovalDoesNotSendInAppMessage() async {
         let editor = EditorViewModel()
         let service = editor.agentService
 
-        async let decision = service.requestGateApproval(GateApproval(phase: "brief"))
-        for _ in 0..<20 where service.pendingGateApproval == nil { await Task.yield() }
-        service.resolveGate(.declined)
-        #expect(await decision == .declined)
-        #expect(service.pendingGateApproval == nil)
+        _ = service.requestGateApproval(GateApproval(phase: "brief"))
+        _ = service.resolveGate(.declined)
+        await Task.yield()
+
+        #expect(service.messages.isEmpty)
+        #expect(service.streamError?.errorDescription == nil)
+    }
+
+    @Test("approve_gate returns approval_pending without waiting or writing")
+    func toolReturnsPending() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+
+        let result = await h.runRaw(
+            "approve_gate",
+            args: ["project_dir": dataRoot.path, "phase": "project_init"]
+        )
+        let payload = try JSONSerialization.jsonObject(
+            with: Data(ToolHarness.textOf(result).utf8)
+        ) as? [String: Any]
+
+        #expect(result.isError == false)
+        #expect(payload?["status"] as? String == "approval_pending")
+        #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
+
+        let state = try await h.runOK("get_project_state", args: ["project_dir": dataRoot.path]) as? [String: Any]
+        let phases = try #require(state?["phases"] as? [[String: Any]])
+        #expect(phases.first { $0["phase"] as? String == "project_init" }?["state"] as? String == "pending")
+    }
+
+    @Test("set_gate_state approval request does not mark the project edited")
+    func setStateApprovalRequestDoesNotDirty() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        var dirtied = 0
+        h.editor.onPipelineChanged = { dirtied += 1 }
+
+        let result = await h.runRaw("set_gate_state", args: [
+            "project_dir": dataRoot.path,
+            "phase": "project_init",
+            "state": "approved",
+        ])
+        let payload = try JSONSerialization.jsonObject(
+            with: Data(ToolHarness.textOf(result).utf8)
+        ) as? [String: Any]
+
+        #expect(payload?["status"] as? String == "approval_pending")
+        #expect(dirtied == 0)
+    }
+
+    @Test("set_gate_state immediate write marks the project edited once")
+    func setStateImmediateWriteDirtiesOnce() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        var dirtied = 0
+        h.editor.onPipelineChanged = { dirtied += 1 }
+
+        let result = await h.runRaw("set_gate_state", args: [
+            "project_dir": dataRoot.path,
+            "phase": "project_init",
+            "state": "needs_revision",
+        ])
+
+        #expect(result.isError == false)
+        #expect(dirtied == 1)
+    }
+
+    @Test("set_gate_state cannot mark an unreached phase for revision")
+    func setStateRejectsFuturePhase() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+
+        let result = await h.runRaw("set_gate_state", args: [
+            "project_dir": dataRoot.path,
+            "phase": "brief",
+            "state": "needs_revision",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("future phase"))
+    }
+
+    @Test("A failed host write leaves the card open with the real reason")
+    func failedWriteKeepsCard() {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let missingRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-gate-root-\(UUID().uuidString)", isDirectory: true)
+
+        _ = service.requestGateApproval(GateApproval(
+            phase: "project_init",
+            dataRoot: missingRoot
+        ))
+        let result = service.resolveGate(.approved)
+
+        #expect(result?.isError == true)
+        #expect(service.pendingGateApproval?.phase == "project_init")
+        #expect(service.gateApprovalError?.isEmpty == false)
+    }
+
+    @Test("An approved gate cannot resume the agent across a host-owned intake card")
+    func approvalDefersFollowUpUntilIntakeCompletes() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        service.isStreaming = true
+        _ = service.requestGateApproval(GateApproval(
+            phase: "project_init",
+            dataRoot: dataRoot
+        ))
+        service.isStreaming = false
+
+        let intake = AgentDialog(
+            id: "hardstep.brief.script",
+            title: "Existing story",
+            symbol: "doc.text",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: [],
+            fileIntake: AgentDialog.FileIntake(
+                accept: ["text"],
+                prompt: nil,
+                allowsMultiple: false,
+                attachAs: "script",
+                namePrompt: nil,
+                required: false
+            ),
+            purpose: .workflowIntake
+        )
+        service.pendingDialog = intake
+
+        let result = service.resolveGate(.approved)
+        #expect(result?.isError == false)
+        #expect(!service.resumePendingGateFollowUp())
+        await Task.yield()
+        #expect(service.pendingDialog?.id == intake.id)
+
+        service.pendingDialog = nil
+        #expect(service.resumePendingGateFollowUp())
     }
 
     // MARK: - Tool outcome (approve writes, decline does not)

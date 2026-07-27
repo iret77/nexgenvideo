@@ -10,22 +10,22 @@ struct PluginLauncherPopover: View {
     let onRun: (PluginCommandCatalog.PluginCommand) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             header
             Rectangle().fill(AppTheme.Border.subtleColor).frame(height: AppTheme.BorderWidth.hairline)
             content
         }
-        .frame(width: 320)
+        .frame(width: AppTheme.ComponentSize.pluginLauncherWidth)
         .glassEffect(.clear, in: .rect(cornerRadius: AppTheme.Radius.md))
     }
 
     private var header: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: "puzzlepiece.extension")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             Text("Workflows")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer()
         }
@@ -52,14 +52,14 @@ struct PluginLauncherPopover: View {
                 }
                 .padding(AppTheme.Spacing.sm)
             }
-            .frame(maxHeight: 360)
+            .frame(maxHeight: AppTheme.ComponentSize.pluginLauncherMaxHeight)
         }
     }
 
     private func pluginSection(_ plugin: PluginCommandCatalog.PluginInfo) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Text(plugin.name)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .textCase(.uppercase)
                 .padding(.horizontal, AppTheme.Spacing.xs)
@@ -81,11 +81,11 @@ private struct PluginCommandRow: View {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     HStack(spacing: AppTheme.Spacing.xs) {
                         Text(command.title)
-                            .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                            .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                             .foregroundStyle(AppTheme.Text.primaryColor)
                         if let hint = command.argumentHint {
                             Text(hint)
-                                .font(.system(size: AppTheme.FontSize.xxs, weight: .medium).monospaced())
+                                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
                                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                                 .padding(.horizontal, AppTheme.Spacing.xs)
                                 .padding(.vertical, AppTheme.Spacing.xxs)
@@ -105,7 +105,7 @@ private struct PluginCommandRow: View {
                 }
                 Spacer(minLength: 0)
                 Image(systemName: command.requiresArgument ? "pencil.line" : "arrow.up")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(hovering ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
             }
             .padding(.horizontal, AppTheme.Spacing.sm)
@@ -114,7 +114,7 @@ private struct PluginCommandRow: View {
             .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-                    .fill(hovering ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint) : Color.clear)
+                    .fill(hovering ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
             )
         }
         .buttonStyle(.plain)

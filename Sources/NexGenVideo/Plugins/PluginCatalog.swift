@@ -16,6 +16,8 @@ struct PluginCatalog: Decodable, Equatable {
         /// A short benefit line under the headline (optional).
         let benefit: String?
         let version: String
+        let projectSchema: String
+        let migratesFrom: [String]
         let minAppVersion: String
         /// Download URL of the pack's zipped `.ngvpack`.
         let url: URL
@@ -25,6 +27,61 @@ struct PluginCatalog: Decodable, Equatable {
         /// asset so the gallery can show the real badge BEFORE install. Absent → the
         /// gallery paints its gradient fallback.
         let badge: URL?
+
+        init(
+            id: String,
+            displayName: String,
+            tagline: String,
+            headline: String? = nil,
+            benefit: String? = nil,
+            version: String,
+            projectSchema: String? = nil,
+            migratesFrom: [String] = [],
+            minAppVersion: String,
+            url: URL,
+            sha256: String,
+            badge: URL? = nil
+        ) {
+            self.id = id
+            self.displayName = displayName
+            self.tagline = tagline
+            self.headline = headline
+            self.benefit = benefit
+            self.version = version
+            self.projectSchema = projectSchema ?? "\(id)/legacy"
+            self.migratesFrom = migratesFrom
+            self.minAppVersion = minAppVersion
+            self.url = url
+            self.sha256 = sha256
+            self.badge = badge
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, displayName, tagline, headline, benefit, version
+            case projectSchema, migratesFrom, minAppVersion, url, sha256, badge
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            let id = try values.decode(String.self, forKey: .id)
+            self.init(
+                id: id,
+                displayName: try values.decode(String.self, forKey: .displayName),
+                tagline: try values.decode(String.self, forKey: .tagline),
+                headline: try values.decodeIfPresent(String.self, forKey: .headline),
+                benefit: try values.decodeIfPresent(String.self, forKey: .benefit),
+                version: try values.decode(String.self, forKey: .version),
+                projectSchema: try values.decodeIfPresent(String.self, forKey: .projectSchema),
+                migratesFrom: try values.decodeIfPresent(
+                    [String].self,
+                    forKey: .migratesFrom
+                ) ?? [],
+                minAppVersion: try values.decode(String.self, forKey: .minAppVersion),
+                url: try values.decode(URL.self, forKey: .url),
+                sha256: try values.decode(String.self, forKey: .sha256),
+                badge: try values.decodeIfPresent(URL.self, forKey: .badge)
+            )
+        }
     }
 }
 
@@ -36,8 +93,23 @@ enum PluginCatalogService {
     /// deleted and recreated on every push to main: that made a versioned release ship a fixed pack
     /// the app never read (0.7.7 "Damaged pack" stayed broken in the field until dev-latest was
     /// re-run by hand). Pack assets here are version-stamped, so a URL always addresses one version.
-    static let catalogURL = URL(
+    static let stableCatalogURL = URL(
         string: "https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json")!
+
+    static var catalogURL: URL {
+        resolvedCatalogURL(
+            configuredValue: Bundle.main.object(forInfoDictionaryKey: "NGVPluginCatalogURL") as? String
+        )
+    }
+
+    nonisolated static func resolvedCatalogURL(configuredValue: String?) -> URL {
+        guard let configuredValue,
+              let url = URL(string: configuredValue),
+              url.scheme?.lowercased() == "https" else {
+            return stableCatalogURL
+        }
+        return url
+    }
 
     enum FetchError: Error { case http(Int); case empty; case insecureURL(String) }
 

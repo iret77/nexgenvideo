@@ -12,7 +12,7 @@ struct ToolbarView: View {
                 toolbarButton("arrow.uturn.forward", help: "Redo (⇧⌘Z)", action: redo)
             }
 
-            Divider()
+            AppDivider()
                 .frame(height: AppTheme.Spacing.xl)
 
             // Tool mode
@@ -21,7 +21,7 @@ struct ToolbarView: View {
                 toolModeButton("scissors", mode: .razor, help: "Razor (C)")
             }
 
-            Divider()
+            AppDivider()
                 .frame(height: AppTheme.Spacing.xl)
 
             // Split, trim buttons — trim is edit-only chrome (docs/UI_UX_CONCEPT.md §3)
@@ -31,7 +31,7 @@ struct ToolbarView: View {
                 bracketButton("]", help: "Trim End to Playhead (W)", isDisabled: !editor.allowsTimelineEditChrome, action: editor.trimEndToPlayhead)
             }
 
-            Divider()
+            AppDivider()
                 .frame(height: AppTheme.Spacing.xl)
 
             // Add content
@@ -57,7 +57,7 @@ struct ToolbarView: View {
                 Slider(value: zoomBinding, in: log(editor.minZoomScale)...log(Zoom.max))
                     .controlSize(.mini)
                     .tint(AppTheme.Accent.primary)
-                    .frame(width: 100)
+                    .frame(width: AppTheme.ComponentSize.toolbarZoomWidth)
                 zoomButton(
                     "plus.magnifyingglass",
                     help: "Zoom In",
@@ -75,12 +75,12 @@ struct ToolbarView: View {
             Image(systemName: systemName)
                 .font(.system(size: AppTheme.FontSize.md))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: 24, height: 24)
+                .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
-        .opacity(isDisabled ? AppTheme.Opacity.strong : 1)
+        .opacity(isDisabled ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help(help)
     }
 
@@ -130,21 +130,21 @@ struct ToolbarView: View {
             Image(systemName: systemName)
                 .font(.system(size: AppTheme.FontSize.md))
                 .foregroundStyle(isActive ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-                .frame(width: 24, height: 24)
+                .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
                 .hoverHighlight(isActive: isActive)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
-        .opacity(disabled ? AppTheme.Opacity.strong : 1)
+        .opacity(disabled ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help(help)
     }
 
     private func textGlyphButton(_ glyph: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(glyph)
-                .font(.system(size: 17, weight: .bold, design: .serif))
+                .font(.system(size: AppTheme.FontSize.xlSm, weight: AppTheme.FontWeight.bold, design: .serif))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: 24, height: 24)
+                .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
@@ -154,14 +154,14 @@ struct ToolbarView: View {
     private func bracketButton(_ bracket: String, help: String, isDisabled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(bracket)
-                .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                .font(.system(size: AppTheme.FontSize.lgXl, weight: AppTheme.FontWeight.semibold, design: .monospaced))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: 24, height: 24)
+                .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
-        .opacity(isDisabled ? AppTheme.Opacity.strong : 1)
+        .opacity(isDisabled ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help(help)
     }
 

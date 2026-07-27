@@ -34,8 +34,8 @@ enum PreviewTab: Identifiable, Equatable {
 
     var tintColor: Color {
         switch self {
-        case .timeline: AppTheme.Accent.primary.opacity(0.15)
-        case .mediaAsset(_, _, let type): Color(type.themeColor).opacity(0.25)
+        case .timeline: AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted)
+        case .mediaAsset(_, _, let type): Color(type.themeColor).opacity(AppTheme.Opacity.moderate)
         }
     }
 

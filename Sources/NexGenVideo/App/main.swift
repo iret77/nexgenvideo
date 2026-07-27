@@ -9,7 +9,7 @@ PackSelfTest.runIfRequested()
 Telemetry.start()
 BundledFonts.register()
 ModelCatalog.shared.configure()
-ModelCatalog.shared.load(entries: FalModelRegistry.entries + MarbleModelRegistry.entries + RunwayModelRegistry.entries)
+ModelCatalog.shared.load(entries: ModelCatalog.launchEntries)
 // Then refresh from the hosted catalog (models + ranking cards without an app release); the
 // registries above are the offline fallback and first-run seed.
 Task { @MainActor in await RemoteCatalog.refresh() }
@@ -25,8 +25,7 @@ CatalogDiscovery.start()
 // in the picker with a reason instead of loading (never a crash).
 PluginLoader.loadInstalled()
 
-// Keep installed packs current in the background (like Sparkle for the app): newer versions stage to
-// disk and go live on the next launch, so users rarely meet the "restart to update" path at all.
+// Stage compatible pack updates without changing any open project's pinned version.
 Task { @MainActor in await PluginAutoUpdate.run() }
 
 // Shorten the default tooltip delay from 2s to 0.01s.

@@ -45,7 +45,7 @@ struct ScrubbableNumberField: View {
                     TextField("", text: $editText)
                         .textFieldStyle(.plain)
                         .multilineTextAlignment(.trailing)
-                        .font(.system(size: AppTheme.FontSize.sm, weight: .medium).monospacedDigit())
+                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium).monospacedDigit())
                         .foregroundStyle(AppTheme.Text.primaryColor)
                         .focused($editFocused)
                         .onAppear { editFocused = true }
@@ -56,7 +56,7 @@ struct ScrubbableNumberField: View {
                         }
                 } else {
                     Text(displayText)
-                        .font(.system(size: AppTheme.FontSize.sm, weight: .medium).monospacedDigit())
+                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium).monospacedDigit())
                         .foregroundStyle(isMixed ? AppTheme.Text.tertiaryColor : ScrubbableTheme.accent)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .lineLimit(1)
@@ -69,7 +69,7 @@ struct ScrubbableNumberField: View {
 
             if let trailingLabel {
                 Text(trailingLabel)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize()
             }

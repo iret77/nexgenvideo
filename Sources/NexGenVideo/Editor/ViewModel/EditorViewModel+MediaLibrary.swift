@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import CryptoKit
 
 enum MediaPanelItemKey {
     static let folderPrefix = "folder-"
@@ -36,6 +37,7 @@ private struct MediaImportPlan: Sendable {
     var files: [File] = []
     var rejectedUnsupportedNames: [String] = []
     var rejectedLottieNames: [String] = []
+    var scanFailure: MediaImportError?
 }
 
 private enum MediaImportScanner {
@@ -46,10 +48,17 @@ private enum MediaImportScanner {
 
     static func scan(roots: [Root]) -> MediaImportPlan {
         var plan = MediaImportPlan()
+        var visitedDirectories: Set<String> = []
         for root in roots {
+            guard plan.scanFailure == nil else { break }
             let parent = MediaImportPlan.Parent.existingFolderId(root.parentFolderId)
             if isDirectory(root.url) {
-                scanFolder(at: root.url, parent: parent, into: &plan)
+                scanFolder(
+                    at: root.url,
+                    parent: parent,
+                    visitedDirectories: &visitedDirectories,
+                    into: &plan
+                )
             } else {
                 scanFile(at: root.url, parent: parent, isRootItem: true, into: &plan)
             }
@@ -61,13 +70,24 @@ private enum MediaImportScanner {
         (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
     }
 
-    private static func scan(entries: [URL], parent: MediaImportPlan.Parent, into plan: inout MediaImportPlan) {
+    private static func scan(
+        entries: [URL],
+        parent: MediaImportPlan.Parent,
+        visitedDirectories: inout Set<String>,
+        into plan: inout MediaImportPlan
+    ) {
         let sorted = entries.sorted {
             $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
         }
         for entry in sorted {
+            guard plan.scanFailure == nil else { break }
             if isDirectory(entry) {
-                scanFolder(at: entry, parent: parent, into: &plan)
+                scanFolder(
+                    at: entry,
+                    parent: parent,
+                    visitedDirectories: &visitedDirectories,
+                    into: &plan
+                )
             } else {
                 scanFile(at: entry, parent: parent, isRootItem: false, into: &plan)
             }
@@ -77,16 +97,30 @@ private enum MediaImportScanner {
     private static func scanFolder(
         at url: URL,
         parent: MediaImportPlan.Parent,
+        visitedDirectories: inout Set<String>,
         into plan: inout MediaImportPlan
     ) {
-        guard let entries = directoryEntries(at: url) else { return }
+        let identity = url.standardizedFileURL.resolvingSymlinksInPath().path
+        guard visitedDirectories.insert(identity).inserted else { return }
+        let entries: [URL]
+        do {
+            entries = try directoryEntries(at: url)
+        } catch {
+            plan.scanFailure = .folderUnreadable(url.lastPathComponent, error.localizedDescription)
+            return
+        }
         let folderIndex = plan.folders.count
         plan.folders.append(.init(name: url.lastPathComponent, parent: parent))
-        scan(entries: entries, parent: .plannedFolder(folderIndex), into: &plan)
+        scan(
+            entries: entries,
+            parent: .plannedFolder(folderIndex),
+            visitedDirectories: &visitedDirectories,
+            into: &plan
+        )
     }
 
-    private static func directoryEntries(at url: URL) -> [URL]? {
-        try? FileManager.default.contentsOfDirectory(
+    private static func directoryEntries(at url: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
@@ -116,13 +150,255 @@ private enum MediaImportScanner {
     }
 }
 
+enum MediaImportError: LocalizedError, Equatable, Sendable {
+    case projectMustBeSaved
+    case unsupportedFile(String)
+    case invalidLottie(String)
+    case sourceUnavailable(String)
+    case sourceNotFile(String)
+    case folderUnreadable(String, String)
+    case prepareFailed(String)
+    case copyFailed(String, String)
+    case cancelled
+
+    var errorDescription: String? {
+        switch self {
+        case .projectMustBeSaved:
+            "Save the project before importing media."
+        case .unsupportedFile(let name):
+            "Can't import \"\(name)\" — unsupported file type."
+        case .invalidLottie(let name):
+            "Can't import \"\(name)\" — not a Lottie animation."
+        case .sourceUnavailable(let name):
+            "Can't import \"\(name)\" — the file is unavailable."
+        case .sourceNotFile(let name):
+            "Can't import \"\(name)\" — choose a file, not a folder."
+        case .folderUnreadable(let name, let detail):
+            "Can't import folder \"\(name)\" — its contents couldn't be read: \(detail)"
+        case .prepareFailed(let detail):
+            "Can't import media — the project media folder couldn't be prepared: \(detail)"
+        case .copyFailed(let name, let detail):
+            "Can't import \"\(name)\" — it couldn't be copied into the project: \(detail)"
+        case .cancelled:
+            "Media import canceled."
+        }
+    }
+}
+
+struct DurableMediaCopy: Sendable {
+    let url: URL
+    let created: Bool
+    let digest: String
+}
+
+private struct PreparedMediaImport: Sendable {
+    struct File: Sendable {
+        let source: MediaImportPlan.File
+        let url: URL
+    }
+
+    let files: [File]
+    let createdURLs: [URL]
+}
+
+enum DurableMediaStore {
+    private static let chunkBytes = 4 * 1024 * 1024
+
+    static func digest(of url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let data = try handle.read(upToCount: chunkBytes), !data.isEmpty {
+            if Task.isCancelled { throw CancellationError() }
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func copy(
+        _ fileURL: URL,
+        into mediaDirectory: URL,
+        reusableByDigest: [String: URL],
+        fileExtension: String? = nil
+    ) throws -> DurableMediaCopy {
+        let fm = FileManager.default
+        let source = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+        let projectMedia = mediaDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let values: URLResourceValues
+        do {
+            values = try source.resourceValues(forKeys: [.isRegularFileKey])
+        } catch {
+            throw MediaImportError.sourceUnavailable(fileURL.lastPathComponent)
+        }
+        guard values.isRegularFile == true else {
+            throw MediaImportError.sourceNotFile(fileURL.lastPathComponent)
+        }
+        if source.path == projectMedia.path || source.path.hasPrefix(projectMedia.path + "/") {
+            return DurableMediaCopy(
+                url: source,
+                created: false,
+                digest: try digest(of: source)
+            )
+        }
+
+        let staging = mediaDirectory.appendingPathComponent(
+            ".import-\(UUID().uuidString).partial",
+            isDirectory: false
+        )
+        guard fm.createFile(atPath: staging.path, contents: nil) else {
+            throw MediaImportError.copyFailed(
+                fileURL.lastPathComponent,
+                "the staging file couldn't be created"
+            )
+        }
+        var completed = false
+        defer {
+            if !completed { try? fm.removeItem(at: staging) }
+        }
+
+        do {
+            let input = try FileHandle(forReadingFrom: source)
+            let output = try FileHandle(forWritingTo: staging)
+            defer {
+                try? input.close()
+                try? output.close()
+            }
+            var hasher = SHA256()
+            while let data = try input.read(upToCount: chunkBytes), !data.isEmpty {
+                if Task.isCancelled { throw CancellationError() }
+                hasher.update(data: data)
+                try output.write(contentsOf: data)
+            }
+            try output.synchronize()
+            let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            if let reusable = reusableByDigest[digest],
+               fm.fileExists(atPath: reusable.path) {
+                try fm.removeItem(at: staging)
+                completed = true
+                return DurableMediaCopy(url: reusable, created: false, digest: digest)
+            }
+
+            let ext = (fileExtension ?? fileURL.pathExtension).lowercased()
+            let filename = ext.isEmpty ? digest : "\(digest).\(ext)"
+            let destination = mediaDirectory.appendingPathComponent(filename)
+            if fm.fileExists(atPath: destination.path) {
+                guard try Self.digest(of: destination) == digest else {
+                    throw MediaImportError.copyFailed(
+                        fileURL.lastPathComponent,
+                        "the content-addressed destination is corrupt"
+                    )
+                }
+                try fm.removeItem(at: staging)
+                completed = true
+                return DurableMediaCopy(url: destination, created: false, digest: digest)
+            }
+            try fm.moveItem(at: staging, to: destination)
+            completed = true
+            return DurableMediaCopy(url: destination, created: true, digest: digest)
+        } catch is CancellationError {
+            throw MediaImportError.cancelled
+        } catch let error as MediaImportError {
+            throw error
+        } catch {
+            throw MediaImportError.copyFailed(
+                fileURL.lastPathComponent,
+                error.localizedDescription
+            )
+        }
+    }
+}
+
+private enum MediaImportPreparer {
+    typealias Progress = @Sendable (_ completed: Int, _ currentName: String) async -> Void
+
+    static func rollback(
+        _ createdURLs: [URL],
+        mediaDirectory: URL
+    ) {
+        let root = mediaDirectory.standardizedFileURL
+            .resolvingSymlinksInPath()
+        for url in createdURLs.reversed() {
+            let target = url.standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard target.path.hasPrefix(root.path + "/"),
+                  (try? target.resourceValues(
+                      forKeys: [.isRegularFileKey]
+                  ).isRegularFile) == true else {
+                continue
+            }
+            try? FileManager.default.removeItem(at: target)
+        }
+    }
+
+    static func prepare(
+        _ plan: MediaImportPlan,
+        mediaDirectory: URL,
+        existingMediaURLs: [URL],
+        progress: Progress
+    ) async throws -> PreparedMediaImport {
+        var reusableByDigest: [String: URL] = [:]
+        for url in existingMediaURLs {
+            if Task.isCancelled { throw MediaImportError.cancelled }
+            let stem = url.deletingPathExtension().lastPathComponent.lowercased()
+            if stem.count == 64, stem.allSatisfy(\.isHexDigit) {
+                reusableByDigest[stem] = reusableByDigest[stem] ?? url
+            } else if let digest = try? DurableMediaStore.digest(of: url) {
+                reusableByDigest[digest] = reusableByDigest[digest] ?? url
+            }
+        }
+
+        var files: [PreparedMediaImport.File] = []
+        var createdURLs: [URL] = []
+        do {
+            for (index, file) in plan.files.enumerated() {
+                if Task.isCancelled { throw MediaImportError.cancelled }
+                await progress(index, file.name)
+                let copy = try DurableMediaStore.copy(
+                    file.url,
+                    into: mediaDirectory,
+                    reusableByDigest: reusableByDigest
+                )
+                reusableByDigest[copy.digest] = copy.url
+                files.append(.init(source: file, url: copy.url))
+                if copy.created { createdURLs.append(copy.url) }
+            }
+            if Task.isCancelled { throw MediaImportError.cancelled }
+            await progress(plan.files.count, "")
+            return PreparedMediaImport(files: files, createdURLs: createdURLs)
+        } catch {
+            rollback(createdURLs, mediaDirectory: mediaDirectory)
+            throw error
+        }
+    }
+}
+
 extension EditorViewModel {
+
+    func prepareWorkingMediaDirectory() throws -> URL {
+        guard let workingRoot, let key = openWorkingCopyKey else {
+            throw MediaImportError.projectMustBeSaved
+        }
+        let mediaDir = workingRoot.appendingPathComponent(
+            Project.mediaDirectoryName,
+            isDirectory: true
+        )
+        do {
+            try ProjectWorkingCopy.markDirty(key: key)
+            try FileManager.default.createDirectory(
+                at: mediaDir,
+                withIntermediateDirectories: true
+            )
+            return mediaDir
+        } catch {
+            throw MediaImportError.prepareFailed(error.localizedDescription)
+        }
+    }
 
     func importMediaAsset(_ asset: MediaAsset, skipAppend: Bool = false) {
         if !skipAppend {
             mediaAssets.append(asset)
         }
-        let entry = asset.toManifestEntry(projectURL: projectURL)
+        let entry = asset.toManifestEntry(projectURL: workingRoot)
         mediaManifest.entries.append(entry)
         Log.project.notice(
             "media imported asset=\(asset.id.prefix(8)) type=\(asset.type.rawValue)",
@@ -135,6 +411,7 @@ extension EditorViewModel {
                 "manifestEntries": mediaManifest.entries.count
             ]
         )
+        onPipelineChanged?()
     }
 
     /// Resolve a drag pasteboard payload (one `nexgen-asset://<id>` per line).
@@ -162,59 +439,68 @@ extension EditorViewModel {
         mediaPanelToast = nil
     }
 
-    @discardableResult
-    func addMediaAsset(from url: URL, folderId: String? = nil) -> MediaAsset? {
-        guard let type = ClipType(fileExtension: url.pathExtension.lowercased()) else {
-            mediaPanelToast = "Can't import \"\(url.lastPathComponent)\" — unsupported file type."
-            return nil
-        }
-        if type == .lottie, !LottieVideoGenerator.isLottie(at: url) {
-            mediaPanelToast = "Can't import \"\(url.lastPathComponent)\" — not a Lottie animation."
-            return nil
-        }
-        return addMediaAsset(from: url, type: type, folderId: folderId)
+    func cancelMediaImport() {
+        mediaImportCancellationRequested = true
+        mediaImportCancellation?()
+        mediaImportTail?.cancel()
     }
 
     @discardableResult
-    private func addMediaAsset(from url: URL, type: ClipType, folderId: String? = nil) -> MediaAsset {
+    func addMediaAsset(from url: URL, folderId: String? = nil) -> MediaAsset? {
+        do {
+            return try addMediaAssetThrowing(from: url, folderId: folderId)
+        } catch {
+            reportMediaImportFailure(error)
+            return nil
+        }
+    }
+
+    @discardableResult
+    func addMediaAssetThrowing(from url: URL, folderId: String? = nil) throws -> MediaAsset {
+        guard let type = ClipType(fileExtension: url.pathExtension.lowercased()) else {
+            throw MediaImportError.unsupportedFile(url.lastPathComponent)
+        }
+        if type == .lottie, !LottieVideoGenerator.isLottie(at: url) {
+            throw MediaImportError.invalidLottie(url.lastPathComponent)
+        }
         let name = url.deletingPathExtension().lastPathComponent
-        let asset = MediaAsset(url: durableProjectMediaURL(for: url), type: type, name: name)
+        let asset = MediaAsset(url: try durableProjectMediaURL(for: url), type: type, name: name)
         asset.folderId = folderId
         importMediaAsset(asset)
         Task { await finalizeImportedAsset(asset) }
         return asset
     }
 
-    /// Copy an imported file into the package's `media/` so the `.ngv` stays self-contained — the
-    /// manifest then records `.project(relativePath:)`, not a host-specific absolute path. Copy, never
-    /// move. Files already inside the package and unsaved projects (no package yet) pass through.
-    func durableProjectMediaURL(for fileURL: URL) -> URL {
-        guard let projectURL,
-              !fileURL.standardizedFileURL.path.hasPrefix(projectURL.standardizedFileURL.path)
-        else { return fileURL }
-        let mediaDir = projectURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
-        let fm = FileManager.default
-        // Hash source path + mtime so distinct sources never alias and an edited source yields a fresh
-        // copy, while re-importing an unchanged file reuses its copy.
-        let src = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
-        let mtime = ((try? fm.attributesOfItem(atPath: fileURL.path))?[.modificationDate] as? Date)?
-            .timeIntervalSince1970 ?? 0
-        var h: UInt64 = 0xcbf29ce484222325
-        for b in "\(src)|\(mtime)".utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
-        let base = fileURL.deletingPathExtension().lastPathComponent
-        let ext = fileURL.pathExtension
-        let stamped = "\(base)-\(String(h, radix: 16))"
-        let dest = mediaDir.appendingPathComponent(ext.isEmpty ? stamped : "\(stamped).\(ext)")
-        if !fm.fileExists(atPath: dest.path) {
-            try? fm.createDirectory(at: mediaDir, withIntermediateDirectories: true)
-            try? fm.copyItem(at: fileURL, to: dest)
+    func durableProjectMediaURL(for fileURL: URL) throws -> URL {
+        try copyIntoProjectMedia(fileURL).url
+    }
+
+    private func copyIntoProjectMedia(_ fileURL: URL) throws -> DurableMediaCopy {
+        let mediaDir = try prepareWorkingMediaDirectory()
+        var reusable: [String: URL] = [:]
+        for asset in mediaAssets {
+            let name = asset.url.deletingPathExtension().lastPathComponent.lowercased()
+            if name.count == 64, name.allSatisfy(\.isHexDigit) {
+                reusable[name] = reusable[name] ?? asset.url
+            }
         }
-        return fm.fileExists(atPath: dest.path) ? dest : fileURL
+        return try DurableMediaStore.copy(
+            fileURL,
+            into: mediaDir,
+            reusableByDigest: reusable
+        )
     }
 
     struct MediaImportSummary: Sendable {
         var assetCount: Int
         var folderCount: Int
+        var failure: String?
+
+        init(assetCount: Int, folderCount: Int, failure: String? = nil) {
+            self.assetCount = assetCount
+            self.folderCount = folderCount
+            self.failure = failure
+        }
     }
 
     /// Import files and folders from the open panel or a Finder drop as one undo step
@@ -238,34 +524,151 @@ extension EditorViewModel {
 
     @discardableResult
     private func performFinderImport(_ urls: [URL], into folderId: String?) async -> MediaImportSummary {
+        mediaImportCancellationRequested = false
         let before = mediaLibraryUndoSnapshot()
         let roots = urls.map { MediaImportScanner.Root(url: $0, parentFolderId: folderId) }
 
         let plan = await Task.detached(priority: .userInitiated) {
             MediaImportScanner.scan(roots: roots)
         }.value
-        return applyMediaImportPlan(plan, restoringFrom: before)
+        if let error = plan.scanFailure {
+            reportMediaImportFailure(error)
+            return MediaImportSummary(
+                assetCount: 0,
+                folderCount: 0,
+                failure: error.localizedDescription
+            )
+        }
+        if plan.files.isEmpty, plan.folders.isEmpty {
+            return applyMediaImportPlan(
+                plan,
+                prepared: PreparedMediaImport(files: [], createdURLs: []),
+                restoringFrom: before
+            )
+        }
+        let mediaDirectory: URL
+        do {
+            mediaDirectory = try prepareWorkingMediaDirectory()
+        } catch {
+            reportMediaImportFailure(error)
+            return MediaImportSummary(
+                assetCount: 0,
+                folderCount: 0,
+                failure: error.localizedDescription
+            )
+        }
+        guard !Task.isCancelled else {
+            return MediaImportSummary(
+                assetCount: 0,
+                folderCount: 0,
+                failure: MediaImportError.cancelled.localizedDescription
+            )
+        }
+
+        mediaImportProgress = MediaImportProgress(
+            completed: 0,
+            total: plan.files.count,
+            currentName: plan.files.first?.name
+        )
+        let existingMediaURLs = mediaAssets.map(\.url)
+        let worker = Task.detached(priority: .userInitiated) {
+            try await MediaImportPreparer.prepare(
+                plan,
+                mediaDirectory: mediaDirectory,
+                existingMediaURLs: existingMediaURLs,
+                progress: { [weak self] completed, currentName in
+                    await MainActor.run {
+                        self?.mediaImportProgress = MediaImportProgress(
+                            completed: completed,
+                            total: plan.files.count,
+                            currentName: currentName.isEmpty ? nil : currentName
+                        )
+                    }
+                }
+            )
+        }
+        mediaImportCancellation = { worker.cancel() }
+        let result = await worker.result
+        let wasCancelled = mediaImportCancellationRequested
+            || Task.isCancelled
+        mediaImportCancellation = nil
+        mediaImportCancellationRequested = false
+        mediaImportProgress = nil
+
+        if wasCancelled {
+            if case .success(let prepared) = result {
+                MediaImportPreparer.rollback(
+                    prepared.createdURLs,
+                    mediaDirectory: mediaDirectory
+                )
+            }
+            return MediaImportSummary(
+                assetCount: 0,
+                folderCount: 0,
+                failure: MediaImportError.cancelled.localizedDescription
+            )
+        }
+        switch result {
+        case .success(let prepared):
+            return applyMediaImportPlan(plan, prepared: prepared, restoringFrom: before)
+        case .failure(let error):
+            let reported = (error as? MediaImportError) ?? .copyFailed(
+                "media",
+                error.localizedDescription
+            )
+            reportMediaImportFailure(reported)
+            return MediaImportSummary(
+                assetCount: 0,
+                folderCount: 0,
+                failure: reported.localizedDescription
+            )
+        }
     }
 
     @discardableResult
-    private func applyMediaImportPlan(_ plan: MediaImportPlan, restoringFrom before: MediaLibraryUndoSnapshot) -> MediaImportSummary {
+    private func applyMediaImportPlan(
+        _ plan: MediaImportPlan,
+        prepared: PreparedMediaImport,
+        restoringFrom before: MediaLibraryUndoSnapshot
+    ) -> MediaImportSummary {
         undoManager?.disableUndoRegistration()
 
         var folderIds = Array(repeating: "", count: plan.folders.count)
+        var createdFolderCount = 0
         for (index, folder) in plan.folders.enumerated() {
             let parentId = parentFolderId(for: folder.parent, plannedFolderIds: folderIds)
-            folderIds[index] = createFolder(name: folder.name, in: parentId)
+            if let existing = mediaManifest.folders.first(where: {
+                $0.name == folder.name && $0.parentFolderId == parentId
+            }) {
+                folderIds[index] = existing.id
+            } else {
+                folderIds[index] = createFolder(name: folder.name, in: parentId)
+                createdFolderCount += 1
+            }
         }
 
-        let importedAssets = plan.files.map { file in
+        var importedAssets: [MediaAsset] = []
+        var knownURLs = Set(mediaAssets.map {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath().path
+        })
+        for preparedFile in prepared.files {
+            let path = preparedFile.url.standardizedFileURL.resolvingSymlinksInPath().path
+            guard knownURLs.insert(path).inserted else { continue }
+            let file = preparedFile.source
             let folderId = parentFolderId(for: file.parent, plannedFolderIds: folderIds)
-            let asset = MediaAsset(url: durableProjectMediaURL(for: file.url), type: file.type, name: file.name)
+            let asset = MediaAsset(
+                url: preparedFile.url,
+                type: file.type,
+                name: file.name
+            )
             asset.folderId = folderId
-            return asset
+            importedAssets.append(asset)
         }
         if !importedAssets.isEmpty {
             mediaAssets.append(contentsOf: importedAssets)
-            mediaManifest.entries.append(contentsOf: importedAssets.map { $0.toManifestEntry(projectURL: projectURL) })
+            mediaManifest.entries.append(
+                contentsOf: importedAssets.map { $0.toManifestEntry(projectURL: workingRoot) }
+            )
             Log.project.notice(
                 "media import applied assets=\(importedAssets.count) folders=\(plan.folders.count)",
                 telemetry: "Media import applied",
@@ -278,7 +681,6 @@ extension EditorViewModel {
             )
         }
         undoManager?.enableUndoRegistration()
-
         if let name = plan.rejectedUnsupportedNames.last {
             mediaPanelToast = "Can't import \"\(name)\" — unsupported file type."
         } else if let name = plan.rejectedLottieNames.last {
@@ -286,18 +688,100 @@ extension EditorViewModel {
         }
 
         let summary = MediaImportSummary(
-            assetCount: mediaAssets.count - before.mediaAssets.count,
-            folderCount: mediaManifest.folders.count - before.mediaManifest.folders.count
+            assetCount: importedAssets.count,
+            folderCount: createdFolderCount
         )
         guard summary.assetCount != 0 || summary.folderCount != 0 else { return summary }
+        let createdURLs = prepared.createdURLs
+        let after = mediaLibraryUndoSnapshot()
+        let stash = workingRoot?.appendingPathComponent(
+            Project.mediaDirectoryName,
+            isDirectory: true
+        ).appendingPathComponent(
+            ".import-undo-\(UUID().uuidString).partial",
+            isDirectory: true
+        )
         undoManager?.registerUndo(withTarget: self) { vm in
-            vm.restoreMediaLibraryUndoSnapshot(before, actionName: "Import Media")
+            vm.restoreMediaImportSnapshot(
+                before,
+                inverse: after,
+                createdURLs: createdURLs,
+                stash: stash,
+                actionName: "Import Media"
+            )
         }
         undoManager?.setActionName("Import Media")
         for asset in importedAssets {
             Task { await finalizeImportedAsset(asset) }
         }
         return summary
+    }
+
+    private func restoreMediaImportSnapshot(
+        _ snapshot: MediaLibraryUndoSnapshot,
+        inverse: MediaLibraryUndoSnapshot,
+        createdURLs: [URL],
+        stash: URL?,
+        actionName: String
+    ) {
+        let required = Set(snapshot.mediaAssets.map {
+            $0.url.standardizedFileURL.path
+        })
+        if let stash, createdURLs.contains(where: {
+            required.contains($0.standardizedFileURL.path)
+        }) {
+            for url in createdURLs where required.contains(
+                url.standardizedFileURL.path
+            ) {
+                let staged = stash.appendingPathComponent(url.lastPathComponent)
+                guard !FileManager.default.fileExists(atPath: url.path),
+                      FileManager.default.fileExists(atPath: staged.path) else {
+                    continue
+                }
+                do {
+                    try FileManager.default.moveItem(at: staged, to: url)
+                } catch {
+                    Log.project.error(
+                        "media import redo restore failed: \(error.localizedDescription)"
+                    )
+                    return
+                }
+            }
+        }
+
+        applyMediaLibrarySnapshot(snapshot)
+
+        if let stash {
+            for url in createdURLs where !required.contains(
+                url.standardizedFileURL.path
+            ) && FileManager.default.fileExists(atPath: url.path) {
+                do {
+                    try FileManager.default.createDirectory(
+                        at: stash,
+                        withIntermediateDirectories: true
+                    )
+                    try FileManager.default.moveItem(
+                        at: url,
+                        to: stash.appendingPathComponent(url.lastPathComponent)
+                    )
+                } catch {
+                    Log.project.error(
+                        "media import undo cleanup failed: \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+
+        undoManager?.registerUndo(withTarget: self) { vm in
+            vm.restoreMediaImportSnapshot(
+                inverse,
+                inverse: snapshot,
+                createdURLs: createdURLs,
+                stash: stash,
+                actionName: actionName
+            )
+        }
+        undoManager?.setActionName(actionName)
     }
 
     private func parentFolderId(for parent: MediaImportPlan.Parent, plannedFolderIds: [String]) -> String? {
@@ -312,21 +796,29 @@ extension EditorViewModel {
     @discardableResult
     func importPastedImageData(_ data: Data, fileExtension: String = "png") -> MediaAsset? {
         let filename = "pasted-\(UUID().uuidString.prefix(8)).\(fileExtension)"
-        let destURL: URL
-        if let projectURL {
-            let mediaDir = projectURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
-            try? FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
-            destURL = mediaDir.appendingPathComponent(filename)
-        } else {
-            destURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-        }
+        let mediaDir: URL
         do {
-            try data.write(to: destURL)
+            mediaDir = try prepareWorkingMediaDirectory()
         } catch {
-            Log.project.error("importPastedImageData: write failed \(error.localizedDescription)")
+            reportMediaImportFailure(error)
             return nil
         }
-        return addMediaAsset(from: destURL)
+        let destURL = mediaDir.appendingPathComponent(filename)
+        do {
+            try data.write(to: destURL, options: .atomic)
+            return try addMediaAssetThrowing(from: destURL)
+        } catch {
+            try? FileManager.default.removeItem(at: destURL)
+            Log.project.error("importPastedImageData: write failed \(error.localizedDescription)")
+            reportMediaImportFailure(error)
+            return nil
+        }
+    }
+
+    private func reportMediaImportFailure(_ error: Error) {
+        let message = error.localizedDescription
+        mediaPanelToast = MediaPanelToast(message: message)
+        Log.project.error("media import failed error=\(message)")
     }
 
     func fitTextClipToContent(clipId: String) {
@@ -393,7 +885,7 @@ extension EditorViewModel {
     /// Recompute `missingMediaRefs` off the main thread, then publish on the main actor.
     func refreshMissingMediaCache() {
         let entries = mediaManifest.entries
-        let projectPath = projectURL?.path
+        let projectPath = workingRoot?.path
         missingMediaRefreshTask?.cancel()
         missingMediaRefreshTask = Task { [weak self] in
             let missing = await Task.detached(priority: .utility) {

@@ -244,6 +244,9 @@ public struct Analysis: Codable, Sendable, Equatable {
     /// Which optional pipeline stages ran.
     public var pipelineStages: [String]
 
+    /// SHA-256 of the exact track bytes this analysis measured.
+    public var songSha256: String?
+
     private enum CodingKeys: String, CodingKey {
         case schema
         case project
@@ -265,6 +268,7 @@ public struct Analysis: Codable, Sendable, Equatable {
         case chordProgression = "chord_progression"
         case interpretation
         case pipelineStages = "pipeline_stages"
+        case songSha256 = "song_sha256"
     }
 
     public init(
@@ -273,7 +277,8 @@ public struct Analysis: Codable, Sendable, Equatable {
         downbeatSource: DownbeatSource, sections: [AnalysisSection], stems: Stems? = nil, alignment: [AlignmentLine] = [],
         structureCandidates: [StructureCandidate] = [], energyCurve: [EnergyPoint] = [],
         tempoCurve: [TempoPoint] = [], key: String? = nil, chordProgression: [Chord] = [],
-        interpretation: Interpretation? = nil, pipelineStages: [String] = []
+        interpretation: Interpretation? = nil, pipelineStages: [String] = [],
+        songSha256: String? = nil
     ) throws {
         self.schema = schema
         self.project = project
@@ -295,6 +300,7 @@ public struct Analysis: Codable, Sendable, Equatable {
         self.chordProgression = chordProgression
         self.interpretation = interpretation
         self.pipelineStages = pipelineStages
+        self.songSha256 = songSha256
         try validate()
     }
 
@@ -321,6 +327,7 @@ public struct Analysis: Codable, Sendable, Equatable {
         chordProgression = try container.decodeIfPresent([Chord].self, forKey: .chordProgression) ?? []
         interpretation = try container.decodeIfPresent(Interpretation.self, forKey: .interpretation)
         pipelineStages = try container.decodeIfPresent([String].self, forKey: .pipelineStages) ?? []
+        songSha256 = try container.decodeIfPresent(String.self, forKey: .songSha256)
         try validate()
     }
 

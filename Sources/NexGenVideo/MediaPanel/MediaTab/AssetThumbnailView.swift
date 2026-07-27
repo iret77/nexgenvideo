@@ -13,7 +13,7 @@ struct AssetThumbnailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             ZStack {
-                Rectangle().fill(Color.black)
+                Rectangle().fill(AppTheme.Background.overlayColor)
                 thumbnailContent
             }
             .aspectRatio(16.0 / 9.0, contentMode: .fit)
@@ -26,13 +26,13 @@ struct AssetThumbnailView: View {
                     .strokeBorder(borderColor, lineWidth: borderWidth)
             )
             .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+                withAnimation(.easeOut(duration: AppTheme.Anim.quick)) { isHovering = hovering }
             }
 
             if isOnTimeline {
                 Capsule()
                     .fill(Color(nsColor: asset.type.themeColor))
-                    .frame(height: 2)
+                    .frame(height: AppTheme.BorderWidth.thick)
             }
 
             ZStack(alignment: .leading) {
@@ -60,7 +60,7 @@ struct AssetThumbnailView: View {
             .padding(.vertical, AppTheme.Spacing.xxs)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(isRenaming ? Color.white.opacity(AppTheme.Opacity.faint) : .clear)
+                    .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
             )
         }
         .frame(maxWidth: .infinity)
@@ -69,7 +69,7 @@ struct AssetThumbnailView: View {
             handleTap()
         }
         .contextMenu { contextMenuItems }
-        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : 1)
+        .opacity(isSwapDimmed ? AppTheme.Opacity.muted : AppTheme.Opacity.opaque)
         .allowsHitTesting(!isSwapDimmed)
     }
 
@@ -78,20 +78,20 @@ struct AssetThumbnailView: View {
         let ids = contextTargetIds
         if let onMoveToFolderMenu {
             onMoveToFolderMenu
-            Divider()
+            Divider() // app-theme: native-menu-divider
         }
         if ids.count == 1, ids.first == asset.id {
             if isMissing {
                 Button("Relink…") { relinkFile() }
-                Divider()
+                Divider() // app-theme: native-menu-divider
             }
             Button("Rename") { beginRename() }
             AIEditMenu(asset: asset)
-            Divider()
+            Divider() // app-theme: native-menu-divider
         }
         Button("Reveal in Finder") { revealInFinder(ids: ids) }
         Button("Copy Path") { copyPaths(ids: ids) }
-        Divider()
+        Divider() // app-theme: native-menu-divider
         Button("Delete", role: .destructive) { deleteAssets(ids: ids) }
     }
 
@@ -144,10 +144,10 @@ struct AssetThumbnailView: View {
             if asset.isGenerating {
                 ZStack {
                     if let image = generatingReferenceImage {
-                        Color.clear
+                        AppTheme.Background.clearColor
                             .overlay { Image(nsImage: image).resizable().scaledToFill().blur(radius: 12) }
                             .clipped()
-                        Color.black.opacity(AppTheme.Opacity.strong)
+                        AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.strong)
                     }
                     GeneratingOverlay(label: asset.generatingLabel)
                 }
@@ -202,13 +202,13 @@ struct AssetThumbnailView: View {
         if isHovering && !asset.isGenerating && !isSwapPickMode {
             Button { editor.agentService.attachMention(for: asset) } label: {
                 Image(systemName: "bubble.left")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
                     .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
             }
             .buttonStyle(.plain)
-            .background(.black.opacity(AppTheme.Opacity.strong), in: .circle)
-            .overlay(Circle().strokeBorder(Color.white.opacity(AppTheme.Opacity.muted), lineWidth: AppTheme.BorderWidth.hairline))
+            .background(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.strong), in: .circle)
+            .overlay(Circle().strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted), lineWidth: AppTheme.BorderWidth.hairline))
             .padding(AppTheme.Spacing.xs)
             .transition(.opacity)
             .help("Add to chat")
@@ -217,17 +217,17 @@ struct AssetThumbnailView: View {
 
     private var sourceBadge: some View {
         Text("AI")
-            .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
             .foregroundStyle(AppTheme.aiGradient)
             .padding(.horizontal, AppTheme.Spacing.sm)
             .padding(.vertical, AppTheme.Spacing.xxs)
-            .background(Color.black.opacity(AppTheme.Opacity.prominent), in: .capsule)
+            .background(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.prominent), in: .capsule)
     }
 
     private var durationBadge: some View {
         Text(formatDuration(asset.duration))
-            .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
-            .foregroundStyle(.white)
+            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+            .foregroundStyle(AppTheme.Text.primaryColor)
             .monospacedDigit()
             .padding(.horizontal, AppTheme.Spacing.sm)
             .padding(.vertical, AppTheme.Spacing.xxs)
@@ -238,9 +238,9 @@ struct AssetThumbnailView: View {
         VStack(spacing: AppTheme.Spacing.xxs) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: AppTheme.FontSize.mdLg))
-                .foregroundStyle(.red.opacity(AppTheme.Opacity.prominent))
+                .foregroundStyle(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.prominent))
             Text("Failed")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Text(error)
                 .font(.system(size: AppTheme.FontSize.xxs))
@@ -259,7 +259,7 @@ struct AssetThumbnailView: View {
                 .font(.system(size: AppTheme.FontSize.mdLg))
                 .foregroundStyle(AppTheme.Status.errorColor)
             Text("Media Offline")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .help("NexGenVideo couldn't load this source file. It may be missing, on an ejected drive, or unreadable.")
@@ -300,8 +300,8 @@ struct AssetThumbnailView: View {
 
     private var borderColor: Color {
         if isMissing { return AppTheme.Status.errorColor }
-        if isSwapPickMode { return isSwapPickHighlighted ? AppTheme.Accent.primary : .clear }
-        return isSelected ? AppTheme.Accent.primary : .clear
+        if isSwapPickMode { return isSwapPickHighlighted ? AppTheme.Accent.primary : AppTheme.Background.clearColor }
+        return isSelected ? AppTheme.Accent.primary : AppTheme.Background.clearColor
     }
 
     private var borderWidth: CGFloat {

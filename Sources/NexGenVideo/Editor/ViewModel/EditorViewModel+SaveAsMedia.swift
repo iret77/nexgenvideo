@@ -15,11 +15,11 @@ extension EditorViewModel {
         let sourceName = mediaResolver.displayName(for: clip.mediaRef)
 
         let mediaDir: URL
-        if let projectURL {
-            mediaDir = projectURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
-            try? FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
-        } else {
-            mediaDir = FileManager.default.temporaryDirectory
+        do {
+            mediaDir = try prepareWorkingMediaDirectory()
+        } catch {
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            return
         }
         let destURL = mediaDir.appendingPathComponent(Self.uniqueClipFilename(for: clip.mediaType))
 
@@ -64,11 +64,11 @@ extension EditorViewModel {
         guard frameCount > 0 else { return }
 
         let mediaDir: URL
-        if let projectURL {
-            mediaDir = projectURL.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
-            try? FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
-        } else {
-            mediaDir = FileManager.default.temporaryDirectory
+        do {
+            mediaDir = try prepareWorkingMediaDirectory()
+        } catch {
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            return
         }
         let destURL = mediaDir.appendingPathComponent(Self.uniqueClipFilename(for: .video))
 

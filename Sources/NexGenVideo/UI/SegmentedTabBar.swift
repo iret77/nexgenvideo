@@ -22,8 +22,14 @@ struct SegmentedTabBar: View {
                 let isAccented = accentedTitles.contains(title)
                 let foreground: AnyShapeStyle = {
                     if isAccented {
-                        if let accentColor { return AnyShapeStyle(accentColor.opacity(isActive ? 1 : 0.6)) }
-                        return AnyShapeStyle(AppTheme.aiGradient.opacity(isActive ? 1 : 0.6))
+                        if let accentColor {
+                            return AnyShapeStyle(accentColor.opacity(
+                                isActive ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled
+                            ))
+                        }
+                        return AnyShapeStyle(AppTheme.aiGradient.opacity(
+                            isActive ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled
+                        ))
                     }
                     return AnyShapeStyle(isActive ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                 }()
@@ -35,7 +41,7 @@ struct SegmentedTabBar: View {
                             .font(.system(size: AppTheme.FontSize.xs, weight: isActive ? .medium : .regular))
                             .foregroundStyle(foreground)
                         Rectangle()
-                            .fill(isActive ? foreground : AnyShapeStyle(Color.clear))
+                            .fill(isActive ? foreground : AnyShapeStyle(AppTheme.Background.clearColor))
                             .frame(height: AppTheme.BorderWidth.medium)
                     }
                     .padding(.vertical, AppTheme.Spacing.xs)
@@ -47,7 +53,7 @@ struct SegmentedTabBar: View {
         }
         .padding(.horizontal, AppTheme.Spacing.lg)
         .padding(.top, AppTheme.Spacing.xs)
-        .background(raisedBackground ? AppTheme.Background.raisedColor : Color.clear)
+        .background(raisedBackground ? AppTheme.Background.raisedColor : AppTheme.Background.clearColor)
         .overlay(alignment: .bottom) {
             if raisedBackground {
                 Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.thin)

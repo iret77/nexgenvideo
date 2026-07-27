@@ -34,11 +34,11 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         case .fal: return "Video · Image · Audio"
         case .runway: return "Video · Image"
         case .google: return "Image"
-        case .higgsfield: return "Video \u{00B7} Image \u{00B7} 30+ models \u{00B7} sign in (MCP)"
+        case .higgsfield: return "Video · Image"
         case .elevenlabs: return "Voice · SFX · Music"
         case .marble: return "3D World · Panorama"
-        case .openart: return "Image · Video \u{00B7} via MCP"
-        case .ace: return "Voice · Singing \u{00B7} via MCP"
+        case .openart: return "Image · Video"
+        case .ace: return "Voice · Singing"
         }
     }
 

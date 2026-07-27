@@ -13,15 +13,17 @@ for every shot so that the video render starts under control. Anchor
 frames are **exact t=0 / t=duration frames**, never representative
 stand-in images — the video model interpolates between them.
 
-Each keyframe is a single `generate_image` call: you compose the frame
-prompt from the shot spec + bible, generate, bring the result into the
-project at `frames/<shot>-<role>.png`, and log it with `record_render`.
+Each keyframe is a single compiled `generate_image` call: compose the
+intent from the shot spec + bible, pass it through `compile_prompt`,
+generate, wait for the returned media asset to become ready, and log
+that asset with `record_render`.
 
 ## Inputs
 
 - Gate `sanity` approved (precondition; check via
   `get_project_state(project_dir)`).
-- `shotlist/current.yaml`
+- The latest versioned shot list via
+  `show_artifact(project_dir, "shotlist")`
 - The bible (via `get_bible(project_dir)`)
 - `brief.yaml` (for aspect ratio + image-model routing)
 
@@ -29,17 +31,19 @@ All project file paths are relative to the project data root.
 
 ## Outputs & gate
 
-- `frames/<shot_id>-start.png` (and optionally `frames/<shot_id>-end.png`)
-  per shot with `keyframe_strategy ∈ {start, start_end}`.
-- One `record_render(project_dir, "frames", shot_id, output, cost_eur)`
-  call per generated keyframe — this is the frame manifest; query it via
-  `get_render_manifest(project_dir, "frames")`.
-- Bible zone-status updates after approval of shots with
-  `zone_introduces`.
-- Gate: when all required frames are rendered + approved →
+- One real project image per required role for every shot with
+  `keyframe_strategy ∈ {start, start_end}`.
+- One `record_render(project_dir, "frames", shot_id, role, output,
+  cost_eur)` call per generated keyframe. The host records the
+  role-aware artifact and exact compiled provider prompt in
+  `frames/manifest.json`; query it via `get_frames_manifest`.
+- One current `save_frame_audit` result per required role, bound to the
+  exact current image hash.
+- Gate: when all required roles are present and their audits are current →
   `approve_gate(project_dir, "frames")` (step F4). `approve_gate` surfaces
-  the approval to the user and writes only after they tap Approve; you're
-  requesting it, not granting it. On a decline, stay on this phase.
+  the complete phase review to the user and writes only after they tap
+  Approve; that aggregate gate is the durable user approval. On a
+  decline, stay on this phase.
 
 ## Steps
 
@@ -48,19 +52,22 @@ All project file paths are relative to the project data root.
 You are freshly spawned on every `/continue`. Before regenerating any
 image (`generate_image` calls cost money):
 
-- Call `get_render_manifest(project_dir, "frames")`. Reconcile its
-  `entries` against `shotlist/current.yaml` and determine per shot:
-  frame rendered + approved / rendered + pending / missing entirely.
+- Call `run_phase(project_dir, "frames")`. Its engine-owned
+  `prepare_frames_manifest` step reconciles the authoritative manifest
+  with the current shot list, including the valid empty-manifest case.
+- Call `get_frames_manifest(project_dir)`. Reconcile its role-aware
+  entries and `audit.current_image` values against the latest shot list:
+  audited current / audit missing or stale / frame role missing.
   `show_dialog` with options:
-  - `approve_gate` (only if all required frames are approved) → set the
-    gate.
+  - `approve_gate` (only if every required role and current audit is
+    present) → request the aggregate Frames gate.
   - `continue_pending` → continue with pending / missing shots in the
-    chosen approval mode. Do NOT re-render approved frames.
+    chosen review mode. Do NOT re-render current audited frames.
   - `redo_selected` → user picks shot(s); re-render only those.
   - `restart_all` → keep old PNGs as history, restart the pass.
 - An empty manifest → normal flow starting at F1.
 
-Never silently overwrite approved or pending frames.
+Never silently overwrite a current audited frame.
 
 ### F1 — Choose approval mode
 
@@ -87,9 +94,10 @@ sub-steps below. Sub-steps F2.2–F2.8 are pre-call checks — they run
 **before** the `generate_image` call. Better to abort a render round than
 sink money into a frame that has to be redone anyway.
 
-Drive the loop with `next_render_shot(project_dir, "frames")` for
-ordering if you like, but the frame phase is per-shot per-keyframe;
-the render manifest tracks completion.
+Drive the loop with `next_render_shot(project_dir, "frames")`. Its
+returned `role` is mandatory: a `start_end` shot is returned once for
+`start` and again for `end`. Completion comes only from the role-aware
+Frames manifest, never the shot-level render ledger.
 
 #### F2.1 — Frame-source decision (generate vs. crop)
 
@@ -97,20 +105,14 @@ Decision rule per shot:
 
 1. Does the shot have a subject in the foreground (character, main
    motif)? → generate the keyframe via `generate_image` (sub-step F2.9).
-2. Pure location-establishing shots (empty street / room, establishing
-   without a pose) where a wide bible master already covers the
-   composition → still generate via `generate_image`, anchored on the
-   bible master (import it as a mediaRef, see F2.10). A deterministic
-   **crop-from-master** path (a local crop of a wider bible master with
-   zero generation cost) is an **OPTIONAL follow-up** — there is no MCP
-   tool for it yet, so for now generate the keyframe directly.
+2. Pure location-establishing shots where a wide bible master already
+   contains the required composition may use `crop_to_aspect` directly.
+   Otherwise generate via `generate_image`, anchored on the bible master,
+   then crop deterministically if the delivery framing is narrower.
 3. Pan/tilt/trucking moves without subject movement need a `start_end`
-   pair. A deterministic **pan-pair** (start + end crops from one
-   extended master, 100% identical world) is likewise an **optional
-   follow-up** with no MCP tool yet — for now generate the start and end
-   keyframes directly via two `generate_image` calls, anchored on the
-   same bible master so the world stays consistent. Document the pair
-   intent in `Shot.notes` (`frame_pair_strategy: generated start_end`).
+   pair. When one extended master contains both endpoints, derive both
+   with separate `crop_to_aspect` calls. Otherwise generate both through
+   the same compiled/reference-anchored path.
 
 #### F2.2 — Model selection (hybrid routing)
 
@@ -224,15 +226,17 @@ content: a prompt that drops one is a defect (the engine's
   surrounding scene visible to the sides — Image 1 (location wide) sets
   the composition, left/right edges show neighboring objects of that
   location."
-- Crop locally (e.g. `Bash` with an image tool) to the target aspect,
-  anchored on the subject's centroid. The final frame after cropping has
-  objects cut off at the edges (like a real camera shot), not the abrupt
-  "nothing left" edge.
+- Call `crop_to_aspect` on the wider generated image, anchored on the
+  subject's centroid. The host writes and registers the deterministic
+  project image while preserving the source generation lineage. The
+  final frame has objects cut off at the edges (like a real camera shot),
+  not the abrupt "nothing left" edge.
 
 #### F2.7 — World-zone pre-check (MANDATORY)
 
-- Before every `generate_image` call: re-run `run_sanity(project_dir)`
-  (or at least scan its findings for the current shot). If
+- Read the approved persisted Sanity report for the current shot. Do not
+  re-run `run_sanity` inside Frames: doing so deliberately reopens the
+  Sanity gate and every downstream gate. If
   `DIRTY_ZONE_VISIBLE` exists for this shot → STOP, notify the user
   ("The shot shows a dirty zone, established in <prev_shot>. Rendering
   would break consistency."). Offer solutions: change the framing (zone
@@ -300,12 +304,13 @@ The frame-zero semantics are carried by the subject description
 ("arrested mid-step", "weight forward", "about to step into …") — not by
 meta instructions.
 
-**The call:** `generate_image(prompt=<composed>, model=<F2.2 model>,
-aspectRatio=<brief aspect, or wider per F2.6>, resolution="2K",
-referenceMediaRefs=[<F2.10 mediaRefs in priority order>])`. It returns
-an async placeholder asset; wait until `get_media` shows the asset
-ready, then bring the result into the project as `frames/<shot>-start.png`
-(or `-end.png`).
+**The calls:** first
+`compile_prompt(intent=<composed>, model=<F2.2 model>, shotId=<shot_id>)`.
+Then pass its `compiledPrompt` unchanged as `generate_image.prompt` and
+its `compileToken` as `generate_image.compileToken`, together with
+`aspectRatio`, `resolution="2K"`, and the ordered
+`referenceMediaRefs`. It returns an async placeholder media ID; wait
+until `get_media` reports that exact asset ready.
 
 After the image is in, glance over it: does it carry the lighting? No
 slop left? Then proceed to the F2.5-Audit. Otherwise fix the shot and
@@ -325,9 +330,10 @@ reconcile the shot spec against the section/camera/blocking. If the
 4. The planned reference image paths.
 
 Then `show_dialog`: **generate** (confirm despite the mismatch),
-**patch shotlist** (correct the spec, then retry), **patch refs** (choose
-different reference images), **skip** (remove the shot from the render
-set, handle later). For **still-only shots**
+**patch shotlist** (`rewind(target_phase="shotlist")`, correct and
+re-approve the dependent chain), **patch refs** (rewind to the owning
+Bible or Shot List phase first), **skip** (remove the shot from the
+render set through the same explicit rewind). For **still-only shots**
 (`still_only_approved:` in `Shot.notes`) this review is additionally
 mandatory even when the spec is clean — stills get animated in the NLE,
 slop is 1:1 slop in the edit.
@@ -361,22 +367,26 @@ supports no refs — consistency only via the prompt description").
 
 After a frame is in the project:
 
-- `record_render(project_dir, "frames", shot_id, output="frames/<shot>-<role>.png",
-  cost_eur=<frame cost>)`. For a `start_end` pair, record the start and
-  end as the same shot's frame outputs (record start, then end —
-  status `rendered`).
+- `record_render(project_dir, "frames", shot_id,
+  output=<ready media asset id>, role="<start|end>",
+  cost_eur=<frame cost>)`. For a `start_end` pair, record both roles
+  separately. The host resolves and persists the real project path;
+  `get_frames_manifest` must then show both entries with non-empty
+  `provider_prompt`.
 - Budget check after every call via `estimate_cost(project_dir)`. If
   `over_budget` would flip true, stop and escalate to the user before
   further calls.
 
 #### F2.12 — Shots without keyframes
 
-Skip shots with `keyframe_strategy=none` — they go straight to
-text_to_video later. Precondition: they have NO bible refs, otherwise
-sanity has already blocked them with `MISSING_BIBLE_ANCHOR_FOR_T2V`
-(error). If you encounter a `keyframe=none` shot WITH bible refs: do NOT
-skip it — ask the user ("raise `keyframe_strategy` to `start` and create
-the anchor, or set `text_to_video_ok:` in notes with a reason?").
+Skip shots with `keyframe_strategy=none`. A
+`chain_with_previous_end=true` shot gets its sole start condition from
+the predecessor render and therefore never creates a separate frame
+here. Other `none` shots go straight to text-to-video and must have no
+bible refs; otherwise Sanity blocks them with
+`MISSING_BIBLE_ANCHOR_FOR_T2V`. If a non-chained `keyframe=none` shot
+has bible refs, ask the user to raise it to `start` and create the
+anchor, or record `text_to_video_ok:` in its notes.
 
 ### F2.5-Audit — Frame audit (vision pass, MANDATORY before F3)
 
@@ -389,7 +399,8 @@ verdict — not your own judgment — decides the next step.
 Per rendered frame (`start` and, if present, `end`), AFTER its
 `record_render`:
 
-1. **`Read frames/<shot>-<role>.png`** — load the image into context.
+1. Read the role's `media_ref` from `get_frames_manifest`, then call
+   **`inspect_media(mediaRef=<media_ref>)`**.
 2. **Judge against the shot spec**, with the iron honesty rule (no
    goodwill pass): does the frame match `framing`, `camera_setup`,
    `character_blocking`, `character_count`, `gaze`, `visible_zones`,
@@ -425,10 +436,9 @@ Per rendered frame (`start` and, if present, `end`), AFTER its
      (render the findings via `show_blocks`, not a markdown wall); the user
      approves or rejects with the deviations in view.
 
-The `frame_audit_bridge` sanity check echoes every non-clean audit into the
-sanity report (`FRAME_AUDIT_ISSUES`, info-level) so a blocking finding can't
-be silently approved past; a corrupt audit file surfaces as
-`FRAME_AUDIT_LOAD_FAILED` (warn) — re-create it via `save_frame_audit`.
+`get_frames_manifest` exposes each audit beside its frame and reports
+`current_image=false` when the file changed after the audit. The Frames
+gate refuses missing, invalid, incomplete, or stale audits.
 
 ### F3 — Review in the chosen mode
 
@@ -449,19 +459,18 @@ camera: <camera block>
 refs: location_view=<...> character_views=[...] prop_views=[...]
 ```
 
-Source: read the shot from `shotlist/current.yaml`. The user must never
-have to browse YAML files to pass a gate.
+Source: read the shot through `show_artifact(project_dir, "shotlist")`.
+The user must never have to browse YAML files to pass a gate.
 
 Per shot:
 
 1. Write the spec block into the chat.
-2. **Frame(s) via `Read` inline:**
-   - **start-only:** `Read frames/<shot>-start.png`.
-   - **start_end (mandatory: pairwise):** FIRST `Read <shot>-start.png`,
-     THEN directly below `Read <shot>-end.png`. Never present only one
-     of the two — the user needs the pair to judge the motion/state
-     difference. Both frames must exist at the moment of the approval
-     question; if one is missing, generate it first — never half-approve.
+2. **Inspect frame media:**
+   - **start-only:** `inspect_media` with the start role's `media_ref`.
+   - **start_end (mandatory: pairwise):** inspect start, then end. Never
+     present only one of the two — the user needs the pair to judge the
+     motion/state difference. Both frames must exist at the moment of
+     the approval question; if one is missing, generate it first.
    - With audit findings: include the findings block before the question.
 3. **`show_dialog`:**
    - start-only: `approve / revise / skip`.
@@ -501,25 +510,17 @@ revise — and any prose feedback stating a durable preference — decide:
 
 **Mode specifics** (`per_shot` / `per_section` / `all_at_once`):
 
-- `per_shot`: a full review cycle per shot (spec + Reads + question).
+- `per_shot`: a full review cycle per shot (spec + media inspection +
+  question).
 - `per_section`: present all shots of a section in sequence; at the end
   a collective confirmation.
 - `all_at_once`: at the end, all shots in turn, then one big review.
 
-### F3.5 — Post-approve zone-status update (MANDATORY with `zone_introduces`)
-
-- When the shot has established a zone for the first time (the shotlist
-  had `zone_introduces=[<zone_id>]`) and the user approves → open the
-  bible, set `Location.zones[<zone_id>].status` to `dirty` and
-  `established_by_shot` to the shot ID. Save the bible.
-- This way the next shot of the same location sees the zone is now
-  dirty; `run_sanity` raises `DIRTY_ZONE_VISIBLE` at the next audit if
-  someone wants to show it again.
-
 ### F4 — Gate
 
-When all required frames are rendered + approved (verify via
-`get_render_manifest(project_dir, "frames")`):
+When `get_frames_manifest` proves that every required role exists, has a
+compiled provider prompt, and has a complete audit with
+`current_image=true`:
 `approve_gate(project_dir, "frames")`.
 
 ### Partial rerender
@@ -529,15 +530,14 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 
 ## Mandatory rules
 
-- **Resume first:** never regenerate before reconciling the frames
-  manifest (`get_render_manifest`) against the shotlist (F0); never
-  silently overwrite approved or pending frames.
+- **Resume first:** never regenerate before reconciling
+  `get_frames_manifest` against the latest shot list (F0); never
+  silently overwrite current audited frames.
 - **Generation path:** all generated frames go through the host's
   `nexgen` `generate_image` tool. Reference anchors are media assets —
   import the on-disk bible PNG via `import_media` first, then pass the
-  mediaRef in `referenceMediaRefs`. The deterministic crop paths
-  (crop-from-master, pan-pair) are an optional follow-up with no MCP
-  tool yet; for now generate keyframes directly.
+  mediaRef in `referenceMediaRefs`. Use `crop_to_aspect` for the
+  deterministic crop-from-master path.
 - **Provider availability:** `list_models` (`loaded=true` + the model
   present in `models`) is the only truth — never guess key presence or
   absence.
@@ -556,9 +556,11 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 - **Audit before review:** the F2.5 vision pass is mandatory for every
   rendered frame (iron honesty rule). Max 2 auto re-render attempts,
   then the user decides.
+- **Compile every prompt:** `compile_prompt` → `generate_image` with
+  unchanged `compiledPrompt` + `compileToken`; no raw prompt path.
 - **Record every frame:** every generated keyframe is logged via
-  `record_render(project_dir, "frames", …)`; the frame manifest is the
-  source of truth for completion.
+  `record_render(project_dir, "frames", …)`; the role-aware Frames
+  manifest is the source of truth for completion.
 - **Budget:** check after every frame call via `estimate_cost`.
 - **English provider prompts:** all provider-facing text is English; the
   user conversation stays in the user's language.
@@ -573,15 +575,16 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 
 | Situation | Action |
 |---|---|
-| `visual_prompt` < 120 chars or vague ("Alex arrives") | Stop. Ask the user: back to the shotlist agent, or refine the prompt manually now? |
-| Blocking markers missing on a keyframed shot | REFUSE the render; point to `run_sanity` / `NO_BLOCKING_AT_T0`; do not polish the prompt yourself. |
+| `visual_prompt` < 120 chars or vague ("Alex arrives") | Stop. Call `rewind(target_phase="shotlist")`, correct it through `write_shotlist`, and re-approve the dependent chain. Never create an unpersisted render-only rewrite. |
+| Blocking markers missing on a keyframed shot | REFUSE the render; point to `NO_BLOCKING_AT_T0` in the approved Sanity report; do not polish the prompt yourself. |
 | `list_models` shows the model missing / `loaded=false` | Quote the reason; offer a registered fallback model only if the catalog proves it. Keys are bound in the host, never a shell command. |
 | `DIRTY_ZONE_VISIBLE` for the current shot | STOP before the call; offer: change framing, or pull the establishing shot in as an additional reference. |
-| `ZONE_UNCOVERED` (warn) | Proceed, but mark the zone `dirty` in the bible after approval (F3.5). |
+| `ZONE_UNCOVERED` (warn) | Return to the shot list: declare the first establishing shot in `zone_introduces`, or add a bible asset. Sanity evaluates zone order statically before Frames. |
 | Reference cap forces dropping refs | Tell the user; the shot probably references too many bible anchors and should be split. Never silently pass fewer refs. |
 | Model has no reference-image support | Warn the user before the call: consistency only via the prompt description. |
-| `keyframe_strategy=none` shot WITH bible refs | Do not skip. Ask: raise to `start` + create the anchor, or set `text_to_video_ok:` in `Shot.notes` with a reason. |
-| Spec drifted from framing/camera/blocking on review | Mandatory pre-generation review (spec + prompt + mismatch + ref paths), then `generate` / `patch shotlist` / `patch refs` / `skip`. |
+| Non-chained `keyframe_strategy=none` shot WITH bible refs | Do not skip silently. Ask: raise to `start` + create the anchor, or set `text_to_video_ok:` in `Shot.notes` with a reason. |
+| Chained `keyframe_strategy=none` shot | Skip Frames. Its predecessor's exact last frame is the Render start condition. |
+| Spec drifted from framing/camera/blocking on review | Mandatory pre-generation review, then either generate unchanged or explicitly rewind to the owning Shot List/Bible phase before any correction or skip. |
 | Audit blocking deviation | Auto re-render with the STRICT patch, max 2 attempts, then the user decides with the findings block. |
 | One frame of a start/end pair is missing at review time | Generate the missing frame first; never half-approve a pair. |
 | `estimate_cost` shows over_budget | Stop and escalate to the user before further `generate_image` calls. |

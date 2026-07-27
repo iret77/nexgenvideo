@@ -49,15 +49,15 @@ struct MentionPopover: View {
     @State private var visibleIDs: Set<String> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             tabStrip
-            Rectangle().fill(AppTheme.Border.subtleColor).frame(height: 0.5)
+            Rectangle().fill(AppTheme.Border.subtleColor).frame(height: AppTheme.BorderWidth.hairline)
             contentArea
-                .frame(height: 280)
-            Rectangle().fill(AppTheme.Border.subtleColor).frame(height: 0.5)
+                .frame(height: AppTheme.ComponentSize.mentionPopoverHeight)
+            Rectangle().fill(AppTheme.Border.subtleColor).frame(height: AppTheme.BorderWidth.hairline)
             uploadRow
         }
-        .frame(width: 260)
+        .frame(width: AppTheme.ComponentSize.mentionPopoverWidth)
         .glassEffect(.clear, in: .rect(cornerRadius: AppTheme.Radius.md))
     }
 
@@ -69,9 +69,9 @@ struct MentionPopover: View {
             Image(systemName: "paperclip")
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: 28, height: 20)
+                .frame(width: AppTheme.IconSize.lgXl, height: AppTheme.IconSize.smMd)
             Text("Upload a file\u{2026}")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer()
         }
@@ -92,7 +92,7 @@ struct MentionPopover: View {
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: AppTheme.Spacing.none) {
                         ForEach(Array(candidates.enumerated()), id: \.element.id) { index, asset in
                             AssetRow(asset: asset, isHighlighted: index == highlightedIndex)
                                 .contentShape(Rectangle())
@@ -131,23 +131,23 @@ struct MentionPopover: View {
             ? .bottom
             : .top
 
-        withAnimation(.easeOut(duration: 0.12)) {
+        withAnimation(.easeOut(duration: AppTheme.Anim.quick)) {
             proxy.scrollTo(targetID, anchor: anchor)
         }
     }
 
     private var tabStrip: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: AppTheme.Spacing.none) {
             ForEach(MentionTab.allCases, id: \.self) { t in
                 Text(t.label)
                     .font(.system(size: AppTheme.FontSize.xs, weight: t == tab ? .semibold : .regular))
                     .foregroundStyle(t == tab ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 5)
+                    .padding(.vertical, AppTheme.Spacing.xsSm)
                     .background(
                         t == tab
-                            ? AppTheme.Accent.primary.opacity(0.18)
-                            : Color.clear,
+                            ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.selection)
+                            : AppTheme.Background.clearColor,
                         in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                     )
                     .contentShape(Rectangle())

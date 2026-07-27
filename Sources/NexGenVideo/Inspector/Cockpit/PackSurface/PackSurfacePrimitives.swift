@@ -40,11 +40,11 @@ struct StatRow: View {
             ForEach(tiles) { tile in
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     Text(tile.label.uppercased())
-                        .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
                         .tracking(AppTheme.Tracking.wide)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Text(tile.value)
-                        .font(.system(size: AppTheme.FontSize.lg, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.lg, weight: AppTheme.FontWeight.semibold))
                         .foregroundStyle(tile.muted ? AppTheme.Text.mutedColor : AppTheme.Text.primaryColor)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -77,7 +77,7 @@ struct BeatTimeline: View {
             Canvas { ctx, size in
                 guard duration > 0 else { return }
                 let w = size.width, h = size.height
-                let bandHeight: CGFloat = 20
+                let bandHeight = AppTheme.ComponentSize.beatTimelineBandHeight
                 func x(_ t: Double) -> CGFloat { CGFloat(min(max(t, 0), duration) / duration) * w }
 
                 for section in sections {
@@ -99,7 +99,7 @@ struct BeatTimeline: View {
                     ctx.stroke(path, with: .color(AppTheme.Accent.timecodeColor), lineWidth: AppTheme.BorderWidth.medium)
                 }
             }
-            .frame(height: 68)
+            .frame(height: AppTheme.ComponentSize.packSurfaceRowHeight)
             .background(AppTheme.Background.surfaceColor)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
             .overlay(
@@ -111,7 +111,7 @@ struct BeatTimeline: View {
     }
 
     private var ruler: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: AppTheme.Spacing.none) {
             ForEach(0..<5) { i in
                 Text(PackSurfaceFormat.mmss(duration * Double(i) / 4))
                     .font(.system(size: AppTheme.FontSize.micro))
@@ -128,14 +128,14 @@ struct SectionList: View {
     let sections: [AnalysisSurfaceData.Section]
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             ForEach(sections) { section in
                 HStack(spacing: AppTheme.Spacing.smMd) {
                     RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
                         .fill(PackSurfacePalette.section(section.index))
                         .frame(width: AppTheme.IconSize.xxs, height: AppTheme.IconSize.xxs)
                     Text(section.label ?? "Section \(section.index + 1)")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     if let source = section.source {
                         Text(source)
@@ -151,7 +151,7 @@ struct SectionList: View {
                 .padding(.horizontal, AppTheme.Spacing.md)
                 .padding(.vertical, AppTheme.Spacing.xs)
                 if section.id != sections.last?.id {
-                    Divider().overlay(AppTheme.Border.subtleColor)
+                    AppDivider()
                 }
             }
         }

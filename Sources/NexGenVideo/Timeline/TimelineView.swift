@@ -222,10 +222,14 @@ final class TimelineView: NSView {
 
         if case .marquee(let marq) = inputController.dragState,
            marq.current.width > 0 || marq.current.height > 0 {
-            ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.6).cgColor)
-            ctx.setFillColor(NSColor.white.withAlphaComponent(0.1).cgColor)
-            ctx.setLineWidth(1)
-            ctx.setLineDash(phase: 0, lengths: [3, 3])
+            ctx.setStrokeColor(
+                AppTheme.Text.primary.withAlphaComponent(AppTheme.Opacity.disabled).cgColor
+            )
+            ctx.setFillColor(
+                AppTheme.Text.primary.withAlphaComponent(AppTheme.Opacity.soft).cgColor
+            )
+            ctx.setLineWidth(AppTheme.BorderWidth.thin)
+            ctx.setLineDash(phase: 0, lengths: AppTheme.Border.shortDash)
             ctx.addRect(marq.current)
             ctx.drawPath(using: .fillStroke)
             ctx.setLineDash(phase: 0, lengths: [])
@@ -239,8 +243,8 @@ final class TimelineView: NSView {
             return nil
         }()
         if let target = activeDropTarget, let lineY = geo.insertionLineY(for: target) {
-            ctx.setStrokeColor(NSColor.systemYellow.cgColor)
-            ctx.setLineWidth(2)
+            ctx.setStrokeColor(AppTheme.Timeline.snapGuide.cgColor)
+            ctx.setLineWidth(AppTheme.BorderWidth.thick)
             ctx.move(to: CGPoint(x: 0, y: Double(lineY)))
             ctx.addLine(to: CGPoint(x: Double(bounds.width), y: Double(lineY)))
             ctx.strokePath()
@@ -248,9 +252,13 @@ final class TimelineView: NSView {
 
         if let razorFrame = inputController.razorPreviewFrame {
             let razorX = geo.xForFrame(razorFrame)
-            ctx.setStrokeColor(NSColor.systemOrange.withAlphaComponent(0.8).cgColor)
-            ctx.setLineWidth(1)
-            ctx.setLineDash(phase: 0, lengths: [4, 4])
+            ctx.setStrokeColor(
+                AppTheme.Timeline.razorGuide
+                    .withAlphaComponent(AppTheme.Opacity.prominent)
+                    .cgColor
+            )
+            ctx.setLineWidth(AppTheme.BorderWidth.thin)
+            ctx.setLineDash(phase: 0, lengths: AppTheme.Border.regularDash)
             ctx.move(to: CGPoint(x: razorX, y: Double(geo.rulerHeight)))
             ctx.addLine(to: CGPoint(x: razorX, y: Double(bounds.height)))
             ctx.strokePath()
@@ -313,7 +321,9 @@ final class TimelineView: NSView {
                     let originalRect = geo.clipRect(for: clip, trackIndex: ti)
 
                     if originalRect.intersects(dirtyRect) {
-                        let originalOpacity = drag.isDuplicate ? 1.0 : 0.3
+                        let originalOpacity = CGFloat(
+                            drag.isDuplicate ? AppTheme.Opacity.opaque : AppTheme.Opacity.shadow
+                        )
                         ClipRenderer.draw(clip, type: clip.mediaType, in: originalRect,
                                           isSelected: drag.isDuplicate && isSelected, opacity: originalOpacity, context: ctx,
                                           cache: editor.mediaVisualCache,
@@ -333,7 +343,7 @@ final class TimelineView: NSView {
                     if case .newTrackAt = drag.dropTarget,
                        !isPinned, onLeadRow,
                        let y = geo.ghostY(for: drag.dropTarget) {
-                        ghostRect = geo.clipRect(for: ghostClip, atY: Double(y), height: Layout.trackHeight)
+                        ghostRect = geo.clipRect(for: ghostClip, atY: Double(y), height: AppTheme.Layout.trackHeight)
                     } else {
                         let destTrack = isPinned ? ti : ti + moveTrackDelta
                         ghostRect = geo.clipRect(for: ghostClip, trackIndex: destTrack)
@@ -341,7 +351,7 @@ final class TimelineView: NSView {
                     clipDisplayRects[clip.id] = ghostRect
                     if ghostRect.intersects(dirtyRect) {
                         ClipRenderer.draw(ghostClip, type: clip.mediaType, in: ghostRect,
-                                          isSelected: true, opacity: 0.7, context: ctx,
+                                          isSelected: true, opacity: AppTheme.Opacity.scrim, context: ctx,
                                           cache: editor.mediaVisualCache,
                                           displayName: editor.clipDisplayLabel(for: clip),
                                           fps: editor.timeline.fps, isMissing: clipMissing, isGenerating: clipGenerating,
@@ -480,10 +490,10 @@ final class TimelineView: NSView {
 
     private func drawDialogRangeLabel(_ text: String, at origin: NSPoint, accent: NSColor,
                                       isSelected: Bool, context ctx: CGContext) {
-        let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xxs, weight: .semibold)
+        let font = NSFont.systemFont(ofSize: AppTheme.FontSize.xxs, weight: AppTheme.AppKitFontWeight.semibold)
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: NSColor.white,
+            .foregroundColor: AppTheme.Text.primary,
         ]
         let string = NSAttributedString(string: text, attributes: attrs)
         let textSize = string.size()
@@ -514,13 +524,27 @@ final class TimelineView: NSView {
         let height = Double(geo.trackHeight(at: gap.trackIndex))
         let minX = geo.xForFrame(gap.range.start)
         let maxX = geo.xForFrame(gap.range.end)
-        let rect = NSRect(x: minX, y: y + 2, width: maxX - minX, height: height - 4)
+        let rect = NSRect(
+            x: minX,
+            y: y + AppTheme.Spacing.xxs,
+            width: maxX - minX,
+            height: height - AppTheme.Spacing.xs
+        )
 
-        ctx.setFillColor(NSColor.white.withAlphaComponent(0.12).cgColor)
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.9).cgColor)
-        ctx.setLineWidth(1)
-        ctx.setLineDash(phase: 0, lengths: [3, 3])
-        ctx.addRect(rect.insetBy(dx: 0.5, dy: 0.5))
+        ctx.setFillColor(
+            AppTheme.Text.primary.withAlphaComponent(AppTheme.Opacity.subdued).cgColor
+        )
+        ctx.setStrokeColor(
+            AppTheme.Text.primary.withAlphaComponent(AppTheme.Opacity.high).cgColor
+        )
+        ctx.setLineWidth(AppTheme.BorderWidth.thin)
+        ctx.setLineDash(phase: 0, lengths: AppTheme.Border.shortDash)
+        ctx.addRect(
+            rect.insetBy(
+                dx: AppTheme.BorderWidth.hairline,
+                dy: AppTheme.BorderWidth.hairline
+            )
+        )
         ctx.drawPath(using: .fillStroke)
         ctx.setLineDash(phase: 0, lengths: [])
     }
@@ -566,7 +590,7 @@ final class TimelineView: NSView {
         dirtyRect: NSRect,
         context ctx: CGContext
     ) {
-        let h = Layout.trackHeight
+        let h = AppTheme.Layout.trackHeight
         let fps = editor.timeline.fps
         let plan = editor.resolveDropPlan(cursor: target, assets: assets, atFrame: frame, segments: segments)
 
@@ -604,7 +628,7 @@ final class TimelineView: NSView {
 
         for ghost in ghosts where ghost.rect.intersects(dirtyRect) {
             ClipRenderer.draw(ghost.clip, type: ghost.clip.mediaType, in: ghost.rect,
-                              isSelected: true, opacity: 0.5, context: ctx,
+                              isSelected: true, opacity: AppTheme.Opacity.balanced, context: ctx,
                               cache: editor.mediaVisualCache,
                               fps: editor.timeline.fps,
                               isMissing: editor.isClipMediaOffline(ghost.clip),
@@ -644,16 +668,16 @@ final class TimelineView: NSView {
         let top = Double(geo.rulerHeight)
         let bottom = Double(bounds.height)
 
-        let color = NSColor.white.cgColor
+        let color = AppTheme.Text.primary.cgColor
         ctx.setStrokeColor(color)
         ctx.setFillColor(color)
-        ctx.setLineWidth(2)
+        ctx.setLineWidth(AppTheme.BorderWidth.thick)
         ctx.move(to: CGPoint(x: x, y: top))
         ctx.addLine(to: CGPoint(x: x, y: bottom))
         ctx.strokePath()
 
-        let arrowW: CGFloat = 7
-        let arrowH: CGFloat = 10
+        let arrowW = AppTheme.Timeline.rippleIndicatorArrowWidth
+        let arrowH = AppTheme.Timeline.rippleIndicatorArrowHeight
         ctx.move(to: CGPoint(x: x, y: top))
         ctx.addLine(to: CGPoint(x: x + arrowW, y: top + Double(arrowH) / 2))
         ctx.addLine(to: CGPoint(x: x, y: top + Double(arrowH)))
@@ -669,21 +693,42 @@ final class TimelineView: NSView {
             let y = geo.trackY(at: i)
             let h = geo.trackHeight(at: i)
             context.setFillColor(Self.trackBg)
-            context.fill(NSRect(x: 0, y: y, width: bounds.width, height: h))
+            context.fill(NSRect(x: AppTheme.Spacing.none, y: y, width: bounds.width, height: h))
 
             if i == 0 {
                 context.setFillColor(borderColor)
-                context.fill(NSRect(x: 0, y: y, width: bounds.width, height: 1))
+                context.fill(
+                    NSRect(
+                        x: AppTheme.Spacing.none,
+                        y: y,
+                        width: bounds.width,
+                        height: AppTheme.BorderWidth.thin
+                    )
+                )
             }
             context.setFillColor(borderColor)
-            context.fill(NSRect(x: 0, y: y + h - 1, width: bounds.width, height: 1))
+            context.fill(
+                NSRect(
+                    x: AppTheme.Spacing.none,
+                    y: y + h - AppTheme.BorderWidth.thin,
+                    width: bounds.width,
+                    height: AppTheme.BorderWidth.thin
+                )
+            )
         }
 
         let z = editor.zones
         if z.videoTrackCount > 0, z.audioTrackCount > 0 {
             let dividerY = geo.trackY(at: z.firstAudioIndex)
             context.setFillColor(AppTheme.Border.divider.cgColor)
-            context.fill(NSRect(x: 0, y: dividerY - 1, width: bounds.width, height: 2))
+            context.fill(
+                NSRect(
+                    x: AppTheme.Spacing.none,
+                    y: dividerY - AppTheme.BorderWidth.thin,
+                    width: bounds.width,
+                    height: AppTheme.BorderWidth.thick
+                )
+            )
         }
     }
 

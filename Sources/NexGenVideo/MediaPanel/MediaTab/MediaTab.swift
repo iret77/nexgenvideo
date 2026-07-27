@@ -82,11 +82,15 @@ struct MediaTab: View {
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             toolbar
 
             if editor.pendingSwapClipId != nil {
                 swapBanner
+            }
+
+            if let progress = editor.mediaImportProgress {
+                importProgressBanner(progress)
             }
 
             ZStack(alignment: .top) {
@@ -94,7 +98,7 @@ struct MediaTab: View {
                     isTargeted: $isDropTargeted,
                     onDrop: { urls in handlePanelFinderDrop(urls: urls) }
                 ) {
-                    VStack(spacing: 0) {
+                    VStack(spacing: AppTheme.Spacing.none) {
                         if showsEmptyState {
                             emptyStateView
                         } else if !trimmedSearchQuery.isEmpty {
@@ -155,21 +159,55 @@ struct MediaTab: View {
         }
     }
 
+    private func importProgressBanner(_ progress: MediaImportProgress) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            if progress.total > 0 {
+                ProgressView(
+                    value: Double(progress.completed),
+                    total: Double(progress.total)
+                )
+                .progressViewStyle(.linear)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text("Importing media")
+                    .font(.system(
+                        size: AppTheme.FontSize.xs,
+                        weight: AppTheme.FontWeight.semibold
+                    ))
+                if let name = progress.currentName {
+                    Text(name)
+                        .font(.system(size: AppTheme.FontSize.xxs))
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: AppTheme.Spacing.sm)
+            Button("Cancel") { editor.cancelMediaImport() }
+                .buttonStyle(.capsule(.secondary, size: .small))
+        }
+        .padding(.horizontal, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.sm)
+        .background(AppTheme.Background.raisedColor)
+    }
+
     private var swapBanner: some View {
         let tint = Color(nsColor: (editor.pendingSwapClip?.mediaType ?? .video).themeColor)
         return HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "arrow.left.arrow.right")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(tint)
             Text("Pick a replacement for \"\(editor.pendingSwapClipName ?? "clip")\"")
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: AppTheme.Spacing.sm)
             Button("Cancel") { editor.cancelMediaSwap() }
                 .buttonStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .padding(.horizontal, AppTheme.Spacing.mdLg)
@@ -185,10 +223,10 @@ struct MediaTab: View {
     private func toastBanner(_ toast: MediaPanelToast) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: toast.kind == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(toast.kind == .success ? AppTheme.Status.successColor : AppTheme.Accent.timecodeColor)
             Text(toast.message)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -266,6 +304,7 @@ struct MediaTab: View {
     private var actionsRow: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             toolbarButton(title: "Import", systemImage: "plus", action: importMedia)
+                .help("Copy media into the project")
                 .tourAnchor(.importButton)
             toolbarButton(title: "Generate", systemImage: "sparkles", filled: true, accentStyle: AnyShapeStyle(AppTheme.aiGradient), action: toggleGenerationPanel)
                 .tourAnchor(.generateButton)
@@ -277,7 +316,7 @@ struct MediaTab: View {
             searchIndexStatus
                 .tourAnchor(.smartSearch)
         }
-        .frame(height: Layout.panelHeaderHeight)
+        .frame(height: AppTheme.Layout.panelHeaderHeight)
     }
 
     private var searchControlsRow: some View {
@@ -287,7 +326,7 @@ struct MediaTab: View {
 
             displayControls
         }
-        .frame(height: Layout.panelHeaderHeight)
+        .frame(height: AppTheme.Layout.panelHeaderHeight)
     }
 
     // MARK: - Context bar (breadcrumb + count)
@@ -360,7 +399,7 @@ struct MediaTab: View {
                     }
                 }
             }
-            Divider()
+            Divider() // app-theme: native-menu-divider
             Section("Thumbnail Size") {
                 ForEach(ThumbnailPreset.allCases) { preset in
                     Button {
@@ -391,11 +430,11 @@ struct MediaTab: View {
                     Label(type.trackLabel, systemImage: filterTypes.contains(type) ? "checkmark" : "")
                 }
             }
-            Divider()
+            Divider() // app-theme: native-menu-divider
             Button { filterAI.toggle() } label: {
                 Label("AI Generated", systemImage: filterAI ? "checkmark" : "")
             }
-            Divider()
+            Divider() // app-theme: native-menu-divider
             Button("Clear Filters", action: clearFilters)
         }
     }
@@ -533,11 +572,11 @@ struct MediaTab: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             Capsule(style: .continuous)
-                .fill(Color.white.opacity(AppTheme.Opacity.subtle))
+                .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
         )
         .overlay(
             Capsule(style: .continuous)
-                .strokeBorder(Color.white.opacity(AppTheme.Opacity.faint), lineWidth: AppTheme.BorderWidth.thin)
+                .strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint), lineWidth: AppTheme.BorderWidth.thin)
         )
     }
 
@@ -685,8 +724,8 @@ struct MediaTab: View {
     var marqueeOverlay: some View {
         if let rect = marqueeSelection.rect {
             Rectangle()
-                .stroke(Color.white.opacity(AppTheme.Opacity.strong), style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thin, dash: [3, 3]))
-                .background(Rectangle().fill(Color.white.opacity(AppTheme.Opacity.soft)))
+                .stroke(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong), style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thin, dash: AppTheme.Border.shortDash))
+                .background(Rectangle().fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.soft)))
                 .frame(width: rect.width, height: rect.height)
                 .position(x: rect.midX, y: rect.midY)
                 .allowsHitTesting(false)
@@ -709,16 +748,16 @@ struct MediaTab: View {
             Spacer()
 
             Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: AppTheme.FontSize.display, weight: .light))
+                .font(.system(size: AppTheme.FontSize.display, weight: AppTheme.FontWeight.light))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
 
             VStack(spacing: AppTheme.Spacing.xs) {
                 Text("No media yet")
-                    .font(.system(size: AppTheme.FontSize.title1, weight: .light))
+                    .font(.system(size: AppTheme.FontSize.title1, weight: AppTheme.FontWeight.light))
                     .tracking(AppTheme.Tracking.tight)
                     .foregroundStyle(AppTheme.Text.primaryColor)
 
-                Text("Drop files here or import from disk")
+                Text("Drop files here or copy them into the project")
                     .font(.system(size: AppTheme.FontSize.sm))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
@@ -731,8 +770,8 @@ struct MediaTab: View {
     private var dropHighlight: some View {
         RoundedRectangle(cornerRadius: AppTheme.Radius.md)
             .strokeBorder(
-                AppTheme.Accent.primary.opacity(0.6),
-                style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thick, dash: [8, 4])
+                AppTheme.Accent.primary.opacity(AppTheme.Opacity.disabled),
+                style: StrokeStyle(lineWidth: AppTheme.BorderWidth.thick, dash: AppTheme.Border.longDash)
             )
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.md)
@@ -747,7 +786,7 @@ struct MediaTab: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
-        panel.message = "Select media files or folders to import"
+        panel.message = "Select media files or folders to copy into the project. Originals stay in place."
         var types: [UTType] = [.movie, .image, .audio, .json, .plainText]
         // Story scripts and outlines are source material the pipeline reads. `.plainText` doesn't
         // cover Markdown/Fountain, so name those explicitly or the picker greys them out.

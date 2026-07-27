@@ -38,13 +38,13 @@ extension ToolExecutor {
 
         let dedupeKey = "\(category)|\(summary)"
         guard !feedbackState.sentKeys.contains(dedupeKey) else {
-            return .ok("Already flagged this to the team this session — not sending a duplicate.")
+            return .ok("Already recorded this in local diagnostics this session — not adding a duplicate.")
         }
         guard feedbackState.sentKeys.count < Self.maxFeedbackPerSession else {
             return .ok("Feedback limit reached for this session. Summarize any remaining issues to the user instead of sending more.")
         }
 
-        // Line 1 (tag + summary) becomes the email subject; category/severity stay in the body.
+        // Keep the first line compact so local diagnostic entries remain scannable.
         var lines = ["[Agent] \(summary)"]
         var classification = "Category: \(category)"
         if let severity { classification += " · \(severity)" }

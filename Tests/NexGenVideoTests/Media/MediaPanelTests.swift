@@ -11,6 +11,23 @@ private func editor() -> EditorViewModel {
 }
 
 @MainActor
+private func savedEditor() throws -> (editor: EditorViewModel, cleanup: URL) {
+    let cleanup = FileManager.default.temporaryDirectory
+        .appendingPathComponent("media-panel-\(UUID().uuidString)", isDirectory: true)
+    let package = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
+    try Fixtures.prepareProjectPackage(at: package)
+    let e = editor()
+    e.projectURL = package
+    return (e, cleanup)
+}
+
+private func writeImportFixture(in directory: URL, name: String, contents: String = "fixture") throws -> URL {
+    let url = directory.appendingPathComponent(name)
+    try Data(contents.utf8).write(to: url)
+    return url
+}
+
+@MainActor
 private func asset(name: String, folderId: String? = nil) -> MediaAsset {
     let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-\(name).mp4")
     let a = MediaAsset(url: url, type: .video, name: name)
@@ -61,21 +78,30 @@ struct FolderReadTests {
         let e = editor()
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("folder-import-\(UUID().uuidString)", isDirectory: true)
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("folder-import-project-\(UUID().uuidString).ngv", isDirectory: true)
         let nested = root.appendingPathComponent("Nested", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
 
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
-        try Data().write(to: root.appendingPathComponent("root.mp4"))
-        try Data().write(to: nested.appendingPathComponent("child.wav"))
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
+        try Data("video".utf8).write(to: root.appendingPathComponent("root.mp4"))
+        try Data("audio".utf8).write(to: nested.appendingPathComponent("child.wav"))
         try Data().write(to: nested.appendingPathComponent("ignored.zip"))
         // A story script inside an imported folder must come WITH it — silently dropping the user's
         // script because it sat in a folder is the failure this guards.
-        try Data().write(to: nested.appendingPathComponent("script.md"))
+        try Data("script".utf8).write(to: nested.appendingPathComponent("script.md"))
 
         let summary = await e.importFinderItems([root], into: nil)
 
         #expect(summary.assetCount == 3)
         #expect(summary.folderCount == 2)
+        #expect(summary.failure == nil)
         let rootFolder = try #require(e.folders.first { $0.name == root.lastPathComponent })
         let nestedFolder = try #require(e.folders.first { $0.name == "Nested" })
         #expect(nestedFolder.parentFolderId == rootFolder.id)
@@ -83,7 +109,7 @@ struct FolderReadTests {
         #expect(e.assetsIn(folderId: nestedFolder.id).map(\.name).sorted() == ["child", "script"])
     }
 
-    @Test func importFinderItemsDoesNotCreateRootFolderWhenDirectoryCannotBeRead() async throws {
+    @Test func importFinderItemsFailsWithoutPartialImportWhenDirectoryCannotBeRead() async throws {
         let e = editor()
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("folder-import-denied-\(UUID().uuidString)", isDirectory: true)
@@ -98,7 +124,362 @@ struct FolderReadTests {
 
         #expect(summary.assetCount == 0)
         #expect(summary.folderCount == 0)
+        #expect(summary.failure?.contains("contents couldn't be read") == true)
         #expect(e.folders.isEmpty)
+        #expect(e.mediaAssets.isEmpty)
+    }
+}
+
+@Suite("EditorViewModel — durable media import")
+@MainActor
+struct DurableMediaImportTests {
+
+    @Test func unsavedProjectRejectsImportWithoutRegisteringAsset() throws {
+        let e = editor()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unsaved-import-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try Data("source".utf8).write(to: source)
+
+        let imported = e.addMediaAsset(from: source)
+
+        #expect(imported == nil)
+        #expect(e.mediaAssets.isEmpty)
+        #expect(e.mediaManifest.entries.isEmpty)
+        #expect(e.mediaPanelToast?.message == "Save the project before importing media.")
+        #expect(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test func copyFailureDoesNotRegisterAsset() throws {
+        let e = editor()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("failed-import-\(UUID().uuidString).mp4")
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("failed-import-project-\(UUID().uuidString).ngv", isDirectory: true)
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        try Data("source".utf8).write(to: source)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        try Data("blocked".utf8).write(
+            to: projectURL.appendingPathComponent(Project.mediaDirectoryName)
+        )
+        e.projectURL = projectURL
+
+        let imported = e.addMediaAsset(from: source)
+
+        #expect(imported == nil)
+        #expect(e.mediaAssets.isEmpty)
+        #expect(e.mediaManifest.entries.isEmpty)
+        #expect(e.mediaPanelToast?.message.contains("project media folder couldn't be prepared") == true)
+        #expect(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    @Test func successfulImportCopiesIntoWorkingCopyAndPersistsRelativeSource() throws {
+        let e = editor()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("durable-import-\(UUID().uuidString).mp4")
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("durable-import-project-\(UUID().uuidString).ngv", isDirectory: true)
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        let contents = Data("source".utf8)
+        try contents.write(to: source)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
+
+        let imported = try #require(e.addMediaAsset(from: source))
+        let entry = try #require(e.mediaManifest.entries.first { $0.id == imported.id })
+        let workingRoot = try #require(e.workingRoot)
+
+        #expect(imported.url.path.hasPrefix(workingRoot.path + "/media/"))
+        #expect(!imported.url.path.hasPrefix(projectURL.path + "/media/"))
+        #expect(try Data(contentsOf: imported.url) == contents)
+        switch entry.source {
+        case .project(let relativePath):
+            #expect(relativePath == "media/\(imported.url.lastPathComponent)")
+        case .external:
+            Issue.record("new imports must not persist an external source")
+        }
+    }
+
+    @Test func folderImportRollsBackPreparedCopiesWhenALaterSourceFails() async throws {
+        let e = editor()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rollback-import-\(UUID().uuidString)", isDirectory: true)
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rollback-import-project-\(UUID().uuidString).ngv", isDirectory: true)
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        try Data("source".utf8).write(to: root.appendingPathComponent("a-valid.mp4"))
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("z-missing.mp4"),
+            withDestinationURL: root.appendingPathComponent("missing-target.mp4")
+        )
+        e.projectURL = projectURL
+
+        let summary = await e.importFinderItems([root], into: nil)
+
+        #expect(summary.failure != nil)
+        #expect(e.mediaAssets.isEmpty)
+        #expect(e.mediaManifest.entries.isEmpty)
+        #expect(e.mediaManifest.folders.isEmpty)
+        let mediaDir = try #require(e.workingRoot).appendingPathComponent(
+            Project.mediaDirectoryName
+        )
+        let remaining = (try? FileManager.default.contentsOfDirectory(atPath: mediaDir.path)) ?? []
+        #expect(remaining.isEmpty)
+    }
+
+    @Test func folderImportDoesNotFollowDirectorySymlinkCycles() async throws {
+        let e = editor()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cycle-import-\(UUID().uuidString)", isDirectory: true)
+        let nested = root.appendingPathComponent("nested", isDirectory: true)
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "cycle-import-project-\(UUID().uuidString).ngv",
+                isDirectory: true
+            )
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data("clip".utf8).write(to: nested.appendingPathComponent("clip.mp4"))
+        try FileManager.default.createSymbolicLink(
+            at: nested.appendingPathComponent("loop"),
+            withDestinationURL: root
+        )
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
+
+        let summary = await e.importFinderItems([root], into: nil)
+
+        #expect(summary.failure == nil)
+        #expect(summary.assetCount == 1)
+        #expect(summary.folderCount == 2)
+        #expect(e.mediaAssets.count == 1)
+    }
+
+    @Test func contentIdentityDistinguishesSameSizeAndMtimeAndDeduplicatesReimport() async throws {
+        let e = editor()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("content-import-\(UUID().uuidString).mp4")
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("content-import-project-\(UUID().uuidString).ngv", isDirectory: true)
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+
+        try Data("aaaa".utf8).write(to: source)
+        try FileManager.default.setAttributes(
+            [.modificationDate: timestamp],
+            ofItemAtPath: source.path
+        )
+        let first = await e.importFinderItems([source], into: nil)
+        let firstURL = try #require(e.mediaAssets.first?.url)
+
+        try Data("bbbb".utf8).write(to: source)
+        try FileManager.default.setAttributes(
+            [.modificationDate: timestamp],
+            ofItemAtPath: source.path
+        )
+        let changed = await e.importFinderItems([source], into: nil)
+        let unchanged = await e.importFinderItems([source], into: nil)
+        let lastURL = try #require(e.mediaAssets.last?.url)
+
+        #expect(first.assetCount == 1)
+        #expect(changed.assetCount == 1)
+        #expect(unchanged.assetCount == 0)
+        #expect(e.mediaAssets.count == 2)
+        #expect(e.mediaAssets.last?.url != firstURL)
+        #expect(try Data(contentsOf: firstURL) == Data("aaaa".utf8))
+        #expect(try Data(contentsOf: lastURL) == Data("bbbb".utf8))
+    }
+
+    @Test func undoRemovesNewWorkingCopyMedia() async throws {
+        let e = editor()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("undo-import-\(UUID().uuidString).mp4")
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("undo-import-project-\(UUID().uuidString).ngv", isDirectory: true)
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        try Data("undo".utf8).write(to: source)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
+        let undo = UndoManager()
+        e.undoManager = undo
+
+        let summary = await e.importFinderItems([source], into: nil)
+        let importedURL = try #require(e.mediaAssets.first?.url)
+        undo.undo()
+
+        #expect(summary.assetCount == 1)
+        #expect(e.mediaAssets.isEmpty)
+        #expect(e.mediaManifest.entries.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: importedURL.path))
+
+        undo.redo()
+        #expect(e.mediaAssets.count == 1)
+        #expect(e.mediaManifest.entries.count == 1)
+        #expect(FileManager.default.fileExists(atPath: importedURL.path))
+        #expect(try Data(contentsOf: importedURL) == Data("undo".utf8))
+    }
+
+    @Test func cancelledLargeImportLeavesNoAssetsOrPartialFiles() async throws {
+        let e = editor()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cancel-import-\(UUID().uuidString).mp4")
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "cancel-import-project-\(UUID().uuidString).ngv",
+                isDirectory: true
+            )
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        FileManager.default.createFile(atPath: source.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: source)
+        try handle.truncate(atOffset: 128 * 1024 * 1024)
+        try handle.close()
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
+
+        let importTask = Task { @MainActor in
+            await e.importFinderItems([source], into: nil)
+        }
+        for _ in 0..<10_000 where e.mediaImportProgress == nil {
+            await Task.yield()
+        }
+        #expect(e.mediaImportProgress != nil)
+        e.cancelMediaImport()
+        let summary = await importTask.value
+
+        #expect(summary.failure == MediaImportError.cancelled.localizedDescription)
+        #expect(e.mediaAssets.isEmpty)
+        #expect(e.mediaManifest.entries.isEmpty)
+        let mediaDirectory = try #require(e.workingRoot).appendingPathComponent(
+            Project.mediaDirectoryName
+        )
+        let remaining = try FileManager.default.contentsOfDirectory(
+            atPath: mediaDirectory.path
+        )
+        #expect(remaining.isEmpty)
+    }
+
+    @Test func concurrentImportsSerializeWithoutLosingEitherBatch() async throws {
+        let e = editor()
+        let first = FileManager.default.temporaryDirectory
+            .appendingPathComponent("concurrent-a-\(UUID().uuidString).mp4")
+        let second = FileManager.default.temporaryDirectory
+            .appendingPathComponent("concurrent-b-\(UUID().uuidString).mp4")
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "concurrent-import-project-\(UUID().uuidString).ngv",
+                isDirectory: true
+            )
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+            try? FileManager.default.removeItem(at: projectURL)
+        }
+        try Data("first".utf8).write(to: first)
+        try Data("second".utf8).write(to: second)
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        e.projectURL = projectURL
+
+        async let firstSummary = e.importFinderItems([first], into: nil)
+        async let secondSummary = e.importFinderItems([second], into: nil)
+        let (firstResult, secondResult) = await (firstSummary, secondSummary)
+        let summaries = [firstResult, secondResult]
+
+        #expect(summaries.map(\.assetCount).reduce(0, +) == 2)
+        #expect(e.mediaAssets.count == 2)
+        #expect(e.mediaManifest.entries.count == 2)
+        #expect(Set(e.mediaAssets.map(\.name)).count == 2)
+    }
+
+    @Test func manifestDoesNotTreatPrefixSiblingAsProjectMedia() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("containment-\(UUID().uuidString).ngv", isDirectory: true)
+        let sibling = URL(fileURLWithPath: root.path + "-copy", isDirectory: true)
+            .appendingPathComponent("clip.mp4")
+        let entry = MediaAsset(url: sibling, type: .video, name: "clip")
+            .toManifestEntry(projectURL: root)
+
+        switch entry.source {
+        case .project:
+            Issue.record("a path-prefix sibling is outside the project package")
+        case .external(let absolutePath):
+            #expect(absolutePath == sibling.path)
+        }
+    }
+
+    @Test func relinkCopiesReplacementIntoWorkingCopy() throws {
+        let e = editor()
+        let projectURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("relink-project-\(UUID().uuidString).ngv", isDirectory: true)
+        let replacement = FileManager.default.temporaryDirectory
+            .appendingPathComponent("replacement-\(UUID().uuidString).mp4")
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: projectURL)
+            try? FileManager.default.removeItem(at: replacement)
+        }
+        try Fixtures.prepareProjectPackage(at: projectURL)
+        try Data("replacement".utf8).write(to: replacement)
+        e.projectURL = projectURL
+        let workingRoot = try #require(e.workingRoot)
+        let missing = workingRoot.appendingPathComponent("media/missing.mp4")
+        let asset = MediaAsset(id: "relink", url: missing, type: .video, name: "Missing")
+        e.mediaAssets = [asset]
+        e.mediaManifest.entries = [
+            MediaManifestEntry(
+                id: asset.id,
+                name: asset.name,
+                type: asset.type,
+                source: .project(relativePath: "media/missing.mp4"),
+                duration: 1
+            )
+        ]
+
+        e.relinkAsset(id: asset.id, to: replacement)
+
+        #expect(asset.url.path.hasPrefix(workingRoot.path + "/media/"))
+        #expect(try Data(contentsOf: asset.url) == Data("replacement".utf8))
+        #expect(!FileManager.default.fileExists(
+            atPath: projectURL.appendingPathComponent("media")
+                .appendingPathComponent(asset.url.lastPathComponent).path
+        ))
+        if case .project(let relativePath) = e.mediaManifest.entries[0].source {
+            #expect(relativePath == "media/\(asset.url.lastPathComponent)")
+        } else {
+            Issue.record("relinked media must remain project-relative")
+        }
     }
 }
 
@@ -589,9 +970,13 @@ struct MoveMediaSelectionTests {
 @MainActor
 struct HandlePanelFinderDropTests {
 
-    @Test func addsAssetAtRootWhenDestinationIsNil() async {
-        let e = editor()
-        let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-clip.mp4")
+    @Test func addsAssetAtRootWhenDestinationIsNil() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let url = try writeImportFixture(in: cleanup, name: "clip.mp4")
 
         await MediaTab.handlePanelFinderDrop(urls: [url], into: nil, editor: e)
 
@@ -599,10 +984,14 @@ struct HandlePanelFinderDropTests {
         #expect(e.mediaAssets.first?.folderId == nil)
     }
 
-    @Test func addsAssetAndMovesIntoDestinationFolder() async {
-        let e = editor()
+    @Test func addsAssetAndMovesIntoDestinationFolder() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let dest = e.createFolder(name: "Dest")
-        let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-clip.mp4")
+        let url = try writeImportFixture(in: cleanup, name: "clip.mp4")
 
         await MediaTab.handlePanelFinderDrop(urls: [url], into: dest, editor: e)
 
@@ -610,20 +999,32 @@ struct HandlePanelFinderDropTests {
         #expect(e.mediaAssets.first?.folderId == dest)
     }
 
-    @Test func skipsUnsupportedFileExtensions() async {
-        let e = editor()
-        let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-archive.zip")
+    @Test func skipsUnsupportedFileExtensions() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let url = try writeImportFixture(in: cleanup, name: "archive.zip")
 
         await MediaTab.handlePanelFinderDrop(urls: [url], into: nil, editor: e)
 
         #expect(e.mediaAssets.isEmpty)
     }
 
-    @Test func addsMultipleAssetsIntoDestination() async {
-        let e = editor()
+    @Test func addsMultipleAssetsIntoDestination() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let dest = e.createFolder(name: "Dest")
-        let urls = (0..<3).map { _ in
-            URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-clip.mp4")
+        let urls = try (0..<3).map { index in
+            try writeImportFixture(
+                in: cleanup,
+                name: "clip-\(index).mp4",
+                contents: "fixture-\(index)"
+            )
         }
 
         await MediaTab.handlePanelFinderDrop(urls: urls, into: dest, editor: e)
@@ -689,8 +1090,12 @@ struct HandleClipboardPasteTests {
         return pb
     }
 
-    @Test func pngBytesImportAtRootWhenDestinationIsNil() async {
-        let e = editor()
+    @Test func pngBytesImportAtRootWhenDestinationIsNil() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let pb = freshPasteboard()
         pb.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
 
@@ -702,8 +1107,12 @@ struct HandleClipboardPasteTests {
         #expect(e.mediaAssets.first?.folderId == nil)
     }
 
-    @Test func pngBytesLandInDestinationFolder() async {
-        let e = editor()
+    @Test func pngBytesLandInDestinationFolder() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let dest = e.createFolder(name: "Dest")
         let pb = freshPasteboard()
         pb.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
@@ -714,8 +1123,12 @@ struct HandleClipboardPasteTests {
         #expect(e.mediaManifest.entries.first?.folderId == dest)
     }
 
-    @Test func tiffBytesImportWithTiffExtension() async {
-        let e = editor()
+    @Test func tiffBytesImportWithTiffExtension() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let pb = freshPasteboard()
         pb.setData(Data([0x4D, 0x4D, 0x00, 0x2A]), forType: .tiff)
 
@@ -725,9 +1138,13 @@ struct HandleClipboardPasteTests {
         #expect(e.mediaAssets.first?.url.pathExtension == "tiff")
     }
 
-    @Test func fileURLRoutesThroughFinderDrop() async {
-        let e = editor()
-        let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-clip.mp4")
+    @Test func fileURLRoutesThroughFinderDrop() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let url = try writeImportFixture(in: cleanup, name: "clip.mp4")
         let pb = freshPasteboard()
         pb.writeObjects([url as NSURL])
 
@@ -737,10 +1154,14 @@ struct HandleClipboardPasteTests {
         #expect(e.mediaAssets.first?.type == .video)
     }
 
-    @Test func fileURLLandsInDestinationFolder() async {
-        let e = editor()
+    @Test func fileURLLandsInDestinationFolder() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let dest = e.createFolder(name: "Dest")
-        let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-clip.mp4")
+        let url = try writeImportFixture(in: cleanup, name: "clip.mp4")
         let pb = freshPasteboard()
         pb.writeObjects([url as NSURL])
 
@@ -753,9 +1174,13 @@ struct HandleClipboardPasteTests {
     /// items always carry a TIFF preview alongside the file URL), the URL wins —
     /// avoids creating both the file-imported asset and a duplicate "pasted-*"
     /// image asset for the same payload.
-    @Test func fileURLTakesPrecedenceOverImageData() async {
-        let e = editor()
-        let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-clip.mp4")
+    @Test func fileURLTakesPrecedenceOverImageData() async throws {
+        let (e, cleanup) = try savedEditor()
+        defer {
+            e.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let url = try writeImportFixture(in: cleanup, name: "clip.mp4")
         let pb = freshPasteboard()
         pb.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
         pb.writeObjects([url as NSURL])

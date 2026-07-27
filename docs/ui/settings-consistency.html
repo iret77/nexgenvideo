@@ -1,0 +1,315 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>UI-Spec — Settings, Help and provider consistency</title>
+<meta name="ui-spec-route" content="/settings,/help">
+<meta name="ui-spec-viewports" content="1440x1120,980x640">
+<style>
+  :root {
+    --base: #0a0a0a;
+    --surface: #161616;
+    --raised: #1e1e1e;
+    --prominent: #2c2c2c;
+    --border: #ffffff29;
+    --border-subtle: #ffffff1f;
+    --text: #fff;
+    --text-2: #ffffffcc;
+    --text-3: #ffffff9e;
+    --muted: #ffffff57;
+    --accent: #f5efe4;
+    --ok: #4fb85f;
+    --warn: #e89c3e;
+    --error: #e54f4f;
+    --s-xs: 4px;
+    --s-sm: 6px;
+    --s-sm-md: 8px;
+    --s-md: 10px;
+    --s-md-lg: 12px;
+    --s-lg: 14px;
+    --s-lg-xl: 16px;
+    --s-xl: 20px;
+    --s-xl-xxl: 24px;
+    --s-xxl: 28px;
+    --r-sm: 6px;
+    --r-md: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: #101010;
+    color: var(--text);
+    font: 400 13px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  body { padding: 32px; }
+  .doc { max-width: 1180px; margin: 0 auto; }
+  h1 { margin: 0 0 8px; font-size: 24px; }
+  h2 { margin: 28px 0 10px; font-size: 16px; }
+  p, li { color: var(--text-2); max-width: 90ch; }
+  li { margin: 5px 0; }
+  code { color: var(--accent); }
+  .mock-label { margin: 24px 0 8px; color: var(--text-3); font-size: 12px; }
+  .window {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    width: 980px;
+    height: 640px;
+    overflow: hidden;
+    border: 1px solid #ffffff24;
+    border-radius: 12px;
+    background: var(--base);
+    box-shadow: 0 18px 50px #000a;
+  }
+  .sidebar {
+    padding: 42px 8px 12px;
+    background: var(--surface);
+    border-right: 1px solid var(--border-subtle);
+  }
+  .side-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+  }
+  .side-row.active { background: var(--prominent); color: var(--text); }
+  .icon { width: 16px; text-align: center; color: var(--text-3); }
+  .detail { background: #00000059; overflow: hidden; }
+  .page-head { padding: 58px 24px 16px; }
+  .page-title { font-size: 28px; font-weight: 300; letter-spacing: -.5px; }
+  .page-subtitle { margin-top: 4px; color: var(--text-3); font-size: 12px; }
+  .scroll { height: 540px; overflow: hidden; padding: 0 24px 24px; }
+  .section + .section { margin-top: 14px; }
+  .section-title { font-weight: 600; }
+  .section-subtitle { margin-top: 3px; color: var(--text-3); font-size: 11px; }
+  .card {
+    margin-top: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--raised);
+  }
+  .row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px;
+  }
+  .row + .row { border-top: 1px solid var(--border-subtle); }
+  .row-main { min-width: 0; flex: 1; }
+  .row-title { color: var(--text); }
+  .row-subtitle { margin-top: 4px; color: var(--text-3); font-size: 11px; }
+  .row-actions { display: flex; align-items: center; gap: 8px; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    color: var(--warn);
+    background: #e89c3e14;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .button {
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--prominent);
+    color: var(--text);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .button.primary { background: var(--accent); color: #1d1b18; font-weight: 600; }
+  .notice { color: var(--text-3); font-size: 11px; }
+  .providers {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .provider {
+    display: grid;
+    grid-template-rows: 58px minmax(96px, auto);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--raised);
+  }
+  .provider-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .provider-name { font-weight: 600; }
+  .provider-meta { margin-top: 3px; color: var(--text-3); font-size: 11px; }
+  .provider-status {
+    margin-left: auto;
+    color: var(--ok);
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .provider-status.off { color: var(--text-3); }
+  .provider-body {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 7px;
+    min-height: 96px;
+    padding: 10px 12px;
+    color: var(--text-3);
+    font-size: 11px;
+  }
+  .field {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-sm);
+    background: #00000026;
+    color: var(--text-3);
+    font: 11px "SF Mono", monospace;
+  }
+  .mcp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .client { min-height: 102px; }
+  @media (max-width: 1050px) {
+    body { padding: 16px; }
+    .window { width: 100%; }
+  }
+</style>
+
+<div class="doc">
+  <section>
+    <h1>Settings, Help and provider consistency</h1>
+    <p>Normative release specification for the Settings/Help shell, Agent runtime status and provider cards.</p>
+    <ul>
+      <li><strong>One window shell:</strong> Settings and Help use the same 980×640 default size, 760×480 minimum, 220-point opaque sidebar, page header, scroll insets and section rhythm.</li>
+      <li><strong>One row for status and action:</strong> Claude Code’s status badge and <em>Check again</em> action share the runtime row. A separate action row exists only when an installation action is required.</li>
+      <li><strong>One provider-card anatomy:</strong> every card has the same header and control-body minimum heights. Transport-specific content changes inside the body; the outer geometry does not.</li>
+      <li><strong>Errors are intentional expansion:</strong> an error notice may add height below the standardized body. Normal states remain equal.</li>
+      <li><strong>SwiftUI owns web authentication:</strong> OAuth uses <code>EnvironmentValues.webAuthenticationSession</code>. No manually retained presentation anchor, unsafe cross-actor AppKit object or callback-thread view mutation remains.</li>
+      <li><strong>Atomic completion:</strong> after OAuth token exchange, the provider snapshot changes once and the catalog notification is emitted after the browser session has returned.</li>
+    </ul>
+  </section>
+
+  <div class="mock-label">Agent — compact runtime state</div>
+  <div class="window">
+    <aside class="sidebar">
+      <div class="side-row"><span class="icon">⚙</span>General</div>
+      <div class="side-row active"><span class="icon">➤</span>Agent</div>
+      <div class="side-row"><span class="icon">◫</span>Format Packs</div>
+      <div class="side-row"><span class="icon">⌘</span>Providers</div>
+      <div class="side-row"><span class="icon">▱</span>Models</div>
+      <div class="side-row"><span class="icon">▰</span>Storage</div>
+    </aside>
+    <main class="detail">
+      <header class="page-head">
+        <div class="page-title">Agent</div>
+        <div class="page-subtitle">Configure the in-app agent, paid render approvals, and local automation.</div>
+      </header>
+      <div class="scroll">
+        <section class="section">
+          <div class="section-title">Agent Runtime</div>
+          <div class="section-subtitle">Choose one backend for the in-app agent.</div>
+          <div class="card">
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">Run agent with</div>
+                <div class="row-subtitle">Uses your signed-in Claude subscription.</div>
+              </div>
+              <div class="button primary">Claude Code</div>
+              <div class="button">Anthropic API</div>
+            </div>
+            <div class="row">
+              <div class="row-main">
+                <div class="row-title">Claude Code 2.1.207</div>
+                <div class="row-subtitle">Run <code>claude auth login</code> in Terminal, then check again.</div>
+              </div>
+              <div class="row-actions">
+                <div class="badge"><span class="dot"></span>Sign-in required</div>
+                <div class="button">Check again</div>
+              </div>
+            </div>
+            <div class="row notice">▣ Claude Code runs headlessly with Read as its only built-in tool.</div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="mock-label">Providers — equal normal-state cards</div>
+  <div class="window">
+    <aside class="sidebar">
+      <div class="side-row"><span class="icon">⚙</span>General</div>
+      <div class="side-row"><span class="icon">➤</span>Agent</div>
+      <div class="side-row"><span class="icon">◫</span>Format Packs</div>
+      <div class="side-row active"><span class="icon">⌘</span>Providers</div>
+      <div class="side-row"><span class="icon">▱</span>Models</div>
+      <div class="side-row"><span class="icon">▰</span>Storage</div>
+    </aside>
+    <main class="detail">
+      <header class="page-head">
+        <div class="page-title">Providers</div>
+        <div class="page-subtitle">Connect the services that supply generation models.</div>
+      </header>
+      <div class="scroll">
+        <div class="section-title">Connected Services</div>
+        <div class="section-subtitle">Credentials are stored in the macOS Keychain.</div>
+        <div class="providers">
+          <div class="provider">
+            <div class="provider-head"><div><div class="provider-name">fal.ai</div><div class="provider-meta">Video · Image · Audio · Get key ↗</div></div><div class="provider-status">● Key saved</div></div>
+            <div class="provider-body"><div class="field">••••••••••••••••••••••••••••••1e9c</div></div>
+          </div>
+          <div class="provider">
+            <div class="provider-head"><div><div class="provider-name">Higgsfield</div><div class="provider-meta">Video · Image · Website ↗</div></div><div class="provider-status off">● Not configured</div></div>
+            <div class="provider-body"><div>30+ video/image models on your subscription.</div><div class="button primary">Sign in with Higgsfield</div></div>
+          </div>
+          <div class="provider">
+            <div class="provider-head"><div><div class="provider-name">Google AI</div><div class="provider-meta">Image · Get key ↗</div></div><div class="provider-status off">● Not configured</div></div>
+            <div class="provider-body"><div class="field">Paste API key…</div></div>
+          </div>
+          <div class="provider">
+            <div class="provider-head"><div><div class="provider-name">ACE Studio</div><div class="provider-meta">Voice · Singing · Website ↗</div></div><div class="provider-status off">● Disabled</div></div>
+            <div class="provider-body"><div>Requires the ACE Studio app running on this Mac.</div><div class="button">Enable</div></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="mock-label">Help / MCP — identical shell and page rhythm</div>
+  <div class="window">
+    <aside class="sidebar">
+      <div class="side-row"><span class="icon">⌨</span>Shortcuts</div>
+      <div class="side-row active"><span class="icon">◎</span>MCP</div>
+    </aside>
+    <main class="detail">
+      <header class="page-head">
+        <div class="page-title">MCP</div>
+        <div class="page-subtitle">Connect external AI clients to the open NexGenVideo project.</div>
+      </header>
+      <div class="scroll">
+        <section class="section">
+          <div class="section-title">Server</div>
+          <div class="section-subtitle">NexGenVideo listens only on this Mac.</div>
+          <div class="card">
+            <div class="row"><div class="row-main"><div class="row-title">Server URL</div><div class="row-subtitle"><code>http://127.0.0.1:19789/mcp</code></div></div><div class="button">Copy</div></div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-title">Client Setup</div>
+          <div class="section-subtitle">Choose the client you want to connect.</div>
+          <div class="mcp-grid">
+            <div class="card client"><div class="row"><div class="row-main"><div class="row-title">Cursor</div><div class="row-subtitle">Install the NexGenVideo MCP connection.</div></div><div class="button">Install</div></div></div>
+            <div class="card client"><div class="row"><div class="row-main"><div class="row-title">Claude Desktop</div><div class="row-subtitle">Install the bundled MCP connection.</div></div><div class="button">Install</div></div></div>
+            <div class="card client"><div class="row"><div class="row-main"><div class="row-title">Claude Code</div><div class="row-subtitle">Run once in Terminal.</div></div><div class="button">Copy</div></div></div>
+            <div class="card client"><div class="row"><div class="row-main"><div class="row-title">Codex</div><div class="row-subtitle">Run once in Terminal.</div></div><div class="button">Copy</div></div></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</div>

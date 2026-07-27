@@ -23,19 +23,19 @@ struct ProjectCard: View {
                             .aspectRatio(contentMode: .fill)
                     } else {
                         Image(systemName: "film")
-                            .font(.system(size: AppTheme.FontSize.title2, weight: .light))
+                            .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                 }
                 .overlay {
                     if !entry.isAccessible {
-                        Color.black.opacity(0.45)
+                        AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.elevated)
 
                         VStack(spacing: AppTheme.Spacing.xxs) {
                             Image(systemName: "questionmark.folder")
-                                .font(.system(size: AppTheme.FontSize.title2, weight: .light))
+                                .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
                             Text("Unavailable")
-                                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                             Text("Moved or deleted")
                                 .font(.system(size: AppTheme.FontSize.xxs))
                                 .foregroundStyle(AppTheme.Text.mutedColor)
@@ -51,29 +51,29 @@ struct ProjectCard: View {
             // Bottom gradient + label overlay
             LinearGradient(
                 stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black.opacity(0.7), location: 1),
+                    .init(color: AppTheme.Background.clearColor, location: 0),
+                    .init(color: AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.scrim), location: 1),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .frame(height: 60)
+            .frame(height: AppTheme.ComponentSize.homeCardOverlayHeight)
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text(entry.name)
-                    .font(.system(size: AppTheme.FontSize.smMd, weight: .regular))
-                    .foregroundStyle(entry.isAccessible ? .white : AppTheme.Text.mutedColor)
+                    .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.regular))
+                    .foregroundStyle(entry.isAccessible ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
                     .lineLimit(1)
 
                 Text(Self.relativeString(for: entry.createdDate))
                     .font(.system(size: AppTheme.FontSize.xs))
-                    .foregroundStyle(.white.opacity(AppTheme.Opacity.medium))
+                    .foregroundStyle(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.medium))
             }
             .padding(.horizontal, AppTheme.Spacing.md)
             .padding(.bottom, AppTheme.Spacing.smMd)
         }
-        .opacity(entry.isAccessible ? 1.0 : 0.6)
+        .opacity(entry.isAccessible ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled)
         .overlay(alignment: .topTrailing) {
             if isHovered {
                 // A present file → delete to Trash; a missing one → just drop it from Recents (there's
@@ -82,8 +82,10 @@ struct ProjectCard: View {
                     if entry.isAccessible { showDeleteConfirmation = true } else { onRemove(entry.url) }
                 } label: {
                     Image(systemName: entry.isAccessible ? "trash.fill" : "xmark")
-                        .font(.system(size: AppTheme.FontSize.smMd, weight: .semibold))
-                        .foregroundStyle(entry.isAccessible ? .red : .white)
+                        .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                        .foregroundStyle(
+                            entry.isAccessible ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor
+                        )
                         .frame(width: AppTheme.IconSize.lgXl, height: AppTheme.IconSize.lgXl)
                         .glassEffect(.regular, in: .circle)
                 }
@@ -97,14 +99,14 @@ struct ProjectCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
                 .strokeBorder(
-                    Color.white.opacity(isHovered ? AppTheme.Opacity.muted : AppTheme.Opacity.hint),
+                    AppTheme.Text.primaryColor.opacity(isHovered ? AppTheme.Opacity.muted : AppTheme.Opacity.hint),
                     lineWidth: AppTheme.BorderWidth.hairline
                 )
         )
-        .shadow(color: .black.opacity(isHovered ? 0.4 : 0.2), radius: isHovered ? 12 : 4, y: isHovered ? 4 : 2)
+        .shadow(isHovered ? AppTheme.Shadow.cardHover : AppTheme.Shadow.cardRest)
         .scaleEffect(isHovered ? 1.03 : 1.0)
         .padding(AppTheme.Spacing.xs)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
+        .animation(.spring(response: AppTheme.Anim.cardSpringResponse, dampingFraction: AppTheme.Anim.cardSpringDamping), value: isHovered)
         .onHover { isHovered = $0 }
         .contextMenu {
             if entry.isAccessible {
@@ -112,7 +114,7 @@ struct ProjectCard: View {
                 Button("Reveal in Finder") {
                     NSWorkspace.shared.selectFile(entry.url.path, inFileViewerRootedAtPath: entry.url.deletingLastPathComponent().path)
                 }
-                Divider()
+                Divider() // app-theme: native-menu-divider
             }
             Button("Remove from Recents") { onRemove(entry.url) }
             Button("Delete Project", role: .destructive) { showDeleteConfirmation = true }

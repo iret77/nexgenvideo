@@ -242,10 +242,17 @@ extension EditorViewModel {
     }
 
     /// Run `work` as a single atomic mutation, registering one timeline-swap undo
-    func withTimelineSwap(actionName: String, _ work: () -> Void) {
+    func withTimelineSwap(actionName: String, _ work: () throws -> Void) rethrows {
         let before = timeline
         undoManager?.disableUndoRegistration()
-        work()
+        do {
+            try work()
+        } catch {
+            timeline = before
+            undoManager?.enableUndoRegistration()
+            notifyTimelineChanged()
+            throw error
+        }
         undoManager?.enableUndoRegistration()
         let after = timeline
         guard before != after else { return }
@@ -607,6 +614,9 @@ extension EditorViewModel {
 
         mediaAssets.removeAll { ids.contains($0.id) }
         mediaManifest.entries.removeAll { ids.contains($0.id) }
+        mediaManifest.intakeRoleByAssetID = mediaManifest.intakeRoleByAssetID.filter {
+            !ids.contains($0.key)
+        }
 
         for id in ids { closePreviewTab(id: PreviewTab.mediaAssetTabId(for: id)) }
         selectedMediaAssetIds.removeAll()

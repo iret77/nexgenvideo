@@ -10,7 +10,7 @@ struct ExportButton: View {
                     .offset(y: -1)
                 Text("Export")
             }
-            .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+            .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
             .foregroundStyle(AppTheme.Text.secondaryColor)
             .padding(.horizontal, AppTheme.Spacing.sm)
             .frame(height: AppTheme.IconSize.lg)

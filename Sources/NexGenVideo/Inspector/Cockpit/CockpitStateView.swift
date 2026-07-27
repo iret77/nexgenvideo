@@ -47,7 +47,7 @@ enum CockpitStateView {
                     .font(.system(size: AppTheme.FontSize.title1))
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 Text(headline)
-                    .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 Text(detail)
                     .font(.system(size: AppTheme.FontSize.sm))
@@ -63,7 +63,7 @@ enum CockpitStateView {
                         HStack(spacing: AppTheme.Spacing.sm) {
                             ProgressView().controlSize(.small)
                             Text("Starting…")
-                                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                         }
                         .padding(.top, AppTheme.Spacing.xs)
@@ -76,7 +76,7 @@ enum CockpitStateView {
             } else {
                 Button("Retry", action: retry)
                     .buttonStyle(.plain)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                     .foregroundStyle(AppTheme.Accent.primary)
                     .padding(.top, AppTheme.Spacing.xs)
             }
@@ -92,7 +92,7 @@ enum CockpitStateView {
                 .font(.system(size: AppTheme.FontSize.title1))
                 .foregroundStyle(AppTheme.Text.mutedColor)
             Text(title)
-                .font(.system(size: AppTheme.FontSize.md, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Text(message)
                 .font(.system(size: AppTheme.FontSize.sm))
@@ -115,12 +115,12 @@ enum CockpitStateView {
             Image(nsImage: badge)
                 .resizable()
                 .scaledToFit()
-                .frame(maxWidth: 320)
+                .frame(maxWidth: AppTheme.ComponentSize.cockpitMessageMaxWidth)
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
                 .padding(.bottom, AppTheme.Spacing.sm)
         }
         Text(pack.headline ?? pack.displayName)
-            .font(.system(size: AppTheme.FontSize.lg, weight: .semibold))
+            .font(.system(size: AppTheme.FontSize.lg, weight: AppTheme.FontWeight.semibold))
             .foregroundStyle(AppTheme.Text.primaryColor)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)

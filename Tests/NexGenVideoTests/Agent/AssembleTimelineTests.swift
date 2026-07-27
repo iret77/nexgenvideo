@@ -61,17 +61,51 @@ struct AssembleTimelineTests {
         )
         _ = try saveShotlist(shotlist, to: dataRoot)
 
-        // Two stub rendered clips on disk (content irrelevant — only the extension/type matter).
-        let outA = tmp.appendingPathComponent("s001.mp4")
-        let outB = tmp.appendingPathComponent("s002.mp4")
-        try Data("clipA".utf8).write(to: outA)
-        try Data("clipB".utf8).write(to: outB)
-
         // assemble_timeline is gated on an approved plan — approve the chain so these tests exercise
         // assembly, not gate policy (the gate itself is covered by the blocked test below).
         try approvePlanChain(dataRoot: dataRoot)
+        try Fixtures.prepareProjectPackage(at: home)
 
-        return (ToolHarness(), dataRoot, tmp, [outA.path, outB.path])
+        let harness = ToolHarness()
+        harness.editor.projectURL = home
+        let workingDataRoot = try #require(
+            harness.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+        let projectHome = FrameInventory.projectHome(of: workingDataRoot)
+        let outA = projectHome.appendingPathComponent("s001.mp4")
+        let outB = projectHome.appendingPathComponent("s002.mp4")
+        try Data("clipA".utf8).write(to: outA)
+        try Data("clipB".utf8).write(to: outB)
+        let generationInput = GenerationInput(
+            prompt: "Compiled provider prompt.",
+            model: "video-model",
+            duration: 1,
+            aspectRatio: "16:9"
+        )
+        harness.editor.mediaAssets.append(
+            MediaAsset(
+                id: "s001-video",
+                url: outA,
+                type: .video,
+                name: "s001",
+                generationInput: generationInput
+            )
+        )
+        harness.editor.mediaAssets.append(
+            MediaAsset(
+                id: "s002-video",
+                url: outB,
+                type: .video,
+                name: "s002",
+                generationInput: generationInput
+            )
+        )
+        return (
+            harness,
+            workingDataRoot,
+            tmp,
+            ["s001-video", "s002-video"]
+        )
     }
 
     /// Approve every core phase up to and including shotlist, so assemble_timeline's require-chain passes.
@@ -99,7 +133,10 @@ struct AssembleTimelineTests {
     @Test("assemble_timeline is blocked until the plan chain is approved")
     func assembleBlockedOnUnapprovedPlan() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
 
         // Un-approve an upstream gate — assembly must refuse (deterministic terminal backstop).
@@ -123,7 +160,10 @@ struct AssembleTimelineTests {
     @Test("places rendered shots on beats, lays the song at frame 0, skips the unrendered shot")
     func assemblesToTheBeat() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
 
         let result = try #require(try await h.runOK("assemble_timeline", args: [
@@ -146,6 +186,10 @@ struct AssembleTimelineTests {
         let videoIndex = try #require(result["video_track_index"] as? Int)
         #expect(h.editor.timeline.tracks[videoIndex].type == .video)
         #expect(h.editor.timeline.tracks[videoIndex].clips.count == 2)
+        #expect(
+            Set(h.editor.timeline.tracks[videoIndex].clips.map(\.mediaRef))
+                == ["s001-video", "s002-video"]
+        )
 
         // The song is the sync anchor: one audio clip at frame 0.
         let songTrack = try #require(result["song_track"] as? [String: Any])
@@ -161,7 +205,10 @@ struct AssembleTimelineTests {
     @Test("assembling again rebuilds in place — no duplicated clips or song")
     func reRunReplaces() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
 
         _ = try await h.runOK("assemble_timeline", args: ["project_dir": dataRoot.path, "phase": "final"])
@@ -190,7 +237,10 @@ struct AssembleTimelineTests {
     @Test("errors when no shots are rendered yet")
     func errorsWithoutRenders() async throws {
         let (h, dataRoot, cleanup, _) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let result = await h.runRaw("assemble_timeline", args: ["project_dir": dataRoot.path, "phase": "final"])
         #expect(result.isError)
         #expect(ToolHarness.textOf(result).contains("No rendered shots"))
@@ -199,7 +249,10 @@ struct AssembleTimelineTests {
     @Test("errors when the analysis artifact is missing")
     func errorsWithoutAnalysis() async throws {
         let (h, dataRoot, cleanup, outputs) = try setup()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         try FileManager.default.removeItem(at: dataRoot.appendingPathComponent("analysis/song.json"))
         try await recordTwoRenders(h, dataRoot: dataRoot, outputs: outputs)
 

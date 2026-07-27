@@ -33,7 +33,7 @@ chain) is yours; the pixels come from the host.
 
 ## Outputs & gate
 
-- `bible/bible.yaml` — the engine bible schema, written by you.
+- `bible/bible.yaml` — written only through `write_bible`.
 - Generated sheet PNGs under `bible/<id>/<view>.png`, copied user
   anchors under `bible/refs/<id>/<name>.png`, optional Scene3D
   panorama anchors under `bible/<id>/scene3d/`.
@@ -60,17 +60,20 @@ sheets (`generate_image` calls cost real money):
     - `generate_missing` → only the sheets that are missing per the
       storyboard demand. Do NOT overwrite existing sheet files.
     - `single_entity` → user picks entity + view, regenerate only that.
-    - `rebuild` → back up `bible.yaml` as `.bak`, keep the old sheet
-      files, run a fresh flow.
+    - `rebuild` → keep the old sheet files and run a fresh flow through
+      `write_bible`; the host archives the previous manifest before
+      replacement.
   - **Yes, but schema-invalid / incomplete** → carry over the existing
     fields, fill in what is missing, never blindly overwrite.
   - **No** → normal flow.
 
-### 2. Know the schema before you write (MANDATORY)
+### 2. Use the typed writer (MANDATORY)
 
 Before anything else, get the current bible shape via
-`get_bible(project_dir)` (null on a fresh project — then you author from
-zero against the schema the engine validates on save). Cheat sheet:
+`get_bible(project_dir)`. Build the semantic fields below and pass them
+to `write_bible`; never author YAML. The tool validates the engine model
+and preserves the prior manifest in history before replacement. Cheat
+sheet:
 
 | Concept | Required | Notes |
 |---|---|---|
@@ -125,8 +128,10 @@ demanded views — that is your generation plan for `Location.sheets`.
 
 You **generate only what the storyboard needs**. No speculative sheets
 ("might be needed"). No missing sheets that a step references. If the
-storyboard appears contradictory (12 views per location), go back to
-the storyboard agent.
+storyboard appears contradictory (12 views per location), call
+`rewind(target_phase="storyboard")` and correct it through the
+Storyboard writer before returning. Never patch an approved Storyboard
+from the Bible phase.
 
 Analogously for characters: aggregate the requested views from
 `step.character_view_request` per character name (treatment plain
@@ -197,9 +202,9 @@ generated** images, never mirrors of the uploads.
 
 #### The generation mechanic (per required view)
 
-One `generate_image` call per required view. You compose the prompt; the
-host generates and the result is brought into the project at the sheet
-path.
+One compiled `generate_image` call per required view. You compose the
+intent; the host compiles and generates it, then stages the result at the
+canonical sheet path with exact prompt/model/hash provenance.
 
 1. **Compose the sheet prompt** from the entity `visual_prompt` +
    `attributes` + `look.style` (verbatim) + the view key (e.g. front /
@@ -220,13 +225,18 @@ path.
    anchor PNG>})` to get a `mediaRef`, then pass those mediaRefs in
    `generate_image(..., referenceMediaRefs=[...])`. Pure text-only
    sheets pass no refs.
-4. **Generate:** `generate_image(prompt=<composed>, model=<model>,
-   aspectRatio=<square or the entity's natural ratio>,
-   referenceMediaRefs=[...])`. The call returns an async placeholder
-   asset; wait until the asset is ready (`get_media` shows its
-   `generationStatus` off `generating`/`downloading`). Then bring the
-   result into the project as `bible/<id>/<view>.png` and record the
-   path in `sheets[<view>]`.
+4. **Compile:** `compile_prompt(intent=<composed>, model=<model>,
+   shotId="none")`. A Bible sheet is not a shot; `none` is deliberate
+   here.
+5. **Generate:** pass the returned `compiledPrompt` and `compileToken`
+   unchanged to `generate_image`, with
+   `aspectRatio=<square or the entity's natural ratio>` and
+   `referenceMediaRefs=[...]`. The call returns an async placeholder
+   asset; wait until it is ready (`get_media` shows its
+   `generationStatus` off `generating`/`downloading`).
+6. **Stage:** `copy_project_file(media=<ready asset id>,
+   to="bible/<id>/<view>.png")`. The host records exact generated-media
+   provenance. Only then record that path in `sheets[<view>]`.
 
 #### Cross-sheet anchor chain (MANDATORY for multi-view sets)
 
@@ -283,12 +293,15 @@ flat per-view sheets above are the **baseline** and are always
 sufficient. As an **optional** location-consistency enhancement, you may
 anchor the views on a single world-model panorama:
 
-- Call `generate_image` with model **`marble/marble-1.1`** (the Marble
-  world-model) and a prompt describing the empty location ("Empty
+- Compile the empty-location intent with
+  `compile_prompt(model="marble/marble-1.1", shotId="none")`, then pass
+  its output unchanged to `generate_image` using **`marble/marble-1.1`**
+  (the Marble world-model). The intent describes the empty location ("Empty
   <location-type>. <wall-precise constraints>. Empty environment, only
   architecture visible."). Marble returns an **equirectangular
-  panorama** of the location. Bring it into the project as
-  `bible/<id>/scene3d/world_pano.png`.
+  panorama** of the location. Once ready, stage its media id with
+  `copy_project_file(media=...,
+  to="bible/<id>/scene3d/world_pano.png")`.
 - **Cut the views out of the panorama** with
   `extract_scene3d_povs(project_dir, location_id)` — a deterministic
   equirect→perspective resample, not a generation. It returns the clay
@@ -297,10 +310,11 @@ anchor the views on a single world-model panorama:
   panorama, the layout is identical across angles and a reverse shot
   mirrors left/right correctly — that is the whole reason to do this, and
   it is a property of the cut, not something the model is asked for.
-- **Restyle each clay POV into the look** with `generate_image`, passing
-  the clay POV as `referenceMediaRefs` and the returned
-  `restyle.instruction` as the intent — it already carries the
-  composition-preserving rule. Record each result as
+- **Restyle each clay POV into the look** through `compile_prompt`
+  (`shotId="none"`) → `generate_image`, passing the clay POV as
+  `referenceMediaRefs` and the returned `restyle.instruction` as the
+  intent — it already carries the composition-preserving rule. Stage
+  each ready result with `copy_project_file(media=...)` and record it as
   `Location.sheets[<pov name>]` (the POV name IS the sheet key). Never
   regenerate such a view from scratch: that throws the geometry away and
   the walls stop agreeing.
@@ -372,7 +386,7 @@ render phase — no bible approval without a 100% match.
 
 ### 10. Display + gate
 
-Write `bible/bible.yaml`. Display it for the user via
+Call `write_bible`. Display it for the user via
 `show_artifact(project_dir, "bible")` (output the `markdown` field in
 full). After user approval: `approve_gate(project_dir, "bible")`.
 
@@ -388,9 +402,12 @@ full). After user approval: `approve_gate(project_dir, "bible")`.
 - `attributes` is a dict, not a list.
 - `visual_prompt` non-empty for every entity.
 - Sheet generation runs exclusively through the host's `nexgen`
-  `generate_image` tool. Reference anchors are media assets — import the
-  on-disk PNG via `import_media` first, then pass the mediaRef in
-  `referenceMediaRefs`. Never guess provider/key availability; check via
+  `compile_prompt` → `generate_image` path. Stage each ready sheet with
+  `copy_project_file(media=...)`; a sheet without current host-recorded
+  prompt/model/hash provenance cannot pass the Bible gate. Reference
+  anchors are media assets — import the on-disk PNG via `import_media`
+  first, then pass the mediaRef in `referenceMediaRefs`. Never guess
+  provider/key availability; check via
   `list_models` (`loaded=true` + the model present in `models`).
 - Scene3D (`marble/marble-1.1` panorama) is **optional** — the flat
   per-view sheets are the baseline. When you do use it, cut the views
@@ -404,7 +421,9 @@ full). After user approval: `approve_gate(project_dir, "bible")`.
 ## Failure modes & escalation
 
 - **Storyboard demand looks contradictory** (e.g. 12 views per
-  location): do not generate — go back to the storyboard agent.
+  location): do not generate — call
+  `rewind(target_phase="storyboard")`, repair it through
+  `write_storyboard`, and re-approve before returning.
 - **Image generation unavailable** (`list_models` shows the model
   missing, or `loaded=false`): quote the reason, offer a registered
   alternative model; keys are bound in the host (Keychain / Settings),

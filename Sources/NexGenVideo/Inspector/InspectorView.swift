@@ -31,7 +31,7 @@ struct InspectorView: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             breadcrumbHeader
             Group {
                 inspectorContent
@@ -66,7 +66,7 @@ struct InspectorView: View {
     private var inspectorContent: some View {
         if editor.isMarqueeSelecting {
             // The breadcrumb already shows the live count; no body echo.
-            Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+            AppTheme.Background.clearColor.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if isMultiClipSelection {
             clipInspectorContent()
         } else if let object = editor.inspectedObject {
@@ -221,7 +221,11 @@ struct InspectorView: View {
                 .fixedSize()
             Spacer()
             Menu {
-                ForEach(SourceModeTag.allCases) { tag in
+                ForEach(
+                    SourceModeTag.allCases.filter {
+                        $0 != .aiEnhanced || current == .aiEnhanced
+                    }
+                ) { tag in
                     Button {
                         Task { await editor.setShotSourceMode(shotId: shot.id, to: tag.engineMode) }
                     } label: {
@@ -235,9 +239,9 @@ struct InspectorView: View {
             } label: {
                 HStack(spacing: AppTheme.Spacing.xxs) {
                     Image(systemName: current.symbol)
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                     Text(current.label)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.system(size: AppTheme.FontSize.micro))
                 }
@@ -292,7 +296,7 @@ struct InspectorView: View {
                     editor.inspectedObject = item.1
                 } label: {
                     Text(item.0)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                         .padding(.horizontal, AppTheme.Spacing.sm)
@@ -370,7 +374,7 @@ struct InspectorView: View {
     private func entityEditForm(_ entity: any BibleEntity) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("Edit \(entity.name)")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             TextField("Name", text: $entityEditName)
                 .textFieldStyle(.roundedBorder)
@@ -389,7 +393,7 @@ struct InspectorView: View {
             }
         }
         .padding(AppTheme.Spacing.mdLg)
-        .frame(width: 340)
+        .frame(width: AppTheme.ComponentSize.inspectorPopoverWidth)
     }
 
     private func applyEntityEdit(_ entity: any BibleEntity) {
@@ -527,7 +531,7 @@ struct InspectorView: View {
                 ForEach(Array(crumb.segments.enumerated()), id: \.offset) { index, segment in
                     if index > 0 {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: AppTheme.FontSize.micro, weight: .semibold))
+                            .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                     let isLast = index == crumb.segments.count - 1
@@ -578,7 +582,7 @@ struct InspectorView: View {
         return VStack(spacing: AppTheme.Spacing.smMd) {
             Spacer()
             Text(currentBreadcrumb.flatText)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .multilineTextAlignment(.center)
             Button("Open in Project") {
@@ -611,7 +615,7 @@ struct InspectorView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text(title.uppercased())
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             VStack(spacing: AppTheme.Spacing.sm) {
@@ -695,7 +699,7 @@ struct InspectorView: View {
     @ViewBuilder
     private func clipInspectorContent() -> some View {
         let tabs = availableTabs
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             if tabs.count > 1 {
                 tabBar(tabs)
             }
@@ -757,15 +761,15 @@ struct InspectorView: View {
         let kfVisible = single != nil && editor.keyframesPanelVisible
 
         if let clip = single, kfVisible {
-            HStack(alignment: .top, spacing: 0) {
+            HStack(alignment: .top, spacing: AppTheme.Spacing.none) {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     transformSection(clips: clips)
                     speedSection(clips: clips + selectedAudioClips)
-                        .padding(.trailing, KeyframesMetrics.controlsColumnWidth + AppTheme.Spacing.sm)
+                        .padding(.trailing, AppTheme.Timeline.keyframeControlsColumnWidth + AppTheme.Spacing.sm)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.trailing, AppTheme.Spacing.sm)
-                Divider()
+                AppDivider()
                 KeyframesPanel(clip: clip)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, AppTheme.Spacing.sm)
@@ -787,9 +791,9 @@ struct InspectorView: View {
             } label: {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     Image(systemName: on ? "diamond.fill" : "diamond")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                     Text("Keyframes")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 }
                 .foregroundStyle(on ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                 .padding(.horizontal, AppTheme.Spacing.smMd)
@@ -798,7 +802,7 @@ struct InspectorView: View {
             }
             .buttonStyle(.plain)
             .disabled(!enabled)
-            .opacity(enabled ? 1 : 0.4)
+            .opacity(enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.settingsWindow)
             .help(enabled ? (on ? "Hide keyframe timeline" : "Show keyframe timeline") : "Select a single clip to enable")
         }
     }
@@ -841,7 +845,7 @@ struct InspectorView: View {
         let single = clips.count == 1 ? clips.first : nil
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             transformHeader(clips: clips)
-                .frame(height: KeyframesMetrics.headerHeight, alignment: .leading)
+                .frame(height: AppTheme.Timeline.keyframeHeaderHeight, alignment: .leading)
             if transformExpanded {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                     animatableRow(label: "Position", clipId: single?.id, property: .position) {
@@ -880,7 +884,7 @@ struct InspectorView: View {
                 }
             }
         }
-        .frame(height: KeyframesMetrics.rowHeight)
+        .frame(height: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func keyframeControls(clipId: String, property: AnimatableProperty) -> some View {
@@ -889,7 +893,7 @@ struct InspectorView: View {
         let onKeyframe = editor.hasKeyframe(clipId: clipId, property: property, at: frame)
         let prev = editor.previousKeyframeFrame(clipId: clipId, property: property, before: frame)
         let next = editor.nextKeyframeFrame(clipId: clipId, property: property, after: frame)
-        return HStack(spacing: 0) {
+        return HStack(spacing: AppTheme.Spacing.none) {
             keyframeNavButton(systemName: "chevron.left", help: "Go to previous keyframe", enabled: prev != nil) {
                 if let f = prev { editor.seekToFrame(f) }
             }
@@ -901,14 +905,14 @@ struct InspectorView: View {
                 }
             } label: {
                 Image(systemName: onKeyframe ? "diamond.fill" : "diamond")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                     .foregroundStyle(onKeyframe ? AppTheme.Accent.timecodeColor : AppTheme.Text.tertiaryColor)
-                    .frame(width: KeyframesMetrics.stampButtonWidth, height: 18)
+                    .frame(width: AppTheme.Timeline.keyframeStampButtonWidth, height: AppTheme.Timeline.keyframeRulerHeight)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!inRange)
-            .opacity(inRange ? 1 : 0.4)
+            .opacity(inRange ? AppTheme.Opacity.opaque : AppTheme.Opacity.settingsWindow)
             .help(!inRange ? "Move playhead inside the clip"
                   : onKeyframe ? "Remove keyframe at playhead"
                   : "Add keyframe at playhead")
@@ -926,14 +930,14 @@ struct InspectorView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: KeyframesMetrics.navButtonWidth, height: 18)
+                .frame(width: AppTheme.Timeline.keyframeNavigationButtonWidth, height: AppTheme.Timeline.keyframeRulerHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.3)
+        .opacity(enabled ? AppTheme.Opacity.opaque : AppTheme.Opacity.shadow)
         .help(help)
     }
 
@@ -1054,7 +1058,7 @@ struct InspectorView: View {
 
     func sectionTitleLabel(title: String) -> some View {
         Text(title.uppercased())
-            .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
             .tracking(AppTheme.Tracking.wide)
             .foregroundStyle(AppTheme.Text.mutedColor)
             .fixedSize()
@@ -1117,7 +1121,7 @@ struct InspectorView: View {
                 }
             }
         }
-        .frame(height: KeyframesMetrics.rowHeight)
+        .frame(height: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func iconToggleButton(
@@ -1128,12 +1132,16 @@ struct InspectorView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(isOn ? AppTheme.Accent.primary : AppTheme.Text.secondaryColor)
                 .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
                 .background(
                     RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                        .fill(Color.white.opacity(isOn ? AppTheme.Opacity.subtle : 0))
+                        .fill(
+                            AppTheme.Text.primaryColor.opacity(
+                                isOn ? AppTheme.Opacity.subtle : AppTheme.Opacity.transparent
+                            )
+                        )
                 )
                 .hoverHighlight()
         }
@@ -1165,8 +1173,8 @@ struct InspectorView: View {
                 }
             }
         }
-        .frame(height: KeyframesMetrics.rowHeight)
-        .opacity(disabled ? 0.4 : 1)
+        .frame(height: AppTheme.Timeline.keyframeRowHeight)
+        .opacity(disabled ? AppTheme.Opacity.settingsWindow : AppTheme.Opacity.opaque)
     }
 
     @ViewBuilder
@@ -1187,10 +1195,10 @@ struct InspectorView: View {
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Text(active.label)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: .medium).monospacedDigit())
+                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium).monospacedDigit())
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .padding(.horizontal, AppTheme.Spacing.sm)
@@ -1223,7 +1231,7 @@ struct InspectorView: View {
     @ViewBuilder
     private func mediaAssetInspectorContent(_ asset: MediaAsset) -> some View {
         if asset.type.isVisual {
-            VStack(spacing: 0) {
+            VStack(spacing: AppTheme.Spacing.none) {
                 assetTabBar([.details, .ai])
                 if preferredAssetTab == .ai {
                     AIEditTab(asset: asset)
@@ -1309,14 +1317,14 @@ struct InspectorView: View {
 
     private var aiBadge: some View {
         Text("AI")
-            .font(.system(size: AppTheme.FontSize.xxs, weight: .bold))
+            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.bold))
             .tracking(AppTheme.Tracking.wide)
             .foregroundStyle(AppTheme.aiGradient)
             .padding(.horizontal, AppTheme.Spacing.sm)
             .padding(.vertical, AppTheme.Spacing.xxs)
             .overlay(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .strokeBorder(Color.white.opacity(AppTheme.Opacity.muted), lineWidth: AppTheme.BorderWidth.hairline)
+                    .strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted), lineWidth: AppTheme.BorderWidth.hairline)
             )
     }
 
@@ -1324,7 +1332,7 @@ struct InspectorView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Text("PROMPT")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 Spacer()
@@ -1437,7 +1445,7 @@ struct PromptCopyButton: View {
     var body: some View {
         Button(action: copy) {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(copied ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
                 .contentTransition(.symbolEffect(.replace))
         }

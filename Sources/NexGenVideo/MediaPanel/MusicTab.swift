@@ -115,7 +115,7 @@ struct MusicTab: View {
 
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
+            VStack(spacing: AppTheme.Spacing.none) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
                         sourceSection
@@ -317,7 +317,7 @@ struct MusicTab: View {
                     Button(option.label) { openMoodDialog(preselecting: option.id) }
                 }
             } label: { Label("Mood", systemImage: "slider.horizontal.3") }
-            Divider()
+            Divider() // app-theme: native-menu-divider
             Button {
                 editor.agentService.prefillInput("")
             } label: { Label("Ask the agent…", systemImage: "bubble.left.and.text.bubble.right") }

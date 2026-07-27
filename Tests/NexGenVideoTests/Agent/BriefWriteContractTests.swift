@@ -116,6 +116,12 @@ struct BriefWriteContractTests {
         #expect(brief.project == "demo")
         #expect(brief.schema == briefSchemaVersion)
         #expect(brief.generator == "brief-agent@write_brief")
+        let project = try YAMLArtifactStore(dataRoot: dataRoot).load(
+            ProjectMeta.self,
+            at: PipelineLayout.projectFile
+        )
+        #expect(project.mode == .section)
+        #expect(project.budgetEur == brief.budgetEur)
     }
 
     @Test("an invalid enum value is rejected and names the field")

@@ -3,18 +3,13 @@ import Testing
 @testable import NexGenEngine
 @testable import MusicvideoPlugin
 
-/// Proves the 23 pattern YAMLs bundled under `Resources/MusicvideoPack/library/`
-/// (copied verbatim from `plugins/musicvideo/nexgen_pack_musicvideo/library/`)
-/// parse and validate through the Swift `Pattern` Codable schema — the M8b
-/// knowledge migration is only sound if every file in the copied library
-/// round-trips through `Patterns.loadPattern`.
+/// Verifies every bundled pattern YAML decodes, validates, and round-trips.
 @Suite("Musicvideo Pattern Library Golden", .serialized)
 struct PatternLibraryGoldenTests {
     @Test("every bundled pattern YAML file parses and validates")
     func everyPatternYAMLParses() throws {
         let urls = PackKnowledge.patternLibraryURLs()
-        // No fixed count: the library grows as patterns get authored, and the pack simply loads
-        // whatever is bundled. Asserting a number here would fail on every addition.
+        // The library has no fixed count.
         #expect(!urls.isEmpty, "no pattern YAMLs bundled as resources")
 
         for url in urls.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {

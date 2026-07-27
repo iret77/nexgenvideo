@@ -55,11 +55,14 @@ final class GenerationService {
         fileExtension: String,
         projectURL: URL?,
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) -> String {
         let count = max(1, min(4, numImages))
-        let baseName = name ?? String(genInput.prompt.prefix(30))
+        var authorizedGenInput = genInput
+        authorizedGenInput.spendTransactionId = authorization.transactionId
+        let baseName = name ?? String(authorizedGenInput.prompt.prefix(30))
 
         let resolvedFolderId = folderId.flatMap { id in
             editor.folder(id: id) != nil ? id : nil
@@ -72,7 +75,7 @@ final class GenerationService {
                 type: assetType,
                 name: baseName,
                 duration: placeholderDuration,
-                genInput: genInput,
+                genInput: authorizedGenInput,
                 folderId: resolvedFolderId,
                 destDir: destDir,
                 fileExtension: fileExtension,
@@ -88,7 +91,7 @@ final class GenerationService {
         // still uploading would re-route the dispatch to a provider that cannot read what was just
         // hosted (a direct provider handed a fal URL reads it as a file path, finds nothing, and
         // silently renders without the reference).
-        let target = Self.dispatchTarget(modelId: genInput.model)
+        let target = authorization.target
         let hosting = Self.referenceHosting(for: target.provider)
 
         Task { @MainActor in
@@ -149,7 +152,7 @@ final class GenerationService {
                 }
 
                 let persistedRefs = hosting.persistsHostedURLs ? uploaded : []
-                var finalGenInput = genInput
+                var finalGenInput = authorizedGenInput
                 if let snapshotRefs {
                     snapshotRefs(&finalGenInput, persistedRefs)
                 } else {
@@ -169,16 +172,22 @@ final class GenerationService {
                     params: params,
                     genInput: finalGenInput,
                     target: target,
+                    authorization: authorization,
                     editor: editor,
                     onComplete: onComplete,
                     onFailure: onFailure
                 )
             } catch {
                 let message = error.localizedDescription
-                Log.generation.error("upload failed model=\(genInput.model) error=\(message)")
+                Log.generation.error("upload failed model=\(authorizedGenInput.model) error=\(message)")
                 for placeholder in placeholders {
                     placeholder.generationStatus = .failed("Upload failed: \(message)")
                 }
+                try? editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .released,
+                    note: "Preparation failed: \(message)"
+                )
                 onFailure?()
             }
         }
@@ -225,7 +234,7 @@ final class GenerationService {
     /// the move fails — staging is a convenience, never a hard dependency of the download.
     @MainActor
     private static func stageDownload(_ downloaded: URL, ext: String, editor: EditorViewModel) -> URL {
-        guard let key = editor.workingCopyKey else { return downloaded }
+        guard let key = editor.openWorkingCopyKey else { return downloaded }
         let dir = AppPaths.ensure(AppPaths.projectStaging(projectId: key))
         let dest = dir.appendingPathComponent(UUID().uuidString)
             .appendingPathExtension(ext.isEmpty ? "bin" : ext)
@@ -258,7 +267,7 @@ final class GenerationService {
                 asset.url = asset.url.deletingPathExtension().appendingPathExtension(realExt)
             }
             // Stage the freshly downloaded bytes in the project's Caches-tier scratch (purgeable,
-            // per-project) before finalizing into the durable package media/. Falls back to the
+            // per-project) before finalizing into the working media store. Falls back to the
             // system temp URL when no project is open.
             let tempURL = Self.stageDownload(downloadURL, ext: asset.url.pathExtension, editor: editor)
             try? FileManager.default.removeItem(at: asset.url)
@@ -412,7 +421,8 @@ final class GenerationService {
         placeholders: [MediaAsset],
         params: BackendGenerationParams,
         genInput: GenerationInput,
-        target: (provider: GenerationProvider, endpoint: String, binding: ProviderBinding?),
+        target: ResolvedGenerationTarget,
+        authorization: GenerationAuthorization,
         editor: EditorViewModel,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
@@ -422,12 +432,15 @@ final class GenerationService {
         defer { Log.generation.notice("run \(runId) settled") }
 
         // `.mcp` runs over MCP, not a keyless REST call, so `canRun` matches what executes.
-        let (provider, endpoint, binding) = target
+        let provider = target.provider
+        let endpoint = target.endpoint
+        let binding = target.binding
 
         if binding?.transport == .mcp {
             await runMCPJob(
                 provider: provider, toolName: endpoint, modelParam: binding?.modelParam,
                 params: params, placeholders: placeholders, editor: editor,
+                authorization: authorization,
                 onComplete: onComplete, onFailure: onFailure)
             return
         }
@@ -435,17 +448,21 @@ final class GenerationService {
         switch provider {
         case .marble:
             guard case .image(let p) = params, let marbleModel = MarbleModelRegistry.model(for: endpoint) else {
-                return failJob(placeholders, "Unsupported Marble request for model: \(endpoint)", onFailure)
+                return failBeforeSubmission(
+                    placeholders, "Unsupported Marble request for model: \(endpoint)",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
             }
             await runMarbleJob(
                 model: marbleModel, prompt: p.prompt, referencePath: p.imageURLs.first,
                 name: genInput.prompt, placeholders: placeholders, editor: editor,
+                authorization: authorization,
                 onComplete: onComplete, onFailure: onFailure)
             return
         case .runway:
             await runRunwayJob(
                 endpoint: endpoint, params: params,
                 placeholders: placeholders, editor: editor,
+                authorization: authorization,
                 onComplete: onComplete, onFailure: onFailure)
             return
         case .elevenlabs:
@@ -455,6 +472,7 @@ final class GenerationService {
                 await runElevenLabsJob(
                     endpoint: endpoint, params: audioParams,
                     placeholders: placeholders, editor: editor,
+                    authorization: authorization,
                     onComplete: onComplete, onFailure: onFailure)
                 return
             }
@@ -462,17 +480,21 @@ final class GenerationService {
             // MCP-only providers: a resolved `.mcp` binding was handled above. Reaching here means the
             // provider isn't signed in (no `.mcp` binding, no direct-API path) — its models were never
             // offered (usable-only), so this is the guidance for a stale id.
-            return failJob(placeholders,
-                           "\(provider.displayName) runs over MCP — sign in under Settings \u{2192} Providers.",
-                           onFailure)
+            return failBeforeSubmission(
+                placeholders,
+                "\(provider.displayName) runs over MCP — sign in under Settings \u{2192} Providers.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         case .google:
             guard case .image(let p) = params,
                   let model = GoogleModelRegistry.model(for: endpoint) else {
-                return failJob(placeholders, "Unsupported Google AI request for model: \(endpoint)", onFailure)
+                return failBeforeSubmission(
+                    placeholders, "Unsupported Google AI request for model: \(endpoint)",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
             }
             await runGoogleImageJob(
                 apiModel: endpoint, model: model, params: p,
-                placeholders: placeholders, editor: editor, onComplete: onComplete, onFailure: onFailure)
+                placeholders: placeholders, editor: editor, authorization: authorization,
+                onComplete: onComplete, onFailure: onFailure)
             return
         case .fal:
             break
@@ -487,15 +509,27 @@ final class GenerationService {
             input = FalInputBuilder.imageInput(p, sizeMode: falModel?.imageSize ?? .imageSizeEnum, refField: falModel?.imageRef ?? .none, count: placeholders.count)
             shape = .images
         case .video(let p):
-            guard let falModel else { return failJob(placeholders, "Unknown video model: \(endpoint)", onFailure) }
+            guard let falModel else {
+                return failBeforeSubmission(
+                    placeholders, "Unknown video model: \(endpoint)",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            }
             input = FalInputBuilder.videoInput(p, model: falModel)
             shape = .video
         case .audio(let p):
-            guard let falModel else { return failJob(placeholders, "Unknown audio model: \(endpoint)", onFailure) }
+            guard let falModel else {
+                return failBeforeSubmission(
+                    placeholders, "Unknown audio model: \(endpoint)",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            }
             input = FalInputBuilder.audioInput(p, model: falModel)
             shape = .audio
         case .upscale(let p):
-            guard let falModel else { return failJob(placeholders, "Unknown upscale model: \(endpoint)", onFailure) }
+            guard let falModel else {
+                return failBeforeSubmission(
+                    placeholders, "Unknown upscale model: \(endpoint)",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            }
             input = FalInputBuilder.upscaleInput(p, model: falModel)
             shape = falModel.entry.responseShape
         }
@@ -506,6 +540,7 @@ final class GenerationService {
             shape: shape,
             placeholders: placeholders,
             editor: editor,
+            authorization: authorization,
             onComplete: onComplete,
             onFailure: onFailure
         )
@@ -519,33 +554,94 @@ final class GenerationService {
         onFailure?()
     }
 
+    private func failBeforeSubmission(
+        _ placeholders: [MediaAsset],
+        _ message: String,
+        authorization: GenerationAuthorization,
+        editor: EditorViewModel,
+        onFailure: (@MainActor () -> Void)?
+    ) {
+        try? editor.recordSpendEvent(
+            authorization: authorization,
+            kind: .released,
+            note: message
+        )
+        failJob(placeholders, message, onFailure)
+    }
+
+    private func markSubmitted(
+        authorization: GenerationAuthorization,
+        providerRequestId: String,
+        editor: EditorViewModel
+    ) {
+        do {
+            try editor.recordSpendEvent(
+                authorization: authorization,
+                kind: .submitted,
+                providerRequestId: providerRequestId,
+                money: authorization.estimate
+            )
+        } catch {
+            Log.generation.error(
+                "could not record provider request \(providerRequestId): \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func markCharged(
+        authorization: GenerationAuthorization,
+        money: GenerationMoney? = nil,
+        editor: EditorViewModel
+    ) {
+        guard let charged = money ?? authorization.estimate else { return }
+        do {
+            try editor.recordSpendEvent(
+                authorization: authorization,
+                kind: .charged,
+                money: charged
+            )
+        } catch {
+            Log.generation.error("could not record generation charge: \(error.localizedDescription)")
+        }
+    }
+
     private func runFalJob(
         endpoint: String,
         input: [String: Any],
         shape: CatalogEntry.ResponseShape,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
         guard let apiKey = ProviderKeychain.load(.fal) else {
-            return failJob(placeholders, "Add a fal.ai API key in Settings to generate.", onFailure)
+            return failBeforeSubmission(
+                placeholders, "Add a fal.ai API key in Settings to generate.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         }
 
+        var requestId: String?
         do {
             // fal's raw HTTP queue API takes the input fields at the top level — NOT wrapped in
             // an "input" key (that is only the JS/Python SDK convention). Wrapping made fal see no
             // recognized fields and reject every job, so no fal generation ever produced an asset.
             let inputBody = try JSONSerialization.data(withJSONObject: input)
             let client = FalClient(apiKey: apiKey)
-            let requestId = try await client.submit(endpoint: endpoint, inputBody: inputBody)
-            let outputData = try await client.result(endpoint: endpoint, requestId: requestId)
+            let submittedId = try await client.submit(endpoint: endpoint, inputBody: inputBody)
+            requestId = submittedId
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: submittedId,
+                editor: editor
+            )
+            let outputData = try await client.result(endpoint: endpoint, requestId: submittedId)
             let urls = FalOutput.urls(from: outputData, shape: shape)
             guard !urls.isEmpty else {
                 throw GenerationBackendError.transport("fal returned no output")
             }
             let job = BackendGenerationJob(
-                _id: requestId,
+                _id: submittedId,
                 status: .succeeded,
                 resultUrls: urls,
                 errorMessage: nil,
@@ -559,8 +655,26 @@ final class GenerationService {
                 onComplete: onComplete,
                 onFailure: onFailure
             )
+            let billed = try? await ProviderMoneyClient.shared.falCharge(
+                requestId: submittedId,
+                endpoint: endpoint,
+                apiKey: apiKey
+            )
+            if let billed {
+                markCharged(
+                    authorization: authorization,
+                    money: billed,
+                    editor: editor
+                )
+            }
         } catch {
-            failJob(placeholders, error.localizedDescription, onFailure)
+            if requestId == nil {
+                failBeforeSubmission(
+                    placeholders, error.localizedDescription,
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            } else {
+                failJob(placeholders, error.localizedDescription, onFailure)
+            }
         }
     }
 
@@ -576,11 +690,14 @@ final class GenerationService {
         params: BackendGenerationParams,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
         guard let client = await ProviderMCP.client(for: provider) else {
-            return failJob(placeholders, "No MCP endpoint configured for \(provider.displayName).", onFailure)
+            return failBeforeSubmission(
+                placeholders, "No MCP endpoint configured for \(provider.displayName).",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         }
         do {
             let tools = try await client.discoverTools()
@@ -590,10 +707,17 @@ final class GenerationService {
                 ?? Self.matchMCPTool(tools, for: params)
             guard let tool else {
                 await client.disconnect()
-                return failJob(placeholders,
-                               "\(provider.displayName)'s MCP exposes no tool for this request — check the provider's MCP or add its API key.",
-                               onFailure)
+                return failBeforeSubmission(
+                    placeholders,
+                    "\(provider.displayName)'s MCP exposes no tool for this request — check the provider's MCP or add its API key.",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
             }
+            let requestId = UUID().uuidString
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: requestId,
+                editor: editor
+            )
             let texts = try await client.callTool(
                 name: tool.name, arguments: Self.mcpArguments(for: params, model: modelParam))
             await client.disconnect()
@@ -602,11 +726,12 @@ final class GenerationService {
                 return failJob(placeholders, "\(provider.displayName)'s MCP returned no media URL.", onFailure)
             }
             let job = BackendGenerationJob(
-                _id: UUID().uuidString, status: .succeeded, resultUrls: urls,
+                _id: requestId, status: .succeeded, resultUrls: urls,
                 errorMessage: nil, costCredits: nil, completedAt: nil)
             await finalizeSuccess(
                 job: job, placeholders: placeholders, editor: editor,
                 onComplete: onComplete, onFailure: onFailure)
+            markCharged(authorization: authorization, editor: editor)
         } catch {
             await client.disconnect()
             failJob(placeholders, "MCP call to \(provider.displayName) failed: \(error.localizedDescription)", onFailure)
@@ -659,54 +784,81 @@ final class GenerationService {
         params: BackendGenerationParams,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
         guard let apiKey = ProviderKeychain.load(.runway) else {
-            return failJob(placeholders, "Add a Runway API key in Settings to generate.", onFailure)
+            return failBeforeSubmission(
+                placeholders, "Add a Runway API key in Settings to generate.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         }
         guard let model = RunwayModelRegistry.model(for: endpoint) else {
-            return failJob(placeholders, "Unknown Runway model: \(endpoint)", onFailure)
+            return failBeforeSubmission(
+                placeholders, "Unknown Runway model: \(endpoint)",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         }
+        var taskId: String?
         do {
             let client = RunwayClient(apiKey: apiKey)
-            let urls: [String]
             switch params {
             case .video(let p) where RunwayModelRegistry.requiresSourceVideo(model):
                 // #223 — the restyle pass: re-render an existing clip. No duration (the output follows
                 // the source) and no reference image; the source clip IS the input.
                 guard let source = p.sourceVideoURL else {
-                    return failJob(placeholders,
-                                   "\(model.entry.displayName) restyles an existing clip — pass the source video.",
-                                   onFailure)
+                    return failBeforeSubmission(
+                        placeholders,
+                        "\(model.entry.displayName) restyles an existing clip — pass the source video.",
+                        authorization: authorization, editor: editor, onFailure: onFailure)
                 }
-                urls = try await client.videoToVideo(
+                taskId = try await client.createVideoToVideo(
                     model: model.apiModel, videoUri: source, promptText: p.prompt,
                     ratio: RunwayModelRegistry.videoRatio(for: p.aspectRatio))
             case .video(let p):
                 guard let image = p.referenceImageURLs.first ?? p.startFrameURL else {
-                    return failJob(placeholders,
-                                   "\(model.entry.displayName) is image-to-video — add a reference image.",
-                                   onFailure)
+                    return failBeforeSubmission(
+                        placeholders,
+                        "\(model.entry.displayName) is image-to-video — add a reference image.",
+                        authorization: authorization, editor: editor, onFailure: onFailure)
                 }
-                urls = try await client.imageToVideo(
+                taskId = try await client.createImageToVideo(
                     model: model.apiModel, promptImage: image, promptText: p.prompt,
                     ratio: RunwayModelRegistry.videoRatio(for: p.aspectRatio), duration: p.duration)
             case .image(let p):
-                urls = try await client.textToImage(
+                taskId = try await client.createTextToImage(
                     model: model.apiModel, promptText: p.prompt,
                     ratio: RunwayModelRegistry.imageRatio(for: p.aspectRatio))
             default:
-                return failJob(placeholders, "Unsupported Runway request: \(endpoint)", onFailure)
+                return failBeforeSubmission(
+                    placeholders, "Unsupported Runway request: \(endpoint)",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
             }
+            guard let taskId else {
+                return failBeforeSubmission(
+                    placeholders, "Runway returned no task id.",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            }
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: taskId,
+                editor: editor
+            )
+            let urls = try await client.output(taskId: taskId)
             let job = BackendGenerationJob(
-                _id: UUID().uuidString, status: .succeeded, resultUrls: urls,
+                _id: taskId, status: .succeeded, resultUrls: urls,
                 errorMessage: nil, costCredits: nil, completedAt: nil)
             await finalizeSuccess(
                 job: job, placeholders: placeholders, editor: editor,
                 onComplete: onComplete, onFailure: onFailure)
+            markCharged(authorization: authorization, editor: editor)
         } catch {
-            failJob(placeholders, error.localizedDescription, onFailure)
+            if taskId == nil {
+                failBeforeSubmission(
+                    placeholders, error.localizedDescription,
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            } else {
+                failJob(placeholders, error.localizedDescription, onFailure)
+            }
         }
     }
 
@@ -737,16 +889,17 @@ final class GenerationService {
     /// endpoint (provider-neutral models). The nominal-provider fallback keeps the "add a key" errors
     /// naming the right provider when nothing is activated.
     @MainActor
-    static func dispatchTarget(
-        modelId: String
-    ) -> (provider: GenerationProvider, endpoint: String, binding: ProviderBinding?) {
+    static func dispatchTarget(modelId: String) -> ResolvedGenerationTarget {
         let binding = ProviderResolver.resolve(
             bindings: ProviderManifest.bindings(forModelId: modelId),
             activation: .current(),
             effectiveCost: ProviderManifest.effectiveCost)
-        return (binding?.provider ?? ProviderManifest.nominalProvider(forModelId: modelId),
-                binding?.providerRef ?? modelId,
-                binding)
+        return ResolvedGenerationTarget(
+            modelId: modelId,
+            provider: binding?.provider ?? ProviderManifest.nominalProvider(forModelId: modelId),
+            endpoint: binding?.providerRef ?? modelId,
+            binding: binding
+        )
     }
 
     /// Reference bytes for a direct client: the generate flow handed us local paths (see the inline-
@@ -763,18 +916,27 @@ final class GenerationService {
         params: ImageGenerationParams,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
         guard let apiKey = ProviderKeychain.load(.google) else {
-            return failJob(placeholders, "Add a Google AI API key in Settings to generate.", onFailure)
+            return failBeforeSubmission(
+                placeholders, "Add a Google AI API key in Settings to generate.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         }
         do {
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: UUID().uuidString,
+                editor: editor
+            )
             let images = try await GoogleImageClient(apiKey: apiKey).geminiImage(
                 model: apiModel, prompt: params.prompt, aspectRatio: params.aspectRatio,
                 referenceImages: Self.referenceBytes(params.imageURLs))
             await finalizeBytes(images, placeholders: placeholders, editor: editor,
                                 onComplete: onComplete, onFailure: onFailure)
+            markCharged(authorization: authorization, editor: editor)
         } catch {
             failJob(placeholders, error.localizedDescription, onFailure)
         }
@@ -844,15 +1006,36 @@ final class GenerationService {
         params: AudioGenerationParams,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
         guard let apiKey = ProviderKeychain.load(.elevenlabs) else {
-            return failJob(placeholders, "Add an ElevenLabs API key in Settings to generate.", onFailure)
+            return failBeforeSubmission(
+                placeholders, "Add an ElevenLabs API key in Settings to generate.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         }
-        guard let placeholder = placeholders.first else { return }
+        guard let placeholder = placeholders.first else {
+            return failBeforeSubmission(
+                placeholders, "No placeholder was created for the ElevenLabs request.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
+        }
+        guard [
+            "fal-ai/elevenlabs/tts/multilingual-v2",
+            "fal-ai/elevenlabs/sound-effects",
+            "fal-ai/elevenlabs/music",
+        ].contains(endpoint) else {
+            return failBeforeSubmission(
+                placeholders, "Unsupported ElevenLabs model: \(endpoint)",
+                authorization: authorization, editor: editor, onFailure: onFailure)
+        }
         do {
             let client = ElevenLabsClient(apiKey: apiKey)
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: UUID().uuidString,
+                editor: editor
+            )
             let data: Data
             switch endpoint {
             case "fal-ai/elevenlabs/tts/multilingual-v2":
@@ -866,7 +1049,7 @@ final class GenerationService {
                     lengthMs: (params.durationSeconds ?? 90) * 1000,
                     forceInstrumental: params.instrumental)
             default:
-                return failJob(placeholders, "Unsupported ElevenLabs model: \(endpoint)", onFailure)
+                preconditionFailure("validated ElevenLabs endpoint was not handled")
             }
             // Bytes arrive directly (no result URL) — write to the placeholder's destination and
             // run the same finalize steps downloadAndFinalize performs after its move.
@@ -884,6 +1067,7 @@ final class GenerationService {
                 assetType: placeholder.type,
                 count: 1
             )
+            markCharged(authorization: authorization, editor: editor)
         } catch {
             failJob(placeholders, error.localizedDescription, onFailure)
         }
@@ -896,30 +1080,42 @@ final class GenerationService {
         name: String,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
         guard let apiKey = ProviderKeychain.load(.marble) else {
-            return failJob(placeholders, "Add a Marble (World Labs) API key in Settings to generate.", onFailure)
+            return failBeforeSubmission(
+                placeholders, "Add a Marble (World Labs) API key in Settings to generate.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         }
         guard let referencePath, let referenceURL = Self.localFileURL(referencePath) else {
-            return failJob(placeholders, "Marble requires a reference image.", onFailure)
+            return failBeforeSubmission(
+                placeholders, "Marble requires a reference image.",
+                authorization: authorization, editor: editor, onFailure: onFailure)
         }
 
+        var operationId: String?
         do {
             let displayName = String(name.prefix(60))
             let body = try MarbleInputBuilder.body(
                 prompt: prompt, displayName: displayName, model: model.model, referenceImageURL: referenceURL
             )
             let client = MarbleClient(apiKey: apiKey)
-            let operationId = try await client.submit(body: body)
-            let outputData = try await client.result(operationId: operationId)
+            let submittedId = try await client.submit(body: body)
+            operationId = submittedId
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: submittedId,
+                editor: editor
+            )
+            let outputData = try await client.result(operationId: submittedId)
             let urls = MarbleOutput.urls(from: outputData)
             guard !urls.isEmpty else {
                 throw GenerationBackendError.transport("Marble returned no panorama")
             }
             let job = BackendGenerationJob(
-                _id: operationId,
+                _id: submittedId,
                 status: .succeeded,
                 resultUrls: urls,
                 errorMessage: nil,
@@ -933,8 +1129,15 @@ final class GenerationService {
                 onComplete: onComplete,
                 onFailure: onFailure
             )
+            markCharged(authorization: authorization, editor: editor)
         } catch {
-            failJob(placeholders, error.localizedDescription, onFailure)
+            if operationId == nil {
+                failBeforeSubmission(
+                    placeholders, error.localizedDescription,
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            } else {
+                failJob(placeholders, error.localizedDescription, onFailure)
+            }
         }
     }
 

@@ -45,11 +45,11 @@ struct TextTab: View {
                     editor.fitTextClipToContent(clipId: clip.id)
                 }
             )
-            .frame(minHeight: 80)
+            .frame(minHeight: AppTheme.ComponentSize.textEditorMinHeight)
             .padding(AppTheme.Spacing.xs)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(Color.white.opacity(AppTheme.Opacity.hint))
+                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.hint))
             )
         }
     }
@@ -139,7 +139,7 @@ struct TextTab: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .tint(Color.white.opacity(AppTheme.Opacity.strong))
+            .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
             .fixedSize()
         }
     }
@@ -199,7 +199,7 @@ struct TextTab: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
-                .tint(Color.white.opacity(AppTheme.Opacity.strong))
+                .tint(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.strong))
             }
         }
     }

@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import MusicvideoPlugin
 @testable import NexGenVideo
+import NexGenEngine
 
 @Suite("Hard-step intake")
 struct HardStepIntakeTests {
@@ -99,6 +100,25 @@ struct HardStepIntakeTests {
         #expect(HardStepManifest.load(packResourceDir: dir) == nil)
     }
 
+    @Test("finds a manifest inside the assembled pack resource bundle")
+    func findsManifestInAssembledPack() throws {
+        let bundle = try makeDataRoot().appendingPathComponent("musicvideo.ngvpack", isDirectory: true)
+        let json = """
+        {"phases": [{"phase": "analysis", "steps": [
+          {"id": "analysis.song", "attachAs": "song", "title": "Track",
+           "required": true, "accept": ["audio"]}
+        ]}]}
+        """
+        try write(
+            "Contents/Resources/MusicvideoPlugin_MusicvideoPlugin.bundle/MusicvideoPack/hardsteps.json",
+            in: bundle,
+            contents: json
+        )
+
+        let manifest = try #require(HardStepManifest.load(bundleURL: bundle))
+        #expect(manifest.steps(for: "analysis").first?.kind == .song)
+    }
+
     // MARK: - Satisfaction
 
     @Test("every kind reads unsatisfied against an empty data root")
@@ -170,7 +190,7 @@ struct HardStepIntakeTests {
 
         #expect(IntakePlanner.next(steps, dataRoot: root, ledger: IntakeLedger.load(dataRoot: root))?.id == "s.script")
 
-        let ledger = IntakeLedger.recordDecline(script, dataRoot: root)
+        let ledger = try IntakeLedger.recordDecline(script, dataRoot: root)
         #expect(ledger.isDeclined("s.script"))
         #expect(IntakePlanner.next(steps, dataRoot: root, ledger: ledger)?.id == "s.style")
         // Durable: a fresh read of the sidecar still knows.
@@ -182,7 +202,7 @@ struct HardStepIntakeTests {
         let root = try makeDataRoot()
         let song = step("s.song", kind: .song, required: true)
 
-        let ledger = IntakeLedger.recordDecline(song, dataRoot: root)
+        let ledger = try IntakeLedger.recordDecline(song, dataRoot: root)
         #expect(!ledger.isDeclined("s.song"))
         #expect(!IntakeLedger.load(dataRoot: root).isDeclined("s.song"))
         #expect(IntakePlanner.next([song], dataRoot: root, ledger: ledger)?.id == "s.song")
@@ -194,6 +214,34 @@ struct HardStepIntakeTests {
         #expect(IntakeLedger.load(dataRoot: root).declined.isEmpty)
         try write(IntakeLedger.filename, in: root, contents: "}}not json{{")
         #expect(IntakeLedger.load(dataRoot: root).declined.isEmpty)
+    }
+
+    @Test("declines from the former Project Init cards migrate to their Brief ids")
+    func formerCreativeDeclinesSurviveUpgrade() throws {
+        let root = try makeDataRoot()
+        try write(
+            IntakeLedger.filename,
+            in: root,
+            contents: """
+            {
+              "schema": "intake/1.0",
+              "declined": [
+                "project_init.script",
+                "project_init.characters",
+                "project_init.locations",
+                "project_init.style"
+              ]
+            }
+            """
+        )
+
+        let ledger = IntakeLedger.load(dataRoot: root)
+        #expect(ledger.declined == Set([
+            "brief.script",
+            "brief.characters",
+            "brief.locations",
+            "brief.style",
+        ]))
     }
 
     // MARK: - Ordering
@@ -229,6 +277,137 @@ struct HardStepIntakeTests {
         #expect(IntakePlanner.next([], dataRoot: root, ledger: IntakeLedger()) == nil)
     }
 
+    @Test("preloaded Media assets do not silently satisfy Track or Lyrics")
+    @MainActor
+    func mediaLibraryIsCandidateNotAssignment() throws {
+        let root = try makeDataRoot()
+        let track = MediaAsset(
+            id: "library-track",
+            url: root.appendingPathComponent("media/song.wav"),
+            type: .audio,
+            name: "song"
+        )
+        let lyrics = MediaAsset(
+            id: "library-lyrics",
+            url: root.appendingPathComponent("media/lyrics.txt"),
+            type: .document,
+            name: "lyrics"
+        )
+        let library = [track, lyrics]
+        #expect(library.count == 2)
+        #expect(!IntakeSatisfaction.isSatisfied(.song, dataRoot: root))
+        #expect(!IntakeSatisfaction.isSatisfied(.lyrics, dataRoot: root))
+
+        let manifestURL = try #require(PackKnowledge.hardStepManifestURL())
+        let manifest = try HardStepManifest.decode(try Data(contentsOf: manifestURL))
+        let first = try #require(
+            IntakePlanner.next(
+                manifest.steps(for: "project_init"),
+                dataRoot: root,
+                ledger: IntakeLedger()
+            )
+        )
+        let dialog = AgentDialog(hardStep: first, isRepeat: false)
+        #expect(dialog.title == "Track")
+        #expect(dialog.fileIntake?.required == true)
+    }
+
+    @Test("the visible first card stays Track when Media already contains track and lyrics")
+    @MainActor
+    func visibleFirstCardIgnoresUnassignedLibraryAssets() async throws {
+        PackCatalog.register(MusicvideoPack())
+        let package = FileManager.default.temporaryDirectory
+            .appendingPathComponent("visible-first-card-\(UUID().uuidString).ngv", isDirectory: true)
+        let editor = EditorViewModel()
+        defer {
+            editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: package)
+        }
+        try Fixtures.prepareProjectPackage(at: package)
+        try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
+        _ = try ProjectScaffold.initProject(
+            home: package,
+            name: "visible-first-card",
+            mode: .beat,
+            extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
+        )
+        editor.projectURL = package
+        let workingRoot = try #require(editor.workingRoot)
+        editor.mediaAssets = [
+            MediaAsset(
+                id: "library-track",
+                url: workingRoot.appendingPathComponent("media/song.wav"),
+                type: .audio,
+                name: "song"
+            ),
+            MediaAsset(
+                id: "library-lyrics",
+                url: workingRoot.appendingPathComponent("media/lyrics.txt"),
+                type: .document,
+                name: "lyrics"
+            ),
+        ]
+
+        await editor.refreshEngineState()
+        _ = editor.pipelineAgentHarness.reconcile(editor: editor)
+
+        #expect(editor.projectState?.nextPhaseName == "project_init")
+        #expect(editor.agentService.pendingDialog?.title == "Track")
+        #expect(editor.agentService.pendingDialog?.fileIntake?.attachAs == "song")
+    }
+
+    @Test("Existing story becomes visible only after the analysis frontier is approved")
+    @MainActor
+    func visibleCreativeIntakeWaitsForAnalysis() async throws {
+        PackCatalog.register(MusicvideoPack())
+        let package = FileManager.default.temporaryDirectory
+            .appendingPathComponent("creative-frontier-\(UUID().uuidString).ngv", isDirectory: true)
+        let editor = EditorViewModel()
+        defer {
+            editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: package)
+        }
+        try Fixtures.prepareProjectPackage(at: package)
+        try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
+        let packageDataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "creative-frontier",
+            mode: .beat,
+            extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
+        )
+        let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
+        var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&packageGates, phase: "project_init")
+        try packageStore.save(packageGates, to: PipelineLayout.gatesFile)
+        editor.projectURL = package
+
+        await editor.refreshEngineState()
+        #expect(editor.projectState?.nextPhaseName == "analysis")
+        #expect(editor.agentService.pendingDialog == nil)
+
+        let liveDataRoot = try #require(
+            editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+        let liveStore = YAMLArtifactStore(dataRoot: liveDataRoot)
+        var liveGates = try liveStore.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&liveGates, phase: "analysis")
+        try liveStore.save(liveGates, to: PipelineLayout.gatesFile)
+
+        await editor.refreshEngineState()
+        _ = editor.pipelineAgentHarness.reconcile(editor: editor)
+        #expect(editor.projectState?.nextPhaseName == "brief")
+        #expect(editor.agentService.pendingDialog?.title == "Existing story")
+        #expect(editor.agentService.pendingDialog?.fileIntake?.attachAs == "script")
+        let prompt = try editor.pipelineAgentHarness.agentPrompt(
+            dataRoot: liveDataRoot
+        )
+        let normalizedPrompt = prompt?
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        #expect(prompt?.contains("# Phase K1 — Brief") == true)
+        #expect(normalizedPrompt?.contains("If it is absent, this is greenfield") == true)
+    }
+
     // MARK: - Dialog construction
 
     @Test("a step becomes a file-intake dialog routed by its attachAs")
@@ -247,12 +426,68 @@ struct HardStepIntakeTests {
         #expect(first.fileIntake?.attachAs == "character")
         #expect(first.fileIntake?.allowsMultiple == true)
         #expect(first.fileIntake?.namePrompt == "Character name")
+        #expect(first.purpose == .workflowIntake)
         // Optional ⇒ confirmable with nothing, which is the user's "no, I don't have one".
         #expect(first.fileIntake?.required == false)
 
         let repeated = AgentDialog(hardStep: characters, isRepeat: true)
         #expect(repeated.intro == "Another one?")
         #expect(repeated.id != first.id)
+    }
+
+    @Test("a workflow hard step completes locally without creating an agent turn")
+    @MainActor
+    func workflowStepDoesNotBecomeChat() async throws {
+        let package = FileManager.default.temporaryDirectory
+            .appendingPathComponent("workflow-intake-\(UUID().uuidString).ngv", isDirectory: true)
+        let editor = EditorViewModel()
+        defer {
+            editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: package)
+        }
+        try Fixtures.prepareProjectPackage(at: package)
+        _ = try ProjectScaffold.initProject(home: package, name: "workflow-intake", mode: .beat)
+        editor.projectURL = package
+
+        let dialog = AgentDialog(
+            hardStep: step("brief.script", phase: "brief", kind: .script),
+            isRepeat: false
+        )
+        editor.agentService.pendingDialog = dialog
+        let messageCount = editor.agentService.messages.count
+        editor.agentService.submitDialog(
+            dialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: ""
+            )
+        )
+
+        #expect(editor.agentService.pendingDialog == nil)
+        #expect(editor.agentService.messages.count == messageCount)
+        #expect(!editor.agentService.isStreaming)
+        await Task.yield()
+    }
+
+    @Test("required track intake cannot advance without a file")
+    @MainActor
+    func requiredTrackStaysOpen() async {
+        let editor = EditorViewModel()
+        let dialog = AgentDialog(
+            hardStep: step("project_init.song", phase: "project_init", kind: .song, required: true),
+            isRepeat: false
+        )
+        editor.agentService.pendingDialog = dialog
+        editor.agentService.submitDialog(
+            dialog,
+            result: AgentDialogResult(selectedLabels: [:], toggles: [:], direction: "")
+        )
+        await Task.yield()
+
+        #expect(editor.agentService.pendingDialog?.id == dialog.id)
+        #expect(editor.agentService.dialogSubmissionError == "Choose a track before continuing.")
+        #expect(!editor.agentService.isStreaming)
     }
 
     @Test("the SHIPPED manifest decodes and keeps every step it declares")
@@ -278,23 +513,196 @@ struct HardStepIntakeTests {
         }
     }
 
-    @Test("the song stays a REQUIRED step of the analysis phase")
+    @Test("startup is exactly required track, then optional lyrics")
     func songStepSurvivesShipped() throws {
-        // The one step whose loss is silent and costly: without it the analysis phase would start with
-        // no song, which is the failure the whole hard-step mechanism exists to prevent.
         let url = try #require(PackKnowledge.hardStepManifestURL())
         let manifest = try HardStepManifest.decode(try Data(contentsOf: url))
-        let song = try #require(manifest.steps(for: "analysis").first { $0.kind == .song })
+        let startup = manifest.steps(for: "project_init")
+        #expect(startup.map(\.kind) == [.song, .lyrics])
+        let song = try #require(startup.first { $0.kind == .song })
         #expect(song.required)
         #expect(song.accept.contains("audio"))
+        #expect(manifest.steps(for: "analysis").isEmpty)
     }
 
-    @Test("the shipped project-init steps cover script, characters and locations")
-    func projectInitStepsSurviveShipped() throws {
+    @Test("creative material is optional and belongs to Brief after analysis")
+    func creativeStepsSurviveShipped() throws {
         let url = try #require(PackKnowledge.hardStepManifestURL())
         let manifest = try HardStepManifest.decode(try Data(contentsOf: url))
-        let kinds = Set(manifest.steps(for: "project_init").map(\.kind))
-        // These are the ones the agent skipped in the field — the reason the mechanism exists.
-        #expect(kinds.isSuperset(of: [.script, .character, .location]))
+        #expect(
+            manifest.steps(for: "brief").map(\.kind)
+                == [.script, .character, .location, .style]
+        )
+        #expect(manifest.steps(for: "brief").allSatisfy { !$0.required })
+    }
+
+    @Test("greenfield and existing-story intake paths are both valid")
+    func creativeMaterialPathsAreBothValid() throws {
+        let url = try #require(PackKnowledge.hardStepManifestURL())
+        let manifest = try HardStepManifest.decode(try Data(contentsOf: url))
+        let creative = manifest.steps(for: "brief")
+
+        let greenfield = try makeDataRoot()
+        var greenfieldLedger = IntakeLedger()
+        for step in creative {
+            greenfieldLedger = try IntakeLedger.recordDecline(
+                step,
+                dataRoot: greenfield
+            )
+        }
+        #expect(greenfieldLedger.declined.count == creative.count)
+        #expect(
+            IntakePlanner.next(
+                creative,
+                dataRoot: greenfield,
+                ledger: IntakeLedger.load(dataRoot: greenfield)
+            ) == nil
+        )
+        #expect(!IntakeSatisfaction.isSatisfied(.script, dataRoot: greenfield))
+
+        let existingStory = try makeDataRoot()
+        try write("import/script.md", in: existingStory, contents: "# Existing story")
+        #expect(
+            IntakePlanner.next(
+                creative,
+                dataRoot: existingStory,
+                ledger: IntakeLedger()
+            )?.kind == .character
+        )
+        #expect(IntakeSatisfaction.isSatisfied(.script, dataRoot: existingStory))
+
+        let instructions = AgentInstructions.serverInstructions
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        #expect(instructions.contains(
+            "A missing story file means greenfield creation from the analyzed song"
+        ))
+        #expect(instructions.contains(
+            "preserve that existing story and identity material as source truth"
+        ))
+    }
+
+    @Test("release contract routes Track and Lyrics through analysis before Existing story")
+    func releaseContractTrace() throws {
+        let manifestURL = try #require(PackKnowledge.hardStepManifestURL())
+        let manifest = try HardStepManifest.decode(try Data(contentsOf: manifestURL))
+        let registry = EngineRegistry()
+        MusicvideoPack().register(registry)
+        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        #expect(Array(order.prefix(3)) == ["project_init", "analysis", "brief"])
+
+        let package = FileManager.default.temporaryDirectory
+            .appendingPathComponent("workflow-contract-\(UUID().uuidString).ngv", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: package) }
+        let dataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "workflow-contract",
+            mode: .beat,
+            extraDirs: registry.projectDirs
+        )
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+
+        var snapshot = try ProjectStateBuilder.buildSnapshot(
+            dataRoot: dataRoot,
+            packPlacements: registry.phasePlacements
+        )
+        #expect(snapshot.nextPhase == "project_init")
+        var ledger = IntakeLedger()
+        var visible = IntakePlanner.next(
+            manifest.steps(for: snapshot.nextPhase!),
+            dataRoot: dataRoot,
+            ledger: ledger
+        )
+        #expect(visible?.kind == .song)
+        #expect(visible?.required == true)
+
+        try write("audio/track.wav", in: dataRoot)
+        let trackURL = dataRoot.appendingPathComponent("audio/track.wav")
+        visible = IntakePlanner.next(
+            manifest.steps(for: snapshot.nextPhase!),
+            dataRoot: dataRoot,
+            ledger: ledger
+        )
+        #expect(visible?.kind == .lyrics)
+        let lyrics = try #require(visible)
+        ledger = try IntakeLedger.recordDecline(
+            lyrics,
+            dataRoot: dataRoot
+        )
+        #expect(
+            IntakePlanner.next(
+                manifest.steps(for: snapshot.nextPhase!),
+                dataRoot: dataRoot,
+                ledger: ledger
+            ) == nil
+        )
+
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&gates, phase: "project_init")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        snapshot = try ProjectStateBuilder.buildSnapshot(
+            dataRoot: dataRoot,
+            packPlacements: registry.phasePlacements
+        )
+        #expect(snapshot.nextPhase == "analysis")
+        #expect(manifest.steps(for: "analysis").isEmpty)
+
+        let analysisDir = dataRoot.appendingPathComponent("analysis", isDirectory: true)
+        try FileManager.default.createDirectory(at: analysisDir, withIntermediateDirectories: true)
+        let analysis: [String: Any] = [
+            "schema": analysisSchemaVersion,
+            "project": "workflow-contract",
+            "song_path": "audio/track.wav",
+            "song_sha256": try FileDigest.sha256(of: trackURL),
+            "sample_rate": 44_100,
+            "beats": [0.5, 1.0, 1.5],
+            "downbeats": [0.5, 2.5],
+            "duration_s": 12.0,
+            "bpm": 120.0,
+            "tempo_multiplier": 1.0,
+            "sections": [[
+                "index": 0,
+                "start": 0.0,
+                "end": 12.0,
+                "cluster": 0,
+            ]],
+            "interpretation": [
+                "section_labels": [[
+                    "index": "0",
+                    "label": "intro",
+                    "confidence": "1.0",
+                ]],
+                "anomalies": [],
+                "overall_character": "Measured opening.",
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: analysis).write(
+            to: analysisDir.appendingPathComponent("track.json")
+        )
+        let analysisLineage = try #require(
+            registry.phaseLineageProviders["analysis"]
+        )
+        try PipelineLineageStore.record(
+            phase: "analysis",
+            snapshot: try analysisLineage(dataRoot),
+            dataRoot: dataRoot
+        )
+        let analysisRequirement = try #require(registry.gateRequirements["analysis"])
+        try analysisRequirement(dataRoot)
+        GatesOperations.approve(&gates, phase: "analysis")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        snapshot = try ProjectStateBuilder.buildSnapshot(
+            dataRoot: dataRoot,
+            packPlacements: registry.phasePlacements
+        )
+        #expect(snapshot.nextPhase == "brief")
+        visible = IntakePlanner.next(
+            manifest.steps(for: snapshot.nextPhase!),
+            dataRoot: dataRoot,
+            ledger: IntakeLedger.load(dataRoot: dataRoot)
+        )
+        #expect(visible?.kind == .script)
+        #expect(visible?.title == "Existing story")
+        #expect(visible?.required == false)
     }
 }

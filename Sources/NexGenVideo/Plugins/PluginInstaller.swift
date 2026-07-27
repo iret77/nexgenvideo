@@ -12,12 +12,16 @@ import NexGenEngine
 /// URLs must be https (defense against a tampered catalog pointing at plaintext).
 @MainActor
 enum PluginInstaller {
+    private static var inFlight: [String: Task<InstalledPluginRecord, Error>] = [:]
+
     enum InstallError: LocalizedError {
         case insecureURL(String)
         case download(String)
         case checksumMismatch(expected: String, actual: String)
         case unpack(String)
         case idMismatch(expected: String, found: String)
+        case versionMismatch(expected: String, found: String)
+        case schemaMismatch(expected: String, found: String)
         case gate(PluginIncompatibility)
 
         var errorDescription: String? {
@@ -30,6 +34,10 @@ enum PluginInstaller {
             case .unpack(let detail): return "Couldn't unpack the pack — \(detail)."
             case .idMismatch(let expected, let found):
                 return "The pack identifies as \"\(found)\" but the catalog listed \"\(expected)\"."
+            case .versionMismatch(let expected, let found):
+                return "The pack is version \(found), but the catalog listed \(expected)."
+            case .schemaMismatch(let expected, let found):
+                return "The pack's project schema is \(found), but the catalog listed \(expected)."
             case .gate(let reason): return reason.reason
             }
         }
@@ -42,7 +50,23 @@ enum PluginInstaller {
         _ entry: PluginCatalog.Entry,
         appVersion: String? = AppVersion.marketing
     ) async throws -> InstalledPluginRecord {
-        try await install(entry, appVersion: appVersion, fetch: { try await download($0) })
+        if let existing = inFlight[entry.id] {
+            let record = try await existing.value
+            if record.version == entry.version {
+                return record
+            }
+            return try await install(entry, appVersion: appVersion)
+        }
+        let task = Task { @MainActor in
+            defer { inFlight.removeValue(forKey: entry.id) }
+            return try await install(
+                entry,
+                appVersion: appVersion,
+                fetch: { try await download($0) }
+            )
+        }
+        inFlight[entry.id] = task
+        return try await task.value
     }
 
     /// The staged install pipeline: https-guard → fetch → checksum → unpack → gate the
@@ -91,6 +115,21 @@ enum PluginInstaller {
         guard info.id == entry.id else {
             throw InstallError.idMismatch(expected: entry.id, found: info.id)
         }
+        guard info.version == entry.version else {
+            throw InstallError.versionMismatch(expected: entry.version, found: info.version)
+        }
+        guard info.projectSchema == entry.projectSchema else {
+            throw InstallError.schemaMismatch(
+                expected: entry.projectSchema,
+                found: info.projectSchema
+            )
+        }
+        guard Set(info.migratesFrom) == Set(entry.migratesFrom) else {
+            throw InstallError.schemaMismatch(
+                expected: entry.migratesFrom.joined(separator: ", "),
+                found: info.migratesFrom.joined(separator: ", ")
+            )
+        }
 
         // Finding 3: run every non-executing gate on the STAGED copy in temp, before
         // touching the installed pack. A failure here throws and leaves disk untouched.
@@ -108,16 +147,22 @@ enum PluginInstaller {
         let alreadyLoaded = PluginLoader.isResident(entry.id)
 
         // All gates passed — now atomically swap the validated bundle into place.
-        try moveIntoPlace(unpacked, id: entry.id)
-        let dest = PluginPaths.installURL(id: entry.id)
+        try moveIntoPlace(unpacked, id: entry.id, version: entry.version)
+        let dest = PluginPaths.installURL(id: entry.id, version: entry.version)
+        PluginLoader.clearRuntimeRejection(
+            id: entry.id,
+            version: entry.version
+        )
 
         if alreadyLoaded {
             return PluginLoader.markUpdatePendingRestart(info, bundleURL: dest)
         }
 
-        // First activation of this id this session — load + register it live.
-        let records = PluginLoader.loadInstalled(appVersion: appVersion)
-        guard let record = records.first(where: { $0.id == entry.id }) else {
+        guard let binding = ProjectPackBinding(
+            id: entry.id,
+            version: info.version,
+            projectSchema: info.projectSchema
+        ), let record = PluginLoader.activate(binding, appVersion: appVersion) else {
             throw InstallError.unpack("the installed pack didn't reappear in the library")
         }
         if let reason = record.incompatibility { throw InstallError.gate(reason) }
@@ -135,9 +180,10 @@ enum PluginInstaller {
     /// until the next launch (dylibs can't be safely unloaded mid-session), but
     /// it won't reload — the picker reflects that immediately.
     static func uninstall(id: String) throws {
-        let url = PluginPaths.installURL(id: id)
-        if FileManager.default.fileExists(atPath: url.path) {
-            try FileManager.default.removeItem(at: url)
+        for url in [PluginPaths.installURL(id: id), PluginPaths.versionDirectory(id: id)] {
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
         }
     }
 
@@ -177,14 +223,17 @@ enum PluginInstaller {
         return entries.first { $0.pathExtension == PluginPaths.bundleExtension }
     }
 
-    /// Atomically place `unpacked` at `<installDir>/<id>.ngvpack`, replacing any
-    /// existing install. Staged inside the install directory so the swap stays on
-    /// one volume.
-    private static func moveIntoPlace(_ unpacked: URL, id: String) throws {
-        let dest = PluginPaths.installURL(id: id)
+    /// Atomically place an immutable version beside every other installed version.
+    private static func moveIntoPlace(
+        _ unpacked: URL,
+        id: String,
+        version: String
+    ) throws {
+        let directory = PluginPaths.versionDirectory(id: id)
+        let dest = PluginPaths.installURL(id: id, version: version)
         try FileManager.default.createDirectory(
-            at: PluginPaths.installDirectory, withIntermediateDirectories: true)
-        let staging = PluginPaths.installDirectory
+            at: directory, withIntermediateDirectories: true)
+        let staging = directory
             .appendingPathComponent(".staging-\(UUID().uuidString).\(PluginPaths.bundleExtension)")
         do {
             try FileManager.default.copyItem(at: unpacked, to: staging)

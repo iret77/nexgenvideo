@@ -4,6 +4,9 @@ struct SidebarRowButton: View {
     let label: String
     let systemImage: String
     var isSelected: Bool = false
+    var trailingSystemImage: String? = nil
+    var trailingColor: Color = AppTheme.Text.tertiaryColor
+    var trailingHelp: String = ""
     let action: () -> Void
 
     var body: some View {
@@ -14,7 +17,13 @@ struct SidebarRowButton: View {
                     .frame(width: AppTheme.Spacing.lgXl)
                 Text(label)
                     .font(.system(size: AppTheme.FontSize.md))
-                Spacer(minLength: 0)
+                Spacer(minLength: AppTheme.Spacing.none)
+                if let trailingSystemImage {
+                    Image(systemName: trailingSystemImage)
+                        .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                        .foregroundStyle(trailingColor)
+                        .help(trailingHelp)
+                }
             }
             .padding(.horizontal, AppTheme.Spacing.smMd)
             .padding(.vertical, AppTheme.Spacing.sm)

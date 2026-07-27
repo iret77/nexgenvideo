@@ -1,8 +1,6 @@
 import SwiftUI
 
 struct ShortcutsPane: View {
-    private static let shortcutKeyColumnWidth: CGFloat = 118
-
     private static let allShortcuts: [ShortcutGroup] = [
         ShortcutGroup(title: "Playback", shortcuts: [
             ("Space", "Play / Pause"),
@@ -60,36 +58,34 @@ struct ShortcutsPane: View {
     private static let rightColumn = Array(allShortcuts.dropFirst(4))
 
     var body: some View {
-        ScrollView {
-            HStack(alignment: .top, spacing: 24) {
-                shortcutColumn(groups: Self.leftColumn)
-                shortcutColumn(groups: Self.rightColumn)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 20)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+        HStack(alignment: .top, spacing: AppTheme.Spacing.xlXxl) {
+            shortcutColumn(groups: Self.leftColumn)
+            shortcutColumn(groups: Self.rightColumn)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func shortcutColumn(groups: [ShortcutGroup]) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
             ForEach(groups, id: \.title) { group in
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
                     Text(group.title)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .textCase(.uppercase)
-                        .tracking(0.3)
+                        .tracking(AppTheme.Tracking.subtle)
 
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                         ForEach(group.shortcuts, id: \.0) { shortcut, description in
-                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.md) {
                                 Text(shortcut)
-                                    .font(.system(.caption2, design: .monospaced))
+                                    .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
                                     .foregroundStyle(AppTheme.Text.primaryColor)
-                                    .fontWeight(.semibold)
-                                    .frame(width: Self.shortcutKeyColumnWidth, alignment: .leading)
+                                    .fontWeight(AppTheme.FontWeight.semibold)
+                                    .frame(
+                                        width: AppTheme.ComponentSize.shortcutKeyColumnWidth,
+                                        alignment: .leading
+                                    )
 
                                 Text(description)
                                     .font(.system(size: AppTheme.FontSize.sm))
@@ -112,6 +108,6 @@ struct ShortcutGroup {
 
 #Preview {
     ShortcutsPane()
-        .frame(width: 700, height: 520)
+        .frame(width: AppTheme.ComponentSize.shortcutsWindow.width, height: AppTheme.ComponentSize.shortcutsWindow.height)
         .background(AppTheme.Background.surfaceColor)
 }

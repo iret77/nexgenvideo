@@ -32,7 +32,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.7.8</string>
+	<string>1.0.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -45,11 +45,13 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>60</string>
+	<string>61</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NGVPluginCatalogURL</key>
+	<string>https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>

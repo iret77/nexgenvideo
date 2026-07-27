@@ -242,7 +242,6 @@ This contract is a hard cutover, not a migration:
    strengths, conflicts and adaptations.
 6. Assemble the project profile from Brief + audio analysis; ask only missing high-impact
    questions.
-7. Add slot selection and fail-closed whole-library validation.
-8. Populate `fit_profile` blocks as patterns get authored, in parallel with steps 1–7. Contract fixtures may be
-   used while app and content branches are separate; complete Pattern content is a mandatory
-   integration and enablement gate.
+7. Add slot selection, partial-library coverage and loud invalid-profile reporting.
+8. Populate `fit_profile` blocks as patterns get authored, independently of app work. Any valid
+   authored subset can ship and rank; unauthored content never gates enablement.

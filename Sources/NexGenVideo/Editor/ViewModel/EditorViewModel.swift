@@ -19,6 +19,12 @@ struct PendingAudioPlacement {
     let actionName: String
 }
 
+struct MediaImportProgress: Equatable {
+    let completed: Int
+    let total: Int
+    let currentName: String?
+}
+
 @Observable
 @MainActor
 final class EditorViewModel {
@@ -221,11 +227,26 @@ final class EditorViewModel {
     var projectURL: URL? {
         didSet {
             guard projectURL != oldValue else { return }
-            activePluginName = ProjectPluginSettings.activePlugin(projectURL: projectURL)
-            intakeCoordinator.reset()
+            let nextProjectId = projectURL.flatMap {
+                ProjectIdentity.existingUUID(for: $0)
+            }
+            let keepsLiveDeclaration = projectURL != nil
+                && nextProjectId != nil
+                && nextProjectId == projectId
+                && workingCopyHome != nil
+                && activeWorkingCopyKey != nil
+            if !keepsLiveDeclaration {
+                let declaration = ProjectPluginSettings.activePlugin(
+                    projectURL: projectURL
+                )
+                activePluginName = declaration
+                declaredPluginName = declaration
+            }
+            pipelineAgentHarness.reset()
+            workflowHandoffPending = false
             // Identity is the package UUID (travels with the file), resolved once here so the working
             // copy, caches, and telemetry all key off the same stable id.
-            projectId = projectURL.map { ProjectIdentity.uuid(for: $0) }
+            projectId = nextProjectId
             prepareWorkingCopy()
         }
     }
@@ -240,36 +261,70 @@ final class EditorViewModel {
     /// key is unchanged — used to tell "re-pointed at my own live copy" apart from "opened a project",
     /// so a move never re-reads the session's edits as crash-recovered.
     private var activeWorkingCopyKey: String?
+    private var preopenedWorkingCopy: (
+        packageURL: URL,
+        key: String,
+        result: ProjectWorkingCopy.OpenResult
+    )?
     /// A crash left a working copy from the last session — the UI offers to restore it. Bindable so the
     /// recovery alert can dismiss itself.
     var recoveredUnsavedWork = false
     /// Marks the document edited when the pipeline changes (so the user is prompted to save, which
     /// persists the working copy into the package). Set by the owning document.
     var onPipelineChanged: (() -> Void)?
+    var onWorkingCopyReset: ((URL) -> Void)?
 
-    /// Stable per-project key for the working copy (same project → same copy across launches),
-    /// derived from the package UUID so a move/rename keeps it and a new project never inherits it.
-    ///
-    /// ⚠️ This RE-READS the package's `ngv.json` on every access, and mints + writes a fresh id when it
-    /// can't read one. Use it to DECIDE which copy to open — never to answer "where is my data right
-    /// now": if the package is momentarily unreadable (mid-save, NSDocument replaces the package), this
-    /// silently answers with a NEW identity. Saving against that answer wrote the pipeline nowhere and
-    /// reported success. For that question use `openWorkingCopyKey`.
-    var workingCopyKey: String? { projectURL.map { ProjectIdentity.key(for: $0) } }
+    /// Stable store key derived once when `projectURL` changes. It never re-reads a package mid-save.
+    var workingCopyKey: String? { projectId.map { "p-" + $0 } }
 
-    /// The key of the working copy this session actually opened and has been writing into — the only
-    /// honest answer to "where does my unsaved work live". Unlike `workingCopyKey` it never touches
-    /// the disk, so it cannot drift while the package is being rewritten.
+    /// The key of the working copy this session actually opened and has been writing into.
     var openWorkingCopyKey: String? { activeWorkingCopyKey }
 
-    /// Materialize the working copy from the package (or keep a crash-surviving one). Synchronous so
-    /// `workingRoot` is valid immediately — the copy is cheap on APFS (copy-on-write clone), and only
-    /// the small pipeline artifacts move, never the media. The engine re-read is still async.
+    func adoptWorkingCopy(
+        _ result: ProjectWorkingCopy.OpenResult,
+        key: String,
+        packageURL: URL
+    ) {
+        preopenedWorkingCopy = (packageURL, key, result)
+        if projectURL == packageURL {
+            prepareWorkingCopy()
+        } else {
+            projectURL = packageURL
+        }
+    }
+
+    /// Materialize the complete package into Recovery, or adopt a crash-surviving dirty copy.
     private func prepareWorkingCopy() {
         recoveredUnsavedWork = false
-        guard let projectURL, let key = workingCopyKey else {
+        guard let projectURL else {
             workingCopyHome = nil
             activeWorkingCopyKey = nil
+            refreshProductionPipelineMarker()
+            return
+        }
+        if let preopenedWorkingCopy,
+           preopenedWorkingCopy.packageURL.standardizedFileURL
+            == projectURL.standardizedFileURL {
+            self.preopenedWorkingCopy = nil
+            workingCopyHome = preopenedWorkingCopy.result.home
+            activeWorkingCopyKey = preopenedWorkingCopy.key
+            recoveredUnsavedWork = preopenedWorkingCopy.result.recoveredUnsaved
+            reconcileRecoveredPluginDeclaration(
+                projectURL: preopenedWorkingCopy.result.home,
+                recovered: preopenedWorkingCopy.result.recoveredUnsaved
+            )
+            rebindProjectMediaURLs()
+            refreshProductionPipelineMarker()
+            verifyPackWiring()
+            Task { [weak self] in await self?.refreshEngineState() }
+            return
+        }
+        guard let key = workingCopyKey else {
+            workingCopyHome = nil
+            activeWorkingCopyKey = nil
+            mediaPanelToast = MediaPanelToast(
+                message: "The project identity is unavailable. Reopen the project."
+            )
             refreshProductionPipelineMarker()
             return
         }
@@ -280,13 +335,44 @@ final class EditorViewModel {
             refreshProductionPipelineMarker()
             return
         }
-        let result = try? ProjectWorkingCopy.open(key: key, packageURL: projectURL)
-        workingCopyHome = result?.home
+        let result: ProjectWorkingCopy.OpenResult
+        do {
+            result = try ProjectWorkingCopy.open(key: key, packageURL: projectURL)
+        } catch {
+            workingCopyHome = nil
+            activeWorkingCopyKey = nil
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            refreshProductionPipelineMarker()
+            return
+        }
+        workingCopyHome = result.home
         activeWorkingCopyKey = key
-        recoveredUnsavedWork = result?.recoveredUnsaved ?? false
+        recoveredUnsavedWork = result.recoveredUnsaved
+        reconcileRecoveredPluginDeclaration(
+            projectURL: result.home,
+            recovered: result.recoveredUnsaved
+        )
+        rebindProjectMediaURLs()
         refreshProductionPipelineMarker()
         verifyPackWiring()
         Task { [weak self] in await self?.refreshEngineState() }
+    }
+
+    private func reconcileRecoveredPluginDeclaration(
+        projectURL: URL,
+        recovered: Bool
+    ) {
+        guard recovered else { return }
+        switch ProjectPluginSettings.resolution(projectURL: projectURL) {
+        case .absent:
+            activePluginName = nil
+            declaredPluginName = nil
+        case .active(let name):
+            activePluginName = name
+            declaredPluginName = name
+        case .unreadable:
+            break
+        }
     }
 
     /// True when the project DECLARES a pack that the runtime can't actually see in this session — the
@@ -299,12 +385,12 @@ final class EditorViewModel {
     private func verifyPackWiring() {
         guard let home = workingCopyHome else { packWiringBroken = nil; return }
         let resolved = ProjectPluginSettings.activePlugin(projectURL: home)
-        let result = PackWiring.verify(expected: activePluginName, resolved: resolved,
+        let result = PackWiring.verify(expected: declaredPluginName, resolved: resolved,
                                        registry: PackCatalog.registry(activePack: resolved))
         if !result.isWired {
             Log.project.error(
                 "PACK WIRING BROKEN (\(String(describing: result))): the project declares pack "
-                    + "\"\(activePluginName ?? "?")\" but the runtime can't see it — its phases, gates and "
+                    + "\"\(declaredPluginName ?? "?")\" but the runtime can't see it — its phases, gates and "
                     + "analysis are OFF this session.")
         }
         packWiringBroken = result.isWired ? nil : result
@@ -319,22 +405,47 @@ final class EditorViewModel {
 
     /// Throw away the recovered working copy and start from the last saved project state.
     func discardRecoveredWork() {
-        guard let projectURL, let key = workingCopyKey else { return }
+        guard let projectURL, let key = activeWorkingCopyKey else { return }
         recoveredUnsavedWork = false
         Task { [weak self] in
-            let home = await Task.detached {
-                try? ProjectWorkingCopy.rematerialize(key: key, packageURL: projectURL)
+            let result = await Task.detached {
+                Result {
+                    try ProjectWorkingCopy.rematerialize(
+                        key: key,
+                        packageURL: projectURL
+                    )
+                }
             }.value
             guard let self, self.projectURL == projectURL else { return }
+            guard case .success(let home) = result else {
+                if case .failure(let error) = result {
+                    Log.project.error(
+                        "discard recovery failed: \(error.localizedDescription)"
+                    )
+                    self.mediaPanelToast = MediaPanelToast(
+                        message: error.localizedDescription
+                    )
+                }
+                self.recoveredUnsavedWork = true
+                return
+            }
             self.workingCopyHome = home
+            let declaration = ProjectPluginSettings.activePlugin(
+                projectURL: projectURL
+            )
+            self.activePluginName = declaration
+            self.declaredPluginName = declaration
+            self.onWorkingCopyReset?(home)
+            self.rebindProjectMediaURLs()
             self.refreshProductionPipelineMarker()
+            self.verifyPackWiring()
             await self.refreshEngineState()
         }
     }
 
     /// Discard the working copy on a clean close (so no false crash-recovery prompt next time).
     func releaseWorkingCopy() {
-        guard let key = workingCopyKey else { return }
+        guard let key = activeWorkingCopyKey else { return }
         ProjectWorkingCopy.discard(key: key)
         workingCopyHome = nil
         activeWorkingCopyKey = nil
@@ -344,6 +455,8 @@ final class EditorViewModel {
     /// plugins stay inert until activated here (gallery in Project settings). The embedded runtime
     /// loads only this plugin's dir; changing it applies to the NEXT agent session.
     private(set) var activePluginName: String?
+    /// Trusted snapshot verified independently against the mutable working-copy file.
+    private(set) var declaredPluginName: String?
 
     /// Whether the on-disk production pipeline (`pipeline/project.yaml`) exists. SYNCHRONOUS ground
     /// truth for "production has started" — cached from a disk probe on `projectURL` change and after
@@ -368,41 +481,47 @@ final class EditorViewModel {
     /// Enforced at the MODEL so every surface (title-bar chip, project cockpit) honors the lock — not
     /// just the ones that remembered to check. A no-op once production has started.
     func setActivePlugin(_ name: String?) {
-        guard let projectURL, canChangeFormat else { return }
-        ProjectPluginSettings.setActivePlugin(name, projectURL: projectURL)
-        // Keep the working copy's ngv.json mirror in step: the in-session pack resolution reads the
-        // WORKING COPY, not the package, so a format change must reach it now — not only at next open.
-        if let home = workingCopyHome {
-            ProjectPluginSettings.setActivePlugin(name, projectURL: home)
+        guard let home = workingCopyHome, canChangeFormat else { return }
+        do {
+            if let name {
+                guard let binding = PluginLoader.liveBinding(id: name) else {
+                    mediaPanelToast = MediaPanelToast(
+                        message: "Restart NexGenVideo before activating this format pack."
+                    )
+                    return
+                }
+                try ProjectPluginSettings.setActivePlugin(
+                    binding,
+                    projectURL: home
+                )
+            } else {
+                try ProjectPluginSettings.setActivePlugin(
+                    nil as ProjectPackBinding?,
+                    projectURL: home
+                )
+            }
+            activePluginName = name
+            declaredPluginName = name
+            onPipelineChanged?()
+        } catch {
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
         }
-        activePluginName = name
     }
 
     /// The generic-workflow entry (docs/UI_UX_CONCEPT.md, Epic #98/G): every project can start AI
     /// production — no plugin required. Composes a deterministic agent command (concrete paths, no
-    /// guessing) that initializes the engine pipeline inside the project package, then hands off to
+    /// guessing) that initializes the engine pipeline inside the working copy, then hands off to
     /// assisted brief drafting. Plugins later SPECIALIZE this generic baseline; they never gate it.
-    /// True while a production start is in flight — drives the CTA's "Starting…" state and blocks the
-    /// repeat taps that happened when nothing visibly changed. Cleared when the engine state reloads
-    /// (agent turn finished) in `refreshEngineState()`.
+    /// True until the host scaffold becomes visible or fails.
     private(set) var productionStarting = false
+    @ObservationIgnored private var workflowHandoffPending = false
 
-    /// Production has been kicked off via ANY path — the button-driven scaffold (`productionStarting`)
-    /// or the agent scaffolding it itself (the pipeline now exists, `hasProductionPipeline`). Every
-    /// "Start production" affordance disables on this so a second start can't fire.
+    /// Whether every production-start affordance must be disabled.
     var productionStarted: Bool { productionStarting || hasProductionPipeline }
 
-    /// Mark production as kicking off WITHOUT the in-process scaffold — for when the agent starts it
-    /// from a chat starter instead of the button, so every "Start production" CTA disables at once. The
-    /// flag clears after the turn (`refreshEngineState`); if a pipeline now exists, `productionStarted`
-    /// stays true via `hasProductionPipeline`, otherwise the CTA correctly re-enables.
-    func markProductionStarting() {
-        guard !productionStarting, !hasProductionPipeline else { return }
-        productionStarting = true
-    }
-
     func startProduction() {
-        guard let url = projectURL, let key = workingCopyKey, !productionStarting else { return }
+        guard let url = projectURL, let key = openWorkingCopyKey,
+              !productionStarting, !hasProductionPipeline else { return }
         // The pipeline is scaffolded into the WORKING COPY (not the package); ⌘S syncs it back. The
         // cockpit reads the working copy via `workingRoot`, so it finds the freshly-created pipeline.
         let home = ProjectWorkingCopy.home(key)
@@ -410,6 +529,15 @@ final class EditorViewModel {
         let name = url.deletingPathExtension().lastPathComponent
         let extraDirs = PackCatalog.projectDirs(activePack: activePluginName)
         productionStarting = true
+        workflowHandoffPending = true
+        do {
+            try ProjectWorkingCopy.markDirty(key: key)
+        } catch {
+            productionStarting = false
+            workflowHandoffPending = false
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            return
+        }
         // Produce focus surfaces the cockpit + agent together, so the work is visible instead of
         // buried in a chat panel the user has to notice.
         workspaceFocus = .produce
@@ -424,31 +552,57 @@ final class EditorViewModel {
                 catch { return error }
             }.value
             guard let self else { return }
-            await self.refreshEngineState()
             if let scaffoldError {
                 self.productionStarting = false
+                self.workflowHandoffPending = false
                 self.mediaPanelToast = MediaPanelToast(
                     message: "Couldn't set up the production pipeline: \(scaffoldError.localizedDescription)")
                 return
             }
+            await self.refreshEngineState()
             // The pipeline now exists in the working copy — mark the document edited so a save persists
             // it into the `.ngv` package (and the user is warned before closing without saving).
             self.onPipelineChanged?()
-            // Genuine dialogue handoff — the pipeline is up. A pack whose workflow starts differently
-            // (musicvideo: song → analysis gate → brief) supplies its own starter; the generic
-            // brief-drafting kickoff is only right for no-pack projects. The kickoff is HIDDEN — the
-            // user never typed it, so it seeds the agent's first turn without a fake user bubble; the
-            // agent's own first reply is what the user sees.
-            let kickoff = PackCatalog.pack(named: self.activePluginName)?.starters.first?.prompt
-                ?? "The production pipeline is initialized. Walk me through drafting the brief — ask me about the video's direction first."
-            self.agentService.send(text: kickoff, mentions: [], hidden: true)
         }
     }
 
-    /// Directory the pipeline engine reads/writes for cockpit data (Bible, shotlist, sanity, `pipeline/`).
-    /// It is the open project package itself — a `.nexgen` bundle is a directory, so engine data lives
-    /// inside it next to `media/`: self-contained, per-project, moves with the project. Nil until saved.
+    func runActivePackStarter() {
+        guard activePluginName != nil else { return }
+        guard !productionStarting else { return }
+        if hasProductionPipeline {
+            let reconciliation = pipelineAgentHarness.reconcile(editor: self)
+            if let failure = reconciliation.failure {
+                mediaPanelToast = MediaPanelToast(message: failure)
+                workflowHandoffPending = false
+                return
+            }
+            if !reconciliation.isReady {
+                if agentService.pendingDialog?.purpose == .workflowIntake {
+                    workflowHandoffPending = true
+                }
+                return
+            }
+            guard !agentService.isComposerBlocked, !agentService.isStreaming else { return }
+            workflowHandoffPending = false
+            let prompt = reconciliation.agentPrompt
+                ?? "Continue from the next unapproved production phase."
+            agentService.send(text: prompt, mentions: [], hidden: true)
+        } else {
+            startProduction()
+        }
+    }
+
+    /// Complete live project root used by the editor, agent, media layer, and pipeline engine.
     var workingRoot: URL? { workingCopyHome }
+
+    private func rebindProjectMediaURLs() {
+        for asset in mediaAssets {
+            guard let entry = mediaManifest.entries.first(where: { $0.id == asset.id }),
+                  case .project = entry.source,
+                  let url = mediaResolver.expectedURL(for: asset.id) else { continue }
+            asset.url = url
+        }
+    }
 
     // Placeholder replaced in init() — @Observable doesn't support lazy var
     private(set) var mediaResolver: MediaResolver = MediaResolver(
@@ -457,8 +611,7 @@ final class EditorViewModel {
 
     let generationService = GenerationService()
     let agentService = AgentService()
-    /// Presents the active pack's declared hard steps before the agent works a phase.
-    let intakeCoordinator = IntakeCoordinator()
+    let pipelineAgentHarness = PipelineAgentHarness()
 
     /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
     /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:
@@ -590,9 +743,8 @@ final class EditorViewModel {
         // Re-probe the durable pipeline marker FIRST — a just-finished scaffold now exists on disk, so
         // the format lock stays closed the instant `productionStarting` clears below (no reopen gap).
         refreshProductionPipelineMarker()
-        // The agent turn that a Start-production tap kicked off has finished; release the CTA lock so
-        // it reflects the (now initialized, or still-empty) reality.
-        productionStarting = false
+        // Release the CTA lock once the scaffolded state is visible.
+        if hasProductionPipeline { productionStarting = false }
         guard let dir = workingRoot else {
             bible = nil
             shotlist = nil
@@ -629,9 +781,27 @@ final class EditorViewModel {
         }
         uiContract = (try? ct.get()) ?? nil
         engineStateRevision += 1
-        // The pipeline may have advanced into a phase whose intake isn't collected yet. Asking is the
-        // workflow's job, not the agent's (#254) — and this is the one point every path funnels through.
-        intakeCoordinator.advance(editor: self)
+        let reconciliation = pipelineAgentHarness.reconcile(editor: self)
+        if let failure = reconciliation.failure {
+            workflowHandoffPending = false
+            mediaPanelToast = MediaPanelToast(message: failure)
+            return
+        }
+        if !reconciliation.isReady, agentService.pendingDialog?.purpose == .workflowIntake {
+            workflowHandoffPending = true
+        }
+        guard reconciliation.isReady else { return }
+        if agentService.resumePendingGateFollowUp(
+            nextPhasePrompt: reconciliation.agentPrompt
+        ) {
+            workflowHandoffPending = false
+            return
+        }
+        guard workflowHandoffPending else { return }
+        workflowHandoffPending = false
+        let kickoff = reconciliation.agentPrompt
+            ?? "The production pipeline is initialized. Continue from the next unapproved phase."
+        agentService.send(text: kickoff, mentions: [], hidden: true)
     }
 
     var keyframesPanelVisible: Bool = {
@@ -660,8 +830,11 @@ final class EditorViewModel {
     var mediaPanelCurrentFolderId: String?
     var mediaPanelPasteRequestTick: Int = 0
     var mediaPanelToast: MediaPanelToast?
+    var mediaImportProgress: MediaImportProgress?
     @ObservationIgnored var mediaImportTail: Task<MediaImportSummary, Never>?
+    @ObservationIgnored var mediaImportCancellation: (() -> Void)?
     @ObservationIgnored var mediaImportSequence: Int = 0
+    @ObservationIgnored var songAttachInProgress = false
 
     func showMediaPanelMediaTab() {
         mediaPanelTab = .assets
@@ -673,7 +846,7 @@ final class EditorViewModel {
     init() {
         mediaResolver = MediaResolver(
             manifest: { [weak self] in self?.mediaManifest ?? MediaManifest() },
-            projectURL: { [weak self] in self?.projectURL }
+            projectURL: { [weak self] in self?.workingCopyHome }
         )
         agentService.editor = self
         searchIndex.assetsProvider = { [weak self] in self?.mediaAssets ?? [] }
@@ -817,6 +990,7 @@ final class EditorViewModel {
 
     /// Coalesces rapid rebuild requests so `replaceCurrentItem` doesn't fire per keystroke.
     var pendingRebuildTask: Task<Void, Never>?
+    @ObservationIgnored var mediaImportCancellationRequested = false
 
     func notifyTimelineChanged() {
         pendingRebuildTask?.cancel()

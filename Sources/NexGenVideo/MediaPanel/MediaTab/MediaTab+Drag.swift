@@ -65,23 +65,23 @@ extension MediaTab {
                     ZStack {
                         Rectangle().fill(.quaternary)
                         Image(systemName: asset.type.sfSymbolName)
-                            .font(.title2)
+                            .font(.system(size: AppTheme.FontSize.title2))
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
                 }
             }
-            .frame(width: 80, height: 60)
+            .frame(width: AppTheme.ComponentSize.dragPreviewWidth, height: AppTheme.ComponentSize.dragPreviewHeight)
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
             .overlay(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                     .strokeBorder(AppTheme.Accent.primary, lineWidth: AppTheme.BorderWidth.medium)
             )
-            .shadow(color: .black.opacity(AppTheme.Opacity.medium), radius: 4, y: 2)
+            .shadow(AppTheme.Shadow.floating)
 
             if count > 1 {
                 Text("\(count)")
-                    .font(.system(size: AppTheme.FontSize.sm, weight: .bold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.bold))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
                     .padding(.horizontal, AppTheme.Spacing.sm)
                     .padding(.vertical, AppTheme.Spacing.xxs)
                     .background(Capsule().fill(AppTheme.Accent.primary))

@@ -25,7 +25,10 @@ struct TextContentField: NSViewRepresentable {
         textView.insertionPointColor = AppTheme.Text.primary
         textView.backgroundColor = .clear
         textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.textContainerInset = NSSize(
+            width: AppTheme.Spacing.xs,
+            height: AppTheme.Spacing.xs
+        )
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false

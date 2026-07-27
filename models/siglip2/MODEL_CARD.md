@@ -36,7 +36,9 @@ is a plain dot product. Minimum deployment target: macOS 15.
   embeddings drift if padding differs.
 - Conversion is parity-gated: every release's embeddings match the PyTorch
   reference at cosine ≥ 0.99 on a fixture set. Conversion source:
-  [palmier-io/palmier-pro `models/siglip2`](https://github.com/palmier-io).
+  [NexGenVideo `models/siglip2`](https://github.com/iret77/nexgenvideo/tree/main/models/siglip2).
+  This conversion originated in Palmier Pro; that is historical provenance, not
+  a source or runtime dependency of NexGenVideo.
 
 ## Versioning
 

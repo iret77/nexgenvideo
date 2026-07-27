@@ -18,12 +18,12 @@ struct ProjectActivityView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             HStack {
                 Text("Project Activity")
-                    .font(.system(size: AppTheme.FontSize.sm, weight: .medium))
+                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Spacer()
                 if !entries.isEmpty {
                     Text("\(CostEstimator.format(total)) used")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                         .monospacedDigit()
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
@@ -43,11 +43,11 @@ struct ProjectActivityView: View {
                         }
                     }
                 }
-                .frame(maxHeight: 420)
+                .frame(maxHeight: AppTheme.ComponentSize.projectActivityMaxHeight)
             }
         }
         .padding(AppTheme.Spacing.md)
-        .frame(width: 340)
+        .frame(width: AppTheme.ComponentSize.projectActivityWidth)
     }
 
     private func row(_ entry: GenerationLogEntry) -> some View {
@@ -57,10 +57,10 @@ struct ProjectActivityView: View {
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.IconSize.xs)
             Text(CostEstimator.format(entry.costCredits))
-                .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .monospacedDigit()
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: 68, alignment: .leading)
+                .frame(width: AppTheme.ComponentSize.projectActivityCostWidth, alignment: .leading)
             Text(entry.modelDisplayName)
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.secondaryColor)

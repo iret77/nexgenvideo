@@ -2,6 +2,12 @@ import Foundation
 
 public let framesSchemaVersion = "frames/v1"
 
+public enum FramesManifestReconciliationError: Swift.Error, Sendable, Equatable {
+    case projectMismatch(manifest: String, shotlist: String)
+    case duplicateShot(String)
+    case duplicateRole(shot: String, role: String)
+}
+
 /// Per-frame generation manifest — records each generated keyframe together with the
 /// EXACT prompt sent to the image provider (`provider_prompt`), for reproducibility +
 /// audit and for the frame sanity checks (ratio / size / builder-bypass). Generic like
@@ -58,6 +64,59 @@ public struct FramesManifest: Codable, Sendable, Equatable {
             }
         } else {
             copy.shots.append(ShotFrames(shotId: shotId, keyframeStrategy: keyframeStrategy, frames: [frame]))
+        }
+        return copy
+    }
+
+    public func reconciled(
+        with shotlist: Shotlist,
+        generated: String = currentTimestamp()
+    ) throws -> FramesManifest {
+        guard project == shotlist.project else {
+            throw FramesManifestReconciliationError.projectMismatch(
+                manifest: project,
+                shotlist: shotlist.project
+            )
+        }
+        var shotByID: [String: Shot] = [:]
+        for shot in shotlist.shots {
+            shotByID[shot.id] = shot
+        }
+        var recordedShots: Set<String> = []
+        for recorded in shots {
+            guard recordedShots.insert(recorded.shotId).inserted else {
+                throw FramesManifestReconciliationError.duplicateShot(
+                    recorded.shotId
+                )
+            }
+            var roles: Set<String> = []
+            for frame in recorded.frames {
+                guard roles.insert(frame.role).inserted else {
+                    throw FramesManifestReconciliationError.duplicateRole(
+                        shot: recorded.shotId,
+                        role: frame.role
+                    )
+                }
+            }
+        }
+        var copy = self
+        copy.generated = generated
+        copy.shots = shots.compactMap { recorded in
+            guard let shot = shotByID[recorded.shotId],
+                  shot.sourceMode == .generated,
+                  shot.keyframeStrategy != .none else {
+                return nil
+            }
+            let validRoles: Set<String> = shot.keyframeStrategy == .startEnd
+                ? ["start", "end"]
+                : ["start"]
+            return ShotFrames(
+                shotId: shot.id,
+                keyframeStrategy: shot.keyframeStrategy.rawValue,
+                frames: recorded.frames.filter {
+                    validRoles.contains($0.role)
+                }
+            )
         }
         return copy
     }

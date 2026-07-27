@@ -18,7 +18,7 @@ struct AnalysisPanelView: View {
     @State private var loadToken = 0
 
     var body: some View {
-        VStack(spacing: 0) { content }
+        VStack(spacing: AppTheme.Spacing.none) { content }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .task(id: editor.projectURL) { await load() }
             .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
@@ -95,7 +95,7 @@ struct AnalysisPanelView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Text(title)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 Spacer(minLength: 0)
                 if let detail {

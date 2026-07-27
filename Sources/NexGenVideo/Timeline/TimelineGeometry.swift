@@ -28,14 +28,14 @@ struct TimelineGeometry {
             bounds: bounds,
             // Produce is a compact display strip — drop the drag-to-create-track padding above
             // and below so video + audio pack directly under the ruler.
-            dropZoneHeight: editor.workspaceFocus == .produce ? 0 : Layout.dropZoneHeight
+            dropZoneHeight: editor.workspaceFocus == .produce ? 0 : AppTheme.Layout.dropZoneHeight
         )
     }
 
-    init(pixelsPerFrame: Double, headerWidth: Double = 0, trackHeights: [CGFloat], bounds: NSRect = .zero, dropZoneHeight: CGFloat = Layout.dropZoneHeight) {
+    init(pixelsPerFrame: Double, headerWidth: Double = 0, trackHeights: [CGFloat], bounds: NSRect = .zero, dropZoneHeight: CGFloat = AppTheme.Layout.dropZoneHeight) {
         self.pixelsPerFrame = pixelsPerFrame
         self.headerWidth = headerWidth
-        self.rulerHeight = Layout.rulerHeight
+        self.rulerHeight = AppTheme.Layout.rulerHeight
         self.dropZoneHeight = dropZoneHeight
         self.trackCount = trackHeights.count
         self.trackHeights = trackHeights
@@ -52,7 +52,7 @@ struct TimelineGeometry {
     }
 
     func trackHeight(at index: Int) -> CGFloat {
-        trackHeights.indices.contains(index) ? trackHeights[index] : Layout.trackHeight
+        trackHeights.indices.contains(index) ? trackHeights[index] : AppTheme.Layout.trackHeight
     }
 
     func trackY(at index: Int) -> CGFloat {
@@ -93,7 +93,7 @@ struct TimelineGeometry {
         }
 
         // Check between-track boundaries
-        let threshold = Double(Layout.insertThreshold)
+        let threshold = Double(AppTheme.Layout.insertThreshold)
         for i in 0..<(trackCount - 1) {
             let bottomOfTrack = Double(cumulativeY[i]) + Double(trackHeights[i])
             let topOfNext = Double(cumulativeY[i + 1])
@@ -134,7 +134,7 @@ struct TimelineGeometry {
     }
 
     /// Y position where a ghost clip should render for a new-track drop.
-    func ghostY(for target: TrackDropTarget, height: CGFloat = Layout.trackHeight) -> CGFloat? {
+    func ghostY(for target: TrackDropTarget, height: CGFloat = AppTheme.Layout.trackHeight) -> CGFloat? {
         guard case .newTrackAt(let index) = target,
               let lineY = insertionLineY(for: target) else { return nil }
         return index < trackCount ? lineY - height : lineY
@@ -154,7 +154,7 @@ struct TimelineGeometry {
 
     func audioVolumeKfRect(clip: Clip, kfOffset: Int, kfDb: Double, in clipRect: NSRect) -> NSRect {
         let p = audioVolumeKfPoint(clip: clip, kfOffset: kfOffset, kfDb: kfDb, in: clipRect)
-        let half = ClipRenderer.volumeKeyframeHitSize / 2
+        let half = AppTheme.Timeline.clipVolumeKeyframeHitSize / 2
         return NSRect(x: p.x - half, y: p.y - half, width: half * 2, height: half * 2)
     }
 
@@ -167,7 +167,7 @@ struct TimelineGeometry {
             : max(0, clip.durationFrames - clip.fadeOutFrames)
         let x = ClipRenderer.fadeHandleRenderX(in: clipRect, kfOffset: kfOffset, isLeft: edge == .left, pxPerFrame: pxPerFrame)
         let y = ClipRenderer.fadeKneeY(in: body)
-        let half = ClipRenderer.volumeKeyframeHitSize / 2
+        let half = AppTheme.Timeline.clipVolumeKeyframeHitSize / 2
         return NSRect(x: x - half, y: y - half, width: half * 2, height: half * 2)
     }
 }

@@ -11,12 +11,10 @@ OpenArt, Higgsfield, ElevenLabs, …) bound via BYO API keys, Claude orchestrati
 architecture, generation/provider, or de-Palmier-ization work — it supersedes the "Palmier-Integration"
 section of `musicvideo/docs/v1-studio-plan.md`.
 
-## Build
+## Verification
 
-```bash
-swift build
-swift run
-```
+Never build, test, or launch the app locally. GitHub Actions on `macos-26` is the
+only verification surface; do not run `scripts/dev.sh` or start a local dev server.
 
 ## Code style
 
@@ -47,7 +45,7 @@ Rule: **any drop target that spans an area containing other drop targets must us
 
 ## Voice
 
-NexGenVideo speaks like a quietly capable native Mac app for filmmakers: direct, technical, calm, and 
+NexGenVideo speaks like a quietly capable native Mac app for filmmakers: direct, technical, calm, and
 confident. Prefer Apple HIG-style terseness over warmth. Never chatty or cute. Never marketing. When the
 product needs to ask for action, lead with the action verb; when it reports state, name the thing.
 
@@ -77,6 +75,12 @@ release or a wasted CI cycle.
   Static `otool` / `nm` checks have twice passed while the shipped pack failed with "Damaged pack /
   entry point not found".
 - **Plugins are real, loadable `.ngvpack` bundles.** Compiled-in is not a shippable state.
+- **Pack updates never rewrite project truth.** Pack versions install side-by-side, and `ngv.json`
+  pins id + version + project schema. New format projects must finish the catalog/update check and
+  refuse stale resident code. Existing projects open their exact pinned version; switching versions
+  requires an explicit transactional Recovery-copy upgrade, plus a declared pack migration when its
+  project schema changes. Never collapse this back to one global `<id>.ngvpack`, id-only project
+  state, or a silent “latest wins” policy.
 
 ### Agent and chat surface
 
@@ -90,6 +94,49 @@ release or a wasted CI cycle.
 - **Gate refusals are agent-facing.** They name tools and artifact paths; don't put them in front of
   the user unchanged.
 
+### Musicvideo workflow start
+
+- **The locked startup contract is [`docs/MUSICVIDEO_START_CONTRACT.md`](docs/MUSICVIDEO_START_CONTRACT.md).**
+  Its observable order is Track → optional Lyrics → Project Init → approved Audio Analysis →
+  optional existing story/identity/style material → story development. Do not move story intake
+  before analysis.
+- **Media-library import is not workflow assignment.** Library assets are candidates until the user
+  assigns them in the matching host-owned card; importing files must never silently skip Track or
+  Lyrics intake.
+- **Greenfield is a first-class answer.** Existing story material is optional. If none is supplied,
+  the agent develops the story from the approved song analysis and lyrics instead of asking for a
+  file that does not exist.
+- **Packaged phase documents are runtime instructions, not reference-only prose.** Every agent start,
+  resume, and gate transition must receive the document for the actual next phase.
+- **Do not validate this flow circularly.** Release evidence must assert the owner-visible sequence
+  independently of `hardsteps.json`; matching docs, manifest, and implementation are not sufficient
+  when they repeat the same mistake.
+- **The full phase harness is locked in
+  [`docs/PIPELINE_AGENT_HARNESS.md`](docs/PIPELINE_AGENT_HARNESS.md).** Every post-init phase needs a
+  canonical schema-validated writer, deterministic structural gate, cumulative exact-byte lineage,
+  packaged runtime instructions, and explicit capability sets for phase-bound plus supporting tools.
+  A runner or writer outside the current phase's contract must fail before execution. Supporting tools
+  must never capture lineage for an artifact they do not own; file staging cannot use canonical
+  artifacts as a source or destination and is confined to declared phase asset paths. Generated Bible
+  sheets must carry host-recorded exact-byte prompt/model provenance. Only the single current phase may execute or approve; editing
+  an approved phase requires explicit rewind. Final renders must prove the exact current source,
+  start/end frames, or deterministic reference plan used for every shot. AI-enhanced shots declare
+  their exact project-local `source_path` in the Shot List; the agent never selects or substitutes it
+  during Render, and imported/AI-enhanced shots never enter Frames.
+- **Pipeline media references are typed and project-local.** Track discovery is shared engine truth
+  and rejects symlink escapes. Production Design, Bible, and Shot List image references must resolve
+  to real project images in both the canonical writer and the independent approval gate.
+- **Format-pack resolution is fail-closed.** Missing, unreadable, or mismatched `ngv.json` state must
+  stop the harness, gate UI, open, and save paths; it must never degrade a format project to the
+  generic workflow. Keep the trusted in-session declaration independent from the working-copy read
+  used to verify it. Every gate-state mutation — including rewind, pending, and needs-revision —
+  must prove that declaration is wired before deriving phase order or writing. Both `NSDocument.save`
+  and direct `write` entry points must pass the same pack gate before package bytes change.
+- **Shot List has one writer.** Agent `write_shotlist` and native source-mode edits both persist
+  through `PipelineShotlistWriter`; neither may duplicate its semantic validation. A chained generated
+  shot uses `keyframe_strategy=none`, `seedance_input_mode=keyframe`, no explicit reference images,
+  skips Frames, and binds its predecessor's exact last frame as the sole Render start condition.
+
 ### Providers and models
 
 - **Provider-agnostic.** Work with whatever keys the user has. Do not extend the upstream's
@@ -101,8 +148,9 @@ release or a wasted CI cycle.
 - **Verify API facts with a live call.** Research has been wrong every single time; model lists are
   free. A 400 proves only the request envelope, never availability. Never probe a *generation* with a
   deliberately invalid field — an invalid value has been accepted and billed.
-- **Never propose the Anthropic API-key mode as an alternative** to the embedded `claude -p` runtime.
-  It stays in the code but is not an option for this project. Fix the embedded runtime instead.
+- **Anthropic API-key mode is a supported secondary backend** alongside the embedded `claude -p`
+  runtime. Keep both functional; never use the API-key path to hide an embedded-runtime defect. OpenAI
+  may offer the same choice once embedded Codex CLI support exists.
 
 ### Working in this repo
 
@@ -113,8 +161,9 @@ release or a wasted CI cycle.
   agent citing itself — never cite it back as a mandate. `docs/CONCEPT.md` is orienting context, not
   a mandate; apply it with judgement, and surface genuine conflicts as a decision point.
 - **Specs that are locked stay locked:** `docs/PROJECT_STORAGE.md`, `docs/PATTERN_FIT_CONTRACT.md`,
-  `docs/PLUGIN_STANDARD.md`. Deviating requires stopping and asking, not a quiet reinterpretation.
+  `docs/PLUGIN_STANDARD.md`, `docs/MUSICVIDEO_START_CONTRACT.md`,
+  `docs/PIPELINE_AGENT_HARNESS.md`. Deviating requires stopping and asking, not a quiet
+  reinterpretation.
 - **No quick wins.** Partial fixes and shortcuts are not robust enough to ship; implement the
   complete, correct solution.
 - The wordmark is **NexGenVideo**, one word — never "NexGen Video" in any shown copy.
-

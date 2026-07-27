@@ -107,7 +107,7 @@ extension InspectorView {
     @ViewBuilder
     func effectsTabContent() -> some View {
         let clips = nonTextVisualClips
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             adjustSection(title: "Basic Correction", effectIds: basicEffectIds, clips: clips) {
                 adjustSubgroup(title: "Tone", controls: toneControls, clips: clips)
                 adjustSubgroup(title: "White Balance", controls: whiteBalanceControls, clips: clips)
@@ -149,7 +149,7 @@ extension InspectorView {
         let expanded = !collapsedAdjustSections.contains(title)
         let hasEffects = anyAdjusted(effectIds, clips: clips)
         let isOn = !hasEffects || sectionEnabled(effectIds, clips: clips)
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: AppTheme.FontSize.xxs))
@@ -399,13 +399,13 @@ extension InspectorView {
                 .frame(maxWidth: .infinity)
                 .background(
                     RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                        .fill(Color.white.opacity(AppTheme.Opacity.hint))
+                        .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.hint))
                 )
             }
             .buttonStyle(.plain)
             .help(path ?? "Choose a .cube LUT file")
         }
-        .frame(height: KeyframesMetrics.rowHeight)
+        .frame(height: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func lutIntensityRow(clips: [Clip]) -> some View {
@@ -429,7 +429,7 @@ extension InspectorView {
                 onChanged: { setLUTIntensity($0 / 100, clips: clips, commit: false) }
             ) { setLUTIntensity($0 / 100, clips: clips, commit: true) }
         }
-        .frame(height: KeyframesMetrics.rowHeight)
+        .frame(height: AppTheme.Timeline.keyframeRowHeight)
     }
 
     private func lutPath(in clips: [Clip]) -> String? {
@@ -511,7 +511,7 @@ extension InspectorView {
                     onChanged: { setControlParam(control, label: label, value: $0, clips: clips, commit: false) }
                 ) { setControlParam(control, label: label, value: $0, clips: clips, commit: true) }
             }
-            .frame(height: KeyframesMetrics.rowHeight)
+            .frame(height: AppTheme.Timeline.keyframeRowHeight)
         }
     }
 

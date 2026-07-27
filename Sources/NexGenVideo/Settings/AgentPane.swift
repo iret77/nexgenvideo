@@ -3,170 +3,305 @@ import SwiftUI
 
 struct AgentPane: View {
     @Bindable private var appState = AppState.shared
-    @State private var hasKey: Bool = false
-    @State private var maskedKey: String = ""
-    @State private var draft: String = ""
+    @State private var backend = AgentBackendPreference.selected
+    @State private var claudeStatus: ClaudeCodeLocator.Status?
+    @State private var isCheckingClaude = false
+    @State private var hasKey = false
+    @State private var maskedKey = ""
+    @State private var draft = ""
     @FocusState private var isFocused: Bool
 
-    @AppStorage("useClaudeCodeRuntime") private var useClaudeRuntime: Bool = false
-    @State private var externalServers: [String: String] = ExternalMcpServers.all()
-    @State private var newServerName = ""
-    @State private var newServerCommand = ""
-    @AppStorage("claudeRuntimePluginDir") private var claudePluginDir: String = ""
-    @AppStorage("claudeRuntimePermissionMode") private var claudePermissionMode: String = "bypassPermissions"
-    @AppStorage(CostGuard.autoApproveKey) private var autoApproveCredits: Int = 0
+    @AppStorage(CostGuard.autoApproveKey) private var autoApproveCredits = 0
 
-    private let consoleURL = URL(string: "https://console.anthropic.com/settings/keys")!
+    private let consoleURL = URL(string: "https://platform.claude.com/settings/keys")!
+    private let installationURL = URL(string: "https://code.claude.com/docs/en/setup")!
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-            runAgentSection
-            Divider().overlay(AppTheme.Border.subtleColor)
+            runtimeSection
+            renderApprovalSection
             mcpSection
         }
-        .onAppear(perform: refresh)
-    }
-
-    // MARK: - Run the in-app agent
-
-    private var runAgentSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-            runAgentHeader
-            apiKeySection
-            claudeRuntimeSection
-            costGuardSection
+        .onAppear {
+            backend = AgentBackendPreference.selected
+            refreshKey()
+        }
+        .task {
+            if backend == .claudeCode {
+                await checkClaude()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .claudeCodeStatusChanged)) { notification in
+            guard let status = notification.object as? ClaudeCodeLocator.Status else { return }
+            claudeStatus = status
         }
     }
 
-    /// Cost-Guard (M7): the user's final word on paid agent renders. The agent recommends a model and
-    /// NGV resolves the cheapest activated provider — but the user approves the spend. This dial is
-    /// how much they pre-approve; above it, every render waits for an explicit tap.
-    private var costGuardSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.md) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                    Text("Confirm agent spend")
+    private var runtimeSection: some View {
+        SettingsSection(
+            "Agent Runtime",
+            subtitle: "Choose one backend for the in-app agent. Provider connections for generated media remain separate."
+        ) {
+            SettingsCard {
+                SettingsRow(
+                    title: "Run agent with",
+                    subtitle: backend == .claudeCode
+                        ? "Uses your signed-in Claude subscription."
+                        : "Uses your Anthropic API account."
+                ) {
+                    Picker("Agent runtime", selection: $backend) {
+                        ForEach(AgentBackend.allCases) { option in
+                            Text(option.displayName).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .onChange(of: backend) { _, newValue in
+                        appState.setAgentBackend(newValue)
+                        if newValue == .claudeCode {
+                            Task { await checkClaude() }
+                        }
+                    }
+                }
+                SettingsDivider()
+                if backend == .claudeCode {
+                    claudeCodeConfiguration
+                } else {
+                    anthropicConfiguration
+                }
+            }
+        }
+    }
+
+    private var anthropicConfiguration: some View {
+        VStack(spacing: AppTheme.Spacing.none) {
+            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    Text("Anthropic API")
                         .font(.system(size: AppTheme.FontSize.md))
                         .foregroundStyle(AppTheme.Text.primaryColor)
-                    Text(autoApproveCredits <= 0
-                         ? "The agent asks before every paid render."
-                         : "The agent runs renders up to \(autoApproveCredits) credits without asking; anything more waits for your approval.")
+                    Button(action: { NSWorkspace.shared.open(consoleURL) }) {
+                        Label("Get API key", systemImage: "arrow.up.right")
+                            .font(.system(size: AppTheme.FontSize.sm))
+                            .foregroundStyle(AppTheme.Accent.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: AppTheme.Spacing.lg)
+                SettingsStatusBadge(
+                    text: hasKey ? "Key saved" : "Not configured",
+                    tone: hasKey ? .success : .neutral
+                )
+            }
+            .padding(.horizontal, AppTheme.Spacing.mdLg)
+            .padding(.vertical, AppTheme.Spacing.md)
+
+            SettingsDivider()
+
+            HStack(spacing: AppTheme.Spacing.sm) {
+                SecureField(keyPlaceholder, text: $draft)
+                    .textFieldStyle(.plain)
+                    .focused($isFocused)
+                    .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                    .onSubmit(saveKey)
+                    .padding(.horizontal, AppTheme.Spacing.md)
+                    .padding(.vertical, AppTheme.Spacing.smMd)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                            .fill(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.muted))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                            .strokeBorder(
+                                isFocused ? AppTheme.Border.primaryColor : AppTheme.Border.subtleColor,
+                                lineWidth: AppTheme.BorderWidth.thin
+                            )
+                    )
+                    .animation(.easeOut(duration: AppTheme.Anim.hover), value: isFocused)
+                keyTrailingControl
+            }
+            .padding(.horizontal, AppTheme.Spacing.mdLg)
+            .padding(.vertical, AppTheme.Spacing.md)
+        }
+    }
+
+    private var claudeCodeConfiguration: some View {
+        VStack(spacing: AppTheme.Spacing.none) {
+            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    Text(claudeCodeTitle)
+                        .font(.system(size: AppTheme.FontSize.md))
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                    Text(claudeCodeDetail)
                         .font(.system(size: AppTheme.FontSize.sm))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: AppTheme.Spacing.lg)
-                Stepper(value: $autoApproveCredits, in: 0...1000, step: 10) {
-                    Text("\(autoApproveCredits)")
-                        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                        .frame(minWidth: AppTheme.IconSize.lg, alignment: .trailing)
-                }
-                .controlSize(.small)
-            }
-        }
-    }
-
-    private var runAgentHeader: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            Text("Run the Agent")
-                .font(.system(size: AppTheme.FontSize.md, weight: .medium))
-                .foregroundStyle(AppTheme.Text.primaryColor)
-            Text("Two ways to power the in-app agent — pick one. Bring your own Anthropic API key, or run it through Claude Code using your Claude subscription.")
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var apiKeySection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-                header
-                keyField
-            }
-            .disabled(useClaudeRuntime)
-            .opacity(useClaudeRuntime ? AppTheme.Opacity.strong : 1)
-
-            if useClaudeRuntime {
-                Text("Not used while Claude Code below is on — that runs the agent instead.")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            Text("Anthropic API Key")
-                .font(.system(size: AppTheme.FontSize.md, weight: .medium))
-                .foregroundStyle(AppTheme.Text.primaryColor)
-
-            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-                Text("Option A — bring your own key. Stored in your macOS Keychain.")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Button(action: { NSWorkspace.shared.open(consoleURL, configuration: .init(), completionHandler: nil) }) {
-                    HStack(spacing: 2) {
-                        Text("Get Anthropic API key")
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    SettingsStatusBadge(text: claudeStatusLabel, tone: claudeStatusTone)
+                    Button("Check again") {
+                        Task { await checkClaude() }
                     }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+                    .disabled(isCheckingClaude)
+                }
+            }
+            .padding(.horizontal, AppTheme.Spacing.mdLg)
+            .padding(.vertical, AppTheme.Spacing.md)
+
+            if !isCheckingClaude && claudeStatus?.found == false {
+                SettingsDivider()
+                HStack {
+                    Button("Installation guide") { NSWorkspace.shared.open(installationURL) }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .controlSize(.small)
+                    Spacer(minLength: AppTheme.Spacing.lg)
+                }
+                .padding(.horizontal, AppTheme.Spacing.mdLg)
+                .padding(.vertical, AppTheme.Spacing.smMd)
+            }
+
+            SettingsDivider()
+            SettingsNotice(
+                text: "Claude Code runs headlessly with Read as its only built-in tool. Timeline changes go through NexGenVideo's local MCP tools.",
+                systemImage: "lock.shield",
+                tone: .neutral
+            )
+        }
+    }
+
+    private var claudeCodeTitle: String {
+        guard let version = claudeStatus?.version else { return "Claude Code" }
+        return "Claude Code \(version)"
+    }
+
+    private var claudeCodeDetail: String {
+        if isCheckingClaude {
+            return "Checking the installed CLI and sign-in status…"
+        }
+        guard claudeStatus?.found == true else {
+            return "Install Claude Code, then sign in with your Claude subscription."
+        }
+        guard claudeStatus?.isAuthenticated == true else {
+            return "Run claude auth login in Terminal, then check again."
+        }
+        return "Ready to run the in-app agent through your Claude subscription."
+    }
+
+    private var claudeStatusLabel: String {
+        if isCheckingClaude { return "Checking" }
+        guard claudeStatus?.found == true else { return "Not installed" }
+        return claudeStatus?.isAuthenticated == true ? "Signed in" : "Sign-in required"
+    }
+
+    private var claudeStatusTone: SettingsTone {
+        if isCheckingClaude { return .neutral }
+        return claudeStatus?.isAuthenticated == true ? .success : .warning
+    }
+
+    private var renderApprovalSection: some View {
+        SettingsSection(
+            "Agent Render Approvals",
+            subtitle: "Unknown costs always require approval."
+        ) {
+            SettingsCard {
+                SettingsRow(
+                    title: "Auto-approve paid renders",
+                    subtitle: autoApproveCredits <= 0
+                        ? "Ask before every paid render."
+                        : "Run priced renders up to \(CostEstimator.format(autoApproveCredits)) without asking."
+                ) {
+                    Stepper(value: $autoApproveCredits, in: 0...1000, step: 10) {
+                        Text(CostEstimator.format(autoApproveCredits))
+                            .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                    }
+                    .controlSize(.small)
+                    .fixedSize()
+                }
+            }
+        }
+    }
+
+    private var mcpSection: some View {
+        SettingsSection(
+            "Local MCP Bridge",
+            subtitle: "Allows supported local clients to control the open NexGenVideo project."
+        ) {
+            SettingsCard {
+                SettingsRow(
+                    title: "NexGenVideo MCP server",
+                    subtitle: appState.isMCPRequiredByAgent
+                        ? "Required while Claude Code is the selected agent runtime."
+                        : "Listens only on this Mac at 127.0.0.1:\(String(MCPService.port))."
+                ) {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        SettingsStatusBadge(text: mcpStatusLabel, tone: mcpStatusTone)
+                        if appState.mcpService?.lastError != nil {
+                            Button("Retry") { appState.restartMCPService() }
+                                .controlSize(.small)
+                        }
+                        Toggle(
+                            "",
+                            isOn: Binding(
+                                get: { appState.isMCPEnabled },
+                                set: { appState.setMCPEnabled($0) }
+                            )
+                        )
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .disabled(appState.isMCPRequiredByAgent)
+                    }
+                }
+                SettingsDivider()
+                HStack {
+                    Text("Connection setup for Claude Desktop, Claude Code, Codex, and other MCP clients.")
+                        .font(.system(size: AppTheme.FontSize.sm))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    Spacer(minLength: AppTheme.Spacing.lg)
+                    Button("Setup instructions") {
+                        HelpWindowController.shared.show(tab: .mcp)
+                    }
+                    .buttonStyle(.plain)
                     .font(.system(size: AppTheme.FontSize.sm))
                     .foregroundStyle(AppTheme.Accent.primary)
                 }
-                .buttonStyle(.plain)
-                .fixedSize()
+                .padding(.horizontal, AppTheme.Spacing.mdLg)
+                .padding(.vertical, AppTheme.Spacing.smMd)
             }
         }
     }
 
-    private var keyField: some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            fieldBox
-            trailingControl
-        }
+    private var mcpStatusLabel: String {
+        if appState.mcpService?.isRunning == true { return "Running" }
+        if appState.mcpService?.lastError != nil { return "Unavailable" }
+        return appState.isMCPEnabled ? "Starting" : "Off"
     }
 
-    private var fieldBox: some View {
-        SecureField(placeholder, text: $draft)
-            .textFieldStyle(.plain)
-            .focused($isFocused)
-            .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
-            .foregroundStyle(AppTheme.Text.primaryColor)
-            .onSubmit(save)
-            .padding(.horizontal, AppTheme.Spacing.md)
-            .padding(.vertical, AppTheme.Spacing.smMd)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(Color.black.opacity(AppTheme.Opacity.muted))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .strokeBorder(
-                        isFocused ? AppTheme.Border.primaryColor : AppTheme.Border.subtleColor,
-                        lineWidth: AppTheme.BorderWidth.thin
-                    )
-            )
-            .animation(.easeOut(duration: AppTheme.Anim.hover), value: isFocused)
+    private var mcpStatusTone: SettingsTone {
+        if appState.mcpService?.isRunning == true { return .success }
+        if appState.mcpService?.lastError != nil { return .error }
+        return .neutral
     }
 
-    private var placeholder: String {
-        hasKey ? maskedKey : "sk-ant-..."
+    private var keyPlaceholder: String {
+        hasKey ? maskedKey : "sk-ant-…"
     }
 
     @ViewBuilder
-    private var trailingControl: some View {
+    private var keyTrailingControl: some View {
         let trimmed = draft.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty {
-            Button("Save", action: save)
+            Button("Save", action: saveKey)
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.large)
         } else if hasKey {
-            Button(action: remove) {
+            Button(action: removeKey) {
                 Image(systemName: "trash")
                     .font(.system(size: AppTheme.FontSize.md))
                     .foregroundStyle(AppTheme.Text.secondaryColor)
@@ -174,280 +309,43 @@ struct AgentPane: View {
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
             .controlSize(.large)
-            .help("Remove API key")
+            .help("Remove Anthropic API key")
         }
     }
 
-    private func refresh() {
+    private func checkClaude() async {
+        isCheckingClaude = true
+        let status = await Task.detached(priority: .utility) {
+            ClaudeCodeLocator.status()
+        }.value
+        claudeStatus = status
+        isCheckingClaude = false
+        NotificationCenter.default.post(name: .claudeCodeStatusChanged, object: status)
+    }
+
+    private func refreshKey() {
         let key = AnthropicKeychain.load() ?? ""
         hasKey = !key.isEmpty
         maskedKey = mask(key)
     }
 
-    private func save() {
+    private func saveKey() {
         let key = draft.trimmingCharacters(in: .whitespaces)
         guard !key.isEmpty else { return }
         AnthropicKeychain.save(key)
         draft = ""
         isFocused = false
-        refresh()
+        refreshKey()
     }
 
-    private func remove() {
+    private func removeKey() {
         AnthropicKeychain.delete()
         draft = ""
-        refresh()
+        refreshKey()
     }
 
     private func mask(_ key: String) -> String {
         guard key.count > 4 else { return String(repeating: "\u{2022}", count: 32) }
         return String(repeating: "\u{2022}", count: 36) + key.suffix(4)
-    }
-
-    // MARK: - MCP server
-
-    private var mcpSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            mcpHeader
-            mcpStatusRow
-        }
-    }
-
-    private var mcpHeader: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            Text("MCP Server")
-                .font(.system(size: AppTheme.FontSize.md, weight: .medium))
-                .foregroundStyle(AppTheme.Text.primaryColor)
-
-            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-                Text("Lets external clients like Cursor, Claude Desktop, Claude Code, and Codex edit your timeline.")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Button(action: openInstructions) {
-                    HStack(spacing: 2) {
-                        Text("Setup instructions")
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
-                    }
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Accent.primary)
-                }
-                .buttonStyle(.plain)
-                .fixedSize()
-            }
-        }
-    }
-
-    private var mcpStatusRow: some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                Circle()
-                    .fill((appState.mcpService?.isRunning ?? false) ? Color.green : AppTheme.Text.mutedColor)
-                    .frame(width: 8, height: 8)
-
-                if appState.mcpService?.isRunning ?? false {
-                    HStack(alignment: .firstTextBaseline, spacing: 0) {
-                        Text("Running on ")
-                            .foregroundStyle(AppTheme.Text.secondaryColor)
-                        Text("127.0.0.1:\(String(MCPService.port))")
-                            .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
-                            .foregroundStyle(AppTheme.Text.primaryColor)
-                    }
-                } else {
-                    Text("Stopped")
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                }
-            }
-            .font(.system(size: AppTheme.FontSize.sm))
-
-            Spacer()
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { (appState.mcpService?.isRunning ?? false) },
-                    set: { appState.setMCPEnabled($0) }
-                )
-            )
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.small)
-        }
-        .padding(.horizontal, AppTheme.Spacing.md)
-        .padding(.vertical, AppTheme.Spacing.smMd)
-        .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .fill(Color.black.opacity(AppTheme.Opacity.muted))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
-        )
-    }
-
-    private func openInstructions() {
-        HelpWindowController.shared.show(tab: .mcp)
-    }
-
-    // MARK: - Claude Code runtime
-
-    private var claudeRuntimeSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text("Claude Code")
-                    .font(.system(size: AppTheme.FontSize.md, weight: .medium))
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                Text("Option B — run the in-app agent as an embedded Claude Code session on your Claude subscription via the claude CLI. It drives the timeline over MCP.")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            runtimeRow {
-                Circle()
-                    .fill(claudeFound ? Color.green : AppTheme.Text.mutedColor)
-                    .frame(width: 8, height: 8)
-                Text(claudeFound ? "claude CLI detected" : "claude CLI not found")
-                    .font(.system(size: AppTheme.FontSize.sm))
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                Spacer()
-                Toggle("", isOn: $useClaudeRuntime)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-            }
-
-            // The working dir follows the open project package automatically — no field here. Format
-            // packs are native (built in); this is only an extra dir for developing an external
-            // Claude-Code plugin.
-            folderRow(title: "Extra plugin folder (optional)", path: $claudePluginDir)
-            permissionRow
-            externalServersSection
-        }
-    }
-
-    // External MCP servers for the embedded runtime — how tools like ACE Studio 2 (built-in stdio
-    // MCP server, "copy command" in its settings) plug into the agent. Merged into --mcp-config.
-    @ViewBuilder
-    private var externalServersSection: some View {
-        Text("Agent tools (advanced)")
-            .font(.system(size: AppTheme.FontSize.md, weight: .medium))
-            .foregroundStyle(AppTheme.Text.primaryColor)
-        ForEach(externalServers.keys.sorted(), id: \.self) { name in
-            runtimeRow {
-                Text(name)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-                Text(ExternalMcpServers.commandPreview(entryJSON: externalServers[name] ?? ""))
-                    .font(.system(size: AppTheme.FontSize.xs, design: .monospaced))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-                Button("Remove") {
-                    ExternalMcpServers.remove(name: name)
-                    externalServers = ExternalMcpServers.all()
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
-        }
-        runtimeRow {
-            TextField("Name (e.g. acestudio)", text: $newServerName)
-                .textFieldStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.sm))
-                .frame(width: 140)
-            TextField("MCP command, server URL, or pasted JSON config", text: $newServerCommand)
-                .textFieldStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
-            Button("Add") { addExternalServer() }
-                .buttonStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Accent.primary)
-                .disabled(newServerCommand.trimmingCharacters(in: .whitespaces).isEmpty)
-        }
-        Text("External MCP servers the embedded agent drives directly — e.g. ACE Studio 2's MCP command (Settings → MCP → copy command) or OpenArt's hosted server (https://mcp.openart.ai/mcp; OAuth servers need one interactive `claude mcp add` first). Power-user escape hatch: these bypass NGV's provider routing and prompt gate. For curated generation, add the provider under Providers instead.")
-            .font(.system(size: AppTheme.FontSize.xs))
-            .foregroundStyle(AppTheme.Text.mutedColor)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func addExternalServer() {
-        guard let entry = ExternalMcpServers.entryJSON(fromUserInput: newServerCommand) else { return }
-        let name = newServerName.trimmingCharacters(in: .whitespaces).isEmpty
-            ? (ExternalMcpServers.nameHint(fromUserInput: newServerCommand) ?? "external")
-            : newServerName.trimmingCharacters(in: .whitespaces)
-        ExternalMcpServers.set(name: name, entryJSON: entry)
-        externalServers = ExternalMcpServers.all()
-        newServerName = ""
-        newServerCommand = ""
-    }
-
-    private var claudeFound: Bool { ClaudeCodeLocator.locateOnly() != nil }
-
-    private var permissionRow: some View {
-        runtimeRow {
-            Text("Permissions")
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-            Spacer()
-            Picker("", selection: $claudePermissionMode) {
-                Text("Bypass (headless)").tag("bypassPermissions")
-                Text("Accept edits").tag("acceptEdits")
-                Text("Don't ask").tag("dontAsk")
-                Text("Default (prompt)").tag("default")
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .controlSize(.small)
-            .fixedSize()
-        }
-    }
-
-    private func runtimeRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            content()
-        }
-        .padding(.horizontal, AppTheme.Spacing.md)
-        .padding(.vertical, AppTheme.Spacing.smMd)
-        .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .fill(Color.black.opacity(AppTheme.Opacity.muted))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.thin)
-        )
-    }
-
-    private func folderRow(title: String, path: Binding<String>) -> some View {
-        runtimeRow {
-            Text(title)
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-            Text(path.wrappedValue.isEmpty ? "Not set" : path.wrappedValue)
-                .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer()
-            Button("Choose…") { chooseFolder(into: path) }
-                .buttonStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(AppTheme.Accent.primary)
-        }
-    }
-
-    private func chooseFolder(into path: Binding<String>) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        if panel.runModal() == .OK, let url = panel.url {
-            path.wrappedValue = url.path
-        }
     }
 }

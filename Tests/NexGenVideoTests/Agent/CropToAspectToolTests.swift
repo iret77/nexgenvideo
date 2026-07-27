@@ -14,8 +14,14 @@ struct CropToAspectToolTests {
     private func scaffold() throws -> (ToolHarness, URL, URL) {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("crop-\(UUID().uuidString)", isDirectory: true)
         let home = tmp.appendingPathComponent("proj", isDirectory: true)
-        let dataRoot = try ProjectScaffold.initProject(home: home, name: "demo", mode: .beat)
-        return (ToolHarness(), dataRoot, tmp)
+        _ = try ProjectScaffold.initProject(home: home, name: "demo", mode: .beat)
+        try Fixtures.prepareProjectPackage(at: home)
+        let harness = ToolHarness()
+        harness.editor.projectURL = home
+        let dataRoot = try #require(
+            harness.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+        return (harness, dataRoot, tmp)
     }
 
     private func writePNG(_ w: Int, _ h: Int, to url: URL) throws {
@@ -33,7 +39,10 @@ struct CropToAspectToolTests {
     @Test("crops a 2000x1000 master to 16:9 with exact centered geometry")
     func crop16x9() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let home = FrameInventory.projectHome(of: dataRoot)
         let master = home.appendingPathComponent("media/master.png")
         try writePNG(2000, 1000, to: master)
@@ -59,7 +68,10 @@ struct CropToAspectToolTests {
     @Test("an unknown source errors, not crashes")
     func missingSource() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
-        defer { try? FileManager.default.removeItem(at: cleanup) }
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
         let raw = await h.runRaw("crop_to_aspect", args: ["project_dir": dataRoot.path, "aspect": "16:9"])
         #expect(raw.isError)
     }

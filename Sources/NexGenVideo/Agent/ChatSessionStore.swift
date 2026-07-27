@@ -49,15 +49,32 @@ enum ChatSessionStore {
     }()
 
     static func load(from projectURL: URL?) -> [ChatSession] {
+        (try? loadThrowing(from: projectURL)) ?? []
+    }
+
+    static func loadThrowing(from projectURL: URL?) throws -> [ChatSession] {
         guard let dir = projectURL?.appendingPathComponent(dirName, isDirectory: true),
-              let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-        else { return [] }
-        return urls.compactMap { url in
-            guard url.pathExtension == "json",
-                  let data = try? Data(contentsOf: url)
-            else { return nil }
-            return try? decoder.decode(ChatSession.self, from: data)
+              FileManager.default.fileExists(atPath: dir.path)
+        else {
+            return []
         }
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        )
+        return try urls
+            .filter { $0.pathExtension == "json" }
+            .map { url in
+                let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+                guard values.isRegularFile == true else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                return try decoder.decode(
+                    ChatSession.self,
+                    from: Data(contentsOf: url)
+                )
+            }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     static func encodeSession(_ session: ChatSession) -> Data? {

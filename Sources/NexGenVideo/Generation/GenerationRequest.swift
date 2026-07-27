@@ -10,7 +10,7 @@ import Foundation
 struct GenerationRequest {
     /// `.upscale` is promptless — its controller path skips the compile stage but shares the same
     /// preflight → submit → feedback sequence as the rest.
-    enum Modality { case video, image, audio, music, upscale }
+    enum Modality: Sendable, Equatable { case video, image, audio, music, upscale }
 
     /// Where the result lands once generation finishes.
     enum Placement {
@@ -36,6 +36,7 @@ struct GenerationRequest {
         /// id, so the controller's compile stage is skipped while placement/feedback stay shared.
         case upscale(run: @MainActor (
             _ service: GenerationService, _ projectURL: URL?, _ editor: EditorViewModel,
+            _ authorization: GenerationAuthorization,
             _ onComplete: (@MainActor (MediaAsset) -> Void)?, _ onFailure: (@MainActor () -> Void)?
         ) -> String)
     }
@@ -104,6 +105,8 @@ enum GenerationRequestError: LocalizedError {
     case optionsInvalid(String)
     case compile(String)
     case gate(String)
+    case storage(String)
+    case budget(String)
 
     var errorDescription: String? {
         switch self {
@@ -111,6 +114,8 @@ enum GenerationRequestError: LocalizedError {
         case .optionsInvalid(let m): return m
         case .compile(let m): return m
         case .gate(let m): return m
+        case .storage(let m): return m
+        case .budget(let m): return m
         }
     }
 }
@@ -152,7 +157,8 @@ enum GenerationController {
         preflight: Preflight? = nil,
         musicProgress: MusicProgress? = nil,
         onSuccess: (@MainActor (MediaAsset?) -> Void)? = nil,
-        onFailure: (@MainActor () -> Void)? = nil
+        onFailure: (@MainActor () -> Void)? = nil,
+        quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
     ) async -> Result<GenerationOutcome, GenerationRequestError> {
         // (a) PREFLIGHT — model exists + options validate (adapter's model.validate lives here).
         if let message = preflight?() {
@@ -175,10 +181,37 @@ enum GenerationController {
             return .failure(.compile(error.localizedDescription))
         }
 
+        let target = GenerationService.dispatchTarget(modelId: request.modelId)
+        let authorization: GenerationAuthorization
+        do {
+            authorization = try await GenerationBudgetGuard.authorize(
+                input: pricingInput(request, compiledPrompt: compiled),
+                target: target,
+                editor: editor,
+                quoteLoader: quoteLoader
+            )
+        } catch {
+            return .failure(.budget(error.localizedDescription))
+        }
+
+        if editor.workingRoot != nil {
+            do {
+                _ = try editor.prepareWorkingMediaDirectory()
+            } catch {
+                try? editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .released,
+                    note: error.localizedDescription
+                )
+                return .failure(.storage(error.localizedDescription))
+            }
+        }
+
         // (c) SUBMIT — the adapter's existing provider submission, with the compiled prompt injected.
         // (d) FEEDBACK — placeholder auto-selected where placed; the outcome is returned uniformly.
         let placeholderId = dispatch(
             request, compiledPrompt: compiled, editor: editor,
+            authorization: authorization,
             musicProgress: musicProgress, onSuccess: onSuccess, onFailure: onFailure)
         return .success(GenerationOutcome(placeholderId: placeholderId, notes: notes))
     }
@@ -243,18 +276,20 @@ enum GenerationController {
         _ request: GenerationRequest,
         compiledPrompt: String,
         editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         musicProgress: MusicProgress?,
         onSuccess: (@MainActor (MediaAsset?) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) -> String {
         let service = editor.generationService
-        let projectURL = editor.projectURL
+        let projectURL = editor.workingRoot
 
         switch request.submission {
         case .video(let make):
             let onComplete = replacementOnComplete(request, editor: editor, then: onSuccess)
             let id = make(compiledPrompt).submit(
                 service: service, projectURL: projectURL, editor: editor,
+                authorization: authorization,
                 onComplete: onComplete, onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
@@ -262,12 +297,14 @@ enum GenerationController {
             let onComplete = replacementOnComplete(request, editor: editor, then: onSuccess)
             let id = make(compiledPrompt).submit(
                 service: service, projectURL: projectURL, editor: editor,
+                authorization: authorization,
                 onComplete: onComplete, onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
         case .audio(let make):
             let id = make(compiledPrompt).submit(
                 service: service, projectURL: projectURL, editor: editor,
+                authorization: authorization,
                 onComplete: audioOnComplete(request, editor: editor, then: onSuccess),
                 onFailure: failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
@@ -278,16 +315,65 @@ enum GenerationController {
             // placeholder id to return, so the outcome carries an empty id for this path.
             runMusic(
                 make(compiledPrompt), editor: editor,
+                authorization: authorization,
                 progress: musicProgress, onSuccess: onSuccess, onFailure: onFailure)
             return ""
         case .upscale(let run):
             let onComplete = replacementOnComplete(request, editor: editor, then: onSuccess)
             let id = run(
                 service, projectURL, editor,
+                authorization,
                 onComplete, failureHandler(request, editor: editor, then: onFailure))
             place(request, placeholderId: id, editor: editor)
             return id
         }
+    }
+
+    private static func pricingInput(
+        _ request: GenerationRequest,
+        compiledPrompt: String
+    ) -> GenerationPricingInput {
+        var duration = request.durationSeconds
+        var outputCount = 1
+        var resolution: String?
+        var quality: String?
+        var generateAudio: Bool?
+
+        switch request.submission {
+        case .video(let make):
+            let submission = make(compiledPrompt)
+            duration = submission.placeholderDuration
+            if case .video(let params) = submission.buildParams([]) {
+                resolution = params.resolution
+                generateAudio = params.generateAudio
+            }
+        case .image(let make):
+            let submission = make(compiledPrompt)
+            outputCount = max(1, submission.numImages)
+            if case .image(let params) = submission.buildParams([]) {
+                resolution = params.resolution
+                quality = params.quality
+            }
+        case .audio(let make):
+            let params = make(compiledPrompt).params
+            duration = params.durationSeconds.map(Double.init) ?? duration
+        case .music(let make):
+            let submission = make(compiledPrompt)
+            duration = submission.spanSeconds
+        case .upscale:
+            break
+        }
+
+        return GenerationPricingInput(
+            modelId: request.modelId,
+            modality: request.modality,
+            durationSeconds: duration,
+            outputCount: outputCount,
+            resolution: resolution,
+            quality: quality,
+            promptCharacterCount: compiledPrompt.count,
+            generateAudio: generateAudio
+        )
     }
 
     /// Placeholder placement + selection. Library placements select in the media panel; timeline
@@ -369,6 +455,7 @@ enum GenerationController {
     /// success/failure flow through the callbacks.
     private static func runMusic(
         _ submission: MusicGenerationSubmission, editor: EditorViewModel,
+        authorization: GenerationAuthorization,
         progress: MusicProgress?,
         onSuccess: (@MainActor (MediaAsset?) -> Void)?, onFailure: (@MainActor () -> Void)?
     ) {
@@ -376,12 +463,18 @@ enum GenerationController {
             do {
                 try await submission.run(
                     service: editor.generationService,
-                    projectURL: editor.projectURL,
+                    projectURL: editor.workingRoot,
                     editor: editor,
+                    authorization: authorization,
                     onPhase: { progress?.onPhase?($0) },
                     onFinished: { progress?.onFinished?() },
                     onSucceeded: { onSuccess?(nil) })
             } catch {
+                try? editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .released,
+                    note: error.localizedDescription
+                )
                 progress?.onFinished?()
                 onFailure?()
             }

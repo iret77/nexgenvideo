@@ -5,7 +5,7 @@ import NexGenEngine
 /// (id/version/minAppVersion/displayName/tagline) mirrors `plugins/musicvideo.json`,
 /// which the release assembles into the `.ngvpack`'s Info.plist `NGVMinAppVersion` —
 /// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
-let musicvideoMinAppVersion = "0.1.0"
+let musicvideoMinAppVersion = "1.0.0"
 
 /// The musicvideo pack — registers music-specific behavior into the generic
 /// engine. Port of `nexgen_pack_musicvideo/pack.py`.
@@ -40,7 +40,11 @@ public struct MusicDurationPolicy: DurationPolicy {
 /// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.0.4"
+    public let version = "0.0.6"
+
+    private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
+        _ = projectURL
+    }
 
     /// Values mirror the retired `plugins/musicvideo/ngv-plugin.json`. The badge ships INSIDE the
     /// pack's resources (self-contained — cut from the owner's badge masters in
@@ -56,21 +60,19 @@ public struct MusicvideoPack: Pack {
         accentHex: "#FF2D55"
     )
 
-    /// One honest starter. The prompt is USER-VISIBLE — it lands in the transcript as if the user
-    /// typed it, so it reads as a natural first-person request, NOT an agent-facing instruction wall.
-    /// The tool choreography (attach_song, run_phase, show_blocks) lives in the agent manual, tool
-    /// descriptions, and phase docs — never in this line.
+    /// Hidden host-to-agent handoff after the ordered startup intake completes.
     public let starters = [
         PackStarter(
             id: "start",
             title: "Start the music video",
-            prompt: "Let's make a music video from my song. Start the pipeline and take me through it step by step — begin by asking me for the track."
+            prompt: MusicvideoPack.phasePrompt(
+                phase: "project_init",
+                handoff: "The host initialized this music-video pipeline and collected the required Track plus optional Lyrics."
+            )
         )
     ]
 
-    /// A half-finished project must never be offered "begin by asking me for the track" — the track is
-    /// long since attached and analysed, and taking that chip sends the agent back to the start. Once
-    /// anything is approved the chip names the phase that is actually next.
+    /// Once anything is approved the chip names the phase that is actually next.
     public func starters(for progress: PackProgress) -> [PackStarter] {
         guard progress.hasStarted else { return starters }
         if let next = progress.nextPhase {
@@ -78,7 +80,10 @@ public struct MusicvideoPack: Pack {
             return [PackStarter(
                 id: "continue",
                 title: "Continue — next: \(label)",
-                prompt: "Let's pick up where we left off and carry on with the \(label) phase. The earlier phases are already approved, so leave those as they are."
+                prompt: Self.phasePrompt(
+                    phase: next,
+                    handoff: "Continue from the durable project state with \(label). Earlier approved phases stay approved."
+                )
             )]
         }
         return [PackStarter(
@@ -86,6 +91,19 @@ public struct MusicvideoPack: Pack {
             title: "Every phase approved — what's left?",
             prompt: "Every phase is approved. Show me where the project stands and what's left to do."
         )]
+    }
+
+    private static func phasePrompt(phase: String, handoff: String) -> String {
+        let resourceName: String
+        switch phase {
+        case "frames": resourceName = "frame"
+        default: resourceName = phase.replacingOccurrences(of: "_", with: "-")
+        }
+        guard let instructions = try? PackKnowledge.phaseDoc(name: resourceName),
+              !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return handoff
+        }
+        return "\(handoff)\n\nFollow these packaged instructions for the current phase:\n\n\(instructions)"
     }
 
     /// Pipeline phase name → the wording this pack uses for it in the UI.
@@ -109,7 +127,32 @@ public struct MusicvideoPack: Pack {
 
     public init() {}
 
+    private func registerHardenedGate(
+        _ phase: String,
+        registry: EngineRegistry,
+        check: @escaping EngineRegistry.GateRequirement
+    ) {
+        registry.registerPhaseLineageProvider(phase) {
+            try MusicvideoPipelineLineage.snapshot(
+                phase: phase,
+                dataRoot: $0
+            )
+        }
+        registry.registerGateRequirement(phase) {
+            try check($0)
+            try MusicvideoPipelineLineage.requireCurrent(
+                phase: phase,
+                dataRoot: $0
+            )
+        }
+    }
+
     public func register(_ registry: EngineRegistry) {
+        registry.registerProjectSchemaMigration(
+            from: "musicvideo/legacy",
+            to: "musicvideo/1.0.0",
+            migrate: Self.adoptLegacyProjectSchema
+        )
         // Wiring-liveness probe: proves this pack's code is actually installed into the registry the
         // runtime built for a session (not silently absent). See PackWiring.
         registry.registerWiringProbe { PackWiring.token(pack: "musicvideo", nonce: $0) }
@@ -166,8 +209,7 @@ public struct MusicvideoPack: Pack {
                 chordRecognizer: registry.chordRecognizer)
         }
         // #174: the one-song contract is load-bearing — analysis is meaningless without exactly one
-        // song in audio/. Pin it to the engine so a missing/duplicate song blocks the phase upfront
-        // with an actionable message, regardless of whether the agent established it via attach_song.
+        // song in audio/. Pin it to the engine so a missing/duplicate song blocks the phase upfront.
         // Runs before the heavy DSP; defense-in-depth with the runner's own locateSong.
         registry.registerDeterministicStep(
             "one_song_contract", phase: "analysis",
@@ -175,19 +217,53 @@ public struct MusicvideoPack: Pack {
         ) { dataRoot in
             _ = try MusicvideoAnalysisRunner.locateSong(dataRoot: dataRoot)
         }
+        registry.registerDeterministicStep(
+            "prepare_frames_manifest",
+            phase: "frames",
+            summary: "Reconcile the role-aware Frames manifest with the approved shot list."
+        ) {
+            try MusicvideoPhasePreparation.frames(dataRoot: $0)
+        }
+        registry.registerDeterministicStep(
+            "prepare_final_render_manifest",
+            phase: "render",
+            summary: "Reconcile the final render manifest with the approved shot list."
+        ) {
+            try MusicvideoPhasePreparation.render(dataRoot: $0)
+        }
         // Hard gate: the analysis gate can't be stamped until a real analysis artifact (with genuine
         // beats/downbeats) exists — the deterministic backstop against a fabricated song structure.
-        registry.registerGateRequirement("analysis") { try MusicvideoGateChecks.requireRealAnalysis(dataRoot: $0) }
-        // Per-phase acceptance harness — every gate deterministically verifies the phase's artifact is
-        // real and to spec (not decoration). More phases wired as their checks land.
-        registry.registerGateRequirement("brief") { try MusicvideoGateChecks.requireRealBrief(dataRoot: $0) }
-        registry.registerGateRequirement("shotlist") { try MusicvideoGateChecks.requireRealShotlist(dataRoot: $0) }
-        registry.registerGateRequirement("bible") { try MusicvideoGateChecks.requireRealBible(dataRoot: $0) }
-        registry.registerGateRequirement("treatment") { try MusicvideoGateChecks.requireRealTreatment(dataRoot: $0) }
-        registry.registerGateRequirement("storyboard") { try MusicvideoGateChecks.requireRealStoryboard(dataRoot: $0) }
-        registry.registerGateRequirement("production_design") { try MusicvideoGateChecks.requireRealProductionDesign(dataRoot: $0) }
-        registry.registerGateRequirement("frames") { try MusicvideoGateChecks.requireRealFrames(dataRoot: $0) }
-        registry.registerGateRequirement("render") { try MusicvideoGateChecks.requireRealRender(dataRoot: $0) }
+        registry.registerGateRequirement("project_init") { try MusicvideoGateChecks.requireProjectTrack(dataRoot: $0) }
+        registerHardenedGate("analysis", registry: registry) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: $0)
+        }
+        registerHardenedGate("brief", registry: registry) {
+            try MusicvideoGateChecks.requireRealBrief(dataRoot: $0)
+        }
+        registerHardenedGate("production_design", registry: registry) {
+            try MusicvideoGateChecks.requireRealProductionDesign(dataRoot: $0)
+        }
+        registerHardenedGate("treatment", registry: registry) {
+            try MusicvideoGateChecks.requireRealTreatment(dataRoot: $0)
+        }
+        registerHardenedGate("storyboard", registry: registry) {
+            try MusicvideoGateChecks.requireRealStoryboard(dataRoot: $0)
+        }
+        registerHardenedGate("bible", registry: registry) {
+            try MusicvideoGateChecks.requireRealBible(dataRoot: $0)
+        }
+        registerHardenedGate("shotlist", registry: registry) {
+            try MusicvideoGateChecks.requireRealShotlist(dataRoot: $0)
+        }
+        registerHardenedGate("sanity", registry: registry) {
+            try MusicvideoGateChecks.requireCurrentSanity(dataRoot: $0)
+        }
+        registerHardenedGate("frames", registry: registry) {
+            try MusicvideoGateChecks.requireRealFrames(dataRoot: $0)
+        }
+        registerHardenedGate("render", registry: registry) {
+            try MusicvideoGateChecks.requireRealRender(dataRoot: $0)
+        }
         registry.registerGateRequirement("cover") { try MusicvideoGateChecks.requireRealCover(dataRoot: $0) }
         try? registry.registerUIContract(phase: "analysis", surface: "choice", taskClass: "classification")
         registry.registerCockpitSurface(

@@ -17,8 +17,8 @@ import NexGenEngine
 /// Purpose: stops someone (including the user) from starting a 5-minute
 /// analysis and only noticing afterward that the lyrics file is missing.
 public enum Preflight {
-    static let audioExtensions: Set<String> = ["wav", "mp3", "flac", "m4a", "aiff"]
-    static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "avif", "heic", "heif", "gif"]
+    static var audioExtensions: Set<String> { AudioProjectLayout.audioExtensions }
+    static let imageExtensions = ProjectMediaExtensions.images
 
     public struct Result: Sendable, Equatable {
         public var project: String
@@ -88,8 +88,7 @@ public enum Preflight {
         if result.audioFiles.isEmpty {
             result.blockers.append(
                 "No audio file in audio/ (.wav/.mp3/.flac/.m4a/.aiff). "
-                    + "No song, no analysis — please place the audio via SFTP into "
-                    + "\(audioDir.path)/."
+                    + "Complete the Track intake before analysis."
             )
         }
 
@@ -124,8 +123,7 @@ public enum Preflight {
         if result.referenceImages.isEmpty {
             result.warnings.append(
                 "No reference images found in import/. Production design and bible then have to work "
-                    + "without visual source material. If character/location/moodboard images exist: "
-                    + "place them under \(importDir.path)/."
+                    + "without visual source material."
             )
         }
 

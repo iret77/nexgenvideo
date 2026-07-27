@@ -47,8 +47,9 @@ enum EditSubmitter {
         let sourceAssetId = asset.id
         let request = GenerationRequest(
             modality: .upscale, modelId: model.id, intent: "",
+            durationSeconds: Double(effectiveDuration),
             placement: .mediaLibrary(folderId: asset.folderId), origin: origin,
-            submission: .upscale(run: { service, projectURL, editor, onComplete, onFailure in
+            submission: .upscale(run: { service, projectURL, editor, authorization, onComplete, onFailure in
                 service.generate(
                     genInput: genInput,
                     assetType: asset.type,
@@ -70,6 +71,7 @@ enum EditSubmitter {
                     fileExtension: isImage ? "jpg" : "mp4",
                     projectURL: projectURL,
                     editor: editor,
+                    authorization: authorization,
                     onComplete: onComplete,
                     onFailure: onFailure
                 )
@@ -94,6 +96,7 @@ enum EditSubmitter {
         case missingReference
         case invalid(String)
         case compileBlocked(code: String, message: String)
+        case budget(String)
 
         var errorDescription: String? {
             switch self {
@@ -103,6 +106,7 @@ enum EditSubmitter {
             case .missingReference: "Cannot rerun: a reference image is no longer in the project"
             case .invalid(let msg): msg
             case .compileBlocked(let code, let message): "Prompt lint failed (\(code)): \(message)"
+            case .budget(let message): message
             }
         }
     }
@@ -123,12 +127,14 @@ enum EditSubmitter {
         asset: MediaAsset,
         editor: EditorViewModel,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
-        onFailure: (@MainActor () -> Void)? = nil
+        onFailure: (@MainActor () -> Void)? = nil,
+        quoteLoader: GenerationBudgetGuard.QuoteLoader = LiveGenerationPricing.quote
     ) async throws -> String {
         guard let stored = asset.generationInput else { throw RerunError.notGenerated }
         var gen = stored
         gen.createdAt = nil
         let modelId = gen.model
+        let modelKind = ModelCatalog.shared.modelKindForRerun(id: modelId)
         // Recompile the ORIGINAL intent against the CURRENT ledger — a lock added or changed since the
         // first render now applies. Three cases (#114 gate):
         //   (a) no stored intent (pre-#114 asset, or upscale) → nil → replay the stored compiled prompt
@@ -141,7 +147,7 @@ enum EditSubmitter {
         }
         let preUploaded = gen.imageURLs
 
-        if let videoModel = VideoModelConfig.allModels.first(where: { $0.id == modelId }) {
+        if case .video(let videoModel)? = modelKind {
             if let err = videoModel.validate(
                 duration: gen.duration, aspectRatio: gen.aspectRatio, resolution: gen.resolution
             ) {
@@ -161,6 +167,14 @@ enum EditSubmitter {
                     referenceImageURLs: imageRefs,
                     generateAudio: gen.generateAudio ?? true
                 )
+                let authorization = try await authorizeRerun(
+                    gen: gen,
+                    modality: .video,
+                    durationSeconds: Double(max(1, gen.duration)),
+                    generateAudio: params.generateAudio,
+                    editor: editor,
+                    quoteLoader: quoteLoader
+                )
                 return editor.generationService.generate(
                     genInput: gen,
                     assetType: .video,
@@ -171,8 +185,9 @@ enum EditSubmitter {
                     folderId: asset.folderId,
                     buildParams: { _ in .video(params) },
                     fileExtension: "mp4",
-                    projectURL: editor.projectURL,
+                    projectURL: editor.workingRoot,
                     editor: editor,
+                    authorization: authorization,
                     onComplete: onComplete,
                     onFailure: onFailure
                 )
@@ -190,6 +205,14 @@ enum EditSubmitter {
                 referenceAudioURLs: gen.referenceAudioURLs ?? [],
                 generateAudio: gen.generateAudio ?? true
             )
+            let authorization = try await authorizeRerun(
+                gen: gen,
+                modality: .video,
+                durationSeconds: Double(max(1, gen.duration)),
+                generateAudio: params.generateAudio,
+                editor: editor,
+                quoteLoader: quoteLoader
+            )
             let bundled = (preUploaded ?? [])
                 + (gen.referenceImageURLs ?? [])
                 + (gen.referenceVideoURLs ?? [])
@@ -205,14 +228,15 @@ enum EditSubmitter {
                 buildParams: { _ in .video(params) },
                 snapshotRefs: { _, _ in },
                 fileExtension: "mp4",
-                projectURL: editor.projectURL,
+                projectURL: editor.workingRoot,
                 editor: editor,
+                authorization: authorization,
                 onComplete: onComplete,
                 onFailure: onFailure
             )
         }
 
-        if let imageModel = ImageModelConfig.allModels.first(where: { $0.id == modelId }) {
+        if case .image(let imageModel)? = modelKind {
             let count = min(imageModel.maxImages, max(1, gen.numImages ?? 1))
             // A provider that takes its references inline (#212) never persists hosted URLs, so
             // `imageURLs` is empty for it and the durable record is `imageURLAssetIds`. Replaying
@@ -228,6 +252,13 @@ enum EditSubmitter {
             ) {
                 throw RerunError.invalid(err)
             }
+            let authorization = try await authorizeRerun(
+                gen: gen,
+                modality: .image,
+                outputCount: count,
+                editor: editor,
+                quoteLoader: quoteLoader
+            )
             return editor.generationService.generate(
                 genInput: gen,
                 assetType: .image,
@@ -248,14 +279,15 @@ enum EditSubmitter {
                     ))
                 },
                 fileExtension: "jpg",
-                projectURL: editor.projectURL,
+                projectURL: editor.workingRoot,
                 editor: editor,
+                authorization: authorization,
                 onComplete: onComplete,
                 onFailure: onFailure
             )
         }
 
-        if let audioModel = AudioModelConfig.allModels.first(where: { $0.id == modelId }) {
+        if case .audio(let audioModel)? = modelKind {
             let sourceVideoURL = audioModel.inputs.contains(.video) ? preUploaded?.first : nil
             let expectsVideoSource = audioModel.inputs.contains(.video)
                 && (!audioModel.inputs.contains(.text)
@@ -281,6 +313,13 @@ enum EditSubmitter {
             if let err = audioModel.validate(params: params) {
                 throw RerunError.invalid(err)
             }
+            let authorization = try await authorizeRerun(
+                gen: gen,
+                modality: .audio,
+                durationSeconds: params.durationSeconds.map(Double.init),
+                editor: editor,
+                quoteLoader: quoteLoader
+            )
             return editor.generationService.generate(
                 genInput: gen,
                 assetType: .audio,
@@ -291,16 +330,24 @@ enum EditSubmitter {
                 folderId: asset.folderId,
                 buildParams: { _ in .audio(params) },
                 fileExtension: "mp3",
-                projectURL: editor.projectURL,
+                projectURL: editor.workingRoot,
                 editor: editor,
+                authorization: authorization,
                 onComplete: onComplete,
                 onFailure: onFailure
             )
         }
 
-        if UpscaleModelConfig.allModels.contains(where: { $0.id == modelId }) {
+        if case .upscale? = modelKind {
             guard let source = preUploaded?.first else { throw RerunError.missingSource }
             let isImage = asset.type == .image
+            let authorization = try await authorizeRerun(
+                gen: gen,
+                modality: .upscale,
+                durationSeconds: Double(max(1, gen.duration)),
+                editor: editor,
+                quoteLoader: quoteLoader
+            )
             return editor.generationService.generate(
                 genInput: gen,
                 assetType: asset.type,
@@ -318,14 +365,45 @@ enum EditSubmitter {
                     ))
                 },
                 fileExtension: isImage ? "jpg" : "mp4",
-                projectURL: editor.projectURL,
+                projectURL: editor.workingRoot,
                 editor: editor,
+                authorization: authorization,
                 onComplete: onComplete,
                 onFailure: onFailure
             )
         }
 
         throw RerunError.unknownModel(modelId)
+    }
+
+    private static func authorizeRerun(
+        gen: GenerationInput,
+        modality: GenerationRequest.Modality,
+        durationSeconds: Double? = nil,
+        outputCount: Int = 1,
+        generateAudio: Bool? = nil,
+        editor: EditorViewModel,
+        quoteLoader: GenerationBudgetGuard.QuoteLoader
+    ) async throws -> GenerationAuthorization {
+        do {
+            return try await GenerationBudgetGuard.authorize(
+                input: GenerationPricingInput(
+                    modelId: gen.model,
+                    modality: modality,
+                    durationSeconds: durationSeconds,
+                    outputCount: max(1, outputCount),
+                    resolution: gen.resolution,
+                    quality: gen.quality,
+                    promptCharacterCount: gen.prompt.count,
+                    generateAudio: generateAudio
+                ),
+                target: GenerationService.dispatchTarget(modelId: gen.model),
+                editor: editor,
+                quoteLoader: quoteLoader
+            )
+        } catch {
+            throw RerunError.budget(error.localizedDescription)
+        }
     }
 
     /// Recompose a rerun's stored intent against the current ledger. Returns the fresh compiled prompt,

@@ -14,8 +14,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-gate:
+    name: Source Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce AppTheme
+        run: python3 scripts/lint_app_theme.py
+
   build-test:
     name: Build & Test
+    needs: source-gate
     # NexGenVideo targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.
     runs-on: macos-26
     # Real runs take ~5.5 min. This is a COST CEILING, not a budget: a hung job on a 10x-billed macOS

@@ -61,11 +61,11 @@ struct ReviewPanelView: View {
             // Sanity has nothing to gate before a shotlist exists — a doubled, half-clipped message.
             content
         } else {
-            VStack(spacing: 0) {
+            VStack(spacing: AppTheme.Spacing.none) {
                 content
-                    .frame(minHeight: 0)
+                    .frame(minHeight: AppTheme.Spacing.none)
                     .clipped()
-                Divider().overlay(AppTheme.Border.subtleColor)
+                AppDivider()
                 // Sanity lives here in EVERY pipeline state — findings gate progress before frames
                 // even exist (§3: no panel is ever locked away). Fixed height: predictable galleries.
                 SanityPanelView()
@@ -118,20 +118,20 @@ struct ReviewPanelView: View {
                     editor.inspectedObject = .shot(shot.shotId)
                 } label: {
                     Text(shot.shotId)
-                        .font(.system(size: AppTheme.FontSize.sm, weight: .semibold).monospaced())
+                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold).monospaced())
                         .foregroundStyle(AppTheme.Text.primaryColor)
                 }
                 .buttonStyle(.plain)
                 .help("Inspect this shot")
                 if let status = shot.auditStatus, !status.isEmpty {
                     Text("audit: \(status)")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(status == "pass" ? AppTheme.Status.successColor : AppTheme.Status.errorColor)
                 }
                 Spacer(minLength: 0)
                 if let picked = remixSelection[shot.shotId], !picked.isEmpty {
                     Text("\(picked.count) picked")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Button("Clear") { remixSelection[shot.shotId] = [] }
                         .controlSize(.small)
@@ -207,7 +207,7 @@ struct ReviewPanelView: View {
                 .controlSize(.small)
             }
         }
-        .frame(width: 160)
+        .frame(width: AppTheme.ComponentSize.reviewThumbnailWidth)
         .popover(item: bindingRedoTarget(matching: frame, shotId: shotId)) { target in
             redoPopover(target)
         }
@@ -236,7 +236,7 @@ struct ReviewPanelView: View {
     private func redoPopover(_ target: RedoTarget) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("Why regenerate?")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 90))], alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 ForEach(ReviewReason.allCases) { reason in
@@ -250,7 +250,7 @@ struct ReviewPanelView: View {
                             .padding(.horizontal, AppTheme.Spacing.sm)
                             .padding(.vertical, AppTheme.Spacing.xxs)
                             .background {
-                                Capsule().fill(selected ? AppTheme.Background.surfaceColor : Color.clear)
+                                Capsule().fill(selected ? AppTheme.Background.surfaceColor : AppTheme.Background.clearColor)
                             }
                             .overlay(Capsule().strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline))
                             .contentShape(Capsule())
@@ -268,7 +268,7 @@ struct ReviewPanelView: View {
             }
         }
         .padding(AppTheme.Spacing.mdLg)
-        .frame(width: 300)
+        .frame(width: AppTheme.ComponentSize.reviewRedoPopoverWidth)
     }
 
     private func remixPopoverBinding(_ shotId: String) -> Binding<Bool> {
@@ -283,7 +283,7 @@ struct ReviewPanelView: View {
         let picked = (remixSelection[shotId] ?? []).sorted()
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("What to take from each")
-                .font(.system(size: AppTheme.FontSize.xs, weight: .semibold))
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             ForEach(picked, id: \.self) { name in
                 HStack(spacing: AppTheme.Spacing.sm) {
@@ -291,7 +291,7 @@ struct ReviewPanelView: View {
                         .font(.system(size: AppTheme.FontSize.xxs).monospaced())
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .lineLimit(1)
-                        .frame(width: 110, alignment: .leading)
+                        .frame(width: AppTheme.ComponentSize.reviewSourceLabelWidth, alignment: .leading)
                     TextField("composition, lighting, …", text: Binding(
                         get: { remixTakes[name] ?? "" },
                         set: { remixTakes[name] = $0 }
@@ -311,7 +311,7 @@ struct ReviewPanelView: View {
             }
         }
         .padding(AppTheme.Spacing.mdLg)
-        .frame(width: 340)
+        .frame(width: AppTheme.ComponentSize.reviewRemixPopoverWidth)
     }
 
     private func remix(_ shotId: String, picked: [String]) {
@@ -333,11 +333,19 @@ struct ReviewPanelView: View {
         remixTakes = [:]
         remixTakesShot = nil
         remixNote = ""
-        send(command)
+        send(AgentControlTurn(
+            command: command,
+            selections: [
+                .init(label: "Action", values: ["Remix"]),
+                .init(label: "Shot", values: [shotId]),
+                .init(label: "Frames", values: picked),
+            ],
+            typedText: note
+        ))
     }
 
     private func accept(_ frame: FrameCandidate, shotId: String) {
-        send("For shot \(shotId), use the frame candidate \u{201C}\(frame.name)\u{201D} as the selected keyframe.")
+        send(Self.acceptTurn(frameName: frame.name, shotId: shotId))
     }
 
     private func regenerate(_ target: RedoTarget) {
@@ -346,11 +354,46 @@ struct ReviewPanelView: View {
             + "(rejected candidate: \u{201C}\(target.frameName)\u{201D}). Reason: \(redoReason.rawValue)."
         if !note.isEmpty { command += " Note: \(note)" }
         redoTarget = nil
-        send(command)
+        send(Self.regenerateTurn(
+            command: command,
+            frameName: target.frameName,
+            shotId: target.shotId,
+            reason: redoReason.rawValue,
+            note: note
+        ))
     }
 
-    private func send(_ command: String) {
-        editor.agentService.send(text: command, mentions: [])
+    static func acceptTurn(frameName: String, shotId: String) -> AgentControlTurn {
+        AgentControlTurn(
+            command: "For shot \(shotId), use the frame candidate \u{201C}\(frameName)\u{201D} as the selected keyframe.",
+            selections: [
+                .init(label: "Keyframe", values: [frameName]),
+                .init(label: "Shot", values: [shotId]),
+            ]
+        )
+    }
+
+    static func regenerateTurn(
+        command: String,
+        frameName: String,
+        shotId: String,
+        reason: String,
+        note: String
+    ) -> AgentControlTurn {
+        AgentControlTurn(
+            command: command,
+            selections: [
+                .init(label: "Action", values: ["Regenerate"]),
+                .init(label: "Shot", values: [shotId]),
+                .init(label: "Reason", values: [reason]),
+                .init(label: "Frame", values: [frameName]),
+            ],
+            typedText: note
+        )
+    }
+
+    private func send(_ turn: AgentControlTurn) {
+        editor.agentService.send(controlTurn: turn)
         editor.agentPanelVisible = true
     }
 

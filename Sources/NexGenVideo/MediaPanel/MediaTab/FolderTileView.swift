@@ -22,17 +22,17 @@ struct FolderTileView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             ZStack {
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(Color(white: 1.0, opacity: AppTheme.Opacity.subtle))
+                    .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
                 Image(systemName: "folder.fill")
-                    .font(.system(size: AppTheme.FontSize.display, weight: .light))
-                    .foregroundStyle(AppTheme.Accent.primary.opacity(0.85))
+                    .font(.system(size: AppTheme.FontSize.display, weight: AppTheme.FontWeight.light))
+                    .foregroundStyle(AppTheme.Accent.primary.opacity(AppTheme.Opacity.emphasis))
                 if childCount > 0 {
                     VStack {
                         HStack {
                             Spacer()
                             Text("\(childCount)")
-                                .font(.system(size: AppTheme.FontSize.xxs, weight: .semibold))
-                                .foregroundStyle(.white)
+                                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                                .foregroundStyle(AppTheme.Text.primaryColor)
                                 .monospacedDigit()
                                 .padding(.horizontal, AppTheme.Spacing.sm)
                                 .padding(.vertical, AppTheme.Spacing.xxs)
@@ -56,7 +56,7 @@ struct FolderTileView: View {
             ZStack(alignment: .leading) {
                 if isRenaming {
                     TextField("Folder", text: $renameDraft)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                         .textFieldStyle(.plain)
                         .lineLimit(1)
                         .focused($isRenameFieldFocused)
@@ -67,7 +67,7 @@ struct FolderTileView: View {
                         .onExitCommand { onCancelRename() }
                 } else {
                     Text(folder.name)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: .medium))
+                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(AppTheme.Text.primaryColor)
@@ -77,7 +77,7 @@ struct FolderTileView: View {
             .padding(.vertical, AppTheme.Spacing.xxs)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(isRenaming ? Color.white.opacity(AppTheme.Opacity.faint) : .clear)
+                    .fill(isRenaming ? AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint) : AppTheme.Background.clearColor)
             )
         }
         .frame(maxWidth: .infinity)
@@ -100,9 +100,9 @@ struct FolderTileView: View {
     }
 
     private var borderColor: Color {
-        if isDropHover { return AppTheme.Accent.primary.opacity(0.8) }
+        if isDropHover { return AppTheme.Accent.primary.opacity(AppTheme.Opacity.prominent) }
         if isSelected { return AppTheme.Accent.primary }
-        return Color.clear
+        return AppTheme.Background.clearColor
     }
 
     private var borderWidth: CGFloat {
@@ -115,7 +115,7 @@ struct FolderTileView: View {
     private var contextMenuItems: some View {
         Button("Open") { onOpen() }
         Button("Rename") { beginRename() }
-        Divider()
+        Divider() // app-theme: native-menu-divider
         Button("Delete", role: .destructive) { onDelete() }
     }
 

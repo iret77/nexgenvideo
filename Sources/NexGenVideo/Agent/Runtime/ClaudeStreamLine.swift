@@ -24,6 +24,80 @@ enum ClaudeStreamEvent: Sendable {
     case toolResult(toolUseId: String, blocks: [ToolResult.Block], isError: Bool)
     /// `result` — the turn finished, with optional cost and error.
     case turnFinished(isError: Bool, errorMessage: String?, costUSD: Double?)
+
+    var requiresAuthentication: Bool {
+        guard case .turnFinished(true, let text?, _) = self else { return false }
+        return Self.isAuthenticationFailure(text, requireLoginInstructionForSignedOut: false)
+    }
+
+    var isAuthenticationMessageCandidate: Bool {
+        guard case .assistantBlock(_, .text(let text)) = self else { return false }
+        return Self.isAuthenticationFailure(text, requireLoginInstructionForSignedOut: true)
+    }
+
+    private static func isAuthenticationFailure(
+        _ text: String,
+        requireLoginInstructionForSignedOut: Bool
+    ) -> Bool {
+        let normalized = text.lowercased()
+        return normalized.contains("failed to authenticate")
+            || normalized.contains("oauth session expired")
+            || normalized.contains("oauth token revoked")
+            || normalized.contains("oauth token has expired")
+            || (
+                normalized.contains("not logged in")
+                && (!requireLoginInstructionForSignedOut || normalized.contains("/login"))
+            )
+    }
+}
+
+struct ClaudeCodeAuthenticationEventBuffer {
+    enum Resolution {
+        case waiting
+        case events([ClaudeStreamEvent])
+        case authenticationRequired
+    }
+
+    private var deferred: [ClaudeStreamEvent] = []
+
+    mutating func receive(_ events: [ClaudeStreamEvent]) -> Resolution {
+        if deferred.isEmpty {
+            if events.contains(where: \.requiresAuthentication) {
+                return .authenticationRequired
+            }
+            if events.contains(where: \.isAuthenticationMessageCandidate),
+               !Self.finishesTurn(events) {
+                deferred = events
+                return .waiting
+            }
+            return .events(events)
+        }
+
+        deferred.append(contentsOf: events)
+        if events.contains(where: \.requiresAuthentication) {
+            deferred.removeAll()
+            return .authenticationRequired
+        }
+        guard Self.finishesTurn(events) else {
+            return .waiting
+        }
+        let ready = deferred
+        deferred.removeAll()
+        return .events(ready)
+    }
+
+    private static func finishesTurn(_ events: [ClaudeStreamEvent]) -> Bool {
+        events.contains(where: {
+            if case .turnFinished = $0 { return true }
+            return false
+        })
+    }
+
+    mutating func flush() -> [ClaudeStreamEvent] {
+        let ready = deferred
+        deferred.removeAll()
+        return ready
+    }
 }
 
 enum ClaudeStreamDecoder {

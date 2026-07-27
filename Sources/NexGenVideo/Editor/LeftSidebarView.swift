@@ -18,7 +18,7 @@ struct LeftSidebarView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: AppTheme.Spacing.none) {
             tabStrip
             Group {
                 switch effectiveTab {
@@ -65,7 +65,7 @@ struct LeftSidebarView: View {
             .frame(maxWidth: .infinity)
             .background {
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                    .fill(selected ? AppTheme.Background.surfaceColor : Color.clear)
+                    .fill(selected ? AppTheme.Background.surfaceColor : AppTheme.Background.clearColor)
             }
             .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
         }
