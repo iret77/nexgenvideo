@@ -55,7 +55,8 @@ struct AnalysisSchemaTests {
         let analysis = try Analysis(
             project: "p", songPath: "audio/song.wav", sampleRate: 44100, durationS: 180.0, bpm: 120.0,
             beats: [0.5, 1.0], downbeats: [0.5], downbeatSource: .madmom,
-            sections: [AnalysisSection(index: 0, start: 0.0, end: 180.0, cluster: 0, source: "consolidated")]
+            sections: [AnalysisSection(index: 0, start: 0.0, end: 180.0, cluster: 0, source: "consolidated")],
+            songSha256: String(repeating: "a", count: 64)
         )
         let yaml = try YAMLCoding.encode(analysis)
         let decoded = try YAMLCoding.decode(Analysis.self, from: yaml)

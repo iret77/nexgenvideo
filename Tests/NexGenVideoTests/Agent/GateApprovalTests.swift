@@ -165,6 +165,21 @@ struct GateApprovalTests {
         #expect(dirtied == 1)
     }
 
+    @Test("set_gate_state cannot mark an unreached phase for revision")
+    func setStateRejectsFuturePhase() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+
+        let result = await h.runRaw("set_gate_state", args: [
+            "project_dir": dataRoot.path,
+            "phase": "brief",
+            "state": "needs_revision",
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("future phase"))
+    }
+
     @Test("A failed host write leaves the card open with the real reason")
     func failedWriteKeepsCard() {
         let editor = EditorViewModel()
@@ -181,6 +196,50 @@ struct GateApprovalTests {
         #expect(result?.isError == true)
         #expect(service.pendingGateApproval?.phase == "project_init")
         #expect(service.gateApprovalError?.isEmpty == false)
+    }
+
+    @Test("An approved gate cannot resume the agent across a host-owned intake card")
+    func approvalDefersFollowUpUntilIntakeCompletes() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        service.isStreaming = true
+        _ = service.requestGateApproval(GateApproval(
+            phase: "project_init",
+            dataRoot: dataRoot
+        ))
+        service.isStreaming = false
+
+        let intake = AgentDialog(
+            id: "hardstep.brief.script",
+            title: "Existing story",
+            symbol: "doc.text",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: [],
+            fileIntake: AgentDialog.FileIntake(
+                accept: ["text"],
+                prompt: nil,
+                allowsMultiple: false,
+                attachAs: "script",
+                namePrompt: nil,
+                required: false
+            ),
+            purpose: .workflowIntake
+        )
+        service.pendingDialog = intake
+
+        let result = service.resolveGate(.approved)
+        #expect(result?.isError == false)
+        #expect(!service.resumePendingGateFollowUp())
+        await Task.yield()
+        #expect(service.pendingDialog?.id == intake.id)
+
+        service.pendingDialog = nil
+        #expect(service.resumePendingGateFollowUp())
     }
 
     // MARK: - Tool outcome (approve writes, decline does not)

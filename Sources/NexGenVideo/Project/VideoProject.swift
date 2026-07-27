@@ -174,7 +174,14 @@ final class VideoProject: NSDocument {
         // (musicvideo's analysis phase simply absent), so writing that shape over the package would
         // normalize a project the user can no longer tell was damaged. Refuse instead: the package on
         // disk stays the last good one, and the banner already says the workflow is inactive.
-        if Thread.isMainThread, let blocked = MainActor.assumeIsolated({ packUnavailable(savingTo: url) }) {
+        if let contextError = Self.saveContextError(
+            isMainThread: Thread.isMainThread
+        ) {
+            Log.project.error("save refused: off-main save entry")
+            completionHandler(contextError)
+            return
+        }
+        if let blocked = MainActor.assumeIsolated({ packUnavailable(savingTo: url) }) {
             completionHandler(blocked)
             return
         }
@@ -183,8 +190,9 @@ final class VideoProject: NSDocument {
         }
 
         captureSaveSnapshot()
-        if let snapshotCaptureError {
-            completionHandler(snapshotCaptureError)
+        if let captureError = snapshotCaptureError {
+            clearSaveSnapshot()
+            completionHandler(captureError)
             return
         }
         snapshotSourceProjectURL = fileURL
@@ -194,9 +202,17 @@ final class VideoProject: NSDocument {
         super.save(to: url, ofType: typeName, for: saveOperation) { error in
             if error == nil, clearsWorkingCopy, let savedWorkingCopyKey {
                 ProjectWorkingCopy.markSaved(key: savedWorkingCopyKey)
+            } else if error != nil {
+                self.clearSaveSnapshot()
             }
             completionHandler(error)
         }
+    }
+
+    nonisolated static func saveContextError(
+        isMainThread: Bool
+    ) -> ProjectSaveContextError? {
+        isMainThread ? nil : ProjectSaveContextError()
     }
 
     /// The project's format pack must be ACTIVE before its package may be rewritten. Anything other
@@ -206,10 +222,22 @@ final class VideoProject: NSDocument {
     @MainActor
     private func packUnavailable(savingTo url: URL) -> Error? {
         switch ProjectPackGate.evaluate(
-            projectURL: editorViewModel.workingRoot ?? fileURL ?? url
+            projectURL: editorViewModel.workingRoot ?? fileURL ?? url,
+            declaredPack: editorViewModel.declaredPluginName
         ) {
         case .satisfied:
             return nil
+        case .unreadable:
+            return ProjectFormatSettingsUnavailableError()
+        case .settingsMissing:
+            return ProjectFormatSettingsUnavailableError(
+                problem: "are missing"
+            )
+        case .inconsistent(let expected, let resolved):
+            return ProjectFormatSettingsUnavailableError(
+                problem: "conflict: this session declares “\(expected)” "
+                    + "but the live project resolves “\(resolved)”"
+            )
         case .missing(let id), .needsRestart(let id):
             return PackUnavailableError(packID: id, detail: nil)
         case .incompatible(let id, let reason):
@@ -223,18 +251,22 @@ final class VideoProject: NSDocument {
                 Log.project.error("save: snapshot not prepared for off-main write()")
                 throw CocoaError(.fileWriteUnknown)
             }
+            if let blocked = MainActor.assumeIsolated({
+                packUnavailable(savingTo: url)
+            }) {
+                throw blocked
+            }
             MainActor.assumeIsolated {
                 captureSaveSnapshot()
                 snapshotSourceProjectURL = fileURL
             }
         }
-        if let snapshotCaptureError {
-            throw snapshotCaptureError
+        if let captureError = snapshotCaptureError {
+            clearSaveSnapshot()
+            throw captureError
         }
         defer {
-            snapshotPreparedForWrite = false
-            snapshotSourceProjectURL = nil
-            snapshotMintNewIdentity = false
+            clearSaveSnapshot()
         }
         guard let data = snapshotTimeline else {
             Log.project.error("save: snapshotTimeline missing at write()")
@@ -257,6 +289,7 @@ final class VideoProject: NSDocument {
     }
 
     private func captureSaveSnapshot() {
+        clearSaveSnapshot()
         do {
             snapshotTimeline = try JSONEncoder().encode(editorViewModel.timeline)
             snapshotManifest = try JSONEncoder().encode(editorViewModel.mediaManifest)
@@ -281,6 +314,19 @@ final class VideoProject: NSDocument {
             )
         }
         snapshotPreparedForWrite = true
+    }
+
+    private nonisolated func clearSaveSnapshot() {
+        snapshotTimeline = nil
+        snapshotManifest = nil
+        snapshotGenerationLog = nil
+        snapshotThumbnail = nil
+        snapshotChatSessionFiles = []
+        snapshotSourceProjectURL = nil
+        snapshotWorkingCopyKey = nil
+        snapshotMintNewIdentity = false
+        snapshotCaptureError = nil
+        snapshotPreparedForWrite = false
     }
 
     private func checkpointWorkingCopy() {

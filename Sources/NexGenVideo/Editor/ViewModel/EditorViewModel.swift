@@ -227,12 +227,26 @@ final class EditorViewModel {
     var projectURL: URL? {
         didSet {
             guard projectURL != oldValue else { return }
-            activePluginName = ProjectPluginSettings.activePlugin(projectURL: projectURL)
-            intakeCoordinator.reset()
+            let nextProjectId = projectURL.flatMap {
+                ProjectIdentity.existingUUID(for: $0)
+            }
+            let keepsLiveDeclaration = projectURL != nil
+                && nextProjectId != nil
+                && nextProjectId == projectId
+                && workingCopyHome != nil
+                && activeWorkingCopyKey != nil
+            if !keepsLiveDeclaration {
+                let declaration = ProjectPluginSettings.activePlugin(
+                    projectURL: projectURL
+                )
+                activePluginName = declaration
+                declaredPluginName = declaration
+            }
+            pipelineAgentHarness.reset()
             workflowHandoffPending = false
             // Identity is the package UUID (travels with the file), resolved once here so the working
             // copy, caches, and telemetry all key off the same stable id.
-            projectId = projectURL.flatMap { ProjectIdentity.existingUUID(for: $0) }
+            projectId = nextProjectId
             prepareWorkingCopy()
         }
     }
@@ -295,8 +309,9 @@ final class EditorViewModel {
             workingCopyHome = preopenedWorkingCopy.result.home
             activeWorkingCopyKey = preopenedWorkingCopy.key
             recoveredUnsavedWork = preopenedWorkingCopy.result.recoveredUnsaved
-            activePluginName = ProjectPluginSettings.activePlugin(
-                projectURL: preopenedWorkingCopy.result.home
+            reconcileRecoveredPluginDeclaration(
+                projectURL: preopenedWorkingCopy.result.home,
+                recovered: preopenedWorkingCopy.result.recoveredUnsaved
             )
             rebindProjectMediaURLs()
             refreshProductionPipelineMarker()
@@ -333,11 +348,31 @@ final class EditorViewModel {
         workingCopyHome = result.home
         activeWorkingCopyKey = key
         recoveredUnsavedWork = result.recoveredUnsaved
-        activePluginName = ProjectPluginSettings.activePlugin(projectURL: result.home)
+        reconcileRecoveredPluginDeclaration(
+            projectURL: result.home,
+            recovered: result.recoveredUnsaved
+        )
         rebindProjectMediaURLs()
         refreshProductionPipelineMarker()
         verifyPackWiring()
         Task { [weak self] in await self?.refreshEngineState() }
+    }
+
+    private func reconcileRecoveredPluginDeclaration(
+        projectURL: URL,
+        recovered: Bool
+    ) {
+        guard recovered else { return }
+        switch ProjectPluginSettings.resolution(projectURL: projectURL) {
+        case .absent:
+            activePluginName = nil
+            declaredPluginName = nil
+        case .active(let name):
+            activePluginName = name
+            declaredPluginName = name
+        case .unreadable:
+            break
+        }
     }
 
     /// True when the project DECLARES a pack that the runtime can't actually see in this session — the
@@ -350,12 +385,12 @@ final class EditorViewModel {
     private func verifyPackWiring() {
         guard let home = workingCopyHome else { packWiringBroken = nil; return }
         let resolved = ProjectPluginSettings.activePlugin(projectURL: home)
-        let result = PackWiring.verify(expected: activePluginName, resolved: resolved,
+        let result = PackWiring.verify(expected: declaredPluginName, resolved: resolved,
                                        registry: PackCatalog.registry(activePack: resolved))
         if !result.isWired {
             Log.project.error(
                 "PACK WIRING BROKEN (\(String(describing: result))): the project declares pack "
-                    + "\"\(activePluginName ?? "?")\" but the runtime can't see it — its phases, gates and "
+                    + "\"\(declaredPluginName ?? "?")\" but the runtime can't see it — its phases, gates and "
                     + "analysis are OFF this session.")
         }
         packWiringBroken = result.isWired ? nil : result
@@ -395,7 +430,11 @@ final class EditorViewModel {
                 return
             }
             self.workingCopyHome = home
-            self.activePluginName = ProjectPluginSettings.activePlugin(projectURL: home)
+            let declaration = ProjectPluginSettings.activePlugin(
+                projectURL: projectURL
+            )
+            self.activePluginName = declaration
+            self.declaredPluginName = declaration
             self.onWorkingCopyReset?(home)
             self.rebindProjectMediaURLs()
             self.refreshProductionPipelineMarker()
@@ -416,6 +455,8 @@ final class EditorViewModel {
     /// plugins stay inert until activated here (gallery in Project settings). The embedded runtime
     /// loads only this plugin's dir; changing it applies to the NEXT agent session.
     private(set) var activePluginName: String?
+    /// Trusted snapshot verified independently against the mutable working-copy file.
+    private(set) var declaredPluginName: String?
 
     /// Whether the on-disk production pipeline (`pipeline/project.yaml`) exists. SYNCHRONOUS ground
     /// truth for "production has started" — cached from a disk probe on `projectURL` change and after
@@ -444,6 +485,7 @@ final class EditorViewModel {
         do {
             try ProjectPluginSettings.setActivePlugin(name, projectURL: home)
             activePluginName = name
+            declaredPluginName = name
             onPipelineChanged?()
         } catch {
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
@@ -508,12 +550,17 @@ final class EditorViewModel {
         }
     }
 
-    func runActivePackStarter(_ prompt: String) {
+    func runActivePackStarter() {
         guard activePluginName != nil else { return }
         guard !productionStarting else { return }
         if hasProductionPipeline {
-            let intakeComplete = intakeCoordinator.advance(editor: self)
-            if !intakeComplete {
+            let reconciliation = pipelineAgentHarness.reconcile(editor: self)
+            if let failure = reconciliation.failure {
+                mediaPanelToast = MediaPanelToast(message: failure)
+                workflowHandoffPending = false
+                return
+            }
+            if !reconciliation.isReady {
                 if agentService.pendingDialog?.purpose == .workflowIntake {
                     workflowHandoffPending = true
                 }
@@ -521,6 +568,8 @@ final class EditorViewModel {
             }
             guard !agentService.isComposerBlocked, !agentService.isStreaming else { return }
             workflowHandoffPending = false
+            let prompt = reconciliation.agentPrompt
+                ?? "Continue from the next unapproved production phase."
             agentService.send(text: prompt, mentions: [], hidden: true)
         } else {
             startProduction()
@@ -546,8 +595,7 @@ final class EditorViewModel {
 
     let generationService = GenerationService()
     let agentService = AgentService()
-    /// Presents the active pack's declared hard steps before the agent works a phase.
-    let intakeCoordinator = IntakeCoordinator()
+    let pipelineAgentHarness = PipelineAgentHarness()
 
     /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
     /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:
@@ -717,22 +765,25 @@ final class EditorViewModel {
         }
         uiContract = (try? ct.get()) ?? nil
         engineStateRevision += 1
-        // The pipeline may have advanced into a phase whose intake isn't collected yet. Asking is the
-        // workflow's job, not the agent's (#254) — and this is the one point every path funnels through.
-        let intakeComplete = intakeCoordinator.advance(editor: self)
-        if !intakeComplete, agentService.pendingDialog?.purpose == .workflowIntake {
+        let reconciliation = pipelineAgentHarness.reconcile(editor: self)
+        if let failure = reconciliation.failure {
+            workflowHandoffPending = false
+            mediaPanelToast = MediaPanelToast(message: failure)
+            return
+        }
+        if !reconciliation.isReady, agentService.pendingDialog?.purpose == .workflowIntake {
             workflowHandoffPending = true
         }
-        guard intakeComplete, workflowHandoffPending else { return }
+        guard reconciliation.isReady else { return }
+        if agentService.resumePendingGateFollowUp(
+            nextPhasePrompt: reconciliation.agentPrompt
+        ) {
+            workflowHandoffPending = false
+            return
+        }
+        guard workflowHandoffPending else { return }
         workflowHandoffPending = false
-        let progress = projectState.map {
-            PackProgress(
-                nextPhase: $0.nextPhaseName,
-                approvedPhases: $0.phases.filter(\.approved).count,
-                totalPhases: $0.phases.count
-            )
-        } ?? .untouched
-        let kickoff = PackCatalog.pack(named: activePluginName)?.starters(for: progress).first?.prompt
+        let kickoff = reconciliation.agentPrompt
             ?? "The production pipeline is initialized. Continue from the next unapproved phase."
         agentService.send(text: kickoff, mentions: [], hidden: true)
     }

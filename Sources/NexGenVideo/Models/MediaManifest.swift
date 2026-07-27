@@ -1,11 +1,12 @@
 import Foundation
 
 struct MediaManifest: Codable, Sendable, Equatable {
-    var version: Int = 3
+    var version: Int = 4
     var entries: [MediaManifestEntry] = []
     var folders: [MediaFolder] = []
     var songAnchorAssetId: String?
     var songAnchorOwnsAsset = false
+    var intakeRoleByAssetID: [String: String] = [:]
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -17,12 +18,19 @@ struct MediaManifest: Codable, Sendable, Equatable {
             Bool.self,
             forKey: .songAnchorOwnsAsset
         ) ?? false
+        intakeRoleByAssetID = try c.decodeIfPresent(
+            [String: String].self,
+            forKey: .intakeRoleByAssetID
+        ) ?? [:]
+        if let songAnchorAssetId {
+            intakeRoleByAssetID[songAnchorAssetId] = "song"
+        }
     }
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case version, entries, folders, songAnchorAssetId, songAnchorOwnsAsset
+        case version, entries, folders, songAnchorAssetId, songAnchorOwnsAsset, intakeRoleByAssetID
     }
 }
 
@@ -75,6 +83,9 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var referenceAudioAssetIds: [String]?
     var spendTransactionId: String?
     var createdAt: Date?
+    var sourceVideoAssetId: String?
+    var startFrameAssetId: String?
+    var endFrameAssetId: String?
 }
 
 enum MediaSource: Codable, Sendable, Equatable {

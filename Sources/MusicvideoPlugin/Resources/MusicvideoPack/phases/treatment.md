@@ -15,8 +15,9 @@ style stays exactly what the brief prescribes.
 
 ## Inputs
 
-- Gate `brief` must be approved (check via
-  `get_project_state(project_dir)`). Analysis and brief are loaded.
+- Gate `production_design` must be approved (which also means `brief`
+  is approved; check via `get_project_state(project_dir)`). Analysis,
+  brief, and production design are loaded.
 - Mandatory input from `brief.yaml` — extract **before** writing any
   variant, never invent it:
 
@@ -40,9 +41,8 @@ style stays exactly what the brief prescribes.
   new `vN.md`.
 - `treatment/current.md` — duplicate of the newest version, kept in
   sync after every write.
-- Every version carries YAML frontmatter per the engine's treatment
-  schema; `origin` is one of `agent_proposal`, `agent_revision`,
-  `user_supplied`, or `user_revision`.
+- Every version carries host-validated frontmatter written by
+  `write_treatment`; never author the metadata or files directly.
 - Gate on approval:
   `approve_gate(project_dir, "treatment", notes=...)`. `approve_gate`
   surfaces the approval to the user and writes only after they tap Approve;
@@ -90,10 +90,10 @@ Ask via `show_dialog` (2 options, plus "Other"):
 3. Revision loop: ask for desired changes (free text), write a new
    version (`v1.md`, `v2.md`, …). Loop until the user explicitly
    approves.
-4. Each version goes to `treatment/vN.md` with YAML frontmatter per the
-   engine's treatment schema. `origin=agent_proposal` for the first
-   round, `agent_revision` for follow-up versions. Keep `current.md` in
-   sync.
+4. Persist each settled version with `write_treatment`. Pass
+   `body_markdown`, `summary_oneline`, `origin`, and optional title/notes.
+   The host chooses vN, validates the frontmatter, and keeps `current.md`
+   in sync.
 
 ### 4. K3b — user-supplied treatment, you review
 
@@ -153,8 +153,9 @@ On approval: `approve_gate(project_dir, "treatment", notes=...)`.
 ## Failure modes & escalation
 
 - **`visual_medium_notes` missing or generic** ("just 2D" or similar):
-  stop and route the user back to the brief agent. No blind
-  improvising.
+  stop, call `rewind(target_phase="brief")`, route the user through the
+  Brief writer and approval again, then resume the dependent phases. No
+  blind improvising or in-place upstream patch.
 - **Existing versions found on resume**: never silently regenerate —
   always run the 3-option resume question (step 1).
 - **User insists on an object-overlapping perspective change**: accept

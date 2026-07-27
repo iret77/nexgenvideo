@@ -17,6 +17,11 @@ struct PackStarterProgressTests {
         #expect(starters.first?.id == "start")
         #expect(starters.first?.title == "Start the music video")
         #expect(starters.first?.prompt.contains("host initialized") == true)
+        #expect(starters.first?.prompt.contains("Track plus optional Lyrics") == true)
+        #expect(starters.first?.prompt.contains("# Phase K0 — Project Init") == true)
+        #expect(starters.first?.prompt.contains(
+            "Do not ask for or develop a story before Audio Analysis is approved."
+        ) == true)
         #expect(starters.first?.prompt.lowercased().contains("asking me for the track") == false)
     }
 
@@ -31,6 +36,10 @@ struct PackStarterProgressTests {
         // The prompt must not restart the pipeline or re-request the song.
         #expect(!starter.prompt.lowercased().contains("ask me for the track"))
         #expect(starter.prompt.contains("Brief"))
+        #expect(starter.prompt.contains("# Phase K1 — Brief"))
+        #expect(starter.prompt.contains(
+            "If it is absent, this is greenfield"
+        ))
     }
 
     @Test("the phase in the chip is the pack's own wording, not the raw key")

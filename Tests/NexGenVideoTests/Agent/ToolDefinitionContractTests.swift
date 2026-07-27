@@ -169,8 +169,10 @@ struct ToolDefinitionContractTests {
             .generateVideo, .generateImage, .generateAudio, .upscaleMedia, .importMedia,
             .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
             .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
-            .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
-            .cropToAspect, .assembleTimeline,
+            .attachSong, .copyProjectFile, .extractScene3dPovs,
+            .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
+            .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
+            .cropToAspect, .assembleTimeline, .runSanity,
         ]
 
         #expect(Set(ToolName.allCases.filter(\.isDurableWrite)) == expected)

@@ -154,6 +154,89 @@ struct ProjectWorkingCopyTests {
         #expect(PackCatalog.registry(activePack: "musicvideo").gateRequirements["analysis"] != nil)
     }
 
+    @Test("the package declaration stays independent from live working-copy verification")
+    func packagePluginDeclarationIsIndependent() throws {
+        PackCatalog.register(MusicvideoPack())
+        let pkg = try tempPackage()
+        let editor = EditorViewModel()
+        editor.projectURL = pkg
+        defer {
+            editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        let home = try #require(editor.workingRoot)
+        let dataRoot = try #require(
+            DataRootResolver.dataRoot(of: home)
+        )
+        #expect(editor.activePluginName == "musicvideo")
+        #expect(editor.declaredPluginName == "musicvideo")
+
+        try ProjectPluginSettings.setActivePlugin(
+            "other",
+            projectURL: home
+        )
+
+        #expect(editor.declaredPluginName == "musicvideo")
+        #expect(throws: ToolError.self) {
+            try editor.pipelineAgentHarness.guardPhaseWork(
+                phase: "project_init",
+                dataRoot: dataRoot,
+                declaredPack: editor.declaredPluginName
+            )
+        }
+    }
+
+    @Test("moving an open package preserves its live format declaration")
+    func movingOpenPackagePreservesLiveDeclaration() throws {
+        let pkg = try tempPackage(pipelineName: nil)
+        let moved = pkg.deletingLastPathComponent().appendingPathComponent(
+            "ngv-wc-moved-\(UUID().uuidString).ngv",
+            isDirectory: true
+        )
+        let editor = EditorViewModel()
+        editor.projectURL = pkg
+        defer {
+            editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: pkg)
+            try? FileManager.default.removeItem(at: moved)
+        }
+
+        editor.setActivePlugin(nil)
+        #expect(editor.activePluginName == nil)
+        #expect(editor.declaredPluginName == nil)
+        try FileManager.default.moveItem(at: pkg, to: moved)
+
+        editor.projectURL = moved
+
+        #expect(editor.activePluginName == nil)
+        #expect(editor.declaredPluginName == nil)
+        #expect(editor.projectId == ProjectIdentity.existingUUID(for: moved))
+        #expect(editor.workingRoot != nil)
+    }
+
+    @Test("retargeting to a different project refreshes the format declaration")
+    func retargetingDifferentProjectRefreshesDeclaration() throws {
+        let first = try tempPackage(pipelineName: nil)
+        let second = try tempPackage(pipelineName: nil)
+        try ProjectPluginSettings.setActivePlugin(nil, projectURL: second)
+        let editor = EditorViewModel()
+        editor.projectURL = first
+        let firstKey = try #require(editor.openWorkingCopyKey)
+        defer {
+            editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: firstKey)
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+        #expect(editor.declaredPluginName == "musicvideo")
+
+        editor.projectURL = second
+
+        #expect(editor.activePluginName == nil)
+        #expect(editor.declaredPluginName == nil)
+        #expect(editor.projectId == ProjectIdentity.existingUUID(for: second))
+    }
+
     @Test("checkpoint keeps the saved package untouched and recovers every editable tier")
     func checkpointRecoversFullWorkingState() throws {
         let pkg = try tempPackage()

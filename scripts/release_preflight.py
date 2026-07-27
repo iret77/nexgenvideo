@@ -7,6 +7,27 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 KNOWN_ATTACH_AS = {"song", "lyrics", "script", "character", "location", "style"}
+ENGINE_REGISTRY_STORED_PROPERTIES = [
+    "checkRegistry",
+    "phases",
+    "phasePlacements",
+    "durationPolicy",
+    "libraries",
+    "projectDirs",
+    "uiContracts",
+    "gateRequirements",
+    "deterministicSteps",
+    "wiringToken",
+    "audioDecoder",
+    "transcriber",
+    "stemSeparator",
+    "beatDetector",
+    "chordRecognizer",
+    "patternProvider",
+    "referencePlanProvider",
+    "cockpitSurfaces",
+    "phaseLineageProviders",
+]
 
 
 def fail(message: str) -> None:
@@ -88,11 +109,51 @@ def validate_hardsteps() -> None:
     if len(songs) != 1 or songs[0].get("required") is not True or "audio" not in songs[0].get("accept", []):
         fail("project_init must contain exactly one required song step accepting audio")
 
-    expected = ["song", "lyrics", "script", "character", "location", "style"]
-    if [step.get("attachAs") for step in startup] != expected:
-        fail("project_init hard steps must be ordered: song, lyrics, script, character, location, style")
+    if [step.get("attachAs") for step in startup] != ["song", "lyrics"]:
+        fail("project_init hard steps must be exactly: song, lyrics")
     if by_phase.get("analysis"):
-        fail("analysis must not duplicate the startup intake")
+        fail("analysis must not contain file intake")
+    creative = by_phase.get("brief", [])
+    if [step.get("attachAs") for step in creative] != ["script", "character", "location", "style"]:
+        fail("brief hard steps must be exactly: script, character, location, style")
+    if any(step.get("required") is True for step in startup[1:] + creative):
+        fail("lyrics and every creative-material hard step must remain optional")
+
+
+def validate_agent_guidance() -> None:
+    try:
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        fail(f"agent project guidance is unreadable: {error}")
+    if agents != claude:
+        fail("AGENTS.md and CLAUDE.md must contain the same standalone project guidance")
+    if "@AGENTS.md" in agents or "@CLAUDE.md" in agents:
+        fail("agent project guidance must not depend on cross-file include directives")
+
+
+def validate_engine_registry_abi() -> None:
+    path = ROOT / "Engine/Sources/NexGenEngine/Packs/EngineRegistry.swift"
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        fail(f"EngineRegistry.swift is unreadable: {error}")
+    class_start = source.find("public final class EngineRegistry")
+    typealias_start = source.find("public typealias PhaseRunner", class_start)
+    if class_start < 0 or typealias_start < 0:
+        fail("EngineRegistry stored-property boundary is unreadable")
+    declaration = source[class_start:typealias_start]
+    properties = re.findall(
+        r"^\s*public(?:\s+private\(set\))?\s+(?:let|var)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        declaration,
+        flags=re.MULTILINE,
+    )
+    if properties != ENGINE_REGISTRY_STORED_PROPERTIES:
+        fail(
+            "EngineRegistry stored-property order changed; separately compiled packs "
+            "require existing properties to stay fixed and new properties to be appended. "
+            f"Expected {ENGINE_REGISTRY_STORED_PROPERTIES}, got {properties}"
+        )
 
 
 def validate_release_assets() -> None:
@@ -123,6 +184,25 @@ def validate_plugin_version(release_version: str, published_catalog: Path) -> No
         manifest.get("version"),
         "plugins/musicvideo.json version",
     )
+    pack_source = ROOT / "Sources/MusicvideoPlugin/MusicvideoPack.swift"
+    try:
+        source = pack_source.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        fail(f"MusicvideoPack.swift is unreadable: {error}")
+    source_match = re.search(r'public let version = "(\d+\.\d+\.\d+)"', source)
+    if source_match is None or semantic_version(
+        source_match.group(1), "MusicvideoPack.version"
+    ) != pack_version:
+        fail("MusicvideoPack.version must equal plugins/musicvideo.json version")
+    min_app_match = re.search(
+        r'let musicvideoMinAppVersion = "(\d+\.\d+\.\d+)"',
+        source,
+    )
+    if min_app_match is None or min_app_match.group(1) != manifest.get("minAppVersion"):
+        fail(
+            "MusicvideoPack minAppVersion must equal "
+            "plugins/musicvideo.json minAppVersion"
+        )
     if manifest.get("minAppVersion") != release_version:
         fail(
             "plugins/musicvideo.json minAppVersion must equal the release version "
@@ -153,11 +233,13 @@ def main() -> None:
     version = sys.argv[1]
     validate_changelog(version)
     validate_hardsteps()
+    validate_agent_guidance()
+    validate_engine_registry_abi()
     validate_release_assets()
     validate_plugin_version(version, Path(sys.argv[2]))
     print(
         f"Release preflight passed for {version}: "
-        "changelog + pack intake/version + release assets"
+        "changelog + agent guidance + pack intake/version + release assets"
     )
 
 

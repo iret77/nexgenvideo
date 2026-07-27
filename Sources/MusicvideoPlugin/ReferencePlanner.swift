@@ -94,9 +94,22 @@ enum ReferencePlanner {
         projectDir: URL, bible: Bible,
         characterRefs: [String], locationRef: String?, propRefs: [String],
         characterViews: [String: String], locationView: String?, propViews: [String: String],
+        referenceImageRefs: [String] = [],
         maxRefs: Int, includeLightingAnchor: Bool = true
     ) -> PlannedRefs {
         var pool: [RefSource] = []
+        for path in referenceImageRefs {
+            let ref = path.trimmingCharacters(in: .whitespaces)
+            guard !ref.isEmpty, exists(projectDir, ref) else { continue }
+            pool.append(RefSource(
+                path: ref,
+                entityId: "explicit",
+                entityKind: "explicit",
+                view: "",
+                purpose: "shot-specific reference",
+                score: 1.1
+            ))
+        }
         for cid in characterRefs {
             guard let ent = bible.lookupId(cid) else { continue }
             switch ent {
@@ -129,6 +142,8 @@ enum ReferencePlanner {
             if $0.view != $1.view { return $0.view < $1.view }
             return $0.path < $1.path
         }
+        var seenPaths: Set<String> = []
+        pool = pool.filter { seenPaths.insert($0.path).inserted }
         let accepted = maxRefs > 0 ? Array(pool.prefix(maxRefs)) : []
         let dropped = maxRefs > 0 ? Array(pool.dropFirst(maxRefs)) : pool
         var warnings: [String] = []
@@ -158,6 +173,7 @@ enum ReferencePlanner {
             projectDir: projectDir, bible: bible,
             characterRefs: shot.characterRefs, locationRef: shot.locationRef, propRefs: shot.propRefs,
             characterViews: shot.characterViews, locationView: shot.locationView, propViews: shot.propViews,
+            referenceImageRefs: shot.referenceImageRefs,
             maxRefs: maxRefs, includeLightingAnchor: includeLightingAnchor)
 
         let anchorMap = IdentityAnchor.pickIdentityAnchors(shotlist)
@@ -184,6 +200,8 @@ enum ReferencePlanner {
             if $0.view != $1.view { return $0.view < $1.view }
             return $0.path < $1.path
         }
+        var seenPaths: Set<String> = []
+        pool = pool.filter { seenPaths.insert($0.path).inserted }
         let accepted = maxRefs > 0 ? Array(pool.prefix(maxRefs)) : []
         let dropped = maxRefs > 0 ? Array(pool.dropFirst(maxRefs)) : pool
         var warnings = base.warnings

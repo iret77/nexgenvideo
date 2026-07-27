@@ -48,15 +48,7 @@ public enum MusicvideoAnalysisRunner {
     /// `.noSong` blocker; more than one → a `.multipleSongs` error naming them.
     static func locateSong(dataRoot: URL) throws -> URL {
         let audioDir = dataRoot.appendingPathComponent("audio")
-        let entries = (try? FileManager.default.contentsOfDirectory(
-            at: audioDir, includingPropertiesForKeys: [.isRegularFileKey]
-        )) ?? []
-        let songs = entries
-            .filter {
-                let isFile = (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile ?? false
-                return isFile && audioExtensions.contains($0.pathExtension.lowercased())
-            }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let songs = AudioProjectLayout.songFiles(dataRoot: dataRoot)
         switch songs.count {
         case 0: throw RunError.noSong(audioDir: audioDir.path)
         case 1: return songs[0]
@@ -142,7 +134,8 @@ public enum MusicvideoAnalysisRunner {
         let analysis = try toCanonical(
             raw, project: project, songPath: songPath,
             stems: stems.map { relativeStems($0, dataRoot: dataRoot) },
-            lyricsAlignment: alignment, chords: chords, pipelineStages: stages)
+            lyricsAlignment: alignment, chords: chords, pipelineStages: stages,
+            songSha256: sha256(song))
 
         let outDir = dataRoot.appendingPathComponent("analysis")
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -193,7 +186,8 @@ public enum MusicvideoAnalysisRunner {
     static func toCanonical(
         _ raw: AudioAnalysis, project: String, songPath: String, stems: Stems? = nil,
         lyricsAlignment: [AlignmentLine] = [], chords: [Chord] = [],
-        pipelineStages: [String] = ["load_audio", "rhythm", "structure", "features"]
+        pipelineStages: [String] = ["load_audio", "rhythm", "structure", "features"],
+        songSha256: String? = nil
     ) throws -> Analysis {
         func map(_ secs: [AudioSection], defaultSource: String) -> [AnalysisSection] {
             secs.map {
@@ -248,8 +242,13 @@ public enum MusicvideoAnalysisRunner {
             key: raw.key,
             chordProgression: chords,
             interpretation: interpretation,
-            pipelineStages: pipelineStages
+            pipelineStages: pipelineStages,
+            songSha256: songSha256
         )
+    }
+
+    private static func sha256(_ url: URL) throws -> String {
+        try FileDigest.sha256(of: url)
     }
 
     /// Persist matching the Python idiom: pretty-printed (2-space), snake_case

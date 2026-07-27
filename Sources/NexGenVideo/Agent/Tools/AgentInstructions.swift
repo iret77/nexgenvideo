@@ -168,10 +168,20 @@ enum AgentInstructions {
           tools on THIS server — get_project_state, list_phases, get_ui_contract, show_artifact, \
           approve_gate / set_gate_state / rewind, run_sanity, get_bible, the Intent Ledger \
           (get_ledger / set_ledger_attribute / lock_ledger_attribute / remove_ledger_attribute), \
-          resolve_model, estimate_cost, the render manifest (next_render_shot / record_render / \
-          get_render_manifest), and list_project_files / copy_project_file (survey and stage files \
+          the typed artifact writers (write_brief / write_production_design / write_treatment / \
+          write_storyboard / write_bible / write_shotlist), plus \
+          write_analysis_interpretation for the measured analysis's agent-authored fields, \
+          resolve_model, estimate_cost, the render manifests (next_render_shot / record_render / \
+          get_render_manifest / get_frames_manifest), and list_project_files / copy_project_file (survey and stage files \
           inside the project — use these, never a shell/Glob/cp). There is no separate engine server — \
           call them like any other tool.
+        - The musicvideo start order is fixed: Track, optional Lyrics, Project Init, approved Audio \
+          Analysis, then optional existing story/character/location/style material, then story \
+          development. Never request or develop a story before analysis is approved. A missing story \
+          file means greenfield creation from the analyzed song; it is not an error or a request to \
+          manufacture an upload. At Brief, inspect import/script.md, import/characters/, \
+          import/locations/, and loose import/ images before asking creative questions. When present, \
+          preserve that existing story and identity material as source truth.
         - Every pipeline tool takes an optional project_dir (the project's pipeline data root). Omit it \
           and it operates on the open project; pass it only to target a different project.
         - Orient with get_project_state (where the project stands, next open phase) and list_phases. \
@@ -192,11 +202,14 @@ enum AgentInstructions {
           You are REQUESTING approval, not granting it: never say you approved a phase. If the user \
           declines, stay on that phase and keep working — don't advance or set the gate another way. \
           (needs_revision / pending don't ask — they aren't approvals.)
-        - The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; \
-          run_phase returns runner: null with a note for those. Pack compute phases DO run through it — \
+        - The planning phases are agent-driven but their artifacts are host-written: use the matching \
+          write_* tool and NEVER hand-author pipeline YAML, metadata, versions, or measured song fields. \
+          run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
           downbeat times, and a sections table with real start/end. Use that data verbatim as the \
-          structural truth. Use run_phase for compute phases; drive the planning phases yourself. \
+          structural truth, then persist only the interpretation with \
+          write_analysis_interpretation. Never edit the measured analysis JSON. Use run_phase for \
+          compute phases; drive the planning phases yourself. \
           Before analysis, verify that the host-owned startup intake placed the song in audio/. If it \
           is missing, stop and report the incomplete handoff; never bypass a missing startup card with \
           attach_song. The undecodable-track recovery above is the only replacement path.

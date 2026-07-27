@@ -145,6 +145,28 @@ struct GatesTests {
         }
     }
 
+    @Test("needs revision invalidates every downstream approval")
+    func needsRevisionInvalidatesDownstream() throws {
+        var gates = Gates(project: "demo")
+        for phase in coreGatePhases {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+
+        try GatesOperations.setStateAndInvalidateDownstream(
+            &gates,
+            phase: "storyboard",
+            state: .needsRevision,
+            notes: "Revise the middle.",
+            now: { "2026-07-26T00:00:00Z" }
+        )
+
+        #expect(gates.get("treatment").approved)
+        #expect(gates.get("storyboard").state == .needsRevision)
+        #expect(gates.get("storyboard").notes == "Revise the middle.")
+        #expect(!gates.get("bible").approved)
+        #expect(!gates.get("render").approved)
+    }
+
     @Test("parity: fixture gates.yaml matches the golden")
     func fixtureParityWithGolden() throws {
         let fixtureHome = try DataRootResolverTests.fixtureHome()

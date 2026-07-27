@@ -62,6 +62,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case nextRenderShot = "next_render_shot"
     case recordRender = "record_render"
     case getRenderManifest = "get_render_manifest"
+    case getFramesManifest = "get_frames_manifest"
     case saveFrameAudit = "save_frame_audit"
     case getFrameAudit = "get_frame_audit"
     case cropToAspect = "crop_to_aspect"
@@ -77,7 +78,13 @@ enum ToolName: String, CaseIterable, Sendable {
     case runProviderTool = "run_provider_tool"
     case listProjectFiles = "list_project_files"
     case copyProjectFile = "copy_project_file"
+    case writeAnalysisInterpretation = "write_analysis_interpretation"
     case writeBrief = "write_brief"
+    case writeProductionDesign = "write_production_design"
+    case writeTreatment = "write_treatment"
+    case writeStoryboard = "write_storyboard"
+    case writeBible = "write_bible"
+    case writeShotlist = "write_shotlist"
 
     /// Filesystem writers that must dirty the live project before execution.
     var isDurableWrite: Bool {
@@ -87,7 +94,9 @@ enum ToolName: String, CaseIterable, Sendable {
              .initProject, .rewind, .runPhase, .recordRender, .recordAffect, .saveFrameAudit,
              .setLedgerAttribute, .lockLedgerAttribute, .removeLedgerAttribute,
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
-             .cropToAspect, .assembleTimeline:
+             .writeAnalysisInterpretation,
+             .writeProductionDesign, .writeTreatment, .writeStoryboard, .writeBible,
+             .writeShotlist, .cropToAspect, .assembleTimeline, .runSanity:
             return true
         default:
             return false
@@ -101,13 +110,64 @@ enum ToolName: String, CaseIterable, Sendable {
         case .runPhase:
             let p = (args["phase"] as? String)?.trimmingCharacters(in: .whitespaces)
             return (p?.isEmpty == false) ? p : nil
-        case .attachSong, .recordAffect:  return "analysis"
-        case .writeBrief:                 return "brief"
+        case .attachSong,
+             .writeAnalysisInterpretation: return "analysis"
+        case .recordAffect, .writeBrief:  return "brief"
+        case .writeProductionDesign:      return "production_design"
+        case .writeTreatment:             return "treatment"
+        case .writeStoryboard:            return "storyboard"
+        case .writeBible:                 return "bible"
+        case .writeShotlist:              return "shotlist"
+        case .runSanity:                  return "sanity"
         case .extractScene3dPovs:         return "bible"
         case .saveFrameAudit:             return "frames"
-        case .recordRender:               return "render"
+        case .nextRenderShot, .recordRender:
+            return args["phase"] as? String == "frames" ? "frames" : "render"
+        case .assembleTimeline:           return "render"
         default:                          return nil
         }
+    }
+
+    var usesCurrentPipelinePhase: Bool {
+        switch self {
+        case .compilePrompt, .generateVideo, .generateImage, .generateAudio,
+             .upscaleMedia, .importMedia, .runProviderTool, .copyProjectFile,
+             .cropToAspect, .setLedgerAttribute, .lockLedgerAttribute,
+             .removeLedgerAttribute:
+            return true
+        default:
+            return false
+        }
+    }
+
+    func writesPhaseArtifact(args: [String: Any], dataRoot: URL) -> Bool {
+        guard isDurableWrite else { return false }
+        switch self {
+        case .runPhase:
+            guard let phase = advancingPhase(args: args) else { return false }
+            let registry = PackCatalog.registry(
+                activePack: ProjectPluginSettings.activePlugin(
+                    projectURL: FrameInventory.projectHome(of: dataRoot)
+                )
+            )
+            return registry.phases[phase] != nil
+                || !registry.deterministicSteps(forPhase: phase).isEmpty
+        case .recordRender:
+            let phase = args["phase"] as? String
+            return phase == "frames" || phase == "final"
+        case .writeAnalysisInterpretation, .writeBrief,
+             .writeProductionDesign, .writeTreatment, .writeStoryboard,
+             .writeBible, .writeShotlist, .runSanity, .saveFrameAudit:
+            return true
+        default:
+            return false
+        }
+    }
+
+    func invalidatesPhaseState(args: [String: Any], dataRoot: URL) -> Bool {
+        self == .attachSong
+            || self == .recordAffect
+            || writesPhaseArtifact(args: args, dataRoot: dataRoot)
     }
 }
 
@@ -638,7 +698,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .generateImage,
-            description: "Starts an async AI image generation. Returns a placeholder asset ID immediately; generation runs in the background. Costs real money and is not undoable.",
+            description: "Starts an async AI image generation. Returns a placeholder asset ID immediately; generation runs in the background. Costs real money and is not undoable. PROMPT GATE: `prompt` must be the `compiledPrompt` returned by `compile_prompt`, passed together with its `compileToken` — never your own phrasing. Raw prompts work only through the explicit pro escape hatch.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
@@ -1005,7 +1065,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .runSanity,
-            description: "Run the full consistency audit for the project and return its findings.\n\nLoads the latest shotlist plus any brief/bible, runs every engine-core check AND every active-pack check, and returns `{project, findings:[{level, code, shot_id, message}]}`. If the project has no shotlist yet, returns `{\"error\": \"no shotlist\", ...}` instead of raising. Read-only. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Run and persist the full consistency audit for the current project state. WRITES.\n\nLoads the latest shotlist plus any brief/bible, runs every engine-core check AND every active-pack check, and writes sanity/report.json with an input fingerprint. The sanity gate accepts only a current report with no blocking errors; any later audited-artifact mutation makes it stale. A missing shotlist is an error. Returns `{project, path, input_fingerprint, findings:[{level, code, shot_id, message}]}`. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: projectDirSchema()
         ),
         AgentTool(
@@ -1073,9 +1133,39 @@ enum ToolDefinitions {
             )
         ),
         AgentTool(
+            name: .writeAnalysisInterpretation,
+            description: "Write the human/agent interpretation onto the existing measured analysis artifact. Use this after run_phase(\"analysis\") and instead of editing analysis JSON. The host preserves measured timing and detector anomalies, requires exactly one label for every measured section, restricts the perceived-tempo multiplier to 0.5/1/2, mirrors labels onto the measured sections, and writes atomically.",
+            inputSchema: PipelineArtifactWriteContract.analysisInterpretationSchema
+        ),
+        AgentTool(
             name: .writeBrief,
             description: "Write the project's brief (`brief.yaml`) — the mandatory director's input every downstream phase reads. Call this INSTEAD of writing brief.yaml by hand: pass the brief fields and the host validates them against the engine's brief schema and persists the file for you. NEVER hand-author brief.yaml or reverse-engineer its schema — the engine decoder rejects freeform YAML, which is exactly the failure this tool exists to prevent. Required fields: mission, target_platform, aspect_ratio, project_mode, concept_type, visual_medium, figures, lyrics_integration; every other field is optional and takes the engine default when omitted. `visual_medium_notes` is required whenever visual_medium is anything other than live_action_realistic. For an \"Other\" answer, set the enum field to 'other' and put the free text in the matching *_other field. On ANY violation nothing is written and the error names the exact field and its allowed values — fix and re-call. The server owns schema/project/generated/generator; do not pass them.",
             inputSchema: writeBriefSchema()
+        ),
+        AgentTool(
+            name: .writeProductionDesign,
+            description: "Write the validated production-design manifest. Use this instead of authoring production_design.yaml. The host owns schema/project/generated/generator. Carry the Brief's visual_medium and visual_medium_notes exactly; a non-empty color_script must cover every measured analysis section. `refs` use production_design/refs/* and `lighting_anchor`, when set, is production_design/lighting_anchor.png; all paths must already exist in the project.",
+            inputSchema: PipelineArtifactWriteContract.productionDesignSchema
+        ),
+        AgentTool(
+            name: .writeTreatment,
+            description: "Write the next immutable treatment version and update treatment/current.md as an exact mirror. Use this instead of writing Markdown/frontmatter files. The host owns project/version/generated/generator. The body must implement the approved Brief and carry its visual_medium_notes verbatim when present.",
+            inputSchema: PipelineArtifactWriteContract.treatmentSchema
+        ),
+        AgentTool(
+            name: .writeStoryboard,
+            description: "Write the next validated storyboard version and update storyboard/current.yaml as an exact mirror. Use this instead of authoring YAML. The host owns schema/project/version/generated/generator. Provide every measured analysis section in order, with its exact interval/label and 4–12 gaplessly numbered, fully composed steps; every nested field is closed and enum-constrained.",
+            inputSchema: PipelineArtifactWriteContract.storyboardSchema
+        ),
+        AgentTool(
+            name: .writeBible,
+            description: "Write bible/bible.yaml through the engine Bible model. Use this instead of authoring YAML. The host owns schema/project/generated/generator, validates globally unique ids, exact generated-asset provenance, every Storyboard-requested entity/view, and synchronized Production Design style/lighting. The previous manifest is preserved in history.",
+            inputSchema: PipelineArtifactWriteContract.bibleSchema
+        ),
+        AgentTool(
+            name: .writeShotlist,
+            description: "Write the next validated shotlist version. Use this instead of authoring YAML. Supply only shots and notes: the host derives schema, project, mode, budget and the complete Song block from the approved Brief plus measured analysis. Approval requires complete song coverage, valid Storyboard section assignment, existing explicit references, and reference mode without keyframes or chaining.",
+            inputSchema: PipelineArtifactWriteContract.shotlistSchema
         ),
         AgentTool(
             name: .initProject,
@@ -1142,19 +1232,20 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .copyProjectFile,
-            description: "Copy a file from one project-relative path to another WITHIN the project (copy, never move). WRITES. Use this instead of a shell `cp` to stage references — e.g. from `import/characters/<id>/face.png` to `bible/refs/<id>/face.png`. Creates the destination directory. Both paths are data-root-relative and must stay inside the project. Returns `{from, to}`.",
+            description: "Stage one image asset for Production Design or Bible use (copy, never move). WRITES. Pass exactly one source: `from` for an uploaded image under `import/`, or `media` for a ready image asset returned by get_media/generate_image. Destinations are limited to `production_design/refs/`, `production_design/lighting_anchor.png`, or image paths under `bible/`; canonical YAML/JSON artifacts are refused. Generated media receives an exact hash, compiled prompt, and model in the scope's provenance sidecar. Returns `{from, media, to, generated_provenance}`.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
                     "from": ["type": "string", "description": "Source path, data-root-relative (e.g. 'import/characters/mouse/face.png')."],
+                    "media": ["type": "string", "description": "Ready media-library asset id to copy into the pipeline. Mutually exclusive with `from`."],
                     "to": ["type": "string", "description": "Destination path, data-root-relative (e.g. 'bible/refs/mouse/face.png')."],
                 ],
-                required: ["from", "to"]
+                required: ["to"]
             )
         ),
         AgentTool(
             name: .runPhase,
-            description: "Run a registered pipeline phase for the project. WRITES.\n\nDispatches to whatever phase runner the active pack registered under `phase` and runs it. For the musicvideo pack, `analysis` decodes the single song in the project's audio/ folder and runs the native audio analysis (beats, downbeats, tempo, structure), writing `analysis/<song>.json` — this takes a few seconds. The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; for those this returns `{phase, runner: null, note: ...}` rather than raising. A failure (no song, several songs, or a decode error) returns `{phase, error: \"phase_failed\", detail}` with an actionable message. On success returns `{phase, ok: true, result}` — for analysis, `result` summarizes bpm, duration_s, beats, downbeats, sections, and the artifact path. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Run a registered pipeline phase for the project. WRITES.\n\nDispatches to whatever phase runner the active pack registered under `phase` and runs it. For the musicvideo pack, `analysis` decodes the single song in the project's audio/ folder and runs the native audio analysis (beats, downbeats, tempo, structure), writing `analysis/<song>.json` — this takes a few seconds. The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; for those this returns `{phase, runner: null, note: ...}`. A deterministic-step or runner failure is a tool error and writes no synthetic success payload. On success returns `{phase, ok: true, result}` — for analysis, `result` summarizes bpm, duration_s, beats, downbeats, sections, and the artifact path. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1177,7 +1268,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .nextRenderShot,
-            description: "The next shot to render for `phase`, in shotlist order. Read-only.\n\nLoads the latest shotlist (for ordered shot IDs) and the phase's render manifest, then returns the first shot whose entry is missing or not yet `rendered`, with its `visual_prompt` and `framing` so the agent can drive nexgen's own generate_image/generate_video. Returns `{phase, shot_id: null, done: true}` once every shot is rendered; a missing or unreadable shotlist is an error. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "The next shot artifact to render for `phase`, in shotlist order. Read-only.\n\nFor `frames`, completion is role-aware against the authoritative Frames manifest: a `start_end` shot is returned once with `role=start` and again with `role=end`; missing files or provider-prompt provenance make that role pending again. For video phases, the phase render manifest determines completion per shot. Returns the shot's structured generation context, or `{phase, shot_id:null, done:true}` only when every required artifact exists. A missing, unreadable, or corrupt source artifact is an error. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1188,13 +1279,14 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .recordRender,
-            description: "Record a shot's render result into the phase manifest. WRITES.\n\nUpserts `shot_id`'s entry (status, `output` path-or-URL, reported `cost_eur`) into `renders/manifest-<phase>.json`, stamps `updated_at`, and returns the saved entry plus the manifest's reported `spent_eur`. These agent-supplied amounts are production notes, never the authoritative project budget ledger; the host records provider charges separately. `status` is one of rendered/pending/failed. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Record a completed shot artifact into the phase manifest. WRITES.\n\nFor `status=rendered`, `output` must resolve to completed project media on disk produced by a schema-validated generation call: an image for `frames`, a video for `preview`/`final`. Imported shots never enter a provider render manifest; place their source footage on the timeline. The host stores a project-relative path, exact output hash, compiled provider prompt, generation model, shot status/cost, and `updated_at`. For frames, pass `role=start|end`; the host also records the exact compiled provider prompt in `frames/manifest.json`, which the Frames gate binds to a vision audit of the exact file. Reported cost is a production note; provider charges remain the authoritative ledger. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
                     "phase": ["type": "string", "enum": ["frames", "preview", "final"], "description": "The render phase."],
                     "shot_id": ["type": "string", "description": "The shot id to record."],
-                    "output": ["type": "string", "description": "Path or URL of the rendered artifact (null if not done)."],
+                    "role": ["type": "string", "enum": ["start", "end"], "description": "Frame role for phase=frames (default start). Omit for video phases."],
+                    "output": ["type": "string", "description": "Completed project media asset id or project path (omit if not done)."],
                     "cost_eur": ["type": "number", "minimum": 0, "description": "Reported EUR cost for production notes (default 0); not used by the hard budget stop."],
                     "status": ["type": "string", "enum": ["rendered", "pending", "failed"], "description": "Render status (default rendered)."],
                 ],
@@ -1203,13 +1295,22 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .getRenderManifest,
-            description: "The phase's render manifest and its progress summary. Read-only.\n\nReturns `{project, phase, entries, summary}` where `entries` maps shot_id → its render record and `summary` is `{total, rendered, pending, failed, spent_eur}` (`total` from the latest shotlist's shot count). `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "A video pass's shot-level render ledger and progress summary. Read-only.\n\nReturns `{project, phase, entries, summary}` where each entry exposes `current_output` plus its generation model and exact output hash; a replaced/missing file or missing generation provenance counts as pending, never rendered. The summary is `{total, rendered, pending, failed, spent_eur}` over provider-rendered shots only. Use `get_frames_manifest` for the role-aware Frames artifact and its exact-file audits; this shot-level ledger cannot represent both start and end roles. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
                     "phase": ["type": "string", "enum": ["frames", "preview", "final"], "description": "The render phase."],
                 ],
                 required: ["phase"]
+            )
+        ),
+        AgentTool(
+            name: .getFramesManifest,
+            description: "The authoritative role-aware Frames artifact. Read-only.\n\nReturns every shot's keyframe strategy and start/end entries with project path, media_ref, exact compiled provider prompt, and the stored vision audit. Each audit includes `current_image`, which is true only when its SHA-256 still matches the current frame bytes. Use this for resume, completion, inspection, and pre-gate reconciliation; never infer frame-role completion from get_render_manifest. Returns `{exists:false}` before the first frame is recorded. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            inputSchema: objectSchema(
+                properties: [
+                    "project_dir": projectDirProperty,
+                ]
             )
         ),
         AgentTool(
@@ -1266,7 +1367,7 @@ enum ToolDefinitions {
                 properties: [
                     "project_dir": projectDirProperty,
                     "location_id": ["type": "string", "description": "Bible location id the views belong to."],
-                    "panorama": ["type": "string", "description": "Equirectangular panorama (home-relative or absolute). Omit to use the location's recorded scene3d.panorama."],
+                    "panorama": ["type": "string", "description": "Equirectangular panorama, relative to the pipeline data root. Omit to use the location's recorded scene3d.panorama."],
                     "style": ["type": "string", "description": "Restyle target for the clay POVs. Omit to use the bible's look.style. The response's `restyle.instruction` is the ready composition-preserving prompt — use it as-is."],
                     "povs": [
                         "type": "array",
@@ -1281,8 +1382,8 @@ enum ToolDefinitions {
                             required: ["name", "yaw"]
                         ),
                     ],
-                    "width": ["type": "integer", "description": "POV width in px (default 1280)."],
-                    "height": ["type": "integer", "description": "POV height in px (default 720)."],
+                    "width": ["type": "integer", "minimum": 64, "maximum": 4096, "description": "POV width in px (default 1280)."],
+                    "height": ["type": "integer", "minimum": 64, "maximum": 4096, "description": "POV height in px (default 720)."],
                 ],
                 required: ["location_id"]
             )

@@ -22,6 +22,8 @@ struct AgentDialogCard: View {
     /// the native picker (#254 stage 2). The card filters these to the intake's accept types and routes
     /// a tap through the SAME `pickedFiles` path as drop/choose — no second import logic.
     var libraryAssets: [MediaAsset] = []
+    /// A library asset assigned by an earlier workflow card must not be offered under another role.
+    var libraryAssetRoles: [String: String] = [:]
     var submissionError: String?
     var isSubmitting = false
     let onSubmit: (AgentDialogResult) -> Void
@@ -213,7 +215,10 @@ struct AgentDialogCard: View {
     /// component as the composer's Reference button.
     @ViewBuilder
     private func libraryPicker(_ intake: AgentDialog.FileIntake) -> some View {
-        let picks = libraryAssets.filter { intake.accepts($0.url) && !pickedFiles.contains($0.url) }
+        let picks = libraryAssets.filter {
+            Self.isLibraryCandidate($0, intake: intake, assignedRoles: libraryAssetRoles)
+                && !pickedFiles.contains($0.url)
+        }
         if !picks.isEmpty, pickedFiles.isEmpty || intake.allowsMultiple {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text("From your library".uppercased())
@@ -223,6 +228,18 @@ struct AgentDialogCard: View {
                 LibraryAssetPicker(assets: picks) { addPicked($0.url, intake) }
             }
         }
+    }
+
+    @MainActor
+    static func isLibraryCandidate(
+        _ asset: MediaAsset,
+        intake: AgentDialog.FileIntake,
+        assignedRoles: [String: String]
+    ) -> Bool {
+        guard intake.accepts(asset.url) else { return false }
+        guard let requestedRole = intake.attachAs,
+              let assignedRole = assignedRoles[asset.id] else { return true }
+        return assignedRole == requestedRole
     }
 
     /// Prominent, accent-tinted drop zone. Everything downstream in a pack workflow hangs on this one

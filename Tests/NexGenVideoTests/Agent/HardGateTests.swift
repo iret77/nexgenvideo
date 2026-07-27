@@ -14,16 +14,83 @@ struct HardGateTests {
         #expect(ToolName.runPhase.advancingPhase(args: ["phase": "analysis"]) == "analysis")
         #expect(ToolName.runPhase.advancingPhase(args: [:]) == nil)          // no phase → tool validates it
         #expect(ToolName.attachSong.advancingPhase(args: [:]) == "analysis")
-        #expect(ToolName.recordAffect.advancingPhase(args: [:]) == "analysis")
+        #expect(ToolName.recordAffect.advancingPhase(args: [:]) == "brief")
+        #expect(ToolName.writeAnalysisInterpretation.advancingPhase(args: [:]) == "analysis")
         #expect(ToolName.writeBrief.advancingPhase(args: [:]) == "brief")
+        #expect(ToolName.writeProductionDesign.advancingPhase(args: [:]) == "production_design")
+        #expect(ToolName.writeTreatment.advancingPhase(args: [:]) == "treatment")
+        #expect(ToolName.writeStoryboard.advancingPhase(args: [:]) == "storyboard")
+        #expect(ToolName.writeBible.advancingPhase(args: [:]) == "bible")
+        #expect(ToolName.writeShotlist.advancingPhase(args: [:]) == "shotlist")
+        #expect(ToolName.runSanity.advancingPhase(args: [:]) == "sanity")
         #expect(ToolName.extractScene3dPovs.advancingPhase(args: [:]) == "bible")
         #expect(ToolName.saveFrameAudit.advancingPhase(args: [:]) == "frames")
-        #expect(ToolName.recordRender.advancingPhase(args: [:]) == "render")
+        #expect(ToolName.nextRenderShot.advancingPhase(args: ["phase": "frames"]) == "frames")
+        #expect(ToolName.recordRender.advancingPhase(args: ["phase": "frames"]) == "frames")
+        #expect(ToolName.recordRender.advancingPhase(args: ["phase": "preview"]) == "render")
+        #expect(ToolName.assembleTimeline.advancingPhase(args: [:]) == "render")
+        #expect(ToolName.generateImage.usesCurrentPipelinePhase)
+        #expect(ToolName.copyProjectFile.usesCurrentPipelinePhase)
         // Never gated: read-only, the approval tools themselves, init, and the backward rewind.
         #expect(ToolName.getProjectState.advancingPhase(args: [:]) == nil)
         #expect(ToolName.approveGate.advancingPhase(args: [:]) == nil)
         #expect(ToolName.initProject.advancingPhase(args: [:]) == nil)
         #expect(ToolName.rewind.advancingPhase(args: [:]) == nil)
+    }
+
+    @Test("only canonical artifact writers can capture phase lineage")
+    func phaseMutationClassification() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+
+        #expect(
+            ToolName.writeBrief.writesPhaseArtifact(
+                args: [:],
+                dataRoot: root
+            )
+        )
+        #expect(
+            ToolName.recordRender.writesPhaseArtifact(
+                args: ["phase": "final"],
+                dataRoot: root
+            )
+        )
+        #expect(
+            !ToolName.recordRender.writesPhaseArtifact(
+                args: ["phase": "preview"],
+                dataRoot: root
+            )
+        )
+        #expect(
+            !ToolName.assembleTimeline.writesPhaseArtifact(
+                args: [:],
+                dataRoot: root
+            )
+        )
+        #expect(
+            ToolName.attachSong.invalidatesPhaseState(
+                args: [:],
+                dataRoot: root
+            )
+        )
+        #expect(
+            !ToolName.attachSong.writesPhaseArtifact(
+                args: [:],
+                dataRoot: root
+            )
+        )
+        #expect(
+            ToolName.recordAffect.invalidatesPhaseState(
+                args: [:],
+                dataRoot: root
+            )
+        )
+        #expect(
+            !ToolName.recordAffect.writesPhaseArtifact(
+                args: [:],
+                dataRoot: root
+            )
+        )
     }
 
     private func scaffold() throws -> (ToolHarness, String, URL) {

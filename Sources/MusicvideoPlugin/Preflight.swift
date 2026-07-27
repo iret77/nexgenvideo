@@ -18,7 +18,7 @@ import NexGenEngine
 /// analysis and only noticing afterward that the lyrics file is missing.
 public enum Preflight {
     static var audioExtensions: Set<String> { AudioProjectLayout.audioExtensions }
-    static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "avif", "heic", "heif", "gif"]
+    static let imageExtensions = ProjectMediaExtensions.images
 
     public struct Result: Sendable, Equatable {
         public var project: String

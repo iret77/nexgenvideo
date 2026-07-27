@@ -290,14 +290,18 @@ public func summary(orderedShotIds: [String], manifest: RenderManifest) -> Rende
 }
 
 /// Port of `render/manifest.py::load`. Returns an empty manifest (not
-/// throwing) if the file doesn't exist — `project` defaults to
-/// `dataRoot.lastPathComponent`, faithfully mirroring the Python quirk
-/// (`project_dir.name`) even though real v2 data roots are named `pipeline`.
+/// throwing) if the file doesn't exist. The project identity comes from
+/// project.yaml when available; a bare directory name is only the legacy
+/// fallback.
 public func loadRenderManifest(dataRoot: URL, phase: String) throws -> RenderManifest {
     let relativePath = PipelineLayout.renderManifestFile(phase: phase)
     let url = PipelineLayout.url(relativePath, in: dataRoot)
     guard FileManager.default.fileExists(atPath: url.path) else {
-        return RenderManifest(project: dataRoot.lastPathComponent, phase: phase)
+        return RenderManifest(
+            project: FrameInventory.projectName(of: dataRoot)
+                ?? dataRoot.lastPathComponent,
+            phase: phase
+        )
     }
     return try JSONArtifactStore(dataRoot: dataRoot).load(RenderManifest.self, at: relativePath)
 }

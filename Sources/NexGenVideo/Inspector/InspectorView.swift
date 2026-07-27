@@ -221,7 +221,11 @@ struct InspectorView: View {
                 .fixedSize()
             Spacer()
             Menu {
-                ForEach(SourceModeTag.allCases) { tag in
+                ForEach(
+                    SourceModeTag.allCases.filter {
+                        $0 != .aiEnhanced || current == .aiEnhanced
+                    }
+                ) { tag in
                     Button {
                         Task { await editor.setShotSourceMode(shotId: shot.id, to: tag.engineMode) }
                     } label: {

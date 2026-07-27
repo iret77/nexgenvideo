@@ -614,6 +614,9 @@ extension EditorViewModel {
 
         mediaAssets.removeAll { ids.contains($0.id) }
         mediaManifest.entries.removeAll { ids.contains($0.id) }
+        mediaManifest.intakeRoleByAssetID = mediaManifest.intakeRoleByAssetID.filter {
+            !ids.contains($0.key)
+        }
 
         for id in ids { closePreviewTab(id: PreviewTab.mediaAssetTabId(for: id)) }
         selectedMediaAssetIds.removeAll()

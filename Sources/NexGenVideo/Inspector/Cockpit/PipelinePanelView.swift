@@ -227,7 +227,7 @@ struct PipelinePanelView: View {
     private func approveButton(_ phase: ProjectPhase) -> some View {
         Button {
             apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase,
-                                                 declaredPack: editor.activePluginName) }
+                                                 declaredPack: editor.declaredPluginName) }
         } label: {
             Text("Approve")
                 .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
@@ -256,17 +256,23 @@ struct PipelinePanelView: View {
         let isFuture = !phase.approved && !isNext
         Menu {
             // Only the active (next) phase is approvable — no approving out of order.
-            Button("Approve") { apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase, declaredPack: editor.activePluginName) } }
+            Button("Approve") { apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase, declaredPack: editor.declaredPluginName) } }
                 .disabled(!isNext)
             // Only a completed phase can be sent back for revision.
             Button("Needs revision") {
-                apply { try NativeGateWriter.setState(projectDir: $0, phase: phase.phase, state: .needsRevision, declaredPack: editor.activePluginName) }
+                apply { try NativeGateWriter.setState(projectDir: $0, phase: phase.phase, state: .needsRevision, declaredPack: editor.declaredPluginName) }
             }
             .disabled(!phase.approved)
             Divider() // app-theme: native-menu-divider
             // Rewind to a phase already reached (active or completed) — never to the future.
             Button("Rewind to here", role: .destructive) {
-                apply { try NativeGateWriter.rewind(projectDir: $0, targetPhase: phase.phase) }
+                apply {
+                    try NativeGateWriter.rewind(
+                        projectDir: $0,
+                        targetPhase: phase.phase,
+                        declaredPack: editor.declaredPluginName
+                    )
+                }
             }
             .disabled(isFuture)
         } label: {

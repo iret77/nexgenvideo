@@ -1,8 +1,9 @@
 import Foundation
 
-struct ToolError: Error, Sendable {
+struct ToolError: LocalizedError, Sendable {
     let message: String
     init(_ message: String) { self.message = message }
+    var errorDescription: String? { message }
 }
 
 /// Shared by the MCP server and the in-app agent.
@@ -36,7 +37,9 @@ final class ToolExecutor {
         }
         guard let editor else { return .error("Editor not available") }
         let before = editor.timeline
-        let result: ToolResult
+        var result: ToolResult
+        var guardedPhase: String?
+        var guardedRoot: URL?
         let started = ContinuousClock.now
         Log.agent.notice(
             "tool start name=\(tool.rawValue)",
@@ -47,12 +50,29 @@ final class ToolExecutor {
             guard let schema = ToolDefinitions.all.first(where: { $0.name == tool })?.inputSchema else {
                 throw ToolError("Tool schema unavailable: \(tool.rawValue)")
             }
-            // HARD GATE: a tool that does phase-N work is refused until every earlier phase is approved.
-            if enforceHardGates, let phase = tool.advancingPhase(args: args) {
-                try guardFrontier(phase: phase, args: args, editor: editor)
-            }
             try validateToolInput(in: args, against: schema, path: tool.rawValue)
             let resolved = try expandingIdPrefixes(in: args, editor: editor)
+            if enforceHardGates {
+                if let phase = tool.advancingPhase(args: resolved) {
+                    let root = try resolveDataRoot(resolved, editor: editor)
+                    try editor.pipelineAgentHarness.guardPhaseWork(
+                        tool: tool,
+                        phase: phase,
+                        dataRoot: root,
+                        declaredPack: editor.declaredPluginName
+                    )
+                    guardedPhase = phase
+                    guardedRoot = root
+                } else if tool.usesCurrentPipelinePhase {
+                    let root = try resolveDataRoot(resolved, editor: editor)
+                    guardedPhase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
+                        tool: tool,
+                        dataRoot: root,
+                        declaredPack: editor.declaredPluginName
+                    )
+                    guardedRoot = root
+                }
+            }
             if tool.isDurableWrite, editor.projectURL != nil {
                 guard let key = editor.openWorkingCopyKey else {
                     throw ToolError(
@@ -62,6 +82,20 @@ final class ToolExecutor {
                 try ProjectWorkingCopy.markDirty(key: key)
             }
             result = try await run(tool, editor, resolved)
+            if !result.isError,
+               let phase = guardedPhase,
+               let root = guardedRoot,
+               tool.invalidatesPhaseState(args: resolved, dataRoot: root) {
+                try editor.pipelineAgentHarness.recordPhaseMutation(
+                    phase: phase,
+                    dataRoot: root,
+                    captureLineage: tool.writesPhaseArtifact(
+                        args: resolved,
+                        dataRoot: root
+                    ),
+                    declaredPack: editor.declaredPluginName
+                )
+            }
             // Record any edit that actually changed the timeline so `undo` can revert it.
             if tool != .undo, !result.isError, editor.timeline != before,
                let actionName = editor.undoManager?.undoActionName {
@@ -151,7 +185,14 @@ final class ToolExecutor {
         case .runSanity:            return try runSanityTool(editor, args)
         case .suggestPatterns:      return try suggestPatternsTool(editor, args)
         case .recordAffect:         return try recordAffectTool(editor, args)
+        case .writeAnalysisInterpretation:
+            return try writeAnalysisInterpretationTool(editor, args)
         case .writeBrief:           return try writeBriefTool(editor, args)
+        case .writeProductionDesign: return try writeProductionDesignTool(editor, args)
+        case .writeTreatment:       return try writeTreatmentTool(editor, args)
+        case .writeStoryboard:      return try writeStoryboardTool(editor, args)
+        case .writeBible:           return try writeBibleTool(editor, args)
+        case .writeShotlist:        return try writeShotlistTool(editor, args)
         case .getPattern:           return try getPatternTool(editor, args)
         case .initProject:          return try initProjectTool(editor, args)
         case .approveGate:          return try await approveGateTool(editor, args)
@@ -165,6 +206,7 @@ final class ToolExecutor {
         case .nextRenderShot:       return try nextRenderShotTool(editor, args)
         case .recordRender:         return try await recordRenderTool(editor, args)
         case .getRenderManifest:    return try getRenderManifestTool(editor, args)
+        case .getFramesManifest:    return try getFramesManifestTool(editor, args)
         case .saveFrameAudit:       return try saveFrameAuditTool(editor, args)
         case .getFrameAudit:        return try getFrameAuditTool(editor, args)
         case .cropToAspect:         return try cropToAspectTool(editor, args)

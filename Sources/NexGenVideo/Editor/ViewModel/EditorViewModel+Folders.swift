@@ -83,6 +83,9 @@ extension EditorViewModel {
 
         mediaAssets.removeAll { assetIdsToDelete.contains($0.id) }
         mediaManifest.entries.removeAll { assetIdsToDelete.contains($0.id) }
+        mediaManifest.intakeRoleByAssetID = mediaManifest.intakeRoleByAssetID.filter {
+            !assetIdsToDelete.contains($0.key)
+        }
         mediaManifest.folders.removeAll { allFolderIds.contains($0.id) }
         selectedFolderIds.subtract(allFolderIds)
         selectedMediaAssetIds.subtract(assetIdsToDelete)

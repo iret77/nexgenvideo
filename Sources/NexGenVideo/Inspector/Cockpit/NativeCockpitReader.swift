@@ -204,21 +204,28 @@ enum NativeCockpitReader {
     /// `read.py` "sanity": `mcp_server.run_sanity` → `{project, findings:[{level, code, shot_id,
     /// message}]}`, or `{error:"no shotlist", project_dir}` when there's no shotlist yet.
     static func sanityJSON(dataRoot: URL, activePack: String? = nil) throws -> Data {
-        guard let shotlist = try? loadShotlist(dataRoot: dataRoot) else {
+        guard let report = sanityReport(dataRoot: dataRoot, activePack: activePack) else {
             return try serialize(["error": "no shotlist", "project_dir": dataRoot.path])
         }
+        return try sanityJSON(report)
+    }
+
+    static func sanityReport(
+        dataRoot: URL,
+        activePack: String? = nil
+    ) -> SanityReport? {
+        guard let shotlist = try? loadShotlist(dataRoot: dataRoot) else { return nil }
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         let brief = try? store.load(Brief.self, at: PipelineLayout.briefFile)
         let bible = (try? loadBible(dataRoot: dataRoot)) ?? nil
-        // Core checks plus the active pack's checks (e.g. music tempo/pacing), mirroring the Python
-        // core-checks + discover_packs() gather.
         let checks = PackCatalog.registry(activePack: activePack).sanityChecks
-        let report = audit(
-            // Pass the data root so pack checks that read their own project dirs (e.g. PATTERN_DRIFT's
-            // per-section storyboard overrides) can resolve them.
+        return audit(
             AuditContext(shotlist: shotlist, brief: brief, bible: bible, extra: ["data_root": dataRoot.path]),
             checks: checks
         )
+    }
+
+    static func sanityJSON(_ report: SanityReport) throws -> Data {
         let findings: [[String: Any]] = report.findings.map { f in
             [
                 "level": f.level.rawValue,

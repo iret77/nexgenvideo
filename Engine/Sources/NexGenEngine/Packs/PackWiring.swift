@@ -9,7 +9,7 @@ import Foundation
 /// Mechanism: the pack registers a probe that emits `token(pack:nonce:)`. The formula is shared, but
 /// only the pack's registered closure can EMIT it through the registry the runtime built — so a token
 /// that matches proves the pack's code is reachable in this session. The host also cross-checks that the
-/// runtime resolution agrees with the pack the project's package declares.
+/// runtime resolution agrees with the trusted declaration captured for this session.
 public enum PackWiring {
     /// The liveness token a loaded pack produces for a nonce. Deterministic + process-stable (FNV-1a);
     /// not a secret — the guarantee is that only the registered pack closure can produce it in-registry.
@@ -23,7 +23,7 @@ public enum PackWiring {
         case ok
         /// A generic project — no pack to wire.
         case noPack
-        /// The project's package declares `expected`, but the runtime resolution didn't return it —
+        /// The trusted session declares `expected`, but the runtime resolution didn't return it —
         /// the pack isn't visible where the session actually looks. This is the P0-class break.
         case unresolved(expected: String, resolved: String?)
         /// Resolution agrees, but the pack's code isn't in the built registry (no probe / wrong token).
@@ -32,7 +32,7 @@ public enum PackWiring {
         public var isWired: Bool { self == .ok || self == .noPack }
     }
 
-    /// Deterministic, LLM-free. `expected` = the pack the project's package declares (ground truth);
+    /// Deterministic, LLM-free. `expected` = the trusted session declaration;
     /// `resolved` = what the runtime's own resolution returned; `registry` = what it built from that.
     public static func verify(expected: String?, resolved: String?, registry: EngineRegistry,
                               nonce: String = UUID().uuidString) -> Result {

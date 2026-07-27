@@ -57,6 +57,8 @@ struct VideoGenerationSubmission {
         if model.requiresSourceVideo {
             let references = inputAssets.editReferences
             genInput.imageURLAssetIds = assetIds(references)
+            genInput.sourceVideoAssetId = inputAssets.sourceVideo?.id
+            genInput.referenceImageAssetIds = assetIds(inputAssets.imageRefs)
 
             return VideoGenerationSubmission(
                 genInput: genInput,
@@ -89,6 +91,8 @@ struct VideoGenerationSubmission {
         let audioRefCount = inputAssets.audioRefs.count
         let references = inputAssets.textToVideoReferences
         genInput.imageURLAssetIds = assetIds(inputAssets.frames)
+        genInput.startFrameAssetId = inputAssets.frames.first?.id
+        genInput.endFrameAssetId = inputAssets.frames.dropFirst().first?.id
         genInput.referenceImageAssetIds = assetIds(inputAssets.imageRefs)
         genInput.referenceVideoAssetIds = assetIds(inputAssets.videoRefs)
         genInput.referenceAudioAssetIds = assetIds(inputAssets.audioRefs)

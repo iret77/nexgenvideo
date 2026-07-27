@@ -14,13 +14,25 @@ public enum AudioProjectLayout {
     /// The audio files sitting directly in `<dataRoot>/audio/`, sorted by name.
     public static func songFiles(dataRoot: URL) -> [URL] {
         let audioDir = dataRoot.appendingPathComponent("audio", isDirectory: true)
+        let projectHome = FrameInventory.projectHome(of: dataRoot)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: audioDir, includingPropertiesForKeys: [.isRegularFileKey]
         )) ?? []
         return entries
             .filter {
-                let isFile = (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile ?? false
-                return isFile && audioExtensions.contains($0.pathExtension.lowercased())
+                let resolved = $0.standardizedFileURL
+                    .resolvingSymlinksInPath()
+                let isInsideProject = resolved.path.hasPrefix(
+                    projectHome.path + "/"
+                )
+                let isFile = (try? resolved.resourceValues(
+                    forKeys: [.isRegularFileKey]
+                ).isRegularFile) ?? false
+                return isInsideProject
+                    && isFile
+                    && audioExtensions.contains($0.pathExtension.lowercased())
             }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }

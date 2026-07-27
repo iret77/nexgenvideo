@@ -31,25 +31,30 @@
             "placeholder": "…or paste the lyrics here",
             "multiline": true
           }
-        },
+        }
+      ]
+    },
+    {
+      "phase": "brief",
+      "steps": [
         {
-          "id": "project_init.script",
+          "id": "brief.script",
           "attachAs": "script",
           "accept": ["text"],
           "multiple": false,
           "required": false,
-          "title": "Story script",
-          "intro": "With a script, the pipeline builds the treatment and bible FROM it instead of inventing a story.",
-          "prompt": "Have a script or story outline? Drop it (.txt / .md) — optional",
+          "title": "Existing story",
+          "intro": "Bring in a script or outline if you have one. Otherwise, the story starts from the analyzed song.",
+          "prompt": "Drop an existing script or story outline (.txt / .md) — optional",
           "symbol": "doc.text",
           "confirmLabel": "Continue",
           "textField": {
-            "placeholder": "…or paste the script here",
+            "placeholder": "…or paste existing story material here",
             "multiline": true
           }
         },
         {
-          "id": "project_init.characters",
+          "id": "brief.characters",
           "attachAs": "character",
           "accept": ["image"],
           "multiple": true,
@@ -64,7 +69,7 @@
           "confirmLabel": "Attach"
         },
         {
-          "id": "project_init.locations",
+          "id": "brief.locations",
           "attachAs": "location",
           "accept": ["image"],
           "multiple": true,
@@ -79,7 +84,7 @@
           "confirmLabel": "Attach"
         },
         {
-          "id": "project_init.style",
+          "id": "brief.style",
           "attachAs": "style",
           "accept": ["image"],
           "multiple": true,

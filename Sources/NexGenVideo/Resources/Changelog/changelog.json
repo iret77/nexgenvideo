@@ -30,7 +30,8 @@
           "heading": "Format packs",
           "items": [
             "Downloaded packs are signed, notarized, integrity-checked, and load-tested under quarantine.",
-            "Release previews use isolated plugin channels; stable publication happens only after the app release succeeds."
+            "Release previews use isolated plugin channels; stable publication happens only after the app release succeeds.",
+            "Music video production now analyzes the assigned track and optional lyrics before it asks for existing story material."
           ]
         }
       ]

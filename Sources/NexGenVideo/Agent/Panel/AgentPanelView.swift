@@ -87,6 +87,7 @@ struct AgentPanelView: View {
                     externalSelections: $service.dialogChoiceSelections,
                     accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
                     libraryAssets: editor.agentPickableMediaAssets,
+                    libraryAssetRoles: editor.mediaManifest.intakeRoleByAssetID,
                     submissionError: service.dialogSubmissionError,
                     isSubmitting: service.submittingDialogID == dialog.id,
                     onSubmit: { result in service.submitDialog(dialog, result: result) },
@@ -217,7 +218,7 @@ struct AgentPanelView: View {
         if command.requiresArgument {
             service.prefillInput(command.command + " ")
         } else {
-            editor.runActivePackStarter(command.command)
+            editor.runActivePackStarter()
         }
     }
 
@@ -444,7 +445,7 @@ struct AgentPanelView: View {
                                 prompt: command.command
                             )
                             AgentStarterPromptButton(starterPrompt: starter) {
-                                editor.runActivePackStarter(starter.prompt)
+                                editor.runActivePackStarter()
                             }
                         }
                     } else {

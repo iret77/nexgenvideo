@@ -161,7 +161,7 @@ final class AgentService {
                 Task { @MainActor [weak self] in await self?.editor?.refreshEngineState() }
             }
             if !isStreaming, pendingGateFollowUp != nil {
-                Task { @MainActor [weak self] in self?.flushPendingGateFollowUp() }
+                Task { @MainActor [weak self] in await self?.preparePendingGateFollowUp() }
             }
         }
     }
@@ -254,6 +254,16 @@ final class AgentService {
         dialogSubmissionError = nil
         if dialog.purpose != .workflowIntake {
             pendingDialog = nil
+        }
+        if dialog.purpose == .workflowIntake,
+           let role = dialog.fileIntake?.attachAs,
+           let conflict = intakeRoleConflict(role, urls: result.fileURLs) {
+            sendDialogFailure(
+                dialog,
+                result: result,
+                notice: "\(conflict.name) is already assigned as \(Self.intakeRoleLabel(conflict.role))."
+            )
+            return
         }
         // Host workflow inputs never become individual chat turns.
         switch dialog.fileIntake?.attachAs {
@@ -364,32 +374,9 @@ final class AgentService {
             )
             return
         }
+        assignIntakeRole(kind, urls: result.fileURLs)
         editor.onPipelineChanged?()
-        sendDialogResponse(
-            dialog,
-            result: result,
-            agentContext: sidecarBrief(kind, relPath: "\(relDir)/\(filename)", content: content)
-        )
-    }
-
-    /// The agent-facing brief after a sidecar lands: what to do with it. Lyrics → label measured
-    /// sections; script → build the treatment/bible FROM it (brownfield), don't invent a new story.
-    private func sidecarBrief(_ kind: String, relPath: String, content: String) -> String {
-        switch kind {
-        case "lyrics":
-            let markers = Self.lyricsSectionMarkers(content)
-            if markers.isEmpty {
-                return "Lyrics attached to \(relPath). No [Section] markers found — label the measured "
-                    + "analysis sections yourself and keep their measured start/end boundaries; never invent timing."
-            }
-            return "Lyrics attached to \(relPath). Section markers, in order: \(markers.joined(separator: ", ")). "
-                + "Use them to LABEL the measured analysis sections (lyrics give labels/order; the measured "
-                + "downbeat-snapped boundaries stay the source of truth for timing)."
-        default:
-            return "Story script attached to \(relPath). This is a BROWNFIELD project: build the treatment, "
-                + "bible, and shots FROM this script — its characters, locations, and beats are the source of "
-                + "truth. Confirm your reading with the user; don't invent a different story."
-        }
+        sendDialogResponse(dialog, result: result)
     }
 
     /// Copy prepared character/location reference images into the bible-anchor convention
@@ -442,6 +429,7 @@ final class AgentService {
             )
             return
         }
+        assignIntakeRole(kind, urls: result.fileURLs)
         editor.onPipelineChanged?()
         let noun = kind == "location" ? "Location" : "Character"
         sendDialogResponse(
@@ -566,6 +554,7 @@ final class AgentService {
             )
             return
         }
+        assignIntakeRole("style", urls: result.fileURLs)
         editor.onPipelineChanged?()
         sendDialogResponse(
             dialog,
@@ -573,6 +562,44 @@ final class AgentService {
             agentContext: "\(copied.count) style reference\(copied.count == 1 ? "" : "s") attached in import/. "
                 + "The production-design agent (K2) curates these as the style source."
         )
+    }
+
+    private func intakeRoleConflict(
+        _ requestedRole: String,
+        urls: [URL]
+    ) -> (name: String, role: String)? {
+        guard let editor, !urls.isEmpty else { return nil }
+        let selected = Set(urls.map { $0.standardizedFileURL.resolvingSymlinksInPath() })
+        for asset in editor.mediaAssets where selected.contains(
+            asset.url.standardizedFileURL.resolvingSymlinksInPath()
+        ) {
+            guard let assigned = editor.mediaManifest.intakeRoleByAssetID[asset.id],
+                  assigned != requestedRole else { continue }
+            return (asset.name, assigned)
+        }
+        return nil
+    }
+
+    private func assignIntakeRole(_ role: String, urls: [URL]) {
+        guard let editor, !urls.isEmpty else { return }
+        let selected = Set(urls.map { $0.standardizedFileURL.resolvingSymlinksInPath() })
+        for asset in editor.mediaAssets where selected.contains(
+            asset.url.standardizedFileURL.resolvingSymlinksInPath()
+        ) {
+            editor.mediaManifest.intakeRoleByAssetID[asset.id] = role
+        }
+    }
+
+    nonisolated private static func intakeRoleLabel(_ role: String) -> String {
+        switch role {
+        case "song": "the project track"
+        case "lyrics": "lyrics"
+        case "script": "existing story"
+        case "character": "a character reference"
+        case "location": "a location reference"
+        case "style": "a style reference"
+        default: role
+        }
     }
 
     /// Copy files into `dir` (copy, never move), choosing a free name for each so nothing is ever
@@ -863,6 +890,7 @@ final class AgentService {
     private struct GateFollowUp {
         let sessionId: UUID?
         let text: String
+        let includeNextPhaseInstructions: Bool
     }
 
     /// Keeps retries idempotent while one approval card is open.
@@ -903,11 +931,16 @@ final class AgentService {
                 let payload = try toolExecutor.commitGateApproval(approval)
                 pendingGateApproval = nil
                 gateApprovalError = nil
-                enqueueGateFollowUp(
-                    "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
-                        + "Continue from the updated project state; do not request this approval again.",
-                    sessionId: approval.sessionId
-                )
+                if approval.sessionId != nil {
+                    enqueueGateFollowUp(
+                        "The user approved \(approval.phaseLabel), and the host wrote the gate successfully: \(payload) "
+                            + "Continue from the updated project state; do not request this approval again.",
+                        sessionId: approval.sessionId,
+                        includeNextPhaseInstructions: true
+                    )
+                } else {
+                    Task { @MainActor [weak self] in await self?.editor?.refreshEngineState() }
+                }
                 return .ok(payload)
             } catch let error as ToolError {
                 return recordGateApprovalFailure(error.message, approval: approval)
@@ -929,25 +962,50 @@ final class AgentService {
         return .error(message)
     }
 
-    private func enqueueGateFollowUp(_ text: String, sessionId: UUID?) {
+    private func enqueueGateFollowUp(
+        _ text: String,
+        sessionId: UUID?,
+        includeNextPhaseInstructions: Bool = false
+    ) {
         guard let sessionId else { return }
-        pendingGateFollowUp = GateFollowUp(sessionId: sessionId, text: text)
-        Task { @MainActor [weak self] in self?.flushPendingGateFollowUp() }
+        pendingGateFollowUp = GateFollowUp(
+            sessionId: sessionId,
+            text: text,
+            includeNextPhaseInstructions: includeNextPhaseInstructions
+        )
+        Task { @MainActor [weak self] in await self?.preparePendingGateFollowUp() }
     }
 
-    private func flushPendingGateFollowUp() {
-        guard !isStreaming, let followUp = pendingGateFollowUp else { return }
+    private func preparePendingGateFollowUp() async {
+        guard !isStreaming, pendingGateFollowUp != nil else { return }
+        await editor?.refreshEngineState()
+    }
+
+    @discardableResult
+    func resumePendingGateFollowUp(nextPhasePrompt: String? = nil) -> Bool {
+        guard !isStreaming, let followUp = pendingGateFollowUp else { return false }
+        guard pendingDialog == nil,
+              pendingSpendApproval == nil,
+              pendingGateApproval == nil else { return false }
         if let sessionId = followUp.sessionId {
             guard sessions.contains(where: { $0.id == sessionId }) else {
                 pendingGateFollowUp = nil
-                return
+                return false
             }
             if sessionId != currentSessionId {
                 selectSession(sessionId)
             }
         }
         pendingGateFollowUp = nil
-        send(text: followUp.text, mentions: [], hidden: true, allowWhileBlocked: true)
+        let phasePrompt = followUp.includeNextPhaseInstructions
+            ? nextPhasePrompt
+            : nil
+        let text = [followUp.text, phasePrompt]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+        send(text: text, mentions: [], hidden: true, allowWhileBlocked: true)
+        return true
     }
 
     private func abandonGateApproval() {

@@ -9,6 +9,12 @@ import NexGenEngine
 enum ProjectPackGate {
     enum Requirement: Equatable {
         case satisfied
+        /// The project contains format settings, but they cannot be decoded safely.
+        case unreadable
+        /// The trusted session declaration and live project settings disagree.
+        case inconsistent(expected: String, resolved: String)
+        /// A live session still declares a pack, but its settings file disappeared.
+        case settingsMissing(expected: String)
         /// Declared pack isn't installed at all.
         case missing(id: String)
         /// Installed but the load gate refused it (contract, version, signature, damage).
@@ -31,12 +37,31 @@ enum ProjectPackGate {
     }
 
     @MainActor
-    static func evaluate(projectURL: URL) -> Requirement {
-        let packID = ProjectPluginSettings.activePlugin(projectURL: projectURL)
-        return requirement(
-            packID: packID,
-            isRegistered: packID.flatMap { PackCatalog.pack(named: $0) } != nil,
-            record: PluginLoader.installed.first { $0.id == packID })
+    static func evaluate(
+        projectURL: URL,
+        declaredPack: String? = nil
+    ) -> Requirement {
+        switch ProjectPluginSettings.resolution(projectURL: projectURL) {
+        case .absent:
+            if let declaredPack {
+                return .settingsMissing(expected: declaredPack)
+            }
+            return .satisfied
+        case .unreadable:
+            return .unreadable
+        case .active(let packID):
+            if let declaredPack, declaredPack != packID {
+                return .inconsistent(
+                    expected: declaredPack,
+                    resolved: packID
+                )
+            }
+            return requirement(
+                packID: packID,
+                isRegistered: PackCatalog.pack(named: packID) != nil,
+                record: PluginLoader.installed.first { $0.id == packID }
+            )
+        }
     }
 }
 
@@ -57,6 +82,34 @@ struct PackUnavailableError: LocalizedError {
                 + "so the last saved version is untouched."
         }
         return "Install the “\(packID)” pack from Settings → Plugins, then reopen the project. "
+            + "Nothing has been written, so the last saved version is untouched."
+    }
+}
+
+struct ProjectFormatSettingsUnavailableError: LocalizedError {
+    let problem: String
+
+    init(problem: String = "are unreadable") {
+        self.problem = problem
+    }
+
+    var errorDescription: String? {
+        "This project's format settings \(problem), so it can't be saved."
+    }
+
+    var recoverySuggestion: String? {
+        "Restore ngv.json from a known-good project version, then reopen the project. "
+            + "Nothing has been written, so the last saved version is untouched."
+    }
+}
+
+struct ProjectSaveContextError: LocalizedError, Sendable {
+    var errorDescription: String? {
+        "Save couldn't start in the app's main context."
+    }
+
+    var recoverySuggestion: String? {
+        "Return to NexGenVideo and choose File → Save again. "
             + "Nothing has been written, so the last saved version is untouched."
     }
 }

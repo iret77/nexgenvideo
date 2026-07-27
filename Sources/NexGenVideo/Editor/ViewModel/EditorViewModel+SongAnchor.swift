@@ -160,6 +160,7 @@ extension EditorViewModel {
             try placeProjectSong(song, replacingAnchorIds: anchorIds)
             mediaManifest.songAnchorAssetId = song.id
             mediaManifest.songAnchorOwnsAsset = ownsSongAsset
+            mediaManifest.intakeRoleByAssetID[song.id] = "song"
 
             if !samePipelineSong {
                 _ = try FileManager.default.replaceItemAt(
@@ -170,15 +171,18 @@ extension EditorViewModel {
                 try? FileManager.default.removeItem(at: prepared.stagingAudioDirectory)
             }
 
-            if let previousAnchorId, previousAnchorId != song.id, previousAnchorOwned {
-                let retiredURL = mediaAssets.first { $0.id == previousAnchorId }?.url
-                mediaAssets.removeAll { $0.id == previousAnchorId }
-                mediaManifest.entries.removeAll { $0.id == previousAnchorId }
-                if let retiredURL,
-                   !mediaAssets.contains(where: {
-                       $0.url.standardizedFileURL == retiredURL.standardizedFileURL
-                   }) {
-                    try? FileManager.default.removeItem(at: retiredURL)
+            if let previousAnchorId, previousAnchorId != song.id {
+                mediaManifest.intakeRoleByAssetID.removeValue(forKey: previousAnchorId)
+                if previousAnchorOwned {
+                    let retiredURL = mediaAssets.first { $0.id == previousAnchorId }?.url
+                    mediaAssets.removeAll { $0.id == previousAnchorId }
+                    mediaManifest.entries.removeAll { $0.id == previousAnchorId }
+                    if let retiredURL,
+                       !mediaAssets.contains(where: {
+                           $0.url.standardizedFileURL == retiredURL.standardizedFileURL
+                       }) {
+                        try? FileManager.default.removeItem(at: retiredURL)
+                    }
                 }
             }
         } catch {

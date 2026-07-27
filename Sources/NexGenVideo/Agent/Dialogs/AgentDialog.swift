@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 import UniformTypeIdentifiers
 
 /// The user's structured answer to a presented dialog.
@@ -399,7 +400,12 @@ extension AgentDialog.FileIntake {
             switch token.lowercased() {
             case "audio": types.append(.audio)
             case "video", "movie": types.append(.movie)
-            case "image": types.append(.image)
+            case "image":
+                types.append(
+                    contentsOf: ProjectMediaExtensions.images.compactMap {
+                        UTType(filenameExtension: $0)
+                    }
+                )
             case "text":
                 // Plain text plus the known document extensions — NOT the broad `public.text` supertype,
                 // which would also admit .json/.csv/.html. Stays in sync with ClipType.documentExtensions.

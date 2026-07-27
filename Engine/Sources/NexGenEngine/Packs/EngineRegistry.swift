@@ -92,6 +92,9 @@ public final class EngineRegistry: @unchecked Sendable {
     /// via a fixed surface `kind` it owns; the pack only declares which kind + phase, keeping packs thin.
     public private(set) var cockpitSurfaces: [CockpitSurface] = []
 
+    /// Pack-supplied deterministic input/output fingerprints for durable phase lineage.
+    public private(set) var phaseLineageProviders: [String: PhaseLineageProvider] = [:]
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -101,6 +104,9 @@ public final class EngineRegistry: @unchecked Sendable {
     /// A deterministic precondition for approving a gate: throws `GateBlocked` (with an actionable
     /// message) when the phase's artifact isn't genuinely present in the data root.
     public typealias GateRequirement = @Sendable (URL) throws -> Void
+
+    public typealias PhaseLineageProvider =
+        @Sendable (URL) throws -> PhaseLineageSnapshot
 
     /// A named, engine-run step pinned to a phase (#174). `run` executes the deterministic operation
     /// against the data root; throwing blocks the phase with the error's message.
@@ -177,6 +183,13 @@ public final class EngineRegistry: @unchecked Sendable {
     /// (agent tool + Pipeline panel) before a gate is stamped.
     public func registerGateRequirement(_ phase: String, _ check: @escaping GateRequirement) {
         gateRequirements[phase] = check
+    }
+
+    public func registerPhaseLineageProvider(
+        _ phase: String,
+        _ provider: @escaping PhaseLineageProvider
+    ) {
+        phaseLineageProviders[phase] = provider
     }
 
     /// Register the pack's wiring-liveness probe (see `wiringToken`). A pack calls this in `register`;

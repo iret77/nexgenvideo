@@ -279,6 +279,30 @@ final class AppState {
         case .satisfied:
             return true
 
+        case .unreadable:
+            notify(
+                message: "The project format settings are unreadable",
+                informative: "Restore ngv.json from a known-good project version, then open the project again. "
+                    + "The project stays closed so its workflow cannot be changed."
+            )
+            return false
+
+        case .inconsistent(let expected, let resolved):
+            notify(
+                message: "The project format settings conflict",
+                informative: "The project declares “\(expected)” in this session but resolves "
+                    + "“\(resolved)” on disk. Restore ngv.json from a known-good project version."
+            )
+            return false
+
+        case .settingsMissing(let expected):
+            notify(
+                message: "The project format settings are missing",
+                informative: "This session still declares “\(expected)”. Restore ngv.json from "
+                    + "a known-good project version, then open the project again."
+            )
+            return false
+
         case .needsRestart(let id):
             offerRestart(id: id)
             return false
@@ -330,6 +354,24 @@ final class AppState {
         switch ProjectPackGate.evaluate(projectURL: projectURL) {
         case .satisfied:
             return true
+        case .unreadable:
+            notify(
+                message: "The project format settings are unreadable",
+                informative: "Restore ngv.json from a known-good project version, then open the project again."
+            )
+            return false
+        case .inconsistent:
+            notify(
+                message: "The project format settings conflict",
+                informative: "Restore ngv.json from a known-good project version, then open the project again."
+            )
+            return false
+        case .settingsMissing:
+            notify(
+                message: "The project format settings are missing",
+                informative: "Restore ngv.json from a known-good project version, then open the project again."
+            )
+            return false
         case .needsRestart:
             offerRestart(id: id)
             return false

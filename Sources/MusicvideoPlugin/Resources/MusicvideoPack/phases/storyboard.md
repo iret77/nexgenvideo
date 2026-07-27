@@ -140,26 +140,27 @@ Per step:
 |---|---|
 | `id` | `<section>.<NN>`, e.g. `verse1.03`. Gapless. |
 | `function` | Tag from story / mood-insert / performance / cutaway / structural-anchor / transition |
+| `source_mode` | `generated`, `imported`, or `ai_enhanced` |
 | `subject` | Who does WHAT in which **starting pose** + vector: "Alex stands in the school gate, left leg forward, about to step in" |
 | `camera` | **Starting framing + EXACTLY ONE move category**: "low angle ~1.5 m, static 2 s, then slow pull-back 1 m". Combinations like "push-in into orbit" or "pan into tracking" are forbidden — at most one move category per step. Allowed categories: push / pull / pan / tilt / track / orbit / crane / zoom / aerial / handheld. "static" counts as 0 and may be combined with one other category. |
+| `framing` | One exact framing enum: wide / full / ms / mcu / cu / ecu / ots / pov / insert / aerial |
+| `camera_setup` | Structured height, angle, lens hint, and optional note |
+| `character_blocking` | Exact starting position, pose, gaze, and set relation per character |
 | `setting_hint` | Which location, rough perspective: "schoolyard, from the gate" |
 | `location_view_request` | View key for the later bible: `entrance`, `wide`, `wide.morning`, `detail.chalkboard`. Freely choosable. |
 | `character_view_request` | Preferred sheet view per character: `{"alex": "side"}`. Optional. |
 | `prop_request` | List of needed props (plain text): `["open_notebook", "chalkboard"]`. The bible agent derives IDs. |
+| `visible_zones` / `zone_introduces` | World zones visible at t=0 and zones this step establishes |
 
-### 7. Write the storyboard YAML (schema)
+### 7. Write the storyboard through the host
 
-`storyboard/vN.yaml` with schema version `storyboard/v1`:
+Call `write_storyboard` with the semantic fields below. The host owns
+schema/project/version/generated/generator, validates the nested shape,
+writes vN, and updates `current.yaml`. Never author the YAML file:
 
 ```yaml
-schema: storyboard/v1
-meta:
-  project: way_in_life
-  version: 1
-  generated: '2026-04-27T10:00:00Z'
-  origin: agent_proposal
-  generator: storyboard-agent
-  summary_oneline: "Teacher accompanies her class through a warm school day"
+origin: agent_proposal
+summary_oneline: "Teacher accompanies her class through a warm school day"
 sections:
   - id: intro
     label: "Intro"
@@ -170,26 +171,48 @@ sections:
     steps:
       - id: intro.01
         function: transition
+        source_mode: generated
         subject: "Schoolyard empty, wind moves the poplar's leaves..."
         camera: "wide static, hip height, 35mm look"
+        framing: wide
+        camera_setup:
+          height: eye_level
+          angle: frontal
+          lens_hint: wide
+        character_blocking: []
         setting_hint: "schoolyard, from inside the yard"
         location_view_request: "wide.morning"
-        character_view_request: {}
+        character_view_request: []
         prop_request: []
+        visible_zones: [schoolyard_main]
+        zone_introduces: [schoolyard_main]
       - id: intro.02
         function: story
+        source_mode: generated
         subject: "Alex appears in the gate, stands still, gazes inside"
         camera: "medium-wide ~3 m, slightly elevated, static"
+        framing: full
+        camera_setup:
+          height: high
+          angle: three_quarter_left
+          lens_hint: normal
+        character_blocking:
+          - character_ref: alex
+            position: "in the gate, left third"
+            pose: "standing still, weight forward"
+            gaze: "into the schoolyard"
         setting_hint: "schoolyard, from the gate"
         location_view_request: "entrance"
-        character_view_request: {alex: front}
+        character_view_request:
+          - character: alex
+            view: front
         prop_request: []
+        visible_zones: [schoolyard_main, school_gate]
+        zone_introduces: [school_gate]
 ```
 
-Validate the YAML against the `storyboard/v1` schema before persisting
-(field names + enum values must match). On a validation error → fix the
-named field, don't guess. Write `storyboard/vN.yaml` and keep
-`storyboard/current.yaml` in sync.
+`write_storyboard` validates before persisting. On a validation error,
+fix the named field and call the tool again; don't guess.
 
 ### 8. Perspective self-check (mandatory before storyboard approval)
 

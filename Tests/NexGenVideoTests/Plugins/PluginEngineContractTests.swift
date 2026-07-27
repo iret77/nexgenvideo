@@ -95,6 +95,7 @@ struct PluginEngineContractTests {
 }
 
 /// Opening a project whose pack isn't live must be refused, not degraded to the generic workflow.
+@MainActor
 @Suite("Project format-pack open gate")
 struct ProjectPackGateTests {
 
@@ -110,9 +111,72 @@ struct ProjectPackGateTests {
         #expect(ProjectPackGate.requirement(packID: "", isRegistered: false, record: nil) == .satisfied)
     }
 
+    @Test func unreadableProjectSettingsFailClosed() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "pack-gate-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: project,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: project) }
+        try Data("{not-json".utf8).write(
+            to: project.appendingPathComponent("ngv.json")
+        )
+
+        #expect(ProjectPackGate.evaluate(projectURL: project) == .unreadable)
+
+        let wrongType = try JSONSerialization.data(
+            withJSONObject: ["activePlugin": 42]
+        )
+        try wrongType.write(
+            to: project.appendingPathComponent("ngv.json"),
+            options: .atomic
+        )
+        #expect(ProjectPackGate.evaluate(projectURL: project) == .unreadable)
+    }
+
     @Test func registeredPackOpens() {
         #expect(ProjectPackGate.requirement(packID: "musicvideo", isRegistered: true, record: record(state: .loaded))
                 == .satisfied)
+    }
+
+    @Test func trustedSessionDeclarationRejectsMissingOrMismatchedSettings() throws {
+        let project = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "pack-declaration-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: project,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: project) }
+
+        #expect(
+            ProjectPackGate.evaluate(
+                projectURL: project,
+                declaredPack: "musicvideo"
+            ) == .settingsMissing(expected: "musicvideo")
+        )
+
+        let settings = try JSONSerialization.data(
+            withJSONObject: ["activePlugin": "other"]
+        )
+        try settings.write(
+            to: project.appendingPathComponent("ngv.json")
+        )
+        #expect(
+            ProjectPackGate.evaluate(
+                projectURL: project,
+                declaredPack: "musicvideo"
+            ) == .inconsistent(
+                expected: "musicvideo",
+                resolved: "other"
+            )
+        )
     }
 
     @Test func notInstalledIsMissing() {
@@ -166,5 +230,26 @@ struct PackUnavailableErrorTests {
         #expect(error.recoverySuggestion?.contains(reason) == true)
         // …and still tells them the saved version survived.
         #expect(error.recoverySuggestion?.lowercased().contains("untouched") == true)
+    }
+
+    @Test("unreadable format settings refuse save without touching the package")
+    func unreadableSettingsAreActionable() {
+        let error = ProjectFormatSettingsUnavailableError()
+        let text = (error.errorDescription ?? "")
+            + " "
+            + (error.recoverySuggestion ?? "")
+        #expect(text.contains("ngv.json"))
+        #expect(text.lowercased().contains("untouched"))
+    }
+
+    @Test("an off-main save asks for a retry instead of claiming ngv.json is damaged")
+    func offMainSaveMessageIsAccurate() {
+        let error = ProjectSaveContextError()
+        let text = (error.errorDescription ?? "")
+            + " "
+            + (error.recoverySuggestion ?? "")
+        #expect(text.contains("Save again"))
+        #expect(!text.contains("ngv.json"))
+        #expect(text.lowercased().contains("untouched"))
     }
 }

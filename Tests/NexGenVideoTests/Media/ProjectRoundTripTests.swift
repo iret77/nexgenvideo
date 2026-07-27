@@ -219,6 +219,11 @@ struct ProjectRoundTripTests {
         ]
         manifest.songAnchorAssetId = "song-1"
         manifest.songAnchorOwnsAsset = true
+        manifest.intakeRoleByAssetID = [
+            "song-1": "song",
+            "proj-1": "style",
+        ]
+        #expect(manifest.version == 4)
         #expect(try roundTrip(manifest) == manifest)
     }
 
@@ -238,6 +243,21 @@ struct ProjectRoundTripTests {
         #expect(manifest.folders.isEmpty)
         #expect(manifest.songAnchorAssetId == nil)
         #expect(manifest.songAnchorOwnsAsset == false)
+        #expect(manifest.intakeRoleByAssetID.isEmpty)
+    }
+
+    @Test func legacySongAnchorMigratesToTheTrackIntakeRole() throws {
+        let json = """
+        {
+          "version": 3,
+          "entries": [],
+          "folders": [],
+          "songAnchorAssetId": "song-1",
+          "songAnchorOwnsAsset": true
+        }
+        """
+        let manifest = try JSONDecoder().decode(MediaManifest.self, from: Data(json.utf8))
+        #expect(manifest.intakeRoleByAssetID == ["song-1": "song"])
     }
 
     // MARK: - GenerationLog

@@ -36,12 +36,44 @@ enum PackSelfTest {
               song.accept.contains("audio") else {
             return "project_init has no required audio song intake"
         }
-        let expected: [HardStep.Kind] = [.song, .lyrics, .script, .character, .location, .style]
-        guard startup.map(\.kind) == expected else {
-            return "project_init hard-step order is not track, lyrics, script, character, location, style"
+        guard startup.map(\.kind) == [.song, .lyrics] else {
+            return "project_init hard-step order is not exactly track, lyrics"
+        }
+        guard startup.dropFirst().allSatisfy({ !$0.required }) else {
+            return "lyrics intake is not optional"
         }
         guard manifest.steps(for: "analysis").isEmpty else {
-            return "analysis duplicates startup intake"
+            return "analysis contains file intake"
+        }
+        let creative = manifest.steps(for: "brief")
+        guard creative.map(\.kind) == [.script, .character, .location, .style] else {
+            return "brief hard-step order is not existing story, characters, locations, style"
+        }
+        guard creative.allSatisfy({ !$0.required }) else {
+            return "creative-material intake is not fully optional"
+        }
+        let failures = PipelineAgentContract.failures(
+            registry: PackCatalog.registry(activePack: record.id),
+            manifest: manifest,
+            phaseDocument: {
+                phaseDocument($0, bundleURL: record.bundleURL)
+            }
+        )
+        return failures.first
+    }
+
+    private static func phaseDocument(
+        _ name: String,
+        bundleURL: URL
+    ) -> String? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: bundleURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        let suffix = "/MusicvideoPack/phases/\(name).md"
+        for case let url as URL in enumerator where url.path.hasSuffix(suffix) {
+            return try? String(contentsOf: url, encoding: .utf8)
         }
         return nil
     }

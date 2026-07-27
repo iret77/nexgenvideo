@@ -61,12 +61,6 @@ struct AssembleTimelineTests {
         )
         _ = try saveShotlist(shotlist, to: dataRoot)
 
-        // Two stub rendered clips on disk (content irrelevant — only the extension/type matter).
-        let outA = tmp.appendingPathComponent("s001.mp4")
-        let outB = tmp.appendingPathComponent("s002.mp4")
-        try Data("clipA".utf8).write(to: outA)
-        try Data("clipB".utf8).write(to: outB)
-
         // assemble_timeline is gated on an approved plan — approve the chain so these tests exercise
         // assembly, not gate policy (the gate itself is covered by the blocked test below).
         try approvePlanChain(dataRoot: dataRoot)
@@ -77,7 +71,46 @@ struct AssembleTimelineTests {
         let workingDataRoot = try #require(
             harness.editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
         )
-        return (harness, workingDataRoot, tmp, [outA.path, outB.path])
+        let media = FrameInventory.projectHome(of: workingDataRoot)
+            .appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: media,
+            withIntermediateDirectories: true
+        )
+        let outA = media.appendingPathComponent("s001.mp4")
+        let outB = media.appendingPathComponent("s002.mp4")
+        try Data("clipA".utf8).write(to: outA)
+        try Data("clipB".utf8).write(to: outB)
+        let generationInput = GenerationInput(
+            prompt: "Compiled provider prompt.",
+            model: "video-model",
+            duration: 1,
+            aspectRatio: "16:9"
+        )
+        harness.editor.mediaAssets.append(
+            MediaAsset(
+                id: "s001-video",
+                url: outA,
+                type: .video,
+                name: "s001",
+                generationInput: generationInput
+            )
+        )
+        harness.editor.mediaAssets.append(
+            MediaAsset(
+                id: "s002-video",
+                url: outB,
+                type: .video,
+                name: "s002",
+                generationInput: generationInput
+            )
+        )
+        return (
+            harness,
+            workingDataRoot,
+            tmp,
+            ["s001-video", "s002-video"]
+        )
     }
 
     /// Approve every core phase up to and including shotlist, so assemble_timeline's require-chain passes.

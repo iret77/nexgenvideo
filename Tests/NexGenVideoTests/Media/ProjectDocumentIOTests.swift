@@ -37,6 +37,81 @@ struct ProjectDocumentIOTests {
         #expect(fm.fileExists(atPath: destination.appendingPathComponent(Project.manifestFilename).path))
     }
 
+    @Test func directWriteRefusesAnUnavailableFormatPack() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-doc-gate-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        try makePackage(at: package)
+        try ProjectPluginSettings.setActivePlugin(
+            "unavailable-\(UUID().uuidString)",
+            projectURL: package
+        )
+        let before = try Data(contentsOf: package.appendingPathComponent(
+            Project.timelineFilename
+        ))
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        doc.editorViewModel.timeline.width = 4096
+
+        #expect(throws: PackUnavailableError.self) {
+            try doc.write(to: package, ofType: VideoProject.typeIdentifier)
+        }
+        #expect(try Data(contentsOf: package.appendingPathComponent(
+            Project.timelineFilename
+        )) == before)
+    }
+
+    @Test func saveRefusesAnUnavailableFormatPackBeforeWriting() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-save-gate-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        try makePackage(at: package)
+        try ProjectPluginSettings.setActivePlugin(
+            "unavailable-\(UUID().uuidString)",
+            projectURL: package
+        )
+        let before = try Data(contentsOf: package.appendingPathComponent(
+            Project.timelineFilename
+        ))
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        doc.editorViewModel.timeline.width = 4096
+        var completionError: Error?
+
+        doc.save(
+            to: package,
+            ofType: VideoProject.typeIdentifier,
+            for: .saveOperation
+        ) {
+            completionError = $0
+        }
+
+        #expect(completionError is PackUnavailableError)
+        #expect(try Data(contentsOf: package.appendingPathComponent(
+            Project.timelineFilename
+        )) == before)
+    }
+
+    @Test func saveContextRejectsOffMainEntry() {
+        #expect(VideoProject.saveContextError(isMainThread: true) == nil)
+        #expect(
+            VideoProject.saveContextError(isMainThread: false)
+                is ProjectSaveContextError
+        )
+    }
+
     private func makePackage(at url: URL) throws {
         let media = url.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         try fm.createDirectory(at: media, withIntermediateDirectories: true)

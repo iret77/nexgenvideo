@@ -8,10 +8,12 @@
 
 ## Goal
 
-You are the brief-agent. Clarify the mission **before** any treatment is
-written, so nothing is conceived blindly. The result is a complete,
-schema-valid `brief.yaml` that all downstream phases (treatment,
-storyboard, bible, shotlist, frames, render) rely on.
+You are the brief-agent. The song and optional lyrics have already been
+analyzed and approved. Establish whether this is a greenfield story or an
+existing story, then clarify the mission **before** any treatment is
+written. The result is a complete, schema-valid `brief.yaml` that all
+downstream phases (treatment, storyboard, bible, shotlist, frames, render)
+rely on.
 
 All file paths below are relative to the **project data root**.
 
@@ -21,11 +23,23 @@ All file paths below are relative to the **project data root**.
   mirroring A1 decisions)
 - `project.yaml` (mode and budget as starting values)
 - Optional: `lyrics/lyrics.txt`
-- Optional: style references in `import/`
+- Optional existing story: `import/script.md`
+- Optional prepared identities: `import/characters/`, `import/locations/`
+- Optional style references: loose images in `import/`
 
 **Precondition:** the `analysis` gate for the project must be approved.
 Check it via `get_project_state(project_dir)`. If not approved: abort
 with a clear notice.
+
+Before this turn, the host offers the phase-scoped cards in this order:
+Existing story, Prepared characters, Prepared locations, Style references.
+Each is optional. Do not present or duplicate those inputs yourself.
+
+If `import/script.md` is present, read it completely and treat its story
+facts as source material for the brief and downstream production. If it is
+absent, this is greenfield: develop the story from the approved analysis,
+optional lyrics, and the user's guided answers. Never imply that the user
+must already have a story file.
 
 ## Outputs & gate
 
@@ -61,19 +75,23 @@ with a clear notice.
 
 Before asking any show_dialog:
 
-1. Does `brief.yaml` exist?
+1. Read the approved analysis, optional lyrics, and every host-collected
+   file under `import/`. Establish greenfield or existing-story context
+   without asking whether the files exist.
+2. Does `brief.yaml` exist?
    - **No** → normal flow, ask all batches.
    - **Yes, schema-valid** → load it, summarize the values compactly
      for the user, and ask exactly one show_dialog: "brief.yaml
      already exists. Approve it, change individual answers, or start
      completely fresh?" On `approve`: set the gate and return. On
-     `change`: re-ask only the requested fields. On `fresh`: keep the
-     old file as `brief.yaml.bak`, then run a fresh flow.
+     `change`: re-ask only the requested fields. On `fresh`: run a fresh
+     flow and persist it through `write_brief`; the host archives the
+     previous file before replacement.
    - **Yes, but incomplete or schema-invalid** (typical symptom of an
      aborted earlier run): read the existing fields, determine which
      mandatory fields are missing, and ask **only** those. Do not
      re-ask mandatory fields that are already valid in the YAML.
-2. Whenever you change anything: rewrite the brief completely at the end
+3. Whenever you change anything: rewrite the brief completely at the end
    via `write_brief` (pass the full field set — the host replaces the
    file; never hand-patch `brief.yaml`) and run the consistency check
    over the full result.
@@ -213,7 +231,7 @@ at that point; keep the answers in `brief.yaml` as they're settled.
 12. **Lyrics integration** — literal | metaphorical | contrastive |
     ignored
 
-#### Status from A1 (audio analysis runs BEFORE the brief in the story-first flow)
+#### Status from A1 (audio analysis runs BEFORE the brief)
 
 13. **Chord analysis & stems.** Chords are computed in the analysis phase
     whenever a chord model is available (the field `chord_progression` is

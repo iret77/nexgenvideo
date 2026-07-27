@@ -244,6 +244,7 @@ struct AnalysisRunnerE2ETests {
         let analysis = try JSONDecoder().decode(Analysis.self, from: data)
         #expect(analysis.project == "Beat Song")
         #expect(analysis.songPath == "audio/mysong.mp3")
+        #expect(analysis.songSha256 != nil)
         #expect(abs(analysis.bpm - 120) <= 3, "bpm=\(analysis.bpm)")
         #expect(!analysis.beats.isEmpty)
         #expect(analysis.durationS > 0)
