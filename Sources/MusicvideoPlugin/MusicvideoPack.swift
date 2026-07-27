@@ -24,6 +24,10 @@ private let musicDurationBands: [String: (min: Double, max: Double)] = [
 public struct MusicDurationPolicy: DurationPolicy {
     public init() {}
 
+    private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
+        _ = projectURL
+    }
+
     public func band(for mode: Mode, context: [String: String]) -> DurationBand {
         let key = mode.rawValue
         let (lo, hi) = musicDurationBands[key] ?? (4.0, 15.0)
@@ -40,7 +44,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 /// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.0.5"
+    public let version = "0.0.6"
 
     /// Values mirror the retired `plugins/musicvideo/ngv-plugin.json`. The badge ships INSIDE the
     /// pack's resources (self-contained — cut from the owner's badge masters in
@@ -144,6 +148,11 @@ public struct MusicvideoPack: Pack {
     }
 
     public func register(_ registry: EngineRegistry) {
+        registry.registerProjectSchemaMigration(
+            from: "musicvideo/legacy",
+            to: "musicvideo/1.0.0",
+            migrate: Self.adoptLegacyProjectSchema
+        )
         // Wiring-liveness probe: proves this pack's code is actually installed into the registry the
         // runtime built for a session (not silently absent). See PackWiring.
         registry.registerWiringProbe { PackWiring.token(pack: "musicvideo", nonce: $0) }

@@ -95,6 +95,9 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Pack-supplied deterministic input/output fingerprints for durable phase lineage.
     public private(set) var phaseLineageProviders: [String: PhaseLineageProvider] = [:]
 
+    /// Transactional project-schema upgrades supplied by the pack that owns the data.
+    public private(set) var projectSchemaMigrations: [ProjectSchemaMigration] = []
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -192,6 +195,19 @@ public final class EngineRegistry: @unchecked Sendable {
         phaseLineageProviders[phase] = provider
     }
 
+    public func registerProjectSchemaMigration(
+        from: String,
+        to: String,
+        migrate: @escaping @Sendable (URL) throws -> Void
+    ) {
+        projectSchemaMigrations.removeAll {
+            $0.from == from && $0.to == to
+        }
+        projectSchemaMigrations.append(
+            ProjectSchemaMigration(from: from, to: to, migrate: migrate)
+        )
+    }
+
     /// Register the pack's wiring-liveness probe (see `wiringToken`). A pack calls this in `register`;
     /// the host later asks the built registry for a token and compares it to the shared formula.
     public func registerWiringProbe(_ probe: @escaping @Sendable (String) -> String) {
@@ -252,6 +268,22 @@ public final class EngineRegistry: @unchecked Sendable {
         cockpitSurfaces.removeAll { $0.id == surface.id }
         cockpitSurfaces.append(surface)
         return surface
+    }
+}
+
+public struct ProjectSchemaMigration: Sendable {
+    public let from: String
+    public let to: String
+    public let migrate: @Sendable (URL) throws -> Void
+
+    public init(
+        from: String,
+        to: String,
+        migrate: @escaping @Sendable (URL) throws -> Void
+    ) {
+        self.from = from
+        self.to = to
+        self.migrate = migrate
     }
 }
 

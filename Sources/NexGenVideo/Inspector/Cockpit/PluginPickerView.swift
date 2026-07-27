@@ -208,7 +208,15 @@ struct PluginPickerView: View {
                 }
 
             case .updatePendingRestart:
-                Button("Restart now") { AppRelaunch.now() }
+                Button(editor.activePluginName == row.id
+                       ? "Upgrade Project"
+                       : "Restart now") {
+                    if editor.activePluginName == row.id {
+                        AppState.shared.upgradeActiveProjectPack()
+                    } else {
+                        PluginUpdateCenter.shared.restartToApplyUpdates()
+                    }
+                }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
                     .help("Relaunch NexGenVideo to activate the updated plugin.")

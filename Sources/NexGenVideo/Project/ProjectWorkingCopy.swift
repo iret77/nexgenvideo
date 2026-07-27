@@ -115,6 +115,37 @@ enum ProjectWorkingCopy {
         try Data().write(to: root.appendingPathComponent(dirtyMarker), options: .atomic)
     }
 
+    static func transact(
+        key: String,
+        markDirty: Bool = true,
+        mutate: (URL) throws -> Void
+    ) throws {
+        let fm = FileManager.default
+        let current = home(key)
+        guard isComplete(current, fm: fm) else {
+            throw PersistError.noWorkingCopy(key: key)
+        }
+        let staging = AppPaths.ensure(AppPaths.recovery).appendingPathComponent(
+            ".transaction-\(key)-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        do {
+            try fm.copyItem(at: current, to: staging)
+            try mutate(staging)
+            if markDirty {
+                try Data().write(
+                    to: staging.appendingPathComponent(dirtyMarker),
+                    options: .atomic
+                )
+            }
+            try validatePackage(staging, fm: fm)
+            try installWorkingCopy(staging, at: current, key: key, fm: fm)
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
+    }
+
     static func markSaved(key: String) {
         try? FileManager.default.removeItem(at: home(key).appendingPathComponent(dirtyMarker))
     }

@@ -13,14 +13,21 @@ enum AppRelaunch {
     /// fires and the observer lingers — a second Restart tap would otherwise stack observers and
     /// spawn multiple `open`s on the eventual quit.
     private static var armed = false
+    private static var beforeRelaunch: (() -> Void)?
 
-    static func now() {
+    static func now(beforeRelaunch action: (() -> Void)? = nil) {
+        beforeRelaunch = action
         if !armed {
             armed = true
             let bundlePath = Bundle.main.bundlePath
             NotificationCenter.default.addObserver(
                 forName: NSApplication.willTerminateNotification, object: nil, queue: .main
             ) { _ in
+                MainActor.assumeIsolated {
+                    let action = beforeRelaunch
+                    beforeRelaunch = nil
+                    action?()
+                }
                 let task = Process()
                 task.executableURL = URL(fileURLWithPath: "/bin/sh")
                 task.arguments = ["-c", "sleep 0.4; open \"\(bundlePath)\""]

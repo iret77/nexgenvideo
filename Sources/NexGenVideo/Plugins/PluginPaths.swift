@@ -1,7 +1,7 @@
 import Foundation
+import NexGenEngine
 
-/// Where installed `.ngvpack` bundles live and how their filenames map to pack
-/// ids. One directory under Application Support; each pack is `<id>.ngvpack`.
+/// Resolves immutable versioned installs and legacy flat bundles.
 enum PluginPaths {
     static let bundleExtension = "ngvpack"
 
@@ -15,20 +15,47 @@ enum PluginPaths {
             .appendingPathComponent("Plugins", isDirectory: true)
     }
 
-    /// The install location for a pack id — `<installDirectory>/<id>.ngvpack`.
-    /// Ids are constrained (see `isValidID`) so they can never escape the dir.
+    /// The legacy install location used before project version pinning.
     static func installURL(id: String) -> URL {
         installDirectory.appendingPathComponent(id).appendingPathExtension(bundleExtension)
     }
 
-    /// Every installed `.ngvpack`, sorted by name. Empty (never throws) when the
-    /// directory is absent — a fresh install with no packs is a calm empty state.
+    static func versionDirectory(id: String) -> URL {
+        installDirectory.appendingPathComponent(id, isDirectory: true)
+    }
+
+    static func installURL(id: String, version: String) -> URL {
+        versionDirectory(id: id)
+            .appendingPathComponent(version)
+            .appendingPathExtension(bundleExtension)
+    }
+
+    static func installedBundle(id: String, version: String) -> URL? {
+        let versioned = installURL(id: id, version: version)
+        if FileManager.default.fileExists(atPath: versioned.path) { return versioned }
+        let legacy = installURL(id: id)
+        guard let info = PluginBundleInfo(bundleURL: legacy),
+              info.id == id, info.version == version else { return nil }
+        return legacy
+    }
+
+    /// Every installed `.ngvpack`, including legacy flat bundles, sorted by path.
     static func installedBundles() -> [URL] {
         let entries = (try? FileManager.default.contentsOfDirectory(
-            at: installDirectory, includingPropertiesForKeys: nil)) ?? []
-        return entries
-            .filter { $0.pathExtension == bundleExtension }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            at: installDirectory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        var bundles = entries.filter { $0.pathExtension == bundleExtension }
+        for directory in entries where directory.pathExtension.isEmpty {
+            let versions = (try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            bundles.append(contentsOf: versions.filter { $0.pathExtension == bundleExtension })
+        }
+        return bundles.sorted { $0.path < $1.path }
     }
 
     /// A pack id safe to use as a path component: lowercase alphanumerics, `-`,
@@ -38,5 +65,9 @@ enum PluginPaths {
         guard !id.isEmpty, id.count <= 64 else { return false }
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-_")
         return id.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    static func isValidVersion(_ version: String) -> Bool {
+        SemanticVersion(version) != nil && !version.contains("/")
     }
 }

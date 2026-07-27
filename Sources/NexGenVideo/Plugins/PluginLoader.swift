@@ -11,6 +11,8 @@ struct InstalledPluginRecord: Identifiable, Equatable {
     let headline: String
     let benefit: String
     let version: String
+    let projectSchema: String
+    let migratesFrom: [String]
     let minAppVersion: String
     let bundleURL: URL
     let state: State
@@ -39,7 +41,7 @@ struct InstalledPluginRecord: Identifiable, Equatable {
 
 /// Loads installed format packs at startup, enforcing the hard gate order:
 /// read Info.plist → id/version/entry well-formed → NGVMinAppVersion ≤ app
-/// version → NGVEngineContract == the running engine's → code signature
+/// version → NGVEngineContract within the running engine's compatibility range → code signature
 /// (same-developer trust chain, or ad-hoc only when the host is itself ad-hoc;
 /// indeterminate host fails closed) → `Bundle.load()` → instantiate the principal
 /// `PackEntry` → register the pack. Every gate reads the bundle's Info.plist ONLY —
@@ -64,10 +66,102 @@ enum PluginLoader {
     /// covers broken loads: it's what tells "a previously-broken pack was just updated → needs restart"
     /// from "same broken version rescanned → still Damaged", so an update no longer re-shows "Damaged".
     private static var residentVersions: [String: String] = [:]
+    private static let selectedVersionsKey = "NGVSelectedPackVersions"
+    private static let runtimeRejectionsKey = "NGVRejectedPackVersions"
 
     /// Whether this id's code is already mapped into the process (loaded, even if it failed to
     /// register). An update to a resident id needs a relaunch to take effect.
     static func isResident(_ id: String) -> Bool { residentVersions[id] != nil }
+
+    static func liveBinding(id: String) -> ProjectPackBinding? {
+        guard let version = loadedVersions[id],
+              let installed = installedInfo(id: id, version: version) else { return nil }
+        return ProjectPackBinding(
+            id: id,
+            version: version,
+            projectSchema: installed.info.projectSchema
+        )
+    }
+
+    static func installedInfo(
+        id: String,
+        version: String
+    ) -> (info: PluginBundleInfo, url: URL)? {
+        guard let url = PluginPaths.installedBundle(id: id, version: version),
+              let info = PluginBundleInfo(bundleURL: url),
+              info.id == id,
+              info.version == version else { return nil }
+        return (info, url)
+    }
+
+    static func newestInstalledInfo(
+        id: String
+    ) -> (info: PluginBundleInfo, url: URL)? {
+        installedBundleInfos()
+            .filter { $0.info.id == id }
+            .max {
+                (SemanticVersion($0.info.version) ?? SemanticVersion("0.0.0")!)
+                    < (SemanticVersion($1.info.version) ?? SemanticVersion("0.0.0")!)
+            }
+    }
+
+    static func newestUsableInstalledInfo(
+        id: String,
+        appVersion: String? = AppVersion.marketing
+    ) -> (info: PluginBundleInfo, url: URL)? {
+        let host = PluginSignature.hostSigningState()
+        return installedBundleInfos()
+            .filter {
+                $0.info.id == id
+                    && runtimeRejection(
+                        id: $0.info.id,
+                        version: $0.info.version
+                    ) == nil
+                    && isUsable(
+                        $0,
+                        appVersion: appVersion,
+                        host: host
+                    )
+            }
+            .max {
+                version($0.info.version) < version($1.info.version)
+            }
+    }
+
+    static func requestVersionForNextLaunch(id: String, version: String) {
+        guard PluginPaths.isValidID(id), PluginPaths.isValidVersion(version) else { return }
+        var selected = UserDefaults.standard.dictionary(
+            forKey: selectedVersionsKey
+        ) as? [String: String] ?? [:]
+        selected[id] = version
+        UserDefaults.standard.set(selected, forKey: selectedVersionsKey)
+    }
+
+    static func clearRequestedVersion(id: String) {
+        var selected = UserDefaults.standard.dictionary(
+            forKey: selectedVersionsKey
+        ) as? [String: String] ?? [:]
+        selected.removeValue(forKey: id)
+        UserDefaults.standard.set(selected, forKey: selectedVersionsKey)
+    }
+
+    static func runtimeRejection(id: String, version: String) -> String? {
+        let rejected = UserDefaults.standard.dictionary(
+            forKey: runtimeRejectionsKey
+        ) as? [String: String] ?? [:]
+        return rejected[runtimeRejectionKey(id: id, version: version)]
+    }
+
+    static func clearRuntimeRejection(id: String, version: String) {
+        var rejected = UserDefaults.standard.dictionary(
+            forKey: runtimeRejectionsKey
+        ) as? [String: String] ?? [:]
+        let suffix = "|\(id)@\(version)"
+        rejected.keys
+            .filter { $0.hasSuffix(suffix) }
+            .forEach { rejected.removeValue(forKey: $0) }
+        UserDefaults.standard.set(rejected, forKey: runtimeRejectionsKey)
+    }
 
     /// Decision for an id that is already resident this process (pure + testable). `nil` = not
     /// resident (or same broken version — re-report the load failure honestly), proceed to load.
@@ -85,11 +179,125 @@ enum PluginLoader {
     @discardableResult
     static func loadInstalled(appVersion: String? = AppVersion.marketing) -> [InstalledPluginRecord] {
         let host = PluginSignature.hostSigningState()
-        let records = PluginPaths.installedBundles().map {
-            load(at: $0, appVersion: appVersion, host: host)
+        let infos = installedBundleInfos()
+        let selected = UserDefaults.standard.dictionary(
+            forKey: selectedVersionsKey
+        ) as? [String: String] ?? [:]
+        var records: [InstalledPluginRecord] = []
+        for (id, candidates) in Dictionary(grouping: infos, by: \.info.id) {
+            let preferred = selected[id]
+            let ordered = candidates.sorted {
+                version($0.info.version) > version($1.info.version)
+            }
+            let usable = ordered.filter {
+                runtimeRejection(
+                    id: $0.info.id,
+                    version: $0.info.version
+                ) == nil && isUsable(
+                    $0,
+                    appVersion: appVersion,
+                    host: host
+                )
+            }
+            var loadOrder = usable
+            if let selectedVersion = startupVersion(
+                available: usable.map { $0.info.version },
+                requested: preferred
+            ), let pinned = usable.first(where: {
+                $0.info.version == selectedVersion
+            }) {
+                loadOrder.removeAll {
+                    $0.info.version == selectedVersion
+                }
+                loadOrder.insert(pinned, at: 0)
+            }
+            if preferred != nil,
+               !usable.contains(where: {
+                   $0.info.version == preferred
+               }) {
+                clearRequestedVersion(id: id)
+            }
+            if loadOrder.isEmpty, let first = ordered.first {
+                loadOrder = [first]
+            }
+            guard var record = loadOrder.first.map({
+                load(at: $0.url, appVersion: appVersion, host: host)
+            }) else { continue }
+            if record.incompatibility != nil,
+               record.version == preferred {
+                clearRequestedVersion(id: id)
+            }
+            if record.incompatibility != nil, !isResident(id) {
+                for fallback in loadOrder.dropFirst() {
+                    record = load(
+                        at: fallback.url,
+                        appVersion: appVersion,
+                        host: host
+                    )
+                    if record.incompatibility == nil || isResident(id) {
+                        break
+                    }
+                }
+            }
+            if let residentVersion = residentVersions[id],
+               let newest = usable.first,
+               let resident = SemanticVersion(residentVersion),
+               let newestVersion = SemanticVersion(newest.info.version),
+               newestVersion > resident,
+               runtimeRejection(
+                   id: newest.info.id,
+                   version: newest.info.version
+               ) == nil,
+               PluginGate.evaluate(
+                   info: newest.info,
+                   appVersion: appVersion
+               ) == nil,
+               PluginSignature.verify(
+                   bundleURL: newest.url,
+                   host: host
+               ) == nil {
+                record = self.record(
+                    newest.info,
+                    bundleURL: newest.url,
+                    state: .updatePendingRestart
+                )
+            }
+            records.append(record)
         }
-        installed = records
-        return records
+        installed = records.sorted { $0.displayName < $1.displayName }
+        return installed
+    }
+
+    nonisolated static func startupVersion(
+        available: [String],
+        requested: String?
+    ) -> String? {
+        let valid = available.compactMap { value in
+            SemanticVersion(value).map { (value, $0) }
+        }
+        if let requested,
+           valid.contains(where: { $0.0 == requested }) {
+            return requested
+        }
+        return valid.max { $0.1 < $1.1 }?.0
+    }
+
+    @discardableResult
+    static func activate(
+        _ binding: ProjectPackBinding,
+        appVersion: String? = AppVersion.marketing
+    ) -> InstalledPluginRecord? {
+        if let live = liveBinding(id: binding.id), live == binding {
+            return installed.first { $0.id == binding.id && $0.version == binding.version }
+        }
+        guard residentVersions[binding.id] == nil,
+              let installed = installedInfo(id: binding.id, version: binding.version),
+              installed.info.projectSchema == binding.projectSchema else {
+            return nil
+        }
+        let record = load(at: installed.url, appVersion: appVersion)
+        self.installed = self.installed.filter { $0.id != binding.id } + [record]
+        return record
     }
 
     /// Run the full gate for a single bundle and, on success, register its pack
@@ -132,6 +340,10 @@ enum PluginLoader {
         }
 
         guard let bundle = Bundle(url: bundleURL), bundle.load() else {
+            rejectRuntime(
+                info,
+                reason: "the pack's code failed to load"
+            )
             return record(info, bundleURL: bundleURL,
                           state: .incompatible(.malformedMetadata("the pack's code failed to load")))
         }
@@ -139,16 +351,27 @@ enum PluginLoader {
         // below succeeds. Record its version so a later update to this id knows a relaunch is required.
         residentVersions[info.id] = info.version
         guard let entryClass = bundle.principalClass as? PackEntry.Type else {
+            rejectRuntime(
+                info,
+                reason: "entry point \(info.principalClass) not found"
+            )
             return record(info, bundleURL: bundleURL,
                           state: .incompatible(.malformedMetadata("entry point \(info.principalClass) not found")))
         }
 
         let pack = entryClass.init().makePack().pack
-        if pack.name != info.id {
-            Log.plugins.warning("pack id \"\(info.id)\" ≠ loaded pack name \"\(pack.name)\" — activating by \"\(pack.name)\"")
+        guard pack.name == info.id else {
+            let detail = "runtime id \(pack.name) doesn't match \(info.id)"
+            rejectRuntime(info, reason: detail)
+            return record(
+                info,
+                bundleURL: bundleURL,
+                state: .incompatible(.malformedMetadata(detail))
+            )
         }
         PackCatalog.register(pack)
         loadedVersions[info.id] = info.version
+        clearRuntimeRejection(id: info.id, version: info.version)
         Log.plugins.notice("loaded pack \(pack.name) v\(info.version) from \(bundleURL.lastPathComponent)")
         return record(info, bundleURL: bundleURL, state: .loaded)
     }
@@ -175,7 +398,8 @@ enum PluginLoader {
         return InstalledPluginRecord(
             id: info.id, displayName: info.displayName.isEmpty ? info.id : info.displayName,
             tagline: info.tagline, headline: info.headline, benefit: info.benefit,
-            version: info.version, minAppVersion: info.minAppVersion,
+            version: info.version, projectSchema: info.projectSchema,
+            migratesFrom: info.migratesFrom, minAppVersion: info.minAppVersion,
             bundleURL: bundleURL, state: state)
     }
 
@@ -185,6 +409,66 @@ enum PluginLoader {
         Log.plugins.warning("pack \(id) not loaded: \(reason.reason)")
         return InstalledPluginRecord(
             id: id, displayName: id, tagline: "", headline: "", benefit: "",
-            version: "", minAppVersion: "", bundleURL: bundleURL, state: .incompatible(reason))
+            version: "", projectSchema: "", migratesFrom: [], minAppVersion: "",
+            bundleURL: bundleURL, state: .incompatible(reason))
+    }
+
+    private static func installedBundleInfos() -> [(info: PluginBundleInfo, url: URL)] {
+        var unique: [String: (PluginBundleInfo, URL)] = [:]
+        for url in PluginPaths.installedBundles() {
+            guard let info = PluginBundleInfo(bundleURL: url),
+                  PluginPaths.isValidID(info.id),
+                  SemanticVersion(info.version) != nil else { continue }
+            let key = "\(info.id)@\(info.version)"
+            if unique[key] == nil || !isLegacyInstall(url) {
+                unique[key] = (info, url)
+            }
+        }
+        return unique.values.map { (info: $0.0, url: $0.1) }
+    }
+
+    private static func isUsable(
+        _ candidate: (info: PluginBundleInfo, url: URL),
+        appVersion: String?,
+        host: PluginSignature.HostSigningState
+    ) -> Bool {
+        PluginGate.evaluate(
+            info: candidate.info,
+            appVersion: appVersion
+        ) == nil && PluginSignature.verify(
+            bundleURL: candidate.url,
+            host: host
+        ) == nil
+    }
+
+    private static func version(_ value: String) -> SemanticVersion {
+        SemanticVersion(value) ?? SemanticVersion("0.0.0")!
+    }
+
+    private static func rejectRuntime(
+        _ info: PluginBundleInfo,
+        reason: String
+    ) {
+        var rejected = UserDefaults.standard.dictionary(
+            forKey: runtimeRejectionsKey
+        ) as? [String: String] ?? [:]
+        rejected[runtimeRejectionKey(
+            id: info.id,
+            version: info.version
+        )] = reason
+        UserDefaults.standard.set(rejected, forKey: runtimeRejectionsKey)
+    }
+
+    private static func runtimeRejectionKey(
+        id: String,
+        version: String
+    ) -> String {
+        "\(AppVersion.marketing ?? "dev")#\(AppVersion.build ?? "dev")"
+            + "#\(EngineContract.current)|\(id)@\(version)"
+    }
+
+    private static func isLegacyInstall(_ url: URL) -> Bool {
+        url.deletingLastPathComponent().standardizedFileURL
+            == PluginPaths.installDirectory.standardizedFileURL
     }
 }

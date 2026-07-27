@@ -38,6 +38,8 @@ TAGLINE="$(read_field tagline)"
 HEADLINE="$(read_optional headline)"
 BENEFIT="$(read_optional benefit)"
 VERSION="$(read_field version)"
+PROJECT_SCHEMA="$(read_field projectSchema)"
+MIGRATES_FROM="$(python3 -c "import json;print(','.join(json.load(open('$MANIFEST')).get('migratesFrom',[])))")"
 MINAPP="$(read_field minAppVersion)"
 # Badge source, relative to the SwiftPM resource bundle (e.g. MusicvideoPack/badge.png).
 BADGE_SRC="$(read_optional badge)"
@@ -84,7 +86,7 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$PACK/Contents/Ma
 # Info.plist via plistlib — no shell-escaping hazards with the copy strings.
 NGV_ID="$ID" NGV_DISPLAY="$DISPLAY" NGV_TAGLINE="$TAGLINE" NGV_HEADLINE="$HEADLINE" \
 NGV_BENEFIT="$BENEFIT" NGV_VERSION="$VERSION" NGV_MINAPP="$MINAPP" NGV_PRINCIPAL="$PRINCIPAL" \
-NGV_CONTRACT="$CONTRACT" \
+NGV_PROJECT_SCHEMA="$PROJECT_SCHEMA" NGV_MIGRATES_FROM="$MIGRATES_FROM" NGV_CONTRACT="$CONTRACT" \
 python3 - "$PACK/Contents/Info.plist" <<'PY'
 import os, plistlib, sys
 info = {
@@ -100,6 +102,8 @@ info = {
     "NGVPackTagline": os.environ["NGV_TAGLINE"],
     "NGVPackHeadline": os.environ["NGV_HEADLINE"],
     "NGVPackBenefit": os.environ["NGV_BENEFIT"],
+    "NGVProjectSchema": os.environ["NGV_PROJECT_SCHEMA"],
+    "NGVMigratesFrom": [value for value in os.environ["NGV_MIGRATES_FROM"].split(",") if value],
     "NGVMinAppVersion": os.environ["NGV_MINAPP"],
     "NGVEngineContract": int(os.environ["NGV_CONTRACT"]),
 }
@@ -142,6 +146,7 @@ fi
 # Catalog entry (url + badge filled by release.yml/gen_plugins_json for the release).
 NGV_ID="$ID" NGV_DISPLAY="$DISPLAY" NGV_TAGLINE="$TAGLINE" NGV_HEADLINE="$HEADLINE" \
 NGV_BENEFIT="$BENEFIT" NGV_VERSION="$VERSION" NGV_MINAPP="$MINAPP" NGV_SHA="$SHA" \
+NGV_PROJECT_SCHEMA="$PROJECT_SCHEMA" NGV_MIGRATES_FROM="$MIGRATES_FROM" \
 NGV_ZIP="$(basename "$ZIP")" NGV_BADGE="$BADGE_ASSET" \
 python3 - "$OUT/${ID}.entry.json" <<'PY'
 import json, os, sys
@@ -150,6 +155,8 @@ entry = {
     "displayName": os.environ["NGV_DISPLAY"],
     "tagline": os.environ["NGV_TAGLINE"],
     "version": os.environ["NGV_VERSION"],
+    "projectSchema": os.environ["NGV_PROJECT_SCHEMA"],
+    "migratesFrom": [value for value in os.environ["NGV_MIGRATES_FROM"].split(",") if value],
     "minAppVersion": os.environ["NGV_MINAPP"],
     "sha256": os.environ["NGV_SHA"],
     "zip": os.environ["NGV_ZIP"],

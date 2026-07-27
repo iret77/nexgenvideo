@@ -154,6 +154,66 @@ struct ProjectWorkingCopyTests {
         #expect(PackCatalog.registry(activePack: "musicvideo").gateRequirements["analysis"] != nil)
     }
 
+    @Test("transaction commits the staged working copy but not the saved package")
+    func transactionCommitsOnlyRecoveryCopy() throws {
+        let pkg = try tempPackage()
+        let key = uniqueKey()
+        defer {
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        let home = try ProjectWorkingCopy.materialize(
+            key: key,
+            packageURL: pkg
+        )
+        let relative = "migration-proof.txt"
+
+        try ProjectWorkingCopy.transact(key: key) { staging in
+            try Data("migrated".utf8).write(
+                to: staging.appendingPathComponent(relative)
+            )
+        }
+
+        #expect(FileManager.default.fileExists(
+            atPath: home.appendingPathComponent(relative).path
+        ))
+        #expect(!FileManager.default.fileExists(
+            atPath: pkg.appendingPathComponent(relative).path
+        ))
+    }
+
+    @Test("failed transaction leaves the current working copy byte-for-byte intact")
+    func transactionRollsBack() throws {
+        enum Failure: Error { case expected }
+        let pkg = try tempPackage()
+        let key = uniqueKey()
+        defer {
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        let home = try ProjectWorkingCopy.materialize(
+            key: key,
+            packageURL: pkg
+        )
+        let settings = home.appendingPathComponent(
+            ProjectPluginSettings.filename
+        )
+        let before = try Data(contentsOf: settings)
+
+        #expect(throws: Failure.self) {
+            try ProjectWorkingCopy.transact(key: key) { staging in
+                try Data("damaged".utf8).write(
+                    to: staging.appendingPathComponent(
+                        ProjectPluginSettings.filename
+                    )
+                )
+                throw Failure.expected
+            }
+        }
+
+        #expect(try Data(contentsOf: settings) == before)
+    }
+
     @Test("the package declaration stays independent from live working-copy verification")
     func packagePluginDeclarationIsIndependent() throws {
         PackCatalog.register(MusicvideoPack())

@@ -483,7 +483,23 @@ final class EditorViewModel {
     func setActivePlugin(_ name: String?) {
         guard let home = workingCopyHome, canChangeFormat else { return }
         do {
-            try ProjectPluginSettings.setActivePlugin(name, projectURL: home)
+            if let name {
+                guard let binding = PluginLoader.liveBinding(id: name) else {
+                    mediaPanelToast = MediaPanelToast(
+                        message: "Restart NexGenVideo before activating this format pack."
+                    )
+                    return
+                }
+                try ProjectPluginSettings.setActivePlugin(
+                    binding,
+                    projectURL: home
+                )
+            } else {
+                try ProjectPluginSettings.setActivePlugin(
+                    nil as ProjectPackBinding?,
+                    projectURL: home
+                )
+            }
             activePluginName = name
             declaredPluginName = name
             onPipelineChanged?()

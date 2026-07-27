@@ -75,6 +75,12 @@ release or a wasted CI cycle.
   Static `otool` / `nm` checks have twice passed while the shipped pack failed with "Damaged pack /
   entry point not found".
 - **Plugins are real, loadable `.ngvpack` bundles.** Compiled-in is not a shippable state.
+- **Pack updates never rewrite project truth.** Pack versions install side-by-side, and `ngv.json`
+  pins id + version + project schema. New format projects must finish the catalog/update check and
+  refuse stale resident code. Existing projects open their exact pinned version; switching versions
+  requires an explicit transactional Recovery-copy upgrade, plus a declared pack migration when its
+  project schema changes. Never collapse this back to one global `<id>.ngvpack`, id-only project
+  state, or a silent “latest wins” policy.
 
 ### Agent and chat surface
 

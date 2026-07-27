@@ -29,6 +29,12 @@ private struct ProjectPackageSnapshot: Sendable {
     var mintNewIdentity: Bool
 }
 
+private enum PackBindingFinalization: Equatable {
+    case none
+    case legacyPin
+    case upgrade
+}
+
 final class VideoProject: NSDocument {
 
     static let typeIdentifier = Project.typeIdentifier
@@ -64,13 +70,25 @@ final class VideoProject: NSDocument {
 
     @MainActor
     static func load(from url: URL) async throws -> VideoProject {
-        let contents = try await Task.detached(priority: .userInitiated) {
+        var contents = try await Task.detached(priority: .userInitiated) {
             try readProjectPackage(at: url)
         }.value
         let doc = VideoProject()
         doc.fileURL = url
         doc.fileType = typeIdentifier
         doc.applyLoadedContents(contents)
+        let finalization = try doc.finalizePackBindingAfterOpen()
+        if finalization == .upgrade {
+            contents = try await Task.detached(priority: .userInitiated) {
+                try readProjectPackage(at: url)
+            }.value
+            contents.workingCopy = .init(
+                home: contents.workingCopy.home,
+                recoveredUnsaved: false
+            )
+            doc.applyLoadedContents(contents)
+            doc.updateChangeCount(.changeDone)
+        }
         return doc
     }
 
@@ -95,6 +113,25 @@ final class VideoProject: NSDocument {
                 "hasGenerationLog": loadedGenerationLog != nil
             ]
         )
+    }
+
+    @MainActor
+    private func finalizePackBindingAfterOpen() throws -> PackBindingFinalization {
+        guard let projectURL = fileURL,
+              let key = loadedWorkingCopyKey else { return .none }
+        if try ProjectPackMigration.applyPending(
+            projectURL: projectURL,
+            workingCopyKey: key
+        ) {
+            return .upgrade
+        }
+        if try ProjectPackMigration.bindLegacyProject(
+            projectURL: projectURL,
+            workingCopyKey: key
+        ) {
+            return .legacyPin
+        }
+        return .none
     }
 
     private nonisolated static func readProjectPackage(at url: URL) throws -> ProjectPackageContents {
@@ -167,13 +204,12 @@ final class VideoProject: NSDocument {
         )
     }
 
+    nonisolated static func validateEditableContents(at root: URL) throws {
+        _ = try readEditableContents(at: root)
+    }
+
     override func save(to url: URL, ofType typeName: String, for saveOperation: NSDocument.SaveOperationType, completionHandler: @escaping (Error?) -> Void) {
-        // Backstop for any path that reaches an open document without its format pack — the Home
-        // window and the Open panel are gated in `AppState`, but a Finder double-click goes straight
-        // through NSDocumentController. Without its pack the session runs on the GENERIC phase set
-        // (musicvideo's analysis phase simply absent), so writing that shape over the package would
-        // normalize a project the user can no longer tell was damaged. Refuse instead: the package on
-        // disk stays the last good one, and the banner already says the workflow is inactive.
+        // Backstop against any direct write path that bypasses the shared project-open gate.
         if let contextError = Self.saveContextError(
             isMainThread: Thread.isMainThread
         ) {
@@ -198,10 +234,17 @@ final class VideoProject: NSDocument {
         snapshotSourceProjectURL = fileURL
         snapshotMintNewIdentity = saveOperation == .saveAsOperation || saveOperation == .saveToOperation
         let savedWorkingCopyKey = snapshotWorkingCopyKey
+        let migrationSourceURL = fileURL
         let clearsWorkingCopy = saveOperation != .saveToOperation
         super.save(to: url, ofType: typeName, for: saveOperation) { error in
             if error == nil, clearsWorkingCopy, let savedWorkingCopyKey {
                 ProjectWorkingCopy.markSaved(key: savedWorkingCopyKey)
+                if let migrationSourceURL {
+                    ProjectPackMigration.complete(
+                        projectURL: migrationSourceURL
+                    )
+                }
+                ProjectPackMigration.complete(projectURL: url)
             } else if error != nil {
                 self.clearSaveSnapshot()
             }
@@ -238,8 +281,15 @@ final class VideoProject: NSDocument {
                 problem: "conflict: this session declares “\(expected)” "
                     + "but the live project resolves “\(resolved)”"
             )
-        case .missing(let id), .needsRestart(let id):
+        case .missing(let id), .missingVersion(let id, _):
             return PackUnavailableError(packID: id, detail: nil)
+        case .needsRestart(let binding):
+            return PackUnavailableError(packID: binding.id, detail: nil)
+        case .legacyMigration(let target):
+            return PackUnavailableError(
+                packID: target.id,
+                detail: "The legacy project hasn't been migrated."
+            )
         case .incompatible(let id, let reason):
             return PackUnavailableError(packID: id, detail: reason)
         }
@@ -506,6 +556,10 @@ final class VideoProject: NSDocument {
     override func close() {
         // Clean close (any save/don't-save prompt already resolved) → drop the working copy so the next
         // launch doesn't mistake it for crash-surviving unsaved work.
+        if let fileURL,
+           ProjectPackMigration.hasPending(projectURL: fileURL) {
+            ProjectPackMigration.cancel(projectURL: fileURL)
+        }
         editorViewModel.releaseWorkingCopy()
         super.close()
         DispatchQueue.main.async {

@@ -72,6 +72,15 @@ struct PluginGateTests {
         #expect(PluginGate.evaluate(info: info(minApp: "9.9.9"), appVersion: nil) == nil)
     }
 
+    @Test func malformedHostVersionFailsClosed() {
+        #expect(
+            PluginGate.evaluate(
+                info: info(minApp: "0.1.0"),
+                appVersion: "1.0.0-rc1"
+            ) == .invalidHostVersion("1.0.0-rc1")
+        )
+    }
+
     /// The host-missing-version leniency applies ONLY to a well-formed pack: a
     /// malformed `NGVMinAppVersion` is incompatible even on a dev host — it must
     /// never be silently treated as compatible.
@@ -98,6 +107,28 @@ struct PluginGateTests {
         }
         if case .malformedMetadata = PluginGate.evaluate(info: info(principal: ""), appVersion: "1.0.0") {} else {
             Issue.record("empty principal class should be malformed")
+        }
+        var invalidSchema: [String: Any] = [
+            PluginBundleInfo.Key.id: "musicvideo",
+            PluginBundleInfo.Key.version: "0.0.1",
+            PluginBundleInfo.Key.projectSchema: "other/1.0.0",
+            PluginBundleInfo.Key.minAppVersion: "0.1.0",
+            PluginBundleInfo.Key.principalClass: "MusicvideoPackEntry",
+            PluginBundleInfo.Key.engineContract: EngineContract.current,
+        ]
+        if case .malformedMetadata = PluginGate.evaluate(
+            info: PluginBundleInfo(plist: invalidSchema),
+            appVersion: "1.0.0"
+        ) {} else {
+            Issue.record("a schema owned by another pack should be malformed")
+        }
+        invalidSchema[PluginBundleInfo.Key.projectSchema] = "musicvideo/1.0.0"
+        invalidSchema[PluginBundleInfo.Key.migratesFrom] = ["musicvideo/1.0.0"]
+        if case .malformedMetadata = PluginGate.evaluate(
+            info: PluginBundleInfo(plist: invalidSchema),
+            appVersion: "1.0.0"
+        ) {} else {
+            Issue.record("a pack must not migrate its current schema from itself")
         }
     }
 
@@ -130,6 +161,7 @@ struct PluginGateTests {
         let read = try #require(PluginBundleInfo(bundleURL: bundleURL))
         #expect(read.id == "musicvideo")
         #expect(read.version == "0.0.1")
+        #expect(read.projectSchema == "musicvideo/legacy")
         #expect(read.minAppVersion == "0.1.0")
         #expect(read.principalClass == "MusicvideoPackEntry")
         #expect(read.displayName == "Music Video Studio")
@@ -156,5 +188,14 @@ struct PluginGateTests {
         let url = PluginPaths.installURL(id: "musicvideo")
         #expect(url.lastPathComponent == "musicvideo.ngvpack")
         #expect(url.deletingLastPathComponent().standardizedFileURL == PluginPaths.installDirectory.standardizedFileURL)
+    }
+
+    @Test func versionedInstallURLKeepsVersionsSideBySide() {
+        let old = PluginPaths.installURL(id: "musicvideo", version: "0.0.5")
+        let new = PluginPaths.installURL(id: "musicvideo", version: "0.0.6")
+        #expect(old != new)
+        #expect(old.lastPathComponent == "0.0.5.ngvpack")
+        #expect(new.lastPathComponent == "0.0.6.ngvpack")
+        #expect(old.deletingLastPathComponent().lastPathComponent == "musicvideo")
     }
 }

@@ -13,6 +13,7 @@ struct HomeView: View {
     ]
 
     @Bindable private var changelog = ChangelogStore.shared
+    @Bindable private var packUpdates = PluginUpdateCenter.shared
     @State private var showFormatSheet = false
 
     /// New project → choose a format first, unless no packs are installed (then generic, no needless
@@ -73,6 +74,35 @@ struct HomeView: View {
             WelcomeTitle()
 
             UpdateBadgeView()
+
+            if let attention = packUpdates.attention {
+                Button {
+                    if attention == .restartRequired {
+                        packUpdates.restartToApplyUpdates()
+                    } else {
+                        SettingsWindowController.shared.show(tab: .plugins)
+                    }
+                } label: {
+                    Label(
+                        attention == .restartRequired
+                            ? "Format pack restart required"
+                            : "Format pack update available",
+                        systemImage: attention == .restartRequired
+                            ? "exclamationmark.circle.fill"
+                            : "arrow.clockwise.circle"
+                    )
+                    .font(.system(
+                        size: AppTheme.FontSize.xs,
+                        weight: AppTheme.FontWeight.medium
+                    ))
+                    .foregroundStyle(
+                        attention == .restartRequired
+                            ? AppTheme.Status.warningColor
+                            : AppTheme.Accent.primary
+                    )
+                }
+                .buttonStyle(.plain)
+            }
 
             Spacer()
         }

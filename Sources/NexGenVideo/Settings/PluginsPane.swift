@@ -87,10 +87,26 @@ struct PluginsPane: View {
         } else {
             switch rowData.status {
             case .updatePendingRestart:
-                Button("Restart now") { AppRelaunch.now() }
+                let isActiveProjectPack = AppState.shared.activeProject?
+                    .editorViewModel.activePluginName == rowData.id
+                Button(
+                    isActiveProjectPack
+                        ? "Upgrade Project"
+                        : "Restart now"
+                ) {
+                    if isActiveProjectPack {
+                        AppState.shared.upgradeActiveProjectPack()
+                    } else {
+                        PluginUpdateCenter.shared.restartToApplyUpdates()
+                    }
+                }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
-                    .help("Restart NexGenVideo to activate this update.")
+                    .help(
+                        isActiveProjectPack
+                            ? "Upgrade this project to the installed format-pack update."
+                            : "Restart NexGenVideo to activate this update."
+                    )
             case .installed(_, let update):
                 if let update {
                     Button("Update") { Task { _ = await manager.install(update); await manager.refresh() } }

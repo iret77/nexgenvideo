@@ -4,9 +4,7 @@ import Testing
 
 @testable import NexGenVideo
 
-/// The host↔pack binary contract gate. A pack built against a different engine contract has no
-/// witness-table entry for requirements added since — calling through it jumps to a null address.
-/// It must be refused from the Info.plist alone, before `Bundle.load()` maps any of its code in.
+/// The host↔pack binary contract gate. Only the host's explicit compatibility range may load.
 @Suite("Loadable-pack engine contract")
 struct PluginEngineContractTests {
 
@@ -30,11 +28,31 @@ struct PluginEngineContractTests {
     }
 
     @Test func differingContractIsIncompatible() {
-        for offset in [-1, 1, 7] {
-            let packContract = EngineContract.current + offset
+        for packContract in [
+            EngineContract.minimumCompatible - 1,
+            EngineContract.current + 1,
+            EngineContract.current + 7,
+        ] {
             let blocked = PluginGate.evaluate(info: info(contract: packContract), appVersion: "0.4.1")
             #expect(blocked == .requiresEngineContract(pack: packContract, app: EngineContract.current))
         }
+    }
+
+    @Test func explicitlyCompatibleOlderContractPassesOnNewHost() {
+        #expect(
+            PluginGate.contractCheck(
+                packContract: 2,
+                engine: 3,
+                minimumCompatible: 2
+            ) == nil
+        )
+        #expect(
+            PluginGate.contractCheck(
+                packContract: 3,
+                engine: 2,
+                minimumCompatible: 2
+            ) == .requiresEngineContract(pack: 3, app: 2)
+        )
     }
 
     /// Every pack shipped before the check exists carries no `NGVEngineContract` — it reads as 0 and
@@ -52,8 +70,16 @@ struct PluginEngineContractTests {
     }
 
     @Test func contractCheckIsPure() {
-        #expect(PluginGate.contractCheck(packContract: 3, engine: 3) == nil)
-        #expect(PluginGate.contractCheck(packContract: 1, engine: 3)
+        #expect(PluginGate.contractCheck(
+            packContract: 3,
+            engine: 3,
+            minimumCompatible: 2
+        ) == nil)
+        #expect(PluginGate.contractCheck(
+            packContract: 1,
+            engine: 3,
+            minimumCompatible: 2
+        )
                 == .requiresEngineContract(pack: 1, app: 3))
     }
 
@@ -102,7 +128,8 @@ struct ProjectPackGateTests {
     private func record(id: String = "musicvideo", state: InstalledPluginRecord.State) -> InstalledPluginRecord {
         InstalledPluginRecord(
             id: id, displayName: id, tagline: "", headline: "", benefit: "",
-            version: "0.0.4", minAppVersion: "0.1.0",
+            version: "0.0.4", projectSchema: "\(id)/legacy", migratesFrom: [],
+            minAppVersion: "0.1.0",
             bundleURL: URL(fileURLWithPath: "/tmp/\(id).ngvpack"), state: state)
     }
 
@@ -194,9 +221,17 @@ struct ProjectPackGateTests {
     }
 
     @Test func stagedUpdateAsksForARestart() {
+        let binding = ProjectPackBinding(
+            id: "musicvideo",
+            version: "0.0.4",
+            projectSchema: "musicvideo/legacy"
+        )!
         #expect(ProjectPackGate.requirement(
             packID: "musicvideo", isRegistered: false, record: record(state: .updatePendingRestart))
-                == .needsRestart(id: "musicvideo"))
+                == .needsRestart(binding))
+        #expect(ProjectPackGate.requirement(
+            packID: "musicvideo", isRegistered: true, record: record(state: .updatePendingRestart))
+                == .needsRestart(binding))
     }
 
     /// Installed and gate-clean but absent from the registry (it never registered) — treat it as

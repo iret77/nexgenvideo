@@ -6,7 +6,11 @@
   "tagline": "Structured AI music video production with engine-enforced consistency.",
   "headline": "Turn a song into a finished video.",
   "benefit": "Reads your track and plans shots to the beat.",
-  "version": "0.0.5",
+  "version": "0.0.6",
+  "projectSchema": "musicvideo/1.0.0",
+  "migratesFrom": [
+    "musicvideo/legacy"
+  ],
   "minAppVersion": "1.0.0",
   "badge": "MusicvideoPack/badge.png"
 }

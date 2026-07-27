@@ -1,11 +1,12 @@
-# Session handoff — 2026-07-26
+# Session handoff — 2026-07-27
 
 ## Objective
 
 Ship one consolidated NexGenVideo 1.0 release candidate. Never build locally. The latest on-device
-candidate fixed Higgsfield OAuth, then exposed a release-blocking musicvideo startup regression:
-imported Media assets were followed by Story intake before Track assignment and Audio Analysis.
-The corrective pipeline batch is prepared locally but not yet CI-verified.
+candidate still showed Story intake first because its separately installed musicvideo 0.0.5 pack
+remained the resident runtime despite the corrected app source. The current batch fixes the pack
+version/update/project-binding lifecycle and carries the corrected workflow in musicvideo 0.0.6.
+It is prepared locally but not yet CI-verified.
 Do not run the next CI/DMG build, merge, open a release PR or publish without the owner's explicit
 in-the-moment approval.
 
@@ -14,7 +15,7 @@ in-the-moment approval.
 - Branch: `codex/release-1.0-rc`
 - Base: `origin/main`
 - App/changelog version: `1.0.0`
-- Musicvideo pack candidate: `0.0.5` (stable catalog currently `0.0.4`)
+- Musicvideo pack candidate: `0.0.6` with project schema `musicvideo/1.0.0`
 - Last green dry-run commit: `38d644efb917fe96ff89fe8943cfac6df344e482`
 - Green release workflow: `30138553162`
 - The run passed the full test suite, signing, app and pack notarization/stapling, external signed-pack
@@ -32,7 +33,7 @@ in-the-moment approval.
   generic failure mapping.
 - No local build or test was run; macOS 26 GitHub Actions remains the only verification surface.
 
-The current pipeline correction is uncommitted on `codex/release-1.0-rc`:
+The current pipeline and pack-lifecycle correction is uncommitted on `codex/release-1.0-rc`:
 
 - `AGENTS.md` and `CLAUDE.md` now contain the same standalone project rules with no cross-file include;
   `scripts/release_preflight.py` blocks drift between them.
@@ -67,9 +68,31 @@ The current pipeline correction is uncommitted on `codex/release-1.0-rc`:
   decline state survive project round-trips and media deletion.
 - Release tests cover the visible first Track card with preloaded Media, the analysis frontier, both
   greenfield and existing-story paths, gate-to-intake ordering, role isolation and runtime phase order.
-- Pack candidate source and publication manifest now both report `0.0.5`; their minimum app version
+- Pack candidate source and publication manifest now both report `0.0.6`; their minimum app version
   is locked to `1.0.0` by release preflight.
 - Static JSON/Python/AppTheme checks pass. Swift/macOS verification remains CI-only.
+
+The release-blocking pack-lifecycle correction is now part of that batch:
+
+- installed versions coexist under `Plugins/<id>/<version>.ngvpack`; legacy flat installs remain
+  readable but no longer win over a newer compatible version by default;
+- every new or upgraded project pins pack id, exact version and project schema in `ngv.json`;
+- catalog/update staging is shared between launch, Home, Settings and new-project creation; the UI
+  distinguishes update-available from restart-required with the approved symbols;
+- new Music Video projects wait for the catalog check and refuse stale resident code instead of
+  binding whichever dylib happened to load first;
+- explicit runtime-version selection commits only from `willTerminate`, so cancelling the
+  save/restart review changes no persistent selection and cannot strand an open project;
+- existing projects keep their exact binding. A version change is explicit; a schema change also
+  requires matching bundle metadata and a pack-owned runtime migration;
+- migrations clone the Recovery working copy, validate before atomic replacement, keep the saved
+  package untouched until Save, survive a crash, and remain cancelable until Save;
+- legacy `musicvideo/legacy → musicvideo/1.0.0` is explicitly data-identical; only the binding changes;
+- contract-3 hosts accept the additive contract-2 pack ABI, while contract-2 hosts reject contract-3
+  packs before load;
+- Finder/open-document events now route through the same fail-closed `AppState` pack gate;
+- release tests cover stale-resident startup, newest-compatible selection, delayed restart commit,
+  project-specific attention, exact binding decode, rollback and data-identical legacy adoption.
 
 The Settings release pass is present but the latest correction is not yet CI-verified:
 

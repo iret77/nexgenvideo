@@ -123,6 +123,7 @@ final class PluginManager {
         do {
             _ = try await PluginInstaller.install(entry, appVersion: appVersion)
             installed = PluginLoader.installed
+            PluginUpdateCenter.shared.refreshInstalledAttention()
             NotificationCenter.default.post(name: .pluginInstallationChanged, object: entry.id)
             return true
         } catch {

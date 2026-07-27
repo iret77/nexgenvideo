@@ -82,6 +82,9 @@ jobs:
           versions = [p["version"] for p in plugins if p["id"] == "musicvideo"]
           assert "0.0.1" in versions, f"append-only violated — older version dropped: {versions}"
           assert len(versions) > 1, f"the freshly built version was not appended: {versions}"
+          fresh = next(p for p in plugins if p["id"] == "musicvideo" and p["version"] != "0.0.1")
+          assert fresh["projectSchema"] == "musicvideo/1.0.0", fresh
+          assert fresh["migratesFrom"] == ["musicvideo/legacy"], fresh
           for p in plugins:
               assert p["url"].endswith(f"{p['id']}-{p['version']}.ngvpack.zip"), f"unversioned asset URL: {p['url']}"
           print(f"catalog carries {len(versions)} musicvideo version(s): {versions}")

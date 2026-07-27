@@ -45,7 +45,7 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.0.5")
+        #expect(pack.version == "0.0.6")
         #expect(pack.manifest.minAppVersion == "1.0.0")
     }
 
@@ -68,5 +68,46 @@ struct MusicvideoPackTests {
         let entry = reg.engine.uiContracts["analysis"]
         #expect(entry?.surface == "choice")
         #expect(entry?.taskClass == "classification")
+    }
+
+    @Test("pack registers every declared project-schema migration")
+    func packRegistersProjectMigrations() {
+        let reg = PackRegistry()
+        reg.load(MusicvideoPack())
+        let migrations = reg.engine.projectSchemaMigrations
+        #expect(migrations.contains {
+            $0.from == "musicvideo/legacy" && $0.to == "musicvideo/1.0.0"
+        })
+        #expect(migrations.count == 1)
+    }
+
+    @Test("legacy schema adoption preserves existing pack artifacts byte-for-byte")
+    func legacySchemaAdoptionIsDataIdentical() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "musicvideo-migration-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let artifact = root.appendingPathComponent("project.yaml")
+        let before = Data("project: legacy\n".utf8)
+        try before.write(to: artifact)
+
+        let reg = PackRegistry()
+        reg.load(MusicvideoPack())
+        let migration = try #require(
+            reg.engine.projectSchemaMigrations.first
+        )
+        try migration.migrate(root)
+
+        #expect(try Data(contentsOf: artifact) == before)
+        #expect(
+            try FileManager.default.contentsOfDirectory(
+                atPath: root.path
+            ) == ["project.yaml"]
+        )
     }
 }

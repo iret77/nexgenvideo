@@ -130,6 +130,108 @@ final class AppState {
         project.showWindows()
     }
 
+    func upgradeActiveProjectPack() {
+        guard let project = activeProject,
+              let projectURL = project.fileURL,
+              let workingRoot = project.editorViewModel.workingRoot else { return }
+        guard case .bound(let source) = ProjectPluginSettings.bindingResolution(
+            projectURL: workingRoot
+        ) else {
+            notify(
+                message: "Save the project before upgrading its format pack",
+                informative: "The current pack version must be pinned in the project first."
+            )
+            return
+        }
+        if case .bound(let saved) = ProjectPluginSettings.bindingResolution(
+            projectURL: projectURL
+        ), saved == source {
+            schedulePackUpgrade(
+                projectURL: projectURL,
+                source: source
+            )
+            return
+        }
+        project.save(
+            to: projectURL,
+            ofType: VideoProject.typeIdentifier,
+            for: .saveOperation
+        ) { error in
+            DispatchQueue.main.async {
+                if let error {
+                    NSAlert(error: error).runModal()
+                } else {
+                    self.schedulePackUpgrade(
+                        projectURL: projectURL,
+                        source: source
+                    )
+                }
+            }
+        }
+    }
+
+    private func schedulePackUpgrade(
+        projectURL: URL,
+        source: ProjectPackBinding
+    ) {
+        guard let target = PluginUpdateCenter.shared.targetByID[source.id],
+              let installed = PluginLoader.installedInfo(
+                  id: target.id,
+                  version: target.version
+              ),
+              installed.info.projectSchema == target.projectSchema,
+              target != source else {
+            notify(
+                message: "No format-pack upgrade is ready",
+                informative: "Check Format Packs in Settings for updates."
+            )
+            return
+        }
+        if let reason = PluginGate.evaluate(
+            info: installed.info,
+            appVersion: AppVersion.marketing
+        ) ?? PluginSignature.verify(
+            bundleURL: installed.url,
+            host: PluginSignature.hostSigningState()
+        ) {
+            notify(
+                message: "This format-pack upgrade isn't usable",
+                informative: reason.reason
+            )
+            return
+        }
+        guard ProjectPackMigration.upgradeKind(
+                  source: source,
+                  target: target
+              ) == .bindingOnly
+                || installed.info.migratesFrom.contains(source.projectSchema) else {
+            notify(
+                message: "This project can't be upgraded automatically",
+                informative: "The installed pack doesn't declare a migration from "
+                    + "\(source.projectSchema) to \(target.projectSchema)."
+            )
+            return
+        }
+        guard confirm(
+            message: "Upgrade this project to \(source.id) \(target.version)",
+            informative: "NexGenVideo will restart, upgrade a Recovery copy, and keep "
+                + "the saved project untouched until you save.",
+            action: "Upgrade and Restart"
+        ) else { return }
+        do {
+            let request = try ProjectPackMigration.prepareSchedule(
+                projectURL: projectURL,
+                source: source,
+                target: target
+            )
+            AppRelaunch.now {
+                ProjectPackMigration.commit(request)
+            }
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
     func revealGeneratedAssetFromNotification(assetId: String?, projectURL: URL?) {
         NSApp.activate(ignoringOtherApps: true)
         guard let project = notificationTargetProject(assetId: assetId, projectURL: projectURL) else {
@@ -182,6 +284,32 @@ final class AppState {
     /// saved and `ngv.json` written BEFORE the windows are made — otherwise the project would open
     /// generic regardless of the choice. Hence: save → set format → show windows.
     func createNewProject(format: String? = nil) {
+        guard let format, !format.isEmpty else {
+            presentNewProjectPanel(binding: nil)
+            return
+        }
+        Task {
+            let progress = PackInstallProgress(packID: format)
+            progress.show()
+            defer { progress.close() }
+            switch await PluginUpdateCenter.shared.prepareNewProject(packID: format) {
+            case .ready(let binding):
+                progress.close()
+                presentNewProjectPanel(binding: binding)
+            case .restartRequired(let binding):
+                progress.close()
+                offerRestart(binding: binding)
+            case .unavailable(let reason):
+                progress.close()
+                notify(
+                    message: "Couldn't prepare the “\(format)” format",
+                    informative: reason
+                )
+            }
+        }
+    }
+
+    private func presentNewProjectPanel(binding: ProjectPackBinding?) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [Self.projectContentType]
         panel.nameFieldStringValue = Project.defaultProjectName
@@ -201,8 +329,11 @@ final class AppState {
                     return
                 }
                 do {
-                    if let format, !format.isEmpty {
-                        try ProjectPluginSettings.setActivePlugin(format, projectURL: url)
+                    if let binding {
+                        try ProjectPluginSettings.setActivePlugin(
+                            binding,
+                            projectURL: url
+                        )
                     }
                     // A fresh UUID prevents a new project from inheriting a namesake's recovery data.
                     try ProjectIdentity.regenerate(at: url)
@@ -228,6 +359,21 @@ final class AppState {
         }
     }
 
+    func openProjectsFromSystem(_ urls: [URL]) async -> NSApplication.DelegateReply {
+        var reply: NSApplication.DelegateReply = .success
+        for url in urls {
+            do {
+                if try await openProjectAsync(at: url) == nil {
+                    reply = .cancel
+                }
+            } catch {
+                NSAlert(error: error).runModal()
+                reply = .failure
+            }
+        }
+        return reply
+    }
+
     /// Returns nil when the project's format pack isn't available and the user didn't install it —
     /// the open is abandoned deliberately, so the caller must not treat it as an error.
     @discardableResult
@@ -239,7 +385,32 @@ final class AppState {
         // Before the document exists: a pack project opened without its pack would come up generic
         // and could be SAVED that way, normalizing it to the wrong shape.
         guard await ensurePackAvailable(for: resolved) else { return nil }
-        let doc = try await VideoProject.load(from: resolved)
+        let doc: VideoProject
+        do {
+            doc = try await VideoProject.load(from: resolved)
+        } catch {
+            if ProjectPackMigration.request(for: resolved) != nil {
+                if offerPendingUpgradeCancellation(
+                    projectURL: resolved,
+                    reason: error.localizedDescription
+                ) {
+                    return try await openProjectAsync(
+                        at: resolved,
+                        register: register,
+                        options: options
+                    )
+                }
+                return nil
+            }
+            if ProjectPackMigration.legacyTarget(for: resolved) != nil {
+                offerLegacyUpgradeCancellation(
+                    projectURL: resolved,
+                    reason: error.localizedDescription
+                )
+                return nil
+            }
+            throw error
+        }
         if let existing = showExistingProject(at: resolved, register: register, options: options) {
             return existing
         }
@@ -303,29 +474,212 @@ final class AppState {
             )
             return false
 
-        case .needsRestart(let id):
-            offerRestart(id: id)
+        case .needsRestart(let binding):
+            if let request = ProjectPackMigration.request(for: projectURL) {
+                return resolvePendingUpgradeRestart(
+                    request,
+                    projectURL: projectURL
+                )
+            }
+            if let target = ProjectPackMigration.legacyTarget(
+                for: projectURL
+            ) {
+                resolveLegacyUpgradeRestart(
+                    target,
+                    projectURL: projectURL
+                )
+                return false
+            }
+            offerRestart(binding: binding)
             return false
+
+        case .legacyMigration(let target):
+            guard confirm(
+                message: "Upgrade this legacy \(target.id) project",
+                informative: "NexGenVideo will migrate a Recovery copy to "
+                    + "\(target.projectSchema). The saved project stays untouched until Save.",
+                action: "Upgrade"
+            ) else { return false }
+            do {
+                try ProjectPackMigration.scheduleLegacy(
+                    projectURL: projectURL,
+                    target: target
+                )
+                return true
+            } catch {
+                NSAlert(error: error).runModal()
+                return false
+            }
 
         case .missing(let id):
             guard confirm(
                 message: "Install the “\(id)” format pack",
                 informative: "Opening this project without it falls back to the generic workflow — and saving would keep it there.",
                 action: "Install") else { return false }
-            return await installPack(id: id, for: projectURL)
+            return await installPack(id: id, version: nil, for: projectURL)
+
+        case .missingVersion(let id, let version):
+            guard confirm(
+                message: "Install “\(id)” \(version)",
+                informative: "This project is pinned to that exact pack version. "
+                    + "It stays closed until the version is installed.",
+                action: "Install"
+            ) else { return false }
+            return await installPack(id: id, version: version, for: projectURL)
 
         case .incompatible(let id, let reason):
+            if ProjectPackMigration.request(for: projectURL) != nil {
+                return offerPendingUpgradeCancellation(
+                    projectURL: projectURL,
+                    reason: reason
+                )
+            }
+            if ProjectPackMigration.legacyTarget(for: projectURL) != nil {
+                offerLegacyUpgradeCancellation(
+                    projectURL: projectURL,
+                    reason: reason
+                )
+                return false
+            }
             guard confirm(
                 message: "Update the “\(id)” format pack",
                 informative: "\(reason) The project stays closed until the pack runs on this build.",
                 action: "Update") else { return false }
-            return await installPack(id: id, for: projectURL)
+            return await installPack(id: id, version: nil, for: projectURL)
         }
+    }
+
+    private func resolvePendingUpgradeRestart(
+        _ request: ProjectPackMigration.Request,
+        projectURL: URL
+    ) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Finish upgrading this project"
+        alert.accessoryView = Self.bodyText(
+            "Restart to load \(request.target.id) \(request.target.version), "
+                + "or cancel the pending project upgrade."
+        )
+        alert.addButton(withTitle: "Restart")
+        alert.addButton(withTitle: "Cancel Upgrade")
+        alert.addButton(withTitle: "Keep Closed")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            AppRelaunch.now {
+                PluginLoader.requestVersionForNextLaunch(
+                    id: request.target.id,
+                    version: request.target.version
+                )
+            }
+            return false
+        case .alertSecondButtonReturn:
+            return cancelPendingUpgrade(
+                projectURL: projectURL,
+                source: request.source
+            )
+        default:
+            return false
+        }
+    }
+
+    private func offerPendingUpgradeCancellation(
+        projectURL: URL,
+        reason: String
+    ) -> Bool {
+        guard let request = ProjectPackMigration.request(
+            for: projectURL
+        ) else { return false }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "The project upgrade couldn't complete"
+        alert.accessoryView = Self.bodyText(
+            "\(reason) Cancel the upgrade to return to "
+                + "\(request.source.id) \(request.source.version)."
+        )
+        alert.addButton(withTitle: "Cancel Upgrade")
+        alert.addButton(withTitle: "Keep Closed")
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return false
+        }
+        return cancelPendingUpgrade(
+            projectURL: projectURL,
+            source: request.source
+        )
+    }
+
+    private func resolveLegacyUpgradeRestart(
+        _ target: ProjectPackBinding,
+        projectURL: URL
+    ) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Finish upgrading this legacy project"
+        alert.accessoryView = Self.bodyText(
+            "Restart to load \(target.id) \(target.version), "
+                + "or cancel the pending upgrade."
+        )
+        alert.addButton(withTitle: "Restart")
+        alert.addButton(withTitle: "Cancel Upgrade")
+        alert.addButton(withTitle: "Keep Closed")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            AppRelaunch.now {
+                PluginLoader.requestVersionForNextLaunch(
+                    id: target.id,
+                    version: target.version
+                )
+            }
+        case .alertSecondButtonReturn:
+            ProjectPackMigration.cancel(projectURL: projectURL)
+        default:
+            break
+        }
+    }
+
+    private func offerLegacyUpgradeCancellation(
+        projectURL: URL,
+        reason: String
+    ) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "The legacy project upgrade couldn't complete"
+        alert.accessoryView = Self.bodyText(
+            "\(reason) The saved legacy project is untouched."
+        )
+        alert.addButton(withTitle: "Cancel Upgrade")
+        alert.addButton(withTitle: "Keep Closed")
+        if alert.runModal() == .alertFirstButtonReturn {
+            ProjectPackMigration.cancel(projectURL: projectURL)
+        }
+    }
+
+    private func cancelPendingUpgrade(
+        projectURL: URL,
+        source: ProjectPackBinding
+    ) -> Bool {
+        ProjectPackMigration.cancel(projectURL: projectURL)
+        switch ProjectPackGate.evaluate(projectURL: projectURL) {
+        case .satisfied:
+            return true
+        case .needsRestart(_):
+            offerRestart(binding: source)
+        default:
+            notify(
+                message: "The project upgrade was cancelled",
+                informative: "Reopen the project with "
+                    + "\(source.id) \(source.version)."
+            )
+        }
+        return false
     }
 
     /// Fetch + install the pack through the same catalog resolution the plugin picker uses, then
     /// re-run the gate — an install that only lands on disk still can't open the project.
-    private func installPack(id: String, for projectURL: URL) async -> Bool {
+    private func installPack(
+        id: String,
+        version: String?,
+        for projectURL: URL
+    ) async -> Bool {
         let progress = PackInstallProgress(packID: id)
         progress.show()
         // Explicit closes keep the panel from floating over an alert; the defer catches a future
@@ -335,7 +689,12 @@ final class AppState {
         let manager = PluginManager()
         await manager.refresh()
 
-        guard let entry = Self.catalogEntry(id: id, rows: manager.rows(activePluginName: nil)) else {
+        let entry = version.flatMap { requiredVersion in
+            manager.catalog.first {
+                $0.id == id && $0.version == requiredVersion
+            }
+        } ?? Self.catalogEntry(id: id, rows: manager.rows(activePluginName: nil))
+        guard let entry else {
             progress.close()
             notify(message: "Couldn't install the “\(id)” format pack",
                    informative: manager.catalogState == .offline
@@ -372,10 +731,12 @@ final class AppState {
                 informative: "Restore ngv.json from a known-good project version, then open the project again."
             )
             return false
-        case .needsRestart:
-            offerRestart(id: id)
+        case .needsRestart(let binding):
+            offerRestart(binding: binding)
             return false
-        case .missing, .incompatible:
+        case .legacyMigration:
+            return await ensurePackAvailable(for: projectURL)
+        case .missing, .missingVersion, .incompatible:
             notify(message: "Couldn't install the “\(id)” format pack",
                    informative: "It installed but didn't come online. Restart NexGenVideo and open the project again.")
             return false
@@ -395,12 +756,17 @@ final class AppState {
         }
     }
 
-    private func offerRestart(id: String) {
+    private func offerRestart(binding: ProjectPackBinding) {
         guard confirm(
-            message: "Restart NexGenVideo to load “\(id)”",
+            message: "Restart NexGenVideo to load “\(binding.id)”",
             informative: "The pack is installed. A pack's code only goes live in a fresh process.",
             action: "Restart") else { return }
-        AppRelaunch.now()
+        AppRelaunch.now {
+            PluginLoader.requestVersionForNextLaunch(
+                id: binding.id,
+                version: binding.version
+            )
+        }
     }
 
     private func confirm(message: String, informative: String, action: String) -> Bool {

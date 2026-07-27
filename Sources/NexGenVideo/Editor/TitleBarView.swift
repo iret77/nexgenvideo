@@ -9,6 +9,7 @@ import SwiftUI
 /// breadcrumb — three roles, three kinds of chrome (docs/UI_UX_CONCEPT.md §3).
 struct TitleBarView: View {
     @Environment(EditorViewModel.self) private var editor
+    @Bindable private var packUpdates = PluginUpdateCenter.shared
     @State private var showsPluginPicker = false
 
     var body: some View {
@@ -110,13 +111,40 @@ struct TitleBarView: View {
     /// artifacts (phases/bible/shotlist are format-specific). Generic counts as a started workflow too
     /// once its pipeline exists. Single source of truth: the same gate `setActivePlugin` enforces.
     private var formatLocked: Bool { !editor.canChangeFormat }
+    private var activeProjectBinding: ProjectPackBinding? {
+        guard case .bound(let binding) = ProjectPluginSettings.bindingResolution(
+            projectURL: editor.workingRoot
+        ) else { return nil }
+        return binding
+    }
+    private var activePackAttention: PluginUpdateCenter.Attention? {
+        packUpdates.attention(for: activeProjectBinding)
+    }
 
     /// The Format control. Before production starts it's a tappable picker (choose/change the format —
     /// generic ⇄ pack — safe, no artifacts yet). Once production starts it becomes a plain STATUS pill
     /// (no chevron, not tappable): the workspace shows the running format, but you can't switch it.
     @ViewBuilder
     private var pluginChip: some View {
-        if formatLocked {
+        if formatLocked,
+           activePackAttention != nil,
+           editor.activePluginName != nil {
+            Button {
+                if activePackAttention == .restartRequired {
+                    AppState.shared.upgradeActiveProjectPack()
+                } else {
+                    SettingsWindowController.shared.show(tab: .plugins)
+                }
+            } label: {
+                chipBody(interactive: false)
+            }
+            .buttonStyle(.plain)
+            .help(
+                activePackAttention == .restartRequired
+                    ? "Upgrade this project to the installed format-pack update."
+                    : "Open Format Packs to install the available update."
+            )
+        } else if formatLocked {
             chipBody(interactive: false)
                 .help("Format is set for this project. It's chosen at the start — changing it mid-workflow would strand the pipeline.")
         } else {
@@ -147,6 +175,15 @@ struct TitleBarView: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(AppTheme.Text.mutedColor)
+            }
+            if let attention = activePackAttention {
+                Image(systemName: attention == .restartRequired
+                      ? "exclamationmark.circle.fill"
+                      : "arrow.clockwise.circle")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(attention == .restartRequired
+                                     ? AppTheme.Status.warningColor
+                                     : AppTheme.Accent.primary)
             }
         }
         .padding(.horizontal, AppTheme.Spacing.smMd)

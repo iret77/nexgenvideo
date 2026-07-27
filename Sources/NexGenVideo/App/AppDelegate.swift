@@ -44,6 +44,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    @MainActor
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        let urls = filenames.map(URL.init(fileURLWithPath:))
+        Task {
+            let reply = await AppState.shared.openProjectsFromSystem(urls)
+            sender.reply(toOpenOrPrint: reply)
+        }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             AppState.shared.showHome()

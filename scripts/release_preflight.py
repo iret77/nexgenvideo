@@ -27,6 +27,7 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "referencePlanProvider",
     "cockpitSurfaces",
     "phaseLineageProviders",
+    "projectSchemaMigrations",
 ]
 
 
@@ -184,6 +185,28 @@ def validate_plugin_version(release_version: str, published_catalog: Path) -> No
         manifest.get("version"),
         "plugins/musicvideo.json version",
     )
+    project_schema = manifest.get("projectSchema")
+    if (
+        not isinstance(project_schema, str)
+        or re.fullmatch(re.escape(pack_id) + r"/\d+\.\d+\.\d+", project_schema) is None
+    ):
+        fail("plugins/musicvideo.json projectSchema must be <id>/X.Y.Z")
+    migrates_from = manifest.get("migratesFrom")
+    if (
+        not isinstance(migrates_from, list)
+        or not migrates_from
+        or not all(
+            isinstance(value, str)
+            and re.fullmatch(
+                re.escape(pack_id) + r"/(?:legacy|\d+\.\d+\.\d+)",
+                value,
+            )
+            for value in migrates_from
+        )
+        or len(set(migrates_from)) != len(migrates_from)
+        or project_schema in migrates_from
+    ):
+        fail("plugins/musicvideo.json migratesFrom is invalid")
     pack_source = ROOT / "Sources/MusicvideoPlugin/MusicvideoPack.swift"
     try:
         source = pack_source.read_text(encoding="utf-8")
@@ -194,6 +217,17 @@ def validate_plugin_version(release_version: str, published_catalog: Path) -> No
         source_match.group(1), "MusicvideoPack.version"
     ) != pack_version:
         fail("MusicvideoPack.version must equal plugins/musicvideo.json version")
+    for source_schema in migrates_from:
+        declaration = (
+            'registerProjectSchemaMigration(\n'
+            f'            from: "{source_schema}",\n'
+            f'            to: "{project_schema}",'
+        )
+        if declaration not in source:
+            fail(
+                "MusicvideoPack must register every migration declared by "
+                "plugins/musicvideo.json"
+            )
     min_app_match = re.search(
         r'let musicvideoMinAppVersion = "(\d+\.\d+\.\d+)"',
         source,

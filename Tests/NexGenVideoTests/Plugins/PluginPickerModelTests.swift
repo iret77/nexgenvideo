@@ -33,7 +33,9 @@ struct PluginPickerModelTests {
     ) -> InstalledPluginRecord {
         InstalledPluginRecord(
             id: id, displayName: "Music Video Studio", tagline: "structured",
-            headline: headline, benefit: benefit, version: version, minAppVersion: "0.1.0",
+            headline: headline, benefit: benefit, version: version,
+            projectSchema: "\(id)/legacy", migratesFrom: [],
+            minAppVersion: "0.1.0",
             bundleURL: URL(fileURLWithPath: "/tmp/\(id).ngvpack"), state: state)
     }
 

@@ -16,6 +16,10 @@ struct PluginBundleInfo: Equatable {
     let benefit: String
     /// `CFBundleShortVersionString` — the pack's own version.
     let version: String
+    /// `NGVProjectSchema` — the project-data contract written by this pack.
+    let projectSchema: String
+    /// `NGVMigratesFrom` — project schemas this pack can migrate transactionally.
+    let migratesFrom: [String]
     /// `NGVMinAppVersion` — minimum NexGenVideo marketing version required.
     let minAppVersion: String
     /// `NGVEngineContract` — the host↔pack binary contract the pack was BUILT against, stamped by
@@ -32,6 +36,8 @@ struct PluginBundleInfo: Equatable {
         static let headline = "NGVPackHeadline"
         static let benefit = "NGVPackBenefit"
         static let version = "CFBundleShortVersionString"
+        static let projectSchema = "NGVProjectSchema"
+        static let migratesFrom = "NGVMigratesFrom"
         static let minAppVersion = "NGVMinAppVersion"
         static let engineContract = "NGVEngineContract"
         static let principalClass = "NSPrincipalClass"
@@ -45,6 +51,10 @@ struct PluginBundleInfo: Equatable {
         headline = (plist[Key.headline] as? String) ?? ""
         benefit = (plist[Key.benefit] as? String) ?? ""
         version = (plist[Key.version] as? String) ?? ""
+        let declaredSchema = (plist[Key.projectSchema] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        projectSchema = declaredSchema.flatMap { $0.isEmpty ? nil : $0 } ?? "\(id)/legacy"
+        migratesFrom = (plist[Key.migratesFrom] as? [String]) ?? []
         minAppVersion = (plist[Key.minAppVersion] as? String) ?? ""
         // Only a genuine plist integer counts — a string ("2") or a missing key reads as 0 and is
         // refused, so an ambiguous stamp can never be mistaken for a matching contract.
@@ -73,8 +83,9 @@ enum PluginIncompatibility: Equatable {
     case requiresAppVersion(String)
     /// Code signature missing, invalid, or not from the host's Team ID.
     case untrustedSignature(String)
-    /// `NGVEngineContract` ≠ the running engine's. The pack's witness tables don't match what the
-    /// host would dispatch through, so it is refused BEFORE any of its code is loaded.
+    /// The host supplied non-semantic marketing-version metadata.
+    case invalidHostVersion(String)
+    /// `NGVEngineContract` lies outside the running engine's explicit compatibility range.
     case requiresEngineContract(pack: Int, app: Int)
 
     var reason: String {
@@ -85,6 +96,8 @@ enum PluginIncompatibility: Equatable {
             return "Requires NexGenVideo \(min) or newer."
         case .untrustedSignature(let detail):
             return "Signature check failed — \(detail)."
+        case .invalidHostVersion:
+            return "This NexGenVideo build has invalid version metadata."
         case .requiresEngineContract:
             return "Built for a different version of NexGenVideo — update the pack."
         }
@@ -102,6 +115,14 @@ enum PluginGate {
         guard SemanticVersion(info.version) != nil else {
             return .malformedMetadata("invalid pack version \"\(info.version)\"")
         }
+        guard isValidProjectSchema(info.projectSchema, packID: info.id) else {
+            return .malformedMetadata("invalid project schema \"\(info.projectSchema)\"")
+        }
+        guard info.migratesFrom.allSatisfy({
+            isValidProjectSchema($0, packID: info.id) && $0 != info.projectSchema
+        }), Set(info.migratesFrom).count == info.migratesFrom.count else {
+            return .malformedMetadata("invalid project migration declaration")
+        }
         guard !info.principalClass.isEmpty else {
             return .malformedMetadata("no entry point declared")
         }
@@ -113,11 +134,13 @@ enum PluginGate {
         return contractCheck(packContract: info.engineContract)
     }
 
-    /// The binary-contract axis. A pack built against a different engine contract has no witness-table
-    /// entry for requirements added since — dispatching into it jumps to a null address and kills the
-    /// app. Refused on the plist alone, so nothing of the pack is ever loaded.
-    static func contractCheck(packContract: Int, engine: Int = EngineContract.current) -> PluginIncompatibility? {
-        guard packContract == engine else {
+    /// The binary-contract axis. Only the host's explicit inclusive compatibility range is accepted.
+    static func contractCheck(
+        packContract: Int,
+        engine: Int = EngineContract.current,
+        minimumCompatible: Int = EngineContract.minimumCompatible
+    ) -> PluginIncompatibility? {
+        guard (minimumCompatible...engine).contains(packContract) else {
             return .requiresEngineContract(pack: packContract, app: engine)
         }
         return nil
@@ -131,12 +154,22 @@ enum PluginGate {
         }
         // Dev / CI builds without a marketing version are always compatible
         // (logged by the caller) — a bare `swift run` still loads local packs.
-        guard let appVersionString = appVersion, let app = SemanticVersion(appVersionString) else {
+        guard let appVersionString = appVersion else {
             return nil
+        }
+        guard let app = SemanticVersion(appVersionString) else {
+            return .invalidHostVersion(appVersionString)
         }
         guard app >= minVersion else {
             return .requiresAppVersion(minAppVersion)
         }
         return nil
+    }
+
+    private static func isValidProjectSchema(_ schema: String, packID: String) -> Bool {
+        let components = schema.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count == 2, components[0] == Substring(packID) else { return false }
+        let revision = String(components[1])
+        return revision == "legacy" || SemanticVersion(revision) != nil
     }
 }

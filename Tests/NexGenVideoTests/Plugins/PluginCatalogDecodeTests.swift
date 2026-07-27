@@ -30,9 +30,23 @@ struct PluginCatalogDecodeTests {
         #expect(entry.id == "musicvideo")
         #expect(entry.displayName == "Music Video Studio")
         #expect(entry.version == "0.0.1")
+        #expect(entry.projectSchema == "musicvideo/legacy")
+        #expect(entry.migratesFrom.isEmpty)
         #expect(entry.minAppVersion == "0.1.0")
         #expect(entry.sha256 == "abc123")
         #expect(entry.url.lastPathComponent == "musicvideo-0.0.1.ngvpack.zip")
+    }
+
+    @Test func decodesProjectSchemaAndMigrationContract() throws {
+        let catalog = try PluginCatalogService.decode("""
+        {"plugins":[{"id":"musicvideo","displayName":"MV","tagline":"t","version":"0.0.6",
+          "projectSchema":"musicvideo/2.0.0",
+          "migratesFrom":["musicvideo/legacy","musicvideo/1.0.0"],
+          "minAppVersion":"1.0.0","url":"https://ex.com/mv.ngvpack.zip","sha256":"abc"}]}
+        """.data(using: .utf8)!)
+        let entry = try #require(catalog.plugins.first)
+        #expect(entry.projectSchema == "musicvideo/2.0.0")
+        #expect(entry.migratesFrom == ["musicvideo/legacy", "musicvideo/1.0.0"])
     }
 
     /// #168: the app must read the STABLE `plugins` channel. `dev-latest` is delete+recreated on
