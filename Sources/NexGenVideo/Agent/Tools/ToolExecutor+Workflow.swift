@@ -1600,7 +1600,8 @@ extension ToolExecutor {
             let entryProof = try stampRenderInputs(
                 &manifest,
                 shotId: shotId,
-                output: completedAsset?.id ?? output,
+                output: output,
+                assetId: completedAsset?.id,
                 editor: editor,
                 dataRoot: root
             )
@@ -2566,11 +2567,16 @@ extension ToolExecutor {
     ///
     /// Semantic slots are authoritative; model lookup is only for older generated media.
     private func stampRenderInputs(
-        _ manifest: inout RenderManifest, shotId: String, output: String, editor: EditorViewModel,
+        _ manifest: inout RenderManifest, shotId: String, output: String,
+        assetId: String?, editor: EditorViewModel,
         dataRoot: URL
     ) throws -> RenderProofEntry {
         guard var entry = manifest.entries[shotId],
-              let asset = resolveRenderedAsset(output, editor: editor, dataRoot: dataRoot),
+              let asset = resolveRenderedAsset(
+                  assetId ?? output,
+                  editor: editor,
+                  dataRoot: dataRoot
+              ),
               let gi = asset.generationInput else {
             throw ToolError(
                 "The rendered video has no generation provenance. Record the completed "

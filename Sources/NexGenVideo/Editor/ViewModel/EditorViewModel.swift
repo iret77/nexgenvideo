@@ -974,6 +974,7 @@ final class EditorViewModel {
 
     /// Coalesces rapid rebuild requests so `replaceCurrentItem` doesn't fire per keystroke.
     var pendingRebuildTask: Task<Void, Never>?
+    @ObservationIgnored var mediaImportCancellationRequested = false
 
     func notifyTimelineChanged() {
         pendingRebuildTask?.cancel()

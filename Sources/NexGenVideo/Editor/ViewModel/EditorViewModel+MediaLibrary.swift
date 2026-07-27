@@ -311,6 +311,25 @@ enum DurableMediaStore {
 private enum MediaImportPreparer {
     typealias Progress = @Sendable (_ completed: Int, _ currentName: String) async -> Void
 
+    static func rollback(
+        _ createdURLs: [URL],
+        mediaDirectory: URL
+    ) {
+        let root = mediaDirectory.standardizedFileURL
+            .resolvingSymlinksInPath()
+        for url in createdURLs.reversed() {
+            let target = url.standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard target.path.hasPrefix(root.path + "/"),
+                  (try? target.resourceValues(
+                      forKeys: [.isRegularFileKey]
+                  ).isRegularFile) == true else {
+                continue
+            }
+            try? FileManager.default.removeItem(at: target)
+        }
+    }
+
     static func prepare(
         _ plan: MediaImportPlan,
         mediaDirectory: URL,
@@ -347,9 +366,7 @@ private enum MediaImportPreparer {
             await progress(plan.files.count, "")
             return PreparedMediaImport(files: files, createdURLs: createdURLs)
         } catch {
-            for url in createdURLs.reversed() {
-                try? FileManager.default.removeItem(at: url)
-            }
+            rollback(createdURLs, mediaDirectory: mediaDirectory)
             throw error
         }
     }
@@ -423,6 +440,7 @@ extension EditorViewModel {
     }
 
     func cancelMediaImport() {
+        mediaImportCancellationRequested = true
         mediaImportCancellation?()
         mediaImportTail?.cancel()
     }
@@ -506,6 +524,7 @@ extension EditorViewModel {
 
     @discardableResult
     private func performFinderImport(_ urls: [URL], into folderId: String?) async -> MediaImportSummary {
+        mediaImportCancellationRequested = false
         let before = mediaLibraryUndoSnapshot()
         let roots = urls.map { MediaImportScanner.Root(url: $0, parentFolderId: folderId) }
 
@@ -570,9 +589,25 @@ extension EditorViewModel {
         }
         mediaImportCancellation = { worker.cancel() }
         let result = await worker.result
+        let wasCancelled = mediaImportCancellationRequested
+            || Task.isCancelled
         mediaImportCancellation = nil
+        mediaImportCancellationRequested = false
         mediaImportProgress = nil
 
+        if wasCancelled {
+            if case .success(let prepared) = result {
+                MediaImportPreparer.rollback(
+                    prepared.createdURLs,
+                    mediaDirectory: mediaDirectory
+                )
+            }
+            return MediaImportSummary(
+                assetCount: 0,
+                folderCount: 0,
+                failure: MediaImportError.cancelled.localizedDescription
+            )
+        }
         switch result {
         case .success(let prepared):
             return applyMediaImportPlan(plan, prepared: prepared, restoringFrom: before)

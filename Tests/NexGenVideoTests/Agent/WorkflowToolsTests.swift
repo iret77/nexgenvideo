@@ -343,6 +343,14 @@ struct WorkflowToolsTests {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
+        try FileManager.default.createDirectory(
+            at: dataRoot.appendingPathComponent("audio"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: dataRoot.appendingPathComponent("lyrics"),
+            withIntermediateDirectories: true
+        )
         try Data("track".utf8).write(
             to: dataRoot.appendingPathComponent("audio/song.wav")
         )
@@ -1901,7 +1909,11 @@ struct WorkflowToolsTests {
         ])
 
         #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("source_path"))
+        #expect(
+            ToolHarness.textOf(result).contains(
+                "exactly one project-local source video"
+            )
+        )
         #expect(try loadShotlist(dataRoot: dataRoot) == nil)
     }
 
