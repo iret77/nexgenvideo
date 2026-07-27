@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 /// Headless CI self-test for the pack LOAD path — the guard that static `otool`/`nm` checks can't be
 /// (they missed the 0.7.6 "entry point not found" rpath regression). When `NGV_SELFTEST_PACK` points
