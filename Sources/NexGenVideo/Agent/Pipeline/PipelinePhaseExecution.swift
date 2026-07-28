@@ -237,24 +237,28 @@ final class PipelinePhaseRunCoordinator {
         progressContinuation: AsyncStream<PhaseProgress>.Continuation
     ) async -> RunnerResult {
         await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result: RunnerResult
-                do {
-                    if let progressRunner {
-                        try progressRunner(projectRoot) {
-                            progressContinuation.yield($0)
+            let thread = Thread {
+                let result: RunnerResult = autoreleasepool {
+                    do {
+                        if let progressRunner {
+                            try progressRunner(projectRoot) {
+                                progressContinuation.yield($0)
+                            }
+                        } else {
+                            try runner(projectRoot)
                         }
-                    } else {
-                        try runner(projectRoot)
+                        return .completed
+                    } catch let blocked as PipelinePhaseBlocked {
+                        return .blocked(blocked.message)
+                    } catch {
+                        return .failed(error.localizedDescription)
                     }
-                    result = .completed
-                } catch let blocked as PipelinePhaseBlocked {
-                    result = .blocked(blocked.message)
-                } catch {
-                    result = .failed(error.localizedDescription)
                 }
                 continuation.resume(returning: result)
             }
+            thread.name = "NexGenVideo phase runner"
+            thread.qualityOfService = .userInitiated
+            thread.start()
         }
     }
 }
