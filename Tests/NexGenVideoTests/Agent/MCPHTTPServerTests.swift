@@ -81,6 +81,7 @@ struct MCPHTTPServerTests {
         let retryJoined = TestAsyncSignal()
         let runnerLatch = PhaseRunnerLatch()
         let runCount = MCPRunCounter()
+        let serverCount = MCPRunCounter()
         let coordinator = PipelinePhaseRunCoordinator()
         let executionState = PipelinePhaseExecutionState()
         let projectRoot = FileManager.default.temporaryDirectory
@@ -90,6 +91,7 @@ struct MCPHTTPServerTests {
             runnerLatch.block()
         }
         let server = MCPHTTPServer(port: port, makeServer: {
+            serverCount.increment()
             let server = Server(
                 name: "mcp-http-test",
                 version: "1.0.0",
@@ -124,7 +126,9 @@ struct MCPHTTPServerTests {
             return server
         })
         try await server.start()
-        var callTask: Task<(data: Data, statusCode: Int), Error>?
+        let disconnectedSession = URLSession(configuration: .ephemeral)
+        var disconnectedCall: Task<(data: Data, statusCode: Int), Error>?
+        var retryCall: Task<(data: Data, statusCode: Int), Error>?
         do {
             let endpoint = try #require(
                 URL(string: "http://127.0.0.1:\(port)/mcp")
@@ -142,21 +146,19 @@ struct MCPHTTPServerTests {
             let call = """
             {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"slow","arguments":{}}}
             """
-            callTask = Task {
+            disconnectedCall = Task.detached {
                 try await post(
                     call,
                     to: endpoint,
-                    protocolVersion: "2025-03-26"
+                    protocolVersion: "2025-03-26",
+                    session: disconnectedSession
                 )
             }
             await runnerLatch.waitUntilEntered()
             #expect(runCount.value == 1)
 
-            callTask?.cancel()
-            if let disconnectedCall = callTask {
-                _ = try? await disconnectedCall.value
-            }
-            callTask = nil
+            disconnectedSession.invalidateAndCancel()
+            disconnectedCall?.cancel()
 
             let reinitialize = """
             {"jsonrpc":"2.0","id":3,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test-reconnect","version":"1"}}}
@@ -167,15 +169,19 @@ struct MCPHTTPServerTests {
                 protocolVersion: nil
             )
             #expect(reinitializeResponse.statusCode == 200)
-            #expect(
-                !String(decoding: reinitializeResponse.data, as: UTF8.self)
-                    .contains("\"error\"")
+            let reinitializeEnvelope = try #require(
+                try JSONSerialization.jsonObject(
+                    with: reinitializeResponse.data
+                ) as? [String: Any]
             )
+            #expect(reinitializeEnvelope["result"] != nil)
+            #expect(reinitializeEnvelope["error"] == nil)
+            #expect(serverCount.value == 2)
 
             let retry = """
             {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"slow","arguments":{}}}
             """
-            callTask = Task {
+            retryCall = Task.detached {
                 try await post(
                     retry,
                     to: endpoint,
@@ -185,6 +191,7 @@ struct MCPHTTPServerTests {
             await retryJoined.wait()
             #expect(coordinator.runningPhase(projectRoot: projectRoot) == "analysis")
             #expect(runCount.value == 1)
+            #expect(serverCount.value == 2)
 
             var getRequest = URLRequest(url: endpoint)
             getRequest.httpMethod = "GET"
@@ -200,7 +207,7 @@ struct MCPHTTPServerTests {
             #expect(runCount.value == 1)
 
             runnerLatch.allowCompletion()
-            let activeCall = try #require(callTask)
+            let activeCall = try #require(retryCall)
             let response = try await activeCall.value
             #expect(response.statusCode == 200)
             #expect(
@@ -208,11 +215,23 @@ struct MCPHTTPServerTests {
                     .contains("finished")
             )
             #expect(runCount.value == 1)
+            #expect(serverCount.value == 2)
+            #expect(coordinator.runningPhase(projectRoot: projectRoot) == nil)
+            #expect(executionState.snapshot?.status == .completed)
+            if let disconnectedCall {
+                _ = try? await disconnectedCall.value
+            }
             await server.stop()
         } catch {
             runnerLatch.allowCompletion()
-            if let callTask {
-                _ = try? await callTask.value
+            disconnectedSession.invalidateAndCancel()
+            disconnectedCall?.cancel()
+            retryCall?.cancel()
+            if let disconnectedCall {
+                _ = try? await disconnectedCall.value
+            }
+            if let retryCall {
+                _ = try? await retryCall.value
             }
             await server.stop()
             throw error
@@ -222,7 +241,8 @@ struct MCPHTTPServerTests {
     private func post(
         _ json: String,
         to endpoint: URL,
-        protocolVersion: String?
+        protocolVersion: String?,
+        session: URLSession = .shared
     ) async throws -> (data: Data, statusCode: Int) {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -239,8 +259,6 @@ struct MCPHTTPServerTests {
                 forHTTPHeaderField: "MCP-Protocol-Version"
             )
         }
-        let session = URLSession(configuration: .ephemeral)
-        defer { session.invalidateAndCancel() }
         let (data, rawResponse) = try await session.data(for: request)
         let response = try #require(rawResponse as? HTTPURLResponse)
         return (data, response.statusCode)

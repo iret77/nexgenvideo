@@ -186,21 +186,13 @@ final class PipelinePhaseRunCoordinator {
                 state.update(runID: runID, progress: progress)
             }
         }
-        let runnerTask = Task.detached(priority: .userInitiated) { () -> RunnerResult in
-            do {
-                if let progressRunner {
-                    try progressRunner(projectRoot) {
-                        progressContinuation.yield($0)
-                    }
-                } else {
-                    try runner(projectRoot)
-                }
-                return .completed
-            } catch let blocked as PipelinePhaseBlocked {
-                return .blocked(blocked.message)
-            } catch {
-                return .failed(error.localizedDescription)
-            }
+        let runnerTask = Task {
+            await Self.executeRunner(
+                projectRoot: projectRoot,
+                runner: runner,
+                progressRunner: progressRunner,
+                progressContinuation: progressContinuation
+            )
         }
         let task = Task { @MainActor [weak self] () -> PipelinePhaseRunOutcome in
             var result = await runnerTask.value
@@ -236,5 +228,33 @@ final class PipelinePhaseRunCoordinator {
         jobs[key] = Job(runID: runID, phase: phase, task: task)
         Log.mcp.notice("phase run started phase=\(phase) run=\(runID.uuidString)")
         return await task.value
+    }
+
+    private nonisolated static func executeRunner(
+        projectRoot: URL,
+        runner: @escaping EngineRegistry.PhaseRunner,
+        progressRunner: EngineRegistry.ProgressPhaseRunner?,
+        progressContinuation: AsyncStream<PhaseProgress>.Continuation
+    ) async -> RunnerResult {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result: RunnerResult
+                do {
+                    if let progressRunner {
+                        try progressRunner(projectRoot) {
+                            progressContinuation.yield($0)
+                        }
+                    } else {
+                        try runner(projectRoot)
+                    }
+                    result = .completed
+                } catch let blocked as PipelinePhaseBlocked {
+                    result = .blocked(blocked.message)
+                } catch {
+                    result = .failed(error.localizedDescription)
+                }
+                continuation.resume(returning: result)
+            }
+        }
     }
 }
