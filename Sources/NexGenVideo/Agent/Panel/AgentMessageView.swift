@@ -1,4 +1,5 @@
 import AppKit
+import NexGenEngine
 import SwiftUI
 
 struct AgentMessageView: View {
