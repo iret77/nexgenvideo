@@ -84,7 +84,8 @@ final class VideoProject: NSDocument {
             }.value
             contents.workingCopy = .init(
                 home: contents.workingCopy.home,
-                recoveredUnsaved: false
+                recoveredUnsaved: false,
+                generation: contents.workingCopy.generation
             )
             doc.applyLoadedContents(contents)
             doc.updateChangeCount(.changeDone)
