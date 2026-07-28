@@ -407,10 +407,26 @@ struct WorkflowToolsTests {
         #expect(ToolHarness.textOf(blocked2).contains("run_phase"))
 
         _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
-        try await h.editor.pipelineAgentHarness.recordPhaseMutation(
-            phase: "analysis",
-            dataRoot: dataRoot,
-            declaredPack: "musicvideo"
+        _ = try await h.runOK(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [
+                    [
+                        "index": 0,
+                        "label": "intro",
+                        "confidence": 0.9,
+                    ],
+                    [
+                        "index": 1,
+                        "label": "verse",
+                        "confidence": 0.9,
+                    ],
+                ],
+                "anomalies": [],
+                "overall_character": "Measured pulse with a clear opening and development.",
+            ]
         )
         let ready = await NativeGateWriter.controlReadiness(
             projectDir: FrameInventory.projectHome(of: dataRoot),

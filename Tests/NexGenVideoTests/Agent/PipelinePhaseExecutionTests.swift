@@ -273,9 +273,8 @@ final class PhaseRunnerLatch: @unchecked Sendable {
     func block() {
         enteredContinuation.yield()
         condition.lock()
-        let deadline = Date(timeIntervalSinceNow: 10)
         while !released {
-            guard condition.wait(until: deadline) else { break }
+            condition.wait()
         }
         condition.unlock()
     }
