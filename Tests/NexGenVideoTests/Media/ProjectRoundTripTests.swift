@@ -228,6 +228,7 @@ struct ProjectRoundTripTests {
         #expect(try roundTrip(manifest) == manifest)
     }
 
+    @MainActor
     @Test func legacyMediaEntryReconstructsAReadableFilenameWithoutExposingStorageHash() {
         let hash = String(repeating: "a", count: 64)
         let entry = MediaManifestEntry(
@@ -247,6 +248,7 @@ struct ProjectRoundTripTests {
         #expect(asset.userFacingFilename.contains(hash) == false)
     }
 
+    @MainActor
     @Test func contentAddressedFilenameIsNeverTheFinalDisplayFallback() {
         let hash = String(repeating: "f", count: 64)
         let asset = MediaAsset(
@@ -260,6 +262,7 @@ struct ProjectRoundTripTests {
         #expect(asset.userFacingFilename.contains(hash) == false)
     }
 
+    @MainActor
     @Test func contentAddressedOriginalMetadataFallsBackToTheReadableName() {
         let hash = String(repeating: "e", count: 64)
         let asset = MediaAsset(
