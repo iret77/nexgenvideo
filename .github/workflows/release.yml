@@ -1,5 +1,9 @@
 name: Release (signed + notarized)
 
+# ci-lint: allow-CI005 The release gate is Linux; the macOS job is required for signing and notarization.
+# ci-lint: allow-CI007 This workflow has workflow_dispatch only; push/PR appear solely in prohibition comments.
+# ci-lint: allow-CI008 Manual workflow_dispatch releases have no path-filter semantics.
+
 # Signs with OUR Developer ID (cert imported into a temp keychain, identity auto-detected),
 # notarizes via the App Store Connect API key, staples, builds a DMG, EdDSA-signs it for Sparkle,
 # and publishes a GitHub release + appcast entry. No local build — everything runs here.
@@ -34,7 +38,7 @@ permissions: {}
 
 jobs:
   release-gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       publication-resumed: ${{ steps.publication-state.outputs.resumed }}
@@ -257,6 +261,7 @@ jobs:
   release:
     needs: release-gate
     if: ${{ needs.release-gate.outputs.publication-resumed != 'true' }}
+    # macOS 26 is required to compile, sign, notarize, staple, and package the app.
     runs-on: macos-26
     timeout-minutes: 90
     permissions:

@@ -28,6 +28,7 @@ struct HardStepIntakeTests {
         HardStep(id: id, phase: phase, kind: kind, accept: [], multiple: false,
                  required: required, repeatable: repeatable, title: id, intro: nil,
                  prompt: nil, namePrompt: nil, addAnotherLabel: nil,
+                 itemTitle: nil, skipLabel: nil, doneLabel: nil, addFileLabel: nil,
                  symbol: "tray", confirmLabel: "Continue", textField: nil)
     }
 
@@ -46,7 +47,9 @@ struct HardStepIntakeTests {
               "steps": [
                 {"id": "a", "attachAs": "script", "title": "Script", "futureField": "ignored"},
                 {"id": "b", "attachAs": "character", "title": "Characters",
-                 "multiple": true, "repeatable": true, "namePrompt": "Name"}
+                 "multiple": true, "repeatable": true, "namePrompt": "Name",
+                 "itemTitle": "Character", "skipLabel": "Skip", "doneLabel": "Done",
+                 "addFileLabel": "Add image"}
               ]
             },
             {
@@ -66,6 +69,10 @@ struct HardStepIntakeTests {
         #expect(initSteps[1].repeatable)
         #expect(initSteps[1].multiple)
         #expect(initSteps[1].namePrompt == "Name")
+        #expect(initSteps[1].itemTitle == "Character")
+        #expect(initSteps[1].skipLabel == "Skip")
+        #expect(initSteps[1].doneLabel == "Done")
+        #expect(initSteps[1].addFileLabel == "Add image")
 
         let analysisSteps = manifest.steps(for: "analysis")
         #expect(analysisSteps.map(\.id) == ["c"])
@@ -426,22 +433,69 @@ struct HardStepIntakeTests {
             accept: ["image"], multiple: true, required: false, repeatable: true,
             title: "Prepared characters", intro: "First one.", prompt: "Drop the images",
             namePrompt: "Character name", addAnotherLabel: "Another one?",
+            itemTitle: "Prepared character", skipLabel: "Skip",
+            doneLabel: "Done", addFileLabel: "Add another image…",
             symbol: "person", confirmLabel: "Attach", textField: nil)
 
         let first = AgentDialog(hardStep: characters, isRepeat: false)
-        #expect(first.title == "Prepared characters")
+        #expect(first.title == "Prepared character 1")
         #expect(first.intro == "First one.")
         #expect(first.sections.isEmpty)
         #expect(first.fileIntake?.attachAs == "character")
         #expect(first.fileIntake?.allowsMultiple == true)
         #expect(first.fileIntake?.namePrompt == "Character name")
+        #expect(first.fileIntake?.completionLabel == "Skip")
+        #expect(first.fileIntake?.addFileLabel == "Add another image…")
         #expect(first.purpose == .workflowIntake)
-        // Optional ⇒ confirmable with nothing, which is the user's "no, I don't have one".
         #expect(first.fileIntake?.required == false)
+        #expect(!first.permitsSubmission(
+            hasFiles: false, direction: "", isSubmitting: false
+        ))
+        #expect(!first.permitsSubmission(
+            hasFiles: true, direction: "", isSubmitting: false
+        ))
+        #expect(!first.permitsSubmission(
+            hasFiles: false, direction: "Claude Mouse", isSubmitting: false
+        ))
+        #expect(!first.permitsSubmission(
+            hasFiles: true, direction: "---", isSubmitting: false
+        ))
+        #expect(first.permitsSubmission(
+            hasFiles: true, direction: "Claude Mouse", isSubmitting: false
+        ))
+        #expect(!first.permitsSubmission(
+            hasFiles: true, direction: "Claude Mouse", isSubmitting: true
+        ))
 
         let repeated = AgentDialog(hardStep: characters, isRepeat: true)
+        #expect(repeated.title == "Prepared character 2")
         #expect(repeated.intro == "Another one?")
+        #expect(repeated.fileIntake?.completionLabel == "Done")
         #expect(repeated.id != first.id)
+
+        let third = AgentDialog(hardStep: characters, isRepeat: true, itemNumber: 3)
+        #expect(third.title == "Prepared character 3")
+    }
+
+    @Test("older pinned packs receive the safe repeatable-intake defaults from the host")
+    func legacyRepeatableStepGetsHostDefaults() {
+        let legacy = HardStep(
+            id: "brief.characters", phase: "brief", kind: .character,
+            accept: ["image"], multiple: true, required: false, repeatable: true,
+            title: "Prepared characters", intro: nil, prompt: "Drop the images",
+            namePrompt: "Character name", addAnotherLabel: nil,
+            itemTitle: nil, skipLabel: nil, doneLabel: nil, addFileLabel: nil,
+            symbol: "person", confirmLabel: "Attach", textField: nil
+        )
+
+        let first = AgentDialog(hardStep: legacy, isRepeat: false, itemNumber: 1)
+        #expect(first.title == "Prepared character 1")
+        #expect(first.fileIntake?.completionLabel == "Skip")
+        #expect(first.fileIntake?.addFileLabel == "Add another image…")
+
+        let third = AgentDialog(hardStep: legacy, isRepeat: true, itemNumber: 3)
+        #expect(third.title == "Prepared character 3")
+        #expect(third.fileIntake?.completionLabel == "Done")
     }
 
     @Test("a workflow hard step completes locally without creating an agent turn")
@@ -520,6 +574,11 @@ struct HardStepIntakeTests {
                 .compactMap { $0["id"] as? String }
             Issue.record("dropped at decode (unknown attachAs?): \(declared.filter { !kept.contains($0) })")
         }
+        let characters = try #require(manifest.allSteps.first { $0.id == "brief.characters" })
+        #expect(characters.itemTitle == "Prepared character")
+        #expect(characters.skipLabel == "Skip")
+        #expect(characters.doneLabel == "Done")
+        #expect(characters.addFileLabel == "Add another image…")
     }
 
     @Test("startup is exactly required track, then optional lyrics")

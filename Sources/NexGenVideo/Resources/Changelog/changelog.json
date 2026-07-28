@@ -22,7 +22,9 @@
             "Format-pack analysis errors now keep their actionable instructions instead of collapsing to a generic failure.",
             "Audio analysis stays connected across MCP requests, runs on an isolated worker without starving MCP or media traffic, shows its current stage, and cannot be approved while work is incomplete.",
             "Overlapping pipeline refreshes now settle to one current project state before the workflow continues.",
-            "The agent defaults to the app's interface language and changes language only when requested."
+            "The agent defaults to the app's interface language and changes language only when requested.",
+            "Disabled actions now use one unmistakable app-wide visual state instead of retaining active-button contrast.",
+            "Agent transcripts remain responsive while pipeline progress, reports, and decision cards update."
           ]
         },
         {
@@ -38,7 +40,8 @@
             "Downloaded packs are signed, notarized, integrity-checked, and load-tested under quarantine.",
             "Release previews use isolated plugin channels; stable publication happens only after the app release succeeds.",
             "Projects pin their exact format-pack version; updates remain visible and require an explicit, recoverable project upgrade.",
-            "Music video production now analyzes the assigned track and optional lyrics before it asks for existing story material."
+            "Music video production now analyzes the assigned track and optional lyrics before it asks for existing story material.",
+            "Prepared character and location intake now numbers each item, requires a complete item before attachment, and provides explicit Skip and Done actions."
           ]
         }
       ]

@@ -273,7 +273,6 @@ struct AgentActivityView: View {
                             ))
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .lineLimit(2)
-                            .contentTransition(.opacity)
                         Spacer(minLength: AppTheme.Spacing.sm)
                         Image(systemName: "chevron.right")
                             .font(.system(
@@ -312,7 +311,6 @@ struct AgentActivityView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
-            .animation(.easeOut(duration: AppTheme.Anim.hover), value: label)
         }
     }
 

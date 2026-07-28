@@ -29,6 +29,10 @@ struct HardStep: Equatable, Sendable, Identifiable {
     let prompt: String?
     let namePrompt: String?
     let addAnotherLabel: String?
+    let itemTitle: String?
+    let skipLabel: String?
+    let doneLabel: String?
+    let addFileLabel: String?
     let symbol: String
     let confirmLabel: String
     let textField: AgentDialog.DialogTextField?
@@ -155,6 +159,10 @@ struct HardStepManifest: Sendable, Equatable {
         var prompt: String?
         var namePrompt: String?
         var addAnotherLabel: String?
+        var itemTitle: String?
+        var skipLabel: String?
+        var doneLabel: String?
+        var addFileLabel: String?
         var symbol: String?
         var confirmLabel: String?
         var textField: TextField?
@@ -179,6 +187,10 @@ struct HardStepManifest: Sendable, Equatable {
                 prompt: prompt,
                 namePrompt: namePrompt,
                 addAnotherLabel: addAnotherLabel,
+                itemTitle: itemTitle,
+                skipLabel: skipLabel,
+                doneLabel: doneLabel,
+                addFileLabel: addFileLabel,
                 symbol: symbol ?? "tray.and.arrow.down",
                 confirmLabel: confirmLabel ?? "Continue",
                 textField: textField.map {

@@ -137,3 +137,19 @@ enum AgentTranscriptProjection {
         text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 }
+
+enum AgentTranscriptScrollPolicy {
+    static func targetID(
+        entries: [AgentTranscriptEntry],
+        isStreaming: Bool
+    ) -> String? {
+        let hasRunningActivity = entries.contains {
+            if case .activity(let activity) = $0 { return activity.isRunning }
+            return false
+        }
+        if isStreaming, !hasRunningActivity {
+            return "streaming-indicator"
+        }
+        return entries.last?.id
+    }
+}

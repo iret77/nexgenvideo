@@ -148,7 +148,10 @@ final class AgentService {
 
     var sessions: [ChatSession] = []
     var currentSessionId: UUID?
-    var messages: [AgentMessage] = []
+    var messages: [AgentMessage] = [] {
+        didSet { transcriptRevision &+= 1 }
+    }
+    private(set) var transcriptRevision: UInt64 = 0
     var isStreaming: Bool = false {
         didSet {
             if oldValue, !isStreaming {

@@ -201,8 +201,32 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         /// the `character`/`location` intakes so the host can name the destination folder. The name
         /// arrives in `AgentDialogResult.direction`.
         let namePrompt: String?
-        /// Whether a file or text is required. Empty optional workflow intake is an explicit skip.
+        /// Whether the workflow step itself may be completed without content.
         let required: Bool
+        /// Finishes an optional intake without submitting the current draft.
+        let completionLabel: String?
+        /// Pack-owned label for adding another file to the same item.
+        let addFileLabel: String?
+
+        init(
+            accept: [String],
+            prompt: String?,
+            allowsMultiple: Bool,
+            attachAs: String?,
+            namePrompt: String?,
+            required: Bool,
+            completionLabel: String? = nil,
+            addFileLabel: String? = nil
+        ) {
+            self.accept = accept
+            self.prompt = prompt
+            self.allowsMultiple = allowsMultiple
+            self.attachAs = attachAs
+            self.namePrompt = namePrompt
+            self.required = required
+            self.completionLabel = completionLabel
+            self.addFileLabel = addFileLabel
+        }
     }
 
     let id: String
@@ -256,6 +280,25 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             return subject.prefix(1).uppercased() + String(subject.dropFirst())
         }
         return head.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func permitsSubmission(
+        hasFiles: Bool,
+        direction: String,
+        isSubmitting: Bool
+    ) -> Bool {
+        guard !isSubmitting else { return false }
+        guard let intake = fileIntake else { return true }
+        let hasText = !direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if intake.namePrompt != nil {
+            return hasFiles && !AgentService.identitySlug(direction).isEmpty
+        }
+        if intake.completionLabel != nil {
+            return textField != nil ? (hasFiles || hasText) : hasFiles
+        }
+        if !intake.required { return true }
+        if textField != nil { return hasFiles || hasText }
+        return hasFiles
     }
 
     /// Parse the `show_dialog` tool args. Throws with actionable messages so the agent can repair.

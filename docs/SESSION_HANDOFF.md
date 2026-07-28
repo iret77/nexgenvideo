@@ -2,13 +2,17 @@
 
 ## Objective
 
-Finish one consolidated NexGenVideo 1.0 correction after on-device testing exposed four coupled
+Finish one consolidated NexGenVideo 1.0 correction after on-device testing exposed six coupled
 release blockers:
 
 1. content-addressed Media storage hashes reached visible Track intake and agent context;
 2. the agent inferred German instead of defaulting to the app UI language;
 3. Audio Analysis had no trustworthy user-visible progress and remained approvable while running;
-4. the embedded Claude MCP transport dropped the long `run_phase("analysis")` response.
+4. the embedded Claude MCP transport dropped the long `run_phase("analysis")` response;
+5. repeatable prepared-character intake did not identify the current item, exposed an active-looking
+   incomplete Attach action, and offered no explicit Skip/Done exit;
+6. the agent transcript entered an unbounded SwiftUI main-thread layout cycle while the Brief intake
+   opened after Audio Analysis.
 
 Never build or test locally. GitHub Actions on `macos-26` is the only Swift/build verification
 surface. Do not dispatch CI, merge, publish, or build a DMG without the owner's explicit
@@ -17,12 +21,12 @@ in-the-moment `build now`.
 ## Working state
 
 - Branch: `codex/original-media-filenames`
-- Base commit: `b3d4b41` (`Release candidate 1.0 (#288)`)
-- App version: `1.0.0`, source build number `63`
-- Musicvideo pack candidate: `0.0.7`, project schema `musicvideo/1.0.0`
+- The branch starts from the pipeline hardening content merged through PRs #289 and #290.
+- App version: `1.0.0`, source `CFBundleVersion` `67`; the failing on-device DMG reported build `68`
+- Musicvideo pack candidate: `0.0.9`, project schema `musicvideo/1.0.0`
 - Engine binary contract: current `4`, minimum compatible `2`
-- The batch is uncommitted and has not run in CI.
-- Preserve the entire working tree; it contains one consolidated correction.
+- The commit containing this handoff is the one consolidated correction; read its live CI and release
+  state from GitHub rather than inferring it from this document.
 
 ## Binding product contracts
 
@@ -40,12 +44,18 @@ in-the-moment `build now`.
   percentage or ETA.
 - Approval, gate-state mutation, and rewind are impossible while a phase job is running. Approval
   appears only after the canonical artifact and lineage pass the shared structural gate.
+- Repeatable optional intake names and numbers the current item. Attach stays disabled until the item
+  is complete; the first empty item has Skip, and subsequent empty items have Done.
+- Transcript layout never feeds animated/inserting/resizing secondary content back from scroll
+  geometry. User scroll intent comes from scroll phases, while agent updates follow the true transcript
+  tail unless the user deliberately scrolled away.
 
 The locked source documents are:
 
 - `docs/MUSICVIDEO_START_CONTRACT.md`
 - `docs/PIPELINE_AGENT_HARNESS.md`
 - `docs/ui/pipeline-phase-progress.html`
+- `docs/ui/repeatable-intake.html`
 
 ## Implemented in the working tree
 
@@ -105,22 +115,62 @@ The locked source documents are:
 - Closing and reopening a project while a phase settles cannot let the retired session delete the new
   Recovery working copy; every open owns an independent generation claim.
 
+### Repeatable optional intake
+
+- Musicvideo 0.0.9 declares prepared characters and locations as numbered repeatable items.
+- Host-owned dialog state distinguishes first empty, completed, and subsequent empty items.
+- The primary Attach action requires all declared required fields; Skip and Done are explicit
+  secondary actions with schema-validated continuation values.
+- Shared capsule button styles now own a visibly disabled treatment across app surfaces.
+- Manifest/runtime tests cover numbering, incomplete submission rejection, Skip, Done, and continuation.
+- `docs/ui/repeatable-intake.html` is the normative rendered UI specification.
+
+### Transcript hang
+
+- The macOS hang report identifies a main-thread SwiftUI/AttributeGraph layout loop:
+  `SecondaryLayerGeometryQuery → LayoutEngine.explicitAlignment → sizeThatFits`; it is not an Audio
+  Analysis or MCP stall.
+- `WrapLayout` now reports only bounded finite geometry, measures and places against the same width,
+  proposes the measured size to children, and explicitly declines merged subview alignment guides.
+- Scroll visibility no longer mutates the observed hierarchy from a geometry callback. Scroll intent
+  is derived only from user scroll phases; the button remains mounted without layout-changing
+  transitions, and programmatic following is not animated.
+- Transcript mutations carry a revision so growth inside an existing assistant turn follows the true
+  final entry rather than an earlier running-activity row.
+- Ignored Claude stream-json lines no longer republish an unchanged observable transcript, and activity
+  status changes no longer apply an implicit layout animation.
+- Geometry and revision regression tests cover wrapping, non-finite/overflow input, consistent
+  measurement, and in-place transcript growth.
+
 ## Verification completed without a local build
 
 - `git diff --check`
 - `python3 scripts/lint_app_theme.py`
 - `python3 scripts/release_preflight.py 1.0.0 <empty-catalog>`
 - JSON/plist/YAML metadata parsing and the standalone `AGENTS.md`/`CLAUDE.md` parity check
+- `ci-lint` with zero failures and zero warnings after pinning Linux images and adding the missing PR
+  concurrency guard.
 - Three independent Claude Subscription/CLI passes reviewed the complete diff and the corrected
   lifecycle subset. Their actionable findings affecting transport lifetime, session rotation,
   listener failure reporting, job settlement, gate visibility, working-copy lifetime, test teardown
   and join determinism were corrected.
+- A critical transcript-hang review used Claude Opus at maximum effort plus bounded-input AGY/Gemini.
+  The verified findings about user scroll intent, true-tail following, repeated projection, inert
+  transitions, consistent wrapping and bounded pathological geometry were corrected. Apple's Layout
+  documentation independently confirms that the default explicit-alignment implementation merges
+  subview guides, while an explicit `nil` declares no explicit guide.
+- The final independent bounded-input AGY/Gemini spec gate reported no findings against
+  `AGENTS.md`, the locked Musicvideo start/harness contracts, and the rendered intake UI spec.
 - No Swift build or test has been run locally.
 
-## Required remaining gates
+## Release procedure for this batch
 
-1. Report readiness and wait. Do not trigger CI until the owner says `build now`.
-2. On explicit approval, commit/push/merge as authorized and run one GitHub Actions macOS release build.
+1. Never trigger CI until the owner says `build now`.
+2. On explicit approval, commit/push as one batch, require every PR gate to pass, merge, then run one
+   GitHub Actions macOS release build.
 3. Verify the notarized DMG with the exact on-device trace: original Track name, English default agent,
    visible advancing Audio Analysis, no active Approve, successful analysis completion, interpretation,
    then approval.
+4. Continue through Brief with prepared-character intake: visible item number, disabled incomplete
+   Attach, Skip on the first empty item, Done after a completed item, and no transcript beachball while
+   progress/report/dialog content changes.
