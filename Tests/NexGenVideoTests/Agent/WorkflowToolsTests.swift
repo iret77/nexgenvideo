@@ -448,6 +448,27 @@ struct WorkflowToolsTests {
         GatesOperations.approve(&gates, phase: "project_init")
         try store.save(gates, to: PipelineLayout.gatesFile)
         _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        _ = try await h.runOK(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [
+                    [
+                        "index": 0,
+                        "label": "intro",
+                        "confidence": 0.9,
+                    ],
+                    [
+                        "index": 1,
+                        "label": "verse",
+                        "confidence": 0.9,
+                    ],
+                ],
+                "anomalies": [],
+                "overall_character": "Measured pulse with a clear opening and development.",
+            ]
+        )
         try await h.editor.pipelineAgentHarness.recordPhaseMutation(
             phase: "analysis",
             dataRoot: dataRoot,
