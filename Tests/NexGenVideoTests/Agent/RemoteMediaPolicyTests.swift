@@ -31,20 +31,22 @@ struct RemoteMediaPolicyTests {
                 )
                 return
             }
-            let .response(status, headers, data) = route
-            let response = HTTPURLResponse(
-                url: url,
-                statusCode: status,
-                httpVersion: "HTTP/1.1",
-                headerFields: headers
-            )!
-            client?.urlProtocol(
-                self,
-                didReceive: response,
-                cacheStoragePolicy: .notAllowed
-            )
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
+            switch route {
+            case let .response(status, headers, data):
+                let response = HTTPURLResponse(
+                    url: url,
+                    statusCode: status,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: headers
+                )!
+                client?.urlProtocol(
+                    self,
+                    didReceive: response,
+                    cacheStoragePolicy: .notAllowed
+                )
+                client?.urlProtocol(self, didLoad: data)
+                client?.urlProtocolDidFinishLoading(self)
+            }
         }
 
         override func stopLoading() {}
