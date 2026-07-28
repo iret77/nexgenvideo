@@ -59,6 +59,7 @@ struct RemoteMediaPolicyTests {
                     wasRedirectedTo: URLRequest(url: destination),
                     redirectResponse: response
                 )
+                client?.urlProtocolDidFinishLoading(self)
             }
         }
 

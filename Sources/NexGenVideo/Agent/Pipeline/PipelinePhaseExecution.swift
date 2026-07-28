@@ -72,16 +72,24 @@ final class PipelinePhaseExecutionState {
     }
 
     func complete(runID: UUID) {
-        guard snapshot?.runID == runID else { return }
-        snapshot?.completedUnitCount = snapshot?.totalUnitCount ?? 0
-        snapshot?.nextStageID = nil
-        snapshot?.status = .completed
+        guard var current = snapshot,
+              current.runID == runID,
+              current.status == .running
+        else { return }
+        current.completedUnitCount = current.totalUnitCount
+        current.nextStageID = nil
+        current.status = .completed
+        snapshot = current
     }
 
     func fail(runID: UUID, message: String) {
-        guard snapshot?.runID == runID else { return }
-        snapshot?.nextStageID = nil
-        snapshot?.status = .failed(message)
+        guard var current = snapshot,
+              current.runID == runID,
+              current.status == .running
+        else { return }
+        current.nextStageID = nil
+        current.status = .failed(message)
+        snapshot = current
     }
 
     func reset() {

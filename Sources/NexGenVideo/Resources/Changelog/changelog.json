@@ -21,6 +21,7 @@
             "Tool failures and approval refusals now stay actionable without exposing internal instructions.",
             "Format-pack analysis errors now keep their actionable instructions instead of collapsing to a generic failure.",
             "Audio analysis stays connected across MCP requests, runs on an isolated worker without starving MCP or media traffic, shows its current stage, and cannot be approved while work is incomplete.",
+            "Overlapping pipeline refreshes now settle to one current project state before the workflow continues.",
             "The agent defaults to the app's interface language and changes language only when requested."
           ]
         },

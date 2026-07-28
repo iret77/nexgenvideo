@@ -773,9 +773,34 @@ final class EditorViewModel {
     /// Bumped after every snapshot refresh; panels with their own load pipelines re-read on change.
     private(set) var engineStateRevision = 0
     @ObservationIgnored private var engineArtifactsLoadToken = 0
+    @ObservationIgnored private var engineRefreshRequested: UInt64 = 0
+    @ObservationIgnored private var engineRefreshCompleted: UInt64 = 0
+    @ObservationIgnored private var engineRefreshTask: Task<Void, Never>?
 
     /// Refresh every engine-read snapshot (pipeline state, Bible, shotlist) in one pass.
     func refreshEngineState() async {
+        engineRefreshRequested &+= 1
+        let request = engineRefreshRequested
+        if engineRefreshTask == nil {
+            engineRefreshTask = Task { @MainActor [weak self] in
+                await self?.drainEngineStateRefreshes()
+            }
+        }
+        while engineRefreshCompleted < request, let task = engineRefreshTask {
+            await task.value
+        }
+    }
+
+    private func drainEngineStateRefreshes() async {
+        while engineRefreshCompleted < engineRefreshRequested {
+            let request = engineRefreshRequested
+            await performEngineStateRefresh()
+            engineRefreshCompleted = request
+        }
+        engineRefreshTask = nil
+    }
+
+    private func performEngineStateRefresh() async {
         // Re-probe the durable pipeline marker FIRST — a just-finished scaffold now exists on disk, so
         // the format lock stays closed the instant `productionStarting` clears below (no reopen gap).
         refreshProductionPipelineMarker()

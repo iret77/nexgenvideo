@@ -346,7 +346,7 @@ struct WorkflowToolsTests {
 
     @Test("approve_gate is hard-blocked for analysis until a real artifact exists")
     func analysisGateHardBlocked() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
         try FileManager.default.createDirectory(

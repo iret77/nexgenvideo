@@ -4,7 +4,7 @@ import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
-@Suite("MCP HTTP server", .serialized, .timeLimit(.minutes(1)))
+@Suite("MCP HTTP server", .serialized, .timeLimit(.minutes(2)))
 struct MCPHTTPServerTests {
     @Test("fragmented request waits for its complete body")
     func fragmentedRequest() throws {

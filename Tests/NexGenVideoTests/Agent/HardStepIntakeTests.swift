@@ -348,7 +348,16 @@ struct HardStepIntakeTests {
             ),
         ]
 
-        await editor.refreshEngineState()
+        let firstRefresh = Task { @MainActor in
+            await editor.refreshEngineState()
+            return editor.projectState?.nextPhaseName
+        }
+        let secondRefresh = Task { @MainActor in
+            await editor.refreshEngineState()
+            return editor.projectState?.nextPhaseName
+        }
+        #expect(await firstRefresh.value == "project_init")
+        #expect(await secondRefresh.value == "project_init")
         _ = editor.pipelineAgentHarness.reconcile(editor: editor)
 
         #expect(editor.projectState?.nextPhaseName == "project_init")
