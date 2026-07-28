@@ -75,11 +75,11 @@ struct WrapLayoutGeometryTests {
     @Test func rejectsNonFiniteGeometry() {
         let result = WrapLayoutGeometry.arrange(
             sizes: [
-                CGSize(width: .infinity, height: 10),
-                CGSize(width: 20, height: .nan),
+                CGSize(width: CGFloat.infinity, height: 10),
+                CGSize(width: 20, height: CGFloat.nan),
             ],
-            maxWidth: .infinity,
-            spacing: .nan
+            maxWidth: CGFloat.infinity,
+            spacing: CGFloat.nan
         )
 
         #expect(result.origins == [
