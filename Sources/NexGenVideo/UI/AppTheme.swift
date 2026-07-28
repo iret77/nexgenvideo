@@ -392,6 +392,7 @@ enum AppTheme {
         static let agentBlockLabelWidth: CGFloat = 96
         static let agentAssetPickerWidth: CGFloat = 280
         static let agentAssetPickerHeight: CGFloat = 260
+        static let agentScrollAwayThreshold: CGFloat = 80
         static let formatSheetWidth: CGFloat = 500
         static let formatSheetCardListMinHeight: CGFloat = 460
         static let formatSheetCardListMaxHeight: CGFloat = 600
@@ -407,6 +408,7 @@ enum AppTheme {
     }
 
     enum Layout {
+        static let safeDimensionCeiling: CGFloat = 10_000
         static let mediaPanelDefault: CGFloat = 500
         static let mediaPanelMin: CGFloat = 280
         static let inspectorDefault: CGFloat = 260

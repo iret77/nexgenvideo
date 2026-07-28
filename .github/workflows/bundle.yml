@@ -29,7 +29,7 @@ concurrency:
 jobs:
   source-gate:
     name: Source Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +43,7 @@ jobs:
     # Smoke-test that the debug .app still assembles (no secrets, no local build) and keep it as a CI
     # artifact. The public `dev-latest` download is the SIGNED + notarized DMG published by release.yml
     # — ci.yml no longer writes that release.
+    # macOS 26 is required to compile and load-test the macOS 26 app and format pack.
     runs-on: macos-26
     # Cost ceiling on a 10x-billed runner; the real job takes ~4.5 min.
     timeout-minutes: 20

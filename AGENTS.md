@@ -37,6 +37,9 @@ All UI styling MUST use `AppTheme` constants from `Sources/NexGenVideo/UI/AppThe
 
 If a needed value doesn't exist in AppTheme, add it there first — don't hardcode it.
 
+Disabled controls must be unmistakably disabled in every app surface. Shared button styles own the
+disabled treatment; a disabled control never retains the active control's contrast or hover response.
+
 ## Drag and drop
 
 SwiftUI `.onDrop` on a parent view shadows every drop target inside its layout area on macOS 26 — even AppKit `NSDraggingDestination` children registered directly with the window. Inner `.onDrop` modifiers silently never fire while a parent `.onDrop` is active.
@@ -90,12 +93,19 @@ release or a wasted CI cycle.
   localization to every backend. OS locale, project content, filenames, lyrics, pack prose, and prior
   generated text never change it; only an explicit user request switches conversation language.
 - **Never show a control that doesn't do what it says.**
+- **Repeatable optional intake is explicit.** Number the current item, keep its primary action
+  disabled until every required field is present, and provide a visible Skip action for the first
+  empty item plus a visible Done action after a completed item. Never overload an enabled Attach
+  button to mean “skip”.
 - **No raw prompt reaches a content model**, from the user or the agent. Everything pre-compiles
   through the prompt engine; raw is a pro escape hatch only.
 - **Constrain agent output with schema-validated tool calls** (enums, `required`,
   `additionalProperties: false`) — never with prompt discipline alone.
 - **Gate refusals are agent-facing.** They name tools and artifact paths; don't put them in front of
   the user unchanged.
+- **Agent transcript layout is acyclic.** Scroll-geometry callbacks must not animate, insert, remove,
+  or resize an overlay on the same observed scroll hierarchy. Custom transcript layouts return only
+  finite geometry and must not derive explicit alignment by traversing secondary-layer children.
 
 ### Musicvideo workflow start
 

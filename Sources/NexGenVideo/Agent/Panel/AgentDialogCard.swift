@@ -201,7 +201,7 @@ struct AgentDialogCard: View {
             } else {
                 ForEach(pickedFiles, id: \.self) { pickedFileChip($0) }
                 if intake.allowsMultiple {
-                    chooseButton(intake, label: "Add another…")
+                    chooseButton(intake, label: intake.addFileLabel ?? "Add another file…")
                 }
             }
             libraryPicker(intake)
@@ -372,6 +372,12 @@ struct AgentDialogCard: View {
                 ProgressView()
                     .controlSize(.small)
             }
+            if let completionLabel = dialog.fileIntake?.completionLabel {
+                Button(completionLabel) { completeWithoutAttachment() }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+                    .disabled(isSubmitting)
+            }
             Button(dialog.confirmLabel) { submit() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.small)
@@ -383,14 +389,11 @@ struct AgentDialogCard: View {
     /// if it also has a textField (paste-OR-upload, e.g. lyrics) a file OR non-empty text suffices;
     /// otherwise a file is required, plus the identity name when the intake asks for one.
     private var canSubmit: Bool {
-        guard !isSubmitting else { return false }
-        guard let intake = dialog.fileIntake else { return true }
-        let hasText = !direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if intake.namePrompt != nil, !pickedFiles.isEmpty, !hasText { return false }
-        if !intake.required { return true }
-        if dialog.textField != nil { return !pickedFiles.isEmpty || hasText }
-        if pickedFiles.isEmpty { return false }
-        return true
+        dialog.permitsSubmission(
+            hasFiles: !pickedFiles.isEmpty,
+            direction: direction,
+            isSubmitting: isSubmitting
+        )
     }
 
     private var canDismiss: Bool {
@@ -437,6 +440,15 @@ struct AgentDialogCard: View {
             direction: direction.trimmingCharacters(in: .whitespacesAndNewlines),
             customValues: customs,
             fileURLs: pickedFiles
+        ))
+    }
+
+    private func completeWithoutAttachment() {
+        onSubmit(AgentDialogResult(
+            selectedLabels: [:],
+            toggles: [:],
+            direction: "",
+            fileURLs: []
         ))
     }
 }

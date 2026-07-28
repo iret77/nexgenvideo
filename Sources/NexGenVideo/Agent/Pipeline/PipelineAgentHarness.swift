@@ -545,10 +545,15 @@ final class PipelineAgentHarness {
         dataRoot: URL,
         editor: EditorViewModel
     ) {
-        let dialog = AgentDialog(hardStep: step, isRepeat: isRepeat)
+        let fingerprint = IntakeSatisfaction.fingerprint(step.kind, dataRoot: dataRoot)
+        let dialog = AgentDialog(
+            hardStep: step,
+            isRepeat: isRepeat,
+            itemNumber: step.repeatable ? fingerprint + 1 : nil
+        )
         offered = (
             step,
-            IntakeSatisfaction.fingerprint(step.kind, dataRoot: dataRoot),
+            fingerprint,
             dialog.id
         )
         editor.agentService.pendingDialog = dialog
@@ -557,10 +562,39 @@ final class PipelineAgentHarness {
 }
 
 extension AgentDialog {
-    init(hardStep step: HardStep, isRepeat: Bool) {
+    init(hardStep step: HardStep, isRepeat: Bool, itemNumber: Int? = nil) {
+        let fallbackItemTitle: String?
+        let fallbackDoneLabel: String?
+        switch step.kind {
+        case .character:
+            fallbackItemTitle = "Prepared character"
+            fallbackDoneLabel = "Done"
+        case .location:
+            fallbackItemTitle = "Prepared location"
+            fallbackDoneLabel = "Done"
+        default:
+            fallbackItemTitle = nil
+            fallbackDoneLabel = nil
+        }
+        let resolvedItemNumber = step.repeatable
+            ? max(itemNumber ?? (isRepeat ? 2 : 1), 1)
+            : nil
+        let resolvedTitle = resolvedItemNumber.flatMap { number in
+            (step.itemTitle ?? fallbackItemTitle).map { "\($0) \(number)" }
+        } ?? step.title
+        let completionLabel: String?
+        if step.required {
+            completionLabel = nil
+        } else if step.repeatable {
+            completionLabel = isRepeat
+                ? (step.doneLabel ?? fallbackDoneLabel ?? "Done")
+                : (step.skipLabel ?? "Skip")
+        } else {
+            completionLabel = step.skipLabel
+        }
         self.init(
             id: "hardstep.\(step.id).\(UUID().uuidString)",
-            title: step.title,
+            title: resolvedTitle,
             symbol: step.symbol,
             intro: isRepeat ? (step.addAnotherLabel ?? step.intro) : step.intro,
             costHint: nil,
@@ -573,7 +607,9 @@ extension AgentDialog {
                 allowsMultiple: step.multiple,
                 attachAs: step.attachAs,
                 namePrompt: step.namePrompt,
-                required: step.required
+                required: step.required,
+                completionLabel: completionLabel,
+                addFileLabel: step.addFileLabel ?? (fallbackItemTitle == nil ? nil : "Add another image…")
             ),
             purpose: .workflowIntake
         )

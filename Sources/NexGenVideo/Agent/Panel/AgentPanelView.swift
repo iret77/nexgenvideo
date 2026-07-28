@@ -67,9 +67,10 @@ struct AgentPanelView: View {
     }
 
     var body: some View {
+        let entries = transcriptEntries
         VStack(spacing: AppTheme.Spacing.none) {
             ZStack(alignment: .top) {
-                messageList
+                messageList(entries: entries)
                 floatingTabBar
             }
             if let approval = service.pendingSpendApproval {
@@ -196,7 +197,7 @@ struct AgentPanelView: View {
     }
 
     @State private var showHistory = false
-    @State private var isScrolledFromBottom = false
+    @State private var isUserPinnedAway = false
     @State private var showPluginLauncher = false
     @State private var discoveredPlugins: [PluginCommandCatalog.PluginInfo] = []
 
@@ -315,9 +316,9 @@ struct AgentPanelView: View {
         return false
     }
 
-    private var messageList: some View {
+    private func messageList(entries: [AgentTranscriptEntry]) -> some View {
         Group {
-            if transcriptEntries.isEmpty && !service.isStreaming {
+            if entries.isEmpty && !service.isStreaming {
                 // Scrollable: in a short pane (Edit-focus sidebar) a fixed empty state would
                 // overflow centered — covering the sidebar tabs above and running out below.
                 ScrollView {
@@ -331,17 +332,16 @@ struct AgentPanelView: View {
                     .padding(.bottom, AppTheme.Spacing.md)
                 }
             } else {
-                scrollingMessages
+                scrollingMessages(entries: entries)
             }
         }
     }
 
-    private var scrollingMessages: some View {
+    private func scrollingMessages(entries: [AgentTranscriptEntry]) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
                     let results = toolResults
-                    let entries = transcriptEntries
                     ForEach(entries) { entry in
                         switch entry {
                         case .message(let message):
@@ -367,30 +367,43 @@ struct AgentPanelView: View {
             }
             .scrollIndicators(.never)
             .scrollEdgeEffectStyle(.soft, for: .bottom)
-            .onScrollGeometryChange(for: Bool.self) { geo in
-                let distance = geo.contentSize.height - geo.contentOffset.y - geo.containerSize.height
-                return distance > 80
-            } action: { _, newValue in
-                withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
-                    isScrolledFromBottom = newValue
-                }
+            .onScrollPhaseChange { oldPhase, newPhase, context in
+                guard newPhase == .interacting
+                        || newPhase == .decelerating
+                        || (newPhase == .idle && oldPhase != .animating)
+                else { return }
+                isUserPinnedAway = isAwayFromBottom(context.geometry)
             }
-            .onChange(of: service.messages.count) { _, _ in scrollToBottom(proxy) }
-            .onChange(of: service.isStreaming) { _, _ in scrollToBottom(proxy) }
+            .onChange(of: service.transcriptRevision) { _, _ in
+                guard !isUserPinnedAway else { return }
+                scrollToBottom(proxy, entries: entries)
+            }
+            .onChange(of: service.isStreaming) { _, _ in
+                guard !isUserPinnedAway else { return }
+                scrollToBottom(proxy, entries: entries)
+            }
             .overlay(alignment: .bottomTrailing) {
-                if isScrolledFromBottom {
-                    scrollToBottomButton(proxy: proxy)
-                        .padding(.trailing, AppTheme.Spacing.mdLg)
-                        .padding(.bottom, AppTheme.Spacing.mdLg)
-                        .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                }
+                scrollToBottomButton(proxy: proxy, entries: entries)
+                    .padding(.trailing, AppTheme.Spacing.mdLg)
+                    .padding(.bottom, AppTheme.Spacing.mdLg)
+                    .opacity(
+                        isUserPinnedAway
+                            ? AppTheme.Opacity.opaque
+                            : AppTheme.Opacity.transparent
+                    )
+                    .allowsHitTesting(isUserPinnedAway)
+                    .accessibilityHidden(!isUserPinnedAway)
             }
         }
     }
 
-    private func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
+    private func scrollToBottomButton(
+        proxy: ScrollViewProxy,
+        entries: [AgentTranscriptEntry]
+    ) -> some View {
         Button {
-            scrollToBottom(proxy)
+            isUserPinnedAway = false
+            scrollToBottom(proxy, entries: entries)
         } label: {
             Image(systemName: "arrow.down")
                 .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
@@ -517,18 +530,24 @@ struct AgentPanelView: View {
         }
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        let runningActivity = transcriptEntries.first {
-            if case .activity(let activity) = $0 { return activity.isRunning }
-            return false
-        }
-        let target = runningActivity?.id
-            ?? (service.isStreaming ? "streaming-indicator" : transcriptEntries.last?.id)
+    private func scrollToBottom(
+        _ proxy: ScrollViewProxy,
+        entries: [AgentTranscriptEntry]
+    ) {
+        let target = AgentTranscriptScrollPolicy.targetID(
+            entries: entries,
+            isStreaming: service.isStreaming
+        )
         if let target {
-            withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
-                proxy.scrollTo(target, anchor: .bottom)
-            }
+            proxy.scrollTo(target, anchor: .bottom)
         }
+    }
+
+    private func isAwayFromBottom(_ geometry: ScrollGeometry) -> Bool {
+        let distance = geometry.contentSize.height
+            - geometry.contentOffset.y
+            - geometry.containerSize.height
+        return distance > AppTheme.ComponentSize.agentScrollAwayThreshold
     }
 
     private var footer: some View {

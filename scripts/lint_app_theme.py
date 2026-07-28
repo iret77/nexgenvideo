@@ -8,6 +8,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "Sources" / "NexGenVideo"
 THEME_FILE = SOURCE_ROOT / "UI" / "AppTheme.swift"
+CAPSULE_BUTTON_FILE = SOURCE_ROOT / "UI" / "CapsuleButton.swift"
 
 NUMBER = r"-?(?:\d+(?:\.\d+)?|\.\d+)"
 WEIGHT = r"(?:light|regular|medium|semibold|bold)"
@@ -182,6 +183,20 @@ def main() -> int:
                     continue
                 snippet = source.splitlines()[line - 1].strip()
                 failures.append((path.relative_to(ROOT), line, rule_name, snippet))
+
+    capsule_source = CAPSULE_BUTTON_FILE.read_text(encoding="utf-8")
+    for fragment, rule_name in (
+        (r"@Environment(\.isEnabled)", "capsule style must read enabled state"),
+        ("AppTheme.Text.mutedColor", "disabled capsule must use muted text"),
+        ("AppTheme.Opacity.disabled", "disabled capsule must use disabled opacity"),
+    ):
+        if fragment not in capsule_source:
+            failures.append((
+                CAPSULE_BUTTON_FILE.relative_to(ROOT),
+                1,
+                rule_name,
+                fragment,
+            ))
 
     if not failures:
         print("AppTheme lint passed")

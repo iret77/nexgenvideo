@@ -18,18 +18,21 @@ struct CapsuleButtonStyle: ButtonStyle {
         let size: Size
         let fill: AnyShapeStyle?
         @State private var hovered = false
+        @Environment(\.isEnabled) private var isEnabled
 
         private var fontSize: CGFloat { size == .small ? AppTheme.FontSize.xs : AppTheme.FontSize.smMd }
         private var hPadding: CGFloat { size == .small ? AppTheme.Spacing.smMd : AppTheme.Spacing.lgXl }
         private var vPadding: CGFloat { size == .small ? AppTheme.Spacing.xs : AppTheme.Spacing.smMd }
 
         private var foreground: AnyShapeStyle {
-            variant == .prominent
+            guard isEnabled else { return AnyShapeStyle(AppTheme.Text.mutedColor) }
+            return variant == .prominent
                 ? AnyShapeStyle(AppTheme.Background.baseColor)
                 : AnyShapeStyle(AppTheme.Text.secondaryColor)
         }
         private var background: AnyShapeStyle {
-            variant == .prominent
+            guard isEnabled else { return AnyShapeStyle(AppTheme.Background.prominentColor) }
+            return variant == .prominent
                 ? (fill ?? AnyShapeStyle(AppTheme.Accent.primary))
                 : AnyShapeStyle(AppTheme.Background.prominentColor)
         }
@@ -44,14 +47,20 @@ struct CapsuleButtonStyle: ButtonStyle {
                 .overlay(
                     Capsule(style: .continuous).fill(
                         AppTheme.Text.primaryColor.opacity(
-                            hovered ? AppTheme.Opacity.faint : AppTheme.Opacity.transparent
+                            hovered && isEnabled ? AppTheme.Opacity.faint : AppTheme.Opacity.transparent
                         )
                     )
                 )
-                .opacity(configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
+                .opacity(opacity)
                 .contentShape(Capsule(style: .continuous))
-                .onHover { hovered = $0 }
+                .onHover { hovered = isEnabled && $0 }
                 .animation(.easeOut(duration: AppTheme.Anim.hover), value: hovered)
+                .animation(.easeOut(duration: AppTheme.Anim.hover), value: isEnabled)
+        }
+
+        private var opacity: Double {
+            guard isEnabled else { return AppTheme.Opacity.disabled }
+            return configuration.isPressed ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque
         }
     }
 }

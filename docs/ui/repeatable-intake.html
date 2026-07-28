@@ -1,0 +1,201 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>UI-Spec — Repeatable optional intake</title>
+<meta name="ui-spec-viewports" content="1180x1050">
+<style>
+  :root {
+    color-scheme: dark;
+    --base: #0a0a0a;
+    --surface: #161616;
+    --raised: #1e1e1e;
+    --prominent: #2c2c2c;
+    --border: rgba(255,255,255,.16);
+    --text: #fff;
+    --text-2: rgba(255,255,255,.80);
+    --text-3: rgba(255,255,255,.62);
+    --muted: rgba(255,255,255,.34);
+    --accent: #ff2d55;
+    --primary: #f5efe4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0c0c0c;
+    color: var(--text-2);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #spec {
+    width: 1080px;
+    margin: 28px auto;
+    padding: 24px 28px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #111;
+  }
+  h1 { margin: 0 0 8px; color: var(--text); font-size: 23px; }
+  h2 { margin: 20px 0 7px; color: var(--text); font-size: 14px; }
+  ul { margin: 7px 0; padding-left: 19px; }
+  li { margin: 4px 0; }
+  code { color: #e9c4cb; }
+  #mockups {
+    min-height: 760px;
+    padding: 38px 0 60px;
+    background: radial-gradient(circle at 70% 0%, #342027 0%, #101010 48%);
+  }
+  .states {
+    width: 1080px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+  }
+  .state-label {
+    margin-bottom: 8px;
+    color: var(--text-3);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+  .card {
+    min-height: 300px;
+    padding: 13px;
+    border: 1px solid rgba(255,45,85,.38);
+    border-radius: 10px;
+    background: var(--raised);
+    box-shadow: 0 18px 50px rgba(0,0,0,.45);
+  }
+  .header { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; }
+  .symbol { color: var(--accent); font-size: 15px; }
+  .close { margin-left: auto; color: var(--text-3); }
+  .intro { margin: 8px 0; color: var(--text-3); font-size: 11px; }
+  .field, .file {
+    width: 100%;
+    min-height: 34px;
+    margin-top: 6px;
+    padding: 8px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 6px;
+    background: rgba(0,0,0,.15);
+    color: var(--text);
+    font-size: 11px;
+  }
+  .file { display: flex; align-items: center; gap: 8px; }
+  .file .remove { margin-left: auto; color: var(--text-3); }
+  .drop {
+    display: grid;
+    place-items: center;
+    min-height: 90px;
+    margin-top: 7px;
+    border: 1px dashed rgba(255,45,85,.55);
+    border-radius: 10px;
+    background: rgba(255,45,85,.07);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .library-title {
+    margin-top: 9px;
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  .library { display: flex; gap: 8px; margin-top: 5px; }
+  .asset {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 118px;
+    padding: 6px;
+    color: var(--text-2);
+    font-size: 10px;
+  }
+  .thumb { width: 25px; height: 25px; border-radius: 5px; background: #665345; }
+  .footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 13px; }
+  button {
+    padding: 7px 15px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--prominent);
+    color: var(--text-2);
+    font: 600 12px inherit;
+  }
+  button.primary { background: var(--primary); color: var(--base); }
+  button:disabled {
+    background: var(--prominent);
+    color: var(--muted);
+    opacity: .60;
+  }
+  .add { margin-top: 7px; color: var(--text-2); font-size: 11px; }
+  .caption {
+    width: 1080px;
+    margin: 18px auto 0;
+    color: var(--text-3);
+    font-size: 12px;
+    text-align: center;
+  }
+</style>
+
+<section id="spec">
+  <h1>Repeatable optional intake</h1>
+  <p>Normative treatment for host-owned intake that can collect zero, one, or several named items,
+    such as prepared characters and locations.</p>
+
+  <h2>Rules</h2>
+  <ul>
+    <li>The card title names and numbers exactly one current item: <code>Prepared character 1</code>,
+      <code>Prepared character 2</code>, and so on.</li>
+    <li>Files shown inside the card all belong to that one item. The additional-file action says
+      <code>Add another image…</code>, never “Add another…” without an object.</li>
+    <li>The primary <code>Attach</code> action is enabled only when the item has both a usable name and
+      at least one accepted reference image.</li>
+    <li>On the first empty item, a visible <code>Skip</code> action ends the entire optional step.</li>
+    <li>After one item was attached, the next empty item shows <code>Done</code>.
+      It ends the repeatable step without creating an empty item.</li>
+    <li>Disabled controls use the shared app-wide button treatment: muted text, non-accented
+      background, reduced opacity, and no hover response.</li>
+  </ul>
+
+  <h2>Acceptance</h2>
+  <ul>
+    <li>At every repetition, the user can identify which item is being edited.</li>
+    <li>Clicking every visible control in every state cannot submit an unnamed or imageless item.</li>
+    <li>A user with zero prepared items and a user who has finished after N items both have an
+      explicit labeled completion action.</li>
+  </ul>
+</section>
+
+<section id="mockups">
+  <div class="states">
+    <div>
+      <div class="state-label">First item · no prepared characters</div>
+      <div class="card">
+        <div class="header"><span class="symbol">▣</span>Prepared character 1<span class="close">×</span></div>
+        <div class="intro">Reference images become the bible anchor for this character.</div>
+        <div class="field" style="color:var(--muted)">Character name</div>
+        <div class="drop">↓ &nbsp; Drop the reference images &nbsp; · &nbsp; Choose…</div>
+        <div class="library-title">From your library</div>
+        <div class="library">
+          <div class="asset"><span class="thumb"></span><span>AI Cat<br><small>image</small></span></div>
+          <div class="asset"><span class="thumb"></span><span>Claude Mouse<br><small>image</small></span></div>
+        </div>
+        <div class="footer"><button>Skip</button><button class="primary" disabled>Attach</button></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="state-label">Second item · first character already attached</div>
+      <div class="card">
+        <div class="header"><span class="symbol">▣</span>Prepared character 2<span class="close">×</span></div>
+        <div class="intro">Add references for another character, or finish adding characters.</div>
+        <div class="field">AI Cat</div>
+        <div class="file"><span class="symbol">▧</span>ai-cat.png<span class="remove">●</span></div>
+        <div class="add">Add another image…</div>
+        <div class="footer"><button>Done</button><button class="primary">Attach</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="caption">One item per card; separate actions for attaching the item and completing the optional step.</div>
+</section>

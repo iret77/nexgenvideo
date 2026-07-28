@@ -146,7 +146,8 @@ final class ClaudeCodeRuntime {
             for try await line in stream {
                 guard gen == generation else { return }   // stopped / rotated before this line: don't ingest or publish
                 let decoded = ClaudeStreamDecoder.decode(line: line)
-                if !decoded.isEmpty { sawOutput = true }
+                guard !decoded.isEmpty else { continue }
+                sawOutput = true
                 let events: [ClaudeStreamEvent]
                 switch authenticationEvents.receive(decoded) {
                 case .waiting:
