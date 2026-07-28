@@ -143,6 +143,29 @@ enum RemoteMediaPolicy {
     }
 }
 
+struct RemoteMediaRedirectPolicy: Sendable {
+    private(set) var redirectCount = 0
+    private var visited: Set<String>
+
+    init(initialURL: URL) {
+        visited = [initialURL.absoluteString]
+    }
+
+    mutating func validate(
+        _ url: URL,
+        resolver: RemoteMediaPolicy.Resolver
+    ) throws {
+        redirectCount += 1
+        guard redirectCount <= 5 else {
+            throw RemoteMediaPolicy.PolicyError.redirectLimit
+        }
+        guard visited.insert(url.absoluteString).inserted else {
+            throw RemoteMediaPolicy.PolicyError.redirectLoop
+        }
+        _ = try RemoteMediaPolicy.validate(url, resolver: resolver)
+    }
+}
+
 enum RemoteMediaDownloader {
     struct Download: Sendable {
         let temporaryURL: URL
@@ -214,8 +237,7 @@ enum RemoteMediaDownloader {
         private let resolver: RemoteMediaPolicy.Resolver
         private let verifyPeerAddress: Bool
         private let lock = NSLock()
-        private var redirectCount = 0
-        private var visited: Set<String>
+        private var redirectPolicy: RemoteMediaRedirectPolicy
         private var storedFailure: (any Error)?
 
         var failure: (any Error)? {
@@ -255,7 +277,7 @@ enum RemoteMediaDownloader {
             self.maxBytes = maxBytes
             self.resolver = resolver
             self.verifyPeerAddress = verifyPeerAddress
-            self.visited = [initialURL.absoluteString]
+            self.redirectPolicy = RemoteMediaRedirectPolicy(initialURL: initialURL)
         }
 
         func urlSession(
@@ -272,15 +294,8 @@ enum RemoteMediaDownloader {
             }
             do {
                 try lock.withLock {
-                    redirectCount += 1
-                    guard redirectCount <= 5 else {
-                        throw RemoteMediaPolicy.PolicyError.redirectLimit
-                    }
-                    guard visited.insert(url.absoluteString).inserted else {
-                        throw RemoteMediaPolicy.PolicyError.redirectLoop
-                    }
+                    try redirectPolicy.validate(url, resolver: resolver)
                 }
-                _ = try RemoteMediaPolicy.validate(url, resolver: resolver)
                 completionHandler(request)
             } catch {
                 fail(error)
