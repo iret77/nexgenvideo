@@ -98,11 +98,16 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Transactional project-schema upgrades supplied by the pack that owns the data.
     public private(set) var projectSchemaMigrations: [ProjectSchemaMigration] = []
 
+    /// Staged phase runners preserving the original `PhaseRunner` ABI for installed packs.
+    public private(set) var progressPhaseRunners: [String: ProgressPhaseRunner] = [:]
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
     /// `pack.py::PhaseRunner`.
     public typealias PhaseRunner = @Sendable (URL) throws -> Void
+    public typealias ProgressPhaseRunner =
+        @Sendable (URL, @escaping @Sendable (PhaseProgress) -> Void) throws -> Void
 
     /// A deterministic precondition for approving a gate: throws `GateBlocked` (with an actionable
     /// message) when the phase's artifact isn't genuinely present in the data root.
@@ -143,6 +148,13 @@ public final class EngineRegistry: @unchecked Sendable {
     public func registerPhase(_ name: String, after: String? = nil, runner: @escaping PhaseRunner) {
         phases[name] = runner
         registerPhasePlacement(name, after: after)
+    }
+
+    public func registerProgressPhaseRunner(
+        _ name: String,
+        runner: @escaping ProgressPhaseRunner
+    ) {
+        progressPhaseRunners[name] = runner
     }
 
     /// Declare a gate phase's placement without a code runner (agent-driven pack

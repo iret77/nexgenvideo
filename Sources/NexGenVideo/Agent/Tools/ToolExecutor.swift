@@ -31,6 +31,18 @@ final class ToolExecutor {
     private var agentUndoStack: [String] = []
     var feedbackState = FeedbackState()
 
+    func requirePhaseIdle(
+        _ editor: EditorViewModel,
+        dataRoot: URL
+    ) throws {
+        guard let running = editor.pipelinePhaseRunCoordinator.runningPhase(
+            projectRoot: dataRoot
+        ) else { return }
+        throw ToolError(
+            "Can't change pipeline state while \(running) is running. Wait for the phase to finish."
+        )
+    }
+
     func execute(name: String, args: [String: Any]) async -> ToolResult {
         guard let tool = ToolName(rawValue: name) else {
             return .error("Unknown tool: \(name)")
@@ -73,6 +85,9 @@ final class ToolExecutor {
                     guardedRoot = root
                 }
             }
+            if tool != .runPhase, let guardedRoot {
+                try requirePhaseIdle(editor, dataRoot: guardedRoot)
+            }
             if tool.isDurableWrite, editor.projectURL != nil {
                 guard let key = editor.openWorkingCopyKey else {
                     throw ToolError(
@@ -82,11 +97,13 @@ final class ToolExecutor {
                 try ProjectWorkingCopy.markDirty(key: key)
             }
             result = try await run(tool, editor, resolved)
-            if !result.isError,
+            if tool != .runPhase,
+               !result.isError,
                let phase = guardedPhase,
                let root = guardedRoot,
                tool.invalidatesPhaseState(args: resolved, dataRoot: root) {
-                try editor.pipelineAgentHarness.recordPhaseMutation(
+                try requirePhaseIdle(editor, dataRoot: root)
+                try await editor.pipelineAgentHarness.recordPhaseMutation(
                     phase: phase,
                     dataRoot: root,
                     captureLineage: tool.writesPhaseArtifact(
@@ -95,6 +112,7 @@ final class ToolExecutor {
                     ),
                     declaredPack: editor.declaredPluginName
                 )
+                await editor.refreshEngineState()
             }
             // Record any edit that actually changed the timeline so `undo` can revert it.
             if tool != .undo, !result.isError, editor.timeline != before,

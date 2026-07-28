@@ -456,6 +456,36 @@ struct ProjectWorkingCopyTests {
         #expect(!FileManager.default.fileExists(atPath: stale.path))
     }
 
+    @Test("a deferred discard cannot delete a reopened working copy")
+    func staleGenerationCannotDiscardReopenedCopy() throws {
+        let pkg = try tempPackage()
+        let key = uniqueKey()
+        defer {
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+
+        let first = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        try ProjectWorkingCopy.markDirty(key: key)
+        let reopened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+
+        #expect(first.generation != reopened.generation)
+        #expect(
+            ProjectWorkingCopy.discard(
+                key: key,
+                ifGeneration: first.generation
+            ) == false
+        )
+        #expect(FileManager.default.fileExists(atPath: reopened.home.path))
+        #expect(
+            ProjectWorkingCopy.discard(
+                key: key,
+                ifGeneration: reopened.generation
+            )
+        )
+        #expect(!FileManager.default.fileExists(atPath: reopened.home.path))
+    }
+
     @Test("discard recovery atomically restores the last saved full package")
     func discardRecoveryRestoresSavedState() throws {
         let pkg = try tempPackage()

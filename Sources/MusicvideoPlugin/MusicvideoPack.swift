@@ -40,7 +40,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 /// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.0.6"
+    public let version = "0.0.7"
 
     private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
         _ = projectURL
@@ -207,6 +207,20 @@ public struct MusicvideoPack: Pack {
                 separator: registry.stemSeparator,
                 beatDetector: registry.beatDetector,
                 chordRecognizer: registry.chordRecognizer)
+        }
+        registry.registerProgressPhaseRunner("analysis") { [weak registry] dataRoot, progress in
+            guard let registry, let decoder = registry.audioDecoder else {
+                throw MusicvideoAnalysisRunner.RunError.noDecoder
+            }
+            _ = try MusicvideoAnalysisRunner.run(
+                dataRoot: dataRoot,
+                decoder: decoder,
+                transcriber: registry.transcriber,
+                separator: registry.stemSeparator,
+                beatDetector: registry.beatDetector,
+                chordRecognizer: registry.chordRecognizer,
+                progress: progress
+            )
         }
         // #174: the one-song contract is load-bearing — analysis is meaningless without exactly one
         // song in audio/. Pin it to the engine so a missing/duplicate song blocks the phase upfront.

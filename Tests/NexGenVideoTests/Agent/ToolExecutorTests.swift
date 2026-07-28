@@ -37,7 +37,7 @@ final class ToolHarness {
     func runGate(_ name: String, args: [String: Any] = [:], decision: GateDecision = .approved) async -> ToolResult {
         let pending = await executor.execute(name: name, args: args)
         guard !pending.isError, editor.agentService.pendingGateApproval != nil else { return pending }
-        return editor.agentService.resolveGate(decision) ?? pending
+        return await editor.agentService.resolveGate(decision) ?? pending
     }
 
     /// `runGate` (default: approve) + decode the .ok JSON payload — the approval must have been granted.
@@ -386,6 +386,7 @@ struct ToolExecutorReadOnlyTests {
         let entry = entries?.first
         #expect(entry?["duration"] as? Double == 12.346)
         #expect(entry?["sourceFPS"] as? Double == 29.97)
+        #expect(entry?["fileName"] as? String == "Clip.mov")
     }
 
     @Test func getMediaSurfacesGenerationStatusForInFlightAndFailedAssets() async throws {

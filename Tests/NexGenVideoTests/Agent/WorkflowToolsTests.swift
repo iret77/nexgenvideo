@@ -15,12 +15,18 @@ import MusicvideoPlugin
 struct WorkflowToolsTests {
 
     /// A throwaway scaffolded project; returns (harness, dataRoot, cleanup-root).
-    private func scaffold() throws -> (ToolHarness, URL, URL) {
+    private func scaffold(
+        enforceHardGates: Bool = false
+    ) throws -> (ToolHarness, URL, URL) {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("wf-tools-\(UUID().uuidString)", isDirectory: true)
         let home = tmp.appendingPathComponent("proj", isDirectory: true)
         let dataRoot = try ProjectScaffold.initProject(home: home, name: "demo", mode: .beat)
-        return (ToolHarness(), dataRoot, tmp)
+        return (
+            ToolHarness(enforceHardGates: enforceHardGates),
+            dataRoot,
+            tmp
+        )
     }
 
     /// Mark the given data root's project package (parent of `pipeline`) active with `pack` by writing
@@ -363,6 +369,28 @@ struct WorkflowToolsTests {
         let ok = try await h.runGateOK("approve_gate", args: ["project_dir": dataRoot.path, "phase": "project_init"]) as? [String: Any]
         #expect(ok?["approved"] as? Bool == true)
 
+        let nativeReadiness = await NativeGateWriter.controlReadiness(
+            projectDir: FrameInventory.projectHome(of: dataRoot),
+            phase: "analysis",
+            declaredPack: "musicvideo",
+            executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+        ).approval
+        #expect(!nativeReadiness.isReady)
+        #expect(nativeReadiness.blocker?.contains("no analysis artifact") == true)
+        do {
+            try await NativeGateWriter.approve(
+                projectDir: FrameInventory.projectHome(of: dataRoot),
+                phase: "analysis",
+                declaredPack: "musicvideo",
+                executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+            )
+            Issue.record("Native approval ignored its blocked readiness")
+        } catch let error as NativeGateWriter.WriteError {
+            #expect(error.localizedDescription == nativeReadiness.blocker)
+        } catch {
+            Issue.record("Native approval exposed an unexpected error type: \(error)")
+        }
+
         // No analysis artifact → approve_gate("analysis") is refused by requireRealAnalysis (points at
         // run_phase). The hard gate is enforced BEFORE the user is ever asked to confirm — the tool
         // errors without surfacing an approval card.
@@ -377,6 +405,127 @@ struct WorkflowToolsTests {
         ])
         #expect(blocked2.isError == true)
         #expect(ToolHarness.textOf(blocked2).contains("run_phase"))
+
+        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        try await h.editor.pipelineAgentHarness.recordPhaseMutation(
+            phase: "analysis",
+            dataRoot: dataRoot,
+            declaredPack: "musicvideo"
+        )
+        let ready = await NativeGateWriter.controlReadiness(
+            projectDir: FrameInventory.projectHome(of: dataRoot),
+            phase: "analysis",
+            declaredPack: "musicvideo",
+            executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+        ).approval
+        #expect(ready.isReady)
+        #expect(ready.blocker == nil)
+    }
+
+    @Test("gate mutations are refused while a phase runner is active")
+    func gateMutationBlockedDuringPhaseRun() async throws {
+        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&gates, phase: "project_init")
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        try await h.editor.pipelineAgentHarness.recordPhaseMutation(
+            phase: "analysis",
+            dataRoot: dataRoot,
+            declaredPack: "musicvideo"
+        )
+        let latch = PhaseRunnerLatch()
+        async let phaseRun = h.editor.pipelinePhaseRunCoordinator.run(
+            projectRoot: dataRoot,
+            phase: "analysis",
+            sourceFilename: "song.wav",
+            runner: { _ in latch.block() },
+            progressRunner: nil,
+            state: h.editor.pipelinePhaseExecution
+        )
+        await latch.waitUntilEntered()
+
+        let blocked = await h.runGate("approve_gate", args: [
+            "project_dir": dataRoot.path,
+            "phase": "analysis",
+        ])
+
+        #expect(blocked.isError)
+        #expect(
+            ToolHarness.textOf(blocked)
+                .contains("while analysis is running")
+        )
+        #expect(h.editor.agentService.pendingGateApproval == nil)
+
+        let nativeReadiness = await NativeGateWriter.controlReadiness(
+            projectDir: FrameInventory.projectHome(of: dataRoot),
+            phase: "analysis",
+            declaredPack: "musicvideo",
+            executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+        ).approval
+        #expect(!nativeReadiness.isReady)
+        #expect(nativeReadiness.blocker?.contains("while analysis is running") == true)
+
+        let writerBlocked = await h.runRaw("attach_song", args: [
+            "project_dir": dataRoot.path,
+            "path": cleanup.appendingPathComponent("replacement.wav").path,
+        ])
+        #expect(writerBlocked.isError)
+        #expect(
+            ToolHarness.textOf(writerBlocked)
+                .contains("while analysis is running")
+        )
+
+        do {
+            try NativeGateWriter.rewind(
+                projectDir: FrameInventory.projectHome(of: dataRoot),
+                targetPhase: "project_init",
+                declaredPack: nil,
+                executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+            )
+            Issue.record("The native gate writer rewound an active phase")
+        } catch {
+            #expect(
+                error.localizedDescription
+                    .contains("while analysis is running")
+            )
+        }
+        latch.allowCompletion()
+        #expect(await phaseRun == .completed)
+        let settledReadiness = await NativeGateWriter.controlReadiness(
+            projectDir: FrameInventory.projectHome(of: dataRoot),
+            phase: "analysis",
+            declaredPack: "musicvideo",
+            executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+        )
+        #expect(settledReadiness.mutations.isReady)
+        #expect(settledReadiness.approval.isReady)
+    }
+
+    @Test("completed pipeline keeps rewind controls available without an approval target")
+    func completedPipelineKeepsRewindAvailable() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in PhaseOrder.merged(packPlacements: []) {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+
+        let readiness = await NativeGateWriter.controlReadiness(
+            projectDir: FrameInventory.projectHome(of: dataRoot),
+            phase: nil,
+            declaredPack: nil,
+            executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+        )
+
+        #expect(readiness.mutations.isReady)
+        #expect(!readiness.approval.isReady)
+        #expect(readiness.approval.blocker?.contains("already approved") == true)
     }
 
     @Test("Brief work is structurally blocked until its host-owned intake is resolved")
@@ -654,15 +803,17 @@ struct WorkflowToolsTests {
             try NativeGateWriter.rewind(
                 projectDir: workingHome,
                 targetPhase: "project_init",
-                declaredPack: pack
+                declaredPack: pack,
+                executionCoordinator: h.editor.pipelinePhaseRunCoordinator
             )
         }
-        #expect(throws: NativeGateWriter.WriteError.self) {
-            try NativeGateWriter.setState(
+        await #expect(throws: NativeGateWriter.WriteError.self) {
+            try await NativeGateWriter.setState(
                 projectDir: workingHome,
                 phase: "project_init",
                 state: .needsRevision,
-                declaredPack: pack
+                declaredPack: pack,
+                executionCoordinator: h.editor.pipelinePhaseRunCoordinator
             )
         }
         #expect(try Data(contentsOf: gatesURL) == gatesBefore)
@@ -2189,9 +2340,16 @@ struct WorkflowToolsTests {
     func attachSongFromMedia() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        let song = cleanup.appendingPathComponent("track.wav")
+        let hash = String(repeating: "4", count: 64)
+        let song = cleanup.appendingPathComponent("\(hash).wav")
         try writeStub(song)
-        let asset = MediaAsset(id: UUID().uuidString, url: song, type: .audio, name: "track")
+        let asset = MediaAsset(
+            id: UUID().uuidString,
+            url: song,
+            type: .audio,
+            name: "Claude Mouse",
+            originalFilename: "Claude Mouse.wav"
+        )
         h.editor.mediaAssets.append(asset)
 
         // Pass an id prefix — expandingIdPrefixes must resolve it, then the file is copied in.
@@ -2199,9 +2357,43 @@ struct WorkflowToolsTests {
         let out = try #require(try await h.runOK("attach_song", args: [
             "project_dir": dataRoot.path, "media": ref,
         ]) as? [String: Any])
-        #expect(out["filename"] as? String == "track.wav")
+        #expect(out["filename"] as? String == "Claude Mouse.wav")
         let audioDir = try #require(out["audio_dir"] as? String)
-        #expect(FileManager.default.fileExists(atPath: URL(fileURLWithPath: audioDir).appendingPathComponent("track.wav").path))
+        #expect(FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: audioDir)
+                .appendingPathComponent("Claude Mouse.wav").path
+        ))
+        #expect(FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: audioDir)
+                .appendingPathComponent("\(hash).wav").path
+        ) == false)
+    }
+
+    @Test("attach_song reconstructs a readable filename for a legacy library asset")
+    func attachSongFromLegacyMedia() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let hash = String(repeating: "8", count: 64)
+        let song = cleanup.appendingPathComponent("\(hash).wav")
+        try writeStub(song)
+        let asset = MediaAsset(
+            id: UUID().uuidString,
+            url: song,
+            type: .audio,
+            name: "Claude Mouse"
+        )
+        h.editor.mediaAssets.append(asset)
+
+        let out = try #require(try await h.runOK("attach_song", args: [
+            "project_dir": dataRoot.path,
+            "media": String(asset.id.prefix(8)),
+        ]) as? [String: Any])
+
+        #expect(out["filename"] as? String == "Claude Mouse.wav")
+        let audioDir = URL(fileURLWithPath: try #require(out["audio_dir"] as? String))
+        #expect(FileManager.default.fileExists(
+            atPath: audioDir.appendingPathComponent("Claude Mouse.wav").path
+        ))
     }
 
     @Test("attach_song rejects a non-audio source")

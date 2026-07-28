@@ -122,6 +122,34 @@ struct DialogChoiceRecordTests {
         #expect(response.agentText.contains("clip.mp4") == false)
     }
 
+    @Test("A content-addressed path is never presented as an attachment name")
+    func storageHashIsNeverPresented() {
+        let hash = String(repeating: "a", count: 64)
+        let dialog = AgentDialog(
+            id: "asset",
+            title: "Choose track",
+            symbol: "music.note",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        )
+        let response = AgentService.dialogResponse(
+            from: dialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: "",
+                fileURLs: [URL(fileURLWithPath: "/project/media/\(hash).mp3")]
+            )
+        )
+
+        #expect(response.agentText.contains(hash) == false)
+        #expect(response.presentation.choiceRecord?.summary.contains(hash) == false)
+        #expect(response.agentText.contains("Media file.mp3"))
+    }
+
     @Test("Review accept is a compact control record, not generated user prose")
     func reviewAcceptControlRecord() {
         let turn = ReviewPanelView.acceptTurn(frameName: "frame-03", shotId: "S012")

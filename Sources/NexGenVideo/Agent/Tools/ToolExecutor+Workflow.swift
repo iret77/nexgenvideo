@@ -785,8 +785,14 @@ extension ToolExecutor {
         let phase = try args.requireString("phase")
         let notes = args.string("notes")
         let declaredPack = editor.declaredPluginName
+        try requirePhaseIdle(editor, dataRoot: root)
         // Hard preconditions FIRST — never ask the user to approve something that can't be approved.
-        try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: declaredPack)
+        try await enforceGateRequirement(
+            phase: phase,
+            dataRoot: root,
+            declaredPack: declaredPack,
+            editor: editor
+        )
         let request = editor.agentService.requestGateApproval(GateApproval(
             phase: phase,
             notes: notes,
@@ -806,6 +812,7 @@ extension ToolExecutor {
         }
         let notes = args.string("notes")
         let declaredPack = editor.declaredPluginName
+        try requirePhaseIdle(editor, dataRoot: root)
         let resolvedPack: String?
         do {
             resolvedPack = try ProjectPluginSettings.resolvedPlugin(
@@ -827,7 +834,12 @@ extension ToolExecutor {
         }
         // Approving states defer their write to the durable user card.
         if GateApproval.isApproval(state) {
-            try enforceGateRequirement(phase: phase, dataRoot: root, declaredPack: declaredPack)
+            try await enforceGateRequirement(
+                phase: phase,
+                dataRoot: root,
+                declaredPack: declaredPack,
+                editor: editor
+            )
             let request = editor.agentService.requestGateApproval(GateApproval(
                 phase: phase,
                 notes: notes,
@@ -897,11 +909,12 @@ extension ToolExecutor {
     }
 
     /// Revalidates and commits a durable approval after the user acts.
-    func commitGateApproval(_ approval: GateApproval) throws -> String {
+    func commitGateApproval(_ approval: GateApproval) async throws -> String {
         guard let editor else { throw ToolError("Editor not available") }
         guard let root = approval.dataRoot else {
             throw ToolError("The approval request no longer identifies its project data root.")
         }
+        try requirePhaseIdle(editor, dataRoot: root)
         do {
             _ = try ProjectPluginSettings.resolvedPlugin(
                 projectURL: FrameInventory.projectHome(of: root),
@@ -913,10 +926,11 @@ extension ToolExecutor {
                     + error.localizedDescription
             )
         }
-        try enforceGateRequirement(
+        try await enforceGateRequirement(
             phase: approval.phase,
             dataRoot: root,
-            declaredPack: approval.declaredPack
+            declaredPack: approval.declaredPack,
+            editor: editor
         )
         if let key = editor.openWorkingCopyKey {
             try ProjectWorkingCopy.markDirty(key: key)
@@ -952,43 +966,28 @@ extension ToolExecutor {
     }
 
     /// Deterministic hard-gate check shared by approve_gate and set_gate_state.
-    private func enforceGateRequirement(phase: String, dataRoot: URL, declaredPack: String?) throws {
-        let resolved: String?
+    private func enforceGateRequirement(
+        phase: String,
+        dataRoot: URL,
+        declaredPack: String?,
+        editor: EditorViewModel
+    ) async throws {
         do {
-            resolved = try ProjectPluginSettings.resolvedPlugin(
-                projectURL: FrameInventory.projectHome(of: dataRoot),
-                declaredPack: declaredPack
+            try await NativeGateWriter.requireApprovalReady(
+                projectDir: FrameInventory.projectHome(of: dataRoot),
+                phase: phase,
+                declaredPack: declaredPack,
+                executionCoordinator: editor.pipelinePhaseRunCoordinator
             )
         } catch {
             throw ToolError(error.localizedDescription)
-        }
-        let registry = PackCatalog.registry(activePack: resolved)
-        let gates = try readGates(dataRoot: dataRoot)
-        do {
-            // FAIL-CLOSED first: a project that declares a pack must have it wired, or NO step approves.
-            try GateGuard.requireWiredPack(declared: declaredPack, resolved: resolved, registry: registry)
-            try PipelinePhaseAccess.requireCurrentPhaseAndIntake(
-                phase,
-                dataRoot: dataRoot,
-                declaredPack: declaredPack
-            )
-            // In order (no approving a phase before its predecessors), then the phase's own artifact.
-            try GateGuard.requirePriorApproved(
-                gates,
-                order: PhaseOrder.merged(
-                    packPlacements: registry.phasePlacements
-                ),
-                phase: phase
-            )
-            try GateGuard.checkApprovable(phase: phase, dataRoot: dataRoot, requirement: registry.gateRequirements[phase])
-        } catch let blocked as GateBlocked {
-            throw ToolError(blocked.message)
         }
     }
 
     func rewindTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let target = try args.requireString("target_phase")
+        try requirePhaseIdle(editor, dataRoot: root)
         let resolvedPack: String?
         do {
             resolvedPack = try ProjectPluginSettings.resolvedPlugin(
@@ -1625,7 +1624,7 @@ extension ToolExecutor {
             do {
                 try saveFramesManifest(updatedFrames, dataRoot: root)
             } catch {
-                try? editor.pipelineAgentHarness.recordPhaseMutation(
+                try? await editor.pipelineAgentHarness.recordPhaseMutation(
                     phase: "frames",
                     dataRoot: root,
                     captureLineage: false,
@@ -2956,43 +2955,86 @@ extension ToolExecutor {
         // agent can neither skip nor improvise (file intake into the right dir, the one-song contract,
         // the assembly hand-off). A step that throws blocks the phase with its actionable message.
         let steps = registry.deterministicSteps(forPhase: phase)
-        for step in steps {
-            do {
-                try step.run(root)
-            } catch {
-                throw ToolError(
-                    "\(phase) blocked by deterministic step '\(step.id)': \(error)"
-                )
+        let runDeterministicSteps: @Sendable (URL) throws -> Void = { dataRoot in
+            for step in steps {
+                do {
+                    try step.run(dataRoot)
+                } catch {
+                    throw PipelinePhaseBlocked(
+                        "\(phase) blocked by deterministic step '\(step.id)': "
+                            + error.localizedDescription
+                    )
+                }
             }
         }
         let engineSteps: [[String: Any]] = steps.map { ["id": $0.id, "summary": $0.summary] }
 
-        guard let runner = registry.phases[phase] else {
+        let runner = registry.phases[phase]
+        if runner == nil, steps.isEmpty {
             return try jsonResult([
                 "phase": phase,
                 "runner": NSNull(),
                 "engine_steps": engineSteps,
-                "note": engineSteps.isEmpty
-                    ? "no code runner registered; this phase is agent-driven"
-                    : "no code runner, but \(steps.count) engine-owned step(s) already ran — orchestrate around them, don't repeat them",
+                "note": "no code runner registered; this phase is agent-driven",
             ])
         }
 
-        // Run the heavy decode+DSP off the main actor. Keep `registry` alive across the await so
-        // the runner's weak decoder reference stays valid for the whole run. The error is
-        // stringified inside the task so nothing non-Sendable crosses the actor boundary.
-        let failure: String? = await Task.detached(priority: .userInitiated) {
-            do {
-                try runner(root)
-                return nil
-            } catch {
-                return String(describing: error)
+        let sourceFilename = AudioProjectLayout.songFiles(dataRoot: root)
+            .first?
+            .lastPathComponent
+        let coordinatedRunner: EngineRegistry.PhaseRunner = { dataRoot in
+            try runDeterministicSteps(dataRoot)
+            try runner?(dataRoot)
+        }
+        let coordinatedProgressRunner: EngineRegistry.ProgressPhaseRunner?
+        if runner != nil,
+           let progressRunner = registry.progressPhaseRunners[phase] {
+            coordinatedProgressRunner = { dataRoot, progress in
+                try runDeterministicSteps(dataRoot)
+                try progressRunner(dataRoot, progress)
             }
-        }.value
+        } else {
+            coordinatedProgressRunner = nil
+        }
+        let outcome = await editor.pipelinePhaseRunCoordinator.run(
+            projectRoot: root,
+            phase: phase,
+            sourceFilename: sourceFilename,
+            runner: coordinatedRunner,
+            progressRunner: coordinatedProgressRunner,
+            state: editor.pipelinePhaseExecution,
+            settleOnce: {
+                try await editor.pipelineAgentHarness.recordPhaseMutation(
+                    phase: phase,
+                    dataRoot: root,
+                    captureLineage: true,
+                    declaredPack: editor.declaredPluginName
+                )
+                await editor.refreshEngineState()
+            }
+        )
         withExtendedLifetime(registry) {}
 
-        if let failure {
+        switch outcome {
+        case .completed:
+            break
+        case .blocked(let message):
+            throw ToolError(message)
+        case .failed(let failure):
             throw ToolError("\(phase) failed: \(failure)")
+        case .refused(let activePhase):
+            throw ToolError(
+                "run_phase was refused without executing \(phase): "
+                    + "\(activePhase) is already running. Wait for it to finish, then retry."
+            )
+        }
+        if runner == nil {
+            return try jsonResult([
+                "phase": phase,
+                "runner": NSNull(),
+                "engine_steps": engineSteps,
+                "note": "no code runner, but \(steps.count) engine-owned step(s) ran once inside the phase job — orchestrate around them, don't repeat them",
+            ])
         }
         return try jsonResult([
             "phase": phase, "ok": true, "engine_steps": engineSteps,
@@ -3056,6 +3098,7 @@ extension ToolExecutor {
         }
 
         let sourceURL: URL
+        let originalFilename: String
         if let mediaRef {
             // Resolve the asset's backing file the way the other media tools do (id prefixes were
             // already expanded on input). A downloading/generating asset has no file on disk yet.
@@ -3067,8 +3110,10 @@ extension ToolExecutor {
                 throw ToolError("Asset \(asset.id) has no file on disk yet (still importing/generating?). Poll get_media and retry once its generationStatus is 'none'.")
             }
             sourceURL = url.resolvingSymlinksInPath()
+            originalFilename = asset.userFacingFilename
         } else {
             sourceURL = URL(fileURLWithPath: path!).resolvingSymlinksInPath()
+            originalFilename = sourceURL.lastPathComponent
             guard FileManager.default.fileExists(atPath: sourceURL.path) else {
                 throw ToolError("File not found: \(sourceURL.path)")
             }
@@ -3082,7 +3127,7 @@ extension ToolExecutor {
         let ext = sourceURL.pathExtension.lowercased()
         guard AudioProjectLayout.audioExtensions.contains(ext) else {
             let accepted = AudioProjectLayout.audioExtensions.sorted().map { ".\($0)" }.joined(separator: "/")
-            throw ToolError("'\(sourceURL.lastPathComponent)' isn't an audio type the analysis runner accepts (\(accepted)).")
+            throw ToolError("'\(originalFilename)' isn't an audio type the analysis runner accepts (\(accepted)).")
         }
 
         let replace = args.bool("replace") ?? false
@@ -3091,7 +3136,8 @@ extension ToolExecutor {
             attached = try await editor.attachProjectSong(
                 from: sourceURL,
                 dataRoot: root,
-                replace: replace
+                replace: replace,
+                originalFilename: originalFilename
             )
         } catch {
             throw ToolError(error.localizedDescription)

@@ -1,8 +1,7 @@
 import Foundation
 
 /// Markdown formatters for project artifacts, rendered directly into chat before
-/// an approval gate. Port of `nexgen_engine/show/formatters.py`. German section
-/// headers/labels are part of the display contract — the app renders them.
+/// an approval gate. Port of `nexgen_engine/show/formatters.py`.
 enum ShowFormatters {
 
     /// Regex-consistent with the dispatcher's still-only discipline: a bare
@@ -36,37 +35,37 @@ enum ShowFormatters {
         var lines: [String] = []
         lines.append("## Brief · \(b.project)")
         lines.append("")
-        lines.append("| Feld | Wert |")
+        lines.append("| Field | Value |")
         lines.append("|---|---|")
         let missionOther = b.missionOther.map { " · \($0)" } ?? ""
         lines.append("| Mission | `\(b.mission.rawValue)`\(missionOther) → \(b.targetPlatform) |")
         if let audience = b.targetAudience, !audience.isEmpty {
-            lines.append("| Zielpublikum | \(audience) |")
+            lines.append("| Target audience | \(audience) |")
         }
         lines.append("| Format | \(b.aspectRatio.rawValue) · \(b.lengthMode) |")
-        lines.append("| Modus | `\(b.projectMode)` |")
+        lines.append("| Mode | `\(b.projectMode)` |")
         let model = b.modelPreference.rawValue + (b.modelPreferenceOther.map { " · \($0)" } ?? "")
-        lines.append("| Runway-Modell | \(model) |")
+        lines.append("| Runway model | \(model) |")
         let frameOther = b.frameImageModelOther.map { " · \($0)" } ?? ""
-        lines.append("| Frame-Image-Modell | `\(b.frameImageModel.rawValue)`\(frameOther) |")
+        lines.append("| Frame image model | `\(b.frameImageModel.rawValue)`\(frameOther) |")
         lines.append("| Stems-Provider | `\(b.stemsProvider.rawValue)` |")
-        lines.append("| Chord-Analyse | \(b.enableChordAnalysis ? "an" : "aus") |")
+        lines.append("| Chord analysis | \(b.enableChordAnalysis ? "on" : "off") |")
         lines.append("| Budget | \(String(format: "%.2f", b.budgetEur)) € |")
         let conceptOther = b.conceptTypeOther.map { " · \($0)" } ?? ""
-        lines.append("| Konzept-Typ | `\(b.conceptType.rawValue)`\(conceptOther) |")
+        lines.append("| Concept type | `\(b.conceptType.rawValue)`\(conceptOther) |")
         var medium = "`\(b.visualMedium.rawValue)`"
         if let other = b.visualMediumOther, !other.isEmpty { medium += " · \(other)" }
         if let notes = b.visualMediumNotes, !notes.isEmpty { medium += " — \(notes)" }
         lines.append("| Medium | \(medium) |")
         let tone = b.tone.isEmpty ? "—" : b.tone.map(\.rawValue).joined(separator: ", ")
         let toneOther = b.toneOther.map { " · \($0)" } ?? ""
-        lines.append("| Ton | \(tone)\(toneOther) |")
+        lines.append("| Tone | \(tone)\(toneOther) |")
         if !b.styleReferences.isEmpty {
-            lines.append("| Stil-Referenzen | \(b.styleReferences.joined(separator: " · ")) |")
+            lines.append("| Style references | \(b.styleReferences.joined(separator: " · ")) |")
         }
         var figures = b.figures.rawValue + (b.figuresOther.map { " · \($0)" } ?? "")
         if let hint = b.figureCountHint, !hint.isEmpty { figures += " (\(hint))" }
-        lines.append("| Figuren | \(figures) |")
+        lines.append("| Figures | \(figures) |")
         var lyrics = b.lyricsIntegration.rawValue
         if let other = b.lyricsIntegrationOther, !other.isEmpty { lyrics += " · \(other)" }
         lines.append("| Lyrics-Integration | \(lyrics) |")
@@ -116,7 +115,7 @@ enum ShowFormatters {
 
     static func showBible(_ dataRoot: URL) -> String {
         guard let bible = (try? loadBible(dataRoot: dataRoot)) ?? nil else {
-            return "_Keine bible.yaml vorhanden._"
+            return "_No bible.yaml exists._"
         }
         var lines: [String] = []
         lines.append("## Bible · \(bible.project)")
@@ -127,7 +126,7 @@ enum ShowFormatters {
         if anyLook {
             lines.append("### Look-Guide")
             lines.append("")
-            lines.append("| Feld | Wert |")
+            lines.append("| Field | Value |")
             lines.append("|---|---|")
             if !look.style.isEmpty { lines.append("| **Style** | \(look.style) |") }
             if !look.palette.isEmpty { lines.append("| Palette | \(look.palette) |") }
@@ -144,7 +143,7 @@ enum ShowFormatters {
             var parts: [String] = []
             if !referenceImages.isEmpty { parts.append("\(referenceImages.count) ref") }
             if !sheets.isEmpty { parts.append("sheets: \(sheets.keys.sorted().joined(separator: ", "))") }
-            return parts.isEmpty ? "⚠️ KEINE" : parts.joined(separator: " · ")
+            return parts.isEmpty ? "⚠️ NONE" : parts.joined(separator: " · ")
         }
 
         func attributesCell(_ attributes: [String: String]) -> String {
@@ -154,7 +153,7 @@ enum ShowFormatters {
         if !bible.characters.isEmpty {
             lines.append("### Characters")
             lines.append("")
-            lines.append("| id | name | prompt (gekürzt) | attributes | Coverage |")
+            lines.append("| id | name | prompt (shortened) | attributes | Coverage |")
             lines.append("|---|---|---|---|---|")
             for it in bible.characters {
                 let cov = coverageCell(referenceImages: it.referenceImages, sheets: it.sheets)
@@ -165,7 +164,7 @@ enum ShowFormatters {
         if !bible.ensembles.isEmpty {
             lines.append("### Ensembles")
             lines.append("")
-            lines.append("| id | name | n | prompt (gekürzt) | attributes | Coverage |")
+            lines.append("| id | name | n | prompt (shortened) | attributes | Coverage |")
             lines.append("|---|---|---:|---|---|---|")
             for it in bible.ensembles {
                 let cov = coverageCell(referenceImages: it.referenceImages, sheets: it.sheets)
@@ -176,7 +175,7 @@ enum ShowFormatters {
         if !bible.props.isEmpty {
             lines.append("### Props")
             lines.append("")
-            lines.append("| id | name | prompt (gekürzt) | attributes | Coverage |")
+            lines.append("| id | name | prompt (shortened) | attributes | Coverage |")
             lines.append("|---|---|---|---|---|")
             for it in bible.props {
                 let cov = coverageCell(referenceImages: it.referenceImages, sheets: it.sheets)
@@ -187,7 +186,7 @@ enum ShowFormatters {
         if !bible.locations.isEmpty {
             lines.append("### Locations")
             lines.append("")
-            lines.append("| id | name | prompt (gekürzt) | attributes | Coverage |")
+            lines.append("| id | name | prompt (shortened) | attributes | Coverage |")
             lines.append("|---|---|---|---|---|")
             for it in bible.locations {
                 let cov = coverageCell(referenceImages: it.referenceImages, sheets: it.sheets)
@@ -206,7 +205,7 @@ enum ShowFormatters {
 
     static func showShotlist(_ dataRoot: URL) -> String {
         guard let sl = (try? loadShotlist(dataRoot: dataRoot)) ?? nil else {
-            return "_Keine shotlist/current.yaml vorhanden._"
+            return "_No shotlist/current.yaml exists._"
         }
         var lines: [String] = []
         lines.append("## Shotlist · \(sl.project) · current · mode=\(sl.mode.rawValue)")
@@ -218,11 +217,11 @@ enum ShowFormatters {
         var bpmStr = "\(String(format: "%.1f", sl.song.bpm)) BPM"
         if abs(perceived - sl.song.bpm) > 0.1 {
             let mult = sl.song.tempoMultiplier
-            bpmStr = "\(String(format: "%.1f", perceived)) BPM (×\(g(mult)) aus \(String(format: "%.1f", sl.song.bpm)))"
+            bpmStr = "\(String(format: "%.1f", perceived)) BPM (×\(g(mult)) from \(String(format: "%.1f", sl.song.bpm)))"
         }
         lines.append(
             "**\(sl.shots.count) Shots** · ASL \(String(format: "%.1f", asl))s · Budget \(String(format: "%.2f", sl.budgetEur)) € "
-            + "· \(bpmStr) · Dauer \(mmSS(sl.song.durationS))"
+            + "· \(bpmStr) · Duration \(mmSS(sl.song.durationS))"
         )
         lines.append("")
 
@@ -235,9 +234,9 @@ enum ShowFormatters {
             bySection[key, default: []].append(shot)
         }
 
-        lines.append("### Section-Übersicht")
+        lines.append("### Section overview")
         lines.append("")
-        lines.append("| Section | Zeit | Shots | ASL | KF-Mix |")
+        lines.append("| Section | Time | Shots | ASL | KF mix |")
         lines.append("|---|---|---|---|---|")
         for sec in sectionOrder {
             let shots = bySection[sec] ?? []
@@ -257,7 +256,7 @@ enum ShowFormatters {
                 let nErr = sequenceCount(srep["errors"])
                 let nWarn = sequenceCount(srep["warnings"])
                 let badge = nErr == 0 ? "✓" : "✗"
-                lines.append("**Sanity-Snapshot:** \(badge) \(nErr) Errors · ⚠ \(nWarn) Warns (siehe sanity-report.yaml)")
+                lines.append("**Sanity snapshot:** \(badge) \(nErr) errors · ⚠ \(nWarn) warnings (see sanity-report.yaml)")
                 lines.append("")
             }
         }
@@ -329,36 +328,36 @@ enum ShowFormatters {
         let anaDir = dataRoot.appendingPathComponent("analysis")
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: anaDir.path, isDirectory: &isDir), isDir.boolValue else {
-            return "_Kein analysis/-Ordner vorhanden — Phase A noch nicht durch._"
+            return "_No analysis/ directory exists — analysis has not run._"
         }
         let entries = (try? FileManager.default.contentsOfDirectory(at: anaDir, includingPropertiesForKeys: nil)) ?? []
         let candidates = entries
             .filter { $0.pathExtension == "json" && !$0.lastPathComponent.hasPrefix("_") }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         guard let first = candidates.first else {
-            return "_Keine analysis/<song>.json vorhanden — Analyse-Lauf ausführen._"
+            return "_No analysis/<song>.json exists — run audio analysis._"
         }
         guard let raw = try? Data(contentsOf: first),
               let parsed = try? JSONSerialization.jsonObject(with: raw),
               let data = parsed as? [String: Any] else {
-            return "_Keine analysis/<song>.json vorhanden — Analyse-Lauf ausführen._"
+            return "_No analysis/<song>.json exists — run audio analysis._"
         }
 
         var lines: [String] = []
         let project = (data["project"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? displayName(dataRoot)
-        lines.append("## Analyse · \(project)")
+        lines.append("## Analysis · \(project)")
         lines.append("")
 
-        lines.append("| Feld | Wert |")
+        lines.append("| Field | Value |")
         lines.append("|---|---|")
         if let bpm = asDouble(data["bpm"]) {
             lines.append("| BPM | \(String(format: "%.1f", bpm)) |")
         }
         if let key = data["key"] as? String, !key.isEmpty {
-            lines.append("| Tonart | \(key) |")
+            lines.append("| Key | \(key) |")
         }
         if let duration = asDouble(data["duration_s"]) {
-            lines.append("| Dauer | \(mmSS(duration)) (\(String(format: "%.1f", duration))s) |")
+            lines.append("| Duration | \(mmSS(duration)) (\(String(format: "%.1f", duration))s) |")
         }
         let downbeats = data["downbeats"] as? [Any] ?? []
         let dbSource = data["downbeat_source"] as? String
@@ -366,7 +365,7 @@ enum ShowFormatters {
             let src = dbSource.map { " (\($0))" } ?? ""
             lines.append("| Downbeats | \(downbeats.count)\(src) |")
         } else if let dbSource, !dbSource.isEmpty {
-            lines.append("| Downbeat-Quelle | `\(dbSource)` |")
+            lines.append("| Downbeat source | `\(dbSource)` |")
         }
         if let stems = data["stems"] as? [String: Any], !stems.isEmpty {
             let present = ["vocals", "drums", "bass", "other"].filter { stems[$0] != nil }
@@ -378,7 +377,7 @@ enum ShowFormatters {
         }
         let alignment = data["alignment"] as? [Any] ?? []
         if !alignment.isEmpty {
-            lines.append("| Alignment-Zeilen | \(alignment.count) |")
+            lines.append("| Alignment lines | \(alignment.count) |")
         }
         lines.append("")
 
@@ -389,7 +388,7 @@ enum ShowFormatters {
         if let firstSection = sections.first, firstSection["start"] != nil {
             lines.append("### Sections")
             lines.append("")
-            lines.append("| # | Label | Start | Dauer |")
+            lines.append("| # | Label | Start | Duration |")
             lines.append("|---|---|---|---|")
             for s in sections {
                 let idx = scalarString(s["index"])
@@ -420,7 +419,7 @@ enum ShowFormatters {
                 guard let dict = anomaly as? [String: Any] else { return nil }
                 return (dict["kind"] as? String) ?? "unknown"
             })
-            lines.append("### Anomalien (\(anomalies.count))")
+            lines.append("### Anomalies (\(anomalies.count))")
             lines.append("")
             for entry in kinds {
                 let samples = anomalies
@@ -440,7 +439,7 @@ enum ShowFormatters {
 
         if let overall = interpretation["overall_character"] {
             let overallS = scalarString(overall)
-            lines.append("### Charakter")
+            lines.append("### Character")
             lines.append("")
             lines.append(overallS.count > 400 ? shorten(overallS, 400) : overallS)
             lines.append("")
@@ -448,7 +447,7 @@ enum ShowFormatters {
 
         let structureCands = data["structure_candidates"] as? [Any] ?? []
         if !structureCands.isEmpty {
-            lines.append("_Structure-Detector-Kandidaten: \(structureCands.count)_")
+            lines.append("_Structure detector candidates: \(structureCands.count)_")
             lines.append("")
         }
 
@@ -460,7 +459,7 @@ enum ShowFormatters {
     static func showProductionDesign(_ dataRoot: URL) -> String {
         let pdURL = dataRoot.appendingPathComponent("production_design").appendingPathComponent("production_design.yaml")
         guard FileManager.default.fileExists(atPath: pdURL.path) else {
-            return "_Keine production_design.yaml vorhanden — Phase K2 noch nicht durch._"
+            return "_No production_design.yaml exists — Production Design has not run._"
         }
         let data: [String: YAMLValue]
         if let text = try? String(contentsOf: pdURL, encoding: .utf8),
@@ -473,7 +472,7 @@ enum ShowFormatters {
         let project = mappingString(data["project"]).flatMap { $0.isEmpty ? nil : $0 } ?? displayName(dataRoot)
         lines.append("## Production Design · \(project)")
         lines.append("")
-        lines.append("| Feld | Wert |")
+        lines.append("| Field | Value |")
         lines.append("|---|---|")
         if let vm = mappingString(data["visual_medium"]), !vm.isEmpty {
             lines.append("| Visual Medium | `\(vm)` |")
@@ -489,7 +488,7 @@ enum ShowFormatters {
         if case .sequence(let refs)? = data["refs"], !refs.isEmpty {
             lines.append("### Style-Refs")
             lines.append("")
-            lines.append("| # | Pfad | Notiz |")
+            lines.append("| # | Path | Note |")
             lines.append("|---:|---|---|")
             for (i, ref) in refs.enumerated() {
                 let path: String
@@ -509,7 +508,7 @@ enum ShowFormatters {
         if case .mapping(let colorScript)? = data["color_script"], !colorScript.isEmpty {
             lines.append("### Color Script")
             lines.append("")
-            lines.append("| Section | Stimmung |")
+            lines.append("| Section | Mood |")
             lines.append("|---|---|")
             for (section, mood) in colorScript {
                 lines.append("| \(section) | \(valueString(mood)) |")
@@ -539,7 +538,7 @@ enum ShowFormatters {
             resolvedVersion = .current
         }
         guard let sb = (try? StoryboardStore.load(dataRoot: dataRoot, version: resolvedVersion)) ?? nil else {
-            return "_Kein Storyboard `\(version)` vorhanden — Phase K4 noch nicht durch._"
+            return "_No storyboard `\(version)` exists — Storyboard has not run._"
         }
         var lines: [String] = []
         lines.append("## Storyboard · \(sb.meta.project) · v\(sb.meta.version) · \(sb.meta.origin)")
@@ -549,12 +548,12 @@ enum ShowFormatters {
             lines.append("")
         }
         let totalSteps = sb.sections.reduce(0) { $0 + $1.steps.count }
-        lines.append("**\(sb.sections.count) Sektionen · \(totalSteps) Steps**")
+        lines.append("**\(sb.sections.count) Sections · \(totalSteps) Steps**")
         lines.append("")
 
-        lines.append("### Sektionen")
+        lines.append("### Sections")
         lines.append("")
-        lines.append("| ID | Label | Energy | Funktion | Steps | Zeit |")
+        lines.append("| ID | Label | Energy | Function | Steps | Time |")
         lines.append("|---|---|---|---|---:|---|")
         for s in sb.sections {
             var zeit = ""
@@ -572,7 +571,7 @@ enum ShowFormatters {
             if sec.steps.isEmpty { continue }
             lines.append("### Steps · \(sec.id)")
             lines.append("")
-            lines.append("| Step | Funktion | Subject | Camera | Location-View |")
+            lines.append("| Step | Function | Subject | Camera | Location view |")
             lines.append("|---|---|---|---|---|")
             for st in sec.steps {
                 let subj = shorten(st.subject, 60)
@@ -585,9 +584,9 @@ enum ShowFormatters {
 
         let demand = sb.locationViewDemand()
         if !demand.isEmpty {
-            lines.append("### Bible-Bedarf (Location-Views)")
+            lines.append("### Bible requirements (location views)")
             lines.append("")
-            lines.append("| Location-Hint | benötigte Views |")
+            lines.append("| Location hint | Required views |")
             lines.append("|---|---|")
             for loc in demand.keys.sorted() {
                 let views = (demand[loc] ?? []).sorted().joined(separator: ", ")
@@ -617,7 +616,7 @@ enum ShowFormatters {
         }
         if !FileManager.default.fileExists(atPath: manifestURL.path) {
             let r = phase == "preview" ? "1" : "2"
-            lines.append("_Kein Manifest unter `renders/manifest-\(phase).*` —_ Render-Phase R\(r) noch nicht gelaufen.")
+            lines.append("_No manifest exists at `renders/manifest-\(phase).*` — render phase R\(r) has not run._")
             return lines.joined(separator: "\n")
         }
 
@@ -645,7 +644,7 @@ enum ShowFormatters {
             lines.append("_Manifest leer._")
             return lines.joined(separator: "\n")
         }
-        lines.append("| Shot | Status | Modell | EUR | Pfad |")
+        lines.append("| Shot | Status | Model | EUR | Path |")
         lines.append("|---|---|---|---|---|")
         var totalEur = 0.0
         for r in results {
@@ -659,7 +658,7 @@ enum ShowFormatters {
             lines.append("| `\(shotId)` | \(status) | \(model) | \(String(format: "%.3f", eur)) | `\(outPath)` |")
         }
         lines.append("")
-        lines.append("**Gesamt:** \(String(format: "%.2f", totalEur)) EUR · \(results.count) Shots")
+        lines.append("**Total:** \(String(format: "%.2f", totalEur)) EUR · \(results.count) Shots")
         return lines.joined(separator: "\n")
     }
 

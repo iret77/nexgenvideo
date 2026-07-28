@@ -20,7 +20,10 @@ let package = Package(
         // the engine into both binaries and break the cross-bundle PackEntry cast.
         .package(path: "Engine"),
         .package(url: "https://github.com/dmrschmidt/DSWaveformImage", from: "14.2.2"),
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.11.0"),
+        .package(
+            url: "https://github.com/modelcontextprotocol/swift-sdk.git",
+            .upToNextMinor(from: "0.12.0")
+        ),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
         .package(url: "https://github.com/getsentry/sentry-cocoa", from: "8.40.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
@@ -79,6 +82,7 @@ let package = Package(
             dependencies: [
                 "NexGenVideo",
                 .product(name: "NexGenEngine", package: "Engine"),
+                .product(name: "MCP", package: "swift-sdk"),
                 "MusicvideoPlugin",
             ],
             path: "Tests/NexGenVideoTests"

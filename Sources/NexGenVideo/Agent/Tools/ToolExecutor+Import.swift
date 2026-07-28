@@ -125,7 +125,17 @@ extension ToolExecutor {
             type: type,
             folderId: folderId
         )
-        applyImportMetadata(editor: editor, asset: asset, name: name, folderId: folderId)
+        let inlineName = name ?? "Imported asset"
+        applyImportMetadata(
+            editor: editor,
+            asset: asset,
+            name: inlineName,
+            originalFilename: MediaFilename.storageFilename(
+                inlineName,
+                matchingExtension: fileExt
+            ),
+            folderId: folderId
+        )
         await editor.finalizeImportedAsset(asset)
         return .ok("Imported '\(asset.name)' (id: \(asset.id), type: \(asset.type.rawValue), \(byteCount) bytes). Available now in get_media.")
     }
@@ -266,6 +276,16 @@ extension ToolExecutor {
             let stem = url.deletingPathExtension().lastPathComponent
             displayName = stem.isEmpty ? "Imported asset" : stem
         }
+        let remoteCandidate = MediaFilename.normalized(
+            download.response.suggestedFilename
+        ) ?? MediaFilename.normalized(
+            download.response.url?.lastPathComponent
+        )
+        let remoteFilename = remoteCandidate.flatMap {
+            URL(fileURLWithPath: $0).pathExtension.isEmpty
+                ? MediaFilename.storageFilename($0, matchingExtension: fileExt)
+                : $0
+        } ?? MediaFilename.storageFilename(displayName, matchingExtension: fileExt)
 
         let asset: MediaAsset
         if let existing = editor.mediaAssets.first(where: {
@@ -284,7 +304,8 @@ extension ToolExecutor {
                 id: UUID().uuidString,
                 url: copy.url,
                 type: type,
-                name: displayName
+                name: displayName,
+                originalFilename: remoteFilename
             )
             editor.importMediaAsset(asset)
             applyImportMetadata(
@@ -301,11 +322,23 @@ extension ToolExecutor {
         )
     }
 
-    private func applyImportMetadata(editor: EditorViewModel, asset: MediaAsset, name: String?, folderId: String?) {
+    private func applyImportMetadata(
+        editor: EditorViewModel,
+        asset: MediaAsset,
+        name: String?,
+        originalFilename: String? = nil,
+        folderId: String?
+    ) {
         if let name {
             asset.name = name
             if let idx = editor.mediaManifest.entries.firstIndex(where: { $0.id == asset.id }) {
                 editor.mediaManifest.entries[idx].name = name
+            }
+        }
+        if let originalFilename {
+            asset.originalFilename = originalFilename
+            if let idx = editor.mediaManifest.entries.firstIndex(where: { $0.id == asset.id }) {
+                editor.mediaManifest.entries[idx].originalFilename = originalFilename
             }
         }
         if let folderId {

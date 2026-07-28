@@ -3,7 +3,8 @@
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.
-> Converse with the user **in the user's language**; everything written
+> Use the **interface language supplied by the host** unless the user explicitly
+> requests another language; everything written
 > into provider-facing fields is **English**.
 
 ## Goal
@@ -294,25 +295,25 @@ camera / lighting directives, and hallucinate on longer sentences.
 - `character_blocking[].position / pose / gaze / relation_to_set`
 - `composition` (in Storyboard.Step)
 
-**May remain in the user's language** (human-only, never sent to the
-provider):
+**May remain in the active conversation language established by the
+host** (human-only, never sent to the provider):
 - `description` (human-readable overview)
 - `notes` (director's notes / escape markers)
 - all brief, treatment, and storyboard story fields that you discuss
   in the user chat
 
-**Workflow:** the user chat stays in the user's language; you pass the
-provider-facing tool fields directly in English — without an intermediate
-draft in the user's language. That saves a translation loop and
+**Workflow:** the user chat stays in the active conversation language;
+you pass the provider-facing tool fields directly in English — without an
+intermediate draft in that language. That saves a translation loop and
 prevents idioms from slipping through unnoticed.
 
 **Sanity check `PROMPT_NOT_ENGLISH`** (warn) detects non-English stop
 words / umlauts in the `visual_prompt` and flags them. Escape marker for
 deliberate exceptions: `non_english_ok: <reason>` in `Shot.notes`
-(e.g. a karaoke insert with a German lyrics overlay).
+(e.g. a karaoke insert with a non-English lyrics overlay).
 
-Example (non-provider fields shown in German here on purpose — they
-may stay in the user's language):
+Example (human-only fields are English here because this example must
+not imply a user-facing language):
 
 ```yaml
 # CORRECT
@@ -322,15 +323,11 @@ visual_prompt: |
   step forward, gaze slightly downcast, bag loose in her right hand,
   about to walk into the courtyard. Warm midday sunlight from camera
   left, long soft shadows on the gravel.
-description: "Lehrerin tritt durchs Schultor in den Hof"
-notes: "Anfangsmoment, vor dem ersten Kontakt mit den Schülern."
+description: "The teacher enters the courtyard through the school gate."
+notes: "Opening moment, before the first contact with the students."
 
-# WRONG (German provider fields)
-visual_prompt: |
-  Junge Lehrerin Mitte 30, kurze braune Haare, runde Brille,
-  navy Strickjacke, steht im offenen Schultor, linkes Bein einen
-  Schritt vor, Blick nach unten, Tasche locker in der rechten Hand.
-  Warmes Mittagslicht von links, lange weiche Schatten auf dem Kies.
+# WRONG
+visual_prompt: "<provider prompt written in a language other than English>"
 ```
 
 ### Rule 2 — Constraints are phrased POSITIVELY

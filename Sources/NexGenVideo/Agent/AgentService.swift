@@ -335,7 +335,7 @@ final class AgentService {
                 sendDialogFailure(
                     dialog,
                     result: result,
-                    notice: "Couldn't read \(src.lastPathComponent). Use a UTF-8 .txt or .md file.",
+                    notice: "Couldn't read \(userFacingFilename(for: src)). Use a UTF-8 .txt or .md file.",
                     agentContext: "The host couldn't read the \(kind) file because it isn't UTF-8 text. Ask for a .txt or .md file."
                 )
                 return
@@ -419,7 +419,11 @@ final class AgentService {
             if let key = editor.openWorkingCopyKey {
                 try ProjectWorkingCopy.markDirty(key: key)
             }
-            copied = try Self.copyFilesUniquely(result.fileURLs, into: dir)
+            copied = try Self.copyFilesUniquely(
+                result.fileURLs,
+                into: dir,
+                preferredFilenames: preferredFilenames(for: result.fileURLs)
+            )
         } catch {
             sendDialogFailure(
                 dialog,
@@ -489,10 +493,12 @@ final class AgentService {
             return
         }
         do {
+            let filename = userFacingFilename(for: src)
             let attached = try await editor.attachProjectSong(
                 from: src,
                 dataRoot: dataRoot,
-                replace: true
+                replace: true,
+                originalFilename: filename
             )
             let routing: String
             if let next = editor.projectState?.nextPhaseName, next != "analysis" {
@@ -504,6 +510,7 @@ final class AgentService {
             sendDialogResponse(
                 dialog,
                 result: result,
+                presentedAttachmentNames: [attached.filename],
                 agentContext: "Song placed in audio/ (\(attached.filename)). \(routing)"
             )
         } catch {
@@ -543,7 +550,11 @@ final class AgentService {
             if let key = editor.openWorkingCopyKey {
                 try ProjectWorkingCopy.markDirty(key: key)
             }
-            copied = try Self.copyFilesUniquely(result.fileURLs, into: dir)
+            copied = try Self.copyFilesUniquely(
+                result.fileURLs,
+                into: dir,
+                preferredFilenames: preferredFilenames(for: result.fileURLs)
+            )
         }
         catch {
             sendDialogFailure(
@@ -590,6 +601,21 @@ final class AgentService {
         }
     }
 
+    private func userFacingFilename(for url: URL) -> String {
+        let target = url.standardizedFileURL.resolvingSymlinksInPath()
+        return editor?.mediaAssets.first {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath() == target
+        }?.userFacingFilename ?? MediaFilename.display(
+            originalFilename: nil,
+            name: "",
+            storageURL: url
+        )
+    }
+
+    private func preferredFilenames(for urls: [URL]) -> [URL: String] {
+        Dictionary(urls.map { ($0, userFacingFilename(for: $0)) }) { first, _ in first }
+    }
+
     nonisolated private static func intakeRoleLabel(_ role: String) -> String {
         switch role {
         case "song": "the project track"
@@ -606,7 +632,11 @@ final class AgentService {
     /// overwritten — collisions with files ALREADY in `dir` (e.g. a reference from an earlier session)
     /// and within this batch both get a `-2`/`-3` suffix. A file already sitting at its destination is
     /// kept as-is. Returns the destination names. One routine for every image intake.
-    nonisolated static func copyFilesUniquely(_ urls: [URL], into dir: URL) throws -> [String] {
+    nonisolated static func copyFilesUniquely(
+        _ urls: [URL],
+        into dir: URL,
+        preferredFilenames: [URL: String] = [:]
+    ) throws -> [String] {
         let fm = FileManager.default
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         var used = Set((try? fm.contentsOfDirectory(atPath: dir.path)) ?? [])
@@ -614,15 +644,20 @@ final class AgentService {
         var created: [URL] = []
         do {
             for src in urls {
-                let inPlace = dir.appendingPathComponent(src.lastPathComponent)
+                let preferred = MediaFilename.storageFilename(
+                    preferredFilenames[src] ?? src.lastPathComponent,
+                    matchingExtension: src.pathExtension
+                ) ?? src.lastPathComponent
+                let inPlace = dir.appendingPathComponent(preferred)
                 if src.standardizedFileURL == inPlace.standardizedFileURL {
-                    used.insert(src.lastPathComponent)
-                    copied.append(src.lastPathComponent)
+                    used.insert(preferred)
+                    copied.append(preferred)
                     continue
                 }
                 let ext = src.pathExtension
-                let base = src.deletingPathExtension().lastPathComponent
-                var name = src.lastPathComponent
+                let base = URL(fileURLWithPath: preferred)
+                    .deletingPathExtension().lastPathComponent
+                var name = preferred
                 var n = 2
                 while used.contains(name) {
                     name = ext.isEmpty ? "\(base)-\(n)" : "\(base)-\(n).\(ext)"
@@ -729,7 +764,13 @@ final class AgentService {
         let direction = result.direction.trimmingCharacters(in: .whitespacesAndNewlines)
         if !direction.isEmpty { agentLines.append("Direction: \(direction)") }
         let attachmentNames = presentedAttachmentNames ?? (attached.isEmpty
-            ? result.fileURLs.map(\.lastPathComponent)
+            ? result.fileURLs.map {
+                MediaFilename.display(
+                    originalFilename: nil,
+                    name: "",
+                    storageURL: $0
+                )
+            }
             : attached.map(\.displayName))
         if !attachmentNames.isEmpty {
             let values = attached.isEmpty
@@ -766,11 +807,15 @@ final class AgentService {
             completeWorkflowIntake(dialog)
             return
         }
+        var resolvedAttachmentNames = presentedAttachmentNames
+        if resolvedAttachmentNames == nil, attached.isEmpty {
+            resolvedAttachmentNames = result.fileURLs.map { userFacingFilename(for: $0) }
+        }
         let response = Self.dialogResponse(
             from: dialog,
             result: result,
             attached: attached,
-            presentedAttachmentNames: presentedAttachmentNames,
+            presentedAttachmentNames: resolvedAttachmentNames,
             userNotice: userNotice
         )
         let text = [response.agentText, agentContext].compactMap { value in
@@ -882,6 +927,7 @@ final class AgentService {
 
     /// The one gate decision currently waiting in the composer.
     private(set) var pendingGateApproval: GateApproval?
+    private(set) var gateApprovalIsWriting = false
     private(set) var gateApprovalError: String?
 
     @ObservationIgnored
@@ -911,7 +957,7 @@ final class AgentService {
 
     /// Applies the decision locally and resumes its originating in-app turn when possible.
     @discardableResult
-    func resolveGate(_ decision: GateDecision) -> ToolResult? {
+    func resolveGate(_ decision: GateDecision) async -> ToolResult? {
         guard let approval = pendingGateApproval else { return nil }
         switch decision {
         case .declined:
@@ -922,13 +968,18 @@ final class AgentService {
             enqueueGateFollowUp(message, sessionId: approval.sessionId)
             return .ok("The user did not approve \(approval.phaseLabel).")
         case .approved:
+            guard !gateApprovalIsWriting else {
+                return .error("The approval is already being applied.")
+            }
             guard let toolExecutor else {
                 let message = "The gate writer is unavailable. The approval request remains open."
                 gateApprovalError = message
                 return .error(message)
             }
+            gateApprovalIsWriting = true
+            defer { gateApprovalIsWriting = false }
             do {
-                let payload = try toolExecutor.commitGateApproval(approval)
+                let payload = try await toolExecutor.commitGateApproval(approval)
                 pendingGateApproval = nil
                 gateApprovalError = nil
                 if approval.sessionId != nil {
@@ -1522,8 +1573,9 @@ final class AgentService {
             return "@\(mention.displayName) → \(asset.url.path)"
         }
         guard !lines.isEmpty else { return nil }
-        return "Attached files live in the project; read a non-image one with the Read tool at: "
-            + lines.joined(separator: "; ") + "."
+        return "Attached files live in content-addressed project storage. Its path basename is an "
+            + "opaque internal hash, never a title or filename. Read a non-image attachment at: "
+            + lines.joined(separator: "; ") + ". Use the fileName metadata above for its original name."
     }
 
     private func configuredPluginDirectories() -> [URL] {

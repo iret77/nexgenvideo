@@ -26,7 +26,7 @@ extension EditorViewModel {
         let index = fileIndex(in: folder)
         var relinked = 0
         for asset in offline {
-            guard let match = index[asset.url.lastPathComponent.lowercased()] else { continue }
+            guard let match = index[asset.userFacingFilename.lowercased()] else { continue }
             do {
                 try applyRelink(id: asset.id, to: match)
                 relinked += 1
@@ -41,9 +41,11 @@ extension EditorViewModel {
     private func applyRelink(id: String, to newURL: URL) throws {
         guard let i = mediaAssets.firstIndex(where: { $0.id == id }) else { return }
         mediaAssets[i].url = try durableProjectMediaURL(for: newURL)
+        mediaAssets[i].originalFilename = MediaFilename.normalized(newURL.lastPathComponent)
         if let j = mediaManifest.entries.firstIndex(where: { $0.id == id }) {
-            mediaManifest.entries[j].source = mediaAssets[i]
-                .toManifestEntry(projectURL: workingRoot).source
+            let entry = mediaAssets[i].toManifestEntry(projectURL: workingRoot)
+            mediaManifest.entries[j].source = entry.source
+            mediaManifest.entries[j].originalFilename = entry.originalFilename
         }
         let asset = mediaAssets[i]
         Task { await finalizeImportedAsset(asset) }

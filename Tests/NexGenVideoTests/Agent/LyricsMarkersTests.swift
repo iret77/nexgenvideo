@@ -88,4 +88,31 @@ struct CopyFilesUniquelyTests {
         }
         #expect((try fm.contentsOfDirectory(atPath: dest.path)).isEmpty)
     }
+
+    @Test("a preferred original filename replaces a content-addressed source name")
+    func preservesOriginalFilename() throws {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent(
+            "copy-original-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let dest = tmp.appendingPathComponent("dest", isDirectory: true)
+        defer { try? fm.removeItem(at: tmp) }
+        try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+        let hash = String(repeating: "a", count: 64)
+        let source = tmp.appendingPathComponent("\(hash).jpg")
+        try Data("image".utf8).write(to: source)
+
+        let names = try AgentService.copyFilesUniquely(
+            [source],
+            into: dest,
+            preferredFilenames: [source: "Character Reference.jpg"]
+        )
+
+        #expect(names == ["Character Reference.jpg"])
+        #expect(fm.fileExists(
+            atPath: dest.appendingPathComponent("Character Reference.jpg").path
+        ))
+        #expect(fm.fileExists(atPath: dest.appendingPathComponent("\(hash).jpg").path) == false)
+    }
 }

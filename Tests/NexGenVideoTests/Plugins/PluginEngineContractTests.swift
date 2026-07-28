@@ -41,17 +41,17 @@ struct PluginEngineContractTests {
     @Test func explicitlyCompatibleOlderContractPassesOnNewHost() {
         #expect(
             PluginGate.contractCheck(
-                packContract: 2,
-                engine: 3,
+                packContract: 3,
+                engine: 4,
                 minimumCompatible: 2
             ) == nil
         )
         #expect(
             PluginGate.contractCheck(
-                packContract: 3,
-                engine: 2,
+                packContract: 4,
+                engine: 3,
                 minimumCompatible: 2
-            ) == .requiresEngineContract(pack: 3, app: 2)
+            ) == .requiresEngineContract(pack: 4, app: 3)
         )
     }
 

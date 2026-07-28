@@ -57,6 +57,14 @@ the current phase's capability set is rejected before it can spend money or muta
   must be complete or explicitly declined, all earlier gates must be approved, and the immediate
   predecessor's structural requirement plus lineage must still be current. Editing an approved phase
   requires an explicit rewind.
+- A project has at most one host-executed phase job. Concurrent calls and MCP reconnect retries for
+  its current phase join that job instead of starting duplicate work; a different phase is refused
+  until it settles. Runner-emitted stage boundaries are the only source of user-visible progress.
+- While a phase job is running, approval, revision-state changes, and rewind fail before mutation.
+  Approval becomes available only after the completed canonical artifact passes the same structural
+  gate used by agent approval.
+- Pipeline approval controls derive their enabled state from that shared approval check. They stay
+  visibly disabled while it is blocked, and the mutation re-runs the check to close click-time races.
 - A successful canonical write rewinds its own gate and every downstream gate, then records lineage
   from the current cumulative inputs and exact artifact bytes.
 - Native artifact edits use the same canonical data root and phase-access guard as agent tools. They
@@ -105,6 +113,8 @@ The release suite must fail if:
 - an artifact or generated media file changes after its recorded proof;
 - a future or approved phase can be mutated without becoming the current phase through rewind;
 - a phase-bound runner or writer is accepted outside that phase's explicit capability set;
+- an MCP reconnect duplicates or loses a running host phase, or a running phase can be approved;
+- the Pipeline UI enables approval while the shared approval check is blocked;
 - a Render passes with missing, stale, substituted, or unplanned conditioning input;
 - host intake appears in an unsupported phase or violates the locked startup sequence;
 - an imported-only project cannot create and approve valid empty Frames/Render artifacts.

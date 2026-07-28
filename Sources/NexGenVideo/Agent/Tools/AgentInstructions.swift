@@ -1,9 +1,55 @@
 import Foundation
 
+struct AgentInterfaceLanguage: Equatable {
+    let identifier: String
+    let displayName: String
+
+    static var current: AgentInterfaceLanguage {
+        resolve(
+            preferredLocalizations: Bundle.main.preferredLocalizations,
+            developmentLocalization: Bundle.main.developmentLocalization
+        )
+    }
+
+    static func resolve(
+        preferredLocalizations: [String],
+        developmentLocalization: String?
+    ) -> AgentInterfaceLanguage {
+        let identifier = preferredLocalizations.first {
+            !$0.isEmpty && $0.caseInsensitiveCompare("Base") != .orderedSame
+        } ?? developmentLocalization ?? "en"
+        let languageCode = identifier
+            .split(whereSeparator: { $0 == "-" || $0 == "_" })
+            .first
+            .map(String.init) ?? "en"
+        let displayName = Locale(identifier: "en")
+            .localizedString(forLanguageCode: languageCode) ?? languageCode
+        return AgentInterfaceLanguage(
+            identifier: identifier,
+            displayName: displayName
+        )
+    }
+
+    var instruction: String {
+        """
+        # User-facing language
+        - The NexGenVideo interface language is \(displayName) (\(identifier)). Use it for every \
+          user-facing response, question, dialog, approval summary, and artifact explanation by default.
+        - Do not infer a different language from the operating-system locale, project content, filenames, \
+          lyrics, internal instructions, or earlier generated text.
+        - Switch languages only when the user explicitly asks you to. Keep that requested language until \
+          the user explicitly asks to switch again.
+        """
+    }
+}
+
 enum AgentInstructions {
-    static let serverInstructions: String = """
+    static var serverInstructions: String {
+        """
         You are a creative AI assistant connected to NexGenVideo, an AI-native video editor. \
         Help the user build and edit their project by calling the tools this server exposes.
+
+        \(AgentInterfaceLanguage.current.instruction)
 
         # Core model
         - The timeline has a fixed fps and resolution. All timing is in FRAMES, not seconds: \
@@ -30,8 +76,8 @@ enum AgentInstructions {
         - Call list_models before generate_video, generate_image, generate_audio, or \
           upscale_media so the model you pick supports the duration, aspect ratio, references, \
           voice, or asset type you need.
-        - Generation and upscale tools need a provider API key set in Settings → Providers \
-          (fal etc.); without one they fail. There is no sign-in and no subscription. \
+        - Generation and upscale tools need a configured connection for the selected provider in \
+          Settings → Providers: an API key or a supported provider sign-in. \
           (inspect_media transcription runs on-device and needs no key.)
         - Before describing any user-supplied asset (referenceMediaRefs, startFrameMediaRef, \
           etc.), call inspect_media and describe what you actually see — never paraphrase \
@@ -224,9 +270,10 @@ enum AgentInstructions {
           rewind to the earliest phase that's actually wrong (usually treatment or storyboard) with the \
           rewind tool; it resets that phase and everything after it so the redo is clean. Offer this \
           explicitly rather than grinding forward on a broken premise.
-        - Review in the USER's language. Provider-facing fields (visual_prompt, etc.) stay ENGLISH for \
+        - Review in the active conversation language established by the host rule above. \
+          Provider-facing fields (visual_prompt, etc.) stay ENGLISH for \
           the models, but when you surface one for approval, add a one-line plain-language gloss in the \
-          user's language — they judge the idea in their language while English goes to the model.
+          active conversation language while English goes to the model.
         - Ask the ESSENTIALS up front, defer render-tuning. Front-load only what shapes the creative \
           work (mission, format, mode, medium, style, figures, lyrics use); DEFER render-tuning knobs \
           (cut handles, director pattern, preview routing) until the phase that needs them — don't run a \
@@ -265,6 +312,7 @@ enum AgentInstructions {
         - When the user is vague about aesthetic direction, ask one focused question instead \
           of guessing.
         """ + "\n\n" + presentationContract
+    }
 
     /// The rich-output contract (#135), kept separate so the embedded runtime can receive it
     /// via --append-system-prompt even when the full manual arrives another way.

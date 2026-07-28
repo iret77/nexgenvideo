@@ -24,11 +24,19 @@ enum IntakePlanner {
 
 @MainActor
 enum PipelinePhaseAccess {
-    static func requireCurrentPhaseAndIntake(
-        _ phase: String,
+    private static var manifestCache: [String: HardStepManifest] = [:]
+
+    struct Prepared: Sendable {
+        let packName: String?
+        let packPlacements: [PhasePlacement]
+        let order: [String]
+        let manifest: HardStepManifest?
+    }
+
+    static func prepare(
         dataRoot: URL,
         declaredPack: String? = nil
-    ) throws {
+    ) throws -> Prepared {
         let projectURL = FrameInventory.projectHome(of: dataRoot)
         let packName: String?
         do {
@@ -39,16 +47,89 @@ enum PipelinePhaseAccess {
         } catch {
             throw GateBlocked(error.localizedDescription)
         }
-        guard let packName else { return }
+        guard let packName else {
+            return Prepared(
+                packName: nil,
+                packPlacements: [],
+                order: [],
+                manifest: nil
+            )
+        }
         let registry = PackCatalog.registry(activePack: packName)
-        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
-        guard order.contains(phase) else {
+        return try prepare(
+            packName: packName,
+            registry: registry
+        )
+    }
+
+    static func prepare(
+        packName: String?,
+        registry: EngineRegistry
+    ) throws -> Prepared {
+        guard let packName else {
+            return Prepared(
+                packName: nil,
+                packPlacements: [],
+                order: [],
+                manifest: nil
+            )
+        }
+        guard let pack = PackCatalog.pack(named: packName) else {
+            throw GateBlocked(
+                "The \(packName) workflow contract is unavailable. Reopen the project before continuing."
+            )
+        }
+        let cacheKey = "\(pack.name)@\(pack.version)#\(PackCatalog.revision(named: pack.name))"
+        let manifest: HardStepManifest
+        if let cached = manifestCache[cacheKey] {
+            manifest = cached
+        } else {
+            guard let loaded = HardStepManifest.load(pack: pack) else {
+                throw GateBlocked(
+                    "The \(packName) workflow contract is unavailable. Reopen the project before continuing."
+                )
+            }
+            manifestCache = manifestCache.filter {
+                !$0.key.hasPrefix("\(pack.name)@")
+            }
+            manifestCache[cacheKey] = loaded
+            manifest = loaded
+        }
+        return Prepared(
+            packName: packName,
+            packPlacements: registry.phasePlacements,
+            order: PhaseOrder.merged(packPlacements: registry.phasePlacements),
+            manifest: manifest
+        )
+    }
+
+    static func requireCurrentPhaseAndIntake(
+        _ phase: String,
+        dataRoot: URL,
+        declaredPack: String? = nil
+    ) throws {
+        try requireCurrentPhaseAndIntake(
+            phase,
+            dataRoot: dataRoot,
+            prepared: prepare(
+                dataRoot: dataRoot,
+                declaredPack: declaredPack
+            )
+        )
+    }
+
+    nonisolated static func requireCurrentPhaseAndIntake(
+        _ phase: String,
+        dataRoot: URL,
+        prepared: Prepared
+    ) throws {
+        guard let packName = prepared.packName else { return }
+        guard prepared.order.contains(phase) else {
             throw GateBlocked(
                 "The \(packName) workflow has no registered phase named \"\(phase)\"."
             )
         }
-        guard let pack = PackCatalog.pack(named: packName),
-              let manifest = HardStepManifest.load(pack: pack) else {
+        guard let manifest = prepared.manifest else {
             throw GateBlocked(
                 "The \(packName) workflow contract is unavailable. Reopen the project before continuing."
             )
@@ -57,7 +138,7 @@ enum PipelinePhaseAccess {
         do {
             snapshot = try ProjectStateBuilder.buildSnapshot(
                 dataRoot: dataRoot,
-                packPlacements: registry.phasePlacements
+                packPlacements: prepared.packPlacements
             )
         } catch {
             throw GateBlocked(
@@ -117,8 +198,6 @@ final class PipelineAgentHarness {
     }
 
     private var offered: (step: HardStep, fingerprint: Int, dialogID: String)?
-    private var manifestCache: [String: HardStepManifest] = [:]
-
     func reset() {
         offered = nil
     }
@@ -323,7 +402,7 @@ final class PipelineAgentHarness {
         dataRoot: URL,
         captureLineage: Bool = true,
         declaredPack: String? = nil
-    ) throws {
+    ) async throws {
         let packName = try resolvedPack(
             dataRoot: dataRoot,
             declaredPack: declaredPack
@@ -332,6 +411,23 @@ final class PipelineAgentHarness {
         let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
         guard let index = order.firstIndex(of: phase) else {
             throw ToolError("The pipeline has no registered phase named '\(phase)'.")
+        }
+        let lineageSnapshot: PhaseLineageSnapshot?
+        let lineageFailure: String?
+        if captureLineage,
+           let provider = registry.phaseLineageProviders[phase] {
+            do {
+                lineageSnapshot = try await Task.detached(priority: .utility) {
+                    try provider(dataRoot)
+                }.value
+                lineageFailure = nil
+            } catch {
+                lineageSnapshot = nil
+                lineageFailure = error.localizedDescription
+            }
+        } else {
+            lineageSnapshot = nil
+            lineageFailure = nil
         }
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try loadGates(dataRoot: dataRoot)
@@ -353,12 +449,17 @@ final class PipelineAgentHarness {
                 )
             }
         }
-        if captureLineage,
-           let provider = registry.phaseLineageProviders[phase] {
+        if let lineageFailure {
+            throw ToolError(
+                "The artifact changed, but its verified input lineage could not "
+                    + "be recorded: \(lineageFailure)"
+            )
+        }
+        if let lineageSnapshot {
             do {
                 try PipelineLineageStore.record(
                     phase: phase,
-                    snapshot: try provider(dataRoot),
+                    snapshot: lineageSnapshot,
                     dataRoot: dataRoot
                 )
             } catch {
@@ -371,29 +472,31 @@ final class PipelineAgentHarness {
     }
 
     private func loadContext(dataRoot: URL, packName: String) throws -> Context {
-        guard let pack = PackCatalog.pack(named: packName) else {
+        guard PackCatalog.pack(named: packName) != nil else {
             throw ToolError(
                 "The \(packName) workflow is not loaded. Reopen the project before continuing."
             )
         }
-        let cacheKey = "\(pack.name)@\(pack.version)"
-        let manifest: HardStepManifest
-        if let cached = manifestCache[cacheKey] {
-            manifest = cached
-        } else {
-            guard let loaded = HardStepManifest.load(pack: pack) else {
-                throw ToolError(
-                    "The \(packName) workflow has no readable hard-step manifest."
-                )
-            }
-            manifestCache[cacheKey] = loaded
-            manifest = loaded
+        let registry = PackCatalog.registry(activePack: packName)
+        let prepared: PipelinePhaseAccess.Prepared
+        do {
+            prepared = try PipelinePhaseAccess.prepare(
+                packName: packName,
+                registry: registry
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
+        }
+        guard let manifest = prepared.manifest else {
+            throw ToolError(
+                "The \(packName) workflow has no readable hard-step manifest."
+            )
         }
         let snapshot: ProjectStateBuilder.ProjectState
         do {
             snapshot = try ProjectStateBuilder.buildSnapshot(
                 dataRoot: dataRoot,
-                packPlacements: PackCatalog.registry(activePack: packName).phasePlacements
+                packPlacements: prepared.packPlacements
             )
         } catch {
             throw ToolError(

@@ -5,6 +5,7 @@ struct GateApprovalCard: View {
     let approval: GateApproval
     let error: String?
     let surface: String?
+    let isWorking: Bool
     let onApprove: () -> Void
     let onDecline: () -> Void
 
@@ -51,6 +52,7 @@ struct GateApprovalCard: View {
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .buttonStyle(.plain)
+            .disabled(isWorking)
             .keyboardShortcut(.cancelAction)
             .help("Not yet (Esc)")
         }
@@ -88,10 +90,21 @@ struct GateApprovalCard: View {
             Button("Not yet") { onDecline() }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .controlSize(.small)
+                .disabled(isWorking)
             Spacer()
-            Button("Approve \(approval.phaseLabel)") { onApprove() }
+            Button {
+                onApprove()
+            } label: {
+                if isWorking {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text("Approve \(approval.phaseLabel)")
+                }
+            }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.small)
+                .disabled(isWorking)
         }
     }
 }

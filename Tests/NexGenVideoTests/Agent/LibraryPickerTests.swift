@@ -119,6 +119,25 @@ struct LibraryPickerTests {
         ))
     }
 
+    @Test("a selected library file shows its original filename, not its storage hash")
+    @MainActor
+    func selectedLibraryFileUsesOriginalFilename() {
+        let hash = String(repeating: "4", count: 64)
+        let storageURL = url("\(hash).mp3")
+        let asset = MediaAsset(
+            id: "track",
+            url: storageURL,
+            type: .audio,
+            name: "Claude Mouse",
+            originalFilename: "Claude Mouse Master.mp3"
+        )
+
+        #expect(AgentDialogCard.displayFilename(
+            for: storageURL,
+            libraryAssets: [asset]
+        ) == "Claude Mouse Master.mp3")
+    }
+
     @Test("workflow submission rejects an incompatible assigned library role")
     @MainActor
     func assignedRoleCannotBypassThePickerFilter() {

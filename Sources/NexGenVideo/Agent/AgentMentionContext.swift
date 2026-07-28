@@ -50,6 +50,13 @@ enum AgentMentionContext {
             entry["kind"] = mention.clipId == nil ? "mediaAsset" : "timelineClip"
             if let mediaRef = mention.mediaRef {
                 entry["mediaRef"] = mediaRef
+                if let asset = editor?.mediaAssets.first(where: { $0.id == mediaRef }) {
+                    entry["name"] = asset.name
+                    entry["fileName"] = asset.userFacingFilename
+                    if let originalFilename = asset.originalFilename {
+                        entry["originalFilename"] = originalFilename
+                    }
+                }
             }
             if let type = mention.type { entry["type"] = type.rawValue }
             if let clipId = mention.clipId {

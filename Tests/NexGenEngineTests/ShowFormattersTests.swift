@@ -28,15 +28,15 @@ struct ShowFormattersTests {
 
         #expect(ShowArtifact.gate("brief", dataRoot: dataRoot) == "_Nothing for gate `brief` yet._")
         #expect(ShowArtifact.gate("treatment", dataRoot: dataRoot) == "_Nothing for gate `treatment` yet._")
-        #expect(ShowArtifact.gate("bible", dataRoot: dataRoot) == "_Keine bible.yaml vorhanden._")
-        #expect(ShowArtifact.gate("shotlist", dataRoot: dataRoot) == "_Keine shotlist/current.yaml vorhanden._")
-        #expect(ShowArtifact.gate("analysis", dataRoot: dataRoot) == "_Kein analysis/-Ordner vorhanden — Phase A noch nicht durch._")
-        #expect(ShowArtifact.gate("production_design", dataRoot: dataRoot) == "_Keine production_design.yaml vorhanden — Phase K2 noch nicht durch._")
-        #expect(ShowArtifact.gate("storyboard", dataRoot: dataRoot) == "_Kein Storyboard `current` vorhanden — Phase K4 noch nicht durch._")
+        #expect(ShowArtifact.gate("bible", dataRoot: dataRoot) == "_No bible.yaml exists._")
+        #expect(ShowArtifact.gate("shotlist", dataRoot: dataRoot) == "_No shotlist/current.yaml exists._")
+        #expect(ShowArtifact.gate("analysis", dataRoot: dataRoot) == "_No analysis/ directory exists — analysis has not run._")
+        #expect(ShowArtifact.gate("production_design", dataRoot: dataRoot) == "_No production_design.yaml exists — Production Design has not run._")
+        #expect(ShowArtifact.gate("storyboard", dataRoot: dataRoot) == "_No storyboard `current` exists — Storyboard has not run._")
 
         let renders = ShowArtifact.gate("render", dataRoot: dataRoot)
         #expect(renders.hasPrefix("## Renders · demo · preview"))
-        #expect(renders.contains("Render-Phase R1 noch nicht gelaufen"))
+        #expect(renders.contains("render phase R1 has not run"))
     }
 
     @Test("brief gate renders the artifact once written")

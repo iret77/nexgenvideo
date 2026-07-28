@@ -44,6 +44,16 @@ struct AgentPanelView: View {
 
     private var service: AgentService { editor.agentService }
 
+    private var pendingGateIsBlockedByPhaseRun: Bool {
+        _ = editor.pipelinePhaseExecution.snapshot
+        guard let root = service.pendingGateApproval?.dataRoot else {
+            return false
+        }
+        return editor.pipelinePhaseRunCoordinator.runningPhase(
+            projectRoot: root
+        ) != nil
+    }
+
     private var canSend: Bool {
         // A pending dialog card (or spend / gate approval) owns the input — the composer is locked, so
         // neither the Send button, Return-to-send, nor submit() may fire a stale draft past the card.
@@ -70,13 +80,19 @@ struct AgentPanelView: View {
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
             }
-            if let gate = service.pendingGateApproval {
+            if let gate = service.pendingGateApproval,
+               !pendingGateIsBlockedByPhaseRun {
                 GateApprovalCard(
                     approval: gate,
                     error: service.gateApprovalError,
                     surface: editor.uiContract?.phases[gate.phase]?.surface,
-                    onApprove: { service.resolveGate(.approved) },
-                    onDecline: { service.resolveGate(.declined) }
+                    isWorking: service.gateApprovalIsWriting,
+                    onApprove: {
+                        Task { await service.resolveGate(.approved) }
+                    },
+                    onDecline: {
+                        Task { await service.resolveGate(.declined) }
+                    }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
             }
@@ -535,7 +551,9 @@ struct AgentPanelView: View {
                 isSending: service.isStreaming,
                 canSend: canSend,
                 blocked: service.isComposerBlocked,
-                blockedHint: service.pendingGateApproval != nil ? "Approve or choose Not yet above to continue"
+                blockedHint: pendingGateIsBlockedByPhaseRun
+                           ? "Wait for the running pipeline phase to finish"
+                           : service.pendingGateApproval != nil ? "Approve or choose Not yet above to continue"
                            : service.pendingSpendApproval != nil ? "Respond to the approval above to continue"
                                                                  : "Answer the card above to continue",
                 onSend: submit,

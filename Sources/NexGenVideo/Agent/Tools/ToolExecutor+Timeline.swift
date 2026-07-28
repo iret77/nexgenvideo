@@ -265,6 +265,7 @@ extension ToolExecutor {
             guard var obj = Self.encodeAsJSONObject(asset.toManifestEntry(projectURL: projectURL)) as? [String: Any] else {
                 continue
             }
+            obj["fileName"] = asset.userFacingFilename
             obj["generationStatus"] = asset.generationStatusToken
             if case .failed(let message) = asset.generationStatus {
                 obj["error"] = message
@@ -302,7 +303,7 @@ extension ToolExecutor {
             case .failed(let msg):
                 throw ToolError("Asset \(asset.id) failed: \(msg)")
             case .none:
-                throw ToolError("Media file not on disk: \(url.lastPathComponent)")
+                throw ToolError("Media file not on disk: \(asset.userFacingFilename)")
             }
         }
 
@@ -667,6 +668,10 @@ extension ToolExecutor {
     func timelineWords(_ editor: EditorViewModel) async throws -> (words: [TimelineWord], skipped: [[String: Any]]) {
         let fps = editor.timeline.fps
         let assetsById = Dictionary(editor.mediaAssets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let filenamesByURL = Dictionary(
+            editor.mediaAssets.map { ($0.url, $0.userFacingFilename) },
+            uniquingKeysWith: { first, _ in first }
+        )
         struct Frag { let clipId: String; let trackIndex: Int; let clip: Clip; let url: URL; let isVideo: Bool }
         var frags: [Frag] = []
         var isVideoByURL: [URL: Bool] = [:]
@@ -682,7 +687,16 @@ extension ToolExecutor {
         var skipped: [[String: Any]] = []
         for url in Set(frags.map(\.url)) {
             do { transcripts[url] = try await TranscriptCache.shared.transcript(for: url, isVideo: isVideoByURL[url] ?? true, range: nil) }
-            catch { skipped.append(["file": url.lastPathComponent, "reason": error.localizedDescription]) }
+            catch {
+                skipped.append([
+                    "file": filenamesByURL[url] ?? MediaFilename.display(
+                        originalFilename: nil,
+                        name: "",
+                        storageURL: url
+                    ),
+                    "reason": error.localizedDescription,
+                ])
+            }
         }
 
         var words: [TimelineWord] = []
@@ -762,9 +776,12 @@ extension ToolExecutor {
         var meta: [String: Any] = [
             "id": asset.id, "name": asset.name,
             "type": asset.type.rawValue, "duration": asset.duration.jsonRounded(toPlaces: 3),
-            "fileName": asset.url.lastPathComponent,
+            "fileName": asset.userFacingFilename,
             "generationStatus": generationStatusString(asset.generationStatus),
         ]
+        if let originalFilename = asset.originalFilename {
+            meta["originalFilename"] = originalFilename
+        }
         if let w = asset.sourceWidth { meta["sourceWidth"] = w }
         if let h = asset.sourceHeight { meta["sourceHeight"] = h }
         if let fps = asset.sourceFPS { meta["sourceFPS"] = fps }
