@@ -1,7 +1,9 @@
 import Foundation
 
 struct MediaManifest: Codable, Sendable, Equatable {
-    var version: Int = 4
+    static let currentVersion = 5
+
+    var version: Int = currentVersion
     var entries: [MediaManifestEntry] = []
     var folders: [MediaFolder] = []
     var songAnchorAssetId: String?
@@ -29,6 +31,16 @@ struct MediaManifest: Codable, Sendable, Equatable {
 
     init() {}
 
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(max(version, Self.currentVersion), forKey: .version)
+        try c.encode(entries, forKey: .entries)
+        try c.encode(folders, forKey: .folders)
+        try c.encodeIfPresent(songAnchorAssetId, forKey: .songAnchorAssetId)
+        try c.encode(songAnchorOwnsAsset, forKey: .songAnchorOwnsAsset)
+        try c.encode(intakeRoleByAssetID, forKey: .intakeRoleByAssetID)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case version, entries, folders, songAnchorAssetId, songAnchorOwnsAsset, intakeRoleByAssetID
     }
@@ -48,6 +60,7 @@ struct MediaManifestEntry: Codable, Sendable, Equatable, Identifiable {
     var folderId: String?
     var cachedRemoteURL: String?
     var cachedRemoteURLExpiresAt: Date?
+    var originalFilename: String? = nil
 }
 
 struct GenerationInput: Codable, Sendable, Equatable {

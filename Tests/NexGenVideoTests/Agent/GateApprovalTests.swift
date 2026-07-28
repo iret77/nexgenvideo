@@ -82,12 +82,12 @@ struct GateApprovalTests {
     }
 
     @Test("Declining is an explicit decision and clears the card")
-    func declineClears() {
+    func declineClears() async {
         let editor = EditorViewModel()
         let service = editor.agentService
 
         _ = service.requestGateApproval(GateApproval(phase: "brief"))
-        let result = service.resolveGate(.declined)
+        let result = await service.resolveGate(.declined)
 
         #expect(result?.isError == false)
         #expect(service.pendingGateApproval == nil)
@@ -99,7 +99,7 @@ struct GateApprovalTests {
         let service = editor.agentService
 
         _ = service.requestGateApproval(GateApproval(phase: "brief"))
-        _ = service.resolveGate(.declined)
+        _ = await service.resolveGate(.declined)
         await Task.yield()
 
         #expect(service.messages.isEmpty)
@@ -181,7 +181,7 @@ struct GateApprovalTests {
     }
 
     @Test("A failed host write leaves the card open with the real reason")
-    func failedWriteKeepsCard() {
+    func failedWriteKeepsCard() async {
         let editor = EditorViewModel()
         let service = editor.agentService
         let missingRoot = FileManager.default.temporaryDirectory
@@ -191,7 +191,7 @@ struct GateApprovalTests {
             phase: "project_init",
             dataRoot: missingRoot
         ))
-        let result = service.resolveGate(.approved)
+        let result = await service.resolveGate(.approved)
 
         #expect(result?.isError == true)
         #expect(service.pendingGateApproval?.phase == "project_init")
@@ -232,7 +232,7 @@ struct GateApprovalTests {
         )
         service.pendingDialog = intake
 
-        let result = service.resolveGate(.approved)
+        let result = await service.resolveGate(.approved)
         #expect(result?.isError == false)
         #expect(!service.resumePendingGateFollowUp())
         await Task.yield()

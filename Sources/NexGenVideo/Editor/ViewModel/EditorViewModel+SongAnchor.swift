@@ -61,7 +61,8 @@ extension EditorViewModel {
     func attachProjectSong(
         from sourceURL: URL,
         dataRoot: URL,
-        replace: Bool
+        replace: Bool,
+        originalFilename: String? = nil
     ) async throws -> SongAnchorResult {
         let source = sourceURL.standardizedFileURL.resolvingSymlinksInPath()
         let ext = source.pathExtension.lowercased()
@@ -74,6 +75,10 @@ extension EditorViewModel {
         guard !songAttachInProgress else {
             throw SongAnchorError.alreadyInProgress
         }
+        let destinationFilename = MediaFilename.storageFilename(
+            originalFilename ?? source.lastPathComponent,
+            matchingExtension: source.pathExtension
+        ) ?? source.lastPathComponent
         songAttachInProgress = true
         defer { songAttachInProgress = false }
 
@@ -100,6 +105,7 @@ extension EditorViewModel {
             prepared = try await Task.detached(priority: .userInitiated) {
                 try Self.prepareProjectSong(
                     source,
+                    destinationFilename: destinationFilename,
                     dataRoot: dataRoot,
                     mediaDirectory: mediaDirectory
                 )
@@ -115,9 +121,11 @@ extension EditorViewModel {
             throw SongAnchorError.projectChanged
         }
 
-        let samePipelineSong = prepared.currentDigest == prepared.durableCopy.digest
+        let sameSongContent = prepared.currentDigest == prepared.durableCopy.digest
             && prepared.currentNames.count == 1
-        if !samePipelineSong, !prepared.currentNames.isEmpty, !replace {
+        let pipelineSongReady = sameSongContent
+            && prepared.currentNames == [prepared.destinationFilename]
+        if !sameSongContent, !prepared.currentNames.isEmpty, !replace {
             prepared.discard(removeDurableCopy: prepared.durableCopy.created)
             throw SongAnchorError.replacementRequired(prepared.currentNames)
         }
@@ -130,13 +138,18 @@ extension EditorViewModel {
             $0.url.standardizedFileURL.resolvingSymlinksInPath()
                 == prepared.durableCopy.url.standardizedFileURL.resolvingSymlinksInPath()
         }
+        let previousOriginalFilename = existing?.originalFilename
+        let previousDuration = existing?.duration
         let song = existing ?? MediaAsset(
             url: prepared.durableCopy.url,
             type: .audio,
-            name: source.deletingPathExtension().lastPathComponent,
-            duration: prepared.duration
+            name: URL(fileURLWithPath: destinationFilename)
+                .deletingPathExtension().lastPathComponent,
+            duration: prepared.duration,
+            originalFilename: destinationFilename
         )
         song.duration = prepared.duration
+        song.originalFilename = destinationFilename
         let ownsSongAsset = existing == nil
             || (previousAnchorId == song.id && previousAnchorOwned)
 
@@ -162,7 +175,7 @@ extension EditorViewModel {
             mediaManifest.songAnchorOwnsAsset = ownsSongAsset
             mediaManifest.intakeRoleByAssetID[song.id] = "song"
 
-            if !samePipelineSong {
+            if !pipelineSongReady {
                 _ = try FileManager.default.replaceItemAt(
                     prepared.audioDirectory,
                     withItemAt: prepared.stagingAudioDirectory
@@ -187,6 +200,10 @@ extension EditorViewModel {
             }
         } catch {
             applyMediaLibrarySnapshot(before)
+            if let existing {
+                existing.originalFilename = previousOriginalFilename
+                existing.duration = previousDuration ?? existing.duration
+            }
             prepared.discard(removeDurableCopy: prepared.durableCopy.created)
             if let error = error as? SongAnchorError { throw error }
             throw SongAnchorError.preparationFailed(error.localizedDescription)
@@ -199,10 +216,8 @@ extension EditorViewModel {
         onPipelineChanged?()
         return SongAnchorResult(
             assetId: song.id,
-            filename: samePipelineSong
-                ? prepared.currentNames[0]
-                : prepared.destinationFilename,
-            replaced: !samePipelineSong && !prepared.currentNames.isEmpty
+            filename: prepared.destinationFilename,
+            replaced: !sameSongContent && !prepared.currentNames.isEmpty
         )
     }
 
@@ -252,6 +267,7 @@ extension EditorViewModel {
 
     nonisolated private static func prepareProjectSong(
         _ source: URL,
+        destinationFilename: String,
         dataRoot: URL,
         mediaDirectory: URL
     ) throws -> PreparedProjectSong {
@@ -277,7 +293,7 @@ extension EditorViewModel {
             ) {
                 try fm.removeItem(at: song)
             }
-            let stagedSong = staging.appendingPathComponent(source.lastPathComponent)
+            let stagedSong = staging.appendingPathComponent(destinationFilename)
             try fm.copyItem(at: source, to: stagedSong)
 
             let copy = try DurableMediaStore.copy(
@@ -296,7 +312,7 @@ extension EditorViewModel {
             return PreparedProjectSong(
                 audioDirectory: audioDirectory,
                 stagingAudioDirectory: staging,
-                destinationFilename: source.lastPathComponent,
+                destinationFilename: destinationFilename,
                 durableCopy: copy,
                 duration: duration,
                 currentDigest: currentDigest,

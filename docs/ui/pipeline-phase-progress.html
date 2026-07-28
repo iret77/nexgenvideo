@@ -1,0 +1,248 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>UI-Spec — Pipeline phase progress</title>
+<meta name="ui-spec-viewports" content="1100x900">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0a0a0a;
+    --surface: #161616;
+    --raised: #1e1e1e;
+    --prominent: #2c2c2c;
+    --border: rgba(255,255,255,.12);
+    --text: rgba(255,255,255,1);
+    --text-2: rgba(255,255,255,.80);
+    --text-3: rgba(255,255,255,.62);
+    --muted: rgba(255,255,255,.34);
+    --accent: #f29933;
+    --success: #4fb85f;
+    --error: #e54f4f;
+    --s-xs: 4px;
+    --s-sm: 6px;
+    --s-md: 10px;
+    --s-lg: 14px;
+    --s-xl: 20px;
+    --r-sm: 6px;
+    --r-md: 10px;
+    --hair: .5px;
+    --f-xxs: 9px;
+    --f-xs: 10px;
+    --f-sm: 11px;
+    --f-md: 13px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #080808; color: var(--text-2);
+    font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #spec {
+    max-width: 980px; margin: 28px auto; padding: 24px 28px;
+    background: #111; border: var(--hair) solid var(--border); border-radius: var(--r-md);
+  }
+  h1 { margin: 0 0 8px; color: var(--text); font-size: 23px; font-weight: 600; }
+  h2 { margin: 20px 0 8px; color: var(--text); font-size: 14px; }
+  p, li { line-height: 1.45; }
+  ul { margin: 6px 0; padding-left: 19px; }
+  code { color: #d5bd9f; }
+  #mockups {
+    min-height: 850px; padding: 44px 28px 64px;
+    background: radial-gradient(circle at 70% 0%, #222 0%, #0a0a0a 48%);
+  }
+  #mockups:target { position: absolute; inset: 0; overflow: hidden; }
+  .stage {
+    width: 1050px; height: 720px; margin: 0 auto; overflow: hidden;
+    display: grid; grid-template-columns: 610px 440px;
+    border: var(--hair) solid rgba(255,255,255,.18); border-radius: 11px;
+    box-shadow: 0 24px 70px rgba(0,0,0,.55); background: var(--bg);
+  }
+  .agent { border-right: var(--hair) solid rgba(255,255,255,.22); }
+  .topbar {
+    height: 42px; display: flex; align-items: center; padding: 0 14px;
+    border-bottom: var(--hair) solid rgba(255,255,255,.2); color: var(--text-3);
+  }
+  .tab { flex: 1; text-align: center; font-size: var(--f-sm); }
+  .tab.selected { color: var(--text); font-weight: 600; }
+  .chat { padding: 18px 16px; }
+  .done {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 20px;
+    color: var(--text-3); font-size: var(--f-sm); font-weight: 500;
+  }
+  .check {
+    width: 12px; height: 12px; border-radius: 50%; display: inline-grid;
+    place-items: center; color: #111; background: var(--success);
+    font-size: 8px; font-weight: 800;
+  }
+  .progress-card {
+    border: var(--hair) solid var(--border); border-radius: var(--r-md);
+    background: var(--surface); padding: 14px;
+  }
+  .progress-head { display: flex; align-items: center; gap: 10px; }
+  .phase-icon {
+    width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+    color: var(--accent); background: rgba(242,153,51,.10); font-size: 13px;
+  }
+  .phase-copy { min-width: 0; flex: 1; }
+  .phase-title { color: var(--text); font-size: var(--f-md); font-weight: 600; }
+  .filename {
+    margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text-3); font-size: var(--f-xs);
+  }
+  .count { color: var(--text-3); font-size: var(--f-xs); font-variant-numeric: tabular-nums; }
+  .stage-copy { margin-top: 13px; }
+  .stage-name { color: var(--text-2); font-size: var(--f-sm); font-weight: 600; }
+  .stage-detail { margin-top: 3px; color: var(--text-3); font-size: var(--f-xs); line-height: 1.35; }
+  .bar {
+    height: 4px; margin-top: 11px; overflow: hidden;
+    background: var(--prominent); border-radius: 99px;
+  }
+  .bar > i {
+    display: block; width: 43%; height: 100%; border-radius: inherit;
+    background: var(--accent);
+  }
+  .next { margin-top: 8px; color: var(--muted); font-size: var(--f-xxs); }
+  .pipeline { padding: 16px; background: #111; }
+  .heading { color: var(--text); font-size: 16px; font-weight: 600; margin: 4px 0 14px; }
+  .phase-list {
+    border: var(--hair) solid var(--border); border-radius: var(--r-md);
+    background: var(--surface); padding: 8px 12px;
+  }
+  .phase-row {
+    height: 28px; display: flex; align-items: center; gap: 8px;
+    border-bottom: var(--hair) solid rgba(255,255,255,.13);
+    color: var(--text-2); font-size: var(--f-sm);
+  }
+  .phase-row:last-child { border-bottom: 0; }
+  .dot { width: 10px; height: 10px; border: 1px solid var(--muted); border-radius: 50%; }
+  .dot.ok { border: 0; background: var(--success); }
+  .dot.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(242,153,51,.15); }
+  .phase-row .state { margin-left: auto; color: var(--muted); font-size: var(--f-xxs); }
+  .phase-row.active { color: var(--text); font-weight: 600; }
+  .phase-row.active .state { color: var(--accent); }
+  .caption {
+    width: 1050px; margin: 12px auto 0; color: var(--text-3);
+    font-size: 12px; text-align: center;
+  }
+  .states {
+    width: 1050px; margin: 32px auto 0; display: grid;
+    grid-template-columns: 1fr 1fr 1fr; gap: 18px;
+  }
+  .small {
+    padding: 14px; border: var(--hair) solid var(--border);
+    border-radius: var(--r-md); background: var(--surface);
+  }
+  .small .line { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: var(--f-sm); }
+  .small .line strong { color: var(--text-2); }
+  .small.error { border-color: rgba(229,79,79,.32); }
+  .small.error .check { background: var(--error); color: white; }
+  .approval-disabled {
+    margin-left: auto; padding: 3px 8px; border: 0; border-radius: var(--r-sm);
+    color: var(--muted); background: var(--raised); font: inherit;
+  }
+  .hint { margin-top: 8px; color: var(--muted); font-size: var(--f-xs); }
+</style>
+
+<section id="spec">
+  <h1>Pipeline phase progress</h1>
+  <p>Normative progress treatment for a host-executed pipeline phase. This specializes the existing
+    transcript activity entry; it does not add a second pipeline or a new destination.</p>
+
+  <h2>Rules</h2>
+  <ul>
+    <li>While <code>run_phase</code> is active, its generic activity row becomes one compact,
+      always-expanded progress card at the position of that tool call.</li>
+    <li>The card names the phase, original user-facing source filename, current operation, completed
+      stage count, total stage count, and the next operation. Never expose storage hashes.</li>
+    <li>Progress advances only on runner-emitted stage boundaries. No invented ETA, percentage, or
+      endlessly animated fake completion.</li>
+    <li>The phase list remains the canonical pipeline overview. It only marks the current phase as
+      active; it does not duplicate detailed progress.</li>
+    <li>While a phase runner is active, its row shows <code>Running</code>; every gate mutation for the
+      project is unavailable on every row and in every writer path. When the runner settles, the
+      current row shows Approve disabled until the canonical artifact and lineage pass the same
+      structural gate used by the agent.</li>
+    <li>When finished, the card collapses to the normal completed activity row. On failure, it remains
+      a concise failed row whose existing disclosure reveals the error.</li>
+    <li>All visible copy follows the app UI language.</li>
+  </ul>
+
+  <h2>States</h2>
+  <ul>
+    <li>Running: phase + file + current stage + linear overall progress + next stage.</li>
+    <li>Completed: checkmark and concise phase-specific completion label.</li>
+    <li>Failed: error marker and concise phase-specific failure label; technical detail stays disclosed.</li>
+  </ul>
+
+  <h2>Tokens</h2>
+  <p>Use existing <code>AppTheme</code> background, border, text, status, spacing, font, radius and
+    animation constants. The progress fill uses <code>AppTheme.Accent.timecodeColor</code>.</p>
+
+  <h2>Acceptance criteria</h2>
+  <ul>
+    <li>During Audio Analysis the user can answer, without expanding anything: what is running, on which
+      track, which operation is current, and how many declared stages are complete.</li>
+    <li>The displayed stage and progress count come from runner events, not model narration or timers.</li>
+    <li>Disconnecting and reconnecting the MCP client does not start a second phase job or lose the
+      original job's progress.</li>
+    <li>No gate control is actionable anywhere in the project until the active phase settles; approval
+      is enabled only if the completed artifact passes its structural gate.</li>
+    <li>The UI remains one compact transcript element at narrow Agent-panel width.</li>
+  </ul>
+</section>
+
+<section id="mockups">
+  <div class="stage">
+    <div class="agent">
+      <div class="topbar"><div class="tab">Media</div><div class="tab selected">✦ Agent</div></div>
+      <div class="chat">
+        <div class="done"><span class="check">✓</span> Project Init approved</div>
+        <div class="progress-card">
+          <div class="progress-head">
+            <div class="phase-icon">♫</div>
+            <div class="phase-copy">
+              <div class="phase-title">Audio Analysis</div>
+              <div class="filename">Claude Mouse.mp3</div>
+            </div>
+            <div class="count">3 of 7</div>
+          </div>
+          <div class="stage-copy">
+            <div class="stage-name">Detecting tempo and beat grid</div>
+            <div class="stage-detail">Measuring beats, downbeats and tempo from the track.</div>
+          </div>
+          <div class="bar"><i></i></div>
+          <div class="next">Next: Detect key and chords</div>
+        </div>
+      </div>
+    </div>
+    <div class="pipeline">
+      <div class="topbar" style="margin:-16px -16px 12px"><div class="tab selected">Pipeline</div><div class="tab">Story</div><div class="tab">Bible</div><div class="tab">Shotlist</div></div>
+      <div class="heading">1 of 11 phases approved</div>
+      <div class="phase-list">
+        <div class="phase-row"><span class="dot ok"></span>Project Init <span class="state">Approved</span></div>
+        <div class="phase-row active"><span class="dot active"></span>Audio Analysis <span class="state">Running</span></div>
+        <div class="phase-row"><span class="dot"></span>Brief</div>
+        <div class="phase-row"><span class="dot"></span>Production Design</div>
+        <div class="phase-row"><span class="dot"></span>Treatment</div>
+        <div class="phase-row"><span class="dot"></span>Storyboard</div>
+        <div class="phase-row"><span class="dot"></span>Bible</div>
+        <div class="phase-row"><span class="dot"></span>Shot List</div>
+        <div class="phase-row"><span class="dot"></span>Sanity Check</div>
+        <div class="phase-row"><span class="dot"></span>Frames</div>
+        <div class="phase-row"><span class="dot"></span>Render</div>
+      </div>
+    </div>
+  </div>
+  <div class="caption">Running — detailed progress lives where the work was triggered; Pipeline stays the overview.</div>
+
+  <div class="states">
+    <div class="small">
+      <div class="line"><span class="check">✓</span><strong>Audio analysis complete</strong> · Claude Mouse.mp3</div>
+    </div>
+    <div class="small error">
+      <div class="line"><span class="check">!</span><strong>Audio analysis stopped</strong> · Show details</div>
+    </div>
+    <div class="small">
+      <div class="line"><span class="dot active"></span><strong>Audio Analysis</strong><button class="approval-disabled" disabled>Approve</button></div>
+      <div class="hint">Complete Audio Analysis before approving.</div>
+    </div>
+  </div>
+</section>

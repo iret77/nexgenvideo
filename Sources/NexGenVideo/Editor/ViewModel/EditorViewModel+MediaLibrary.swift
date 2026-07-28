@@ -464,7 +464,12 @@ extension EditorViewModel {
             throw MediaImportError.invalidLottie(url.lastPathComponent)
         }
         let name = url.deletingPathExtension().lastPathComponent
-        let asset = MediaAsset(url: try durableProjectMediaURL(for: url), type: type, name: name)
+        let asset = MediaAsset(
+            url: try durableProjectMediaURL(for: url),
+            type: type,
+            name: name,
+            originalFilename: url.lastPathComponent
+        )
         asset.folderId = folderId
         importMediaAsset(asset)
         Task { await finalizeImportedAsset(asset) }
@@ -659,7 +664,8 @@ extension EditorViewModel {
             let asset = MediaAsset(
                 url: preparedFile.url,
                 type: file.type,
-                name: file.name
+                name: file.name,
+                originalFilename: file.url.lastPathComponent
             )
             asset.folderId = folderId
             importedAssets.append(asset)
@@ -984,6 +990,7 @@ extension EditorViewModel {
             mediaManifest.entries[idx].sourceHeight = asset.sourceHeight
             mediaManifest.entries[idx].sourceFPS = asset.sourceFPS
             mediaManifest.entries[idx].hasAudio = asset.hasAudio
+            mediaManifest.entries[idx].originalFilename = asset.originalFilename
         }
     }
 

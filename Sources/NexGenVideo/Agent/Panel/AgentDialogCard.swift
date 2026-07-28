@@ -282,7 +282,7 @@ struct AgentDialogCard: View {
             Image(systemName: fileSymbol(url))
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(accent)
-            Text(url.lastPathComponent)
+            Text(Self.displayFilename(for: url, libraryAssets: libraryAssets))
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(1)
@@ -337,6 +337,18 @@ struct AgentDialogCard: View {
         } else {
             pickedFiles = [url]
         }
+    }
+
+    @MainActor
+    static func displayFilename(for url: URL, libraryAssets: [MediaAsset]) -> String {
+        let target = url.standardizedFileURL.resolvingSymlinksInPath()
+        return libraryAssets.first {
+            $0.url.standardizedFileURL.resolvingSymlinksInPath() == target
+        }?.userFacingFilename ?? MediaFilename.display(
+            originalFilename: nil,
+            name: "",
+            storageURL: url
+        )
     }
 
     private func fileSymbol(_ url: URL) -> String {

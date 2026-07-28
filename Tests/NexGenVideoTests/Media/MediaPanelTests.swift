@@ -200,6 +200,9 @@ struct DurableMediaImportTests {
         #expect(imported.url.path.hasPrefix(workingRoot.path + "/media/"))
         #expect(!imported.url.path.hasPrefix(projectURL.path + "/media/"))
         #expect(try Data(contentsOf: imported.url) == contents)
+        #expect(imported.originalFilename == source.lastPathComponent)
+        #expect(imported.userFacingFilename == source.lastPathComponent)
+        #expect(entry.originalFilename == source.lastPathComponent)
         switch entry.source {
         case .project(let relativePath):
             #expect(relativePath == "media/\(imported.url.lastPathComponent)")
@@ -471,6 +474,8 @@ struct DurableMediaImportTests {
 
         #expect(asset.url.path.hasPrefix(workingRoot.path + "/media/"))
         #expect(try Data(contentsOf: asset.url) == Data("replacement".utf8))
+        #expect(asset.originalFilename == replacement.lastPathComponent)
+        #expect(e.mediaManifest.entries[0].originalFilename == replacement.lastPathComponent)
         #expect(!FileManager.default.fileExists(
             atPath: projectURL.appendingPathComponent("media")
                 .appendingPathComponent(asset.url.lastPathComponent).path

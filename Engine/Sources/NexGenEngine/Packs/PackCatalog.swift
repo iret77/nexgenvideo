@@ -16,16 +16,22 @@ public enum PackCatalog {
         private let lock = NSLock()
         private var byName: [String: Pack] = [:]
         private var order: [String] = []
+        private var revisions: [String: UInt64] = [:]
+        private var nextRevision: UInt64 = 0
 
         func register(_ pack: Pack) {
             lock.lock(); defer { lock.unlock() }
             if byName[pack.name] == nil { order.append(pack.name) }
             byName[pack.name] = pack  // last-write-wins (a reload/update replaces in place)
+            nextRevision &+= 1
+            revisions[pack.name] = nextRevision
         }
 
         func removeAll() {
             lock.lock(); defer { lock.unlock() }
-            byName.removeAll(); order.removeAll()
+            byName.removeAll()
+            order.removeAll()
+            revisions.removeAll()
         }
 
         var all: [Pack] {
@@ -36,6 +42,11 @@ public enum PackCatalog {
         func pack(named name: String) -> Pack? {
             lock.lock(); defer { lock.unlock() }
             return byName[name]
+        }
+
+        func revision(named name: String) -> UInt64 {
+            lock.lock(); defer { lock.unlock() }
+            return revisions[name, default: 0]
         }
     }
 
@@ -55,6 +66,10 @@ public enum PackCatalog {
     public static func pack(named name: String?) -> Pack? {
         guard let name else { return nil }
         return store.pack(named: name)
+    }
+
+    public static func revision(named name: String) -> UInt64 {
+        store.revision(named: name)
     }
 
     /// An `EngineRegistry` with core sanity checks installed plus the active

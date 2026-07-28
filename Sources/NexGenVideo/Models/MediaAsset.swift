@@ -1,6 +1,58 @@
 import AppKit
 import AVFoundation
 
+enum MediaFilename {
+    nonisolated static func normalized(_ candidate: String?) -> String? {
+        guard let candidate else { return nil }
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let filename = URL(fileURLWithPath: trimmed).lastPathComponent
+        guard !filename.isEmpty, filename != ".", filename != ".." else { return nil }
+        return filename
+    }
+
+    nonisolated static func storageFilename(
+        _ candidate: String?,
+        matchingExtension extensionValue: String
+    ) -> String? {
+        guard let filename = normalized(candidate) else { return nil }
+        guard !extensionValue.isEmpty else { return filename }
+        let stem = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+        guard !stem.isEmpty else { return nil }
+        return "\(stem).\(extensionValue)"
+    }
+
+    nonisolated static func display(
+        originalFilename: String?,
+        name: String,
+        storageURL: URL
+    ) -> String {
+        if let original = normalized(originalFilename),
+           !isContentAddressed(original) {
+            return original
+        }
+        if let fallback = storageFilename(
+            name,
+            matchingExtension: storageURL.pathExtension
+        ), !isContentAddressed(fallback) {
+            return fallback
+        }
+        if isContentAddressed(storageURL.lastPathComponent) {
+            return storageFilename(
+                "Media file",
+                matchingExtension: storageURL.pathExtension
+            ) ?? "Media file"
+        }
+        return storageURL.lastPathComponent
+    }
+
+    nonisolated static func isContentAddressed(_ filename: String) -> Bool {
+        let stem = URL(fileURLWithPath: filename)
+            .deletingPathExtension().lastPathComponent.lowercased()
+        return stem.count == 64 && stem.allSatisfy(\.isHexDigit)
+    }
+}
+
 @Observable
 @MainActor
 final class MediaAsset: Identifiable {
@@ -20,6 +72,7 @@ final class MediaAsset: Identifiable {
     var pendingDownloadURL: URL?
     var cachedRemoteURL: String?
     var cachedRemoteURLExpiresAt: Date?
+    var originalFilename: String?
 
     /// Returns the cached URL if it's set AND not expired; else nil.
     var freshRemoteURL: String? {
@@ -49,6 +102,14 @@ final class MediaAsset: Identifiable {
         default: "Generating..."
         }
     }
+
+    var userFacingFilename: String {
+        MediaFilename.display(
+            originalFilename: originalFilename,
+            name: name,
+            storageURL: url
+        )
+    }
     /// Agent-facing token for get_media. The persisted manifest carries no status, so the
     /// library (this object) is the only source that knows an asset is mid-flight or failed.
     var generationStatusToken: String {
@@ -61,7 +122,16 @@ final class MediaAsset: Identifiable {
         }
     }
 
-    init(id: String = UUID().uuidString, url: URL, type: ClipType, name: String, duration: Double = 0, thumbnail: NSImage? = nil, generationInput: GenerationInput? = nil) {
+    init(
+        id: String = UUID().uuidString,
+        url: URL,
+        type: ClipType,
+        name: String,
+        duration: Double = 0,
+        thumbnail: NSImage? = nil,
+        generationInput: GenerationInput? = nil,
+        originalFilename: String? = nil
+    ) {
         self.id = id
         self.url = url
         self.type = type
@@ -70,11 +140,20 @@ final class MediaAsset: Identifiable {
         self.thumbnail = thumbnail
         self.generationInput = generationInput
         self.hasAudio = (type == .video)
+        self.originalFilename = MediaFilename.normalized(originalFilename)
     }
 
     /// Reconstruct from a manifest entry + resolved URL.
     convenience init(entry: MediaManifestEntry, resolvedURL: URL) {
-        self.init(id: entry.id, url: resolvedURL, type: entry.type, name: entry.name, duration: entry.duration, generationInput: entry.generationInput)
+        self.init(
+            id: entry.id,
+            url: resolvedURL,
+            type: entry.type,
+            name: entry.name,
+            duration: entry.duration,
+            generationInput: entry.generationInput,
+            originalFilename: entry.originalFilename
+        )
         self.sourceWidth = entry.sourceWidth
         self.sourceHeight = entry.sourceHeight
         self.sourceFPS = entry.sourceFPS
@@ -107,6 +186,7 @@ final class MediaAsset: Identifiable {
             hasAudio: hasAudio, folderId: folderId,
             cachedRemoteURL: fresh,
             cachedRemoteURLExpiresAt: fresh == nil ? nil : cachedRemoteURLExpiresAt,
+            originalFilename: originalFilename,
         )
     }
 

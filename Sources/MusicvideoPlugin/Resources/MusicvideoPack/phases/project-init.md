@@ -1,7 +1,8 @@
 # Phase K0 — Project Init
 
 > **Orchestrator instruction (main-session context).** Never spawn this
-> phase as a sub-agent. Converse with the user **in the user's language**;
+> phase as a sub-agent. Use the **interface language supplied by the host**
+> unless the user explicitly requests another language;
 > everything written into provider-facing fields is **English**.
 
 ## Goal

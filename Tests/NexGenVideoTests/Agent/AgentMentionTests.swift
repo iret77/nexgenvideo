@@ -171,6 +171,29 @@ struct AgentMentionTests {
         #expect(editor.agentService.draft == "@Interview-Take @Interview-Take-V1-00:00:01:00 @Range-00:00:01:00-00:00:03:00 ")
     }
 
+    @Test func assetMentionCarriesTheOriginalFilenameInsteadOfTheStorageHash() {
+        let editor = EditorViewModel()
+        let hash = String(repeating: "c", count: 64)
+        let asset = MediaAsset(
+            id: "asset-audio",
+            url: URL(fileURLWithPath: "/project/media/\(hash).mp3"),
+            type: .audio,
+            name: "Claude Mouse",
+            originalFilename: "Claude Mouse Master.mp3"
+        )
+        editor.mediaAssets = [asset]
+        editor.agentService.attachMention(for: asset)
+
+        let entry = AgentMentionContext.mentionEntries(
+            editor.agentService.mentions,
+            editor: editor
+        )[0]
+
+        #expect(entry["fileName"] as? String == "Claude Mouse Master.mp3")
+        #expect(entry["originalFilename"] as? String == "Claude Mouse Master.mp3")
+        #expect((entry["fileName"] as? String)?.contains(hash) == false)
+    }
+
     @Test func timelineRangeMentionRoundTripsThroughChatSessionCodable() throws {
         let mention = AgentMention(
             displayName: "Range-00:00:01:00-00:00:03:00",

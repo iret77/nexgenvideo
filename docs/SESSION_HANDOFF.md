@@ -1,218 +1,126 @@
-# Session handoff — 2026-07-27
+# Session handoff — 2026-07-28
 
 ## Objective
 
-Ship one consolidated NexGenVideo 1.0 release candidate. Never build locally. The latest on-device
-candidate still showed Story intake first because its separately installed musicvideo 0.0.5 pack
-remained the resident runtime despite the corrected app source. The current batch fixes the pack
-version/update/project-binding lifecycle and carries the corrected workflow in musicvideo 0.0.6.
-It is prepared locally but not yet CI-verified.
-Do not run the next CI/DMG build, merge, open a release PR or publish without the owner's explicit
-in-the-moment approval.
+Finish one consolidated NexGenVideo 1.0 correction after on-device testing exposed four coupled
+release blockers:
 
-## Prepared state
+1. content-addressed Media storage hashes reached visible Track intake and agent context;
+2. the agent inferred German instead of defaulting to the app UI language;
+3. Audio Analysis had no trustworthy user-visible progress and remained approvable while running;
+4. the embedded Claude MCP transport dropped the long `run_phase("analysis")` response.
 
-- Branch: `codex/release-1.0-rc`
-- Base: `origin/main`
-- App/changelog version: `1.0.0`
-- Musicvideo pack candidate: `0.0.6` with project schema `musicvideo/1.0.0`
-- Last green dry-run commit: `38d644efb917fe96ff89fe8943cfac6df344e482`
-- Green release workflow: `30138553162`
-- The run passed the full test suite, signing, app and pack notarization/stapling, external signed-pack
-  loading, DMG verification, Sparkle signing and artifact upload.
-- The dry-run artifact `NexGenVideo-1.0.0-dry-run` contains the DMG and both publication names of the
-  same musicvideo pack. Stable release, appcast and catalog publication were skipped.
-- The first on-device Higgsfield failure was an AuthenticationServices XPC-queue `SIGTRAP`. The
-  subsequent candidate passed the callback but then crashed on the main thread in SwiftUI's
-  AttributeGraph/`NSHostingView.updateConstraints` after successful authentication.
-- The new correction removes the manually retained `ASWebAuthenticationSession`, presentation context
-  and unsafe AppKit anchor entirely. SwiftUI's macOS 26 `webAuthenticationSession` environment owns the
-  browser lifecycle; one provider snapshot replaces four piecemeal state dictionaries, and the login
-  task is cancelled when the page leaves the view tree.
-- Browser callback tests cover task cancellation, provider errors, system login cancellation and
-  generic failure mapping.
-- No local build or test was run; macOS 26 GitHub Actions remains the only verification surface.
+Never build or test locally. GitHub Actions on `macos-26` is the only Swift/build verification
+surface. Do not dispatch CI, merge, publish, or build a DMG without the owner's explicit
+in-the-moment `build now`.
 
-The current pipeline and pack-lifecycle correction is uncommitted on `codex/release-1.0-rc`:
+## Working state
 
-- `AGENTS.md` and `CLAUDE.md` now contain the same standalone project rules with no cross-file include;
-  `scripts/release_preflight.py` blocks drift between them.
-- The locked observable contract is `docs/MUSICVIDEO_START_CONTRACT.md`: Track → optional Lyrics →
-  Project Init → approved Audio Analysis → optional existing story/identity/style material → story
-  development.
-- Musicvideo `project_init` owns only Track and Lyrics. Existing story, characters, locations and
-  style references are optional Brief intake and therefore cannot appear before approved analysis.
-- Media-library presence is candidate-only. Persisted asset roles keep Lyrics from reappearing as
-  Existing story and reject incompatible reuse at submission.
-- Gate approval now refreshes and resolves host-owned phase intake before resuming the in-app agent.
-  Brief-writing and agent-dialog tools are hard-blocked while Brief intake is unresolved, including
-  external MCP use.
-- Every in-app start, resume and successful gate transition now includes the packaged instructions
-  for the actual current phase; the formerly reference-only phase documents are live agent input.
-- Every remaining phase now executes through one current-phase capability contract, typed canonical
-  writers/runners, deterministic acceptance gates and cumulative exact-byte lineage. Agent and native
-  Shot List edits converge on `PipelineShotlistWriter` before invalidation and lineage capture.
-- Intake, analysis, planning writers and gates now share one project-confined track discovery path.
-  Analysis interpretation and Shot List writing reject measurements for replaced track bytes before
-  mutation; Production Design, Bible and Shot List reject non-image references at write and approval.
-- Render proof records semantic source/start/end/reference slots independently of the current model
-  catalog. AI-enhanced shots declare one exact project-local `source_path`; Frames excludes imported
-  and AI-enhanced footage, and Render rejects a missing, stale or substituted source.
-- Chained generated shots have one conditioning truth: the predecessor's exact last frame. They skip
-  Frames, use no separate start/reference image, and Render proof binds that predecessor frame.
-- Format-pack resolution is fail-closed across open, save, native gate actions and every harness entry.
-  Missing, unreadable or mismatched `ngv.json` cannot silently disable the musicvideo contract.
-- Intake and gate image types now share `ProjectMediaExtensions`; unsupported broad image formats
-  cannot enter through a host card and fail later in the pipeline.
-- Legacy optional declines migrate from the former `project_init.*` ids to `brief.*`; role state and
-  decline state survive project round-trips and media deletion.
-- Release tests cover the visible first Track card with preloaded Media, the analysis frontier, both
-  greenfield and existing-story paths, gate-to-intake ordering, role isolation and runtime phase order.
-- Pack candidate source and publication manifest now both report `0.0.6`; their minimum app version
-  is locked to `1.0.0` by release preflight.
-- Static JSON/Python/AppTheme checks pass. Swift/macOS verification remains CI-only.
+- Branch: `codex/original-media-filenames`
+- Base commit: `b3d4b41` (`Release candidate 1.0 (#288)`)
+- App version: `1.0.0`, source build number `63`
+- Musicvideo pack candidate: `0.0.7`, project schema `musicvideo/1.0.0`
+- Engine binary contract: current `4`, minimum compatible `2`
+- The batch is uncommitted and has not run in CI.
+- Preserve the entire working tree; it contains one consolidated correction.
 
-The release-blocking pack-lifecycle correction is now part of that batch:
+## Binding product contracts
 
-- installed versions coexist under `Plugins/<id>/<version>.ngvpack`; legacy flat installs remain
-  readable but no longer win over a newer compatible version by default;
-- every new or upgraded project pins pack id, exact version and project schema in `ngv.json`;
-- catalog/update staging is shared between launch, Home, Settings and new-project creation; the UI
-  distinguishes update-available from restart-required with the approved symbols;
-- new Music Video projects wait for the catalog check and refuse stale resident code instead of
-  binding whichever dylib happened to load first;
-- explicit runtime-version selection commits only from `willTerminate`, so cancelling the
-  save/restart review changes no persistent selection and cannot strand an open project;
-- existing projects keep their exact binding. A version change is explicit; a schema change also
-  requires matching bundle metadata and a pack-owned runtime migration;
-- migrations clone the Recovery working copy, validate before atomic replacement, keep the saved
-  package untouched until Save, survive a crash, and remain cancelable until Save;
-- legacy `musicvideo/legacy → musicvideo/1.0.0` is explicitly data-identical; only the binding changes;
-- contract-3 hosts accept the additive contract-2 pack ABI, while contract-2 hosts reject contract-3
-  packs before load;
-- Finder/open-document events now route through the same fail-closed `AppState` pack gate;
-- release tests cover stale-resident startup, newest-compatible selection, delayed restart commit,
-  project-specific attention, exact binding decode, rollback and data-identical legacy adoption.
+- Startup order remains
+  `Track → optional Lyrics → Project Init → approved Audio Analysis → optional existing creative material → story development`.
+- Media import is candidate discovery, not workflow assignment.
+- The original imported filename is durable metadata and is used in UI, agent context, and workflow
+  destinations. A content hash is storage identity only.
+- The agent defaults to the actual app interface localization. OS locale, pack prose, filenames,
+  project content, and lyrics cannot change it. Only an explicit user request changes conversation
+  language.
+- A project has exactly one active phase job. Same-phase calls and MCP reconnect retries join it;
+  a different phase is refused without execution.
+- Runner-emitted deterministic stage boundaries are the only progress truth; there is no invented
+  percentage or ETA.
+- Approval, gate-state mutation, and rewind are impossible while a phase job is running. Approval
+  appears only after the canonical artifact and lineage pass the shared structural gate.
 
-The Settings release pass is present but the latest correction is not yet CI-verified:
+The locked source documents are:
 
-- all six pages share one hierarchy of page context, sections, cards, rows, status badges and notices;
-- General, Format Packs, Providers, Models and Storage show only actionable, accurately named controls;
-- Format Packs shows a right-aligned sidebar indicator for available updates and restart-required updates;
-- Providers uses honest transport states and an adaptive one-/two-column layout;
-- Provider cards now share one header/body geometry in every normal state; error rows alone may expand.
-- Agent keeps `Check again` in the Claude status row instead of spending a separate row.
-- Help/MCP uses the same window size, sidebar, page header, scroll insets, sections, cards and visible
-  control labels as Settings.
-- Agent selects exactly one runtime, verifies Claude Code installation and authentication, fixes
-  headless permissions to `bypassPermissions`, and restricts built-in Claude tools to `Read`;
-- Claude Code makes the loopback MCP bridge mandatory, while API mode retains the user's MCP choice;
-- release builds ignore stored external Claude plugin/MCP escape hatches.
+- `docs/MUSICVIDEO_START_CONTRACT.md`
+- `docs/PIPELINE_AGENT_HARNESS.md`
+- `docs/ui/pipeline-phase-progress.html`
 
-The owner explicitly deferred the Finish action strip until after 1.0. It is not part of the release
-scope and must remain unchanged for this candidate.
+## Implemented in the working tree
 
-The AppTheme release gate is now implemented:
+### Original filenames
 
-- visible SwiftUI and AppKit chrome uses `AppTheme` for spacing, dimensions, typography, colors,
-  opacity, borders, radii, shadows and animation timing;
-- the former global layout, track and trim constants now live under `AppTheme`;
-- themed dividers and timeline/keyframe drawing metrics remove remaining system/default styling;
-- `scripts/lint_app_theme.py` blocks new hardcoded UI styling before CI, bundle and release work.
+- `MediaManifest` v5 persists `originalFilename`; legacy projects derive a readable fallback from the
+  media name without ever exposing a 64-character storage hash.
+- Finder, folder, URL, bytes, relink, dialog, mention, `get_media`, transcript-error, and Track
+  assignment paths carry the user-facing filename.
+- Track assignment copies the song into `audio/` under the sanitized original filename while the Media
+  library keeps its content-addressed durable copy.
+- Agent context explicitly distinguishes original filename metadata from the opaque backing path.
+- Round-trip, legacy, dialog, mention, copy, import, relink, and Track-assignment regressions are added.
 
-The release-blocker implementations for #279–#287 are present:
+### Language
 
-- #279: complete working-copy recovery and recovery regression coverage.
-- #280: persistent project-song identity, awaited/idempotent attach and atomic replacement.
-- #281: isolated preview publication and retry-safe stable release transaction.
-- #282: off-main content-addressed bulk import, cancellation, rollback, undo and redo.
-- #283: fail-closed remote import policy for URLs, redirects, DNS/peer addresses, limits and payloads.
-- #284: immutable model revisions plus mandatory SHA-256 verification and cache repair.
-- #285: typed control turns that never render app-authored commands as user messages.
-- #286: central pre-dispatch monetary ledger and hard budget guard.
-- #287: notarized downloadable packs plus quarantined runtime load verification.
+- `AgentInterfaceLanguage` resolves from `Bundle.main.preferredLocalizations`, falling back to the
+  development localization.
+- Both embedded Claude Subscription/CLI and Anthropic API-key mode receive the same hard language
+  rule through `AgentInstructions.serverInstructions`.
+- Pack phase documents defer to the host-provided interface language and permit a switch only after an
+  explicit user request.
+- Fixed German host-authored artifact labels were converted to the current English UI language.
 
-The issues stay open until the corrected candidate passes CI and final on-device verification.
+### MCP and phase execution
 
-## Review and static verification
+- The former adapter incorrectly created one `Server`/`StatelessHTTPServerTransport` per TCP
+  connection and also advertised a fabricated GET SSE stream unrelated to that transport.
+- The adapter uses official stateless POST/JSON semantics and lets GET return the SDK-defined 405.
+  One SDK server/transport survives all HTTP connections within a logical client session. A new
+  `initialize` rotates to a fresh SDK session because the SDK rejects reinitialization; retired
+  sessions stay alive until their in-flight calls settle.
+- Rotation ownership and listener generations prevent an old async resume from unlocking or reviving
+  a newer lifecycle. A post-start listener failure reaches `MCPService`, clears its running state and
+  exposes Retry instead of leaving a false healthy badge.
+- MCP stop is terminal for that service instance. Stop, restart and rapid Settings off/on transitions
+  finish the old listener teardown before another listener may bind the port.
+- HTTP requests are accumulated through fragmentation by `Content-Length`, bounded, and parsed without
+  assuming one network receive equals one request.
+- The shared editor-level `PipelinePhaseRunCoordinator` keeps one execution task per project;
+  reconnect retries join the same phase instead of starting duplicate analysis, while different phases
+  fail closed.
+- MCP transport tests disconnect a delayed phase call, reinitialize, retry it through a new SDK
+  session, require the retry to join the original project job, and assert that the runner executes
+  exactly once. They also pin the SDK-defined GET 405 response.
 
-- Independent reviews found and the batch fixes:
-  - import undo deleting bytes without redo;
-  - remote temp-file installation assuming a same-volume move;
-  - `URLSession` download files not being retained from the delegate callback;
-  - cross-thread model-download error state;
-  - deferred `set_gate_state` approvals incorrectly dirtying the project;
-  - new multi-line comments violating the repository's one-line comment rule.
-- A bounded-input Gemini 3.1 Pro High spec audit passed storage/recovery, media import and remote
-  security, generation/budget, model integrity, agent/chat/UI and the app design system. Its claimed
-  `bundle.sh` initialization defect was rejected after direct source verification: `RESOURCES` is
-  assigned before `package_release` can run.
-- The owner explicitly approved the locked `docs/PATTERN_FIT_CONTRACT.md` partial-library change on
-  2026-07-24. A targeted Gemini 3.1 Pro High re-review then passed the contract, implementation,
-  tool projection and tests with no findings.
-- Gemini 3.1 Pro High reviewed the OAuth correction, weak-provider lifetime and off-main regression
-  test. After receiving the complete actor-isolation context, it approved the final patch with no
-  release blocker.
-- Gemini 3.1 Pro High separately reviewed the Settings composition with no findings. Its Agent/MCP
-  review found one valid lifecycle-hardening opportunity: `AppState` now reconciles MCP for every
-  backend-change notification. Claimed missing MCP awaits, missing main-actor isolation and ignored
-  allowed tools were rejected against the actual source. The brief Claude-status loading state and
-  stale-result fencing were tightened during verification.
-- Gemini 3.1 Pro High reviewed the new SwiftUI-owned OAuth flow and UI correction. Two claimed blockers
-  were rejected against Apple's macOS 26 API and the actual `.onAppear` implementation. Its valid
-  lifecycle, narrow-layout and error-preservation findings were fixed.
-- Claude Opus 4.6 Thinking then found no critical release blocker. Its cancellation-notification,
-  browser-error-test, duplicate-sidebar-layer and copy-feedback lifecycle findings were fixed.
-- Claude Opus, run through the authenticated `claude -p` Subscription/OAuth CLI, reviewed the complete
-  pipeline hardening batch. Its valid findings were fixed: the release-trace analysis fixture now
-  proves real lineage, chained-render conditioning is internally consistent, image intake and gate
-  types share one whitelist, unreadable format settings fail closed, and native/agent Shot List edits
-  use one canonical writer.
-- The targeted Claude follow-up found three Swift test compile errors and one declaration-integrity
-  gap. The fixtures now use valid symbols and MainActor isolation; a separate
-  `declaredPluginName` snapshot is captured from the package or an explicitly recovered/host-mutated
-  state and independently verifies every mutable working-copy read.
-- The same Claude CLI/Subscription follow-up exposed three remaining callers that bypassed that
-  guarantee. Rewind now resolves the live pack fail-closed, a move/rename preserves the open
-  session's declaration, and every save context must complete the pack gate before writing.
-- A final targeted Claude CLI/Subscription pass found the remaining asymmetric mutations and save
-  lifecycle edges. Agent and native rewind/set-state now require a genuinely wired pack before
-  deriving phase order or writing; direct `write` shares the save gate; failed snapshot handoffs are
-  cleared; concrete UUID matching governs declaration preservation. Regression coverage pins valid
-  mismatch, unreadable and unwired settings, both retarget branches, direct/main/off-main save
-  refusal, byte-identical failed mutations, and the central durable-write hook for rewind.
-- Claude's claimed rewind-persistence defect was rejected against the actual dispatcher:
-  `.rewind` is an `isDurableWrite`, so `ToolExecutor.execute` marks the working copy dirty before
-  execution and calls `onPipelineChanged` after success. A regression assertion now pins that path.
-- The renderable release specification `docs/ui/settings-consistency.html` was rendered headlessly and
-  visually passed with the compact Agent row, equal provider cards and unified Help/MCP shell.
-- Gemini 3.1 Pro High and Claude Opus 4.6 Thinking reviewed the AppTheme gate. Their valid findings
-  were fixed: the linter now understands Swift strings/comments and multiline modifiers, native menu
-  dividers retain menu semantics, and timeline snap, razor, playhead and badge colors remain distinct.
-- `git diff --check` passes.
-- The AppTheme source gate passes.
-- All workflow YAML parses.
-- All 34 workflow `run:` blocks and release shell scripts pass `bash -n`.
-- Changelog JSON, app Info.plist and Python sources pass static parsing/syntax checks.
-- Branch pushes do not trigger CI; repository workflows run on pull requests or manual dispatch.
-- Native Shot List source-mode edits now resolve the working copy's canonical `pipeline/` data root,
-  pass through the shared current-phase/predecessor guard, invalidate downstream gates, and capture
-  fresh Shot List lineage. Regression coverage rejects both a parallel top-level artifact tree and
-  mutation while another pipeline phase is current.
+### Progress and approval
 
-## Remaining gates
+- Engine contract 4 adds an ABI-safe `ProgressPhaseRunner` registry at the end of `EngineRegistry`.
+- Musicvideo 0.0.7 reports seven real Audio Analysis stage boundaries from decode through canonical
+  artifact write.
+- The transcript replaces the generic running tool row with the approved compact progress card showing
+  phase, original filename, current stage, measured stage count, progress bar, and next stage.
+- Pipeline rows show `Running`; direct Approve is absent and the gate menu is disabled during work.
+- Agent approval, native approval, gate-state changes, deferred approval commits, and rewind share
+  fail-closed running/structural checks.
+- Closing and reopening a project while a phase settles cannot let the retired session delete the new
+  Recovery working copy; every open owns an independent generation claim.
 
-1. Obtain the owner's explicit in-the-moment `build now` for one consolidated dry-run.
-2. Run the macOS 26 release workflow and verify all workflow, pack-load and release gates.
-3. From the notarized DMG, start a new musicvideo project with Track and Lyrics preloaded in Media and
-   verify the locked sequence through approved Audio Analysis into greenfield and existing-story Brief.
-4. Only after that succeeds: close verified blockers and prepare the release PR.
-5. Production merge and publication remain separate explicit actions.
+## Verification completed without a local build
 
-## Release workflow
+- `git diff --check`
+- `python3 scripts/lint_app_theme.py`
+- `python3 scripts/release_preflight.py 1.0.0 <empty-catalog>`
+- JSON/plist/YAML metadata parsing and the standalone `AGENTS.md`/`CLAUDE.md` parity check
+- Three independent Claude Subscription/CLI passes reviewed the complete diff and the corrected
+  lifecycle subset. Their actionable findings affecting transport lifetime, session rotation,
+  listener failure reporting, job settlement, gate visibility, working-copy lifetime, test teardown
+  and join determinism were corrected.
+- No Swift build or test has been run locally.
 
-The stable pack and badge bytes upload before the final catalog promotion. Pending catalog,
-transaction metadata, catalog/artifact hashes and a completion marker make publication resumable
-without another macOS allocation. Resume now fetches the release branch and checks out its head
-detached before committing the appcast, preventing stale Linux-gate state from causing a
-non-fast-forward publication failure.
+## Required remaining gates
+
+1. Report readiness and wait. Do not trigger CI until the owner says `build now`.
+2. On explicit approval, commit/push/merge as authorized and run one GitHub Actions macOS release build.
+3. Verify the notarized DMG with the exact on-device trace: original Track name, English default agent,
+   visible advancing Audio Analysis, no active Approve, successful analysis completion, interpretation,
+   then approval.

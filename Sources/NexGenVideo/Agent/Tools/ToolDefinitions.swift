@@ -307,7 +307,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .getMedia,
-            description: "Call before referencing any asset. Every mediaRef/reference ID in other tools comes from the IDs returned here. Also exposes generationStatus (generating | downloading | rendering | failed | none) for async-generated and -imported assets — a failed entry additionally carries an 'error' message. An asset is only usable in add_clips once its generationStatus is 'none'; if it is 'failed', report the error to the user instead of retrying blindly.",
+            description: "Call before referencing any asset. Every mediaRef/reference ID in other tools comes from the IDs returned here. fileName is the user-facing original filename; content-addressed storage basenames are internal and must never be treated as titles. Also exposes generationStatus (generating | downloading | rendering | failed | none) for async-generated and -imported assets — a failed entry additionally carries an 'error' message. An asset is only usable in add_clips once its generationStatus is 'none'; if it is 'failed', report the error to the user instead of retrying blindly.",
             inputSchema: objectSchema()
         ),
         AgentTool(

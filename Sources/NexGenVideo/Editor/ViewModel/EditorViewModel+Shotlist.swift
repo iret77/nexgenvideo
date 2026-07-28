@@ -70,7 +70,7 @@ extension EditorViewModel {
         onPipelineChanged?()
         var invalidated = true
         do {
-            try pipelineAgentHarness.recordPhaseMutation(
+            try await pipelineAgentHarness.recordPhaseMutation(
                 phase: "shotlist",
                 dataRoot: dataRoot,
                 declaredPack: declaredPluginName

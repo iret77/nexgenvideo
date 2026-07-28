@@ -86,6 +86,9 @@ release or a wasted CI cycle.
 
 - **Never render an app-authored or auto-generated message as a user turn.** Seed it with
   `hidden: true` and let the agent answer — see `AgentService.send(text:mentions:hidden:)`.
+- **Agent language follows the app, not ambient clues.** The host supplies the actual interface
+  localization to every backend. OS locale, project content, filenames, lyrics, pack prose, and prior
+  generated text never change it; only an explicit user request switches conversation language.
 - **Never show a control that doesn't do what it says.**
 - **No raw prompt reaches a content model**, from the user or the agent. Everything pre-compiles
   through the prompt engine; raw is a pro escape hatch only.
@@ -103,6 +106,10 @@ release or a wasted CI cycle.
 - **Media-library import is not workflow assignment.** Library assets are candidates until the user
   assigns them in the matching host-owned card; importing files must never silently skip Track or
   Lyrics intake.
+- **Content-addressed media names are internal only.** Persist the original import filename separately
+  from the hash-backed storage URL. UI, agent metadata, and workflow destinations use the original
+  filename (or a readable legacy fallback); a storage hash must never be shown or interpreted as a
+  title.
 - **Greenfield is a first-class answer.** Existing story material is optional. If none is supplied,
   the agent develops the story from the approved song analysis and lyrics instead of asking for a
   file that does not exist.
@@ -123,6 +130,17 @@ release or a wasted CI cycle.
   start/end frames, or deterministic reference plan used for every shot. AI-enhanced shots declare
   their exact project-local `source_path` in the Shot List; the agent never selects or substitutes it
   during Render, and imported/AI-enhanced shots never enter Frames.
+- **A host phase has one execution identity.** Concurrent calls and MCP reconnect retries join the
+  same project/phase job, and one project never executes two phases at once. User-visible progress
+  comes only from runner-emitted stage boundaries.
+  Approval, gate-state mutation, and rewind remain unavailable until the job finishes and its canonical
+  artifact passes the shared structural gate. Pipeline approval controls derive their enabled state
+  from that same check, and the click path revalidates it before mutation.
+- **An MCP connection is not a phase lifetime.** The stateless HTTP adapter keeps one SDK
+  server/transport across TCP connections within a logical initialized session. Reinitialization
+  rotates to a fresh SDK session while retired in-flight calls settle; the canonical project phase job
+  survives both transport loss and rotation. Never create the SDK server per TCP connection or reuse
+  an already initialized SDK server for a new initialization.
 - **Pipeline media references are typed and project-local.** Track discovery is shared engine truth
   and rejects symlink escapes. Production Design, Bible, and Shot List image references must resolve
   to real project images in both the canonical writer and the independent approval gate.

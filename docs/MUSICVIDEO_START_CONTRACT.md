@@ -12,6 +12,8 @@
    - A track already imported into the Media library is offered as a candidate, but importing it does
      not assign it as the project song.
    - The user assigns exactly one track. The host copies it into `audio/` and anchors it at frame zero.
+   - The copy in `audio/`, the intake card, and the agent context use the original filename. The
+     content-addressed Media-library storage name remains internal.
 2. **Lyrics — optional.**
    - The host offers Lyrics directly after Track.
    - Supplying lyrics writes `lyrics/lyrics.txt`; continuing without them is an explicit valid choice.
@@ -69,6 +71,8 @@ A release candidate is blocked unless independent tests prove this observable tr
 7. Supplying Existing story reaches story development with both the script and analysis context.
 8. Save, close, reopen, and agent resume preserve the same order without duplicate cards or hidden
    agent turns.
+9. A content-addressed Media-library track is shown and attached under its original filename; no
+   storage hash reaches visible copy or song-title inference.
 
 Static agreement between this document, `hardsteps.json`, phase prose, and source code is not release
 evidence. The release test must drive state transitions and assert the visible cards and handoff

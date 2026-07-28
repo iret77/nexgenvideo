@@ -1,9 +1,22 @@
 import SwiftUI
 import NexGenEngine
 
-// Read-only Pipeline cockpit panel: the project's phase gates as a vertical checklist, with the next
-// open phase highlighted — "where does the project stand". Loaded via CockpitDataService.projectState.
-// Explicit loading / empty / error / engine-not-ready states. No mutations.
+enum PipelineApprovalControl {
+    static func isEnabled(
+        approvalReady: Bool,
+        controlsAvailable: Bool,
+        gateWriting: Bool,
+        pipelineIsRunning: Bool
+    ) -> Bool {
+        approvalReady
+            && controlsAvailable
+            && !gateWriting
+            && !pipelineIsRunning
+    }
+}
+
+// Pipeline cockpit panel: the project's phase gates as a vertical checklist, with the next open phase
+// highlighted and gate mutations routed through NativeGateWriter.
 
 struct PipelinePanelView: View {
     @Environment(EditorViewModel.self) private var editor
@@ -20,10 +33,31 @@ struct PipelinePanelView: View {
     @State private var loadToken = 0
     /// True while a gate mutation (approve / needs-revision / rewind) is being written + reloaded.
     @State private var gateWriting = false
-    /// A gate mutation that was refused (an unmet precondition) or couldn't run — surfaced HERE in the
-    /// cockpit, next to the button that was clicked, not routed to the Media panel's toast where the user
-    /// can't see it. Cleared on the next successful gate write.
-    @State private var gateError: String?
+    @State private var dataRoot: URL?
+    @State private var readinessToken = 0
+    @State private var readinessTask: Task<Void, Never>?
+    @State private var readinessRefreshQueued = false
+    @State private var approvalPhase: String?
+    @State private var approvalReadiness = NativeGateApprovalReadiness.blocked(
+        "The pipeline state is unavailable."
+    )
+    @State private var mutationReadiness = NativeGateApprovalReadiness.blocked(
+        "The pipeline state is unavailable."
+    )
+    /// A user-safe error plus an agent-only diagnostic for click-time races or write failures.
+    @State private var gateError: GateErrorState?
+
+    private struct GateErrorState: Equatable {
+        let message: String
+        let diagnostic: String
+    }
+
+    private var runningPhase: String? {
+        guard let dataRoot else { return nil }
+        return editor.pipelinePhaseRunCoordinator.runningPhase(
+            projectRoot: dataRoot
+        )
+    }
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
@@ -33,7 +67,15 @@ struct PipelinePanelView: View {
         .task(id: editor.projectURL) { await load() }
         // Re-read when the engine state changes (e.g. production just started) — projectURL is unchanged
         // then, so without this the panel would keep showing the stale "Start production" state.
-        .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
+        .onChange(of: editor.engineStateRevision) { _, _ in
+            Task { await load(showProgress: false) }
+        }
+        .onChange(of: editor.projectURL) { _, _ in
+            gateError = nil
+        }
+        .onChange(of: runningPhase) { _, _ in
+            refreshApprovalReadiness()
+        }
     }
 
     @ViewBuilder
@@ -57,6 +99,7 @@ struct PipelinePanelView: View {
 
     @ViewBuilder
     private func loadedBody(_ data: ProjectStateData) -> some View {
+        let activeRunningPhase = runningPhase
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                 summaryHeader(data)
@@ -70,7 +113,8 @@ struct PipelinePanelView: View {
                     VStack(spacing: AppTheme.Spacing.none) {
                         ForEach(Array(data.phases.enumerated()), id: \.element.id) { index, phase in
                             phaseRow(phase, isNext: phase.phase == data.nextPhaseName,
-                                     isLast: index == data.phases.count - 1)
+                                     isLast: index == data.phases.count - 1,
+                                     runningPhase: activeRunningPhase)
                         }
                     }
                     .padding(AppTheme.Spacing.mdLg)
@@ -181,7 +225,24 @@ struct PipelinePanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func phaseRow(_ phase: ProjectPhase, isNext: Bool, isLast: Bool) -> some View {
+    @ViewBuilder
+    private func phaseRow(
+        _ phase: ProjectPhase,
+        isNext: Bool,
+        isLast: Bool,
+        runningPhase: String?
+    ) -> some View {
+        let isRunning = runningPhase == phase.phase
+        let pipelineIsRunning = runningPhase != nil
+        let readiness = isNext && approvalPhase == phase.phase
+            ? approvalReadiness
+            : .blocked("This phase is not current.")
+        let approvalEnabled = PipelineApprovalControl.isEnabled(
+            approvalReady: readiness.isReady,
+            controlsAvailable: mutationReadiness.isReady,
+            gateWriting: gateWriting,
+            pipelineIsRunning: pipelineIsRunning
+        )
         VStack(spacing: AppTheme.Spacing.none) {
             HStack(spacing: AppTheme.Spacing.smMd) {
                 statusDot(approved: phase.approved, isNext: isNext, state: phase.state)
@@ -206,14 +267,27 @@ struct PipelinePanelView: View {
                         .help(phase.notes ?? "Approved with notes")
                 }
                 surfaceIcon(for: phase.phase)
-                if isNext {
-                    approveButton(phase)
+                if isRunning {
+                    Text("Running")
+                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                        .foregroundStyle(AppTheme.Accent.timecodeColor)
+                } else if isNext {
+                    approveButton(
+                        phase,
+                        enabled: approvalEnabled
+                    )
                 } else if phase.approved {
                     Text("Approved")
                         .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
                         .foregroundStyle(AppTheme.Status.successColor)
                 }
-                gateMenu(phase, isNext: isNext)
+                gateMenu(
+                    phase,
+                    isNext: isNext,
+                    canApprove: approvalEnabled,
+                    controlsAvailable: mutationReadiness.isReady,
+                    pipelineIsRunning: pipelineIsRunning
+                )
             }
             .frame(height: AppTheme.IconSize.md)
             if !isLast {
@@ -224,24 +298,45 @@ struct PipelinePanelView: View {
 
     /// Approving a phase is the one action the pipeline cannot advance without — it belongs in the row,
     /// not behind an unlabeled “…”. The menu keeps the rarer siblings (send back, rewind).
-    private func approveButton(_ phase: ProjectPhase) -> some View {
+    private func approveButton(
+        _ phase: ProjectPhase,
+        enabled: Bool
+    ) -> some View {
         Button {
-            apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase,
-                                                 declaredPack: editor.declaredPluginName) }
+            apply(
+                failureMessage: "\(PhaseDisplay.label(phase.phase)) isn't ready for approval yet."
+            ) {
+                try await NativeGateWriter.approve(
+                    projectDir: $0,
+                    phase: phase.phase,
+                    declaredPack: editor.declaredPluginName,
+                    executionCoordinator: editor.pipelinePhaseRunCoordinator
+                )
+            }
         } label: {
             Text("Approve")
                 .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
-                .foregroundStyle(AppTheme.Accent.timecodeColor)
+                .foregroundStyle(
+                    enabled ? AppTheme.Accent.timecodeColor : AppTheme.Text.mutedColor
+                )
                 .padding(.horizontal, AppTheme.Spacing.sm)
                 .padding(.vertical, AppTheme.Spacing.xxs)
                 .background(
                     RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                        .fill(AppTheme.Accent.timecodeColor.opacity(AppTheme.Opacity.faint))
+                        .fill(
+                            enabled
+                                ? AppTheme.Accent.timecodeColor.opacity(AppTheme.Opacity.faint)
+                                : AppTheme.Background.raisedColor
+                        )
                 )
         }
         .buttonStyle(.plain)
-        .disabled(gateWriting)
-        .help("Approve \(PhaseDisplay.label(phase.phase)) and move to the next phase")
+        .disabled(!enabled)
+        .help(
+            enabled
+                ? "Approve \(PhaseDisplay.label(phase.phase)) and move to the next phase"
+                : "Complete \(PhaseDisplay.label(phase.phase)) before approving"
+        )
     }
 
     /// Direct gate controls (docs/UI_UX_CONCEPT.md §4) — approve / send back / rewind, wired to the
@@ -250,31 +345,59 @@ struct PipelinePanelView: View {
     /// approved; a COMPLETED phase can be sent back or rewound to. A future phase can't be approved
     /// out of order or "rewound to" — that would be meaningless.
     @ViewBuilder
-    private func gateMenu(_ phase: ProjectPhase, isNext: Bool) -> some View {
+    private func gateMenu(
+        _ phase: ProjectPhase,
+        isNext: Bool,
+        canApprove: Bool,
+        controlsAvailable: Bool,
+        pipelineIsRunning: Bool
+    ) -> some View {
         // The first not-yet-approved phase is the frontier: everything before it is done, it is active,
         // everything after is in the future.
         let isFuture = !phase.approved && !isNext
         Menu {
             // Only the active (next) phase is approvable — no approving out of order.
-            Button("Approve") { apply { try NativeGateWriter.approve(projectDir: $0, phase: phase.phase, declaredPack: editor.declaredPluginName) } }
-                .disabled(!isNext)
-            // Only a completed phase can be sent back for revision.
-            Button("Needs revision") {
-                apply { try NativeGateWriter.setState(projectDir: $0, phase: phase.phase, state: .needsRevision, declaredPack: editor.declaredPluginName) }
-            }
-            .disabled(!phase.approved)
-            Divider() // app-theme: native-menu-divider
-            // Rewind to a phase already reached (active or completed) — never to the future.
-            Button("Rewind to here", role: .destructive) {
-                apply {
-                    try NativeGateWriter.rewind(
+            Button("Approve") {
+                apply(
+                    failureMessage: "\(PhaseDisplay.label(phase.phase)) isn't ready for approval yet."
+                ) {
+                    try await NativeGateWriter.approve(
                         projectDir: $0,
-                        targetPhase: phase.phase,
-                        declaredPack: editor.declaredPluginName
+                        phase: phase.phase,
+                        declaredPack: editor.declaredPluginName,
+                        executionCoordinator: editor.pipelinePhaseRunCoordinator
                     )
                 }
             }
-            .disabled(isFuture)
+            .disabled(!isNext || !canApprove || pipelineIsRunning)
+            // Only a completed phase can be sent back for revision.
+            Button("Needs revision") {
+                apply(
+                    failureMessage: "Couldn't update \(PhaseDisplay.label(phase.phase)). Try again."
+                ) {
+                    try await NativeGateWriter.setState(
+                        projectDir: $0,
+                        phase: phase.phase,
+                        state: .needsRevision,
+                        declaredPack: editor.declaredPluginName,
+                        executionCoordinator: editor.pipelinePhaseRunCoordinator
+                    )
+                }
+            }
+            .disabled(!phase.approved || !controlsAvailable)
+            Divider() // app-theme: native-menu-divider
+            // Rewind to a phase already reached (active or completed) — never to the future.
+            Button("Rewind to here", role: .destructive) {
+                apply(failureMessage: "Couldn't rewind the pipeline. Try again.") {
+                    try NativeGateWriter.rewind(
+                        projectDir: $0,
+                        targetPhase: phase.phase,
+                        declaredPack: editor.declaredPluginName,
+                        executionCoordinator: editor.pipelinePhaseRunCoordinator
+                    )
+                }
+            }
+            .disabled(isFuture || !controlsAvailable)
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.system(size: AppTheme.FontSize.xs))
@@ -285,54 +408,69 @@ struct PipelinePanelView: View {
         // A borderless Menu overrides its label's foreground style with the control tint.
         .tint(AppTheme.Text.mutedColor)
         .fixedSize()
-        .disabled(gateWriting || isFuture)
-        .help(isFuture ? "Not reached yet — approve earlier phases first"
-                       : "Gate: approve, send back for revision, or rewind the pipeline to this phase")
+        .disabled(
+            gateWriting || isFuture || pipelineIsRunning || !controlsAvailable
+        )
+        .help(
+            pipelineIsRunning
+                ? "A pipeline phase is still running"
+                : (!controlsAvailable
+                    ? "Pipeline gate controls are unavailable"
+                    : (isFuture
+                        ? "Not reached yet — approve earlier phases first"
+                        : "Gate: approve, send back for revision, or rewind the pipeline to this phase"))
+        )
     }
 
-    /// Run a gate mutation against the project dir, then reload both this panel and the shared engine
-    /// snapshot (title-bar capsule + other panels) so every surface reflects the new gate state. The
-    /// write is fast local YAML I/O — kept inline (the reloads are the async part).
-    private func apply(_ write: (URL) throws -> Void) {
+    /// Run a gate mutation against the project dir, then reload this panel and the shared engine state.
+    private func apply(
+        failureMessage: String,
+        _ write: @escaping @MainActor (URL) async throws -> Void
+    ) {
         guard !gateWriting else { return }
         guard let dir = editor.workingRoot else {
-            gateError = "No open project to update — reopen the project and try again."
+            gateError = GateErrorState(
+                message: "No project is open.",
+                diagnostic: "No open project to update."
+            )
             return
         }
         gateWriting = true
-        do {
-            try write(dir)
-            // The gate write landed in the working copy — mark the document edited so a save persists it.
-            gateError = nil
-            editor.onPipelineChanged?()
-        } catch {
-            // A refused gate (unmet precondition) or a write failure — show it in the cockpit, where the
-            // click happened. `error.localizedDescription` carries the block reason from the gate checks.
-            // `apply` also runs needs-revision / rewind, so the prefix stays action-neutral.
-            gateError = "Couldn't update the gate: \(error.localizedDescription)"
-        }
-        Task {
+        Task { @MainActor in
+            do {
+                try await write(dir)
+                gateError = nil
+                if editor.workingRoot == dir {
+                    editor.onPipelineChanged?()
+                }
+            } catch {
+                gateError = GateErrorState(
+                    message: failureMessage,
+                    diagnostic: error.localizedDescription
+                )
+            }
             await editor.refreshEngineState()
-            await load()
+            if editor.workingRoot == dir {
+                await load(showProgress: false)
+            }
             gateWriting = false
         }
     }
 
-    /// The refusal/feedback for a gate action, rendered inline at the top of the cockpit (HAX G11 —
-    /// say WHY the pipeline didn't advance). Dismissible; also clears on the next successful write.
-    private func gateErrorBanner(_ message: String) -> some View {
+    /// Dismissible user-safe feedback for the rare race where a ready control becomes blocked on click.
+    private func gateErrorBanner(_ error: GateErrorState) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Status.errorColor)
-            Text(message)
+            Text(error.message)
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: AppTheme.Spacing.sm)
             Button {
                 editor.agentService.send(
-                    text: "The gate refused this approval: \(message) Clear it, then ask for approval again.",
+                    text: "Resolve this pipeline gate failure before requesting approval again: \(error.diagnostic)",
                     mentions: [], hidden: true)
                 gateError = nil
             } label: {
@@ -419,19 +557,71 @@ struct PipelinePanelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func load() async {
+    private func refreshApprovalReadiness() {
+        readinessToken += 1
+        guard case .loaded(let data) = state,
+              let data,
+              editor.workingRoot != nil
+        else {
+            approvalPhase = nil
+            approvalReadiness = .blocked("The pipeline state is unavailable.")
+            mutationReadiness = .blocked("The pipeline state is unavailable.")
+            return
+        }
+        let phase = data.nextPhaseName
+        approvalPhase = phase
+        approvalReadiness = .blocked("Checking approval readiness.")
+        mutationReadiness = .blocked("Checking gate controls.")
+        readinessRefreshQueued = true
+        guard readinessTask == nil else { return }
+        readinessTask = Task { @MainActor in
+            repeat {
+                readinessRefreshQueued = false
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled else { break }
+                let token = readinessToken
+                let currentPhase = approvalPhase
+                guard let currentDir = editor.workingRoot else { break }
+                let readiness = await NativeGateWriter.controlReadiness(
+                    projectDir: currentDir,
+                    phase: currentPhase,
+                    declaredPack: editor.declaredPluginName,
+                    executionCoordinator: editor.pipelinePhaseRunCoordinator
+                )
+                guard token == readinessToken,
+                      approvalPhase == currentPhase,
+                      editor.workingRoot == currentDir
+                else { continue }
+                mutationReadiness = readiness.mutations
+                approvalReadiness = readiness.approval
+            } while readinessRefreshQueued
+            readinessTask = nil
+        }
+    }
+
+    private func load(showProgress: Bool = true) async {
         guard let dir = editor.workingRoot else {
+            dataRoot = nil
             state = .failed(.noProject)
             return
         }
+        dataRoot = DataRootResolver.dataRoot(of: dir)
         loadToken += 1
         let token = loadToken
-        state = .loading
+        if showProgress {
+            state = .loading
+        }
         let result = await CockpitDataService.projectState(projectDir: dir)
         guard token == loadToken else { return }
         switch result {
-        case .success(let data): state = .loaded(data)
-        case .failure(let error): state = .failed(error)
+        case .success(let data):
+            state = .loaded(data)
+            refreshApprovalReadiness()
+        case .failure(let error):
+            approvalPhase = nil
+            approvalReadiness = .blocked("The pipeline state is unavailable.")
+            mutationReadiness = .blocked("The pipeline state is unavailable.")
+            state = .failed(error)
         }
     }
 }

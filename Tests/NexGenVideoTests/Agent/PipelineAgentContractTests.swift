@@ -328,7 +328,7 @@ struct PipelineAgentContractTests {
     }
 
     @Test("a phase artifact mutation rewinds that phase and every downstream gate")
-    func mutationInvalidatesDownstreamGates() throws {
+    func mutationInvalidatesDownstreamGates() async throws {
         PackCatalog.register(MusicvideoPack())
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
@@ -342,7 +342,7 @@ struct PipelineAgentContractTests {
         try store.save(gates, to: PipelineLayout.gatesFile)
 
         let harness = PipelineAgentHarness()
-        try harness.recordPhaseMutation(phase: "storyboard", dataRoot: dataRoot)
+        try await harness.recordPhaseMutation(phase: "storyboard", dataRoot: dataRoot)
 
         let updated = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         let boundary = try #require(order.firstIndex(of: "storyboard"))
@@ -357,6 +357,46 @@ struct PipelineAgentContractTests {
             try PipelineLineageStore.loadIfPresent(dataRoot: dataRoot)
         )
         #expect(lineage.phases["storyboard"] != nil)
+    }
+
+    @Test("a lineage capture failure still invalidates the changed phase")
+    func lineageFailureStillInvalidatesGates() async throws {
+        PackCatalog.register(MusicvideoPack())
+        let (dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let registry = PackCatalog.registry(activePack: "musicvideo")
+        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in order {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let storyboard = dataRoot.appendingPathComponent(
+            PipelineLayout.storyboardCurrentFile
+        )
+        try FileManager.default.createDirectory(
+            at: storyboard.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("unreadable".utf8).write(to: storyboard)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0],
+            ofItemAtPath: storyboard.path
+        )
+
+        await #expect(throws: ToolError.self) {
+            try await PipelineAgentHarness().recordPhaseMutation(
+                phase: "storyboard",
+                dataRoot: dataRoot
+            )
+        }
+
+        let updated = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        let boundary = try #require(order.firstIndex(of: "storyboard"))
+        for phase in order[boundary...] {
+            #expect(!updated.get(phase).approved)
+        }
     }
 
     @Test("phase work revalidates the immediate approved predecessor")

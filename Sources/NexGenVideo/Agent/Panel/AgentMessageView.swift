@@ -209,6 +209,7 @@ struct ToolRunResult {
 struct AgentActivityView: View {
     let activity: AgentActivity
     let toolResults: [String: ToolRunResult]
+    @Environment(EditorViewModel.self) private var editor
     @State private var expanded = false
 
     private var hasError: Bool {
@@ -232,51 +233,86 @@ struct AgentActivityView: View {
         return "Completed"
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-            Button {
-                withAnimation(.easeOut(duration: AppTheme.Anim.hover)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: AppTheme.Spacing.sm) {
-                    statusIcon
-                    Text(label)
-                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .lineLimit(2)
-                        .contentTransition(.opacity)
-                    Spacer(minLength: AppTheme.Spacing.sm)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(accessibilityState): \(label)")
+    private var activePhaseProgress: PipelinePhaseExecutionSnapshot? {
+        guard let snapshot = editor.pipelinePhaseExecution.snapshot,
+              snapshot.isRunning,
+              let dataRoot = editor.workingRoot.flatMap({
+                  DataRootResolver.dataRoot(of: $0)
+              }),
+              editor.pipelinePhaseExecution.isRunning(
+                  projectRoot: dataRoot,
+                  phase: snapshot.phase
+              ),
+              activity.steps.contains(where: {
+                  ToolRunPresentation.baseName(for: $0.name)
+                      == ToolName.runPhase.rawValue
+                      && Self.phase(from: $0.inputJSON) == snapshot.phase
+              })
+        else { return nil }
+        return snapshot
+    }
 
-            if expanded {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                    if activity.statuses.count > 1 {
-                        ForEach(Array(activity.statuses.dropLast().enumerated()), id: \.offset) { _, status in
-                            Text(status)
-                                .font(.system(size: AppTheme.FontSize.xs))
-                                .foregroundStyle(AppTheme.Text.mutedColor)
+    @ViewBuilder
+    var body: some View {
+        if let activePhaseProgress {
+            PipelinePhaseProgressView(snapshot: activePhaseProgress)
+        } else {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                Button {
+                    withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
+                        expanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        statusIcon
+                        Text(label)
+                            .font(.system(
+                                size: AppTheme.FontSize.sm,
+                                weight: AppTheme.FontWeight.medium
+                            ))
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            .lineLimit(2)
+                            .contentTransition(.opacity)
+                        Spacer(minLength: AppTheme.Spacing.sm)
+                        Image(systemName: "chevron.right")
+                            .font(.system(
+                                size: AppTheme.FontSize.micro,
+                                weight: AppTheme.FontWeight.semibold
+                            ))
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                            .foregroundStyle(AppTheme.Text.mutedColor)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(accessibilityState): \(label)")
+
+                if expanded {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                        if activity.statuses.count > 1 {
+                            ForEach(
+                                Array(activity.statuses.dropLast().enumerated()),
+                                id: \.offset
+                            ) { _, status in
+                                Text(status)
+                                    .font(.system(size: AppTheme.FontSize.xs))
+                                    .foregroundStyle(AppTheme.Text.mutedColor)
+                            }
+                        }
+                        ForEach(activity.steps) { step in
+                            ToolRunRow(
+                                name: step.name,
+                                inputJSON: step.inputJSON,
+                                result: toolResults[step.id]
+                            )
                         }
                     }
-                    ForEach(activity.steps) { step in
-                        ToolRunRow(
-                            name: step.name,
-                            inputJSON: step.inputJSON,
-                            result: toolResults[step.id]
-                        )
-                    }
+                    .padding(.leading, AppTheme.Spacing.xxs)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-                .padding(.leading, AppTheme.Spacing.xxs)
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
+            .animation(.easeOut(duration: AppTheme.Anim.hover), value: label)
         }
-        .animation(.easeOut(duration: AppTheme.Anim.hover), value: label)
     }
 
     @ViewBuilder
@@ -296,6 +332,14 @@ struct AgentActivityView: View {
                         : AppTheme.Text.tertiaryColor
                 )
         }
+    }
+
+    private static func phase(from inputJSON: String) -> String? {
+        guard let data = inputJSON.data(using: .utf8),
+              let raw = try? JSONSerialization.jsonObject(with: data),
+              let object = raw as? [String: Any]
+        else { return nil }
+        return object["phase"] as? String
     }
 }
 

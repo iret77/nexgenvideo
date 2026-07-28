@@ -227,6 +227,9 @@ final class EditorViewModel {
     var projectURL: URL? {
         didSet {
             guard projectURL != oldValue else { return }
+            if !pipelinePhaseRunCoordinator.hasRunningJobs {
+                pipelinePhaseExecution.reset()
+            }
             let nextProjectId = projectURL.flatMap {
                 ProjectIdentity.existingUUID(for: $0)
             }
@@ -261,6 +264,7 @@ final class EditorViewModel {
     /// key is unchanged — used to tell "re-pointed at my own live copy" apart from "opened a project",
     /// so a move never re-reads the session's edits as crash-recovered.
     private var activeWorkingCopyKey: String?
+    private var activeWorkingCopyGeneration: UUID?
     private var preopenedWorkingCopy: (
         packageURL: URL,
         key: String,
@@ -299,6 +303,7 @@ final class EditorViewModel {
         guard let projectURL else {
             workingCopyHome = nil
             activeWorkingCopyKey = nil
+            activeWorkingCopyGeneration = nil
             refreshProductionPipelineMarker()
             return
         }
@@ -308,6 +313,7 @@ final class EditorViewModel {
             self.preopenedWorkingCopy = nil
             workingCopyHome = preopenedWorkingCopy.result.home
             activeWorkingCopyKey = preopenedWorkingCopy.key
+            activeWorkingCopyGeneration = preopenedWorkingCopy.result.generation
             recoveredUnsavedWork = preopenedWorkingCopy.result.recoveredUnsaved
             reconcileRecoveredPluginDeclaration(
                 projectURL: preopenedWorkingCopy.result.home,
@@ -322,6 +328,7 @@ final class EditorViewModel {
         guard let key = workingCopyKey else {
             workingCopyHome = nil
             activeWorkingCopyKey = nil
+            activeWorkingCopyGeneration = nil
             mediaPanelToast = MediaPanelToast(
                 message: "The project identity is unavailable. Reopen the project."
             )
@@ -341,12 +348,14 @@ final class EditorViewModel {
         } catch {
             workingCopyHome = nil
             activeWorkingCopyKey = nil
+            activeWorkingCopyGeneration = nil
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             refreshProductionPipelineMarker()
             return
         }
         workingCopyHome = result.home
         activeWorkingCopyKey = key
+        activeWorkingCopyGeneration = result.generation
         recoveredUnsavedWork = result.recoveredUnsaved
         reconcileRecoveredPluginDeclaration(
             projectURL: result.home,
@@ -445,10 +454,35 @@ final class EditorViewModel {
 
     /// Discard the working copy on a clean close (so no false crash-recovery prompt next time).
     func releaseWorkingCopy() {
-        guard let key = activeWorkingCopyKey else { return }
-        ProjectWorkingCopy.discard(key: key)
+        guard let key = activeWorkingCopyKey,
+              let generation = activeWorkingCopyGeneration
+        else { return }
+        let dataRoot = workingCopyHome.flatMap {
+            DataRootResolver.dataRoot(of: $0)
+        }
+        let phaseCoordinator = pipelinePhaseRunCoordinator
         workingCopyHome = nil
         activeWorkingCopyKey = nil
+        activeWorkingCopyGeneration = nil
+        if let dataRoot,
+           phaseCoordinator.runningPhase(
+                projectRoot: dataRoot
+           ) != nil {
+            Task { @MainActor [phaseCoordinator] in
+                await phaseCoordinator.waitUntilIdle(
+                    projectRoot: dataRoot
+                )
+                ProjectWorkingCopy.discard(
+                    key: key,
+                    ifGeneration: generation
+                )
+            }
+        } else {
+            ProjectWorkingCopy.discard(
+                key: key,
+                ifGeneration: generation
+            )
+        }
     }
 
     /// The project's ACTIVE format plugin — exactly one, or nil for the generic workflow. Installed
@@ -612,6 +646,8 @@ final class EditorViewModel {
     let generationService = GenerationService()
     let agentService = AgentService()
     let pipelineAgentHarness = PipelineAgentHarness()
+    let pipelinePhaseExecution = PipelinePhaseExecutionState()
+    let pipelinePhaseRunCoordinator = PipelinePhaseRunCoordinator()
 
     /// Agent is now a tab of the left sidebar, not a separate column. Kept as a computed proxy so the
     /// many "reveal the agent" call sites (agent replies, media routing, menu, tour) keep working:

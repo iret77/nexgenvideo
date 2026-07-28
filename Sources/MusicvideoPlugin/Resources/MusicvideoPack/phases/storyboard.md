@@ -3,7 +3,8 @@
 > **Orchestrator instruction (main-session context).** Never spawn this
 > phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.
-> Converse with the user **in the user's language**; everything written
+> Use the **interface language supplied by the host** unless the user explicitly
+> requests another language; everything written
 > into provider-facing fields is **English**.
 
 ## Goal
@@ -344,7 +345,7 @@ Fields that later (via the shotlist) go to a provider are written
 - `Step.camera` — camera setup note
 - `Step.setting_hint` — location detail in plain text
 
-May remain in the user's language:
+May remain in the active conversation language established by the host:
 
 - `Step.function_tag` (enum, agnostic)
 - `Step.beat_anchor` / lyrics anchor (song lyrics in their original

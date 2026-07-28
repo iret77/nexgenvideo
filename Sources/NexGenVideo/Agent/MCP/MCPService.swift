@@ -30,29 +30,45 @@ final class MCPService {
     private var httpServer: MCPHTTPServer?
     @ObservationIgnored
     private var startGeneration = 0
+    @ObservationIgnored
+    private var stopInProgress = false
+    @ObservationIgnored
+    private var stopWaiters: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored
+    private var isStopped = false
 
     init(editorProvider: @escaping () -> EditorViewModel?) {
         self.toolExecutor = ToolExecutor(editorProvider: editorProvider)
     }
 
     func start() {
+        guard !isStopped else { return }
         startGeneration &+= 1
         let generation = startGeneration
         lastError = nil
-        let httpServer = MCPHTTPServer(port: Self.port) { [weak self] in
-            let server = Server(
-                name: "nexgen",
-                version: "1.0.0",
-                instructions: AgentInstructions.serverInstructions,
-                capabilities: .init(
-                    resources: .init(subscribe: false, listChanged: false),
-                    tools: .init(listChanged: false)
+        let httpServer = MCPHTTPServer(
+            port: Self.port,
+            makeServer: { [weak self] in
+                let server = Server(
+                    name: "nexgen",
+                    version: "1.0.0",
+                    instructions: AgentInstructions.serverInstructions,
+                    capabilities: .init(
+                        resources: .init(subscribe: false, listChanged: false),
+                        tools: .init(listChanged: false)
+                    )
                 )
-            )
-            await self?.registerTools(on: server)
-            await self?.registerResources(on: server)
-            return server
-        }
+                await self?.registerTools(on: server)
+                await self?.registerResources(on: server)
+                return server
+            },
+            onFailure: { [weak self] message in
+                await self?.serverFailed(
+                    message,
+                    generation: generation
+                )
+            }
+        )
         self.httpServer = httpServer
         Task { @MainActor [weak self] in
             do {
@@ -72,29 +88,50 @@ final class MCPService {
         }
     }
 
-    func stop() {
+    func stop() async {
+        isStopped = true
         startGeneration &+= 1
-        if let server = httpServer {
-            Task { await server.stop() }
-        }
-        httpServer = nil
-        isRunning = false
         lastError = nil
+        await stopCurrentServer()
         Log.mcp.notice("http server stopped")
     }
 
     func restart() {
+        guard !isStopped else { return }
         startGeneration &+= 1
-        let server = httpServer
-        httpServer = nil
+        let generation = startGeneration
         isRunning = false
         lastError = nil
         Task { @MainActor [weak self] in
-            if let server {
-                await server.stop()
-            }
-            self?.start()
+            guard let self else { return }
+            await self.stopCurrentServer()
+            guard self.startGeneration == generation else { return }
+            self.start()
         }
+    }
+
+    private func stopCurrentServer() async {
+        if stopInProgress {
+            await withCheckedContinuation { stopWaiters.append($0) }
+            return
+        }
+        stopInProgress = true
+        let server = httpServer
+        httpServer = nil
+        isRunning = false
+        if let server {
+            await server.stop()
+        }
+        stopInProgress = false
+        let waiters = stopWaiters
+        stopWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func serverFailed(_ message: String, generation: Int) {
+        guard startGeneration == generation, !isStopped else { return }
+        isRunning = false
+        lastError = message
     }
 
     private func registerTools(on server: Server) async {

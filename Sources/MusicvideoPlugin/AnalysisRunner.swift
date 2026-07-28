@@ -12,6 +12,16 @@ import NexGenEngine
 /// audio lives at `<dataRoot>/audio/`, the artifact lands at
 /// `<dataRoot>/analysis/<stem>.json`.
 public enum MusicvideoAnalysisRunner {
+    public static let progressStages = [
+        "decode_audio",
+        "measure_structure",
+        "separate_stems",
+        "detect_beat_grid",
+        "detect_harmony",
+        "align_lyrics",
+        "write_analysis",
+    ]
+
     /// Audio extensions this analysis runner accepts — the engine's shared
     /// `AudioProjectLayout.audioExtensions`, so what the host's `attach_song`
     /// accepts is exactly what `run_phase("analysis")` decodes.
@@ -75,14 +85,30 @@ public enum MusicvideoAnalysisRunner {
         transcriber: (any AudioTranscribing)? = nil,
         separator: (any AudioStemSeparating)? = nil,
         beatDetector: (any AudioBeatDetecting)? = nil,
-        chordRecognizer: (any AudioChordRecognizing)? = nil
+        chordRecognizer: (any AudioChordRecognizing)? = nil,
+        progress: (@Sendable (PhaseProgress) -> Void)? = nil
     ) throws -> Outcome {
         let song = try locateSong(dataRoot: dataRoot)
+        func report(_ stageIndex: Int) {
+            progress?(
+                PhaseProgress(
+                    sourceFilename: song.lastPathComponent,
+                    stageID: progressStages[stageIndex],
+                    completedUnitCount: stageIndex,
+                    totalUnitCount: progressStages.count,
+                    nextStageID: progressStages.indices.contains(stageIndex + 1)
+                        ? progressStages[stageIndex + 1]
+                        : nil
+                )
+            )
+        }
+        report(0)
         let pcm = try decoder.decode(song)
+        report(1)
         var raw = AudioAnalysisPipeline.run(pcm)
         var stages = ["load_audio", "rhythm", "structure", "features"]
 
-        // Source separation (optional) — a cleaner signal for transcription + beats.
+        report(2)
         var stems: SeparatedStems?
         if let separator {
             let stemsDir = dataRoot.appendingPathComponent("analysis", isDirectory: true)
@@ -94,7 +120,7 @@ public enum MusicvideoAnalysisRunner {
             }
         }
 
-        // Neural beat/downbeat detection (optional) — supersedes the DSP grid.
+        report(3)
         if let beatDetector, let grid = try? beatDetector.detectBeats(song, stems: stems),
             !grid.beats.isEmpty {
             raw.beats = grid.beats.map { Energy.round3($0) }
@@ -104,9 +130,7 @@ public enum MusicvideoAnalysisRunner {
             stages.append("neural_beats")
         }
 
-        // Chord recognition (optional) — the harmonic planning signal. Computed whenever a
-        // recognizer is registered; the brief's `enable_chord_analysis` gates downstream USE
-        // (shotlist/prompt consumption), not the compute (analysis runs before the brief).
+        report(4)
         var chords: [Chord] = []
         if let chordRecognizer, let recognized = try? chordRecognizer.recognizeChords(song, stems: stems),
             !recognized.isEmpty {
@@ -116,7 +140,7 @@ public enum MusicvideoAnalysisRunner {
             stages.append("chords")
         }
 
-        // Forced lyric alignment (optional; needs both lyrics and a transcriber).
+        report(5)
         var alignment: [AlignmentLine] = []
         if let transcriber, let lyrics = loadLyrics(dataRoot: dataRoot) {
             let vocals = stems?.vocals ?? song
@@ -129,6 +153,7 @@ public enum MusicvideoAnalysisRunner {
             }
         }
 
+        report(6)
         let songPath = FrameInventory.relativePath(of: song, to: dataRoot)
         let project = FrameInventory.projectName(of: dataRoot) ?? FrameInventory.projectHome(of: dataRoot).lastPathComponent
         let analysis = try toCanonical(

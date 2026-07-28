@@ -28,6 +28,7 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "cockpitSurfaces",
     "phaseLineageProviders",
     "projectSchemaMigrations",
+    "progressPhaseRunners",
 ]
 
 

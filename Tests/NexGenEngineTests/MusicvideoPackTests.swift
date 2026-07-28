@@ -15,6 +15,7 @@ struct MusicvideoPackTests {
         #expect(reg.engine.projectDirs.contains("analysis"))
         #expect(reg.engine.sanityChecks["tempo"] != nil)
         #expect(reg.engine.phases["analysis"] != nil)
+        #expect(reg.engine.progressPhaseRunners["analysis"] != nil)
     }
 
     @Test("music duration bands")
@@ -45,7 +46,7 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.0.6")
+        #expect(pack.version == "0.0.7")
         #expect(pack.manifest.minAppVersion == "1.0.0")
     }
 

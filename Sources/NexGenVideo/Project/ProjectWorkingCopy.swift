@@ -6,11 +6,20 @@ enum ProjectWorkingCopy {
     private static let pipelineDir = DataRootResolver.pipelineDirname   // "pipeline"
     private static let completeSentinel = ".ngv-materialized"
     private static let dirtyMarker = ".ngv-dirty"
-    private static let internalNames = Set([completeSentinel, dirtyMarker])
+    private static let generationMarker = ".ngv-open-generation"
+    private static let internalNames = Set([
+        completeSentinel,
+        dirtyMarker,
+        generationMarker,
+    ])
 
     static func home(_ key: String) -> URL { AppPaths.workingCopy(projectId: key) }
 
-    struct OpenResult: Sendable { let home: URL; let recoveredUnsaved: Bool }
+    struct OpenResult: Sendable {
+        let home: URL
+        let recoveredUnsaved: Bool
+        let generation: UUID
+    }
 
     struct Checkpoint: Sendable {
         let timeline: Data
@@ -27,11 +36,19 @@ enum ProjectWorkingCopy {
         if isComplete(existing, fm: fm),
            fm.fileExists(atPath: existing.appendingPathComponent(dirtyMarker).path) {
             migrateSchemas(in: home(key))
-            return OpenResult(home: home(key), recoveredUnsaved: true)
+            return OpenResult(
+                home: home(key),
+                recoveredUnsaved: true,
+                generation: try claim(key: key)
+            )
         }
         let materialized = try materialize(key: key, packageURL: packageURL)
         migrateSchemas(in: materialized)
-        return OpenResult(home: materialized, recoveredUnsaved: false)
+        return OpenResult(
+            home: materialized,
+            recoveredUnsaved: false,
+            generation: try claim(key: key)
+        )
     }
 
     private static func migrateSchemas(in home: URL) {
@@ -50,7 +67,12 @@ enum ProjectWorkingCopy {
 
     @discardableResult
     static func rematerialize(key: String, packageURL: URL?) throws -> URL {
-        return try materialize(key: key, packageURL: packageURL)
+        let generation = currentGeneration(key: key)
+        let result = try materialize(key: key, packageURL: packageURL)
+        if let generation {
+            try writeClaim(generation, key: key)
+        }
+        return result
     }
 
     @discardableResult
@@ -207,6 +229,38 @@ enum ProjectWorkingCopy {
 
     static func discard(key: String) {
         try? FileManager.default.removeItem(at: home(key))
+    }
+
+    @discardableResult
+    static func discard(key: String, ifGeneration generation: UUID) -> Bool {
+        guard currentGeneration(key: key) == generation else { return false }
+        do {
+            try FileManager.default.removeItem(at: home(key))
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func claim(key: String) throws -> UUID {
+        let generation = UUID()
+        try writeClaim(generation, key: key)
+        return generation
+    }
+
+    private static func writeClaim(_ generation: UUID, key: String) throws {
+        try Data(generation.uuidString.utf8).write(
+            to: home(key).appendingPathComponent(generationMarker),
+            options: .atomic
+        )
+    }
+
+    private static func currentGeneration(key: String) -> UUID? {
+        let url = home(key).appendingPathComponent(generationMarker)
+        guard let data = try? Data(contentsOf: url),
+              let raw = String(data: data, encoding: .utf8)
+        else { return nil }
+        return UUID(uuidString: raw)
     }
 
     private static let idleKeys: Set<URLResourceKey> = [.contentAccessDateKey, .contentModificationDateKey]

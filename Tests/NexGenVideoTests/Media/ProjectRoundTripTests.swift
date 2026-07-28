@@ -205,7 +205,8 @@ struct ProjectRoundTripTests {
                 source: .external(absolutePath: "/abs/path/video.mp4"),
                 duration: 5.0,
                 sourceWidth: 1920, sourceHeight: 1080, sourceFPS: 30,
-                hasAudio: true
+                hasAudio: true,
+                originalFilename: "Camera A 001.mp4"
             ),
             MediaManifestEntry(
                 id: "proj-1", name: "Project-relative", type: .image,
@@ -223,8 +224,53 @@ struct ProjectRoundTripTests {
             "song-1": "song",
             "proj-1": "style",
         ]
-        #expect(manifest.version == 4)
+        #expect(manifest.version == 5)
         #expect(try roundTrip(manifest) == manifest)
+    }
+
+    @Test func legacyMediaEntryReconstructsAReadableFilenameWithoutExposingStorageHash() {
+        let hash = String(repeating: "a", count: 64)
+        let entry = MediaManifestEntry(
+            id: "legacy",
+            name: "Claude Mouse",
+            type: .audio,
+            source: .project(relativePath: "media/\(hash).mp3"),
+            duration: 180
+        )
+        let asset = MediaAsset(
+            entry: entry,
+            resolvedURL: URL(fileURLWithPath: "/project/media/\(hash).mp3")
+        )
+
+        #expect(asset.originalFilename == nil)
+        #expect(asset.userFacingFilename == "Claude Mouse.mp3")
+        #expect(asset.userFacingFilename.contains(hash) == false)
+    }
+
+    @Test func contentAddressedFilenameIsNeverTheFinalDisplayFallback() {
+        let hash = String(repeating: "f", count: 64)
+        let asset = MediaAsset(
+            id: "unnamed",
+            url: URL(fileURLWithPath: "/project/media/\(hash).mp3"),
+            type: .audio,
+            name: hash
+        )
+
+        #expect(asset.userFacingFilename == "Media file.mp3")
+        #expect(asset.userFacingFilename.contains(hash) == false)
+    }
+
+    @Test func contentAddressedOriginalMetadataFallsBackToTheReadableName() {
+        let hash = String(repeating: "e", count: 64)
+        let asset = MediaAsset(
+            id: "migrated",
+            url: URL(fileURLWithPath: "/project/media/\(hash).mp3"),
+            type: .audio,
+            name: "Claude Mouse",
+            originalFilename: "\(hash).mp3"
+        )
+
+        #expect(asset.userFacingFilename == "Claude Mouse.mp3")
     }
 
     @Test func mediaManifestMissingVersionDecodesAsVersionOne() throws {
@@ -233,6 +279,11 @@ struct ProjectRoundTripTests {
         """
         let manifest = try JSONDecoder().decode(MediaManifest.self, from: Data(json.utf8))
         #expect(manifest.version == 1)
+        let saved = try JSONDecoder().decode(
+            MediaManifest.self,
+            from: JSONEncoder().encode(manifest)
+        )
+        #expect(saved.version == MediaManifest.currentVersion)
     }
 
     @Test func mediaManifestMissingEntriesAndFoldersDecodesAsEmpty() throws {
