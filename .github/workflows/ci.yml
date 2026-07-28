@@ -52,18 +52,16 @@ jobs:
         shell: bash
         run: |
           set +e  # GitHub's default `-e` would abort on the first failing attempt; we handle codes below.
-          # macos-26 SIGSEGV/SIGTRAP crashes here were traced (via SWIFT_BACKTRACE) to CODE traps, not the
-          # environment: an integer-overflow trap in BICStructure (t - Int.min) and a slow lazy-global init
-          # (PackKnowledge.packRoot) that starved the pool under concurrent first-touch — both fixed in the
-          # sources. The "CoreData: Failed to create NSXPCConnection" line the retry keys on is benign noise
-          # (present in passing runs too), NOT the cause. Retry + backtrace stay as a cheap backstop (exits
-          # on first success, costs nothing when green) for the runner's rarer genuine XPC flake and to pin
-          # any future trap. Full coverage is kept — nothing is skipped.
+          # The package test process exercises AVFoundation, CoreMedia, ImageIO, AppKit, and shared
+          # application registries. Swift Testing's default unbounded parallelism repeatedly drives the
+          # macOS 26 runner into the same libdispatch system trap with 100+ framework threads, while a
+          # different innocent test owns Thread 0 on each attempt. Run the complete suite serially so
+          # process-global Apple frameworks and registries have one deterministic owner.
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
           attempts=3
           for i in $(seq 1 "$attempts"); do
             echo "::group::swift test (attempt $i/$attempts)"
-            swift test 2>&1 | tee "test-attempt-$i.log"
+            swift test --no-parallel 2>&1 | tee "test-attempt-$i.log"
             code=${PIPESTATUS[0]}
             echo "::endgroup::"
             if [ "$code" -eq 0 ]; then
