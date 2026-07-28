@@ -27,7 +27,7 @@ public enum MusicvideoAnalysisRunner {
     /// accepts is exactly what `run_phase("analysis")` decodes.
     public static var audioExtensions: Set<String> { AudioProjectLayout.audioExtensions }
 
-    public enum RunError: Swift.Error, Sendable, Equatable, CustomStringConvertible {
+    public enum RunError: LocalizedError, Sendable, Equatable, CustomStringConvertible {
         case noDecoder
         case noSong(audioDir: String)
         case multipleSongs(audioDir: String, files: [String])
@@ -44,6 +44,8 @@ public enum MusicvideoAnalysisRunner {
                     + "\(files.joined(separator: ", ")). Remove all but the one to analyze."
             }
         }
+
+        public var errorDescription: String? { description }
     }
 
     /// Result of a run — the persisted analysis plus the artifact URL, so the

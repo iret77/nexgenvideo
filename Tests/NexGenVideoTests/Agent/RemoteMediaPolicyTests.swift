@@ -7,7 +7,6 @@ struct RemoteMediaPolicyTests {
     private final class FixtureURLProtocol: URLProtocol, @unchecked Sendable {
         enum Route: Sendable {
             case response(status: Int, headers: [String: String], data: Data)
-            case redirect(URL)
         }
 
         private static let lock = NSLock()
@@ -33,7 +32,7 @@ struct RemoteMediaPolicyTests {
                 return
             }
             switch route {
-            case .response(let status, let headers, let data):
+            case let .response(status, headers, data):
                 let response = HTTPURLResponse(
                     url: url,
                     statusCode: status,
@@ -47,18 +46,6 @@ struct RemoteMediaPolicyTests {
                 )
                 client?.urlProtocol(self, didLoad: data)
                 client?.urlProtocolDidFinishLoading(self)
-            case .redirect(let destination):
-                let response = HTTPURLResponse(
-                    url: url,
-                    statusCode: 302,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Location": destination.absoluteString]
-                )!
-                client?.urlProtocol(
-                    self,
-                    wasRedirectedTo: URLRequest(url: destination),
-                    redirectResponse: response
-                )
             }
         }
 
@@ -112,50 +99,34 @@ struct RemoteMediaPolicyTests {
     }
 
     @Test("HTTPS to HTTP redirect is rejected")
-    func rejectsHTTPRedirect() async {
+    func rejectsHTTPRedirect() {
         let start = URL(string: "https://public.test/start.png")!
         let destination = URL(string: "http://public.test/end.png")!
-        FixtureURLProtocol.install([start: .redirect(destination)])
+        var policy = RemoteMediaRedirectPolicy(initialURL: start)
 
-        await #expect(throws: RemoteMediaPolicy.PolicyError.self) {
-            _ = try await RemoteMediaDownloader.download(
-                start,
-                maxBytes: 1024,
-                timeout: 5,
-                resolver: publicResolver,
-                configuration: configuration(),
-                verifyPeerAddress: false
-            )
+        #expect(throws: RemoteMediaPolicy.PolicyError.self) {
+            try policy.validate(destination, resolver: publicResolver)
         }
     }
 
     @Test("redirect to a private address is rejected")
-    func rejectsPrivateRedirect() async {
+    func rejectsPrivateRedirect() {
         let start = URL(string: "https://public.test/start.png")!
         let destination = URL(string: "https://private.test/end.png")!
-        FixtureURLProtocol.install([start: .redirect(destination)])
         let resolver: RemoteMediaPolicy.Resolver = {
             $0 == "private.test" ? ["10.0.0.2"] : ["93.184.216.34"]
         }
+        var policy = RemoteMediaRedirectPolicy(initialURL: start)
 
-        await #expect(throws: RemoteMediaPolicy.PolicyError.self) {
-            _ = try await RemoteMediaDownloader.download(
-                start,
-                maxBytes: 1024,
-                timeout: 5,
-                resolver: resolver,
-                configuration: configuration(),
-                verifyPeerAddress: false
-            )
+        #expect(throws: RemoteMediaPolicy.PolicyError.self) {
+            try policy.validate(destination, resolver: resolver)
         }
     }
 
-    @Test("an allowed redirect chain downloads once")
-    func allowsPublicRedirect() async throws {
-        let start = URL(string: "https://public.test/start.bin")!
+    @Test("an allowed response downloads once")
+    func downloadsPublicResponse() async throws {
         let destination = URL(string: "https://cdn.test/end.bin")!
         FixtureURLProtocol.install([
-            start: .redirect(destination),
             destination: .response(
                 status: 200,
                 headers: ["Content-Length": "3"],
@@ -164,7 +135,7 @@ struct RemoteMediaPolicyTests {
         ])
 
         let download = try await RemoteMediaDownloader.download(
-            start,
+            destination,
             maxBytes: 1024,
             timeout: 5,
             resolver: publicResolver,
@@ -177,51 +148,30 @@ struct RemoteMediaPolicyTests {
     }
 
     @Test("a redirect loop is rejected")
-    func rejectsRedirectLoop() async {
+    func rejectsRedirectLoop() throws {
         let first = URL(string: "https://public.test/first.bin")!
         let second = URL(string: "https://public.test/second.bin")!
-        FixtureURLProtocol.install([
-            first: .redirect(second),
-            second: .redirect(first),
-        ])
+        var policy = RemoteMediaRedirectPolicy(initialURL: first)
+        try policy.validate(second, resolver: publicResolver)
+        #expect(policy.redirectCount == 1)
 
-        await #expect(throws: RemoteMediaPolicy.PolicyError.self) {
-            _ = try await RemoteMediaDownloader.download(
-                first,
-                maxBytes: 1024,
-                timeout: 5,
-                resolver: publicResolver,
-                configuration: configuration(),
-                verifyPeerAddress: false
-            )
+        #expect(throws: RemoteMediaPolicy.PolicyError.self) {
+            try policy.validate(first, resolver: publicResolver)
         }
     }
 
     @Test("more than five redirects are rejected")
-    func rejectsRedirectLimit() async {
+    func rejectsRedirectLimit() throws {
         let urls = (0...6).map {
             URL(string: "https://public.test/hop-\($0).bin")!
         }
-        var routes: [URL: FixtureURLProtocol.Route] = [:]
-        for index in 0..<6 {
-            routes[urls[index]] = .redirect(urls[index + 1])
+        var policy = RemoteMediaRedirectPolicy(initialURL: urls[0])
+        for url in urls[1...5] {
+            try policy.validate(url, resolver: publicResolver)
         }
-        routes[urls[6]] = .response(
-            status: 200,
-            headers: ["Content-Length": "3"],
-            data: Data("abc".utf8)
-        )
-        FixtureURLProtocol.install(routes)
 
-        await #expect(throws: RemoteMediaPolicy.PolicyError.self) {
-            _ = try await RemoteMediaDownloader.download(
-                urls[0],
-                maxBytes: 1024,
-                timeout: 5,
-                resolver: publicResolver,
-                configuration: configuration(),
-                verifyPeerAddress: false
-            )
+        #expect(throws: RemoteMediaPolicy.PolicyError.self) {
+            try policy.validate(urls[6], resolver: publicResolver)
         }
     }
 

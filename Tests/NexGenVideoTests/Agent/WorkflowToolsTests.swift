@@ -346,7 +346,7 @@ struct WorkflowToolsTests {
 
     @Test("approve_gate is hard-blocked for analysis until a real artifact exists")
     func analysisGateHardBlocked() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
         try FileManager.default.createDirectory(
@@ -407,10 +407,26 @@ struct WorkflowToolsTests {
         #expect(ToolHarness.textOf(blocked2).contains("run_phase"))
 
         _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
-        try await h.editor.pipelineAgentHarness.recordPhaseMutation(
-            phase: "analysis",
-            dataRoot: dataRoot,
-            declaredPack: "musicvideo"
+        _ = try await h.runOK(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [
+                    [
+                        "index": 0,
+                        "label": "intro",
+                        "confidence": 0.9,
+                    ],
+                    [
+                        "index": 1,
+                        "label": "verse",
+                        "confidence": 0.9,
+                    ],
+                ],
+                "anomalies": [],
+                "overall_character": "Measured pulse with a clear opening and development.",
+            ]
         )
         let ready = await NativeGateWriter.controlReadiness(
             projectDir: FrameInventory.projectHome(of: dataRoot),
@@ -432,6 +448,27 @@ struct WorkflowToolsTests {
         GatesOperations.approve(&gates, phase: "project_init")
         try store.save(gates, to: PipelineLayout.gatesFile)
         _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        _ = try await h.runOK(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [
+                    [
+                        "index": 0,
+                        "label": "intro",
+                        "confidence": 0.9,
+                    ],
+                    [
+                        "index": 1,
+                        "label": "verse",
+                        "confidence": 0.9,
+                    ],
+                ],
+                "anomalies": [],
+                "overall_character": "Measured pulse with a clear opening and development.",
+            ]
+        )
         try await h.editor.pipelineAgentHarness.recordPhaseMutation(
             phase: "analysis",
             dataRoot: dataRoot,

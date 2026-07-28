@@ -58,16 +58,18 @@ struct PipelinePhaseExecutionTests {
             latch.block()
         }
 
-        async let first = coordinator.run(
-            projectRoot: root,
-            phase: "analysis",
-            sourceFilename: "track.wav",
-            runner: runner,
-            progressRunner: nil,
-            state: state
-        )
+        let first = Task.detached {
+            await coordinator.run(
+                projectRoot: root,
+                phase: "analysis",
+                sourceFilename: "track.wav",
+                runner: runner,
+                progressRunner: nil,
+                state: state
+            )
+        }
         await latch.waitUntilEntered()
-        let retry = Task {
+        let retry = Task.detached {
             await coordinator.run(
                 projectRoot: root,
                 phase: "analysis",
@@ -87,7 +89,7 @@ struct PipelinePhaseExecutionTests {
         let retryResult = await retry.value
         #expect(retryResult == .completed)
         #expect(state.snapshot?.status == .completed)
-        #expect(await first == .completed)
+        #expect(await first.value == .completed)
         #expect(counter.value == 1)
     }
 
@@ -102,14 +104,16 @@ struct PipelinePhaseExecutionTests {
             latch.block()
         }
 
-        async let first = coordinator.run(
-            projectRoot: root,
-            phase: "analysis",
-            sourceFilename: "track.wav",
-            runner: runner,
-            progressRunner: nil,
-            state: state
-        )
+        let first = Task.detached {
+            await coordinator.run(
+                projectRoot: root,
+                phase: "analysis",
+                sourceFilename: "track.wav",
+                runner: runner,
+                progressRunner: nil,
+                state: state
+            )
+        }
         await latch.waitUntilEntered()
         let refused = await coordinator.run(
             projectRoot: root,
@@ -123,7 +127,7 @@ struct PipelinePhaseExecutionTests {
         #expect(refused == .refused(activePhase: "analysis"))
         #expect(state.runningPhase(projectRoot: root) == "analysis")
         latch.allowCompletion()
-        #expect(await first == .completed)
+        #expect(await first.value == .completed)
     }
 
     @Test("progress runner publishes the current deterministic stage")
@@ -179,33 +183,37 @@ struct PipelinePhaseExecutionTests {
             settlementCount.increment()
         }
 
-        async let first = coordinator.run(
-            projectRoot: root,
-            phase: "analysis",
-            sourceFilename: "track.wav",
-            runner: runner,
-            progressRunner: nil,
-            state: state,
-            settleOnce: settle
-        )
+        let first = Task.detached {
+            await coordinator.run(
+                projectRoot: root,
+                phase: "analysis",
+                sourceFilename: "track.wav",
+                runner: runner,
+                progressRunner: nil,
+                state: state,
+                settleOnce: settle
+            )
+        }
         await latch.waitUntilEntered()
-        async let retry = coordinator.run(
-            projectRoot: root,
-            phase: "analysis",
-            sourceFilename: "track.wav",
-            runner: runner,
-            progressRunner: nil,
-            state: state,
-            settleOnce: settle,
-            onJoin: {
-                await retryJoined.signal()
-            }
-        )
+        let retry = Task.detached {
+            await coordinator.run(
+                projectRoot: root,
+                phase: "analysis",
+                sourceFilename: "track.wav",
+                runner: runner,
+                progressRunner: nil,
+                state: state,
+                settleOnce: settle,
+                onJoin: {
+                    await retryJoined.signal()
+                }
+            )
+        }
 
         await retryJoined.wait()
         latch.allowCompletion()
-        #expect(await first == .completed)
-        #expect(await retry == .completed)
+        #expect(await first.value == .completed)
+        #expect(await retry.value == .completed)
         #expect(settlementCount.value == 1)
         #expect(coordinator.runningPhase(projectRoot: root) == nil)
     }

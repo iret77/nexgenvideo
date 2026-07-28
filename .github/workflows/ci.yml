@@ -70,8 +70,12 @@ jobs:
               echo "swift test passed on attempt $i"
               exit 0
             fi
-            if grep -qE "unexpected signal code|Failed to create NSXPCConnection" "test-attempt-$i.log"; then
-              echo "::warning::Environmental crash (SIGSEGV / CoreData XPC) on attempt $i — retrying"
+            if grep -qE "✘ Test|recorded an issue|Time limit was exceeded" "test-attempt-$i.log"; then
+              echo "::error::Real test failure on attempt $i — not retrying"
+              exit "$code"
+            fi
+            if grep -q "unexpected signal code" "test-attempt-$i.log"; then
+              echo "::warning::Environmental test-process crash on attempt $i — retrying"
               continue
             fi
             echo "::error::Real test failure on attempt $i (exit $code); not an environmental crash — not retrying"

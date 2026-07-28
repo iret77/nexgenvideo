@@ -472,7 +472,7 @@ final class PipelineAgentHarness {
     }
 
     private func loadContext(dataRoot: URL, packName: String) throws -> Context {
-        guard PackCatalog.pack(named: packName) != nil else {
+        guard let pack = PackCatalog.pack(named: packName) else {
             throw ToolError(
                 "The \(packName) workflow is not loaded. Reopen the project before continuing."
             )

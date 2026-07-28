@@ -40,7 +40,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 /// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.0.7"
+    public let version = "0.0.8"
 
     private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
         _ = projectURL

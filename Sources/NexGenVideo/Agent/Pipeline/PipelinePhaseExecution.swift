@@ -72,16 +72,24 @@ final class PipelinePhaseExecutionState {
     }
 
     func complete(runID: UUID) {
-        guard snapshot?.runID == runID else { return }
-        snapshot?.completedUnitCount = snapshot?.totalUnitCount ?? 0
-        snapshot?.nextStageID = nil
-        snapshot?.status = .completed
+        guard var current = snapshot,
+              current.runID == runID,
+              current.status == .running
+        else { return }
+        current.completedUnitCount = current.totalUnitCount
+        current.nextStageID = nil
+        current.status = .completed
+        snapshot = current
     }
 
     func fail(runID: UUID, message: String) {
-        guard snapshot?.runID == runID else { return }
-        snapshot?.nextStageID = nil
-        snapshot?.status = .failed(message)
+        guard var current = snapshot,
+              current.runID == runID,
+              current.status == .running
+        else { return }
+        current.nextStageID = nil
+        current.status = .failed(message)
+        snapshot = current
     }
 
     func reset() {
@@ -186,21 +194,13 @@ final class PipelinePhaseRunCoordinator {
                 state.update(runID: runID, progress: progress)
             }
         }
-        let runnerTask = Task.detached(priority: .userInitiated) { () -> RunnerResult in
-            do {
-                if let progressRunner {
-                    try progressRunner(projectRoot) {
-                        progressContinuation.yield($0)
-                    }
-                } else {
-                    try runner(projectRoot)
-                }
-                return .completed
-            } catch let blocked as PipelinePhaseBlocked {
-                return .blocked(blocked.message)
-            } catch {
-                return .failed(error.localizedDescription)
-            }
+        let runnerTask = Task {
+            await Self.executeRunner(
+                projectRoot: projectRoot,
+                runner: runner,
+                progressRunner: progressRunner,
+                progressContinuation: progressContinuation
+            )
         }
         let task = Task { @MainActor [weak self] () -> PipelinePhaseRunOutcome in
             var result = await runnerTask.value
@@ -236,5 +236,37 @@ final class PipelinePhaseRunCoordinator {
         jobs[key] = Job(runID: runID, phase: phase, task: task)
         Log.mcp.notice("phase run started phase=\(phase) run=\(runID.uuidString)")
         return await task.value
+    }
+
+    private nonisolated static func executeRunner(
+        projectRoot: URL,
+        runner: @escaping EngineRegistry.PhaseRunner,
+        progressRunner: EngineRegistry.ProgressPhaseRunner?,
+        progressContinuation: AsyncStream<PhaseProgress>.Continuation
+    ) async -> RunnerResult {
+        await withCheckedContinuation { continuation in
+            let thread = Thread {
+                let result: RunnerResult = autoreleasepool {
+                    do {
+                        if let progressRunner {
+                            try progressRunner(projectRoot) {
+                                progressContinuation.yield($0)
+                            }
+                        } else {
+                            try runner(projectRoot)
+                        }
+                        return .completed
+                    } catch let blocked as PipelinePhaseBlocked {
+                        return .blocked(blocked.message)
+                    } catch {
+                        return .failed(error.localizedDescription)
+                    }
+                }
+                continuation.resume(returning: result)
+            }
+            thread.name = "NexGenVideo phase runner"
+            thread.qualityOfService = .userInitiated
+            thread.start()
+        }
     }
 }
