@@ -62,4 +62,19 @@ struct AgentTranscriptRevisionTests {
             isStreaming: true
         ) == "streaming-indicator")
     }
+
+    @Test func scrollDistanceOnlyPinsAwayBeyondTheThreshold() {
+        #expect(!AgentTranscriptScrollPolicy.isAwayFromBottom(
+            contentHeight: 1_000,
+            contentOffsetY: 700,
+            containerHeight: 250,
+            threshold: 60
+        ))
+        #expect(AgentTranscriptScrollPolicy.isAwayFromBottom(
+            contentHeight: 1_000,
+            contentOffsetY: 680,
+            containerHeight: 250,
+            threshold: 60
+        ))
+    }
 }

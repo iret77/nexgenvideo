@@ -124,6 +124,12 @@ struct AgentPanelView: View {
         // approval. Without this the chip is built while progress is still unknown and then never
         // updated, so a reopened project keeps offering "start" for the rest of the session.
         .onChange(of: packProgress) { _, _ in refreshDiscoveredPlugins() }
+        .onChange(of: hangContext, initial: true) { _, context in
+            MainThreadHangWatchdog.shared.update(context: context)
+        }
+        .onDisappear {
+            MainThreadHangWatchdog.shared.resetContext()
+        }
     }
 
     private func refreshDiscoveredPlugins() {
@@ -141,6 +147,19 @@ struct AgentPanelView: View {
             nextPhase: state.nextPhaseName,
             approvedPhases: state.phases.filter(\.approved).count,
             totalPhases: state.phases.count
+        )
+    }
+
+    private var hangContext: MainThreadHangContext {
+        let execution = editor.pipelinePhaseExecution.snapshot
+        return MainThreadHangContext(
+            surface: "agentTranscript",
+            phase: execution?.phase ?? editor.projectState?.nextPhaseName,
+            stage: execution?.stageID,
+            isStreaming: service.isStreaming,
+            hasDialog: service.pendingDialog != nil,
+            hasGateApproval: service.pendingGateApproval != nil,
+            hasSpendApproval: service.pendingSpendApproval != nil
         )
     }
 
@@ -339,60 +358,72 @@ struct AgentPanelView: View {
 
     private func scrollingMessages(entries: [AgentTranscriptEntry]) -> some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                    let results = toolResults
-                    ForEach(entries) { entry in
-                        switch entry {
-                        case .message(let message):
-                            AgentMessageView(message: message, toolResults: results)
-                        case .activity(let activity):
-                            AgentActivityView(activity: activity, toolResults: results)
+            ZStack {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                        let results = toolResults
+                        ForEach(entries) { entry in
+                            switch entry {
+                            case .message(let message):
+                                AgentMessageView(message: message, toolResults: results)
+                            case .activity(let activity):
+                                AgentActivityView(activity: activity, toolResults: results)
+                            }
                         }
+                        if service.isStreaming && !entries.contains(where: {
+                            if case .activity(let activity) = $0 { return activity.isRunning }
+                            return false
+                        }) {
+                            ThinkingDots().id("streaming-indicator")
+                        }
+                        errorBanner
+                            .padding(.top, AppTheme.Spacing.sm)
                     }
-                    if service.isStreaming && !entries.contains(where: {
-                        if case .activity(let activity) = $0 { return activity.isRunning }
-                        return false
-                    }) {
-                        ThinkingDots().id("streaming-indicator")
-                    }
-                    errorBanner
-                        .padding(.top, AppTheme.Spacing.sm)
+                    .padding(.horizontal, AppTheme.Spacing.lgXl)
+                    .padding(.top, AppTheme.Layout.panelHeaderHeight + AppTheme.Spacing.sm)
+                    .padding(.bottom, AppTheme.Spacing.smMd)
+                    .frame(maxWidth: AppTheme.Layout.chatColumnMax)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, AppTheme.Spacing.lgXl)
-                .padding(.top, AppTheme.Layout.panelHeaderHeight + AppTheme.Spacing.sm)
-                .padding(.bottom, AppTheme.Spacing.smMd)
-                .frame(maxWidth: AppTheme.Layout.chatColumnMax)
-                .frame(maxWidth: .infinity)
-            }
-            .scrollIndicators(.never)
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
-            .onScrollPhaseChange { oldPhase, newPhase, context in
-                guard newPhase == .interacting
-                        || newPhase == .decelerating
-                        || (newPhase == .idle && oldPhase != .animating)
-                else { return }
-                isUserPinnedAway = isAwayFromBottom(context.geometry)
-            }
-            .onChange(of: service.transcriptRevision) { _, _ in
-                guard !isUserPinnedAway else { return }
-                scrollToBottom(proxy, entries: entries)
-            }
-            .onChange(of: service.isStreaming) { _, _ in
-                guard !isUserPinnedAway else { return }
-                scrollToBottom(proxy, entries: entries)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                scrollToBottomButton(proxy: proxy, entries: entries)
-                    .padding(.trailing, AppTheme.Spacing.mdLg)
-                    .padding(.bottom, AppTheme.Spacing.mdLg)
-                    .opacity(
-                        isUserPinnedAway
-                            ? AppTheme.Opacity.opaque
-                            : AppTheme.Opacity.transparent
+                .scrollIndicators(.never)
+                .scrollEdgeEffectStyle(.soft, for: .bottom)
+                .onScrollPhaseChange { oldPhase, newPhase, context in
+                    guard newPhase == .interacting
+                            || newPhase == .decelerating
+                            || (newPhase == .idle && oldPhase != .animating)
+                    else { return }
+                    isUserPinnedAway = AgentTranscriptScrollPolicy.isAwayFromBottom(
+                        contentHeight: context.geometry.contentSize.height,
+                        contentOffsetY: context.geometry.contentOffset.y,
+                        containerHeight: context.geometry.containerSize.height,
+                        threshold: AppTheme.ComponentSize.agentScrollAwayThreshold
                     )
-                    .allowsHitTesting(isUserPinnedAway)
-                    .accessibilityHidden(!isUserPinnedAway)
+                }
+                .onChange(of: service.transcriptRevision) { _, _ in
+                    guard !isUserPinnedAway else { return }
+                    scrollToBottom(proxy, entries: entries)
+                }
+                .onChange(of: service.isStreaming) { _, _ in
+                    guard !isUserPinnedAway else { return }
+                    scrollToBottom(proxy, entries: entries)
+                }
+
+                VStack(spacing: AppTheme.Spacing.none) {
+                    Spacer(minLength: AppTheme.Spacing.none)
+                    HStack(spacing: AppTheme.Spacing.none) {
+                        Spacer(minLength: AppTheme.Spacing.none)
+                        scrollToBottomButton(proxy: proxy, entries: entries)
+                    }
+                }
+                .padding(.trailing, AppTheme.Spacing.mdLg)
+                .padding(.bottom, AppTheme.Spacing.mdLg)
+                .opacity(
+                    isUserPinnedAway
+                        ? AppTheme.Opacity.opaque
+                        : AppTheme.Opacity.transparent
+                )
+                .allowsHitTesting(isUserPinnedAway)
+                .accessibilityHidden(!isUserPinnedAway)
             }
         }
     }
@@ -541,13 +572,6 @@ struct AgentPanelView: View {
         if let target {
             proxy.scrollTo(target, anchor: .bottom)
         }
-    }
-
-    private func isAwayFromBottom(_ geometry: ScrollGeometry) -> Bool {
-        let distance = geometry.contentSize.height
-            - geometry.contentOffset.y
-            - geometry.containerSize.height
-        return distance > AppTheme.ComponentSize.agentScrollAwayThreshold
     }
 
     private var footer: some View {

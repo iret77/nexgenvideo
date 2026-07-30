@@ -35,7 +35,7 @@ enum Telemetry {
             options.environment = "production"
             #endif
             options.tracesSampleRate = 0.1
-            options.appHangTimeoutInterval = 8.0
+            options.appHangTimeoutInterval = MainThreadHangWatchdog.stallThreshold
             options.attachStacktrace = true
             options.enableCaptureFailedRequests = false
             options.enableUncaughtNSExceptionReporting = true

@@ -180,6 +180,7 @@ enum MainMenuBuilder {
         menu.addItem(withTitle: "MCP Instructions", action: #selector(AppDelegate.showMCPInstructions(_:)), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Send Feedback…", action: #selector(AppDelegate.showFeedback(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Reveal Diagnostics", action: #selector(AppDelegate.revealDiagnostics(_:)), keyEquivalent: "")
         item.submenu = menu
         return item
     }

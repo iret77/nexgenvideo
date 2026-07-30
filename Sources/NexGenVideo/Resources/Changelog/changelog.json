@@ -2,6 +2,19 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.0.1",
+      "date": "2026-07-30",
+      "sections": [
+        {
+          "heading": "Agent",
+          "items": [
+            "Agent transcripts remain responsive when Brief opens after Audio Analysis.",
+            "Main-thread stalls now save recent pipeline state and, when available, a process sample under Help → Reveal Diagnostics."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.0",
       "date": "2026-07-28",
       "sections": [
