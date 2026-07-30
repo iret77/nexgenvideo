@@ -139,6 +139,15 @@ enum AgentTranscriptProjection {
 }
 
 enum AgentTranscriptScrollPolicy {
+    static func isAwayFromBottom(
+        contentHeight: CGFloat,
+        contentOffsetY: CGFloat,
+        containerHeight: CGFloat,
+        threshold: CGFloat
+    ) -> Bool {
+        contentHeight - contentOffsetY - containerHeight > threshold
+    }
+
     static func targetID(
         entries: [AgentTranscriptEntry],
         isStreaming: Bool

@@ -106,6 +106,8 @@ release or a wasted CI cycle.
 - **Agent transcript layout is acyclic.** Scroll-geometry callbacks must not animate, insert, remove,
   or resize an overlay on the same observed scroll hierarchy. Custom transcript layouts return only
   finite geometry and must not derive explicit alignment by traversing secondary-layer children.
+  Transcript scroll accessories are persistent sibling layers outside the observed `ScrollView`
+  modifier chain; never attach them with `.overlay` to that `ScrollView`.
 
 ### Musicvideo workflow start
 

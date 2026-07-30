@@ -20,6 +20,7 @@ enum Log {
     static let plugins    = CategoryLog("plugins")
     static let transcription = CategoryLog("transcription")
     static let search     = CategoryLog("search")
+    static let hang       = CategoryLog("hang")
 
     static let crashLogURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Logs/NexGenVideo/crash.log")

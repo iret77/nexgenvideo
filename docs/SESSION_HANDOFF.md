@@ -20,10 +20,11 @@ in-the-moment `build now`.
 
 ## Working state
 
-- Branch: `codex/original-media-filenames`
+- Branch: `codex/transcript-hang-watchdog`
 - The branch starts from the pipeline hardening content merged through PRs #289 and #290.
-- App version: `1.0.0`, source `CFBundleVersion` `67`; the failing on-device DMG reported build `68`
-- Musicvideo pack candidate: `0.0.9`, project schema `musicvideo/1.0.0`
+- Release candidate: app `1.0.1`, source `CFBundleVersion` `68`; the release workflow will emit
+  build `69`. The failing on-device DMG was app `1.0.0`, build `68`.
+- Musicvideo pack candidate: `0.0.10`, project schema `musicvideo/1.0.0`
 - Engine binary contract: current `4`, minimum compatible `2`
 - The commit containing this handoff is the one consolidated correction; read its live CI and release
   state from GitHub rather than inferring it from this document.
@@ -117,7 +118,7 @@ The locked source documents are:
 
 ### Repeatable optional intake
 
-- Musicvideo 0.0.9 declares prepared characters and locations as numbered repeatable items.
+- Musicvideo 0.0.10 declares prepared characters and locations as numbered repeatable items.
 - Host-owned dialog state distinguishes first empty, completed, and subsequent empty items.
 - The primary Attach action requires all declared required fields; Skip and Done are explicit
   secondary actions with schema-validated continuation values.
@@ -133,20 +134,24 @@ The locked source documents are:
 - `WrapLayout` now reports only bounded finite geometry, measures and places against the same width,
   proposes the measured size to children, and explicitly declines merged subview alignment guides.
 - Scroll visibility no longer mutates the observed hierarchy from a geometry callback. Scroll intent
-  is derived only from user scroll phases; the button remains mounted without layout-changing
-  transitions, and programmatic following is not animated.
+  is derived only from user scroll phases; the button remains mounted as a sibling outside the
+  observed `ScrollView` modifier chain, and programmatic following is not animated.
 - Transcript mutations carry a revision so growth inside an existing assistant turn follows the true
   final entry rather than an earlier running-activity row.
 - Ignored Claude stream-json lines no longer republish an unchanged observable transcript, and activity
   status changes no longer apply an implicit layout animation.
 - Geometry and revision regression tests cover wrapping, non-finite/overflow input, consistent
   measurement, and in-place transcript growth.
+- A background main-thread watchdog distinguishes a blocked UI thread from whole-process suspension.
+  After eight continuously observed seconds it writes state history and requests a bounded
+  three-second macOS process sample under `~/Library/Logs/NexGenVideo`; Help → Reveal Diagnostics
+  opens that folder even when process sampling is unavailable.
 
 ## Verification completed without a local build
 
 - `git diff --check`
 - `python3 scripts/lint_app_theme.py`
-- `python3 scripts/release_preflight.py 1.0.0 <empty-catalog>`
+- `python3 scripts/release_preflight.py 1.0.1 <empty-catalog>`
 - JSON/plist/YAML metadata parsing and the standalone `AGENTS.md`/`CLAUDE.md` parity check
 - `ci-lint` with zero failures and zero warnings after pinning Linux images and adding the missing PR
   concurrency guard.
@@ -159,8 +164,11 @@ The locked source documents are:
   transitions, consistent wrapping and bounded pathological geometry were corrected. Apple's Layout
   documentation independently confirms that the default explicit-alignment implementation merges
   subview guides, while an explicit `nil` declares no explicit guide.
-- The final independent bounded-input AGY/Gemini spec gate reported no findings against
-  `AGENTS.md`, the locked Musicvideo start/harness contracts, and the rendered intake UI spec.
+- The Claude/AGY watchdog review confirmed the transcript sibling-layer correction and found
+  compile-access, privacy, duplicate-report, and sampling-timeout defects in the first watchdog
+  draft. Those findings are corrected.
+- The final independent repository gate passed both its text conformance review and its degraded
+  visual review against the normative UI specs, rendered mockups, and Swift UI diff.
 - No Swift build or test has been run locally.
 
 ## Release procedure for this batch

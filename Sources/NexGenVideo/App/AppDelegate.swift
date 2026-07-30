@@ -2,6 +2,8 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        MainThreadHangWatchdog.shared.start()
+
         // Activate the app (required when launched from CLI, not a .app bundle)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -88,6 +90,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     @objc func showFeedback(_ sender: Any?) {
         FeedbackWindowController.shared.show()
+    }
+
+    @MainActor
+    @objc func revealDiagnostics(_ sender: Any?) {
+        let directory = MainThreadHangWatchdog.diagnosticsDirectory
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        NSWorkspace.shared.open(directory)
     }
 
     @MainActor
