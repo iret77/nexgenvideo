@@ -1,4 +1,4 @@
-# Session handoff — 2026-07-28
+# Session handoff — 2026-07-31
 
 ## Objective
 
@@ -12,7 +12,9 @@ release blockers:
 5. repeatable prepared-character intake did not identify the current item, exposed an active-looking
    incomplete Attach action, and offered no explicit Skip/Done exit;
 6. the agent transcript entered an unbounded SwiftUI main-thread layout cycle while the Brief intake
-   opened after Audio Analysis.
+   opened after Audio Analysis;
+7. the first watchdog implementation inherited `@MainActor` isolation for a timer callback executed
+   on its background queue, causing Swift 6 to terminate app 1.0.1 at the first timer tick.
 
 Never build or test locally. GitHub Actions on `macos-26` is the only Swift/build verification
 surface. Do not dispatch CI, merge, publish, or build a DMG without the owner's explicit
@@ -20,11 +22,11 @@ in-the-moment `build now`.
 
 ## Working state
 
-- Branch: `codex/transcript-hang-watchdog`
-- The branch starts from the pipeline hardening content merged through PRs #289 and #290.
-- Release candidate: app `1.0.1`, source `CFBundleVersion` `68`; the release workflow will emit
-  build `69`. The failing on-device DMG was app `1.0.0`, build `68`.
-- Musicvideo pack candidate: `0.0.10`, project schema `musicvideo/1.0.0`
+- Branch: `codex/fix-watchdog-startup-crash`
+- The branch starts from PR #293 merged as `dec44b4` on `origin/main`.
+- Release candidate: app `1.0.2`, source `CFBundleVersion` `69`; the release workflow will emit
+  build `70`. The failing on-device DMG was app `1.0.1`, build `69`.
+- Musicvideo pack candidate: `0.0.11`, project schema `musicvideo/1.0.0`
 - Engine binary contract: current `4`, minimum compatible `2`
 - The commit containing this handoff is the one consolidated correction; read its live CI and release
   state from GitHub rather than inferring it from this document.
@@ -147,11 +149,22 @@ The locked source documents are:
   three-second macOS process sample under `~/Library/Logs/NexGenVideo`; Help → Reveal Diagnostics
   opens that folder even when process sampling is unavailable.
 
+### 1.0.1 startup regression
+
+- The on-device `crash.log` proves the current failure at
+  `MainThreadHangWatchdog.start → _swift_task_checkIsolatedSwift → _dispatch_assert_queue_fail`.
+- The timer callback is now constructed in a non-actor-isolated helper before Dispatch installs it
+  on the watchdog queue; it no longer inherits `start()`'s `@MainActor` executor requirement.
+- A regression test starts a real watchdog instance, allows the first background timer tick to run,
+  and then cancels it. The previous implementation terminates that test process.
+- `SIGTRAP` is no longer intercepted by the app crash handler. Swift executor and runtime traps now
+  retain their original faulting stack in the native macOS crash report.
+
 ## Verification completed without a local build
 
 - `git diff --check`
 - `python3 scripts/lint_app_theme.py`
-- `python3 scripts/release_preflight.py 1.0.1 <empty-catalog>`
+- `python3 scripts/release_preflight.py 1.0.2 <published-catalog>`
 - JSON/plist/YAML metadata parsing and the standalone `AGENTS.md`/`CLAUDE.md` parity check
 - `ci-lint` with zero failures and zero warnings after pinning Linux images and adding the missing PR
   concurrency guard.
