@@ -136,7 +136,7 @@ final class MainThreadHangWatchdog: @unchecked Sendable {
         ContextRecord(recordedAt: Date(), context: .application),
     ]
 
-    private init() {}
+    init() {}
 
     @MainActor
     func start() {
@@ -154,12 +154,17 @@ final class MainThreadHangWatchdog: @unchecked Sendable {
             repeating: Self.tickInterval,
             leeway: .milliseconds(100)
         )
-        timer.setEventHandler { [weak self] in
-            self?.monitorTick()
-        }
+        timer.setEventHandler(handler: makeMonitorEventHandler())
         self.timer = timer
         timer.resume()
         Log.hang.notice("main-thread watchdog started")
+    }
+
+    @MainActor
+    func stop() {
+        timer?.cancel()
+        timer = nil
+        started = false
     }
 
     func update(context: MainThreadHangContext) {
@@ -180,6 +185,13 @@ final class MainThreadHangWatchdog: @unchecked Sendable {
 
     func resetContext() {
         update(context: .application)
+    }
+
+    private func makeMonitorEventHandler() -> DispatchWorkItem {
+        // Keep this outside start() so the callback cannot inherit MainActor isolation.
+        DispatchWorkItem { [weak self] in
+            self?.monitorTick()
+        }
     }
 
     private func monitorTick() {

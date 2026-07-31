@@ -101,7 +101,8 @@ private enum CrashHandler {
         fd = open(url.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
 
         NSSetUncaughtExceptionHandler(uncaughtExceptionHandler)
-        for sig in [SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGTRAP] {
+        // Leave SIGTRAP untouched so Swift reports the original faulting stack.
+        for sig in [SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE] {
             signal(sig, signalHandler)
         }
     }

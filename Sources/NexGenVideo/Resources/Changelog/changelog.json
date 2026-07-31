@@ -2,6 +2,19 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.0.2",
+      "date": "2026-07-31",
+      "sections": [
+        {
+          "heading": "Stability",
+          "items": [
+            "The main-thread watchdog no longer terminates the app at launch.",
+            "Swift runtime traps now retain their original stack in macOS crash reports."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.1",
       "date": "2026-07-30",
       "sections": [

@@ -4,6 +4,14 @@ import Testing
 
 @Suite("Main-thread hang watchdog")
 struct MainThreadHangWatchdogTests {
+    @Test @MainActor func timerCallbackRunsOutsideTheMainActor() async throws {
+        let watchdog = MainThreadHangWatchdog()
+        watchdog.start()
+        defer { watchdog.stop() }
+
+        try await Task.sleep(for: .milliseconds(1_250))
+    }
+
     @Test func capturesOneReportForAnUnansweredProbe() {
         var state = MainThreadHangProbeState(
             stallThreshold: 8,
