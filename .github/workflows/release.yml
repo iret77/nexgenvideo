@@ -52,9 +52,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh label view release-blocker --repo "$GITHUB_REPOSITORY" >/dev/null
+          LABEL_COUNT="$(gh label list \
+            --repo iret77/nexgenvideo \
+            --search release-blocker \
+            --limit 100 \
+            --json name \
+            --jq 'map(select(.name == "release-blocker")) | length')"
+          if [ "$LABEL_COUNT" -ne 1 ]; then
+            echo "::error::Required release-blocker label is missing"
+            exit 1
+          fi
           BLOCKERS="$(gh issue list \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo iret77/nexgenvideo \
             --state open \
             --label release-blocker \
             --limit 100 \

@@ -114,6 +114,9 @@ struct PluginCatalogPublicationTests {
               - name: Inspect or resume release publication
                 if: ${{ inputs.dry_run == false }}
         """))
+        #expect(workflow.contains("gh label list"))
+        #expect(workflow.contains("--repo iret77/nexgenvideo"))
+        #expect(!workflow.contains("gh label view"))
     }
 
     @Test("publication resume updates the dispatched ref before pushing appcast")
