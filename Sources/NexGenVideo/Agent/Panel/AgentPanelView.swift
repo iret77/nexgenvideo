@@ -69,10 +69,8 @@ struct AgentPanelView: View {
     var body: some View {
         let entries = transcriptEntries
         VStack(spacing: AppTheme.Spacing.none) {
-            ZStack(alignment: .top) {
-                messageList(entries: entries)
-                floatingTabBar
-            }
+            floatingTabBar
+            messageList(entries: entries)
             if let approval = service.pendingSpendApproval {
                 SpendApprovalCard(
                     approval: approval,
@@ -187,6 +185,7 @@ struct AgentPanelView: View {
                         }
                     }
                 }
+                scrollToLatestButton
                 newTabButton
                 pluginLauncherButton
                 historyButton
@@ -215,8 +214,27 @@ struct AgentPanelView: View {
         .help("New chat")
     }
 
+    private var scrollToLatestButton: some View {
+        Button {
+            isUserPinnedAway = false
+            scrollToLatestRequest &+= 1
+        } label: {
+            Image(systemName: "arrow.down")
+                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .opacity(isUserPinnedAway ? AppTheme.Opacity.opaque : AppTheme.Opacity.transparent)
+        .allowsHitTesting(isUserPinnedAway)
+        .accessibilityHidden(!isUserPinnedAway)
+        .help("Scroll to latest")
+    }
+
     @State private var showHistory = false
     @State private var isUserPinnedAway = false
+    @State private var scrollToLatestRequest: UInt = 0
     @State private var showPluginLauncher = false
     @State private var discoveredPlugins: [PluginCommandCatalog.PluginInfo] = []
 
@@ -347,7 +365,7 @@ struct AgentPanelView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, AppTheme.Spacing.lgXl)
-                    .padding(.top, AppTheme.Layout.panelHeaderHeight + AppTheme.Spacing.md)
+                    .padding(.top, AppTheme.Spacing.md)
                     .padding(.bottom, AppTheme.Spacing.md)
                 }
             } else {
@@ -358,93 +376,57 @@ struct AgentPanelView: View {
 
     private func scrollingMessages(entries: [AgentTranscriptEntry]) -> some View {
         ScrollViewReader { proxy in
-            ZStack {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                        let results = toolResults
-                        ForEach(entries) { entry in
-                            switch entry {
-                            case .message(let message):
-                                AgentMessageView(message: message, toolResults: results)
-                            case .activity(let activity):
-                                AgentActivityView(activity: activity, toolResults: results)
-                            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                    let results = toolResults
+                    ForEach(entries) { entry in
+                        switch entry {
+                        case .message(let message):
+                            AgentMessageView(message: message, toolResults: results)
+                        case .activity(let activity):
+                            AgentActivityView(activity: activity, toolResults: results)
                         }
-                        if service.isStreaming && !entries.contains(where: {
-                            if case .activity(let activity) = $0 { return activity.isRunning }
-                            return false
-                        }) {
-                            ThinkingDots().id("streaming-indicator")
-                        }
-                        errorBanner
-                            .padding(.top, AppTheme.Spacing.sm)
                     }
-                    .padding(.horizontal, AppTheme.Spacing.lgXl)
-                    .padding(.top, AppTheme.Layout.panelHeaderHeight + AppTheme.Spacing.sm)
-                    .padding(.bottom, AppTheme.Spacing.smMd)
-                    .frame(maxWidth: AppTheme.Layout.chatColumnMax)
-                    .frame(maxWidth: .infinity)
-                }
-                .scrollIndicators(.never)
-                .scrollEdgeEffectStyle(.soft, for: .bottom)
-                .onScrollPhaseChange { oldPhase, newPhase, context in
-                    guard newPhase == .interacting
-                            || newPhase == .decelerating
-                            || (newPhase == .idle && oldPhase != .animating)
-                    else { return }
-                    isUserPinnedAway = AgentTranscriptScrollPolicy.isAwayFromBottom(
-                        contentHeight: context.geometry.contentSize.height,
-                        contentOffsetY: context.geometry.contentOffset.y,
-                        containerHeight: context.geometry.containerSize.height,
-                        threshold: AppTheme.ComponentSize.agentScrollAwayThreshold
-                    )
-                }
-                .onChange(of: service.transcriptRevision) { _, _ in
-                    guard !isUserPinnedAway else { return }
-                    scrollToBottom(proxy, entries: entries)
-                }
-                .onChange(of: service.isStreaming) { _, _ in
-                    guard !isUserPinnedAway else { return }
-                    scrollToBottom(proxy, entries: entries)
-                }
-
-                VStack(spacing: AppTheme.Spacing.none) {
-                    Spacer(minLength: AppTheme.Spacing.none)
-                    HStack(spacing: AppTheme.Spacing.none) {
-                        Spacer(minLength: AppTheme.Spacing.none)
-                        scrollToBottomButton(proxy: proxy, entries: entries)
+                    if service.isStreaming && !entries.contains(where: {
+                        if case .activity(let activity) = $0 { return activity.isRunning }
+                        return false
+                    }) {
+                        ThinkingDots().id("streaming-indicator")
                     }
+                    errorBanner
+                        .padding(.top, AppTheme.Spacing.sm)
                 }
-                .padding(.trailing, AppTheme.Spacing.mdLg)
-                .padding(.bottom, AppTheme.Spacing.mdLg)
-                .opacity(
-                    isUserPinnedAway
-                        ? AppTheme.Opacity.opaque
-                        : AppTheme.Opacity.transparent
+                .padding(.horizontal, AppTheme.Spacing.lgXl)
+                .padding(.top, AppTheme.Spacing.sm)
+                .padding(.bottom, AppTheme.Spacing.smMd)
+                .frame(maxWidth: AppTheme.Layout.chatColumnMax)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollIndicators(.never)
+            .onScrollPhaseChange { oldPhase, newPhase, context in
+                guard newPhase == .interacting
+                        || newPhase == .decelerating
+                        || (newPhase == .idle && oldPhase != .animating)
+                else { return }
+                isUserPinnedAway = AgentTranscriptScrollPolicy.isAwayFromBottom(
+                    contentHeight: context.geometry.contentSize.height,
+                    contentOffsetY: context.geometry.contentOffset.y,
+                    containerHeight: context.geometry.containerSize.height,
+                    threshold: AppTheme.ComponentSize.agentScrollAwayThreshold
                 )
-                .allowsHitTesting(isUserPinnedAway)
-                .accessibilityHidden(!isUserPinnedAway)
+            }
+            .onChange(of: service.transcriptRevision) { _, _ in
+                guard !isUserPinnedAway else { return }
+                scrollToBottom(proxy, entries: entries)
+            }
+            .onChange(of: service.isStreaming) { _, _ in
+                guard !isUserPinnedAway else { return }
+                scrollToBottom(proxy, entries: entries)
+            }
+            .onChange(of: scrollToLatestRequest) { _, _ in
+                scrollToBottom(proxy, entries: entries)
             }
         }
-    }
-
-    private func scrollToBottomButton(
-        proxy: ScrollViewProxy,
-        entries: [AgentTranscriptEntry]
-    ) -> some View {
-        Button {
-            isUserPinnedAway = false
-            scrollToBottom(proxy, entries: entries)
-        } label: {
-            Image(systemName: "arrow.down")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.IconSize.lgXl, height: AppTheme.IconSize.lgXl)
-                .glassEffect(.regular, in: .circle)
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .help("Scroll to latest")
     }
 
     @ViewBuilder

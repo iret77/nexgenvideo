@@ -1,4 +1,4 @@
-# Session handoff — 2026-07-31
+# Session handoff — 2026-08-01
 
 ## Objective
 
@@ -11,8 +11,8 @@ release blockers:
 4. the embedded Claude MCP transport dropped the long `run_phase("analysis")` response;
 5. repeatable prepared-character intake did not identify the current item, exposed an active-looking
    incomplete Attach action, and offered no explicit Skip/Done exit;
-6. the agent transcript entered an unbounded SwiftUI main-thread layout cycle while the Brief intake
-   opened after Audio Analysis;
+6. the agent transcript entered an unbounded SwiftUI main-thread layout cycle while an unanswered
+   Brief intake remained open after Audio Analysis;
 7. the first watchdog implementation inherited `@MainActor` isolation for a timer callback executed
    on its background queue, causing Swift 6 to terminate app 1.0.1 at the first timer tick.
 
@@ -22,11 +22,10 @@ in-the-moment `build now`.
 
 ## Working state
 
-- Branch: `codex/fix-watchdog-startup-crash`
-- The branch starts from PR #293 merged as `dec44b4` on `origin/main`.
-- Release candidate: app `1.0.2`, source `CFBundleVersion` `69`; the release workflow will emit
-  build `70`. The failing on-device DMG was app `1.0.1`, build `69`.
-- Musicvideo pack candidate: `0.0.11`, project schema `musicvideo/1.0.0`
+- Branch: `codex/fix-agent-transcript-layout-cycle`
+- The branch starts from PR #294 merged as `daa1477` on `origin/main`.
+- Release candidate source: app `1.0.3`, `CFBundleVersion` `70`. No CI or release has run for it.
+- Musicvideo pack candidate: `0.0.12`, project schema `musicvideo/1.0.0`
 - Engine binary contract: current `4`, minimum compatible `2`
 - The commit containing this handoff is the one consolidated correction; read its live CI and release
   state from GitHub rather than inferring it from this document.
@@ -130,14 +129,19 @@ The locked source documents are:
 
 ### Transcript hang
 
-- The macOS hang report identifies a main-thread SwiftUI/AttributeGraph layout loop:
-  `SecondaryLayerGeometryQuery → LayoutEngine.explicitAlignment → sizeThatFits`; it is not an Audio
-  Analysis or MCP stall.
+- The full app 1.0.2 on-device sample records 834 seconds unresponsive at 100% main-thread CPU and a
+  12.77 GB footprint. The hot path is `SecondaryLayerGeometryQuery → explicitAlignment → two nested
+  ZStack measurements → ScrollViewLayoutComputer → LazyVStackLayout`; Claude is idle.
+- The 1.0.1 correction only moved the scroll button from `.overlay` into a `ZStack`, while a second
+  `ZStack` still layered the tab bar over the transcript. Its source-string test prohibited only the
+  old spelling, not the cyclic property, so app 1.0.2 retained the hang.
+- The tab bar is now an in-flow sibling above the transcript. The scroll action is permanently mounted
+  in that bar and relays a state request to `ScrollViewReader`; the observed scroll hierarchy has no
+  `ZStack`, overlay, or scroll-edge effect.
 - `WrapLayout` now reports only bounded finite geometry, measures and places against the same width,
   proposes the measured size to children, and explicitly declines merged subview alignment guides.
 - Scroll visibility no longer mutates the observed hierarchy from a geometry callback. Scroll intent
-  is derived only from user scroll phases; the button remains mounted as a sibling outside the
-  observed `ScrollView` modifier chain, and programmatic following is not animated.
+  is derived only from user scroll phases, and programmatic following is not animated.
 - Transcript mutations carry a revision so growth inside an existing assistant turn follows the true
   final entry rather than an earlier running-activity row.
 - Ignored Claude stream-json lines no longer republish an unchanged observable transcript, and activity
@@ -180,6 +184,9 @@ The locked source documents are:
 - The Claude/AGY watchdog review confirmed the transcript sibling-layer correction and found
   compile-access, privacy, duplicate-report, and sampling-timeout defects in the first watchdog
   draft. Those findings are corrected.
+- A bounded Gemini 3.1 Pro review checked the 1.0.3 layout correction against the 1.0.2 runtime sample
+  and found no remaining issue in the reviewed diff. Codex independently confirmed that the two
+  sampled nested `ZStack` paths and the scroll-edge layer are absent from the observed scroll region.
 - The final independent repository gate passed both its text conformance review and its degraded
   visual review against the normative UI specs, rendered mockups, and Swift UI diff.
 - No Swift build or test has been run locally.
@@ -192,6 +199,8 @@ The locked source documents are:
 3. Verify the notarized DMG with the exact on-device trace: original Track name, English default agent,
    visible advancing Audio Analysis, no active Approve, successful analysis completion, interpretation,
    then approval.
-4. Continue through Brief with prepared-character intake: visible item number, disabled incomplete
+4. Leave the Brief decision card unanswered beyond the previously failing interval and confirm the app
+   remains responsive with idle CPU and bounded memory before continuing.
+5. Continue through Brief with prepared-character intake: visible item number, disabled incomplete
    Attach, Skip on the first empty item, Done after a completed item, and no transcript beachball while
    progress/report/dialog content changes.
