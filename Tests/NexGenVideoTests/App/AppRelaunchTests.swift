@@ -8,13 +8,22 @@ struct AppRelaunchTests {
     func cancelledReviewDisarmsRequest() {
         var state = AppRelaunchRequestState()
 
-        #expect(state.begin())
-        #expect(!state.begin())
-        #expect(state.complete(approved: false) == .cancelled)
+        let firstBegin = state.begin()
+        let duplicateBegin = state.begin()
+        let cancellation = state.complete(approved: false)
+
+        #expect(firstBegin)
+        #expect(!duplicateBegin)
+        #expect(cancellation == .cancelled)
         #expect(!state.isPending)
-        #expect(state.begin())
-        #expect(state.complete(approved: true) == .proceed)
-        #expect(state.complete(approved: true) == .ignored)
+
+        let retryBegin = state.begin()
+        let approval = state.complete(approved: true)
+        let duplicateCompletion = state.complete(approved: true)
+
+        #expect(retryBegin)
+        #expect(approval == .proceed)
+        #expect(duplicateCompletion == .ignored)
     }
 
     @Test("reopener waits for the exact process exit and passes the bundle path as data")
