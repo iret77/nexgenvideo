@@ -95,6 +95,7 @@ final class PluginManager {
     /// Reload installed packs and (re)fetch the catalog.
     func refresh() async {
         installed = PluginLoader.loadInstalled()
+        PluginUpdateCenter.shared.refreshInstalledAttention()
         if catalogState != .loaded { catalogState = .loading }
         switch await PluginCatalogService.fetch() {
         case .success(let catalog):
@@ -107,6 +108,7 @@ final class PluginManager {
 
     func reloadInstalled() {
         installed = PluginLoader.loadInstalled()
+        PluginUpdateCenter.shared.refreshInstalledAttention()
     }
 
     func isBusy(_ id: String) -> Bool { busyIDs.contains(id) }

@@ -1,39 +1,147 @@
 import AppKit
 
-/// Relaunch NexGenVideo cleanly. Needed after a pack update: a loaded `.dylib` can't be unloaded, so
-/// the new pack code only goes live in a fresh process. Non-sandboxed Developer-ID app → Process is
-/// allowed.
-///
-/// Save-aware: `NSApp.terminate` runs NSDocument's standard unsaved-changes review (Save / Don't Save
-/// / Cancel), so the user never loses work. The reopener is registered on `willTerminate` and only
-/// fires once the app ACTUALLY quits — so cancelling the save review leaves no second instance behind.
+struct AppRelaunchRequestState {
+    enum Completion: Equatable {
+        case ignored
+        case cancelled
+        case proceed
+    }
+
+    private(set) var isPending = false
+
+    mutating func begin() -> Bool {
+        guard !isPending else { return false }
+        isPending = true
+        return true
+    }
+
+    mutating func complete(approved: Bool) -> Completion {
+        guard isPending else { return .ignored }
+        isPending = false
+        return approved ? .proceed : .cancelled
+    }
+}
+
 @MainActor
 enum AppRelaunch {
-    /// Arm the reopener exactly once: if the user Cancels the save review, `willTerminate` never
-    /// fires and the observer lingers — a second Restart tap would otherwise stack observers and
-    /// spawn multiple `open`s on the eventual quit.
-    private static var armed = false
-    private static var beforeRelaunch: (() -> Void)?
+    enum RelaunchFailure: LocalizedError {
+        case requestAlreadyPending
+        case appBundleMissing
+        case reopenerUnavailable
 
-    static func now(beforeRelaunch action: (() -> Void)? = nil) {
-        beforeRelaunch = action
-        if !armed {
-            armed = true
-            let bundlePath = Bundle.main.bundlePath
-            NotificationCenter.default.addObserver(
-                forName: NSApplication.willTerminateNotification, object: nil, queue: .main
-            ) { _ in
-                MainActor.assumeIsolated {
-                    let action = beforeRelaunch
-                    beforeRelaunch = nil
-                    action?()
-                }
-                let task = Process()
-                task.executableURL = URL(fileURLWithPath: "/bin/sh")
-                task.arguments = ["-c", "sleep 0.4; open \"\(bundlePath)\""]
-                try? task.run()
+        var errorDescription: String? {
+            switch self {
+            case .requestAlreadyPending:
+                return "A restart is already waiting for confirmation."
+            case .appBundleMissing:
+                return "The installed NexGenVideo app could not be found."
+            case .reopenerUnavailable:
+                return "macOS could not prepare the app to reopen."
             }
         }
-        NSApp.terminate(nil)
+    }
+
+    private static var pendingAction: (() -> Void)?
+    private static var requestState = AppRelaunchRequestState()
+
+    nonisolated static func reopenerArguments(
+        parentPID: Int32,
+        bundlePath: String
+    ) -> [String] {
+        [
+            "-c",
+            "attempts=0; while kill -0 \"$1\" 2>/dev/null; do attempts=$((attempts + 1)); "
+                + "[ \"$attempts\" -lt 300 ] || exit 1; /bin/sleep 0.1; done; "
+                + "exec /usr/bin/open \"$2\"",
+            "nexgenvideo-relaunch",
+            String(parentPID),
+            bundlePath,
+        ]
+    }
+
+    static func now(beforeRelaunch action: (() -> Void)? = nil) {
+        guard requestState.begin() else {
+            presentFailure(RelaunchFailure.requestAlreadyPending)
+            return
+        }
+        pendingAction = action
+        NSDocumentController.shared.reviewUnsavedDocuments(
+            withAlertTitle: nil,
+            cancellable: true,
+            delegate: AppRelaunchDocumentReview.shared,
+            didReviewAllSelector: #selector(
+                AppRelaunchDocumentReview.documentController(
+                    _:didReviewAll:contextInfo:
+                )
+            ),
+            contextInfo: nil
+        )
+    }
+
+    fileprivate static func documentReviewCompleted(_ approved: Bool) {
+        switch requestState.complete(approved: approved) {
+        case .ignored:
+            return
+        case .cancelled:
+            clearRequest()
+            return
+        case .proceed:
+            break
+        }
+
+        let bundlePath = Bundle.main.bundlePath
+        guard FileManager.default.fileExists(atPath: bundlePath) else {
+            clearRequest()
+            presentFailure(RelaunchFailure.appBundleMissing)
+            return
+        }
+        guard FileManager.default.isExecutableFile(atPath: "/bin/sh"),
+              FileManager.default.isExecutableFile(atPath: "/usr/bin/open") else {
+            clearRequest()
+            presentFailure(RelaunchFailure.reopenerUnavailable)
+            return
+        }
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = reopenerArguments(
+            parentPID: ProcessInfo.processInfo.processIdentifier,
+            bundlePath: bundlePath
+        )
+        do {
+            pendingAction?()
+            try task.run()
+            clearRequest()
+            NSApp.terminate(nil)
+        } catch {
+            clearRequest()
+            Log.app.error("relaunch preparation failed: \(error.localizedDescription)")
+            presentFailure(error)
+        }
+    }
+
+    private static func clearRequest() {
+        pendingAction = nil
+    }
+
+    private static func presentFailure(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "NexGenVideo couldn't restart"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
+    }
+}
+
+@MainActor
+private final class AppRelaunchDocumentReview: NSObject {
+    static let shared = AppRelaunchDocumentReview()
+
+    @objc func documentController(
+        _ documentController: NSDocumentController,
+        didReviewAll: Bool,
+        contextInfo: UnsafeMutableRawPointer?
+    ) {
+        AppRelaunch.documentReviewCompleted(didReviewAll)
     }
 }

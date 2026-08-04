@@ -208,6 +208,9 @@ struct PluginPickerView: View {
                 }
 
             case .updatePendingRestart:
+                let canApplyUpdate = PluginUpdateCenter.shared.restartTarget(
+                    for: row.id
+                ) != nil
                 Button(editor.activePluginName == row.id
                        ? "Upgrade Project"
                        : "Restart now") {
@@ -219,6 +222,7 @@ struct PluginPickerView: View {
                 }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
+                    .disabled(!canApplyUpdate)
                     .help("Relaunch NexGenVideo to activate the updated plugin.")
 
             case .unavailable:
