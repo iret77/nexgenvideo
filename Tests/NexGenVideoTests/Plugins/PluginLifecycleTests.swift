@@ -5,11 +5,12 @@ import Testing
 @Suite("Format-pack lifecycle")
 struct PluginLifecycleTests {
     private func binding(
+        id: String = "musicvideo",
         version: String,
         schema: String
     ) -> ProjectPackBinding {
         ProjectPackBinding(
-            id: "musicvideo",
+            id: id,
             version: version,
             projectSchema: schema
         )!
@@ -101,5 +102,51 @@ struct PluginLifecycleTests {
                 current: current
             ) == nil
         )
+    }
+
+    @Test("restart requires one complete installed target")
+    func restartPlanRejectsMissingState() {
+        let current = binding(
+            version: "0.0.6",
+            schema: "musicvideo/1.0.0"
+        )
+        #expect(throws: PluginUpdateCenter.RestartFailure.noInstalledUpdate) {
+            try PluginUpdateCenter.validatedRestartTargets([]) { _ in true }
+        }
+        #expect(throws: PluginUpdateCenter.RestartFailure.targetMissing(current)) {
+            try PluginUpdateCenter.validatedRestartTargets([current]) { _ in false }
+        }
+        let documentary = binding(
+            id: "documentary",
+            version: "0.1.0",
+            schema: "documentary/1.0.0"
+        )
+        #expect(throws: PluginUpdateCenter.RestartFailure.targetMissing(current)) {
+            try PluginUpdateCenter.validatedRestartTargets(
+                [current, documentary]
+            ) {
+                $0 == documentary
+            }
+        }
+    }
+
+    @Test("restart accepts the exact installed target")
+    func restartPlanUsesInstalledTarget() throws {
+        let musicvideo = binding(
+            version: "0.0.6",
+            schema: "musicvideo/1.0.0"
+        )
+        let documentary = binding(
+            id: "documentary",
+            version: "0.1.0",
+            schema: "documentary/1.0.0"
+        )
+        let installed = [musicvideo, documentary]
+        let targets = try PluginUpdateCenter.validatedRestartTargets(
+            [musicvideo, documentary]
+        ) {
+            installed.contains($0)
+        }
+        #expect(targets == [documentary, musicvideo])
     }
 }

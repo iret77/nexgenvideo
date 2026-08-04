@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -23,32 +24,80 @@ final class PluginUpdateCenter {
         case restart
     }
 
-    private(set) var attentionByID: [String: Attention] = [:]
-    private(set) var targetByID: [String: ProjectPackBinding] = [:]
+    enum RestartFailure: LocalizedError, Equatable {
+        case noInstalledUpdate
+        case targetMissing(ProjectPackBinding)
+
+        var errorDescription: String? {
+            switch self {
+            case .noInstalledUpdate:
+                return "No installed format-pack update is ready to restart."
+            case .targetMissing(let binding):
+                return "The installed update for \(binding.id) \(binding.version) is no longer available or usable."
+            }
+        }
+    }
+
+    private enum PendingUpdate: Equatable {
+        case available(ProjectPackBinding)
+        case restartRequired(ProjectPackBinding)
+
+        var attention: Attention {
+            switch self {
+            case .available: return .updateAvailable
+            case .restartRequired: return .restartRequired
+            }
+        }
+
+        var target: ProjectPackBinding {
+            switch self {
+            case .available(let binding), .restartRequired(let binding): return binding
+            }
+        }
+    }
+
+    private var pendingByID: [String: PendingUpdate] = [:]
     private(set) var isChecking = false
     @ObservationIgnored private var checkWaiters: [CheckedContinuation<Void, Never>] = []
 
     var attention: Attention? {
-        if attentionByID.values.contains(.restartRequired) {
+        if pendingByID.keys.contains(where: { restartTarget(for: $0) != nil }) {
             return .restartRequired
         }
-        if attentionByID.values.contains(.updateAvailable) {
+        if pendingByID.values.contains(where: { $0.attention == .updateAvailable }) {
             return .updateAvailable
         }
         return nil
     }
 
     func attention(for id: String?) -> Attention? {
-        guard let id else { return nil }
-        return attentionByID[id]
+        guard let id, let pending = pendingByID[id] else { return nil }
+        if pending.attention == .restartRequired {
+            return restartTarget(for: id) == nil ? nil : .restartRequired
+        }
+        return .updateAvailable
+    }
+
+    func restartTarget(for id: String) -> ProjectPackBinding? {
+        guard case .restartRequired(let binding) = pendingByID[id] else {
+            return nil
+        }
+        guard PluginLoader.installed.contains(where: {
+            $0.id == binding.id
+                && $0.version == binding.version
+                && $0.projectSchema == binding.projectSchema
+                && $0.isUpdatePendingRestart
+        }) else { return nil }
+        return binding
     }
 
     func attention(for binding: ProjectPackBinding?) -> Attention? {
         guard let binding,
-              let attention = attentionByID[binding.id] else { return nil }
+              let attention = attention(for: binding.id),
+              let pending = pendingByID[binding.id] else { return nil }
         return Self.projectAttention(
             global: attention,
-            target: targetByID[binding.id],
+            target: pending.target,
             current: binding
         )
     }
@@ -94,8 +143,7 @@ final class PluginUpdateCenter {
                 version: candidate.version,
                 projectSchema: candidate.projectSchema
             ) else { continue }
-            targetByID[live.id] = target
-            attentionByID[live.id] = .updateAvailable
+            pendingByID[live.id] = .available(target)
             if let existing = PluginLoader.installedInfo(
                 id: candidate.id,
                 version: candidate.version
@@ -121,7 +169,13 @@ final class PluginUpdateCenter {
                     projectSchema: existing.info.projectSchema
                 ) else { continue }
                 if PluginLoader.isResident(live.id) {
-                    attentionByID[live.id] = .restartRequired
+                    apply(
+                        record: PluginLoader.markUpdatePendingRestart(
+                            existing.info,
+                            bundleURL: existing.url
+                        ),
+                        id: live.id
+                    )
                 } else if let record = PluginLoader.activate(binding) {
                     apply(record: record, id: live.id)
                 }
@@ -162,8 +216,13 @@ final class PluginUpdateCenter {
                    version: newest.info.version,
                    projectSchema: newest.info.projectSchema
                ) {
-                attentionByID[packID] = .restartRequired
-                targetByID[packID] = binding
+                apply(
+                    record: PluginLoader.markUpdatePendingRestart(
+                        newest.info,
+                        bundleURL: newest.url
+                    ),
+                    id: packID
+                )
                 return .restartRequired(binding)
             }
             return .ready(live)
@@ -200,7 +259,6 @@ final class PluginUpdateCenter {
         ) else {
             return .unavailable("The installed format pack metadata is invalid.")
         }
-        targetByID[packID] = binding
         if let reason = PluginGate.evaluate(
             info: installed.info,
             appVersion: AppVersion.marketing
@@ -226,8 +284,7 @@ final class PluginUpdateCenter {
             target: binding
         ) {
         case .ready:
-            attentionByID.removeValue(forKey: packID)
-            targetByID.removeValue(forKey: packID)
+            pendingByID.removeValue(forKey: packID)
             return .ready(binding)
         case .load:
             if let record = PluginLoader.activate(binding) {
@@ -236,15 +293,20 @@ final class PluginUpdateCenter {
                 }
             }
             if PluginLoader.liveBinding(id: packID) == binding {
-                attentionByID.removeValue(forKey: packID)
-                targetByID.removeValue(forKey: packID)
+                pendingByID.removeValue(forKey: packID)
                 return .ready(binding)
             }
         case .restart:
-            break
+            apply(
+                record: PluginLoader.markUpdatePendingRestart(
+                    installed.info,
+                    bundleURL: installed.url
+                ),
+                id: packID
+            )
+            return .restartRequired(binding)
         }
-        attentionByID[packID] = .restartRequired
-        return .restartRequired(binding)
+        return .unavailable("The installed format pack could not be activated.")
     }
 
     nonisolated static func activationRequirement(
@@ -269,37 +331,52 @@ final class PluginUpdateCenter {
     }
 
     func refreshInstalledAttention() {
-        for record in PluginLoader.installed where record.isUpdatePendingRestart {
+        let records = PluginLoader.installed.filter { $0.isUpdatePendingRestart }
+        let installedIDs = Set(records.map(\.id))
+        pendingByID = pendingByID.filter { entry in
+            entry.value.attention != .restartRequired || installedIDs.contains(entry.key)
+        }
+        for record in records {
             guard let binding = ProjectPackBinding(
                 id: record.id,
                 version: record.version,
                 projectSchema: record.projectSchema
             ) else { continue }
-            targetByID[record.id] = binding
-            attentionByID[record.id] = .restartRequired
+            pendingByID[record.id] = .restartRequired(binding)
         }
     }
 
-    @discardableResult
-    func restartToApplyUpdates() -> Bool {
-        var targets: [ProjectPackBinding] = []
-        var staleIDs: [String] = []
-        for (id, attention) in attentionByID where attention == .restartRequired {
-            guard let binding = targetByID[id],
-                  PluginLoader.installedInfo(
-                      id: id,
-                      version: binding.version
-                  ) != nil else {
-                staleIDs.append(id)
-                continue
+    nonisolated static func validatedRestartTargets(
+        _ candidates: [ProjectPackBinding],
+        isInstalled: (ProjectPackBinding) -> Bool
+    ) throws -> [ProjectPackBinding] {
+        guard !candidates.isEmpty else { throw RestartFailure.noInstalledUpdate }
+        let targets = candidates.sorted { $0.id < $1.id }
+        for target in targets where !isInstalled(target) {
+            throw RestartFailure.targetMissing(target)
+        }
+        return targets
+    }
+
+    func restartToApplyUpdates() {
+        let candidates = pendingByID.values.compactMap { pending -> ProjectPackBinding? in
+            guard pending.attention == .restartRequired else { return nil }
+            return pending.target
+        }
+        let targets: [ProjectPackBinding]
+        do {
+            targets = try Self.validatedRestartTargets(candidates) { binding in
+                PluginLoader.usableInstalledInfo(for: binding) != nil
             }
-            targets.append(binding)
+        } catch {
+            refreshInstalledAttention()
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "NexGenVideo couldn't restart"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+            return
         }
-        for id in staleIDs {
-            attentionByID.removeValue(forKey: id)
-            targetByID.removeValue(forKey: id)
-        }
-        guard !targets.isEmpty else { return false }
         AppRelaunch.now {
             for binding in targets {
                 PluginLoader.requestVersionForNextLaunch(
@@ -308,23 +385,32 @@ final class PluginUpdateCenter {
                 )
             }
         }
-        return true
     }
 
     private func apply(record: InstalledPluginRecord, id: String) {
         switch Self.attention(after: record.state) {
         case nil:
-            attentionByID.removeValue(forKey: id)
-            targetByID.removeValue(forKey: id)
+            pendingByID.removeValue(forKey: id)
         case .restartRequired:
-            targetByID[id] = ProjectPackBinding(
+            guard let binding = ProjectPackBinding(
                 id: record.id,
                 version: record.version,
                 projectSchema: record.projectSchema
-            )
-            attentionByID[id] = .restartRequired
+            ) else {
+                pendingByID.removeValue(forKey: id)
+                return
+            }
+            pendingByID[id] = .restartRequired(binding)
         case .updateAvailable:
-            attentionByID[id] = .updateAvailable
+            guard let binding = ProjectPackBinding(
+                id: record.id,
+                version: record.version,
+                projectSchema: record.projectSchema
+            ) else {
+                pendingByID.removeValue(forKey: id)
+                return
+            }
+            pendingByID[id] = .available(binding)
         }
     }
 }

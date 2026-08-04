@@ -94,6 +94,26 @@ enum PluginLoader {
         return (info, url)
     }
 
+    static func usableInstalledInfo(
+        for binding: ProjectPackBinding,
+        appVersion: String? = AppVersion.marketing
+    ) -> (info: PluginBundleInfo, url: URL)? {
+        guard let installed = installedInfo(
+            id: binding.id,
+            version: binding.version
+        ), installed.info.projectSchema == binding.projectSchema,
+           runtimeRejection(
+               id: binding.id,
+               version: binding.version
+           ) == nil,
+           isUsable(
+               installed,
+               appVersion: appVersion,
+               host: PluginSignature.hostSigningState()
+           ) else { return nil }
+        return installed
+    }
+
     static func newestInstalledInfo(
         id: String
     ) -> (info: PluginBundleInfo, url: URL)? {

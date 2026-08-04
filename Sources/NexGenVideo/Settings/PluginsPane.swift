@@ -89,6 +89,9 @@ struct PluginsPane: View {
             case .updatePendingRestart:
                 let isActiveProjectPack = AppState.shared.activeProject?
                     .editorViewModel.activePluginName == rowData.id
+                let canApplyUpdate = PluginUpdateCenter.shared.restartTarget(
+                    for: rowData.id
+                ) != nil
                 Button(
                     isActiveProjectPack
                         ? "Upgrade Project"
@@ -102,6 +105,7 @@ struct PluginsPane: View {
                 }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .controlSize(.small)
+                    .disabled(!canApplyUpdate)
                     .help(
                         isActiveProjectPack
                             ? "Upgrade this project to the installed format-pack update."

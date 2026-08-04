@@ -185,29 +185,12 @@ final class AppState {
         projectURL: URL,
         source: ProjectPackBinding
     ) {
-        guard let target = PluginUpdateCenter.shared.targetByID[source.id],
-              let installed = PluginLoader.installedInfo(
-                  id: target.id,
-                  version: target.version
-              ),
-              installed.info.projectSchema == target.projectSchema,
+        guard let target = PluginUpdateCenter.shared.restartTarget(for: source.id),
+              let installed = PluginLoader.usableInstalledInfo(for: target),
               target != source else {
             notify(
                 message: "No format-pack upgrade is ready",
                 informative: "Check Format Packs in Settings for updates."
-            )
-            return
-        }
-        if let reason = PluginGate.evaluate(
-            info: installed.info,
-            appVersion: AppVersion.marketing
-        ) ?? PluginSignature.verify(
-            bundleURL: installed.url,
-            host: PluginSignature.hostSigningState()
-        ) {
-            notify(
-                message: "This format-pack upgrade isn't usable",
-                informative: reason.reason
             )
             return
         }

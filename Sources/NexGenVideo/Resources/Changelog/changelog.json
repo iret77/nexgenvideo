@@ -2,6 +2,18 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.0.4",
+      "date": "2026-08-05",
+      "sections": [
+        {
+          "heading": "Format packs",
+          "items": [
+            "Restart NexGenVideo reliably activates an installed format-pack update and reports an invalid restart state instead of doing nothing."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.3",
       "date": "2026-08-01",
       "sections": [
