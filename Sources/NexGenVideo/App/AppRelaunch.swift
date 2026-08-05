@@ -22,6 +22,12 @@ struct AppRelaunchRequestState {
     }
 }
 
+enum AppRelaunchDocumentPolicy {
+    static func requiresReview(editStates: [Bool]) -> Bool {
+        editStates.contains(true)
+    }
+}
+
 @MainActor
 enum AppRelaunch {
     enum RelaunchFailure: LocalizedError {
@@ -42,29 +48,41 @@ enum AppRelaunch {
     }
 
     private static var pendingAction: (() -> Void)?
+    private static var pendingOpenArguments: [String] = []
     private static var requestState = AppRelaunchRequestState()
 
     nonisolated static func reopenerArguments(
         parentPID: Int32,
-        bundlePath: String
+        bundlePath: String,
+        openArguments: [String] = []
     ) -> [String] {
         [
             "-c",
-            "attempts=0; while kill -0 \"$1\" 2>/dev/null; do attempts=$((attempts + 1)); "
-                + "[ \"$attempts\" -lt 300 ] || exit 1; /bin/sleep 0.1; done; "
-                + "exec /usr/bin/open \"$2\"",
+            "parent=\"$1\"; bundle=\"$2\"; shift 2; "
+                + "while kill -0 \"$parent\" 2>/dev/null; do /bin/sleep 0.1; done; "
+                + "exec /usr/bin/open \"$bundle\" \"$@\"",
             "nexgenvideo-relaunch",
             String(parentPID),
             bundlePath,
-        ]
+        ] + openArguments
     }
 
-    static func now(beforeRelaunch action: (() -> Void)? = nil) {
+    static func now(
+        reopenArguments: [String] = [],
+        beforeRelaunch action: (() -> Void)? = nil
+    ) {
         guard requestState.begin() else {
             presentFailure(RelaunchFailure.requestAlreadyPending)
             return
         }
         pendingAction = action
+        pendingOpenArguments = reopenArguments
+        let editStates = NSDocumentController.shared.documents.map(\.isDocumentEdited)
+        guard AppRelaunchDocumentPolicy.requiresReview(editStates: editStates) else {
+            documentReviewCompleted(true)
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)
         NSDocumentController.shared.reviewUnsavedDocuments(
             withAlertTitle: nil,
             cancellable: true,
@@ -106,11 +124,12 @@ enum AppRelaunch {
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = reopenerArguments(
             parentPID: ProcessInfo.processInfo.processIdentifier,
-            bundlePath: bundlePath
+            bundlePath: bundlePath,
+            openArguments: pendingOpenArguments
         )
         do {
-            pendingAction?()
             try task.run()
+            pendingAction?()
             clearRequest()
             NSApp.terminate(nil)
         } catch {
@@ -122,6 +141,7 @@ enum AppRelaunch {
 
     private static func clearRequest() {
         pendingAction = nil
+        pendingOpenArguments = []
     }
 
     private static func presentFailure(_ error: Error) {

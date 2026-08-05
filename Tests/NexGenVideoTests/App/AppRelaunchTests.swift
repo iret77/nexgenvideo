@@ -4,6 +4,13 @@ import Testing
 
 @Suite("App relaunch")
 struct AppRelaunchTests {
+    @Test("home restart bypasses document review when no unsaved document exists")
+    func cleanHomeRestartIsImmediate() {
+        #expect(!AppRelaunchDocumentPolicy.requiresReview(editStates: []))
+        #expect(!AppRelaunchDocumentPolicy.requiresReview(editStates: [false, false]))
+        #expect(AppRelaunchDocumentPolicy.requiresReview(editStates: [false, true]))
+    }
+
     @Test("cancelling a document review fully disarms the restart request")
     func cancelledReviewDisarmsRequest() {
         var state = AppRelaunchRequestState()
@@ -35,11 +42,22 @@ struct AppRelaunchTests {
         )
 
         #expect(arguments[0] == "-c")
-        #expect(arguments[1].contains("kill -0 \"$1\""))
-        #expect(arguments[1].contains("\"$attempts\" -lt 300"))
-        #expect(arguments[1].contains("exec /usr/bin/open \"$2\""))
+        #expect(arguments[1].contains("kill -0 \"$parent\""))
+        #expect(!arguments[1].contains("exit 1"))
+        #expect(arguments[1].contains("exec /usr/bin/open \"$bundle\" \"$@\""))
         #expect(!arguments[1].contains(bundlePath))
         #expect(arguments[3] == "1234")
         #expect(arguments[4] == bundlePath)
+    }
+
+    @Test("reopener passes self-test launch arguments as data")
+    func reopenerArgumentsRemainSeparated() {
+        let arguments = AppRelaunch.reopenerArguments(
+            parentPID: 1234,
+            bundlePath: "/Applications/NexGenVideo.app",
+            openArguments: ["--args", "--self-test", "/tmp/state file"]
+        )
+
+        #expect(Array(arguments.suffix(3)) == ["--args", "--self-test", "/tmp/state file"])
     }
 }

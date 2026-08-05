@@ -551,6 +551,8 @@ jobs:
           INSTALL_CHECK="$(mktemp -d)"
           INSTALL_APP="$INSTALL_CHECK/NexGenVideo.app"
           ditto "$MOUNT_POINT/NexGenVideo.app" "$INSTALL_APP"
+          cleanup_mount
+          trap - EXIT
           codesign --verify --strict --verbose=2 "$INSTALL_APP"
           codesign --verify --strict --verbose=2 "$INSTALL_APP/Contents/Frameworks/libNexGenEngine.dylib"
           xcrun stapler validate "$INSTALL_APP"
@@ -567,6 +569,7 @@ jobs:
           /usr/bin/xattr -r -w com.apple.quarantine "$QUARANTINE" "$PACK_BUNDLE"
           NGV_SELFTEST_PACK="$PACK_BUNDLE" \
             "$INSTALL_APP/Contents/MacOS/NexGenVideo"
+          bash scripts/relaunch_selftest.sh "$INSTALL_APP"
           echo "OK: mounted DMG layout, copied app, Gatekeeper assessment, and quarantined pack load"
 
       - name: Publish isolated preview plugin channel

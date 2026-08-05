@@ -5,6 +5,7 @@ name: Bundle .app
 # the SHARED engine, the @executable_path rpath, and the real load-time cast — can only be broken by
 # the build graph, the engine, the bundling scripts or the pack sources. A change confined to
 # Sources/NexGenVideo cannot alter how the pack links, so paying 45 quota-minutes for it was waste.
+# The relaunch files are explicit exceptions because this job exercises the real Home restart.
 #
 # NOTE the coverage this trades away: the load test also happens to smoke-test that the app BINARY
 # launches. A Sources/NexGenVideo-only PR no longer gets that. `swift test` still runs on every PR.
@@ -17,6 +18,10 @@ on:
       - 'Package.resolved'
       - 'Engine/**'
       - 'Sources/MusicvideoPlugin/**'
+      - 'Sources/NexGenVideo/App/AppDelegate.swift'
+      - 'Sources/NexGenVideo/App/AppRelaunch.swift'
+      - 'Sources/NexGenVideo/App/AppRelaunchSelfTest.swift'
+      - 'Sources/NexGenVideo/App/main.swift'
       - 'scripts/**'
       - 'plugins/**'
       - '.github/workflows/bundle.yml'
@@ -137,6 +142,9 @@ jobs:
           echo "loading $EXTDIR/musicvideo.ngvpack with the real app binary…"
           NGV_SELFTEST_PACK="$EXTDIR/musicvideo.ngvpack" .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
           echo "OK: the app loaded the pack from an external directory"
+
+      - name: Relaunch-test — Home restart remains interactive without an open document
+        run: bash scripts/relaunch_selftest.sh .build/NexGenVideo.app
 
       - name: Zip .app
         run: ditto -c -k --keepParent .build/NexGenVideo.app .build/NexGenVideo.zip
