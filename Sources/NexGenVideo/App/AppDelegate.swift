@@ -8,6 +8,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        if AppRelaunchSelfTest.isRequested {
+            HomeWindowController.shared.showWindow(nil)
+            Task { @MainActor in
+                await Task.yield()
+                _ = AppRelaunchSelfTest.startIfRequested()
+            }
+            return
+        }
+
         // Start Sparkle updater
         _ = Updater.shared
 

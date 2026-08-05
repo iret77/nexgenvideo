@@ -5,7 +5,7 @@ import NexGenEngine
 /// (id/version/minAppVersion/displayName/tagline) mirrors `plugins/musicvideo.json`,
 /// which the release assembles into the `.ngvpack`'s Info.plist `NGVMinAppVersion` —
 /// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
-let musicvideoMinAppVersion = "1.0.4"
+let musicvideoMinAppVersion = "1.0.5"
 
 /// The musicvideo pack — registers music-specific behavior into the generic
 /// engine. Port of `nexgen_pack_musicvideo/pack.py`.
@@ -40,7 +40,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 /// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.0.12"
+    public let version = "0.0.13"
 
     private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
         _ = projectURL

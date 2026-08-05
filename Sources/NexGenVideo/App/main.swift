@@ -2,6 +2,8 @@ import AppKit
 
 Log.bootstrap()
 
+AppRelaunchSelfTest.completeIfRequested()
+
 // CI-only pack load self-test. No-op unless NGV_SELFTEST_PACK is set; when set, loads that pack with
 // the real binary + Frameworks and exits before any UI — reproduces + guards the load-time cast.
 PackSelfTest.runIfRequested()
