@@ -199,40 +199,31 @@ private struct HomeUpdateNotices: View {
     let appUpdateVersion: String?
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            noticeStack(layout: .horizontal)
-            noticeStack(layout: .compact)
-        }
-        .padding(.horizontal, AppTheme.Spacing.xlXxl)
-        .padding(.bottom, AppTheme.Spacing.xxl)
+        noticeStack
+            .padding(.horizontal, AppTheme.Spacing.xlXxl)
+            .padding(.bottom, AppTheme.Spacing.xxl)
     }
 
-    private func noticeStack(
-        layout: HomeStatusNoticeLayout
-    ) -> some View {
+    private var noticeStack: some View {
         VStack(spacing: AppTheme.Spacing.smMd) {
             if let packAttention {
-                packNotice(packAttention, layout: layout)
+                packNotice(packAttention)
             }
             if appUpdateAvailable {
-                appNotice(layout: layout)
+                appNotice
             }
         }
     }
 
     @ViewBuilder
-    private func packNotice(
-        _ attention: PluginUpdateCenter.Attention,
-        layout: HomeStatusNoticeLayout
-    ) -> some View {
+    private func packNotice(_ attention: PluginUpdateCenter.Attention) -> some View {
         switch attention {
         case .restartRequired:
             HomeStatusNotice(
                 title: "Restart to finish updating format packs",
                 message: "The update is installed. Restart before creating a project with the updated format.",
                 systemImage: "exclamationmark.circle.fill",
-                tone: .warning,
-                layout: layout
+                tone: .warning
             ) {
                 Button("Restart NexGenVideo") {
                     PluginUpdateCenter.shared.restartToApplyUpdates()
@@ -247,8 +238,7 @@ private struct HomeUpdateNotices: View {
                 title: "Format pack update available",
                 message: "Review and install the update before starting a project with that format.",
                 systemImage: "arrow.clockwise.circle",
-                tone: .pack,
-                layout: layout
+                tone: .pack
             ) {
                 Button("Open Format Packs…") {
                     SettingsWindowController.shared.show(tab: .plugins)
@@ -260,17 +250,14 @@ private struct HomeUpdateNotices: View {
         }
     }
 
-    private func appNotice(
-        layout: HomeStatusNoticeLayout
-    ) -> some View {
+    private var appNotice: some View {
         HomeStatusNotice(
             title: appUpdateVersion.map {
                 "NexGenVideo \($0) is available"
             } ?? "A NexGenVideo update is available",
             message: "Install the update to get the latest fixes and improvements.",
             systemImage: "arrow.up.circle",
-            tone: .pack,
-            layout: layout
+            tone: .pack
         ) {
             HStack(spacing: AppTheme.Spacing.smMd) {
                 Button("Not Now") {
@@ -290,11 +277,6 @@ private struct HomeUpdateNotices: View {
     }
 }
 
-private enum HomeStatusNoticeLayout {
-    case horizontal
-    case compact
-}
-
 private struct HomeStatusNotice<Actions: View>: View {
     enum Tone {
         case warning
@@ -312,7 +294,6 @@ private struct HomeStatusNotice<Actions: View>: View {
     let message: String
     let systemImage: String
     let tone: Tone
-    let layout: HomeStatusNoticeLayout
     let actions: Actions
 
     init(
@@ -320,48 +301,20 @@ private struct HomeStatusNotice<Actions: View>: View {
         message: String,
         systemImage: String,
         tone: Tone,
-        layout: HomeStatusNoticeLayout,
         @ViewBuilder actions: () -> Actions
     ) {
         self.title = title
         self.message = message
         self.systemImage = systemImage
         self.tone = tone
-        self.layout = layout
         self.actions = actions()
     }
 
     var body: some View {
-        Group {
-            if layout == .horizontal {
-                HStack(spacing: AppTheme.Spacing.mdLg) {
-                    icon
-                    copy
-                        .frame(
-                            width: AppTheme.ComponentSize.homeNoticeCopyWidth,
-                            alignment: .leading
-                        )
-                    Spacer(minLength: AppTheme.Spacing.md)
-                    actions
-                        .frame(
-                            width: AppTheme.ComponentSize.homeNoticeActionsWidth,
-                            alignment: .trailing
-                        )
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
-                    HStack(alignment: .top, spacing: AppTheme.Spacing.mdLg) {
-                        icon
-                        copy
-                    }
-                    HStack(spacing: AppTheme.Spacing.none) {
-                        Spacer(minLength: AppTheme.Spacing.none)
-                        actions
-                            .fixedSize()
-                    }
-                }
-            }
+        HomeStatusNoticeLayout {
+            icon
+            copy
+            actions.fixedSize()
         }
         .padding(.horizontal, AppTheme.Spacing.lgXl)
         .padding(.vertical, AppTheme.Spacing.mdLg)
@@ -418,6 +371,112 @@ private struct HomeStatusNotice<Actions: View>: View {
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+private struct HomeStatusNoticeLayout: Layout {
+    private var spacing: CGFloat { AppTheme.Spacing.mdLg }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard subviews.count == 3 else { return .zero }
+        let width = resolvedWidth(proposal)
+        let sizes = measuredSizes(width: width, subviews: subviews)
+        return CGSize(width: width, height: sizes.height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard subviews.count == 3 else { return }
+        let sizes = measuredSizes(width: bounds.width, subviews: subviews)
+
+        if sizes.isHorizontal {
+            let copyX = bounds.minX + sizes.icon.width + spacing
+            let actionsX = bounds.maxX - sizes.actions.width
+            place(
+                subviews[0],
+                at: CGPoint(x: bounds.minX, y: bounds.minY + centered(sizes.icon.height, in: sizes.height)),
+                size: sizes.icon
+            )
+            place(
+                subviews[1],
+                at: CGPoint(x: copyX, y: bounds.minY + centered(sizes.copy.height, in: sizes.height)),
+                size: sizes.copy
+            )
+            place(
+                subviews[2],
+                at: CGPoint(x: actionsX, y: bounds.minY + centered(sizes.actions.height, in: sizes.height)),
+                size: sizes.actions
+            )
+        } else {
+            place(subviews[0], at: bounds.origin, size: sizes.icon)
+            place(
+                subviews[1],
+                at: CGPoint(x: bounds.minX + sizes.icon.width + spacing, y: bounds.minY),
+                size: sizes.copy
+            )
+            place(
+                subviews[2],
+                at: CGPoint(x: bounds.maxX - sizes.actions.width, y: bounds.minY + sizes.topHeight + spacing),
+                size: sizes.actions
+            )
+        }
+    }
+
+    private func resolvedWidth(_ proposal: ProposedViewSize) -> CGFloat {
+        guard let width = proposal.width, width.isFinite else {
+            return AppTheme.ComponentSize.homeNoticeHorizontalMinWidth
+        }
+        return max(width, AppTheme.Spacing.none)
+    }
+
+    private func measuredSizes(width: CGFloat, subviews: Subviews) -> Measurements {
+        let icon = subviews[0].sizeThatFits(.unspecified)
+        let actions = subviews[2].sizeThatFits(.unspecified)
+        let isHorizontal = width >= AppTheme.ComponentSize.homeNoticeHorizontalMinWidth
+        let reservedWidth = icon.width + spacing + (isHorizontal ? actions.width + spacing : 0)
+        let copyWidth = max(width - reservedWidth, AppTheme.Spacing.none)
+        let copy = subviews[1].sizeThatFits(ProposedViewSize(width: copyWidth, height: nil))
+        let topHeight = max(icon.height, copy.height)
+        let height = isHorizontal
+            ? max(topHeight, actions.height)
+            : topHeight + spacing + actions.height
+        return Measurements(
+            isHorizontal: isHorizontal,
+            icon: icon,
+            copy: CGSize(width: copyWidth, height: copy.height),
+            actions: actions,
+            topHeight: topHeight,
+            height: height
+        )
+    }
+
+    private func centered(_ child: CGFloat, in parent: CGFloat) -> CGFloat {
+        max((parent - child) / 2, AppTheme.Spacing.none)
+    }
+
+    private func place(_ subview: LayoutSubview, at point: CGPoint, size: CGSize) {
+        subview.place(
+            at: point,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: size.width, height: size.height)
+        )
+    }
+
+    private struct Measurements {
+        let isHorizontal: Bool
+        let icon: CGSize
+        let copy: CGSize
+        let actions: CGSize
+        let topHeight: CGFloat
+        let height: CGFloat
     }
 }
 

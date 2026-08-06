@@ -8,7 +8,7 @@
         {
           "heading": "Format packs",
           "items": [
-            "Restarting after a format-pack update now completes within a bounded interval, activates the installed version, and returns to an interactive Home window."
+            "Format-pack update notices no longer block Home input, and restarting now completes within a bounded interval, activates the installed version, and returns to an interactive Home window."
           ]
         }
       ]
