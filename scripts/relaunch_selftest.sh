@@ -143,7 +143,7 @@ defaults write de.h5ventures.nexgenvideo NGVSelectedPackVersions -dict "$pack_id
 app_version="$(plist_value "$app_path" CFBundleShortVersionString)"
 defaults write de.h5ventures.nexgenvideo lastSeenVersion "$app_version"
 
-/usr/bin/open -n "$app_path" \
+/usr/bin/open -n -a "$app_path" \
   --stdout "$stdout_log" \
   --stderr "$stderr_log" \
   --args \

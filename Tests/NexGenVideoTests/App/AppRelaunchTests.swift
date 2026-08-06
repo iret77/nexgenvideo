@@ -49,7 +49,8 @@ struct AppRelaunchTests {
         #expect(arguments[1].contains("[ \"$attempts\" -lt 50 ]"))
         #expect(arguments[1].contains("/bin/kill -TERM \"$parent\""))
         #expect(arguments[1].contains("/bin/kill -KILL \"$parent\""))
-        #expect(arguments[1].contains("exec /usr/bin/open -n \"$bundle\" \"$@\""))
+        #expect(arguments[1].contains("exec /usr/bin/open -n -a \"$bundle\" \"$@\""))
+        #expect(!arguments[1].contains("open -n \"$bundle\""))
         #expect(!arguments[1].contains(bundlePath))
         #expect(arguments[3] == "1234")
         #expect(arguments[4] == executablePath)
@@ -62,9 +63,18 @@ struct AppRelaunchTests {
             parentPID: 1234,
             executablePath: "/Applications/NexGenVideo.app/Contents/MacOS/NexGenVideo",
             bundlePath: "/Applications/NexGenVideo.app",
-            openArguments: ["--args", "--self-test", "/tmp/state file"]
+            openArguments: ["--self-test", "/tmp/state file"]
         )
 
         #expect(Array(arguments.suffix(3)) == ["--args", "--self-test", "/tmp/state file"])
+
+        let prefixed = AppRelaunch.reopenerArguments(
+            parentPID: 1234,
+            executablePath: "/Applications/NexGenVideo.app/Contents/MacOS/NexGenVideo",
+            bundlePath: "/Applications/NexGenVideo.app",
+            openArguments: ["--args", "--self-test", "/tmp/state file"]
+        )
+        #expect(Array(prefixed.suffix(3)) == ["--args", "--self-test", "/tmp/state file"])
+        #expect(prefixed.filter { $0 == "--args" }.count == 1)
     }
 }

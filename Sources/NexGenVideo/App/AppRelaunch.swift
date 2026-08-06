@@ -65,7 +65,13 @@ enum AppRelaunch {
         bundlePath: String,
         openArguments: [String] = []
     ) -> [String] {
-        [
+        let applicationArguments = openArguments.first == "--args"
+            ? Array(openArguments.dropFirst())
+            : openArguments
+        let launchArguments = applicationArguments.isEmpty
+            ? []
+            : ["--args"] + applicationArguments
+        return [
             "-c",
             "parent=\"$1\"; expected=\"$2\"; bundle=\"$3\"; shift 3; "
                 + "is_parent() { actual_parent=\"$(/bin/ps -ww -p \"$$\" -o ppid= 2>/dev/null)\"; "
@@ -81,12 +87,12 @@ enum AppRelaunch {
                 + "if is_parent; then /bin/kill -KILL \"$parent\"; attempts=0; "
                 + "while is_parent && [ \"$attempts\" -lt 20 ]; do "
                 + "attempts=$((attempts + 1)); /bin/sleep 0.1; done; fi; "
-                + "is_parent && exit 1; exec /usr/bin/open -n \"$bundle\" \"$@\"",
+                + "is_parent && exit 1; exec /usr/bin/open -n -a \"$bundle\" \"$@\"",
             "nexgenvideo-relaunch",
             String(parentPID),
             executablePath,
             bundlePath,
-        ] + openArguments
+        ] + launchArguments
     }
 
     static func now(

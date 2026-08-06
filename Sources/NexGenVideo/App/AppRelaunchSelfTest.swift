@@ -28,7 +28,6 @@ enum AppRelaunchSelfTest {
     static func reopenArguments(_ requested: [String]) -> [String] {
         guard requested.isEmpty, let config = startConfiguration else { return requested }
         return [
-            "--args",
             completionArgument,
             config.stateURL.path,
             config.expectedBundle,

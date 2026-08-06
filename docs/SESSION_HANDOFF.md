@@ -2,24 +2,26 @@
 
 ## Current release blocker
 
-App 1.0.5 still leaves Home unable to accept input after **Restart NexGenVideo** is used for an
-installed format-pack update. The user's diagnostics directory contains no report from the current
-incident; its only watchdog files predate 1.0.5. That independently rules out another continuously
-blocked main-thread/layout cycle for this failure and points to the live AppKit termination/relaunch
-state.
+App 1.0.5 leaves Home unable to accept input after **Restart NexGenVideo** is used for an installed
+format-pack update. macOS CI run `31095830027` independently proved the cause: the reopener passed
+the app bundle to `open` as a file operand, so the new process received its own bundle through
+`application(_:openFiles:)` and blocked in a hidden modal project-open error.
 
 The staged 1.0.6 correction keeps the approved Home composition unchanged and replaces the unbounded
 restart handoff with a bounded process-identity-checked relaunch. It persists the requested pack
 version before termination, gives AppKit three seconds to quit cleanly, guarantees that a stuck old
-process cannot survive, and uses `open -n` on the exact app bundle. Pack extraction no longer waits
-for `/usr/bin/ditto` on the main actor.
+process cannot survive, and uses `open -n -a` on the exact app bundle. Pack extraction no longer
+waits for `/usr/bin/ditto` on the main actor. LaunchServices now starts the exact app without sending
+its bundle back as a document, and the reopener centrally inserts `--args` before any application
+arguments.
 
 The release gate now starts the exact app through LaunchServices with the previous and current signed
 musicvideo packs installed side by side. It selects and loads the previous version, waits for the
 real restart notice, presses the visible production button through Accessibility, verifies the new
 process loaded the requested version, then presses Home's Settings control and requires the Settings
-window to appear. The same test runs against the copied app from the exact notarized DMG. This remains
-unverified until the owner authorizes the single macOS CI/release run.
+window to appear. The same test runs against the copied app from the exact notarized DMG. The
+diagnostic run proved the hidden-modal cause; the corrected `open -a` path still requires its final
+macOS CI/release run.
 
 ## Objective
 
@@ -43,8 +45,8 @@ in-the-moment `build now`.
 
 ## Working state
 
-- Branch: `codex/fix-home-restart-modal`
-- App candidate: `1.0.6`, `CFBundleVersion` `73`. No CI or release has run for it.
+- Branch: `codex/fix-home-restart-failsafe`
+- App candidate: `1.0.6`, `CFBundleVersion` `73`. Diagnostic CI ran; release is not published.
 - Musicvideo pack candidate: `0.0.14`, project schema `musicvideo/1.0.0`
 - Engine binary contract: current `4`, minimum compatible `2`
 - The commit containing this handoff is the one consolidated correction; read its live CI and release
