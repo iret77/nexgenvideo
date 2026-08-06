@@ -3,9 +3,6 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainThreadHangWatchdog.shared.start()
-        Task { @MainActor in
-            await AppRelaunchSelfTest.runIfRequested()
-        }
 
         // Activate the app (required when launched from CLI, not a .app bundle)
         NSApp.setActivationPolicy(.regular)
@@ -14,11 +11,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start Sparkle updater
         _ = Updater.shared
 
-        // Splash first (Photoshop pattern), then reveal Home — unless a project already opened
-        // (e.g. a document launch), in which case the editor owns the screen.
-        SplashScreenController.shared.showAtLaunch {
-            if AppState.shared.activeProject == nil {
-                HomeWindowController.shared.showWindow(nil)
+        if AppRelaunchSelfTest.isRequested {
+            HomeWindowController.shared.showWindow(nil)
+            Task { @MainActor in
+                await Task.yield()
+                await AppRelaunchSelfTest.runIfRequested()
+            }
+        } else {
+            // Splash first (Photoshop pattern), then reveal Home — unless a project already opened
+            // (e.g. a document launch), in which case the editor owns the screen.
+            SplashScreenController.shared.showAtLaunch {
+                if AppState.shared.activeProject == nil {
+                    HomeWindowController.shared.showWindow(nil)
+                }
             }
         }
         Task.detached(priority: .utility) {

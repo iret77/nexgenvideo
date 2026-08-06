@@ -20,6 +20,10 @@ enum AppRelaunchSelfTest {
         let newVersion: String
     }
 
+    static var isRequested: Bool {
+        startConfiguration != nil || completionConfiguration != nil
+    }
+
     static func reopenArguments(_ requested: [String]) -> [String] {
         guard requested.isEmpty, let config = startConfiguration else { return requested }
         return [
