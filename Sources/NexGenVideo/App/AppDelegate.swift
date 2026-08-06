@@ -3,28 +3,35 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainThreadHangWatchdog.shared.start()
+        AppRelaunchSelfTest.checkpoint("delegate-started")
 
         // Activate the app (required when launched from CLI, not a .app bundle)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-
-        if AppRelaunchSelfTest.isRequested {
-            HomeWindowController.shared.showWindow(nil)
-            Task { @MainActor in
-                await Task.yield()
-                _ = AppRelaunchSelfTest.startIfRequested()
-            }
-            return
-        }
+        AppRelaunchSelfTest.checkpoint("app-activated")
 
         // Start Sparkle updater
         _ = Updater.shared
+        AppRelaunchSelfTest.checkpoint("updater-ready")
 
-        // Splash first (Photoshop pattern), then reveal Home — unless a project already opened
-        // (e.g. a document launch), in which case the editor owns the screen.
-        SplashScreenController.shared.showAtLaunch {
-            if AppState.shared.activeProject == nil {
-                HomeWindowController.shared.showWindow(nil)
+        if AppRelaunchSelfTest.isRequested {
+            AppRelaunchSelfTest.checkpoint("home-controller-requested")
+            let home = HomeWindowController.shared
+            AppRelaunchSelfTest.checkpoint("home-controller-ready")
+            home.showWindow(nil)
+            AppRelaunchSelfTest.checkpoint("home-shown")
+            Task { @MainActor in
+                await Task.yield()
+                await AppRelaunchSelfTest.runIfRequested()
+            }
+            AppRelaunchSelfTest.checkpoint("selftest-scheduled")
+        } else {
+            // Splash first (Photoshop pattern), then reveal Home — unless a project already opened
+            // (e.g. a document launch), in which case the editor owns the screen.
+            SplashScreenController.shared.showAtLaunch {
+                if AppState.shared.activeProject == nil {
+                    HomeWindowController.shared.showWindow(nil)
+                }
             }
         }
         Task.detached(priority: .utility) {
@@ -57,6 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        if AppRelaunchSelfTest.isRequested {
+            AppRelaunchSelfTest.failUnexpectedOpenFiles(filenames)
+        }
         let urls = filenames.map(URL.init(fileURLWithPath:))
         Task {
             let reply = await AppState.shared.openProjectsFromSystem(urls)

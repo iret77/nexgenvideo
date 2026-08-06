@@ -2,6 +2,18 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.0.6",
+      "date": "2026-08-06",
+      "sections": [
+        {
+          "heading": "Format packs",
+          "items": [
+            "Format-pack update notices no longer block Home input, and restarting now completes within a bounded interval, activates the installed version, and returns to an interactive Home window."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.5",
       "date": "2026-08-05",
       "sections": [

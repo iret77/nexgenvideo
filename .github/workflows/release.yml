@@ -524,6 +524,8 @@ jobs:
         run: scripts/bundle.sh release --package
 
       - name: Verify the exact DMG users install
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           codesign --verify --strict --verbose=2 .build/NexGenVideo.app
@@ -569,7 +571,13 @@ jobs:
           /usr/bin/xattr -r -w com.apple.quarantine "$QUARANTINE" "$PACK_BUNDLE"
           NGV_SELFTEST_PACK="$PACK_BUNDLE" \
             "$INSTALL_APP/Contents/MacOS/NexGenVideo"
-          bash scripts/relaunch_selftest.sh "$INSTALL_APP"
+          PREVIOUS_DIR="$(mktemp -d)"
+          PREVIOUS_PACK="$(bash scripts/fetch_previous_pack.sh \
+            "$PACK_BUNDLE" "$PREVIOUS_DIR")"
+          bash scripts/relaunch_selftest.sh \
+            "$INSTALL_APP" \
+            "$PREVIOUS_PACK" \
+            "$PACK_BUNDLE"
           echo "OK: mounted DMG layout, copied app, Gatekeeper assessment, and quarantined pack load"
 
       - name: Publish isolated preview plugin channel

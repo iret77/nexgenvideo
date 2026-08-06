@@ -143,8 +143,18 @@ jobs:
           NGV_SELFTEST_PACK="$EXTDIR/musicvideo.ngvpack" .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
           echo "OK: the app loaded the pack from an external directory"
 
-      - name: Relaunch-test — Home restart remains interactive without an open document
-        run: bash scripts/relaunch_selftest.sh .build/NexGenVideo.app
+      - name: Relaunch-test — the real Home button activates a two-version pack update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PREVIOUS_DIR="$(mktemp -d)"
+          PREVIOUS_PACK="$(bash scripts/fetch_previous_pack.sh \
+            .build/plugins/musicvideo.ngvpack "$PREVIOUS_DIR")"
+          bash scripts/relaunch_selftest.sh \
+            .build/NexGenVideo.app \
+            "$PREVIOUS_PACK" \
+            .build/plugins/musicvideo.ngvpack
 
       - name: Zip .app
         run: ditto -c -k --keepParent .build/NexGenVideo.app .build/NexGenVideo.zip

@@ -115,6 +115,7 @@ final class PluginUpdateCenter {
     func checkAndStageUpdates() async {
         guard !isChecking else { return }
         isChecking = true
+        refreshInstalledAttention()
         defer {
             isChecking = false
             let waiters = checkWaiters
@@ -333,7 +334,7 @@ final class PluginUpdateCenter {
     func refreshInstalledAttention() {
         let records = PluginLoader.installed.filter { $0.isUpdatePendingRestart }
         let installedIDs = Set(records.map(\.id))
-        pendingByID = pendingByID.filter { entry in
+        var refreshed = pendingByID.filter { entry in
             entry.value.attention != .restartRequired || installedIDs.contains(entry.key)
         }
         for record in records {
@@ -342,8 +343,9 @@ final class PluginUpdateCenter {
                 version: record.version,
                 projectSchema: record.projectSchema
             ) else { continue }
-            pendingByID[record.id] = .restartRequired(binding)
+            refreshed[record.id] = .restartRequired(binding)
         }
+        if refreshed != pendingByID { pendingByID = refreshed }
     }
 
     nonisolated static func validatedRestartTargets(

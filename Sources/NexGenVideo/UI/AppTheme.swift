@@ -329,8 +329,7 @@ enum AppTheme {
         static let toolImagePreviewMaxHeight: CGFloat = 50
         static let projectCardWidth: CGFloat = 150
         static let projectCardHeight: CGFloat = 120
-        static let homeNoticeCopyWidth: CGFloat = 400
-        static let homeNoticeActionsWidth: CGFloat = 200
+        static let homeNoticeHorizontalMinWidth: CGFloat = 500
         static let homeNoticeMinHeight: CGFloat = 70
         static let updateOverlayWidth: CGFloat = 640
         static let projectActivityWidth: CGFloat = 340

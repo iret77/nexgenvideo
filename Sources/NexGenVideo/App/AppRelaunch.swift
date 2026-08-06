@@ -1,4 +1,6 @@
 import AppKit
+import Darwin
+import Dispatch
 
 struct AppRelaunchRequestState {
     enum Completion: Equatable {
@@ -33,6 +35,7 @@ enum AppRelaunch {
     enum RelaunchFailure: LocalizedError {
         case requestAlreadyPending
         case appBundleMissing
+        case documentsStillEdited
         case reopenerUnavailable
 
         var errorDescription: String? {
@@ -41,6 +44,8 @@ enum AppRelaunch {
                 return "A restart is already waiting for confirmation."
             case .appBundleMissing:
                 return "The installed NexGenVideo app could not be found."
+            case .documentsStillEdited:
+                return "NexGenVideo couldn't finish reviewing unsaved documents."
             case .reopenerUnavailable:
                 return "macOS could not prepare the app to reopen."
             }
@@ -50,21 +55,44 @@ enum AppRelaunch {
     private static var pendingAction: (() -> Void)?
     private static var pendingOpenArguments: [String] = []
     private static var requestState = AppRelaunchRequestState()
+    private static var reopenerTask: Process?
+
+    nonisolated static let gracefulExitTimeout: Duration = .seconds(3)
 
     nonisolated static func reopenerArguments(
         parentPID: Int32,
+        executablePath: String,
         bundlePath: String,
         openArguments: [String] = []
     ) -> [String] {
-        [
+        let applicationArguments = openArguments.first == "--args"
+            ? Array(openArguments.dropFirst())
+            : openArguments
+        let launchArguments = applicationArguments.isEmpty
+            ? []
+            : ["--args"] + applicationArguments
+        return [
             "-c",
-            "parent=\"$1\"; bundle=\"$2\"; shift 2; "
-                + "while kill -0 \"$parent\" 2>/dev/null; do /bin/sleep 0.1; done; "
-                + "exec /usr/bin/open \"$bundle\" \"$@\"",
+            "parent=\"$1\"; expected=\"$2\"; bundle=\"$3\"; shift 3; "
+                + "is_parent() { actual_parent=\"$(/bin/ps -ww -p \"$$\" -o ppid= 2>/dev/null)\"; "
+                + "[ \"$actual_parent\" -eq \"$parent\" ] 2>/dev/null || return 1; "
+                + "actual=\"$(/bin/ps -ww -p \"$parent\" -o command= 2>/dev/null)\"; "
+                + "[ \"$actual\" = \"$expected\" ] && return 0; "
+                + "case \"$actual\" in \"$expected \"*) return 0;; *) return 1;; esac; }; "
+                + "attempts=0; while is_parent && [ \"$attempts\" -lt 50 ]; do "
+                + "attempts=$((attempts + 1)); /bin/sleep 0.1; done; "
+                + "if is_parent; then /bin/kill -TERM \"$parent\"; attempts=0; "
+                + "while is_parent && [ \"$attempts\" -lt 20 ]; do "
+                + "attempts=$((attempts + 1)); /bin/sleep 0.1; done; fi; "
+                + "if is_parent; then /bin/kill -KILL \"$parent\"; attempts=0; "
+                + "while is_parent && [ \"$attempts\" -lt 20 ]; do "
+                + "attempts=$((attempts + 1)); /bin/sleep 0.1; done; fi; "
+                + "is_parent && exit 1; exec /usr/bin/open -n -a \"$bundle\" \"$@\"",
             "nexgenvideo-relaunch",
             String(parentPID),
+            executablePath,
             bundlePath,
-        ] + openArguments
+        ] + launchArguments
     }
 
     static func now(
@@ -76,7 +104,7 @@ enum AppRelaunch {
             return
         }
         pendingAction = action
-        pendingOpenArguments = reopenArguments
+        pendingOpenArguments = AppRelaunchSelfTest.reopenArguments(reopenArguments)
         let editStates = NSDocumentController.shared.documents.map(\.isDocumentEdited)
         guard AppRelaunchDocumentPolicy.requiresReview(editStates: editStates) else {
             documentReviewCompleted(true)
@@ -107,6 +135,15 @@ enum AppRelaunch {
             break
         }
 
+        for document in NSDocumentController.shared.documents where document.isDocumentEdited {
+            document.close()
+        }
+        guard !NSDocumentController.shared.hasEditedDocuments else {
+            clearRequest()
+            presentFailure(RelaunchFailure.documentsStillEdited)
+            return
+        }
+
         let bundlePath = Bundle.main.bundlePath
         guard FileManager.default.fileExists(atPath: bundlePath) else {
             clearRequest()
@@ -124,15 +161,28 @@ enum AppRelaunch {
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = reopenerArguments(
             parentPID: ProcessInfo.processInfo.processIdentifier,
+            executablePath: Bundle.main.executableURL?.path
+                ?? ProcessInfo.processInfo.arguments[0],
             bundlePath: bundlePath,
             openArguments: pendingOpenArguments
         )
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
         do {
             try task.run()
+            reopenerTask = task
             pendingAction?()
+            guard UserDefaults.standard.synchronize() else {
+                throw RelaunchFailure.reopenerUnavailable
+            }
             clearRequest()
+            forceExitIfTerminationStalls()
             NSApp.terminate(nil)
         } catch {
+            if task.isRunning {
+                task.terminate()
+            }
+            reopenerTask = nil
             clearRequest()
             Log.app.error("relaunch preparation failed: \(error.localizedDescription)")
             presentFailure(error)
@@ -144,12 +194,28 @@ enum AppRelaunch {
         pendingOpenArguments = []
     }
 
+    private static func forceExitIfTerminationStalls() {
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + gracefulExitTimeout.timeInterval
+        ) {
+            Darwin._exit(EXIT_SUCCESS)
+        }
+    }
+
     private static func presentFailure(_ error: Error) {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "NexGenVideo couldn't restart"
         alert.informativeText = error.localizedDescription
         alert.runModal()
+    }
+}
+
+private extension Duration {
+    var timeInterval: TimeInterval {
+        let parts = components
+        return TimeInterval(parts.seconds)
+            + TimeInterval(parts.attoseconds) / 1_000_000_000_000_000_000
     }
 }
 

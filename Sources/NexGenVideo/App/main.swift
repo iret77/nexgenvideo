@@ -1,8 +1,7 @@
 import AppKit
 
 Log.bootstrap()
-
-AppRelaunchSelfTest.completeIfRequested()
+AppRelaunchSelfTest.recordBootIfRequested()
 
 // CI-only pack load self-test. No-op unless NGV_SELFTEST_PACK is set; when set, loads that pack with
 // the real binary + Frameworks and exits before any UI — reproduces + guards the load-time cast.
@@ -26,6 +25,7 @@ CatalogDiscovery.start()
 // signed `.ngvpack` bundles outside the DMG; incompatible/unsigned ones surface
 // in the picker with a reason instead of loading (never a crash).
 PluginLoader.loadInstalled()
+PluginUpdateCenter.shared.refreshInstalledAttention()
 
 // Stage compatible pack updates without changing any open project's pinned version.
 Task { @MainActor in await PluginAutoUpdate.run() }
