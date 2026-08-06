@@ -8,15 +8,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        if AppRelaunchSelfTest.isRequested {
-            HomeWindowController.shared.showWindow(nil)
-            Task { @MainActor in
-                await Task.yield()
-                _ = AppRelaunchSelfTest.startIfRequested()
-            }
-            return
-        }
-
         // Start Sparkle updater
         _ = Updater.shared
 
@@ -25,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SplashScreenController.shared.showAtLaunch {
             if AppState.shared.activeProject == nil {
                 HomeWindowController.shared.showWindow(nil)
+                Task { @MainActor in
+                    await AppRelaunchSelfTest.runIfRequested()
+                }
             }
         }
         Task.detached(priority: .utility) {

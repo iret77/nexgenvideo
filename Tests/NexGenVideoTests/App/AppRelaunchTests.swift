@@ -33,27 +33,34 @@ struct AppRelaunchTests {
         #expect(duplicateCompletion == .ignored)
     }
 
-    @Test("reopener waits for the exact process exit and passes the bundle path as data")
+    @Test("reopener bounds termination and launches one exact new app instance")
     func reopenerCommandIsRaceFree() {
         let bundlePath = "/Applications/NexGenVideo Test.app"
+        let executablePath = bundlePath + "/Contents/MacOS/NexGenVideo"
         let arguments = AppRelaunch.reopenerArguments(
             parentPID: 1234,
+            executablePath: executablePath,
             bundlePath: bundlePath
         )
 
         #expect(arguments[0] == "-c")
-        #expect(arguments[1].contains("kill -0 \"$parent\""))
-        #expect(!arguments[1].contains("exit 1"))
-        #expect(arguments[1].contains("exec /usr/bin/open \"$bundle\" \"$@\""))
+        #expect(arguments[1].contains("-p \"$$\" -o ppid="))
+        #expect(arguments[1].contains("/bin/ps -ww -p \"$parent\" -o command="))
+        #expect(arguments[1].contains("[ \"$attempts\" -lt 50 ]"))
+        #expect(arguments[1].contains("/bin/kill -TERM \"$parent\""))
+        #expect(arguments[1].contains("/bin/kill -KILL \"$parent\""))
+        #expect(arguments[1].contains("exec /usr/bin/open -n \"$bundle\" \"$@\""))
         #expect(!arguments[1].contains(bundlePath))
         #expect(arguments[3] == "1234")
-        #expect(arguments[4] == bundlePath)
+        #expect(arguments[4] == executablePath)
+        #expect(arguments[5] == bundlePath)
     }
 
     @Test("reopener passes self-test launch arguments as data")
     func reopenerArgumentsRemainSeparated() {
         let arguments = AppRelaunch.reopenerArguments(
             parentPID: 1234,
+            executablePath: "/Applications/NexGenVideo.app/Contents/MacOS/NexGenVideo",
             bundlePath: "/Applications/NexGenVideo.app",
             openArguments: ["--args", "--self-test", "/tmp/state file"]
         )

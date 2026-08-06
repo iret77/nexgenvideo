@@ -115,6 +115,7 @@ final class PluginUpdateCenter {
     func checkAndStageUpdates() async {
         guard !isChecking else { return }
         isChecking = true
+        refreshInstalledAttention()
         defer {
             isChecking = false
             let waiters = checkWaiters

@@ -239,6 +239,7 @@ private struct HomeUpdateNotices: View {
                 }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.small)
+                .accessibilityIdentifier("home.restart-format-packs")
                 .help("Restart NexGenVideo to activate this update.")
             }
         case .updateAvailable:
@@ -447,6 +448,7 @@ private struct HomeSidebar: View {
                 systemImage: "gearshape",
                 action: { SettingsWindowController.shared.show() }
             )
+            .accessibilityIdentifier("home.settings")
             .padding(.horizontal, AppTheme.Spacing.smMd)
             .padding(.bottom, AppTheme.Spacing.md)
         }

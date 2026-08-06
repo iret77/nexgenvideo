@@ -104,7 +104,7 @@ enum PluginInstaller {
         try data.write(to: zipURL)
         let extractDir = work.appendingPathComponent("x", isDirectory: true)
         try FileManager.default.createDirectory(at: extractDir, withIntermediateDirectories: true)
-        try unzip(zipURL, into: extractDir)
+        try await unzip(zipURL, into: extractDir)
 
         guard let unpacked = firstBundle(in: extractDir) else {
             throw InstallError.unpack("no .ngvpack inside the archive")
@@ -206,13 +206,23 @@ enum PluginInstaller {
         }
     }
 
-    private static func unzip(_ zip: URL, into dir: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        process.arguments = ["-x", "-k", zip.path, dir.path]
-        do { try process.run() } catch { throw InstallError.unpack(error.localizedDescription) }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
+    private static func unzip(_ zip: URL, into dir: URL) async throws {
+        let outcome = await Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            process.arguments = ["-x", "-k", zip.path, dir.path]
+            do {
+                try process.run()
+            } catch {
+                return (status: Int32?.none, launchError: error.localizedDescription)
+            }
+            process.waitUntilExit()
+            return (status: Optional(process.terminationStatus), launchError: String?.none)
+        }.value
+        if let launchError = outcome.launchError {
+            throw InstallError.unpack(launchError)
+        }
+        guard outcome.status == 0 else {
             throw InstallError.unpack("archive extraction failed")
         }
     }

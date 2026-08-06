@@ -1,4 +1,25 @@
-# Session handoff — 2026-08-01
+# Session handoff — 2026-08-06
+
+## Current release blocker
+
+App 1.0.5 still leaves Home unable to accept input after **Restart NexGenVideo** is used for an
+installed format-pack update. The user's diagnostics directory contains no report from the current
+incident; its only watchdog files predate 1.0.5. That independently rules out another continuously
+blocked main-thread/layout cycle for this failure and points to the live AppKit termination/relaunch
+state.
+
+The staged 1.0.6 correction keeps the approved Home composition unchanged and replaces the unbounded
+restart handoff with a bounded process-identity-checked relaunch. It persists the requested pack
+version before termination, gives AppKit three seconds to quit cleanly, guarantees that a stuck old
+process cannot survive, and uses `open -n` on the exact app bundle. Pack extraction no longer waits
+for `/usr/bin/ditto` on the main actor.
+
+The release gate now starts the exact app through LaunchServices with the previous and current signed
+musicvideo packs installed side by side. It selects and loads the previous version, waits for the
+real restart notice, presses the visible production button through Accessibility, verifies the new
+process loaded the requested version, then presses Home's Settings control and requires the Settings
+window to appear. The same test runs against the copied app from the exact notarized DMG. This remains
+unverified until the owner authorizes the single macOS CI/release run.
 
 ## Objective
 
@@ -22,10 +43,9 @@ in-the-moment `build now`.
 
 ## Working state
 
-- Branch: `codex/fix-agent-transcript-layout-cycle`
-- The branch starts from PR #294 merged as `daa1477` on `origin/main`.
-- Release candidate source: app `1.0.3`, `CFBundleVersion` `70`. No CI or release has run for it.
-- Musicvideo pack candidate: `0.0.12`, project schema `musicvideo/1.0.0`
+- Branch: `codex/fix-home-restart-modal`
+- App candidate: `1.0.6`, `CFBundleVersion` `73`. No CI or release has run for it.
+- Musicvideo pack candidate: `0.0.14`, project schema `musicvideo/1.0.0`
 - Engine binary contract: current `4`, minimum compatible `2`
 - The commit containing this handoff is the one consolidated correction; read its live CI and release
   state from GitHub rather than inferring it from this document.
@@ -168,7 +188,9 @@ The locked source documents are:
 
 - `git diff --check`
 - `python3 scripts/lint_app_theme.py`
-- `python3 scripts/release_preflight.py 1.0.2 <published-catalog>`
+- `python3 scripts/release_preflight.py 1.0.6 <published-catalog>` against the live stable GitHub
+  catalog
+- `bash -n` and warning-level `shellcheck` for both relaunch gate scripts
 - JSON/plist/YAML metadata parsing and the standalone `AGENTS.md`/`CLAUDE.md` parity check
 - `ci-lint` with zero failures and zero warnings after pinning Linux images and adding the missing PR
   concurrency guard.
@@ -189,6 +211,12 @@ The locked source documents are:
   sampled nested `ZStack` paths and the scroll-edge layer are absent from the observed scroll region.
 - The final independent repository gate passed both its text conformance review and its degraded
   visual review against the normative UI specs, rendered mockups, and Swift UI diff.
+- Claude Fable 5 at XHigh reviewed the final restart lifecycle, pack transition, production Home
+  accessibility actions, exact-DMG gate and CI ordering. Its verdict is `PASS`; the one actionable
+  relative-path warning was corrected by canonicalizing all gate inputs before launch.
+- The host `spec-check` wrapper could not start because its external Codex route is denied by the
+  managed Guardian policy. The Fable review above is the independent spec-review fallback; the
+  denial was not bypassed.
 - No Swift build or test has been run locally.
 
 ## Release procedure for this batch
