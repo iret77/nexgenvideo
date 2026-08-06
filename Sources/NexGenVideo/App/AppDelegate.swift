@@ -64,6 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        if AppRelaunchSelfTest.isRequested {
+            AppRelaunchSelfTest.failUnexpectedOpenFiles(filenames)
+        }
         let urls = filenames.map(URL.init(fileURLWithPath:))
         Task {
             let reply = await AppState.shared.openProjectsFromSystem(urls)

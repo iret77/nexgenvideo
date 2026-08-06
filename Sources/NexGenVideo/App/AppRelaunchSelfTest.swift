@@ -5,6 +5,11 @@ import Darwin
 enum AppRelaunchSelfTest {
     private static let startArgument = "--ngv-relaunch-selftest-start"
     private static let completionArgument = "--ngv-relaunch-selftest-complete"
+    private static let stateArgument = "--ngv-relaunch-state="
+    private static let bundleArgument = "--ngv-relaunch-bundle="
+    private static let packArgument = "--ngv-relaunch-pack="
+    private static let oldVersionArgument = "--ngv-relaunch-old-version="
+    private static let newVersionArgument = "--ngv-relaunch-new-version="
 
     private struct StartConfiguration {
         let stateURL: URL
@@ -29,10 +34,10 @@ enum AppRelaunchSelfTest {
         guard requested.isEmpty, let config = startConfiguration else { return requested }
         return [
             completionArgument,
-            config.stateURL.path,
-            config.expectedBundle,
-            config.packID,
-            config.newVersion,
+            stateArgument + config.stateURL.path,
+            bundleArgument + config.expectedBundle,
+            packArgument + config.packID,
+            newVersionArgument + config.newVersion,
         ]
     }
 
@@ -48,6 +53,13 @@ enum AppRelaunchSelfTest {
             "checkpoint:\(name) \(ProcessInfo.processInfo.processIdentifier)",
             to: config.stateURL
         )
+    }
+
+    static func failUnexpectedOpenFiles(_ filenames: [String]) -> Never {
+        let names = filenames.map { URL(fileURLWithPath: $0).lastPathComponent }
+            .joined(separator: ", ")
+        let stateURL = startConfiguration?.stateURL ?? completionConfiguration?.stateURL
+        fail("received an unexpected Open Files event for: \(names)", stateURL: stateURL)
     }
 
     static func runIfRequested() async {
@@ -117,27 +129,40 @@ enum AppRelaunchSelfTest {
 
     private static var startConfiguration: StartConfiguration? {
         let arguments = ProcessInfo.processInfo.arguments
-        guard let marker = arguments.firstIndex(of: startArgument),
-              arguments.indices.contains(marker + 5) else { return nil }
+        guard arguments.contains(startArgument),
+              let statePath = value(for: stateArgument, in: arguments),
+              let expectedBundle = value(for: bundleArgument, in: arguments),
+              let packID = value(for: packArgument, in: arguments),
+              let oldVersion = value(for: oldVersionArgument, in: arguments),
+              let newVersion = value(for: newVersionArgument, in: arguments) else { return nil }
         return StartConfiguration(
-            stateURL: URL(fileURLWithPath: arguments[marker + 1]),
-            expectedBundle: arguments[marker + 2],
-            packID: arguments[marker + 3],
-            oldVersion: arguments[marker + 4],
-            newVersion: arguments[marker + 5]
+            stateURL: URL(fileURLWithPath: statePath),
+            expectedBundle: expectedBundle,
+            packID: packID,
+            oldVersion: oldVersion,
+            newVersion: newVersion
         )
     }
 
     private static var completionConfiguration: CompletionConfiguration? {
         let arguments = ProcessInfo.processInfo.arguments
-        guard let marker = arguments.firstIndex(of: completionArgument),
-              arguments.indices.contains(marker + 4) else { return nil }
+        guard arguments.contains(completionArgument),
+              let statePath = value(for: stateArgument, in: arguments),
+              let expectedBundle = value(for: bundleArgument, in: arguments),
+              let packID = value(for: packArgument, in: arguments),
+              let newVersion = value(for: newVersionArgument, in: arguments) else { return nil }
         return CompletionConfiguration(
-            stateURL: URL(fileURLWithPath: arguments[marker + 1]),
-            expectedBundle: arguments[marker + 2],
-            packID: arguments[marker + 3],
-            newVersion: arguments[marker + 4]
+            stateURL: URL(fileURLWithPath: statePath),
+            expectedBundle: expectedBundle,
+            packID: packID,
+            newVersion: newVersion
         )
+    }
+
+    private static func value(for prefix: String, in arguments: [String]) -> String? {
+        guard let argument = arguments.first(where: { $0.hasPrefix(prefix) }) else { return nil }
+        let value = argument.dropFirst(prefix.count)
+        return value.isEmpty ? nil : String(value)
     }
 
     private static func validateBundle(_ expected: String, stateURL: URL) {

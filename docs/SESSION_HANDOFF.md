@@ -3,25 +3,27 @@
 ## Current release blocker
 
 App 1.0.5 leaves Home unable to accept input after **Restart NexGenVideo** is used for an installed
-format-pack update. macOS CI run `31095830027` independently proved the cause: the reopener passed
-the app bundle to `open` as a file operand, so the new process received its own bundle through
-`application(_:openFiles:)` and blocked in a hidden modal project-open error.
+format-pack update. macOS CI runs `31095830027` and `31097323154` proved that the release test had
+not yet reached the production restart: its raw path arguments were delivered through
+`application(_:openFiles:)` and blocked in a hidden modal project-open error before the queued test
+could press the restart button.
 
 The staged 1.0.6 correction keeps the approved Home composition unchanged and replaces the unbounded
 restart handoff with a bounded process-identity-checked relaunch. It persists the requested pack
 version before termination, gives AppKit three seconds to quit cleanly, guarantees that a stuck old
 process cannot survive, and uses `open -n -a` on the exact app bundle. Pack extraction no longer
-waits for `/usr/bin/ditto` on the main actor. LaunchServices now starts the exact app without sending
-its bundle back as a document, and the reopener centrally inserts `--args` before any application
-arguments.
+waits for `/usr/bin/ditto` on the main actor. The reopener centrally inserts `--args` before any
+application arguments. The test harness encodes every value as an option-shaped `--key=value`
+argument so AppKit cannot reinterpret paths as documents, and any Open Files event during the test
+is now an immediate explicit failure.
 
 The release gate now starts the exact app through LaunchServices with the previous and current signed
 musicvideo packs installed side by side. It selects and loads the previous version, waits for the
 real restart notice, presses the visible production button through Accessibility, verifies the new
 process loaded the requested version, then presses Home's Settings control and requires the Settings
 window to appear. The same test runs against the copied app from the exact notarized DMG. The
-diagnostic run proved the hidden-modal cause; the corrected `open -a` path still requires its final
-macOS CI/release run.
+two diagnostic runs proved the test-harness modal; this change removes it, pending the final macOS
+CI run. The actual production restart remains unverified until that run reaches the button.
 
 ## Objective
 

@@ -148,11 +148,11 @@ defaults write de.h5ventures.nexgenvideo lastSeenVersion "$app_version"
   --stderr "$stderr_log" \
   --args \
   --ngv-relaunch-selftest-start \
-  "$state_file" \
-  "$app_path" \
-  "$pack_id" \
-  "$old_version" \
-  "$new_version"
+  "--ngv-relaunch-state=$state_file" \
+  "--ngv-relaunch-bundle=$app_path" \
+  "--ngv-relaunch-pack=$pack_id" \
+  "--ngv-relaunch-old-version=$old_version" \
+  "--ngv-relaunch-new-version=$new_version"
 
 attempts=0
 while [ "$attempts" -lt 900 ]; do
