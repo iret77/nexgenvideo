@@ -208,6 +208,7 @@ enum PluginInstaller {
 
     private static func unzip(_ zip: URL, into dir: URL) async throws {
         let outcome = await Task.detached(priority: .utility) {
+            () -> (status: Int32?, launchError: String?) in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
             process.arguments = ["-x", "-k", zip.path, dir.path]
