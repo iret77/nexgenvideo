@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 @MainActor
 enum AppRelaunchSelfTest {
@@ -38,7 +39,16 @@ enum AppRelaunchSelfTest {
 
     static func recordBootIfRequested() {
         guard let config = startConfiguration else { return }
+        Darwin.signal(SIGABRT, SIG_DFL)
         write("booted \(ProcessInfo.processInfo.processIdentifier)", to: config.stateURL)
+    }
+
+    static func checkpoint(_ name: String) {
+        guard let config = startConfiguration else { return }
+        write(
+            "checkpoint:\(name) \(ProcessInfo.processInfo.processIdentifier)",
+            to: config.stateURL
+        )
     }
 
     static func runIfRequested() async {

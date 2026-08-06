@@ -3,20 +3,28 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainThreadHangWatchdog.shared.start()
+        AppRelaunchSelfTest.checkpoint("delegate-started")
 
         // Activate the app (required when launched from CLI, not a .app bundle)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        AppRelaunchSelfTest.checkpoint("app-activated")
 
         // Start Sparkle updater
         _ = Updater.shared
+        AppRelaunchSelfTest.checkpoint("updater-ready")
 
         if AppRelaunchSelfTest.isRequested {
-            HomeWindowController.shared.showWindow(nil)
+            AppRelaunchSelfTest.checkpoint("home-controller-requested")
+            let home = HomeWindowController.shared
+            AppRelaunchSelfTest.checkpoint("home-controller-ready")
+            home.showWindow(nil)
+            AppRelaunchSelfTest.checkpoint("home-shown")
             Task { @MainActor in
                 await Task.yield()
                 await AppRelaunchSelfTest.runIfRequested()
             }
+            AppRelaunchSelfTest.checkpoint("selftest-scheduled")
         } else {
             // Splash first (Photoshop pattern), then reveal Home — unless a project already opened
             // (e.g. a document launch), in which case the editor owns the screen.

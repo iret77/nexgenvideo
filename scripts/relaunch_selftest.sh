@@ -68,7 +68,13 @@ dump_runtime_evidence() {
     -name 'NexGenVideo*.ips' -newer "$marker_file" -print -quit 2>/dev/null || true)"
   if [ -n "$crash_report" ]; then
     echo "--- fresh crash report: $crash_report ---" >&2
-    sed -n '1,240p' "$crash_report" >&2
+    sed -n '1,1000p' "$crash_report" >&2
+  fi
+
+  crash_log="$diagnostics/crash.log"
+  if [ -f "$crash_log" ] && [ "$crash_log" -nt "$marker_file" ]; then
+    echo "--- fresh app crash log: $crash_log ---" >&2
+    tail -n 240 "$crash_log" >&2
   fi
 
   hang_report="$(find "$diagnostics" -type f -newer "$marker_file" \
@@ -86,7 +92,7 @@ cleanup() {
   set +e
   state="$(cat "$state_file" 2>/dev/null || true)"
   case "$state" in
-    booted\ *|launched\ *|pressing\ *|reopened\ *) test_pid="${state##* }" ;;
+    booted\ *|checkpoint:*\ *|launched\ *|pressing\ *|reopened\ *) test_pid="${state##* }" ;;
   esac
   if [ -n "$test_pid" ] && kill -0 "$test_pid" 2>/dev/null; then
     command_line="$(ps -ww -p "$test_pid" -o command= 2>/dev/null || true)"
@@ -170,6 +176,37 @@ while [ "$attempts" -lt 900 ]; do
       exit 1
       ;;
   esac
+  if [ "$attempts" -eq 150 ]; then
+    latest_state="$(cat "$state_file" 2>/dev/null || true)"
+    case "$latest_state" in
+      booted\ *|checkpoint:*\ *)
+        state="$latest_state"
+        stalled_pid="${latest_state##* }"
+        command_line="$(ps -ww -p "$stalled_pid" -o command= 2>/dev/null || true)"
+        case "$command_line" in
+          "$binary"|"$binary "*) kill -ABRT "$stalled_pid" 2>/dev/null || true ;;
+        esac
+        crash_wait=0
+        while kill -0 "$stalled_pid" 2>/dev/null && [ "$crash_wait" -lt 50 ]; do
+          crash_wait=$((crash_wait + 1))
+          /bin/sleep 0.1
+        done
+        report_wait=0
+        while [ "$report_wait" -lt 300 ]; do
+          crash_report="$(find "$HOME/Library/Logs/DiagnosticReports" -type f \
+            -name 'NexGenVideo*.ips' -newer "$marker_file" -print -quit \
+            2>/dev/null || true)"
+          [ -z "$crash_report" ] || break
+          report_wait=$((report_wait + 1))
+          /bin/sleep 0.1
+        done
+        dump_app_output
+        dump_runtime_evidence
+        echo "relaunch self-test stalled before its first main-queue turn (state=$state)" >&2
+        exit 1
+        ;;
+    esac
+  fi
   attempts=$((attempts + 1))
   /bin/sleep 0.1
 done

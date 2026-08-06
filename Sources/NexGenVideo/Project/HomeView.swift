@@ -522,8 +522,13 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
     static let shared = HomeWindowController()
 
     private init() {
-        let hostingController = NSHostingController(rootView: HomeView().tint(AppTheme.Accent.primary))
+        AppRelaunchSelfTest.checkpoint("home-init-started")
+        let rootView = HomeView().tint(AppTheme.Accent.primary)
+        AppRelaunchSelfTest.checkpoint("home-root-ready")
+        let hostingController = NSHostingController(rootView: rootView)
+        AppRelaunchSelfTest.checkpoint("home-hosting-ready")
         let window = NSWindow(contentViewController: hostingController)
+        AppRelaunchSelfTest.checkpoint("home-window-ready")
         window.title = "NexGenVideo"
         // v4: bump the key so the taller screen-fraction default replaces frames saved by earlier,
         // too-short builds. A user-resized frame is still honored on later launches.
@@ -553,6 +558,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
 
         super.init(window: window)
         window.delegate = self
+        AppRelaunchSelfTest.checkpoint("home-init-finished")
     }
 
     /// A fraction of the visible screen (60% × 82%), capped at `homeDefault` and floored at `homeMin`,
