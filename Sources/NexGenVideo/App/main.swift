@@ -25,6 +25,7 @@ CatalogDiscovery.start()
 // signed `.ngvpack` bundles outside the DMG; incompatible/unsigned ones surface
 // in the picker with a reason instead of loading (never a crash).
 PluginLoader.loadInstalled()
+PluginUpdateCenter.shared.refreshInstalledAttention()
 
 // Stage compatible pack updates without changing any open project's pinned version.
 Task { @MainActor in await PluginAutoUpdate.run() }
