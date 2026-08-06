@@ -3,6 +3,9 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainThreadHangWatchdog.shared.start()
+        Task { @MainActor in
+            await AppRelaunchSelfTest.runIfRequested()
+        }
 
         // Activate the app (required when launched from CLI, not a .app bundle)
         NSApp.setActivationPolicy(.regular)
@@ -16,9 +19,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SplashScreenController.shared.showAtLaunch {
             if AppState.shared.activeProject == nil {
                 HomeWindowController.shared.showWindow(nil)
-                Task { @MainActor in
-                    await AppRelaunchSelfTest.runIfRequested()
-                }
             }
         }
         Task.detached(priority: .utility) {

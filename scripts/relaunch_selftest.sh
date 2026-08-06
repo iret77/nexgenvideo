@@ -29,6 +29,8 @@ new_version="$(plist_value "$new_pack" CFBundleShortVersionString)"
 state_dir="$(mktemp -d)"
 state_file="$state_dir/state"
 marker_file="$state_dir/started"
+stdout_log="$state_dir/stdout.log"
+stderr_log="$state_dir/stderr.log"
 defaults_backup="$state_dir/defaults.plist"
 pack_root="$HOME/Library/Application Support/NexGenVideo/Plugins/$pack_id"
 pack_backup="$state_dir/pack-backup"
@@ -44,13 +46,47 @@ if pgrep -x NexGenVideo >/dev/null 2>&1; then
   exit 2
 fi
 
+dump_app_output() {
+  for log_file in "$stdout_log" "$stderr_log"; do
+    if [ -s "$log_file" ]; then
+      echo "--- $log_file ---" >&2
+      sed -n '1,240p' "$log_file" >&2
+    fi
+  done
+}
+
+dump_runtime_evidence() {
+  pids="$(pgrep -x NexGenVideo 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    echo "--- live NexGenVideo processes ---" >&2
+    for pid in $pids; do
+      ps -ww -p "$pid" -o pid=,stat=,etime=,command= >&2 || true
+    done
+  fi
+
+  crash_report="$(find "$HOME/Library/Logs/DiagnosticReports" -type f \
+    -name 'NexGenVideo*.ips' -newer "$marker_file" -print -quit 2>/dev/null || true)"
+  if [ -n "$crash_report" ]; then
+    echo "--- fresh crash report: $crash_report ---" >&2
+    sed -n '1,240p' "$crash_report" >&2
+  fi
+
+  hang_report="$(find "$diagnostics" -type f -newer "$marker_file" \
+    \( -name '*main-thread-hang.json' -o -name '*main-thread-hang.sample.txt' \) \
+    -print -quit 2>/dev/null || true)"
+  if [ -n "$hang_report" ]; then
+    echo "--- fresh hang report: $hang_report ---" >&2
+    sed -n '1,240p' "$hang_report" >&2
+  fi
+}
+
 cleanup() {
   status=$?
   trap - EXIT
   set +e
   state="$(cat "$state_file" 2>/dev/null || true)"
   case "$state" in
-    launched\ *|pressing\ *|reopened\ *) test_pid="${state##* }" ;;
+    booted\ *|launched\ *|pressing\ *|reopened\ *) test_pid="${state##* }" ;;
   esac
   if [ -n "$test_pid" ] && kill -0 "$test_pid" 2>/dev/null; then
     command_line="$(ps -ww -p "$test_pid" -o command= 2>/dev/null || true)"
@@ -58,6 +94,13 @@ cleanup() {
       "$binary"|"$binary "*) kill "$test_pid" 2>/dev/null || true ;;
     esac
   fi
+  for candidate_pid in $(pgrep -x NexGenVideo 2>/dev/null || true); do
+    [ "$candidate_pid" = "$test_pid" ] && continue
+    command_line="$(ps -ww -p "$candidate_pid" -o command= 2>/dev/null || true)"
+    case "$command_line" in
+      "$binary"|"$binary "*) kill "$candidate_pid" 2>/dev/null || true ;;
+    esac
+  done
   if [ "$test_pack_root_installed" -eq 1 ]; then
     rm -rf "$pack_root"
   fi
@@ -94,7 +137,10 @@ defaults write de.h5ventures.nexgenvideo NGVSelectedPackVersions -dict "$pack_id
 app_version="$(plist_value "$app_path" CFBundleShortVersionString)"
 defaults write de.h5ventures.nexgenvideo lastSeenVersion "$app_version"
 
-/usr/bin/open -n "$app_path" --args \
+/usr/bin/open -n "$app_path" \
+  --stdout "$stdout_log" \
+  --stderr "$stderr_log" \
+  --args \
   --ngv-relaunch-selftest-start \
   "$state_file" \
   "$app_path" \
@@ -118,6 +164,8 @@ while [ "$attempts" -lt 900 ]; do
       exit 0
       ;;
     failed:*)
+      dump_app_output
+      dump_runtime_evidence
       echo "relaunch self-test failed: ${state#failed: }" >&2
       exit 1
       ;;
@@ -126,5 +174,7 @@ while [ "$attempts" -lt 900 ]; do
   /bin/sleep 0.1
 done
 
+dump_app_output
+dump_runtime_evidence
 echo "relaunch self-test timed out (state=$(cat "$state_file" 2>/dev/null || true))" >&2
 exit 1

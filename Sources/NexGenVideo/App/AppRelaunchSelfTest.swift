@@ -32,6 +32,11 @@ enum AppRelaunchSelfTest {
         ]
     }
 
+    static func recordBootIfRequested() {
+        guard let config = startConfiguration else { return }
+        write("booted \(ProcessInfo.processInfo.processIdentifier)", to: config.stateURL)
+    }
+
     static func runIfRequested() async {
         if let config = completionConfiguration {
             await complete(config)
@@ -182,7 +187,7 @@ enum AppRelaunchSelfTest {
         do {
             try Data(value.utf8).write(to: url, options: .atomic)
         } catch {
-            fail("could not write state: \(error.localizedDescription)")
+            fail("could not write state: \(error.localizedDescription)", stateURL: url)
         }
     }
 
