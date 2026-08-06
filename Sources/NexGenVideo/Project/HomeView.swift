@@ -231,6 +231,13 @@ private struct HomeUpdateNotices: View {
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.small)
                 .accessibilityIdentifier("home.restart-format-packs")
+                .background {
+                    if AppRelaunchSelfTest.isRequested {
+                        AppRelaunchClickProbe(identifier: "home.restart-format-packs")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .help("Restart NexGenVideo to activate this update.")
             }
         case .updateAvailable:
@@ -508,6 +515,13 @@ private struct HomeSidebar: View {
                 action: { SettingsWindowController.shared.show() }
             )
             .accessibilityIdentifier("home.settings")
+            .background {
+                if AppRelaunchSelfTest.isRequested {
+                    AppRelaunchClickProbe(identifier: "home.settings")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                }
+            }
             .padding(.horizontal, AppTheme.Spacing.smMd)
             .padding(.bottom, AppTheme.Spacing.md)
         }

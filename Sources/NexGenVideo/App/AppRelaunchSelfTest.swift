@@ -1,5 +1,24 @@
 import AppKit
 import Darwin
+import SwiftUI
+
+struct AppRelaunchClickProbe: NSViewRepresentable {
+    let identifier: String
+
+    func makeNSView(context: Context) -> AppRelaunchClickProbeView {
+        let view = AppRelaunchClickProbeView()
+        view.identifier = NSUserInterfaceItemIdentifier(identifier)
+        return view
+    }
+
+    func updateNSView(_ nsView: AppRelaunchClickProbeView, context: Context) {
+        nsView.identifier = NSUserInterfaceItemIdentifier(identifier)
+    }
+}
+
+final class AppRelaunchClickProbeView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
 
 @MainActor
 enum AppRelaunchSelfTest {
@@ -81,6 +100,10 @@ enum AppRelaunchSelfTest {
                 && PluginLoader.liveBinding(id: config.packID)?.version == config.oldVersion
                 && PluginUpdateCenter.shared.restartTarget(for: config.packID)?.version
                     == config.newVersion
+                && isClickProbeReady(
+                    identifier: "home.restart-format-packs",
+                    in: HomeWindowController.shared.window
+                )
         }
         guard ready else {
             fail("the real two-pack restart state never became actionable", stateURL: config.stateURL)
@@ -108,6 +131,10 @@ enum AppRelaunchSelfTest {
                 && NSApp.modalWindow == nil
                 && PluginLoader.liveBinding(id: config.packID)?.version == config.newVersion
                 && PluginUpdateCenter.shared.restartTarget(for: config.packID) == nil
+                && isClickProbeReady(
+                    identifier: "home.settings",
+                    in: HomeWindowController.shared.window
+                )
         }
         guard ready else {
             fail("the requested pack did not become live in an interactive Home", stateURL: config.stateURL)
@@ -202,22 +229,25 @@ enum AppRelaunchSelfTest {
         guard window.isKeyWindow else { return "the Home window was not key" }
         guard !window.ignoresMouseEvents else { return "the Home window ignored mouse events" }
         guard let root = window.contentView,
-              let element = findAccessibilityElement(
-                  in: root,
-                  identifier: identifier,
-                  depth: 0
-              ) else { return "the control was absent from the accessibility tree" }
+              let probe = findClickProbe(in: root, identifier: identifier) else {
+            return "the control geometry probe was absent"
+        }
+        guard probe.window === window else { return "the control probe belonged to another window" }
+        guard !probe.isHiddenOrHasHiddenAncestor else { return "the control probe was hidden" }
 
-        let frame = element.accessibilityFrame()
+        let frame = probe.bounds
         guard frame.width.isFinite, frame.height.isFinite,
               frame.width > 0, frame.height > 0 else {
             return "the control had no finite clickable frame"
         }
-        let screenPoint = NSPoint(x: frame.midX, y: frame.midY)
-        guard window.frame.contains(screenPoint) else {
+        let location = probe.convert(
+            NSPoint(x: frame.midX, y: frame.midY),
+            to: nil
+        )
+        let contentPoint = root.convert(location, from: nil)
+        guard root.bounds.contains(contentPoint) else {
             return "the control frame was outside the Home window"
         }
-        let location = window.convertPoint(fromScreen: screenPoint)
         let timestamp = ProcessInfo.processInfo.systemUptime
         guard let down = NSEvent.mouseEvent(
             with: .leftMouseDown,
@@ -247,22 +277,27 @@ enum AppRelaunchSelfTest {
         return nil
     }
 
-    private static func findAccessibilityElement(
-        in element: Any,
-        identifier: String,
-        depth: Int
-    ) -> (any NSAccessibilityProtocol)? {
-        guard depth < 32,
-              let accessible = element as? any NSAccessibilityProtocol else { return nil }
-        if accessible.accessibilityIdentifier() == identifier { return accessible }
-        for child in accessible.accessibilityChildren() ?? [] {
-            if let match = findAccessibilityElement(
-                in: child,
-                identifier: identifier,
-                depth: depth + 1
-            ) {
-                return match
-            }
+    private static func isClickProbeReady(identifier: String, in window: NSWindow?) -> Bool {
+        guard let window,
+              window.isVisible,
+              window.isKeyWindow,
+              !window.ignoresMouseEvents,
+              let root = window.contentView,
+              let probe = findClickProbe(in: root, identifier: identifier),
+              probe.window === window,
+              !probe.isHiddenOrHasHiddenAncestor else { return false }
+        let frame = probe.bounds
+        guard frame.width.isFinite, frame.height.isFinite,
+              frame.width > 0, frame.height > 0 else { return false }
+        let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
+        return root.bounds.contains(root.convert(location, from: nil))
+    }
+
+    private static func findClickProbe(in view: NSView, identifier: String) -> NSView? {
+        if view is AppRelaunchClickProbeView,
+           view.identifier?.rawValue == identifier { return view }
+        for child in view.subviews {
+            if let match = findClickProbe(in: child, identifier: identifier) { return match }
         }
         return nil
     }
