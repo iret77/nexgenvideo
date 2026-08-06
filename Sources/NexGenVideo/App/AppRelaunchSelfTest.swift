@@ -76,6 +76,7 @@ enum AppRelaunchSelfTest {
 
         let ready = await waitUntil(timeout: .seconds(30)) {
             HomeWindowController.shared.window?.isVisible == true
+                && HomeWindowController.shared.window?.isKeyWindow == true
                 && NSApp.modalWindow == nil
                 && PluginLoader.liveBinding(id: config.packID)?.version == config.oldVersion
                 && PluginUpdateCenter.shared.restartTarget(for: config.packID)?.version
@@ -86,11 +87,11 @@ enum AppRelaunchSelfTest {
         }
 
         write("pressing \(ProcessInfo.processInfo.processIdentifier)", to: config.stateURL)
-        guard pressAccessibilityElement(
+        if let failure = postMouseClick(
             identifier: "home.restart-format-packs",
             in: HomeWindowController.shared.window
-        ) else {
-            fail("the visible restart button rejected its accessibility press", stateURL: config.stateURL)
+        ) {
+            fail("the visible restart button was not clickable: \(failure)", stateURL: config.stateURL)
         }
     }
 
@@ -103,6 +104,7 @@ enum AppRelaunchSelfTest {
 
         let ready = await waitUntil(timeout: .seconds(30)) {
             HomeWindowController.shared.window?.isVisible == true
+                && HomeWindowController.shared.window?.isKeyWindow == true
                 && NSApp.modalWindow == nil
                 && PluginLoader.liveBinding(id: config.packID)?.version == config.newVersion
                 && PluginUpdateCenter.shared.restartTarget(for: config.packID) == nil
@@ -110,11 +112,14 @@ enum AppRelaunchSelfTest {
         guard ready else {
             fail("the requested pack did not become live in an interactive Home", stateURL: config.stateURL)
         }
-        guard pressAccessibilityElement(
+        guard SettingsWindowController.shared.window?.isVisible != true else {
+            fail("Settings was already visible before the Home control click", stateURL: config.stateURL)
+        }
+        if let failure = postMouseClick(
             identifier: "home.settings",
             in: HomeWindowController.shared.window
-        ) else {
-            fail("Home rejected a control press after relaunch", stateURL: config.stateURL)
+        ) {
+            fail("Home Settings was not clickable after relaunch: \(failure)", stateURL: config.stateURL)
         }
         guard await waitUntil(timeout: .seconds(5), {
             SettingsWindowController.shared.window?.isVisible == true
@@ -188,17 +193,58 @@ enum AppRelaunchSelfTest {
         return predicate()
     }
 
-    private static func pressAccessibilityElement(
+    private static func postMouseClick(
         identifier: String,
         in window: NSWindow?
-    ) -> Bool {
-        guard let root = window?.contentView,
+    ) -> String? {
+        guard let window else { return "the Home window was unavailable" }
+        guard window.isVisible else { return "the Home window was not visible" }
+        guard window.isKeyWindow else { return "the Home window was not key" }
+        guard !window.ignoresMouseEvents else { return "the Home window ignored mouse events" }
+        guard let root = window.contentView,
               let element = findAccessibilityElement(
                   in: root,
                   identifier: identifier,
                   depth: 0
-              ) else { return false }
-        return element.accessibilityPerformPress()
+              ) else { return "the control was absent from the accessibility tree" }
+
+        let frame = element.accessibilityFrame()
+        guard frame.width.isFinite, frame.height.isFinite,
+              frame.width > 0, frame.height > 0 else {
+            return "the control had no finite clickable frame"
+        }
+        let screenPoint = NSPoint(x: frame.midX, y: frame.midY)
+        guard window.frame.contains(screenPoint) else {
+            return "the control frame was outside the Home window"
+        }
+        let location = window.convertPoint(fromScreen: screenPoint)
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        guard let down = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: location,
+            modifierFlags: [],
+            timestamp: timestamp,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ), let up = NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: location,
+            modifierFlags: [],
+            timestamp: timestamp + 0.001,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 0
+        ) else {
+            return "AppKit could not create mouse events"
+        }
+        NSApp.postEvent(down, atStart: false)
+        NSApp.postEvent(up, atStart: false)
+        return nil
     }
 
     private static func findAccessibilityElement(

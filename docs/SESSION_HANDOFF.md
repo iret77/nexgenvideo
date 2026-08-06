@@ -19,11 +19,12 @@ is now an immediate explicit failure.
 
 The release gate now starts the exact app through LaunchServices with the previous and current signed
 musicvideo packs installed side by side. It selects and loads the previous version, waits for the
-real restart notice, presses the visible production button through Accessibility, verifies the new
-process loaded the requested version, then presses Home's Settings control and requires the Settings
-window to appear. The same test runs against the copied app from the exact notarized DMG. The
-two diagnostic runs proved the test-harness modal; this change removes it, pending the final macOS
-CI run. The actual production restart remains unverified until that run reaches the button.
+real restart notice, posts a native AppKit mouse-down/up pair at the visible production button's
+accessibility frame, verifies the new process loaded the requested version, then clicks Home's
+Settings control by the same user-input path and requires the Settings window to appear. The same
+test runs against the copied app from the exact notarized DMG. The raw-path Open Files regression is
+fixed; the actual production restart remains unverified until the final macOS CI run passes both
+clicks.
 
 ## Objective
 
