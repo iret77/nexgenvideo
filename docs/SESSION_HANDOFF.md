@@ -1,30 +1,30 @@
-# Session handoff — 2026-08-06
+# Session handoff — 2026-08-07
 
 ## Current release blocker
 
-App 1.0.5 leaves Home unable to accept input after **Restart NexGenVideo** is used for an installed
-format-pack update. macOS CI runs `31095830027` and `31097323154` proved that the release test had
-not yet reached the production restart: its raw path arguments were delivered through
-`application(_:openFiles:)` and blocked in a hidden modal project-open error before the queued test
-could press the restart button.
+App 1.0.6 accepts the **What's New** Continue click but leaves Home unable to accept input until the
+user activates another app and returns to NexGenVideo. The full-window SwiftUI overlay was removed
+inside an animated opacity transition, so a visually gone transition layer could remain in Home's
+input hierarchy. An activation round trip restoring input without changing app state is consistent
+with that stale transition-layer path.
 
-The staged 1.0.6 correction keeps the approved Home composition unchanged and replaces the unbounded
-restart handoff with a bounded process-identity-checked relaunch. It persists the requested pack
-version before termination, gives AppKit three seconds to quit cleanly, guarantees that a stuck old
-process cannot survive, and uses `open -n -a` on the exact app bundle. Pack extraction no longer
-waits for `/usr/bin/ditto` on the main actor. The reopener centrally inserts `--args` before any
-application arguments. The test harness encodes every value as an option-shaped `--key=value`
-argument so AppKit cannot reinterpret paths as documents, and any Open Files event during the test
-is now an immediate explicit failure.
+The staged 1.0.7 correction removes the blocking overlay synchronously in an animation-disabled
+transaction. The release gate now forces the actual current-version What's New state, clicks its real
+Continue button through AppKit mouse events, requires the overlay's native geometry probe to leave the
+Home hierarchy, and then clicks the real Restart NexGenVideo control without deactivating or
+reactivating the app. The post-relaunch Settings click remains the final proof that Home still accepts
+input. The same flow runs against the copied app from the exact notarized DMG. This correction remains
+unverified until the macOS CI gate passes the complete click sequence.
 
-The release gate now starts the exact app through LaunchServices with the previous and current signed
-musicvideo packs installed side by side. It selects and loads the previous version, waits for the
-real restart notice and its test-only non-hit-testing native geometry probe, then posts an AppKit
-mouse-down/up pair at the visible production button. It verifies the new process loaded the requested
-version, clicks Home's Settings control by the same user-input path, and requires the Settings window
-to appear. The same test runs against the copied app from the exact notarized DMG. The raw-path Open
-Files regression is fixed; the actual production restart remains unverified until the final macOS CI
-run passes both clicks.
+App 1.0.6 also remained vulnerable to the transcript layout cycle during active repeatable Location
+intake. The 2026-08-07 process sample records the same hot path through
+`SecondaryLayerGeometryQuery → explicitAlignment → ScrollViewLayoutComputer → LazyVStackLayout`,
+while the third Location card was absent after the second attachment. The staged correction moves the
+entire panel shell and focus ring out of the SwiftUI transcript hierarchy, removes the remaining
+transcript ancestor effects, keeps the current card mounted while reference files copy off the main
+thread, and resolves every Attach/Skip/Done/close transition explicitly and atomically. A repeated
+identity name can no longer be mistaken for Done, and a reconciliation failure restores the same card
+with its error instead of exposing the composer.
 
 ## Objective
 
@@ -48,9 +48,9 @@ in-the-moment `build now`.
 
 ## Working state
 
-- Branch: `codex/fix-home-restart-failsafe`
-- App candidate: `1.0.6`, `CFBundleVersion` `73`. Diagnostic CI ran; release is not published.
-- Musicvideo pack candidate: `0.0.14`, project schema `musicvideo/1.0.0`
+- Branch: `codex/fix-whats-new-hit-testing`
+- App candidate: `1.0.7`, `CFBundleVersion` `74`. No CI has run; release is not published.
+- Musicvideo pack candidate: `0.0.15`, project schema `musicvideo/1.0.0`
 - Engine binary contract: current `4`, minimum compatible `2`
 - The commit containing this handoff is the one consolidated correction; read its live CI and release
   state from GitHub rather than inferring it from this document.
@@ -177,6 +177,15 @@ The locked source documents are:
   After eight continuously observed seconds it writes state history and requests a bounded
   three-second macOS process sample under `~/Library/Logs/NexGenVideo`; Help → Reveal Diagnostics
   opens that folder even when process sampling is unavailable.
+- The 1.0.6 sample proves a remaining outer panel focus overlay/background participated in the same
+  secondary-layer cycle during active Location intake. Panel chrome is now AppKit-owned, and source
+  gates cover the complete transcript ancestor chain rather than one local function spelling.
+- Repeatable intake completion is explicit host state rather than inferred from an identity-directory
+  count. The current card remains mounted while copies run off-main, then changes directly to the next
+  numbered card; failure restores it, and Skip, Done, and close share the same transition.
+- Integration regressions reuse one Location name across two attachments, require Location 3 without
+  a declined ledger entry, and corrupt the gate artifact to prove failure keeps the current card and
+  composer lock in place.
 
 ### 1.0.1 startup regression
 
@@ -193,7 +202,7 @@ The locked source documents are:
 
 - `git diff --check`
 - `python3 scripts/lint_app_theme.py`
-- `python3 scripts/release_preflight.py 1.0.6 <published-catalog>` against the live stable GitHub
+- `python3 scripts/release_preflight.py 1.0.7 <published-catalog>` against the live stable GitHub
   catalog
 - `bash -n` and warning-level `shellcheck` for both relaunch gate scripts
 - JSON/plist/YAML metadata parsing and the standalone `AGENTS.md`/`CLAUDE.md` parity check
@@ -216,12 +225,20 @@ The locked source documents are:
   sampled nested `ZStack` paths and the scroll-edge layer are absent from the observed scroll region.
 - The final independent repository gate passed both its text conformance review and its degraded
   visual review against the normative UI specs, rendered mockups, and Swift UI diff.
-- Claude Fable 5 at XHigh reviewed the final restart lifecycle, pack transition, production Home
-  accessibility actions, exact-DMG gate and CI ordering. Its verdict is `PASS`; the one actionable
-  relative-path warning was corrected by canonicalizing all gate inputs before launch.
-- The host `spec-check` wrapper could not start because its external Codex route is denied by the
-  managed Guardian policy. The Fable review above is the independent spec-review fallback; the
-  denial was not bypassed.
+- Claude Fable 5 at XHigh confirmed the synchronous What's New removal and native Continue → Restart
+  → Settings click chain. Its findings about 1.0.7 pack metadata, PR path coverage, and a five-second
+  overlay-removal grace period were corrected with immutable pack 0.0.15, complete gate paths, and a
+  single 100 ms post-dismiss hierarchy check.
+- Gemini 3.1 Pro's only finding claimed the relaunched process would repeat the start-only What's New
+  wait. Codex rejected it after verifying that process two executes `complete(_:)`, not `start(_:)`.
+- Claude Fable 5 at XHigh reviewed the 1.0.6 Location-intake hang against the process sample. Its
+  verified findings about reused identity names, swallowed reconciliation failures, the remaining
+  SwiftUI background, incomplete ancestor tests, asynchronous close transitions, dirty declines,
+  focus-ring ordering, and main-thread copies are corrected. A bounded Gemini 3.1 Pro review of the
+  corrected diff returned no findings.
+- The independent Codex spec reviewer returned `VERDICT: PASS`. The `spec-check` wrapper still exited
+  2 because its parser treated CLI metadata before the repeated final verdict as an unclear result;
+  no spec deviation was reported.
 - No Swift build or test has been run locally.
 
 ## Release procedure for this batch
@@ -234,6 +251,7 @@ The locked source documents are:
    then approval.
 4. Leave the Brief decision card unanswered beyond the previously failing interval and confirm the app
    remains responsive with idle CPU and bounded memory before continuing.
-5. Continue through Brief with prepared-character intake: visible item number, disabled incomplete
-   Attach, Skip on the first empty item, Done after a completed item, and no transcript beachball while
-   progress/report/dialog content changes.
+5. Continue through Brief with prepared-character and prepared-location intake: visible item numbers,
+   disabled incomplete Attach, Skip on the first empty item, Done after a completed item, and a third
+   Location card immediately after attaching two. Leave that card open beyond the previous failure
+   interval and require responsive UI, idle CPU, and bounded memory before continuing.

@@ -140,8 +140,7 @@ test_pack_root_installed=1
 /usr/bin/ditto "$old_pack" "$pack_root/$old_version.ngvpack"
 /usr/bin/ditto "$new_pack" "$pack_root/$new_version.ngvpack"
 defaults write de.h5ventures.nexgenvideo NGVSelectedPackVersions -dict "$pack_id" "$old_version"
-app_version="$(plist_value "$app_path" CFBundleShortVersionString)"
-defaults write de.h5ventures.nexgenvideo lastSeenVersion "$app_version"
+defaults write de.h5ventures.nexgenvideo lastSeenVersion "0.0.0"
 
 /usr/bin/open -n -a "$app_path" \
   --stdout "$stdout_log" \
@@ -166,7 +165,7 @@ while [ "$attempts" -lt 900 ]; do
         echo "relaunch self-test produced a main-thread hang report: $fresh_hang" >&2
         exit 1
       }
-      echo "OK: the real Home button activated $pack_id $new_version and Home remained interactive"
+      echo "OK: the real What's New and Home buttons activated $pack_id $new_version and Home remained interactive"
       exit 0
       ;;
     failed:*)

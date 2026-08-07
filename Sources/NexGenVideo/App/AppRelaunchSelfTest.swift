@@ -93,6 +93,38 @@ enum AppRelaunchSelfTest {
         validateBundle(config.expectedBundle, stateURL: config.stateURL)
         write("launched \(ProcessInfo.processInfo.processIdentifier)", to: config.stateURL)
 
+        let whatsNewReady = await waitUntil(timeout: .seconds(30)) {
+            HomeWindowController.shared.window?.isVisible == true
+                && HomeWindowController.shared.window?.isKeyWindow == true
+                && NSApp.modalWindow == nil
+                && ChangelogStore.shared.pending != nil
+                && isClickProbeReady(
+                    identifier: "home.whats-new.continue",
+                    in: HomeWindowController.shared.window
+                )
+        }
+        guard whatsNewReady else {
+            fail("What's New never became actionable", stateURL: config.stateURL)
+        }
+        if let failure = postMouseClick(
+            identifier: "home.whats-new.continue",
+            in: HomeWindowController.shared.window
+        ) {
+            fail("the visible What's New Continue button was not clickable: \(failure)", stateURL: config.stateURL)
+        }
+        guard await waitUntil(timeout: .seconds(5), {
+            ChangelogStore.shared.pending == nil
+        }) else {
+            fail("What's New did not dismiss", stateURL: config.stateURL)
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+        guard isClickProbeAbsent(
+            identifier: "home.whats-new.continue",
+            in: HomeWindowController.shared.window
+        ) else {
+            fail("What's New did not leave the Home input hierarchy", stateURL: config.stateURL)
+        }
+
         let ready = await waitUntil(timeout: .seconds(30)) {
             HomeWindowController.shared.window?.isVisible == true
                 && HomeWindowController.shared.window?.isKeyWindow == true
@@ -291,6 +323,11 @@ enum AppRelaunchSelfTest {
               frame.width > 0, frame.height > 0 else { return false }
         let location = probe.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil)
         return root.bounds.contains(root.convert(location, from: nil))
+    }
+
+    private static func isClickProbeAbsent(identifier: String, in window: NSWindow?) -> Bool {
+        guard let root = window?.contentView else { return false }
+        return findClickProbe(in: root, identifier: identifier) == nil
     }
 
     private static func findClickProbe(in view: NSView, identifier: String) -> NSView? {

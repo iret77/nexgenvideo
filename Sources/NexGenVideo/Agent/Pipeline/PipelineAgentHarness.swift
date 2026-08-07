@@ -197,9 +197,43 @@ final class PipelineAgentHarness {
         }
     }
 
-    private var offered: (step: HardStep, fingerprint: Int, dialogID: String)?
+    private struct OfferedIntake {
+        let step: HardStep
+        let isRepeat: Bool
+        let itemNumber: Int?
+        let dialogID: String
+    }
+
+    private struct IntakeResolution {
+        let dialogID: String
+        let didProvideMaterial: Bool
+    }
+
+    private var offered: OfferedIntake?
+    private var intakeResolution: IntakeResolution?
+
     func reset() {
         offered = nil
+        intakeResolution = nil
+    }
+
+    func resolveWorkflowIntake(
+        dialogID: String,
+        didProvideMaterial: Bool,
+        editor: EditorViewModel
+    ) -> Reconciliation {
+        guard offered?.dialogID == dialogID else {
+            return Reconciliation(
+                isReady: false,
+                agentPrompt: nil,
+                failure: "The workflow intake changed before the answer could be applied. Try again."
+            )
+        }
+        intakeResolution = IntakeResolution(
+            dialogID: dialogID,
+            didProvideMaterial: didProvideMaterial
+        )
+        return reconcile(editor: editor)
     }
 
     func reconcile(editor: EditorViewModel) -> Reconciliation {
@@ -208,6 +242,7 @@ final class PipelineAgentHarness {
            let pending = service.pendingDialog,
            pending.id != previous.dialogID {
             offered = nil
+            intakeResolution = nil
         }
         guard service.pendingDialog == nil,
               service.pendingSpendApproval == nil,
@@ -242,16 +277,36 @@ final class PipelineAgentHarness {
         }
 
         var ledger = IntakeLedger.load(dataRoot: dataRoot)
-        var repeatStep: HardStep?
+        var repeatStep: (step: HardStep, itemNumber: Int)?
         if let previous = offered {
-            offered = nil
-            let now = IntakeSatisfaction.fingerprint(previous.step.kind, dataRoot: dataRoot)
-            if now == previous.fingerprint {
+            guard let resolution = intakeResolution,
+                  resolution.dialogID == previous.dialogID else {
+                present(
+                    previous.step,
+                    isRepeat: previous.isRepeat,
+                    itemNumber: previous.itemNumber,
+                    dataRoot: dataRoot,
+                    editor: editor
+                )
+                return .blocked
+            }
+            if resolution.didProvideMaterial {
+                if previous.step.repeatable, previous.step.phase == context.phase {
+                    repeatStep = (
+                        previous.step,
+                        (previous.itemNumber ?? 1) + 1
+                    )
+                }
+            } else {
                 do {
+                    if let key = editor.openWorkingCopyKey {
+                        try ProjectWorkingCopy.markDirty(key: key)
+                    }
                     ledger = try IntakeLedger.recordDecline(
                         previous.step,
                         dataRoot: dataRoot
                     )
+                    editor.onPipelineChanged?()
                 } catch {
                     return Reconciliation(
                         isReady: false,
@@ -260,13 +315,19 @@ final class PipelineAgentHarness {
                             + error.localizedDescription
                     )
                 }
-            } else if previous.step.repeatable, previous.step.phase == context.phase {
-                repeatStep = previous.step
             }
+            offered = nil
+            intakeResolution = nil
         }
 
         if let repeatStep {
-            present(repeatStep, isRepeat: true, dataRoot: dataRoot, editor: editor)
+            present(
+                repeatStep.step,
+                isRepeat: true,
+                itemNumber: repeatStep.itemNumber,
+                dataRoot: dataRoot,
+                editor: editor
+            )
             return .blocked
         }
         guard let phase = context.phase,
@@ -542,19 +603,22 @@ final class PipelineAgentHarness {
     private func present(
         _ step: HardStep,
         isRepeat: Bool,
+        itemNumber: Int? = nil,
         dataRoot: URL,
         editor: EditorViewModel
     ) {
         let fingerprint = IntakeSatisfaction.fingerprint(step.kind, dataRoot: dataRoot)
+        let resolvedItemNumber = step.repeatable ? (itemNumber ?? fingerprint + 1) : nil
         let dialog = AgentDialog(
             hardStep: step,
             isRepeat: isRepeat,
-            itemNumber: step.repeatable ? fingerprint + 1 : nil
+            itemNumber: resolvedItemNumber
         )
-        offered = (
-            step,
-            fingerprint,
-            dialog.id
+        offered = OfferedIntake(
+            step: step,
+            isRepeat: isRepeat,
+            itemNumber: resolvedItemNumber,
+            dialogID: dialog.id
         )
         editor.agentService.pendingDialog = dialog
         editor.agentPanelVisible = true
