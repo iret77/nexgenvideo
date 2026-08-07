@@ -11,6 +11,7 @@ struct EditorView: NSViewControllerRepresentable {
     func updateNSViewController(_ controller: EditorSplitViewController, context: Context) {
         controller.applyLayoutIfNeeded(editor.layoutPreset)
         controller.applyFocusIfNeeded(editor.workspaceFocus)
+        controller.applyPanelFocus(editor.focusedPanel)
         controller.applyMediaVisibility(editor.mediaPanelVisible)
         // Produce hides the Inspector unless an object is being inspected; Edit follows the user's pref.
         let inspectorVisible = editor.workspaceFocus == .edit
@@ -74,6 +75,7 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
     private weak var inspectorSplitItem: NSSplitViewItem?
     private weak var timelineSplitItem: NSSplitViewItem?
     private weak var cockpitSplitItem: NSSplitViewItem?
+    private var panelHosts: [any PanelFocusUpdating] = []
 
     private lazy var mediaHC: NSViewController     = makeHosting(LeftSidebarView(), panel: .media)
     private lazy var previewHC: NSViewController   = makeHosting(PreviewContainerView(), panel: .preview)
@@ -459,23 +461,21 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         return item
     }
 
-    private func makeHosting<V: View>(_ content: V, panel: EditorViewModel.FocusedPanel) -> NSHostingController<some View> {
-        let inset = AppTheme.Layout.panelGap / 2
-        let panelShell = RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-        let hc = NSHostingController(
+    func applyPanelFocus(_ focusedPanel: EditorViewModel.FocusedPanel?) {
+        for host in panelHosts {
+            host.applyPanelFocus(focusedPanel)
+        }
+    }
+
+    private func makeHosting<V: View>(_ content: V, panel: EditorViewModel.FocusedPanel) -> NSViewController {
+        let hc = PanelHostingController(
             rootView: content
                 .environment(editor)
-                .frame(minWidth: AppTheme.Spacing.none, maxWidth: .infinity, minHeight: AppTheme.Spacing.none, maxHeight: .infinity)
-                .background(AppTheme.Background.surfaceColor)
-                .clipShape(panelShell)
-                .padding(inset)
-                .background(AppTheme.Background.baseColor)
-                .overlay {
-                    PanelFocusRing(editor: editor, panel: panel)
-                        .padding(inset)
-                        .allowsHitTesting(false)
-                }
+                .frame(minWidth: AppTheme.Spacing.none, maxWidth: .infinity, minHeight: AppTheme.Spacing.none, maxHeight: .infinity),
+            panel: panel
         )
+        panelHosts.append(hc)
+        hc.applyPanelFocus(editor.focusedPanel)
         hc.view.setAccessibilityIdentifier(panel.accessibilityID)
         return hc
     }
@@ -526,20 +526,80 @@ private struct TimelinePanel: View {
     }
 }
 
-// MARK: - Panel focus ring overlay
+// MARK: - Panel focus ring
 
-private struct PanelFocusRing: View {
-    var editor: EditorViewModel
-    let panel: EditorViewModel.FocusedPanel
+@MainActor
+private protocol PanelFocusUpdating: AnyObject {
+    func applyPanelFocus(_ focusedPanel: EditorViewModel.FocusedPanel?)
+}
 
-    private var isFocused: Bool { editor.focusedPanel == panel }
+private final class PanelHostingController<Content: View>: NSViewController, PanelFocusUpdating {
+    private let hostingController: NSHostingController<Content>
+    private let panel: EditorViewModel.FocusedPanel
+    private let focusRing = CAShapeLayer()
+    private var focusedPanel: EditorViewModel.FocusedPanel?
 
-    var body: some View {
-        // Deliberately faint: a whisper of "this panel gets the keyboard", never a frame around the
-        // workspace — with the full-height sidebar a prominent ring reads as broken chrome.
-        RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-            .strokeBorder(AppTheme.Accent.primary, lineWidth: AppTheme.BorderWidth.thin)
-            .opacity(isFocused ? AppTheme.Opacity.muted : AppTheme.Opacity.transparent)
-            .animation(.easeOut(duration: AppTheme.Anim.transition), value: isFocused)
+    init(rootView: Content, panel: EditorViewModel.FocusedPanel) {
+        hostingController = NSHostingController(rootView: rootView)
+        self.panel = panel
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func loadView() {
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.backgroundColor = AppTheme.Background.base.cgColor
+        view = container
+
+        addChild(hostingController)
+        let hostedView = hostingController.view
+        hostedView.wantsLayer = true
+        hostedView.layer?.backgroundColor = AppTheme.Background.surface.cgColor
+        hostedView.layer?.cornerRadius = AppTheme.Radius.sm
+        hostedView.layer?.masksToBounds = true
+        container.addSubview(hostedView)
+
+        focusRing.fillColor = nil
+        focusRing.strokeColor = AppTheme.Accent.primaryNSColor.cgColor
+        focusRing.lineWidth = AppTheme.BorderWidth.thin
+        focusRing.opacity = focusRingOpacity
+        focusRing.zPosition = 1
+        focusRing.actions = [
+            "opacity": NSNull(),
+            "path": NSNull(),
+            "bounds": NSNull(),
+            "position": NSNull(),
+        ]
+        container.layer?.addSublayer(focusRing)
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        let inset = AppTheme.Layout.panelGap / 2
+        let bounds = view.bounds
+        hostingController.view.frame = bounds.insetBy(dx: inset, dy: inset)
+        focusRing.frame = bounds
+        focusRing.path = CGPath(
+            roundedRect: bounds.insetBy(dx: inset, dy: inset),
+            cornerWidth: AppTheme.Radius.sm,
+            cornerHeight: AppTheme.Radius.sm,
+            transform: nil
+        )
+        if let scale = view.window?.backingScaleFactor {
+            focusRing.contentsScale = scale
+        }
+    }
+
+    func applyPanelFocus(_ focusedPanel: EditorViewModel.FocusedPanel?) {
+        self.focusedPanel = focusedPanel
+        guard isViewLoaded else { return }
+        focusRing.opacity = focusRingOpacity
+    }
+
+    private var focusRingOpacity: Float {
+        Float(focusedPanel == panel ? AppTheme.Opacity.muted : AppTheme.Opacity.transparent)
     }
 }

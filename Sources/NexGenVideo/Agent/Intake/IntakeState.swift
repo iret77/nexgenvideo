@@ -13,8 +13,8 @@ enum IntakeSatisfaction {
         fingerprint(kind, dataRoot: dataRoot) > 0
     }
 
-    /// How much of the kind's material is on disk. A COUNT, not a flag: a repeatable identity step has
-    /// to tell "the user attached another one" from "the user is done", and only the count moves.
+    /// How much durable material exists. Repeatable-card completion is explicit; this count determines
+    /// satisfaction and the first item number after reopening a project.
     static func fingerprint(_ kind: HardStep.Kind, dataRoot: URL) -> Int {
         switch kind {
         case .song:

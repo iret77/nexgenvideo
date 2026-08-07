@@ -313,7 +313,10 @@ final class AgentService {
                 )
             }
         case .workflowIntake:
-            completeWorkflowIntake(dialog)
+            completeWorkflowIntake(
+                dialog,
+                didProvideMaterial: Self.didProvideWorkflowMaterial(result)
+            )
         }
     }
 
@@ -388,10 +391,10 @@ final class AgentService {
     /// pipeline stays consistent with the user's prepared assets instead of inventing new ones.
     private func attachIdentityAssets(_ kind: String, dialog: AgentDialog, result: AgentDialogResult) {
         guard !result.fileURLs.isEmpty else {
-            sendDialogResponse(
+            sendDialogFailure(
                 dialog,
                 result: result,
-                agentContext: "No \(kind) references were provided. Ask for at least one image."
+                notice: "Choose at least one reference image."
             )
             return
         }
@@ -417,16 +420,10 @@ final class AgentService {
         }
         let category = kind == "location" ? "locations" : "characters"
         let dir = dataRoot.appendingPathComponent("import").appendingPathComponent(category).appendingPathComponent(slug)
-        let copied: [String]
         do {
             if let key = editor.openWorkingCopyKey {
                 try ProjectWorkingCopy.markDirty(key: key)
             }
-            copied = try Self.copyFilesUniquely(
-                result.fileURLs,
-                into: dir,
-                preferredFilenames: preferredFilenames(for: result.fileURLs)
-            )
         } catch {
             sendDialogFailure(
                 dialog,
@@ -436,16 +433,37 @@ final class AgentService {
             )
             return
         }
-        assignIntakeRole(kind, urls: result.fileURLs)
-        editor.onPipelineChanged?()
-        let noun = kind == "location" ? "Location" : "Character"
-        sendDialogResponse(
-            dialog,
-            result: result,
-            agentContext: "\(noun) \"\(name)\" attached: \(copied.count) reference image\(copied.count == 1 ? "" : "s") "
-                + "in import/\(category)/\(slug)/. This is a BROWNFIELD anchor — the bible-agent adopts it; "
-                + "keep this identity consistent across the pipeline and don't invent a different one."
-        )
+        let urls = result.fileURLs
+        let preferred = preferredFilenames(for: urls)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let copied = try await Task.detached(priority: .userInitiated) {
+                    try Self.copyFilesUniquely(
+                        urls,
+                        into: dir,
+                        preferredFilenames: preferred
+                    )
+                }.value
+                self.assignIntakeRole(kind, urls: urls)
+                editor.onPipelineChanged?()
+                let noun = kind == "location" ? "Location" : "Character"
+                self.sendDialogResponse(
+                    dialog,
+                    result: result,
+                    agentContext: "\(noun) \"\(name)\" attached: \(copied.count) reference image\(copied.count == 1 ? "" : "s") "
+                        + "in import/\(category)/\(slug)/. This is a BROWNFIELD anchor — the bible-agent adopts it; "
+                        + "keep this identity consistent across the pipeline and don't invent a different one."
+                )
+            } catch {
+                self.sendDialogFailure(
+                    dialog,
+                    result: result,
+                    notice: "Couldn't attach \(kind) references: \(error.localizedDescription)",
+                    agentContext: "The host couldn't attach the \(kind) \"\(name)\": \(error.localizedDescription)."
+                )
+            }
+        }
     }
 
     /// A filesystem-safe slug for an identity folder name: lowercased, non-alphanumerics collapsed to
@@ -548,18 +566,11 @@ final class AgentService {
             return
         }
         let dir = dataRoot.appendingPathComponent("import", isDirectory: true)
-        let copied: [String]
         do {
             if let key = editor.openWorkingCopyKey {
                 try ProjectWorkingCopy.markDirty(key: key)
             }
-            copied = try Self.copyFilesUniquely(
-                result.fileURLs,
-                into: dir,
-                preferredFilenames: preferredFilenames(for: result.fileURLs)
-            )
-        }
-        catch {
+        } catch {
             sendDialogFailure(
                 dialog,
                 result: result,
@@ -568,14 +579,35 @@ final class AgentService {
             )
             return
         }
-        assignIntakeRole("style", urls: result.fileURLs)
-        editor.onPipelineChanged?()
-        sendDialogResponse(
-            dialog,
-            result: result,
-            agentContext: "\(copied.count) style reference\(copied.count == 1 ? "" : "s") attached in import/. "
-                + "The production-design agent (K2) curates these as the style source."
-        )
+        let urls = result.fileURLs
+        let preferred = preferredFilenames(for: urls)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let copied = try await Task.detached(priority: .userInitiated) {
+                    try Self.copyFilesUniquely(
+                        urls,
+                        into: dir,
+                        preferredFilenames: preferred
+                    )
+                }.value
+                self.assignIntakeRole("style", urls: urls)
+                editor.onPipelineChanged?()
+                self.sendDialogResponse(
+                    dialog,
+                    result: result,
+                    agentContext: "\(copied.count) style reference\(copied.count == 1 ? "" : "s") attached in import/. "
+                        + "The production-design agent (K2) curates these as the style source."
+                )
+            } catch {
+                self.sendDialogFailure(
+                    dialog,
+                    result: result,
+                    notice: "Couldn't attach style references: \(error.localizedDescription)",
+                    agentContext: "The host couldn't attach the style references: \(error.localizedDescription)."
+                )
+            }
+        }
     }
 
     private func intakeRoleConflict(
@@ -807,7 +839,10 @@ final class AgentService {
         agentContext: String? = nil
     ) {
         if dialog.purpose == .workflowIntake {
-            completeWorkflowIntake(dialog)
+            completeWorkflowIntake(
+                dialog,
+                didProvideMaterial: Self.didProvideWorkflowMaterial(result)
+            )
             return
         }
         var resolvedAttachmentNames = presentedAttachmentNames
@@ -848,10 +883,35 @@ final class AgentService {
         )
     }
 
-    private func completeWorkflowIntake(_ dialog: AgentDialog) {
+    nonisolated private static func didProvideWorkflowMaterial(
+        _ result: AgentDialogResult
+    ) -> Bool {
+        !result.fileURLs.isEmpty
+            || !result.direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func completeWorkflowIntake(
+        _ dialog: AgentDialog,
+        didProvideMaterial: Bool
+    ) {
         guard pendingDialog?.id == dialog.id else { return }
         submittingDialogID = nil
         pendingDialog = nil
+        guard let editor else {
+            pendingDialog = dialog
+            dialogSubmissionError = "The project is unavailable. Reopen it and try again."
+            return
+        }
+        let reconciliation = editor.pipelineAgentHarness.resolveWorkflowIntake(
+            dialogID: dialog.id,
+            didProvideMaterial: didProvideMaterial,
+            editor: editor
+        )
+        if let failure = reconciliation.failure {
+            pendingDialog = dialog
+            dialogSubmissionError = failure
+            return
+        }
         Task { @MainActor [weak self] in
             await self?.editor?.refreshEngineState()
         }
@@ -871,10 +931,7 @@ final class AgentService {
         let dialog = pendingDialog
         if let dialog, dialog.purpose == .workflowIntake {
             guard dialog.fileIntake?.required != true, submittingDialogID == nil else { return }
-            pendingDialog = nil
-            Task { @MainActor [weak self] in
-                await self?.editor?.refreshEngineState()
-            }
+            completeWorkflowIntake(dialog, didProvideMaterial: false)
             return
         }
         pendingDialog = nil

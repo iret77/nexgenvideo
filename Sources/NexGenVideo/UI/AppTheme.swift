@@ -57,7 +57,8 @@ enum AppTheme {
         static let timecodeColor = Color(timecodeNSColor)
 
         /// Warm off-white
-        static let primary = Color(red: 0.961, green: 0.937, blue: 0.894)
+        static let primaryNSColor = NSColor(red: 0.961, green: 0.937, blue: 0.894, alpha: 1)
+        static let primary = Color(primaryNSColor)
 
         /// Pack-scoped accent — marks a cockpit tab a format pack contributed, distinct from the
         /// first-party generic tabs. (#c08bff)

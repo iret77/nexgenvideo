@@ -17,7 +17,6 @@ struct UpdateOverlay: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .transition(.opacity)
     }
 
     private var card: some View {
@@ -47,6 +46,14 @@ struct UpdateOverlay: View {
                 Button("Continue") { onDismiss() }
                     .buttonStyle(.capsule(.prominent, size: .regular))
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("home.whats-new.continue")
+                    .background {
+                        if AppRelaunchSelfTest.isRequested {
+                            AppRelaunchClickProbe(identifier: "home.whats-new.continue")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .allowsHitTesting(false)
+                        }
+                    }
             }
             .padding(.top, AppTheme.Spacing.lg)
         }

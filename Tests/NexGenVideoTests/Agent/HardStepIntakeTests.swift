@@ -424,7 +424,158 @@ struct HardStepIntakeTests {
         #expect(normalizedPrompt?.contains("If it is absent, this is greenfield") == true)
     }
 
+    @Test("repeatable location intake advances directly to the next numbered card")
+    @MainActor
+    func repeatableLocationIntakeHasNoEmptyCardGap() async throws {
+        PackCatalog.register(MusicvideoPack())
+        let package = FileManager.default.temporaryDirectory
+            .appendingPathComponent("location-intake-transition-\(UUID().uuidString).ngv", isDirectory: true)
+        let editor = EditorViewModel()
+        defer {
+            editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: package)
+        }
+        try Fixtures.prepareProjectPackage(at: package)
+        try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
+        let packageDataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "location-intake-transition",
+            mode: .beat,
+            extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
+        )
+        let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
+        var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&packageGates, phase: "project_init")
+        GatesOperations.approve(&packageGates, phase: "analysis")
+        try packageStore.save(packageGates, to: PipelineLayout.gatesFile)
+        editor.projectURL = package
+
+        await editor.refreshEngineState()
+        let dataRoot = try #require(
+            editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+        let manifestURL = try #require(PackKnowledge.hardStepManifestURL())
+        let manifest = try HardStepManifest.decode(try Data(contentsOf: manifestURL))
+        for kind in [HardStep.Kind.script, .character] {
+            let step = try #require(manifest.steps(for: "brief").first { $0.kind == kind })
+            _ = try IntakeLedger.recordDecline(step, dataRoot: dataRoot)
+        }
+        editor.agentService.pendingDialog = nil
+        editor.pipelineAgentHarness.reset()
+        _ = editor.pipelineAgentHarness.reconcile(editor: editor)
+
+        let first = try #require(editor.agentService.pendingDialog)
+        #expect(first.title == "Prepared location 1")
+        try write("fixtures/first.png", in: dataRoot)
+        editor.agentService.submitDialog(
+            first,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: "Shared location",
+                fileURLs: [dataRoot.appendingPathComponent("fixtures/first.png")]
+            )
+        )
+
+        #expect(editor.agentService.pendingDialog != nil)
+        #expect(editor.agentService.isComposerBlocked)
+        let awaitedSecond = await waitForDialog(
+            titled: "Prepared location 2",
+            service: editor.agentService
+        )
+        let second = try #require(awaitedSecond)
+        #expect(second.title == "Prepared location 2")
+        try write("fixtures/second.png", in: dataRoot)
+        editor.agentService.submitDialog(
+            second,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: "Shared location",
+                fileURLs: [dataRoot.appendingPathComponent("fixtures/second.png")]
+            )
+        )
+
+        #expect(editor.agentService.pendingDialog != nil)
+        #expect(editor.agentService.isComposerBlocked)
+        let awaitedThird = await waitForDialog(
+            titled: "Prepared location 3",
+            service: editor.agentService
+        )
+        _ = try #require(awaitedThird)
+        #expect(!IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.locations"))
+        editor.agentService.cancelDialog()
+        #expect(editor.agentService.pendingDialog?.title == "Style references")
+        #expect(editor.agentService.isComposerBlocked)
+    }
+
+    @Test("workflow intake failures keep the current card mounted")
+    @MainActor
+    func workflowIntakeFailureKeepsCardMounted() async throws {
+        PackCatalog.register(MusicvideoPack())
+        let package = FileManager.default.temporaryDirectory
+            .appendingPathComponent("location-intake-failure-\(UUID().uuidString).ngv", isDirectory: true)
+        let editor = EditorViewModel()
+        defer {
+            editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: package)
+        }
+        try Fixtures.prepareProjectPackage(at: package)
+        try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
+        let packageDataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "location-intake-failure",
+            mode: .beat,
+            extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
+        )
+        let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
+        var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&packageGates, phase: "project_init")
+        GatesOperations.approve(&packageGates, phase: "analysis")
+        try packageStore.save(packageGates, to: PipelineLayout.gatesFile)
+        editor.projectURL = package
+
+        await editor.refreshEngineState()
+        let dataRoot = try #require(
+            editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
+        )
+        let manifestURL = try #require(PackKnowledge.hardStepManifestURL())
+        let manifest = try HardStepManifest.decode(try Data(contentsOf: manifestURL))
+        for kind in [HardStep.Kind.script, .character] {
+            let step = try #require(manifest.steps(for: "brief").first { $0.kind == kind })
+            _ = try IntakeLedger.recordDecline(step, dataRoot: dataRoot)
+        }
+        editor.agentService.pendingDialog = nil
+        editor.pipelineAgentHarness.reset()
+        _ = editor.pipelineAgentHarness.reconcile(editor: editor)
+
+        let location = try #require(editor.agentService.pendingDialog)
+        try Data("invalid gates".utf8).write(
+            to: dataRoot.appendingPathComponent(PipelineLayout.gatesFile),
+            options: .atomic
+        )
+        editor.agentService.cancelDialog()
+
+        #expect(editor.agentService.pendingDialog?.id == location.id)
+        #expect(editor.agentService.dialogSubmissionError != nil)
+        #expect(editor.agentService.isComposerBlocked)
+    }
+
     // MARK: - Dialog construction
+
+    @MainActor
+    private func waitForDialog(
+        titled title: String,
+        service: AgentService
+    ) async -> AgentDialog? {
+        for _ in 0..<1_000 {
+            if service.pendingDialog?.title == title {
+                return service.pendingDialog
+            }
+            await Task.yield()
+        }
+        return nil
+    }
 
     @Test("a step becomes a file-intake dialog routed by its attachAs")
     func stepBecomesDialog() {

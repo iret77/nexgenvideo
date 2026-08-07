@@ -56,7 +56,10 @@ struct HomeView: View {
         .overlay {
             if let entry = changelog.pending {
                 UpdateOverlay(entry: entry, changelogURL: changelog.changelogURL) {
-                    withAnimation { changelog.dismiss() }
+                    // A disappearing full-window transition can keep intercepting Home input.
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { changelog.dismiss() }
                 }
             }
         }

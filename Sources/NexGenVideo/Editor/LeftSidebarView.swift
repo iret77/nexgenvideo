@@ -27,8 +27,7 @@ struct LeftSidebarView: View {
                 case .agent: AgentPanelView()
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .clipped()  // a panel may never paint over the sidebar tabs
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

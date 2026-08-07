@@ -2,6 +2,24 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.0.7",
+      "date": "2026-08-07",
+      "sections": [
+        {
+          "heading": "Home",
+          "items": [
+            "Closing What's New now removes its blocking layer immediately, so Home controls remain clickable without switching away and back."
+          ]
+        },
+        {
+          "heading": "Stability",
+          "items": [
+            "Prepared character and location cards now advance without briefly exposing the composer, while image copies stay off the main thread and the agent transcript remains responsive."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.6",
       "date": "2026-08-06",
       "sections": [
