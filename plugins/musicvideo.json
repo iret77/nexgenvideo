@@ -11,6 +11,6 @@
   "migratesFrom": [
     "musicvideo/legacy"
   ],
-  "minAppVersion": "1.0.8",
+  "minAppVersion": "1.0.9",
   "badge": "MusicvideoPack/badge.png"
 }
