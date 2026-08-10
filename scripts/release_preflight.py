@@ -29,7 +29,259 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "phaseLineageProviders",
     "projectSchemaMigrations",
     "progressPhaseRunners",
+    "productionProfiles",
 ]
+ENGINE_BOUNDARY_LAYOUT_CONTRACT = 5
+ENGINE_BOUNDARY_LAYOUTS = {
+    "Shot": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public struct Shot: Codable, Sendable, Equatable {",
+        "end": "    private enum CodingKeys: String, CodingKey {",
+        "properties": [
+            "id", "section", "timeStart", "timeEnd", "durationS", "type",
+            "sourceMode", "description", "visualPrompt", "motion", "mood",
+            "lyricsExcerpt", "characterRefs", "characterViews", "locationRef",
+            "locationView", "modelSuggestion", "keyframeStrategy", "framing",
+            "visibleZones", "zoneIntroduces", "cameraSetup", "characterBlocking",
+            "propRefs", "propViews", "cameraId", "cameraLabel", "redo",
+            "sceneVideoProvider", "seedanceInputMode", "referenceImageRefs",
+            "chainWithPreviousEnd", "transitionIn", "transitionOut", "notes",
+            "sourcePath", "productionPlan",
+        ],
+    },
+    "AuditContext": {
+        "path": "Engine/Sources/NexGenEngine/Sanity/Audit.swift",
+        "start": "public struct AuditContext: Sendable {",
+        "end": "    public init(",
+        "properties": [
+            "shotlist", "brief", "bible", "extra", "productionProfileIDs",
+        ],
+    },
+}
+ENGINE_BOUNDARY_VALUE_LAYOUTS = {
+    "CameraSetup": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public struct CameraSetup: Codable, Sendable, Equatable {",
+        "end": "    private enum CodingKeys: String, CodingKey {",
+        "members": [
+            "var height: CameraHeight", "var angle: CameraAngle",
+            "var lensHint: LensHint", "var note: String",
+        ],
+    },
+    "CharacterBlocking": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public struct CharacterBlocking: Codable, Sendable, Equatable {",
+        "end": "    private enum CodingKeys: String, CodingKey {",
+        "members": [
+            "var characterRef: String", "var position: String", "var pose: String",
+            "var gaze: String", "var relationToSet: String",
+        ],
+    },
+    "Song": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public struct Song: Codable, Sendable, Equatable {",
+        "end": "    private enum CodingKeys: String, CodingKey {",
+        "members": [
+            "var title: String", "var artist: String?", "var audioPath: String",
+            "var lyricsPath: String?", "var analysisPath: String", "var bpm: Double",
+            "var tempoMultiplier: Double", "var durationS: Double",
+        ],
+    },
+    "ShotProductionPlan": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public struct ShotProductionPlan: Codable, Sendable, Equatable {",
+        "end": "    private enum CodingKeys: String, CodingKey {",
+        "members": [
+            "var primaryAction: String", "var cameraMovement: CameraMovement",
+            "var cameraMovementDetail: String?", "var narrativeBeat: NarrativeBeat?",
+            "var renderability: RenderabilityRating", "var risks: [RenderabilityRisk]",
+            "var rescueCut: String?", "var matchActionCue: String?",
+            "var continuityLocks: [String]",
+        ],
+    },
+    "Shotlist": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public struct Shotlist: Codable, Sendable, Equatable {",
+        "end": "    private enum CodingKeys: String, CodingKey {",
+        "members": [
+            "var schema_: String", "var mode: Mode", "var project: String",
+            "var song: Song", "var generated: String", "var generator: String",
+            "var budgetEur: Double", "var shots: [Shot]", "var notes: String?",
+        ],
+    },
+    "Finding": {
+        "path": "Engine/Sources/NexGenEngine/Sanity/Models.swift",
+        "start": "public struct Finding: Codable, Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "var level: Level", "var code: String", "var shotId: String?",
+            "var message: String",
+        ],
+    },
+    "ProductionProfileID": {
+        "path": "Engine/Sources/NexGenEngine/Production/ProductionProfile.swift",
+        "start": "public struct ProductionProfileID: RawRepresentable, Hashable, Codable, Sendable, ExpressibleByStringLiteral {",
+        "end": "    public init(rawValue:",
+        "members": ["let rawValue: String"],
+    },
+    "ProductionProfile": {
+        "path": "Engine/Sources/NexGenEngine/Production/ProductionProfile.swift",
+        "start": "public struct ProductionProfile: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "let id: ProductionProfileID",
+            "let activation: ProductionProfileActivation",
+        ],
+    },
+}
+ENGINE_BOUNDARY_ENUM_LAYOUTS = {
+    "Mode": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/ProjectMeta.swift",
+        "start": "public enum Mode: String, Codable, Sendable, CaseIterable {",
+        "end": "/// Project metadata",
+        "cases": ["beat", "phrase", "section", "multicam", "generic  // Swift-side follow-up (issue #99); Python modes.py has no such case yet."],
+    },
+    "ShotType": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum ShotType: String, Codable, Sendable, CaseIterable {",
+        "end": "/// Port of `shotlist/schema.py::ModelSuggestion`.",
+        "cases": [
+            "closeUp = \"close-up\"", "establishing", "highMotion = \"high-motion\"",
+            "performance", "bRoll = \"b-roll\"",
+        ],
+    },
+    "ModelSuggestion": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum ModelSuggestion: String, Codable, Sendable, CaseIterable {",
+        "end": "/// How many keyframes",
+        "cases": [
+            "gen45 = \"gen-4.5\"", "seedance20 = \"seedance-2.0\"", "veo3",
+            "veo31Fast = \"veo3.1_fast\"", "gen4Turbo = \"gen-4-turbo\"",
+        ],
+    },
+    "KeyframeStrategy": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum KeyframeStrategy: String, Codable, Sendable, CaseIterable {",
+        "end": "/// Per-shot selectable video provider.",
+        "cases": ["none", "start", "startEnd = \"start_end\""],
+    },
+    "SceneVideoProvider": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum SceneVideoProvider: String, Codable, Sendable, CaseIterable {",
+        "end": "/// How Seedance anchors",
+        "cases": ["fal", "runway"],
+    },
+    "SeedanceInputMode": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum SeedanceInputMode: String, Codable, Sendable, CaseIterable {",
+        "end": "/// Framing per shot.",
+        "cases": ["keyframe", "reference"],
+    },
+    "Framing": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum Framing: String, Codable, Sendable, CaseIterable {",
+        "end": "/// Camera height.",
+        "cases": [
+            "wide", "full", "ms", "mcu", "cu", "ecu", "ots", "pov", "insert",
+            "aerial",
+        ],
+    },
+    "CameraHeight": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum CameraHeight: String, Codable, Sendable, CaseIterable {",
+        "end": "/// Camera axis to subject.",
+        "cases": ["eyeLevel = \"eye_level\"", "low", "high", "overhead", "knee", "worm"],
+    },
+    "CameraAngle": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum CameraAngle: String, Codable, Sendable, CaseIterable {",
+        "end": "/// Lens character",
+        "cases": [
+            "frontal", "threeQuarterLeft = \"three_quarter_left\"",
+            "threeQuarterRight = \"three_quarter_right\"",
+            "profileLeft = \"profile_left\"", "profileRight = \"profile_right\"",
+            "back",
+        ],
+    },
+    "LensHint": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum LensHint: String, Codable, Sendable, CaseIterable {",
+        "end": "/// How a shot's footage is sourced.",
+        "cases": ["wide", "normal", "long"],
+    },
+    "SourceMode": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum SourceMode: String, Codable, Sendable, CaseIterable {",
+        "end": "    // How the shot's material COMES TO BE",
+        "cases": ["generated", "imported", "aiEnhanced = \"ai_enhanced\""],
+    },
+    "TransitionType": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum TransitionType: String, Codable, Sendable, CaseIterable {",
+        "end": "    /// A fade/crossfade needs overlap material",
+        "cases": ["hardCut = \"hard_cut\"", "fade", "crossfade"],
+    },
+    "ProductionProfileActivation": {
+        "path": "Engine/Sources/NexGenEngine/Production/ProductionProfile.swift",
+        "start": "public enum ProductionProfileActivation: Sendable, Equatable {",
+        "end": "    public func matches(",
+        "cases": [
+            "always",
+            "metadataValue(key: String, allowedValues: Set<String>)",
+        ],
+    },
+    "CameraMovement": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum CameraMovement: String, Codable, Sendable, CaseIterable {",
+        "end": "    public func promptProse(",
+        "cases": [
+            "`static`", "pan", "tilt", "dollyIn = \"dolly_in\"",
+            "dollyOut = \"dolly_out\"", "tracking", "handheld", "crane",
+            "orbit", "zoom", "other",
+        ],
+    },
+    "NarrativeBeat": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum NarrativeBeat: String, Codable, Sendable, CaseIterable, Hashable {",
+        "end": "public enum RenderabilityRating:",
+        "cases": [
+            "establish", "action", "reaction", "detail", "transition",
+            "performance", "atmosphere",
+        ],
+    },
+    "RenderabilityRating": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum RenderabilityRating: String, Codable, Sendable, CaseIterable {",
+        "end": "public enum RenderabilityRisk:",
+        "cases": ["green", "yellow", "red"],
+    },
+    "RenderabilityRisk": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public enum RenderabilityRisk: String, Codable, Sendable, CaseIterable, Hashable {",
+        "end": "public struct ShotProductionPlan:",
+        "cases": [
+            "readableInFrameText = \"readable_in_frame_text\"",
+            "mirrorReflection = \"mirror_reflection\"",
+            "fineMotorHands = \"fine_motor_hands\"",
+            "closeUpEatingDrinking = \"close_up_eating_drinking\"",
+            "denseFaceCrowd = \"dense_face_crowd\"",
+            "continuousFight = \"continuous_fight\"",
+            "physicsShowcase = \"physics_showcase\"",
+            "vehicleMechanics = \"vehicle_mechanics\"",
+            "identityDrift = \"identity_drift\"",
+            "nonEnglishLipSync = \"non_english_lip_sync\"",
+            "longTake = \"long_take\"",
+            "aggressiveCameraMove = \"aggressive_camera_move\"",
+            "complexInteraction = \"complex_interaction\"",
+        ],
+    },
+    "Level": {
+        "path": "Engine/Sources/NexGenEngine/Sanity/Models.swift",
+        "start": "public enum Level: String, Codable, Sendable, Equatable {",
+        "end": "/// One sanity-check result.",
+        "cases": ["info", "warn", "error"],
+    },
+}
 
 
 def fail(message: str) -> None:
@@ -158,6 +410,105 @@ def validate_engine_registry_abi() -> None:
         )
 
 
+def validate_engine_boundary_abi() -> None:
+    contract_path = ROOT / "Engine/Sources/NexGenEngine/Packs/EngineContract.swift"
+    try:
+        contract = contract_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        fail(f"EngineContract.swift is unreadable: {error}")
+    current_match = re.search(r"public static let current = (\d+)", contract)
+    minimum_match = re.search(r"public static let minimumCompatible = (\d+)", contract)
+    if current_match is None or minimum_match is None:
+        fail("EngineContract current/minimumCompatible declarations are unreadable")
+    current = int(current_match.group(1))
+    minimum = int(minimum_match.group(1))
+    if current != ENGINE_BOUNDARY_LAYOUT_CONTRACT:
+        fail(
+            "Engine boundary layout guard must be reviewed for contract "
+            f"{current}; it currently pins contract {ENGINE_BOUNDARY_LAYOUT_CONTRACT}"
+        )
+    if minimum < ENGINE_BOUNDARY_LAYOUT_CONTRACT:
+        fail(
+            "Engine boundary value layouts changed in contract "
+            f"{ENGINE_BOUNDARY_LAYOUT_CONTRACT}; minimumCompatible cannot be {minimum}"
+        )
+
+    for type_name, layout in ENGINE_BOUNDARY_LAYOUTS.items():
+        path = ROOT / layout["path"]
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            fail(f"{layout['path']} is unreadable: {error}")
+        start = source.find(layout["start"])
+        end = source.find(layout["end"], start)
+        if start < 0 or end < 0:
+            fail(f"{type_name} stored-property boundary is unreadable")
+        declaration = source[start:end]
+        properties = re.findall(
+            r"^\s*(?:(?:open|public|package|internal|fileprivate|private)"
+            r"(?:\s*\(set\))?\s+)*(?:let|var)\s+"
+            r"([A-Za-z_][A-Za-z0-9_]*)\s*:",
+            declaration,
+            flags=re.MULTILINE,
+        )
+        if properties != layout["properties"]:
+            fail(
+                f"{type_name} stored-property layout changed without updating the "
+                "engine boundary contract guard. "
+                f"Expected {layout['properties']}, got {properties}"
+            )
+
+    for type_name, layout in ENGINE_BOUNDARY_VALUE_LAYOUTS.items():
+        path = ROOT / layout["path"]
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            fail(f"{layout['path']} is unreadable: {error}")
+        start = source.find(layout["start"])
+        end = source.find(layout["end"], start)
+        if start < 0 or end < 0:
+            fail(f"{type_name} value-layout boundary is unreadable")
+        declaration = source[start:end]
+        members = [
+            f"{kind} {name}: {' '.join(value_type.split())}"
+            for kind, name, value_type in re.findall(
+                r"^\s*(?:(?:open|public|package|internal|fileprivate|private)"
+                r"(?:\s*\(set\))?\s+)*(let|var)\s+"
+                r"([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^\n]+)",
+                declaration,
+                flags=re.MULTILINE,
+            )
+        ]
+        if members != layout["members"]:
+            fail(
+                f"{type_name} public value layout changed without updating the "
+                "engine boundary contract guard. "
+                f"Expected {layout['members']}, got {members}"
+            )
+
+    for type_name, layout in ENGINE_BOUNDARY_ENUM_LAYOUTS.items():
+        path = ROOT / layout["path"]
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            fail(f"{layout['path']} is unreadable: {error}")
+        start = source.find(layout["start"])
+        end = source.find(layout["end"], start)
+        if start < 0 or end < 0:
+            fail(f"{type_name} enum-layout boundary is unreadable")
+        declaration = source[start:end]
+        cases = re.findall(
+            r"^    case\s+(.+?)\s*$",
+            declaration,
+            flags=re.MULTILINE,
+        )
+        if cases != layout["cases"]:
+            fail(
+                f"{type_name} cases changed without updating the engine boundary "
+                f"contract guard. Expected {layout['cases']}, got {cases}"
+            )
+
+
 def validate_release_assets() -> None:
     required = [
         ROOT / "assets/dmg-background.png",
@@ -270,11 +621,12 @@ def main() -> None:
     validate_hardsteps()
     validate_agent_guidance()
     validate_engine_registry_abi()
+    validate_engine_boundary_abi()
     validate_release_assets()
     validate_plugin_version(version, Path(sys.argv[2]))
     print(
         f"Release preflight passed for {version}: "
-        "changelog + agent guidance + pack intake/version + release assets"
+        "changelog + agent guidance + engine ABI + pack intake/version + release assets"
     )
 
 

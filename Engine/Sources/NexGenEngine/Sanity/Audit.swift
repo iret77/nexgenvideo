@@ -17,14 +17,17 @@ public struct AuditContext: Sendable {
     public var brief: Brief?
     public var bible: Bible?
     public var extra: [String: String]?
+    public var productionProfileIDs: Set<ProductionProfileID>
 
     public init(
-        shotlist: Shotlist, brief: Brief? = nil, bible: Bible? = nil, extra: [String: String]? = nil
+        shotlist: Shotlist, brief: Brief? = nil, bible: Bible? = nil, extra: [String: String]? = nil,
+        productionProfileIDs: Set<ProductionProfileID> = []
     ) {
         self.shotlist = shotlist
         self.brief = brief
         self.bible = bible
         self.extra = extra
+        self.productionProfileIDs = productionProfileIDs
     }
 }
 

@@ -1212,6 +1212,19 @@ extension ToolExecutor {
             "camera": shot.cameraSetup.map { $0.promptProse() as Any } ?? NSNull(),
             "chain_with_previous_end": shot.chainWithPreviousEnd,
         ]
+        if let plan = shot.productionPlan {
+            body["production_plan"] = [
+                "primary_action": plan.primaryAction,
+                "camera_movement": plan.cameraMovement.rawValue,
+                "camera_movement_detail": plan.cameraMovementDetail.map { $0 as Any } ?? NSNull(),
+                "narrative_beat": plan.narrativeBeat.map { $0.rawValue as Any } ?? NSNull(),
+                "renderability": plan.renderability.rawValue,
+                "risks": plan.risks.map(\.rawValue),
+                "rescue_cut": plan.rescueCut.map { $0 as Any } ?? NSNull(),
+                "match_action_cue": plan.matchActionCue.map { $0 as Any } ?? NSNull(),
+                "continuity_locks": plan.continuityLocks,
+            ]
+        }
         if let frameRole { body["role"] = frameRole }
         if phase != "frames", shot.sourceMode == .aiEnhanced {
             guard let sourcePath = shot.sourcePath,

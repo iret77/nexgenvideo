@@ -4,7 +4,7 @@ import Foundation
 /// generation. Port of `shotlist/schema.py`. `Mode` here is the shared core
 /// enum (`ProjectMeta.swift`), not a local redefinition — Python's schema.py
 /// literally re-exports `core.modes.Mode`.
-public let shotlistSchemaVersion = "shotlist/v3"
+public let shotlistSchemaVersion = "shotlist/v4"
 
 /// Port of `shotlist/schema.py::SHOT_ID_RE`.
 private let shotIDPattern = #"^s\d{3}$"#
@@ -16,10 +16,7 @@ public let shotlistDurationEpsilon = 1e-3
 /// multicam `time_end` vs. `song.duration_s` (distinct from `DURATION_EPSILON`).
 private let multicamEndToleranceSeconds = 0.5
 
-// MARK: - Enums (9 total: ShotType, ModelSuggestion, KeyframeStrategy,
-// SceneVideoProvider, SeedanceInputMode, Framing, CameraHeight, CameraAngle,
-// LensHint — re-derived directly from shotlist/schema.py; the task's
-// estimate of 11 was incorrect).
+// MARK: - Shot and camera enums
 
 /// Port of `shotlist/schema.py::ShotType`.
 public enum ShotType: String, Codable, Sendable, CaseIterable {
@@ -297,6 +294,191 @@ public struct Song: Codable, Sendable, Equatable {
     public var perceivedBpm: Double { bpm * tempoMultiplier }
 }
 
+public enum CameraMovement: String, Codable, Sendable, CaseIterable {
+    case `static`
+    case pan
+    case tilt
+    case dollyIn = "dolly_in"
+    case dollyOut = "dolly_out"
+    case tracking
+    case handheld
+    case crane
+    case orbit
+    case zoom
+    case other
+
+    public func promptProse(detail: String? = nil) -> String {
+        let movement: String
+        switch self {
+        case .static: movement = "locked-off static camera"
+        case .pan: movement = "single controlled pan"
+        case .tilt: movement = "single controlled tilt"
+        case .dollyIn: movement = "single controlled dolly-in"
+        case .dollyOut: movement = "single controlled dolly-out"
+        case .tracking: movement = "single controlled tracking move"
+        case .handheld: movement = "controlled handheld movement"
+        case .crane: movement = "single controlled crane move"
+        case .orbit: movement = "single controlled orbit"
+        case .zoom: movement = "single controlled optical zoom"
+        case .other: movement = detail ?? "single controlled camera movement"
+        }
+        guard self != .other,
+              let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !detail.isEmpty else { return movement }
+        return "\(movement): \(detail)"
+    }
+}
+
+public enum NarrativeBeat: String, Codable, Sendable, CaseIterable, Hashable {
+    case establish
+    case action
+    case reaction
+    case detail
+    case transition
+    case performance
+    case atmosphere
+}
+
+public enum RenderabilityRating: String, Codable, Sendable, CaseIterable {
+    case green
+    case yellow
+    case red
+}
+
+public enum RenderabilityRisk: String, Codable, Sendable, CaseIterable, Hashable {
+    case readableInFrameText = "readable_in_frame_text"
+    case mirrorReflection = "mirror_reflection"
+    case fineMotorHands = "fine_motor_hands"
+    case closeUpEatingDrinking = "close_up_eating_drinking"
+    case denseFaceCrowd = "dense_face_crowd"
+    case continuousFight = "continuous_fight"
+    case physicsShowcase = "physics_showcase"
+    case vehicleMechanics = "vehicle_mechanics"
+    case identityDrift = "identity_drift"
+    case nonEnglishLipSync = "non_english_lip_sync"
+    case longTake = "long_take"
+    case aggressiveCameraMove = "aggressive_camera_move"
+    case complexInteraction = "complex_interaction"
+}
+
+public struct ShotProductionPlan: Codable, Sendable, Equatable {
+    public var primaryAction: String
+    public var cameraMovement: CameraMovement
+    public var cameraMovementDetail: String?
+    public var narrativeBeat: NarrativeBeat?
+    public var renderability: RenderabilityRating
+    public var risks: [RenderabilityRisk]
+    public var rescueCut: String?
+    public var matchActionCue: String?
+    public var continuityLocks: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case primaryAction = "primary_action"
+        case cameraMovement = "camera_movement"
+        case cameraMovementDetail = "camera_movement_detail"
+        case narrativeBeat = "narrative_beat"
+        case renderability
+        case risks
+        case rescueCut = "rescue_cut"
+        case matchActionCue = "match_action_cue"
+        case continuityLocks = "continuity_locks"
+    }
+
+    public init(
+        primaryAction: String,
+        cameraMovement: CameraMovement,
+        cameraMovementDetail: String? = nil,
+        narrativeBeat: NarrativeBeat? = nil,
+        renderability: RenderabilityRating,
+        risks: [RenderabilityRisk] = [],
+        rescueCut: String? = nil,
+        matchActionCue: String? = nil,
+        continuityLocks: [String] = []
+    ) throws {
+        self.primaryAction = primaryAction
+        self.cameraMovement = cameraMovement
+        self.cameraMovementDetail = cameraMovementDetail
+        self.narrativeBeat = narrativeBeat
+        self.renderability = renderability
+        self.risks = risks
+        self.rescueCut = rescueCut
+        self.matchActionCue = matchActionCue
+        self.continuityLocks = continuityLocks
+        try validate()
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        primaryAction = try container.decode(String.self, forKey: .primaryAction)
+        cameraMovement = try container.decode(CameraMovement.self, forKey: .cameraMovement)
+        cameraMovementDetail = try container.decodeIfPresent(String.self, forKey: .cameraMovementDetail)
+        narrativeBeat = try container.decodeIfPresent(NarrativeBeat.self, forKey: .narrativeBeat)
+        renderability = try container.decode(RenderabilityRating.self, forKey: .renderability)
+        risks = try container.decodeIfPresent([RenderabilityRisk].self, forKey: .risks) ?? []
+        rescueCut = try container.decodeIfPresent(String.self, forKey: .rescueCut)
+        matchActionCue = try container.decodeIfPresent(String.self, forKey: .matchActionCue)
+        continuityLocks = try container.decodeIfPresent([String].self, forKey: .continuityLocks) ?? []
+        try validate()
+    }
+
+    public enum ValidationError: Swift.Error, Sendable, Equatable {
+        case emptyPrimaryAction
+        case missingCameraMovementDetail
+        case greenShotDeclaresRisks
+        case riskyShotMissingRisks
+        case riskyShotMissingRescueCut
+        case duplicateRisks
+        case emptyContinuityLock
+        case duplicateContinuityLocks
+    }
+
+    public func validate() throws {
+        guard !primaryAction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ValidationError.emptyPrimaryAction
+        }
+        if cameraMovement == .other {
+            guard let cameraMovementDetail,
+                  !cameraMovementDetail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ValidationError.missingCameraMovementDetail
+            }
+        }
+        guard Set(risks).count == risks.count else {
+            throw ValidationError.duplicateRisks
+        }
+        let normalizedLocks = continuityLocks.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        guard normalizedLocks.allSatisfy({ !$0.isEmpty }) else {
+            throw ValidationError.emptyContinuityLock
+        }
+        guard Set(normalizedLocks).count == normalizedLocks.count else {
+            throw ValidationError.duplicateContinuityLocks
+        }
+        if renderability == .green {
+            guard risks.isEmpty else { throw ValidationError.greenShotDeclaresRisks }
+        } else {
+            guard !risks.isEmpty else { throw ValidationError.riskyShotMissingRisks }
+            guard let rescueCut,
+                  !rescueCut.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw ValidationError.riskyShotMissingRescueCut
+            }
+        }
+    }
+
+    public var providerDirectives: [String] {
+        var directives = ["Single approved subject action: \(primaryAction)"]
+        directives.append(contentsOf: stillProviderDirectives)
+        if let cue = matchActionCue?.trimmingCharacters(in: .whitespacesAndNewlines), !cue.isEmpty {
+            directives.append("Match-action cue: \(cue)")
+        }
+        return directives
+    }
+
+    public var stillProviderDirectives: [String] {
+        continuityLocks.map { "Continuity lock: \($0)" }
+    }
+}
+
 /// One shot. Port of `shotlist/schema.py::Shot`.
 public struct Shot: Codable, Sendable, Equatable {
     public var id: String
@@ -338,6 +520,7 @@ public struct Shot: Codable, Sendable, Equatable {
     public var transitionOut: TransitionType
     public var notes: String?
     public var sourcePath: String?
+    public var productionPlan: ShotProductionPlan?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -376,6 +559,7 @@ public struct Shot: Codable, Sendable, Equatable {
         case transitionOut = "transition_out"
         case notes
         case sourcePath = "source_path"
+        case productionPlan = "production_plan"
     }
 
     public init(
@@ -392,7 +576,8 @@ public struct Shot: Codable, Sendable, Equatable {
         seedanceInputMode: SeedanceInputMode = .keyframe, referenceImageRefs: [String] = [],
         chainWithPreviousEnd: Bool = false,
         transitionIn: TransitionType = .hardCut, transitionOut: TransitionType = .hardCut,
-        notes: String? = nil, sourcePath: String? = nil
+        notes: String? = nil, sourcePath: String? = nil,
+        productionPlan: ShotProductionPlan? = nil
     ) throws {
         self.id = id
         self.section = section
@@ -430,6 +615,7 @@ public struct Shot: Codable, Sendable, Equatable {
         self.transitionOut = transitionOut
         self.notes = notes
         self.sourcePath = sourcePath
+        self.productionPlan = productionPlan
         try validate()
     }
 
@@ -478,6 +664,7 @@ public struct Shot: Codable, Sendable, Equatable {
         transitionOut = try container.decodeIfPresent(TransitionType.self, forKey: .transitionOut) ?? .hardCut
         notes = try container.decodeIfPresent(String.self, forKey: .notes)
         sourcePath = try container.decodeIfPresent(String.self, forKey: .sourcePath)
+        productionPlan = try container.decodeIfPresent(ShotProductionPlan.self, forKey: .productionPlan)
         try validate()
     }
 
@@ -517,6 +704,7 @@ public struct Shot: Codable, Sendable, Equatable {
                 )
             }
         }
+        try productionPlan?.validate()
     }
 }
 
@@ -596,9 +784,8 @@ public struct Shotlist: Codable, Sendable, Equatable {
     /// Port of `Shotlist._schema_const`, `_shot_ids_sequential`,
     /// `_mode_specific_rules`, and the `budget_eur` `Field(gt=0)` constraint.
     public func validate() throws {
-        // v1/v2 are tolerant legacy reads; newer fields (framing, visible_zones,
-        // zone_introduces added in v3) are optional, so old files still load.
-        guard ["shotlist/v3", "shotlist/v2", "shotlist/v1"].contains(schema_) else {
+        // Legacy versions are tolerant reads; fields added later remain optional.
+        guard ["shotlist/v4", "shotlist/v3", "shotlist/v2", "shotlist/v1"].contains(schema_) else {
             throw ValidationError.unknownSchema(schema_)
         }
         guard budgetEur > 0 else { throw ValidationError.budgetNotPositive(budgetEur) }

@@ -372,6 +372,9 @@ struct AgentPanelView: View {
                 scrollingMessages(entries: entries)
             }
         }
+        .onChange(of: service.currentSessionId) { _, _ in
+            isUserPinnedAway = false
+        }
     }
 
     private func scrollingMessages(entries: [AgentTranscriptEntry]) -> some View {
@@ -395,6 +398,9 @@ struct AgentPanelView: View {
                     }
                     errorBanner
                         .padding(.top, AppTheme.Spacing.sm)
+                    AppTheme.Background.clearColor
+                        .frame(height: AppTheme.Spacing.none)
+                        .id(AgentTranscriptScrollPolicy.endID)
                 }
                 .padding(.horizontal, AppTheme.Spacing.lgXl)
                 .padding(.top, AppTheme.Spacing.sm)
@@ -403,28 +409,26 @@ struct AgentPanelView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.never)
-            .onScrollPhaseChange { oldPhase, newPhase, context in
-                guard newPhase == .interacting
-                        || newPhase == .decelerating
-                        || (newPhase == .idle && oldPhase != .animating)
-                else { return }
-                isUserPinnedAway = AgentTranscriptScrollPolicy.isAwayFromBottom(
+            .id(service.currentSessionId)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(
+                isUserPinnedAway ? nil : .bottom,
+                for: .sizeChanges
+            )
+            .onScrollPhaseChange { _, newPhase, context in
+                guard let away = AgentTranscriptScrollPolicy.pinState(
+                    for: newPhase,
                     contentHeight: context.geometry.contentSize.height,
                     contentOffsetY: context.geometry.contentOffset.y,
                     containerHeight: context.geometry.containerSize.height,
                     threshold: AppTheme.ComponentSize.agentScrollAwayThreshold
-                )
-            }
-            .onChange(of: service.transcriptRevision) { _, _ in
-                guard !isUserPinnedAway else { return }
-                scrollToBottom(proxy, entries: entries)
-            }
-            .onChange(of: service.isStreaming) { _, _ in
-                guard !isUserPinnedAway else { return }
-                scrollToBottom(proxy, entries: entries)
+                ) else { return }
+                if away != isUserPinnedAway {
+                    isUserPinnedAway = away
+                }
             }
             .onChange(of: scrollToLatestRequest) { _, _ in
-                scrollToBottom(proxy, entries: entries)
+                scrollToBottom(proxy)
             }
         }
     }
@@ -543,16 +547,10 @@ struct AgentPanelView: View {
         }
     }
 
-    private func scrollToBottom(
-        _ proxy: ScrollViewProxy,
-        entries: [AgentTranscriptEntry]
-    ) {
-        let target = AgentTranscriptScrollPolicy.targetID(
-            entries: entries,
-            isStreaming: service.isStreaming
-        )
-        if let target {
-            proxy.scrollTo(target, anchor: .bottom)
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            await Task.yield()
+            proxy.scrollTo(AgentTranscriptScrollPolicy.endID, anchor: .bottom)
         }
     }
 

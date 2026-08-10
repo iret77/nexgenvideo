@@ -101,6 +101,9 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Staged phase runners preserving the original `PhaseRunner` ABI for installed packs.
     public private(set) var progressPhaseRunners: [String: ProgressPhaseRunner] = [:]
 
+    /// Reusable core production doctrine activated by a thin format pack.
+    public private(set) var productionProfiles: [ProductionProfile] = []
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -192,6 +195,21 @@ public final class EngineRegistry: @unchecked Sendable {
 
     public func registerDurationPolicy(_ policy: DurationPolicy) {
         durationPolicy = policy
+    }
+
+    public func registerProductionProfile(_ profile: ProductionProfile) {
+        productionProfiles.removeAll { $0.id == profile.id }
+        productionProfiles.append(profile)
+    }
+
+    public func registerProductionProfiles(_ profiles: [ProductionProfile]) {
+        for profile in profiles {
+            registerProductionProfile(profile)
+        }
+    }
+
+    public func activeProductionProfileIDs(metadata: [String: String]) -> Set<ProductionProfileID> {
+        Set(productionProfiles.filter { $0.activation.matches(metadata) }.map(\.id))
     }
 
     /// Register a deterministic hard-gate precondition for `phase`. Consulted by the approve paths

@@ -21,6 +21,30 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(!implementation.contains("withAnimation"))
         #expect(!implementation.contains(".animation("))
         #expect(!implementation.contains("if isUserPinnedAway"))
+        #expect(!implementation.contains(".onChange(of: service.transcriptRevision)"))
+        #expect(!implementation.contains(".onChange(of: service.isStreaming)"))
+        #expect(implementation.contains(
+            ".defaultScrollAnchor(.bottom, for: .initialOffset)"
+        ))
+        #expect(implementation.contains("for: .sizeChanges"))
+        #expect(implementation.contains("AgentTranscriptScrollPolicy.pinState("))
+        #expect(implementation.contains("if away != isUserPinnedAway"))
+        #expect(!implementation.contains(".onChange(of: service.currentSessionId)"))
+        #expect(implementation.contains(".id(service.currentSessionId)"))
+        #expect(implementation.contains(".id(AgentTranscriptScrollPolicy.endID)"))
+    }
+
+    @Test func sessionPinResetLivesOnTheAlwaysPresentMessageList() throws {
+        let source = try agentPanelSource()
+        let start = try #require(source.range(of: "private func messageList"))
+        let end = try #require(source.range(
+            of: "private func scrollingMessages",
+            range: start.upperBound..<source.endIndex
+        ))
+        let implementation = source[start.lowerBound..<end.lowerBound]
+
+        #expect(implementation.contains(".onChange(of: service.currentSessionId)"))
+        #expect(implementation.contains("isUserPinnedAway = false"))
     }
 
     @Test func transcriptHeaderIsInFlowInsteadOfLayeredOverMessages() throws {

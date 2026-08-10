@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 struct AgentActivity: Identifiable {
     struct Step: Identifiable {
@@ -139,6 +140,26 @@ enum AgentTranscriptProjection {
 }
 
 enum AgentTranscriptScrollPolicy {
+    static let endID = "transcript-end"
+
+    static func pinState(
+        for phase: ScrollPhase,
+        contentHeight: CGFloat,
+        contentOffsetY: CGFloat,
+        containerHeight: CGFloat,
+        threshold: CGFloat
+    ) -> Bool? {
+        guard phase == .interacting || phase == .decelerating || phase == .idle else {
+            return nil
+        }
+        return isAwayFromBottom(
+            contentHeight: contentHeight,
+            contentOffsetY: contentOffsetY,
+            containerHeight: containerHeight,
+            threshold: threshold
+        )
+    }
+
     static func isAwayFromBottom(
         contentHeight: CGFloat,
         contentOffsetY: CGFloat,
@@ -146,19 +167,5 @@ enum AgentTranscriptScrollPolicy {
         threshold: CGFloat
     ) -> Bool {
         contentHeight - contentOffsetY - containerHeight > threshold
-    }
-
-    static func targetID(
-        entries: [AgentTranscriptEntry],
-        isStreaming: Bool
-    ) -> String? {
-        let hasRunningActivity = entries.contains {
-            if case .activity(let activity) = $0 { return activity.isRunning }
-            return false
-        }
-        if isStreaming, !hasRunningActivity {
-            return "streaming-indicator"
-        }
-        return entries.last?.id
     }
 }

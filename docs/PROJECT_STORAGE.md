@@ -77,7 +77,7 @@ inspects a source path, so a file the user merely moved is never mistaken for de
 ### Artifact schemas
 
 Layout is not the only thing that ages. `SchemaMigrator` lifts a project's artifacts to the
-schema the engine writes today (`bible/v4 → v5`, `shotlist/v1|v2 → v3`), driven by the
+schema the engine writes today (`bible/v4 → v5`, `shotlist/v1|v2|v3 → v4`), driven by the
 `SchemaVersions` matrix. It runs on the **working copy**, so the `.ngv` package is untouched
 until ⌘S — a migration the user never saves is discarded with the copy.
 

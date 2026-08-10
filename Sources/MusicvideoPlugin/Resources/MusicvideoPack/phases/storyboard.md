@@ -202,6 +202,7 @@ sections:
             position: "in the gate, left third"
             pose: "standing still, weight forward"
             gaze: "into the schoolyard"
+            relation_to_set: "between the hall-side gate post and the bicycle rack"
         setting_hint: "schoolyard, from the gate"
         location_view_request: "entrance"
         character_view_request:
@@ -318,7 +319,8 @@ Storyboard-phase duties:
   sometimes three_quarter_right, occasionally low/high. Otherwise
   `CAMERA_SETUP_MONOKULTUR` fires.
 - **One `character_blocking` per step with ≥2 figures**, with position,
-  pose, gaze, and set relation per figure. Solo steps don't need it.
+  pose, gaze, and `relation_to_set` anchored to a named object or set
+  zone per figure. Solo steps don't need it.
 - **Cut grammar at step design** (shot size ≠ perspective): consecutive
   steps on the same subject in the same location need **either a size
   change** (change the `framing` level — even WIDE → CU at the same

@@ -23,7 +23,10 @@ public enum SchemaVersions {
     /// always included in `supported`.
     public static let matrix: [String: Info] = [
         "bible": Info(current: "bible/v5", supported: ["bible/v4", "bible/v5"]),
-        "shotlist": Info(current: "shotlist/v3", supported: ["shotlist/v1", "shotlist/v2", "shotlist/v3"]),
+        "shotlist": Info(
+            current: "shotlist/v4",
+            supported: ["shotlist/v1", "shotlist/v2", "shotlist/v3", "shotlist/v4"]
+        ),
         "brief": Info(current: "brief/v1", supported: ["brief/v1"]),
         "ledger": Info(current: "ledger/v1", supported: ["ledger/v1"]),
         "frame_audit": Info(current: "frame_audit/v1", supported: ["frame_audit/v1"]),

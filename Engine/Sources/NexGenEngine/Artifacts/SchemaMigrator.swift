@@ -5,7 +5,7 @@ import Foundation
 /// pointed at a `<modul> migrate` CLI that was never ported, so a schema bump would have stranded
 /// existing `.ngv` projects with a warning (#202).
 ///
-/// Port of the Python `*/migrate.py` family (`bible/migrate.py` v4→v5, `shotlist/migrate.py` v1|v2→v3),
+/// Port of the Python migration model, extended through `bible/v5` and `shotlist/v4`,
 /// but built on the seam Python lacked: the Swift readers already decode the older versions tolerantly
 /// (new fields are `decodeIfPresent` with empty defaults) and the writers emit the current shape. So a
 /// migration is a decode → re-stamp → `validate()` → encode round-trip rather than hand-written field

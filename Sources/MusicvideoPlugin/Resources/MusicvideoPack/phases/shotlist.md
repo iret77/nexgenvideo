@@ -95,7 +95,8 @@ The bible IDs are fixed by the bible agent (read them via
 - `step.camera_setup` → `shot.camera_setup` (MANDATORY — triplet
   height + angle + lens_hint)
 - `step.character_blocking` → `shot.character_blocking` (MANDATORY for
-  shots with ≥2 `character_refs`)
+  shots with ≥2 `character_refs`; every entry keeps its object- or
+  zone-anchored `relation_to_set`)
 - Cut-grammar markers / plausibility markers: `cut_ok:` /
   `plausibility_ok:` notes set in `step.notes` are copied 1:1 into
   `shot.notes` — otherwise the sanity checks fire again.

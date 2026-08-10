@@ -1164,7 +1164,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .writeShotlist,
-            description: "Write the next validated shotlist version. Use this instead of authoring YAML. Supply only shots and notes: the host derives schema, project, mode, budget and the complete Song block from the approved Brief plus measured analysis. Approval requires complete song coverage, valid Storyboard section assignment, existing explicit references, and reference mode without keyframes or chaining.",
+            description: "Write the next validated shotlist version. Use this instead of authoring YAML. Supply only shots and notes: the host derives schema, project, mode, budget and the complete Song block from the approved Brief plus measured analysis. Every generated or AI-enhanced shot requires a production_plan with one primary action, one camera movement, renderability, declared risks, continuity locks, and a rescue cut for yellow/red risk; imported shots omit it. Narrative/hybrid planned shots also require narrative_beat. Approval requires complete song coverage, valid Storyboard section assignment, existing explicit references, and reference mode without keyframes or chaining.",
             inputSchema: PipelineArtifactWriteContract.shotlistSchema
         ),
         AgentTool(

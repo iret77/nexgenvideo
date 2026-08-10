@@ -278,6 +278,9 @@ enum ShowFormatters {
                 }
                 if shot.redo { flags.append("⟳ redo") }
                 if shot.chainWithPreviousEnd { flags.append("⛓ chain") }
+                if let plan = shot.productionPlan {
+                    flags.append("renderability: \(plan.renderability.rawValue)")
+                }
                 let notesStr = shot.notes ?? ""
                 if notesStr.range(of: stillOnlyPattern, options: [.regularExpression, .caseInsensitive]) != nil {
                     flags.append("🖼 still-only (NLE)")
@@ -308,6 +311,25 @@ enum ShowFormatters {
 
                 let desc = shot.description.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !desc.isEmpty { lines.append("  > \(shorten(desc, 140))") }
+                if let plan = shot.productionPlan {
+                    var planParts = [
+                        "action: \(plan.primaryAction)",
+                        "camera: \(plan.cameraMovement.rawValue)",
+                    ]
+                    if let beat = plan.narrativeBeat {
+                        planParts.append("beat: \(beat.rawValue)")
+                    }
+                    lines.append("  **Plan:** " + planParts.joined(separator: " · "))
+                    if !plan.risks.isEmpty {
+                        lines.append("  **Risks:** " + plan.risks.map(\.rawValue).joined(separator: ", "))
+                    }
+                    if let rescue = plan.rescueCut {
+                        lines.append("  **Rescue:** \(rescue)")
+                    }
+                    if !plan.continuityLocks.isEmpty {
+                        lines.append("  **Continuity:** " + plan.continuityLocks.joined(separator: "; "))
+                    }
+                }
                 lines.append("")
             }
         }

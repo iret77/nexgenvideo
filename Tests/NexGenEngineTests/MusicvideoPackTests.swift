@@ -16,6 +16,10 @@ struct MusicvideoPackTests {
         #expect(reg.engine.sanityChecks["tempo"] != nil)
         #expect(reg.engine.phases["analysis"] != nil)
         #expect(reg.engine.progressPhaseRunners["analysis"] != nil)
+        #expect(reg.engine.productionProfiles.map(\.id) == [
+            .generativeFilm,
+            .narrativeStorytelling,
+        ])
     }
 
     @Test("music duration bands")
@@ -46,8 +50,8 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.0.16")
-        #expect(pack.manifest.minAppVersion == "1.0.9")
+        #expect(pack.version == "0.1.0")
+        #expect(pack.manifest.minAppVersion == "1.1.0")
     }
 
     @Test("pack exposes gallery manifest and a starter")
@@ -60,6 +64,19 @@ struct MusicvideoPackTests {
         let badge = try #require(pack.manifest.badgeURL)
         #expect(FileManager.default.fileExists(atPath: badge.path))
         #expect(pack.starters.isEmpty == false)
+    }
+
+    @Test("pack leaves project-specific production profiles to the host")
+    func packDoesNotGuessProductionProfiles() throws {
+        let starter = try #require(
+            MusicvideoPack().starters(for: PackProgress(
+                nextPhase: "shotlist",
+                approvedPhases: 7,
+                totalPhases: 11
+            )).first
+        )
+        #expect(!starter.prompt.contains("Core production profile:"))
+        #expect(!starter.prompt.contains("Apply this profile only when `concept_type`"))
     }
 
     @Test("pack registers the analysis UI contract entry")

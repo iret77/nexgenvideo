@@ -1,6 +1,27 @@
 # Session handoff — 2026-08-10
 
-## Current release blocker
+## Current work package
+
+The `ai-film-production` material is integrated as reusable NexGenEngine production profiles rather
+than musicvideo-only prompt text. `generative_film` owns cross-format renderability, shot complexity,
+continuity, and rescue-cut discipline. `narrative_storytelling` activates from generic Brief metadata
+for narrative/hybrid projects. The host composes only the profiles active for the current project;
+planned packs can register the same profiles without copying them. `shotlist/v4` persists the
+structured per-shot production plan while older projects migrate without invented creative values.
+
+The owner authorized the current CI build incident and merge to `main` on 2026-08-10. No CI run has
+been dispatched yet. Claude Opus/max and Gemini independently reviewed the release scope; every
+evidence-backed finding was corrected and the release review gate passed.
+
+Current non-build verification: `git diff --check`, JSON/plist parsing, `lint_app_theme.py`, and
+`release_preflight.py` pass for 1.1.0. Codex self-review corrected the prompt source-of-truth,
+legacy-compatibility, transcript-scroll edges, pack ABI floor, deterministic sanity order,
+project-specific profile activation, and still/video prompt separation. The release preflight now
+pins the transitive stored-value and enum layouts used across the pack boundary so an incompatible
+pack floor cannot ship silently. Swift compilation and runtime tests remain unverified until the
+authorized GitHub Actions run completes.
+
+## Previous release blocker
 
 App 1.0.8 contains the corrections for two user actions regressed in 1.0.7: `Done` on an empty repeated character/location card was routed
 through the attachment validator and failed with “Choose at least one reference image”; the Trash
@@ -24,7 +45,7 @@ remote, pasted-image, and relink path through one serialized async transaction w
 visible progress/cancel, rollback, idempotent reimport, and transactional undo/redo. The consolidated
 1.0.9 correction remains unverified until macOS CI passes.
 
-## Objective
+## Previous objective
 
 Finish one consolidated NexGenVideo 1.0 correction after on-device testing exposed six coupled
 release blockers:
@@ -48,12 +69,12 @@ in-the-moment `build now`.
 
 ## Working state
 
-- Branch: `codex/fix-release-blockers-279-287`
-- App candidate: `1.0.9`, `CFBundleVersion` `76`. No CI has run; release is not published.
-- Musicvideo pack candidate: `0.0.16`, project schema `musicvideo/1.0.0`
-- Engine binary contract: current `4`, minimum compatible `2`
-- The commit containing this handoff is the one consolidated correction; read its live CI and release
-  state from GitHub rather than inferring it from this document.
+- Branch: `codex/integrate-film-production-core-1-1-build`
+- App candidate: `1.1.0`, `CFBundleVersion` `77`. No CI run has been dispatched.
+- Musicvideo pack candidate: `0.1.0`, project schema `musicvideo/1.0.0`
+- Engine binary contract: current `5`, minimum compatible `2`
+- The production-profile and transcript-hang corrections are integrated locally. They have not been
+  pushed, reviewed by CI, merged, or released.
 
 ## Binding product contracts
 
@@ -167,12 +188,19 @@ The locked source documents are:
   proposes the measured size to children, and explicitly declines merged subview alignment guides.
 - Scroll visibility no longer mutates the observed hierarchy from a geometry callback. Scroll intent
   is derived only from user scroll phases, and programmatic following is not animated.
-- Transcript mutations carry a revision so growth inside an existing assistant turn follows the true
-  final entry rather than an earlier running-activity row.
+- The 1.0.9 stackshot records the main thread CPU-active in `AttributeGraph`, recursive stack/flex/text
+  measurement, and `LazySubviewPlacements.makeAnchorTranslationIfNeeded` in every sample; no pipeline,
+  network, or filesystem wait owns the hang.
+- Transcript growth no longer issues a synchronous `ScrollViewProxy.scrollTo` from message or streaming
+  state changes. Initial placement and unpinned growth use SwiftUI's native scroll anchors, while the
+  proxy remains reserved for the user's explicit Scroll to latest action.
+- Session identity reconstructs the scroll view and resets user pinning without a structural-change
+  scroll command. The stable end sentinel includes the error banner in the true transcript tail.
 - Ignored Claude stream-json lines no longer republish an unchanged observable transcript, and activity
   status changes no longer apply an implicit layout animation.
-- Geometry and revision regression tests cover wrapping, non-finite/overflow input, consistent
-  measurement, and in-place transcript growth.
+- Geometry and scroll-policy regression tests cover wrapping, non-finite/overflow input, consistent
+  measurement, native size-change anchoring, session identity, and the absence of transcript-driven
+  programmatic scrolling.
 - A background main-thread watchdog distinguishes a blocked UI thread from whole-process suspension.
   After eight continuously observed seconds it writes state history and requests a bounded
   three-second macOS process sample under `~/Library/Logs/NexGenVideo`; Help → Reveal Diagnostics

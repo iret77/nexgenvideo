@@ -5,7 +5,7 @@ import NexGenEngine
 /// (id/version/minAppVersion/displayName/tagline) mirrors `plugins/musicvideo.json`,
 /// which the release assembles into the `.ngvpack`'s Info.plist `NGVMinAppVersion` —
 /// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
-let musicvideoMinAppVersion = "1.0.9"
+let musicvideoMinAppVersion = "1.1.0"
 
 /// The musicvideo pack — registers music-specific behavior into the generic
 /// engine. Port of `nexgen_pack_musicvideo/pack.py`.
@@ -40,7 +40,12 @@ public struct MusicDurationPolicy: DurationPolicy {
 /// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.0.16"
+    public let version = "0.1.0"
+
+    static let productionProfiles: [ProductionProfile] = [
+        StandardProductionProfiles.generativeFilm,
+        StandardProductionProfiles.narrativeStorytelling,
+    ]
 
     private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
         _ = projectURL
@@ -99,11 +104,12 @@ public struct MusicvideoPack: Pack {
         case "frames": resourceName = "frame"
         default: resourceName = phase.replacingOccurrences(of: "_", with: "-")
         }
-        guard let instructions = try? PackKnowledge.phaseDoc(name: resourceName),
-              !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let packInstructions = (try? PackKnowledge.phaseDoc(name: resourceName))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !packInstructions.isEmpty else {
             return handoff
         }
-        return "\(handoff)\n\nFollow these packaged instructions for the current phase:\n\n\(instructions)"
+        return "\(handoff)\n\nFollow these packaged instructions for the current phase:\n\n\(packInstructions)"
     }
 
     /// Pipeline phase name → the wording this pack uses for it in the UI.
@@ -157,6 +163,7 @@ public struct MusicvideoPack: Pack {
         // runtime built for a session (not silently absent). See PackWiring.
         registry.registerWiringProbe { PackWiring.token(pack: "musicvideo", nonce: $0) }
         registry.registerDurationPolicy(MusicDurationPolicy())
+        registry.registerProductionProfiles(Self.productionProfiles)
         // Agent-callable pattern query surface (suggest/get) — the live path to the pattern library.
         registry.registerPatternProvider(MusicvideoPatternProvider())
         registry.registerReferencePlanProvider(MusicvideoReferencePlanProvider())

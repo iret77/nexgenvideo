@@ -188,7 +188,7 @@ enum PipelineArtifactWriteContract {
             "gaze": string,
             "relation_to_set": string,
         ],
-        required: ["character_ref", "position", "pose", "gaze"]
+        required: ["character_ref", "position", "pose", "gaze", "relation_to_set"]
     ) }
 
     private static var lookGuide: [String: Any] {
@@ -326,6 +326,7 @@ enum PipelineArtifactWriteContract {
             "transition_out": enumeration(TransitionType.allCases.map(\.rawValue)),
             "notes": string,
             "source_path": string,
+            "production_plan": productionPlan,
         ],
         required: [
             "id",
@@ -355,6 +356,27 @@ enum PipelineArtifactWriteContract {
         ]
     ) }
 
+    private static var productionPlan: [String: Any] { object(
+        [
+            "primary_action": string,
+            "camera_movement": enumeration(CameraMovement.allCases.map(\.rawValue)),
+            "camera_movement_detail": string,
+            "narrative_beat": enumeration(NarrativeBeat.allCases.map(\.rawValue)),
+            "renderability": enumeration(RenderabilityRating.allCases.map(\.rawValue)),
+            "risks": array(enumeration(RenderabilityRisk.allCases.map(\.rawValue))),
+            "rescue_cut": string,
+            "match_action_cue": string,
+            "continuity_locks": stringArray,
+        ],
+        required: [
+            "primary_action",
+            "camera_movement",
+            "renderability",
+            "risks",
+            "continuity_locks",
+        ]
+    ) }
+
     private static var cameraSetup: [String: Any] { object(
         [
             "height": enumeration(CameraHeight.allCases.map(\.rawValue)),
@@ -373,7 +395,7 @@ enum PipelineArtifactWriteContract {
             "gaze": string,
             "relation_to_set": string,
         ],
-        required: ["character_ref", "position", "pose", "gaze"]
+        required: ["character_ref", "position", "pose", "gaze", "relation_to_set"]
     ) }
 
     private static var stringArray: [String: Any] {

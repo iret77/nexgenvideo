@@ -74,7 +74,9 @@ would always pass.
 **Bump `EngineContract.current` whenever anything crossing the binary boundary changes
 shape** — a `Pack` protocol requirement, a type in its signatures, `PackEntry`. A pack
 built against a contract below `minimumCompatible` has no safe ABI guarantee and is
-refused. Additive changes may retain the previous floor; incompatible changes raise it.
+refused. Appending a stored property to a public value type that crosses this boundary
+is ABI-incompatible without library evolution and raises the floor. Only verified
+additive changes may retain the previous floor.
 
 The bundle is assembled and signed by `scripts/assemble_ngvpack.sh` from
 `plugins/<id>.json` (the pack's shipping metadata) and the SwiftPM build products
@@ -243,12 +245,18 @@ public protocol Pack: Sendable {
 
 - `registerSanityCheck(_ name:_ check:)` — domain checks (e.g. music tempo/pacing). Last-write-wins by name.
 - `registerDurationPolicy(_:)` — mode → duration band (music makes it BPM-aware); the engine's Shot/sanity logic stays format-neutral.
+- `registerProductionProfile(_:)` — activate reusable core filmmaking guidance and checks through a
+  generic metadata condition; packs must not copy the profile into their own phase prose.
 - `registerProjectDirs(_:)` — extra project-layout subdirs (music: `audio`, `lyrics`, `analysis`).
 - `registerUIContract(phase:surface:taskClass:)` — override a phase's default interaction surface / router task class.
 - `registerPhase(_ name:runner:)` — workflow phase runners the pack contributes.
 - `registerLibrary(_ name:_ library:)` — domain reference data.
 - `registerProjectSchemaMigration(from:to:migrate:)` — exact, pack-owned project
   migration executed only through the host's transactional upgrade coordinator.
+
+Production profiles and their planned cross-pack composition are specified in
+[`PRODUCTION_PROFILES.md`](PRODUCTION_PROFILES.md). Provider/model capability claims never belong in
+a profile because they expire independently of the pack and engine contracts.
 
 ## Knowledge resources
 

@@ -24,6 +24,7 @@ extension EditorViewModel {
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             return false
         }
+        let trustedPack = declaredPluginName
         let result: Result<Bool, ToolError> = await Task.detached {
             guard var shotlist = (try? loadShotlist(dataRoot: dataRoot)) ?? nil,
                   let index = shotlist.shots.firstIndex(where: { $0.id == shotId }),
@@ -49,7 +50,9 @@ extension EditorViewModel {
             do {
                 _ = try PipelineShotlistWriter.write(
                     shotlist,
-                    dataRoot: dataRoot
+                    dataRoot: dataRoot,
+                    declaredPack: trustedPack,
+                    enforceProductionPlans: false
                 )
                 return .success(true)
             } catch let error as ToolError {

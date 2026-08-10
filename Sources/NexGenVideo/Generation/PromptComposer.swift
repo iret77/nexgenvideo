@@ -43,7 +43,10 @@ enum PromptComposer {
     /// `lint_prompt_against_shot` call.
     struct ShotProjection: Sendable {
         let camera: String
+        let cameraMovement: String
         let composition: String
+        let videoDirectives: [String]
+        let imageDirectives: [String]
         let spec: ComplianceLinter.ShotSpec
         /// The deterministic cut-handle timing for this shot (#213), empty when it carries no handle.
         /// `forceHandles` is the project-wide override (brief.cut_handles_mode == with_overlap).
@@ -51,7 +54,12 @@ enum PromptComposer {
 
         init(_ shot: Shot, forceHandles: Bool = false) {
             camera = shot.cameraSetup?.promptProse() ?? ""
+            cameraMovement = shot.productionPlan?.cameraMovement.promptProse(
+                detail: shot.productionPlan?.cameraMovementDetail
+            ) ?? ""
             composition = shot.framing?.compositionProse ?? ""
+            videoDirectives = shot.productionPlan?.providerDirectives ?? []
+            imageDirectives = shot.productionPlan?.stillProviderDirectives ?? []
             spec = ComplianceLinter.ShotSpec(
                 framing: shot.framing?.rawValue,
                 cameraHeight: shot.cameraSetup?.height.rawValue,
@@ -104,10 +112,13 @@ enum PromptComposer {
                 subject: trimmed,
                 durationS: durationSeconds,
                 aspectRatio: aspectRatio,
-                directives: directives.all
+                directives: directives.all + (shot?.videoDirectives ?? [])
             )
             if let shot {
-                payload.camera = shot.camera; payload.composition = shot.composition
+                payload.camera = [shot.camera, shot.cameraMovement]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: ". ")
+                payload.composition = shot.composition
                 payload.temporalStructure = shot.temporalStructure
             }
             composed = PromptGenerator.buildVideoPrompt(modelID: engineModelID(modelId), payload: payload)
@@ -116,7 +127,7 @@ enum PromptComposer {
             var payload = PromptPayload(
                 subject: trimmed,
                 aspectRatio: aspectRatio,
-                directives: directives.all
+                directives: directives.all + (shot?.imageDirectives ?? [])
             )
             if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
             composed = try PromptGenerator.buildImagePrompt(modelID: engineModelID(modelId), payload: payload)

@@ -8,8 +8,11 @@ struct SchemaVersionsTests {
     func matrixContents() {
         #expect(SchemaVersions.matrix["bible"]?.current == "bible/v5")
         #expect(SchemaVersions.matrix["bible"]?.supported == ["bible/v4", "bible/v5"])
-        #expect(SchemaVersions.matrix["shotlist"]?.current == "shotlist/v3")
-        #expect(SchemaVersions.matrix["shotlist"]?.supported == ["shotlist/v1", "shotlist/v2", "shotlist/v3"])
+        #expect(SchemaVersions.matrix["shotlist"]?.current == "shotlist/v4")
+        #expect(
+            SchemaVersions.matrix["shotlist"]?.supported
+                == ["shotlist/v1", "shotlist/v2", "shotlist/v3", "shotlist/v4"]
+        )
         #expect(SchemaVersions.matrix["brief"]?.current == "brief/v1")
         #expect(SchemaVersions.matrix["ledger"]?.current == "ledger/v1")
         #expect(SchemaVersions.matrix["frame_audit"]?.current == "frame_audit/v1")
@@ -60,7 +63,7 @@ struct SchemaVersionsTests {
     func anyAheadDetection() {
         let findings: [SchemaVersions.Finding] = [
             .init(artifact: "a", schemaField: "bible", projectVersion: "bible/v5", skillCurrent: "bible/v5", status: .match, message: ""),
-            .init(artifact: "b", schemaField: "shotlist", projectVersion: "shotlist/v1", skillCurrent: "shotlist/v3", status: .behind, message: ""),
+            .init(artifact: "b", schemaField: "shotlist", projectVersion: "shotlist/v1", skillCurrent: "shotlist/v4", status: .behind, message: ""),
         ]
         #expect(SchemaVersions.anyAhead(findings) == false)
         let withAhead = findings + [

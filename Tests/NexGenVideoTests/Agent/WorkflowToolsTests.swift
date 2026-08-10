@@ -42,17 +42,20 @@ struct WorkflowToolsTests {
 
     private func minimalShotlist(
         project: String = "demo",
-        keyframeStrategy: KeyframeStrategy = .start
+        keyframeStrategy: KeyframeStrategy = .start,
+        productionPlan: ShotProductionPlan? = nil,
+        generator: String = "test"
     ) throws -> Shotlist {
         let shot = try Shot(
             id: "s001", section: "verse", timeStart: 0.0, timeEnd: 4.0, durationS: 4.0,
             type: .performance, description: "d", visualPrompt: "p", mood: "m",
-            keyframeStrategy: keyframeStrategy
+            keyframeStrategy: keyframeStrategy,
+            productionPlan: productionPlan
         )
         let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 4.0)
         return try Shotlist(
             schema_: shotlistSchemaVersion, mode: .section, project: project, song: song,
-            generated: "2026-01-01", generator: "test", shots: [shot]
+            generated: "2026-01-01", generator: generator, shots: [shot]
         )
     }
 
@@ -1015,6 +1018,101 @@ struct WorkflowToolsTests {
         }
     }
 
+    @Test("run_sanity activates reusable profiles from the pack and brief")
+    func sanityActivatesProductionProfiles() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            try Brief(
+                project: "demo",
+                generated: "2026-08-08T00:00:00Z",
+                mission: .artPiece,
+                targetPlatform: "Festival",
+                aspectRatio: .landscape16x9,
+                projectMode: "section",
+                budgetEur: 50,
+                conceptType: .narrative,
+                visualMedium: .liveActionRealistic,
+                tone: [.quiet],
+                figures: .othersOnly,
+                lyricsIntegration: .metaphorical
+            ),
+            to: PipelineLayout.briefFile
+        )
+        _ = try saveShotlist(try minimalShotlist(), to: dataRoot)
+
+        let report = try await h.runOK(
+            "run_sanity",
+            args: ["project_dir": dataRoot.path]
+        ) as? [String: Any]
+        let findings = try #require(report?["findings"] as? [[String: Any]])
+        let codes = Set(findings.compactMap { $0["code"] as? String })
+        #expect(codes.contains("PRODUCTION_PLAN_MISSING"))
+        #expect(!codes.contains("NARRATIVE_BEAT_MISSING"))
+        #expect(!codes.contains("NARRATIVE_ACTION_MISSING"))
+        #expect(!codes.contains("NARRATIVE_CONTEXT_MISSING"))
+        #expect(!codes.contains("NARRATIVE_CONSEQUENCE_MISSING"))
+    }
+
+    @Test("agent prompt includes only host-activated production profiles")
+    func agentPromptUsesActiveProductionProfiles() throws {
+        let (_, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        let order = PhaseOrder.merged(
+            packPlacements: PackCatalog.registry(activePack: "musicvideo")
+                .phasePlacements
+        )
+        for phase in order.prefix(while: { $0 != "shotlist" }) {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+
+        func saveBrief(conceptType: ConceptType) throws {
+            try store.save(
+                try Brief(
+                    project: "demo",
+                    generated: "2026-08-10T00:00:00Z",
+                    mission: .artPiece,
+                    targetPlatform: "Festival",
+                    aspectRatio: .landscape16x9,
+                    projectMode: "section",
+                    budgetEur: 50,
+                    conceptType: conceptType,
+                    visualMedium: .liveActionRealistic,
+                    tone: [.quiet],
+                    figures: .artistOnly,
+                    lyricsIntegration: .metaphorical
+                ),
+                to: PipelineLayout.briefFile
+            )
+        }
+
+        try saveBrief(conceptType: .performance)
+        let performancePrompt = try #require(
+            PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
+        )
+        #expect(performancePrompt.contains("Core production profile: generative_film"))
+        #expect(!performancePrompt.contains("Core production profile: narrative_storytelling"))
+
+        try saveBrief(conceptType: .narrative)
+        let narrativePrompt = try #require(
+            PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
+        )
+        #expect(narrativePrompt.contains("Core production profile: generative_film"))
+        #expect(narrativePrompt.contains("Core production profile: narrative_storytelling"))
+
+        try Data("concept_type: [unterminated".utf8).write(
+            to: PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+        )
+        #expect(throws: ToolError.self) {
+            _ = try PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
+        }
+    }
+
     // MARK: - estimate_cost / render manifest / show_artifact / run_phase / get_bible
 
     @Test("estimate_cost returns the spent/remaining budget picture")
@@ -1034,6 +1132,7 @@ struct WorkflowToolsTests {
     func typedPlanningWritersPersistArtifacts() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
 
         _ = try await h.runOK("write_production_design", args: [
             "project_dir": dataRoot.path,
@@ -1204,7 +1303,54 @@ struct WorkflowToolsTests {
             "chain_with_previous_end": false,
             "transition_in": "hard_cut",
             "transition_out": "hard_cut",
+            "production_plan": [
+                "primary_action": "The performer enters the yard.",
+                "camera_movement": "static",
+                "narrative_beat": "establish",
+                "renderability": "green",
+                "risks": [],
+                "continuity_locks": [],
+            ],
         ]
+        var missingPlanShot = shot
+        missingPlanShot.removeValue(forKey: "production_plan")
+        let missingPlan = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [missingPlanShot],
+        ])
+        #expect(missingPlan.isError)
+        #expect(ToolHarness.textOf(missingPlan).contains("production_plan"))
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
+
+        var invalidShot = shot
+        var invalidPlan = try #require(
+            invalidShot["production_plan"] as? [String: Any]
+        )
+        invalidPlan.removeValue(forKey: "narrative_beat")
+        invalidShot["production_plan"] = invalidPlan
+        let missingBeat = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [invalidShot],
+        ])
+        #expect(missingBeat.isError)
+        #expect(ToolHarness.textOf(missingBeat).contains("narrative_beat"))
+
+        var unanchoredShot = shot
+        unanchoredShot["character_refs"] = ["performer"]
+        unanchoredShot["character_blocking"] = [[
+            "character_ref": "performer",
+            "position": "near the doorway",
+            "pose": "standing",
+            "gaze": "toward the yard",
+            "relation_to_set": "",
+        ]]
+        let unanchored = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [unanchoredShot],
+        ])
+        #expect(unanchored.isError)
+        #expect(ToolHarness.textOf(unanchored).contains("relation_to_set"))
+
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [shot],
@@ -1213,6 +1359,18 @@ struct WorkflowToolsTests {
         #expect(shotlist.project == "demo")
         #expect(shotlist.song.bpm == 160)
         #expect(shotlist.shots.map(\.id) == ["s001"])
+
+        var importedShot = shot
+        importedShot["source_mode"] = "imported"
+        importedShot["keyframe_strategy"] = "none"
+        importedShot.removeValue(forKey: "production_plan")
+        _ = try await h.runOK("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [importedShot],
+        ])
+        let importedShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
+        #expect(importedShotlist.shots.first?.sourceMode == .imported)
+        #expect(importedShotlist.shots.first?.productionPlan == nil)
     }
 
     @Test("planning writers reject project-path symlink escapes")
@@ -1296,13 +1454,21 @@ struct WorkflowToolsTests {
             name: "demo",
             mode: .beat
         )
-        _ = try saveShotlist(try minimalShotlist(), to: packageDataRoot)
+        try activatePack("musicvideo", dataRoot: packageDataRoot)
+        _ = try saveShotlist(
+            try minimalShotlist(generator: "shotlist-agent@write_shotlist"),
+            to: packageDataRoot
+        )
         let store = YAMLArtifactStore(dataRoot: packageDataRoot)
         var gates = try store.load(
             Gates.self,
             at: PipelineLayout.gatesFile
         )
-        for phase in coreGatePhases.prefix(while: { $0 != "shotlist" }) {
+        let order = PhaseOrder.merged(
+            packPlacements: PackCatalog.registry(activePack: "musicvideo")
+                .phasePlacements
+        )
+        for phase in order.prefix(while: { $0 != "shotlist" }) {
             GatesOperations.approve(&gates, phase: phase)
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
@@ -1344,6 +1510,26 @@ struct WorkflowToolsTests {
         )
         #expect(!invalidEnhancement)
         #expect(latestShotlistVersion(dataRoot: workingDataRoot) == 2)
+    }
+
+    @Test("shotlist writes fail closed when declared pack state is unreadable")
+    func shotlistWriteRejectsUnreadablePackState() throws {
+        let (_, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        let binding = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent(ProjectPluginSettings.filename)
+        try Data("{broken".utf8).write(to: binding)
+
+        #expect(throws: ToolError.self) {
+            _ = try PipelineShotlistWriter.write(
+                try minimalShotlist(),
+                dataRoot: dataRoot,
+                declaredPack: "musicvideo",
+                enforceProductionPlans: false
+            )
+        }
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
     }
 
     @Test("native shot source edits cannot bypass the current pipeline phase")
@@ -1921,12 +2107,25 @@ struct WorkflowToolsTests {
     func nextRenderShotPending() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try saveShotlist(try minimalShotlist(), to: dataRoot)
+        let plan = try ShotProductionPlan(
+            primaryAction: "performer turns toward camera",
+            cameraMovement: .static,
+            narrativeBeat: .performance,
+            renderability: .yellow,
+            risks: [.identityDrift],
+            rescueCut: "Cut to a profile reaction",
+            continuityLocks: ["silver jacket"]
+        )
+        _ = try saveShotlist(try minimalShotlist(productionPlan: plan), to: dataRoot)
         let next = try await h.runOK("next_render_shot", args: ["project_dir": dataRoot.path, "phase": "preview"]) as? [String: Any]
         #expect(next?["done"] as? Bool == false)
         #expect(next?["shot_id"] as? String == "s001")
         #expect(next?["visual_prompt"] as? String == "p")
         #expect(next?["source_mode"] as? String == "generated")
+        let renderedPlan = next?["production_plan"] as? [String: Any]
+        #expect(renderedPlan?["primary_action"] as? String == "performer turns toward camera")
+        #expect(renderedPlan?["camera_movement"] as? String == "static")
+        #expect(renderedPlan?["rescue_cut"] as? String == "Cut to a profile reaction")
     }
 
     /// A 3-shot shotlist: s001 imported, s002 generated, s003 ai_enhanced.
@@ -2094,6 +2293,14 @@ struct WorkflowToolsTests {
             "chain_with_previous_end": false,
             "transition_in": "hard_cut",
             "transition_out": "hard_cut",
+            "production_plan": [
+                "primary_action": "Preserve and restyle the imported performance.",
+                "camera_movement": "static",
+                "narrative_beat": "action",
+                "renderability": "green",
+                "risks": [],
+                "continuity_locks": [],
+            ],
         ]
 
         let result = await h.runRaw("write_shotlist", args: [

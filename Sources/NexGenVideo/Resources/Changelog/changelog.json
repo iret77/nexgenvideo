@@ -2,6 +2,26 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.1.0",
+      "date": "2026-08-10",
+      "sections": [
+        {
+          "heading": "Production planning",
+          "items": [
+            "Reusable production profiles now carry renderability, continuity, rescue-cut, and narrative-beat discipline across compatible format packs.",
+        "New generated and AI-enhanced shots store structured production plans while imported footage and existing projects keep their real source truth without invented creative decisions.",
+            "Compiled provider prompts and render tasks now preserve the approved primary action, camera movement, continuity locks, and match-action cue."
+          ]
+        },
+        {
+          "heading": "Stability",
+          "items": [
+            "Agent conversations now follow streaming output through the scroll view's native size-change anchor instead of issuing reentrant scroll commands during layout."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.9",
       "date": "2026-08-10",
       "sections": [
