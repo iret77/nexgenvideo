@@ -45,13 +45,13 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>76</string>
+	<string>77</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
 	<key>NGVPluginCatalogURL</key>
 	<string>https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
