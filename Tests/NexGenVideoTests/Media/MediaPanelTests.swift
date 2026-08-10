@@ -27,6 +27,11 @@ private func writeImportFixture(in directory: URL, name: String, contents: Strin
     return url
 }
 
+private func directoryIsMissingOrEmpty(_ url: URL) throws -> Bool {
+    guard FileManager.default.fileExists(atPath: url.path) else { return true }
+    return try FileManager.default.contentsOfDirectory(atPath: url.path).isEmpty
+}
+
 @MainActor
 private func asset(name: String, folderId: String? = nil) -> MediaAsset {
     let url = URL(fileURLWithPath: "/tmp/\(UUID().uuidString)-\(name).mp4")
@@ -389,10 +394,7 @@ struct DurableMediaImportTests {
         let mediaDirectory = try #require(e.workingRoot).appendingPathComponent(
             Project.mediaDirectoryName
         )
-        let remaining = try FileManager.default.contentsOfDirectory(
-            atPath: mediaDirectory.path
-        )
-        #expect(remaining.isEmpty)
+        #expect(try directoryIsMissingOrEmpty(mediaDirectory))
     }
 
     @Test func concurrentImportsSerializeWithoutLosingEitherBatch() async throws {
@@ -475,10 +477,7 @@ struct DurableMediaImportTests {
         let mediaDirectory = try #require(e.workingRoot).appendingPathComponent(
             Project.mediaDirectoryName
         )
-        let remaining = try FileManager.default.contentsOfDirectory(
-            atPath: mediaDirectory.path
-        )
-        #expect(remaining.isEmpty)
+        #expect(try directoryIsMissingOrEmpty(mediaDirectory))
     }
 
     @Test func corruptDigestNamedMediaIsNeverReused() async throws {
