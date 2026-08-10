@@ -112,7 +112,7 @@ struct AssetThumbnailView: View {
         panel.message = "Choose the source file for \"\(asset.name)\""
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            editor.relinkAsset(id: asset.id, to: url)
+            Task { await editor.relinkAsset(id: asset.id, to: url) }
         }
     }
 

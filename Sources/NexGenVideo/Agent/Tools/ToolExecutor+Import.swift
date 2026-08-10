@@ -146,36 +146,15 @@ extension ToolExecutor {
         type: ClipType,
         folderId: String?
     ) async throws -> MediaAsset {
-        let existingIds = Set(editor.mediaAssets.map(\.id))
-        let digest: String
-        do {
-            digest = try await Task.detached(priority: .userInitiated) {
-                try DurableMediaStore.digest(of: fileURL)
-            }.value
-        } catch {
-            throw ToolError(error.localizedDescription)
-        }
         let summary = await editor.importFinderItems([fileURL], into: folderId)
         if let failure = summary.failure {
             throw ToolError(failure)
         }
-        if let imported = editor.mediaAssets.first(where: {
-            !existingIds.contains($0.id) && $0.type == type
-        }) {
-            return imported
-        }
-        let source = fileURL.standardizedFileURL.resolvingSymlinksInPath()
-        if let existing = editor.mediaAssets.first(where: {
-            $0.type == type
-                && $0.url.standardizedFileURL.resolvingSymlinksInPath() == source
-        }) {
-            return existing
-        }
-        if let existing = editor.mediaAssets.first(where: {
-            $0.type == type
-                && $0.url.deletingPathExtension().lastPathComponent.lowercased() == digest
-        }) {
-            return existing
+        if let assetID = summary.assetIDs.first,
+           let asset = editor.mediaAssets.first(where: {
+               $0.id == assetID && $0.type == type
+           }) {
+            return asset
         }
         throw ToolError("The media copy completed but no library asset was registered.")
     }
@@ -234,39 +213,15 @@ extension ToolExecutor {
             throw ToolError("The project changed while remote media was downloading. Import again.")
         }
 
-        let mediaDir: URL
+        let durableURL: URL
         do {
-            mediaDir = try editor.prepareWorkingMediaDirectory()
-        } catch {
-            throw ToolError(error.localizedDescription)
-        }
-        let reusableByDigest: [String: URL] = editor.mediaAssets.reduce(
-            into: [:]
-        ) { result, asset in
-            guard asset.type == type else { return }
-            let stem = asset.url.deletingPathExtension()
-                .lastPathComponent.lowercased()
-            if stem.count == 64, stem.allSatisfy(\.isHexDigit) {
-                result[stem] = result[stem] ?? asset.url
-            }
-        }
-        let copy: DurableMediaCopy
-        do {
-            copy = try await Task.detached(priority: .userInitiated) {
-                try DurableMediaStore.copy(
-                    download.temporaryURL,
-                    into: mediaDir,
-                    reusableByDigest: reusableByDigest,
-                    fileExtension: fileExt
-                )
-            }.value
+            durableURL = try await editor.durableProjectMediaURL(
+                for: download.temporaryURL,
+                type: type,
+                fileExtension: fileExt
+            )
         } catch {
             throw ToolError("Couldn't install remote media: \(error.localizedDescription)")
-        }
-        guard editor.workingRoot?.standardizedFileURL == workingRoot.standardizedFileURL,
-              editor.openWorkingCopyKey == workingCopyKey else {
-            if copy.created { try? FileManager.default.removeItem(at: copy.url) }
-            throw ToolError("The project changed while remote media was being installed. Import again.")
         }
 
         let displayName: String
@@ -290,7 +245,7 @@ extension ToolExecutor {
         let asset: MediaAsset
         if let existing = editor.mediaAssets.first(where: {
             $0.type == type
-                && $0.url.standardizedFileURL == copy.url.standardizedFileURL
+                && $0.url.standardizedFileURL == durableURL.standardizedFileURL
         }) {
             asset = existing
             applyImportMetadata(
@@ -302,7 +257,7 @@ extension ToolExecutor {
         } else {
             asset = MediaAsset(
                 id: UUID().uuidString,
-                url: copy.url,
+                url: durableURL,
                 type: type,
                 name: displayName,
                 originalFilename: remoteFilename

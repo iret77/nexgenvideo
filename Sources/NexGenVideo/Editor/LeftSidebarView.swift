@@ -20,6 +20,9 @@ struct LeftSidebarView: View {
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             tabStrip
+            if let progress = editor.mediaImportProgress {
+                MediaImportProgressBanner(progress: progress)
+            }
             Group {
                 switch effectiveTab {
                 case .media: MediaPanelView()

@@ -180,7 +180,11 @@ extension EditorViewModel {
             selectedFolderIds: selectedFolderIds,
             previewTabs: previewTabs,
             activePreviewTabId: activePreviewTabId,
-            sourcePlayheadFrame: sourcePlayheadFrame
+            sourcePlayheadFrame: sourcePlayheadFrame,
+            availableMediaPaths: Set(mediaAssets.compactMap { asset in
+                let path = asset.url.standardizedFileURL.path
+                return FileManager.default.fileExists(atPath: path) ? path : nil
+            })
         )
     }
 
@@ -219,6 +223,7 @@ struct MediaLibraryUndoSnapshot {
     let previewTabs: [PreviewTab]
     let activePreviewTabId: String
     let sourcePlayheadFrame: Int
+    let availableMediaPaths: Set<String>
 }
 
 // Cached lookup tables for folder path and descendant traversal.

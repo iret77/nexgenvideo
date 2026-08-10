@@ -461,17 +461,24 @@ final class EditorViewModel {
             DataRootResolver.dataRoot(of: $0)
         }
         let phaseCoordinator = pipelinePhaseRunCoordinator
+        let importTail = mediaImportTail
+        if importTail != nil {
+            cancelMediaImport()
+        }
+        let phaseIsRunning = dataRoot.map {
+            phaseCoordinator.runningPhase(projectRoot: $0) != nil
+        } ?? false
         workingCopyHome = nil
         activeWorkingCopyKey = nil
         activeWorkingCopyGeneration = nil
-        if let dataRoot,
-           phaseCoordinator.runningPhase(
-                projectRoot: dataRoot
-           ) != nil {
+        if importTail != nil || phaseIsRunning {
             Task { @MainActor [phaseCoordinator] in
-                await phaseCoordinator.waitUntilIdle(
-                    projectRoot: dataRoot
-                )
+                _ = await importTail?.value
+                if let dataRoot, phaseIsRunning {
+                    await phaseCoordinator.waitUntilIdle(
+                        projectRoot: dataRoot
+                    )
+                }
                 ProjectWorkingCopy.discard(
                     key: key,
                     ifGeneration: generation
@@ -895,6 +902,7 @@ final class EditorViewModel {
     @ObservationIgnored var mediaImportTail: Task<MediaImportSummary, Never>?
     @ObservationIgnored var mediaImportCancellation: (() -> Void)?
     @ObservationIgnored var mediaImportSequence: Int = 0
+    @ObservationIgnored var mediaImportCancellationGeneration: Int = 0
     @ObservationIgnored var songAttachInProgress = false
 
     func showMediaPanelMediaTab() {
@@ -1051,8 +1059,6 @@ final class EditorViewModel {
 
     /// Coalesces rapid rebuild requests so `replaceCurrentItem` doesn't fire per keystroke.
     var pendingRebuildTask: Task<Void, Never>?
-    @ObservationIgnored var mediaImportCancellationRequested = false
-
     func notifyTimelineChanged() {
         pendingRebuildTask?.cancel()
         pendingRebuildTask = nil

@@ -307,16 +307,22 @@ struct AgentInputBox<LeadingTools: View>: View {
         panel.prompt = "Attach"
         panel.message = "Choose media to copy into the project. Originals stay in place."
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            importAndMention(url)
+        let urls = panel.urls
+        Task {
+            await importAndMention(urls)
         }
     }
 
-    private func importAndMention(_ url: URL) {
-        if let asset = editor.addMediaAsset(from: url) {
-            editor.agentService.attachMention(for: asset)
-        } else {
-            attachmentError = editor.mediaPanelToast?.message ?? "The media couldn't be imported."
+    private func importAndMention(_ urls: [URL]) async {
+        let summary = await editor.importFinderItems(urls, into: nil)
+        if let failure = summary.failure {
+            attachmentError = failure
+            return
+        }
+        for assetID in summary.assetIDs {
+            if let asset = editor.mediaAssets.first(where: { $0.id == assetID }) {
+                editor.agentService.attachMention(for: asset)
+            }
         }
     }
 
@@ -426,7 +432,7 @@ struct AgentInputBox<LeadingTools: View>: View {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
                 guard let url else { return }
                 Task { @MainActor in
-                    importAndMention(url)
+                    await importAndMention([url])
                 }
             }
         }
@@ -436,15 +442,19 @@ struct AgentInputBox<LeadingTools: View>: View {
     private func handlePaste(_: [NSItemProvider]) {
         let pb = NSPasteboard.general
         if let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL], !urls.isEmpty {
-            urls.forEach { importAndMention($0) }
+            Task {
+                await importAndMention(urls)
+            }
             return
         }
         for (type, ext) in [(NSPasteboard.PasteboardType.png, "png"), (.tiff, "tiff")] {
             if let data = pb.data(forType: type) {
-                if let asset = editor.importPastedImageData(data, fileExtension: ext) {
-                    editor.agentService.attachMention(for: asset)
-                } else {
-                    attachmentError = editor.mediaPanelToast?.message ?? "The image couldn't be imported."
+                Task {
+                    if let asset = await editor.importPastedImageData(data, fileExtension: ext) {
+                        editor.agentService.attachMention(for: asset)
+                    } else {
+                        attachmentError = editor.mediaPanelToast?.message ?? "The image couldn't be imported."
+                    }
                 }
                 return
             }
