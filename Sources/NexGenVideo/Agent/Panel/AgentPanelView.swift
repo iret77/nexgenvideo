@@ -106,6 +106,7 @@ struct AgentPanelView: View {
                     submissionError: service.dialogSubmissionError,
                     isSubmitting: service.submittingDialogID == dialog.id,
                     onSubmit: { result in service.submitDialog(dialog, result: result) },
+                    onComplete: { service.completeDialog(dialog) },
                     onCancel: { service.cancelDialog() }
                 )
                 .id(dialog.id)

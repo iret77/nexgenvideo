@@ -424,12 +424,12 @@ struct HardStepIntakeTests {
         #expect(normalizedPrompt?.contains("If it is absent, this is greenfield") == true)
     }
 
-    @Test("repeatable location intake advances directly to the next numbered card")
+    @Test("repeatable intake advances directly and Done finishes without attaching an empty item")
     @MainActor
-    func repeatableLocationIntakeHasNoEmptyCardGap() async throws {
+    func repeatableIntakeDoneFinishesWithoutEmptyAttachment() async throws {
         PackCatalog.register(MusicvideoPack())
         let package = FileManager.default.temporaryDirectory
-            .appendingPathComponent("location-intake-transition-\(UUID().uuidString).ngv", isDirectory: true)
+            .appendingPathComponent("repeatable-intake-done-\(UUID().uuidString).ngv", isDirectory: true)
         let editor = EditorViewModel()
         defer {
             editor.releaseWorkingCopy()
@@ -439,7 +439,7 @@ struct HardStepIntakeTests {
         try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
         let packageDataRoot = try ProjectScaffold.initProject(
             home: package,
-            name: "location-intake-transition",
+            name: "repeatable-intake-done",
             mode: .beat,
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
@@ -456,42 +456,45 @@ struct HardStepIntakeTests {
         )
         let manifestURL = try #require(PackKnowledge.hardStepManifestURL())
         let manifest = try HardStepManifest.decode(try Data(contentsOf: manifestURL))
-        for kind in [HardStep.Kind.script, .character] {
-            let step = try #require(manifest.steps(for: "brief").first { $0.kind == kind })
-            _ = try IntakeLedger.recordDecline(step, dataRoot: dataRoot)
-        }
+        let script = try #require(
+            manifest.steps(for: "brief").first { $0.kind == .script }
+        )
+        _ = try IntakeLedger.recordDecline(script, dataRoot: dataRoot)
         editor.agentService.pendingDialog = nil
         editor.pipelineAgentHarness.reset()
         _ = editor.pipelineAgentHarness.reconcile(editor: editor)
 
         let first = try #require(editor.agentService.pendingDialog)
-        #expect(first.title == "Prepared location 1")
+        #expect(first.title == "Prepared character 1")
         try write("fixtures/first.png", in: dataRoot)
         editor.agentService.submitDialog(
             first,
             result: AgentDialogResult(
                 selectedLabels: [:],
                 toggles: [:],
-                direction: "Shared location",
+                direction: "Character One",
                 fileURLs: [dataRoot.appendingPathComponent("fixtures/first.png")]
             )
         )
+        #expect(editor.agentService.submittingDialogID == first.id)
+        editor.agentService.completeDialog(first)
 
         #expect(editor.agentService.pendingDialog != nil)
+        #expect(editor.agentService.submittingDialogID == first.id)
         #expect(editor.agentService.isComposerBlocked)
         let awaitedSecond = await waitForDialog(
-            titled: "Prepared location 2",
+            titled: "Prepared character 2",
             service: editor.agentService
         )
         let second = try #require(awaitedSecond)
-        #expect(second.title == "Prepared location 2")
+        #expect(second.title == "Prepared character 2")
         try write("fixtures/second.png", in: dataRoot)
         editor.agentService.submitDialog(
             second,
             result: AgentDialogResult(
                 selectedLabels: [:],
                 toggles: [:],
-                direction: "Shared location",
+                direction: "Character Two",
                 fileURLs: [dataRoot.appendingPathComponent("fixtures/second.png")]
             )
         )
@@ -499,14 +502,55 @@ struct HardStepIntakeTests {
         #expect(editor.agentService.pendingDialog != nil)
         #expect(editor.agentService.isComposerBlocked)
         let awaitedThird = await waitForDialog(
+            titled: "Prepared character 3",
+            service: editor.agentService
+        )
+        let third = try #require(awaitedThird)
+        #expect(!IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.characters"))
+        editor.agentService.completeDialog(first)
+        #expect(editor.agentService.pendingDialog?.id == third.id)
+        #expect(!IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.characters"))
+        editor.agentService.completeDialog(third)
+        #expect(editor.agentService.pendingDialog?.title == "Prepared location 1")
+        #expect(editor.agentService.dialogSubmissionError == nil)
+        #expect(IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.characters"))
+        #expect(editor.agentService.isComposerBlocked)
+
+        let firstLocation = try #require(editor.agentService.pendingDialog)
+        try write("fixtures/location-first.png", in: dataRoot)
+        editor.agentService.submitDialog(
+            firstLocation,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: "Shared location",
+                fileURLs: [dataRoot.appendingPathComponent("fixtures/location-first.png")]
+            )
+        )
+        let awaitedSecondLocation = await waitForDialog(
+            titled: "Prepared location 2",
+            service: editor.agentService
+        )
+        let secondLocation = try #require(awaitedSecondLocation)
+        try write("fixtures/location-second.png", in: dataRoot)
+        editor.agentService.submitDialog(
+            secondLocation,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: "Shared location",
+                fileURLs: [dataRoot.appendingPathComponent("fixtures/location-second.png")]
+            )
+        )
+        let awaitedThirdLocation = await waitForDialog(
             titled: "Prepared location 3",
             service: editor.agentService
         )
-        _ = try #require(awaitedThird)
+        let thirdLocation = try #require(awaitedThirdLocation)
         #expect(!IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.locations"))
-        editor.agentService.cancelDialog()
+        editor.agentService.completeDialog(thirdLocation)
         #expect(editor.agentService.pendingDialog?.title == "Style references")
-        #expect(editor.agentService.isComposerBlocked)
+        #expect(IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.locations"))
     }
 
     @Test("workflow intake failures keep the current card mounted")
@@ -623,6 +667,23 @@ struct HardStepIntakeTests {
         #expect(repeated.intro == "Another one?")
         #expect(repeated.fileIntake?.completionLabel == "Done")
         #expect(repeated.id != first.id)
+        #expect(repeated.permitsCompletion(
+            hasFiles: false, direction: "", isSubmitting: false
+        ))
+        #expect(!repeated.permitsCompletion(
+            hasFiles: true, direction: "", isSubmitting: false
+        ))
+        #expect(!repeated.permitsCompletion(
+            hasFiles: false, direction: "Claude Mouse", isSubmitting: false
+        ))
+        #expect(!repeated.permitsCompletion(
+            hasFiles: false, direction: "", isSubmitting: true
+        ))
+        #expect(!repeated.hasRepeatableIntakeDraft(hasFiles: false, direction: ""))
+        #expect(repeated.hasRepeatableIntakeDraft(hasFiles: true, direction: ""))
+        #expect(repeated.hasRepeatableIntakeDraft(
+            hasFiles: false, direction: "Claude Mouse"
+        ))
 
         let third = AgentDialog(hardStep: characters, isRepeat: true, itemNumber: 3)
         #expect(third.title == "Prepared character 3")
@@ -716,7 +777,7 @@ struct HardStepIntakeTests {
         }
         try Fixtures.prepareProjectPackage(at: package)
         try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
-        _ = try ProjectScaffold.initProject(
+        let packageDataRoot = try ProjectScaffold.initProject(
             home: package,
             name: "required-track-intake",
             mode: .beat,
@@ -728,6 +789,9 @@ struct HardStepIntakeTests {
         let dialog = try #require(editor.agentService.pendingDialog)
         #expect(dialog.title == "Track")
         #expect(dialog.purpose == .workflowIntake)
+        editor.agentService.completeDialog(dialog)
+        #expect(editor.agentService.pendingDialog?.id == dialog.id)
+        #expect(!IntakeLedger.load(dataRoot: packageDataRoot).isDeclined("project_init.song"))
         editor.agentService.submitDialog(
             dialog,
             result: AgentDialogResult(selectedLabels: [:], toggles: [:], direction: "")

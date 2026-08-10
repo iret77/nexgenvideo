@@ -252,10 +252,14 @@ final class AgentService {
     /// generation handler (the music-shaping dialog is this purpose — its bespoke path collapses into
     /// this one). Kept on `AgentService` so no surface re-implements dialog submission.
     func submitDialog(_ dialog: AgentDialog, result: AgentDialogResult) {
-        guard pendingDialog?.id == dialog.id, submittingDialogID == nil else { return }
+        if dialog.purpose == .generationIntent {
+            submitGenerationIntent(dialog, result: result)
+            return
+        }
+        guard submittingDialogID == nil, pendingDialog?.id == dialog.id else { return }
         submittingDialogID = dialog.id
         dialogSubmissionError = nil
-        if dialog.purpose != .workflowIntake {
+        if dialog.purpose == .chatClarification {
             pendingDialog = nil
         }
         if dialog.purpose == .workflowIntake,
@@ -299,25 +303,28 @@ final class AgentService {
                 agentContext: imported.failureContext
             )
         case .generationIntent:
-            if let sink = onGenerationDialogIntent {
-                sink(Self.intentLine(from: dialog, result: result))
-            } else {
-                let imported = importDialogFiles(result.fileURLs)
-                sendDialogResponse(
-                    dialog,
-                    result: result,
-                    attached: imported.mentions,
-                    presentedAttachmentNames: imported.mentions.map(\.displayName),
-                    userNotice: imported.failureNotice,
-                    agentContext: imported.failureContext
-                )
-            }
+            break
         case .workflowIntake:
             completeWorkflowIntake(
                 dialog,
                 didProvideMaterial: Self.didProvideWorkflowMaterial(result)
             )
         }
+    }
+
+    private func submitGenerationIntent(_ dialog: AgentDialog, result: AgentDialogResult) {
+        guard let sink = onGenerationDialogIntent else { return }
+        sink(Self.intentLine(from: dialog, result: result))
+    }
+
+    func completeDialog(_ dialog: AgentDialog) {
+        guard pendingDialog?.id == dialog.id,
+              submittingDialogID == nil,
+              dialog.purpose == .workflowIntake,
+              dialog.fileIntake?.required != true,
+              dialog.fileIntake?.completionLabel != nil else { return }
+        dialogSubmissionError = nil
+        completeWorkflowIntake(dialog, didProvideMaterial: false)
     }
 
     /// Write a copied text-sidecar intake into its deterministic project location.
@@ -759,9 +766,7 @@ final class AgentService {
         return imported
     }
 
-    /// Sink for a `.generationIntent` dialog's composed intent, set by the surface that owns the
-    /// generation (e.g. the music tab). When unset the intent is composed into a chat message so the
-    /// answer is never dropped.
+    /// Surface-owned generation sink; stale deliveries are discarded instead of entering agent chat.
     var onGenerationDialogIntent: (@MainActor (String) -> Void)?
 
     struct DialogResponse: Equatable {

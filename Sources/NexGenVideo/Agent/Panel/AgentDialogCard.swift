@@ -2,11 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The docked rendering of a pending `AgentDialog` (locked placement architecture, #96): a native
-/// card that shapes a step with clicks instead of prose. Presenter-agnostic — the agent panel hosts
-/// it to compose a chat message, the generation panels host it to compile a prompt — so it takes an
-/// `onSubmit`/`onCancel` pair and owns its own dialog-scoped free-text field. Never a modal, never a
-/// transcript card.
+/// Presenter-agnostic docked dialog card with explicit submit, complete, and cancel actions.
 struct AgentDialogCard: View {
     let dialog: AgentDialog
     /// Seeds a section's initial selection (e.g. a mood chosen from a menu before the dialog opens).
@@ -27,6 +23,7 @@ struct AgentDialogCard: View {
     var submissionError: String?
     var isSubmitting = false
     let onSubmit: (AgentDialogResult) -> Void
+    let onComplete: () -> Void
     let onCancel: () -> Void
 
     @State private var localChoiceSelections: [String: Set<String>] = [:]
@@ -373,10 +370,19 @@ struct AgentDialogCard: View {
                     .controlSize(.small)
             }
             if let completionLabel = dialog.fileIntake?.completionLabel {
-                Button(completionLabel) { completeWithoutAttachment() }
+                if hasRepeatableDraft {
+                    Button("Clear item", action: clearRepeatableDraft)
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                        .controlSize(.small)
+                }
+                Button(completionLabel, action: onComplete)
                     .buttonStyle(.capsule(.secondary, size: .regular))
                     .controlSize(.small)
-                    .disabled(isSubmitting)
+                    .disabled(!dialog.permitsCompletion(
+                        hasFiles: !pickedFiles.isEmpty,
+                        direction: direction,
+                        isSubmitting: isSubmitting
+                    ))
             }
             Button(dialog.confirmLabel) { submit() }
                 .buttonStyle(.capsule(.prominent, size: .regular))
@@ -397,7 +403,21 @@ struct AgentDialogCard: View {
     }
 
     private var canDismiss: Bool {
-        !isSubmitting && !(dialog.purpose == .workflowIntake && dialog.fileIntake?.required == true)
+        !isSubmitting
+            && !(dialog.purpose == .workflowIntake && dialog.fileIntake?.required == true)
+            && !hasRepeatableDraft
+    }
+
+    private var hasRepeatableDraft: Bool {
+        dialog.hasRepeatableIntakeDraft(
+            hasFiles: !pickedFiles.isEmpty,
+            direction: direction
+        )
+    }
+
+    private func clearRepeatableDraft() {
+        direction = ""
+        pickedFiles = []
     }
 
     // MARK: - State
@@ -440,15 +460,6 @@ struct AgentDialogCard: View {
             direction: direction.trimmingCharacters(in: .whitespacesAndNewlines),
             customValues: customs,
             fileURLs: pickedFiles
-        ))
-    }
-
-    private func completeWithoutAttachment() {
-        onSubmit(AgentDialogResult(
-            selectedLabels: [:],
-            toggles: [:],
-            direction: "",
-            fileURLs: []
         ))
     }
 }

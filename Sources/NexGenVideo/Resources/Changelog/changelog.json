@@ -2,6 +2,32 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.0.8",
+      "date": "2026-08-10",
+      "sections": [
+        {
+          "heading": "Agent",
+          "items": [
+            "Done now finishes repeatable character and location intake without requiring another reference image.",
+            "A started character or location item can be cleared explicitly before finishing the optional intake.",
+            "The music-shaping dialog now submits its direction reliably instead of closing without starting generation."
+          ]
+        },
+        {
+          "heading": "Home",
+          "items": [
+            "The Trash control on a recent project now opens deletion confirmation without opening the project."
+          ]
+        },
+        {
+          "heading": "Editor",
+          "items": [
+            "The main window now uses more of the available screen height and a taller cap on unusually large desktops."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.7",
       "date": "2026-08-07",
       "sections": [

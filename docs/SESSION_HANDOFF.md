@@ -1,30 +1,22 @@
-# Session handoff — 2026-08-07
+# Session handoff — 2026-08-10
 
 ## Current release blocker
 
-App 1.0.6 accepts the **What's New** Continue click but leaves Home unable to accept input until the
-user activates another app and returns to NexGenVideo. The full-window SwiftUI overlay was removed
-inside an animated opacity transition, so a visually gone transition layer could remain in Home's
-input hierarchy. An activation round trip restoring input without changing app state is consistent
-with that stale transition-layer path.
+App 1.0.7 regressed two user actions: `Done` on an empty repeated character/location card was routed
+through the attachment validator and failed with “Choose at least one reference image”; the Trash
+control on a Home project card competed with the card-wide open gesture and could open the project on
+its first click. The staged 1.0.8 correction gives completion its own guarded workflow action and makes
+Home open/removal exclusive sibling buttons with a fully owned hit area. A filled intake draft keeps
+`Done` and close unavailable until the user attaches it or explicitly clears the item.
 
-The staged 1.0.7 correction removes the blocking overlay synchronously in an animation-disabled
-transaction. The release gate now forces the actual current-version What's New state, clicks its real
-Continue button through AppKit mouse events, requires the overlay's native geometry probe to leave the
-Home hierarchy, and then clicks the real Restart NexGenVideo control without deactivating or
-reactivating the app. The post-relaunch Settings click remains the final proof that Home still accepts
-input. The same flow runs against the copied app from the exact notarized DMG. This correction remains
-unverified until the macOS CI gate passes the complete click sequence.
+The editor's initial frame remained visibly flat. The staged default uses 96% of the visible AppKit
+point height, raises the unusually-large-desktop cap to 2560×1800, and rotates the project-window
+autosave key once so the prior saved frame cannot win over the corrected default.
 
-App 1.0.6 also remained vulnerable to the transcript layout cycle during active repeatable Location
-intake. The 2026-08-07 process sample records the same hot path through
-`SecondaryLayerGeometryQuery → explicitAlignment → ScrollViewLayoutComputer → LazyVStackLayout`,
-while the third Location card was absent after the second attachment. The staged correction moves the
-entire panel shell and focus ring out of the SwiftUI transcript hierarchy, removes the remaining
-transcript ancestor effects, keeps the current card mounted while reference files copy off the main
-thread, and resolves every Attach/Skip/Done/close transition explicitly and atomically. A repeated
-identity name can no longer be mistaken for Done, and a reconciliation failure restores the same card
-with its error instead of exposing the composer.
+The same review exposed a pre-existing generation-dialog defect: the Music tab owned its dialog
+locally while `AgentService.submitDialog` required it to be the composer-owned pending dialog. The
+staged correction accepts that explicit generation-intent path and clears its submission identity
+after every synchronous delivery. The consolidated corrections remain unverified until macOS CI passes.
 
 ## Objective
 
@@ -48,9 +40,9 @@ in-the-moment `build now`.
 
 ## Working state
 
-- Branch: `codex/fix-whats-new-hit-testing`
-- App candidate: `1.0.7`, `CFBundleVersion` `74`. No CI has run; release is not published.
-- Musicvideo pack candidate: `0.0.15`, project schema `musicvideo/1.0.0`
+- Branch: `codex/fix-intake-project-card-actions`
+- App candidate: `1.0.8`, `CFBundleVersion` `75`. No CI has run; release is not published.
+- Musicvideo pack candidate: `0.0.16`, project schema `musicvideo/1.0.0`
 - Engine binary contract: current `4`, minimum compatible `2`
 - The commit containing this handoff is the one consolidated correction; read its live CI and release
   state from GitHub rather than inferring it from this document.
@@ -202,7 +194,7 @@ The locked source documents are:
 
 - `git diff --check`
 - `python3 scripts/lint_app_theme.py`
-- `python3 scripts/release_preflight.py 1.0.7 <published-catalog>` against the live stable GitHub
+- `python3 scripts/release_preflight.py 1.0.8 <published-catalog>` against the live stable GitHub
   catalog
 - `bash -n` and warning-level `shellcheck` for both relaunch gate scripts
 - JSON/plist/YAML metadata parsing and the standalone `AGENTS.md`/`CLAUDE.md` parity check
