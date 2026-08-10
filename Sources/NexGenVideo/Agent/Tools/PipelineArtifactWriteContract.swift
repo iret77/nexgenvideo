@@ -105,6 +105,9 @@ enum PipelineArtifactWriteContract {
     ) }
 
     private static var string: [String: Any] { ["type": "string"] }
+    private static var nonEmptyString: [String: Any] {
+        ["type": "string", "minLength": 1, "pattern": #"\S"#]
+    }
     private static var number: [String: Any] { ["type": "number"] }
     private static var integer: [String: Any] { ["type": "integer"] }
     private static var boolean: [String: Any] { ["type": "boolean"] }
@@ -144,11 +147,29 @@ enum PipelineArtifactWriteContract {
         ]
     ) }
 
-    private static var storyboardStep: [String: Any] { object(
+    private static var storyboardStep: [String: Any] {
+        [
+            "anyOf": SourceMode.allCases.map {
+                storyboardStepVariant(sourceMode: $0)
+            },
+        ]
+    }
+
+    private static func storyboardStepVariant(
+        sourceMode: SourceMode
+    ) -> [String: Any] {
+        var properties = storyboardStepProperties
+        properties["source_mode"] = enumeration([sourceMode.rawValue])
+        properties["character_blocking"] = array(storyboardBlocking(
+            requiresSetAnchor: sourceMode == .generated
+        ))
+        return object(properties, required: storyboardStepRequired)
+    }
+
+    private static var storyboardStepProperties: [String: [String: Any]] {
         [
             "id": string,
             "function": enumeration(StepFunction.allCases.map(\.rawValue)),
-            "source_mode": enumeration(SourceMode.allCases.map(\.rawValue)),
             "subject": string,
             "camera": string,
             "setting_hint": string,
@@ -159,10 +180,13 @@ enum PipelineArtifactWriteContract {
             "visible_zones": stringArray,
             "zone_introduces": stringArray,
             "camera_setup": cameraSetup,
-            "character_blocking": array(storyboardBlocking),
+            "character_blocking": array(storyboardBlocking(requiresSetAnchor: false)),
             "notes": string,
-        ],
-        required: [
+        ]
+    }
+
+    private static var storyboardStepRequired: [String] {
+        [
             "id",
             "function",
             "source_mode",
@@ -178,18 +202,25 @@ enum PipelineArtifactWriteContract {
             "camera_setup",
             "character_blocking",
         ]
-    ) }
+    }
 
-    private static var storyboardBlocking: [String: Any] { object(
-        [
+    private static func storyboardBlocking(
+        requiresSetAnchor: Bool
+    ) -> [String: Any] {
+        let properties = [
             "character_ref": string,
             "position": string,
             "pose": string,
             "gaze": string,
             "relation_to_set": string,
-        ],
-        required: ["character_ref", "position", "pose", "gaze", "relation_to_set"]
-    ) }
+            "set_anchor": nonEmptyString,
+        ]
+        var required = [
+            "character_ref", "position", "pose", "gaze", "relation_to_set",
+        ]
+        if requiresSetAnchor { required.append("set_anchor") }
+        return object(properties, required: required)
+    }
 
     private static var lookGuide: [String: Any] {
         object([
@@ -288,7 +319,34 @@ enum PipelineArtifactWriteContract {
         required: ["panorama", "provider", "povs"]
     ) }
 
-    private static var shot: [String: Any] { object(
+    private static var shot: [String: Any] {
+        [
+            "anyOf": [
+                shotVariant(sourceMode: .generated, requiresProductionPlan: true),
+                shotVariant(sourceMode: .aiEnhanced, requiresProductionPlan: true),
+                shotVariant(sourceMode: .imported, requiresProductionPlan: false),
+            ],
+        ]
+    }
+
+    private static func shotVariant(
+        sourceMode: SourceMode,
+        requiresProductionPlan: Bool
+    ) -> [String: Any] {
+        var properties = shotProperties
+        properties["source_mode"] = enumeration([sourceMode.rawValue])
+        properties["character_blocking"] = array(characterBlocking(
+            requiresSetAnchor: sourceMode == .generated
+        ))
+        var required = shotRequired
+        if requiresProductionPlan {
+            properties["production_plan"] = productionPlan
+            required.append("production_plan")
+        }
+        return object(properties, required: required)
+    }
+
+    private static var shotProperties: [String: [String: Any]] {
         [
             "id": string,
             "section": string,
@@ -296,7 +354,6 @@ enum PipelineArtifactWriteContract {
             "time_end": number,
             "duration_s": number,
             "type": enumeration(ShotType.allCases.map(\.rawValue)),
-            "source_mode": enumeration(SourceMode.allCases.map(\.rawValue)),
             "description": string,
             "visual_prompt": string,
             "motion": string,
@@ -312,7 +369,7 @@ enum PipelineArtifactWriteContract {
             "visible_zones": stringArray,
             "zone_introduces": stringArray,
             "camera_setup": cameraSetup,
-            "character_blocking": array(characterBlocking),
+            "character_blocking": array(characterBlocking(requiresSetAnchor: false)),
             "prop_refs": stringArray,
             "prop_views": keyValueArray(key: "prop", value: "view"),
             "camera_id": string,
@@ -326,9 +383,11 @@ enum PipelineArtifactWriteContract {
             "transition_out": enumeration(TransitionType.allCases.map(\.rawValue)),
             "notes": string,
             "source_path": string,
-            "production_plan": productionPlan,
-        ],
-        required: [
+        ]
+    }
+
+    private static var shotRequired: [String] {
+        [
             "id",
             "time_start",
             "time_end",
@@ -354,7 +413,7 @@ enum PipelineArtifactWriteContract {
             "transition_in",
             "transition_out",
         ]
-    ) }
+    }
 
     private static var productionPlan: [String: Any] { object(
         [
@@ -387,16 +446,23 @@ enum PipelineArtifactWriteContract {
         required: ["height", "angle", "lens_hint"]
     ) }
 
-    private static var characterBlocking: [String: Any] { object(
-        [
+    private static func characterBlocking(
+        requiresSetAnchor: Bool
+    ) -> [String: Any] {
+        let properties = [
             "character_ref": string,
             "position": string,
             "pose": string,
             "gaze": string,
             "relation_to_set": string,
-        ],
-        required: ["character_ref", "position", "pose", "gaze", "relation_to_set"]
-    ) }
+            "set_anchor": nonEmptyString,
+        ]
+        var required = [
+            "character_ref", "position", "pose", "gaze", "relation_to_set",
+        ]
+        if requiresSetAnchor { required.append("set_anchor") }
+        return object(properties, required: required)
+    }
 
     private static var stringArray: [String: Any] {
         ["type": "array", "items": string]

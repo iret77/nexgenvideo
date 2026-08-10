@@ -250,7 +250,9 @@ public enum MusicvideoChecks {
     private static func shotContentTokens(_ shot: Shot) -> Set<String> {
         var t = contentTokens(shot.visualPrompt).union(contentTokens(shot.motion))
         let blocking = shot.characterBlocking
-            .flatMap { [$0.pose, $0.position, $0.gaze, $0.relationToSet] }
+            .flatMap {
+                [$0.pose, $0.position, $0.gaze, $0.setAnchor ?? "", $0.relationToSet]
+            }
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             .joined(separator: " ")
         if !blocking.isEmpty { t.formUnion(contentTokens(blocking)) }
@@ -694,15 +696,12 @@ private func checkShotPacing(
     return []
 }
 
-/// Concatenate `CharacterBlocking` fields (pose, gaze, position,
-/// relationToSet) into a beat-source text. Pose verbs otherwise live only in
-/// this struct and would not feed the beat count. Port of
-/// `checks.py::_blocking_text`.
+/// Concatenate blocking fields into beat-source text for pacing checks.
 private func blockingText(_ blocking: [CharacterBlocking]) -> String? {
     guard !blocking.isEmpty else { return nil }
     var parts: [String] = []
     for b in blocking {
-        for value in [b.position, b.pose, b.gaze, b.relationToSet] {
+        for value in [b.position, b.pose, b.gaze, b.setAnchor ?? "", b.relationToSet] {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { parts.append(trimmed) }
         }

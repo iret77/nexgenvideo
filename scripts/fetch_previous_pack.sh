@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 /path/to/current.ngvpack /path/to/output-directory" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "usage: $0 /path/to/current.ngvpack /path/to/output-directory [sign-identity]" >&2
   exit 2
 fi
 
 current_pack="$1"
 output_dir="$2"
+sign_identity="${3:-}"
 [ -d "$current_pack" ] || { echo "missing current pack: $current_pack" >&2; exit 2; }
-mkdir -p "$output_dir"
+mkdir -p "$output_dir/compatible" "$output_dir/incompatible"
 
 pack_id="$(/usr/libexec/PlistBuddy -c 'Print :NGVPackID' "$current_pack/Contents/Info.plist")"
 current_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
@@ -36,66 +37,121 @@ headers = {"Accept": "application/vnd.github+json", "User-Agent": "NexGenVideo-C
 if token:
     headers["Authorization"] = f"Bearer {token}"
 
-assets = []
-page = 1
-while True:
-    request = urllib.request.Request(
-        f"https://api.github.com/repos/{repository}/releases?per_page=100&page={page}",
-        headers=headers,
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        releases = json.load(response)
-    for release in releases:
-        assets.extend(release.get("assets", []))
-    if len(releases) < 100:
-        break
-    page += 1
+request = urllib.request.Request(
+    f"https://api.github.com/repos/{repository}/releases/tags/plugins",
+    headers=headers,
+)
+with urllib.request.urlopen(request, timeout=30) as response:
+    assets = json.load(response).get("assets", [])
 
 pattern = re.compile(rf"^{re.escape(pack_id)}-(\d+\.\d+\.\d+)\.ngvpack\.zip$")
-prior_assets = []
+prior_assets = {}
 for asset in assets:
     match = pattern.fullmatch(asset.get("name", ""))
     key = version(match.group(1)) if match else None
     digest = asset.get("digest") or ""
     if key is not None and key < current_key:
         checksum = digest[7:] if digest.startswith("sha256:") else None
-        prior_assets.append((key, asset.get("created_at", ""), match.group(1), asset, checksum))
+        candidate = (asset.get("created_at", ""), match.group(1), asset, checksum)
+        if key not in prior_assets or candidate[0] > prior_assets[key][0]:
+            prior_assets[key] = candidate
 if not prior_assets:
     raise SystemExit(f"no previous release asset for {pack_id} before {current}")
-_, _, previous, asset, digest = max(prior_assets, key=lambda item: (item[0], item[1]))
-if digest is None:
-    raise SystemExit(
-        f"latest previous release asset lacks a GitHub SHA-256 digest: {asset.get('name')}"
-    )
 with open(output, "w") as handle:
-    handle.write(f"{previous}\n{asset['browser_download_url']}\n{digest}\n")
+    for key in sorted(prior_assets):
+        _, previous, asset, digest = prior_assets[key]
+        if digest is None:
+            raise SystemExit(
+                f"previous release asset lacks a GitHub SHA-256 digest: {asset.get('name')}"
+            )
+        handle.write(f"{previous}\t{asset['browser_download_url']}\t{digest}\n")
 PY
 
-previous_version="$(sed -n '1p' "$selection")"
-previous_url="$(sed -n '2p' "$selection")"
-expected_sha="$(sed -n '3p' "$selection")"
-archive="$output_dir/$pack_id-$previous_version.ngvpack.zip"
-/usr/bin/curl -fsSL "$previous_url" -o "$archive"
-actual_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
-[ "$actual_sha" = "$expected_sha" ] || {
-  echo "previous pack checksum mismatch: expected $expected_sha, got $actual_sha" >&2
+contract_source="$(cd "$(dirname "$0")/.." && pwd)/Engine/Sources/NexGenEngine/Packs/EngineContract.swift"
+minimum_contract="$(grep -Eo '^[[:space:]]*public static let minimumCompatible = [0-9]+[[:space:]]*$' \
+  "$contract_source" | grep -Eo '[0-9]+' | head -1 || true)"
+current_contract="$(/usr/libexec/PlistBuddy -c 'Print :NGVEngineContract' \
+  "$current_pack/Contents/Info.plist" 2>/dev/null)" || current_contract=""
+for contract in "$minimum_contract" "$current_contract"; do
+  case "$contract" in
+    ''|*[!0-9]*)
+      echo "invalid engine contracts: minimum=$minimum_contract current=$current_contract" >&2
+      exit 1
+      ;;
+  esac
+done
+
+latest_compatible=""
+latest_historical_version=""
+tab="$(printf '\t')"
+while IFS="$tab" read -r previous_version previous_url expected_sha; do
+  [ -n "$previous_version" ] || continue
+  latest_historical_version="$previous_version"
+  archive="$output_dir/$pack_id-$previous_version.ngvpack.zip"
+  /usr/bin/curl -fsSL "$previous_url" -o "$archive"
+  actual_sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+  [ "$actual_sha" = "$expected_sha" ] || {
+    echo "previous pack checksum mismatch: expected $expected_sha, got $actual_sha" >&2
+    exit 1
+  }
+
+  extract_dir="$output_dir/extracted-$previous_version"
+  mkdir -p "$extract_dir"
+  /usr/bin/ditto -x -k "$archive" "$extract_dir"
+  source_pack="$(find "$extract_dir" -maxdepth 1 -type d -name '*.ngvpack' -print -quit)"
+  [ -n "$source_pack" ] || { echo "previous pack archive contains no .ngvpack" >&2; exit 1; }
+  actual_id="$(/usr/libexec/PlistBuddy -c 'Print :NGVPackID' "$source_pack/Contents/Info.plist")"
+  actual_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+    "$source_pack/Contents/Info.plist")"
+  [ "$actual_id" = "$pack_id" ] && [ "$actual_version" = "$previous_version" ] || {
+    echo "previous pack metadata mismatch: $actual_id $actual_version" >&2
+    exit 1
+  }
+  previous_contract="$(/usr/libexec/PlistBuddy -c 'Print :NGVEngineContract' \
+    "$source_pack/Contents/Info.plist" 2>/dev/null)" || previous_contract="0"
+  case "$previous_contract" in
+    ''|*[!0-9]*)
+      echo "invalid previous engine contract: $previous_contract" >&2
+      exit 1
+      ;;
+  esac
+
+  if [ "$previous_contract" -ge "$minimum_contract" ] \
+    && [ "$previous_contract" -le "$current_contract" ]; then
+    installed_pack="$output_dir/compatible/$previous_version.ngvpack"
+    latest_compatible="$installed_pack"
+  else
+    installed_pack="$output_dir/incompatible/$previous_version.ngvpack"
+  fi
+  /usr/bin/ditto --noqtn "$source_pack" "$installed_pack"
+done < "$selection"
+
+[ -n "$latest_historical_version" ] || {
+  echo "no previous pack was selected for $pack_id" >&2
   exit 1
 }
 
-extract_dir="$output_dir/extracted"
-mkdir -p "$extract_dir"
-/usr/bin/ditto -x -k "$archive" "$extract_dir"
-source_pack="$(find "$extract_dir" -maxdepth 1 -type d -name '*.ngvpack' -print -quit)"
-[ -n "$source_pack" ] || { echo "previous pack archive contains no .ngvpack" >&2; exit 1; }
-installed_pack="$output_dir/$previous_version.ngvpack"
-/usr/bin/ditto "$source_pack" "$installed_pack"
+if [ -n "$latest_compatible" ]; then
+  lifecycle_pack="$latest_compatible"
+else
+  lifecycle_pack="$output_dir/lifecycle-$latest_historical_version.ngvpack"
+  /usr/bin/ditto --noqtn "$current_pack" "$lifecycle_pack"
+  /usr/libexec/PlistBuddy -c \
+    "Set :CFBundleShortVersionString $latest_historical_version" \
+    "$lifecycle_pack/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $latest_historical_version" \
+    "$lifecycle_pack/Contents/Info.plist"
+  lifecycle_binary="$lifecycle_pack/Contents/MacOS/$pack_id"
+  if [ -n "$sign_identity" ]; then
+    /usr/bin/codesign --force --options runtime --timestamp \
+      --sign "$sign_identity" "$lifecycle_binary"
+    /usr/bin/codesign --force --options runtime --timestamp \
+      --sign "$sign_identity" "$lifecycle_pack"
+  else
+    /usr/bin/codesign --force --sign - "$lifecycle_binary"
+    /usr/bin/codesign --force --sign - "$lifecycle_pack"
+  fi
+  /usr/bin/codesign --verify --strict --verbose=2 "$lifecycle_pack"
+fi
 
-actual_id="$(/usr/libexec/PlistBuddy -c 'Print :NGVPackID' "$installed_pack/Contents/Info.plist")"
-actual_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-  "$installed_pack/Contents/Info.plist")"
-[ "$actual_id" = "$pack_id" ] && [ "$actual_version" = "$previous_version" ] || {
-  echo "previous pack metadata mismatch: $actual_id $actual_version" >&2
-  exit 1
-}
-
-printf '%s\n' "$installed_pack"
+printf '%s\n' "$lifecycle_pack"

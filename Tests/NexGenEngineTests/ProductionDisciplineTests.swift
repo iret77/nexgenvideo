@@ -28,7 +28,8 @@ struct ProductionDisciplineTests {
         plan: ShotProductionPlan? = nil,
         section: String? = "scene",
         sourceMode: SourceMode = .generated,
-        cameraId: String? = nil
+        cameraId: String? = nil,
+        characterBlocking: [CharacterBlocking] = []
     ) throws -> Shot {
         try Shot(
             id: id,
@@ -42,6 +43,7 @@ struct ProductionDisciplineTests {
             visualPrompt: "Static wide shot of a subject crossing a doorway.",
             mood: "controlled",
             characterRefs: characters,
+            characterBlocking: characterBlocking,
             cameraId: cameraId,
             productionPlan: plan
         )
@@ -122,6 +124,29 @@ struct ProductionDisciplineTests {
         #expect(try productionRenderabilityCheck(ctx).isEmpty)
     }
 
+    @Test("AI-enhanced shots do not inherit generated-shot feasibility limits")
+    func enhancedShotFeasibility() throws {
+        let blocking = try CharacterBlocking(
+            characterRef: "a",
+            position: "right third",
+            pose: "standing",
+            gaze: "toward camera",
+            relationToSet: "camera center"
+        )
+        let shot = try Self.shot(
+            end: 20,
+            characters: ["a", "b", "c"],
+            plan: Self.plan(),
+            sourceMode: .aiEnhanced,
+            characterBlocking: [blocking]
+        )
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            productionProfileIDs: [.generativeFilm]
+        )
+        #expect(try productionRenderabilityCheck(ctx).isEmpty)
+    }
+
     @Test("planned generated blocking names a set anchor")
     func blockingAnchorRequired() throws {
         let blocking = try CharacterBlocking(
@@ -153,6 +178,83 @@ struct ProductionDisciplineTests {
             productionProfileIDs: [.generativeFilm]
         )
         #expect(try productionRenderabilityCheck(ctx).map(\.code) == ["BLOCKING_ANCHOR_MISSING"])
+    }
+
+    @Test("screen direction prose without a set anchor is rejected")
+    func screenDirectionIsNotAnchor() throws {
+        let blocking = try CharacterBlocking(
+            characterRef: "subject",
+            position: "right third",
+            pose: "standing",
+            gaze: "toward the hall",
+            relationToSet: "screen-right"
+        )
+        let base = try Self.shot(
+            characters: ["subject"],
+            plan: Self.plan()
+        )
+        let shot = try Shot(
+            id: base.id,
+            section: base.section,
+            timeStart: base.timeStart,
+            timeEnd: base.timeEnd,
+            durationS: base.durationS,
+            type: base.type,
+            description: base.description,
+            visualPrompt: base.visualPrompt,
+            mood: base.mood,
+            characterRefs: base.characterRefs,
+            characterBlocking: [blocking],
+            productionPlan: base.productionPlan
+        )
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            productionProfileIDs: [.generativeFilm]
+        )
+        #expect(try productionRenderabilityCheck(ctx).map(\.code) == ["BLOCKING_ANCHOR_MISSING"])
+    }
+
+    @Test("spatial prose cannot substitute for a named set anchor")
+    func spatialProseIsNotAnchor() throws {
+        let blocking = try CharacterBlocking(
+            characterRef: "subject",
+            position: "right third",
+            pose: "standing",
+            gaze: "toward the hall",
+            relationToSet: "stage centre third"
+        )
+        let shot = try Self.shot(
+            characters: ["subject"],
+            plan: Self.plan(),
+            characterBlocking: [blocking]
+        )
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            productionProfileIDs: [.generativeFilm]
+        )
+        #expect(try productionRenderabilityCheck(ctx).map(\.code) == ["BLOCKING_ANCHOR_MISSING"])
+    }
+
+    @Test("a named set anchor satisfies generated blocking")
+    func namedSetAnchor() throws {
+        let blocking = try CharacterBlocking(
+            characterRef: "subject",
+            position: "right third",
+            pose: "standing",
+            gaze: "toward the hall",
+            relationToSet: "beside the doorway",
+            setAnchor: "hall doorway"
+        )
+        let shot = try Self.shot(
+            characters: ["subject"],
+            plan: Self.plan(),
+            characterBlocking: [blocking]
+        )
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            productionProfileIDs: [.generativeFilm]
+        )
+        #expect(try productionRenderabilityCheck(ctx).isEmpty)
     }
 
     @Test("narrative profiles require a beat on every shot")
@@ -193,12 +295,45 @@ struct ProductionDisciplineTests {
         #expect(codes == ["NARRATIVE_CONTEXT_MISSING", "NARRATIVE_CONSEQUENCE_MISSING"])
     }
 
+    @Test("a later consequence remains valid after an earlier detail")
+    func consequenceAfterAction() throws {
+        let shots = try [
+            Self.shot(id: "s001", start: 0, end: 4, plan: Self.plan(beat: .establish)),
+            Self.shot(id: "s002", start: 4, end: 8, plan: Self.plan(beat: .detail)),
+            Self.shot(id: "s003", start: 8, end: 12, plan: Self.plan(beat: .action)),
+            Self.shot(id: "s004", start: 12, end: 16, plan: Self.plan(beat: .reaction)),
+        ]
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist(shots),
+            productionProfileIDs: [.narrativeStorytelling]
+        )
+        #expect(try narrativeStructureCheck(ctx).isEmpty)
+    }
+
     @Test("narrative sequences surface a missing action beat")
     func narrativeActionRequired() throws {
         let shots = try [
             Self.shot(id: "s001", start: 0, end: 4, plan: Self.plan(beat: .establish)),
             Self.shot(id: "s002", start: 4, end: 8, plan: Self.plan(beat: .reaction)),
             Self.shot(id: "s003", start: 8, end: 12, plan: Self.plan(beat: .detail)),
+        ]
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist(shots),
+            productionProfileIDs: [.narrativeStorytelling]
+        )
+        #expect(try narrativeStructureCheck(ctx).map(\.code) == ["NARRATIVE_ACTION_MISSING"])
+    }
+
+    @Test("imported footage does not exempt a planned narrative sequence")
+    func importedShotDoesNotExemptPlannedSequence() throws {
+        let shots = try [
+            Self.shot(
+                id: "s001", start: 0, end: 4, section: "scene",
+                sourceMode: .imported
+            ),
+            Self.shot(id: "s002", start: 4, end: 8, plan: Self.plan(beat: .establish)),
+            Self.shot(id: "s003", start: 8, end: 12, plan: Self.plan(beat: .reaction)),
+            Self.shot(id: "s004", start: 12, end: 16, plan: Self.plan(beat: .detail)),
         ]
         let ctx = AuditContext(
             shotlist: try Self.shotlist(shots),

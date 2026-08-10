@@ -573,7 +573,16 @@ jobs:
             "$INSTALL_APP/Contents/MacOS/NexGenVideo"
           PREVIOUS_DIR="$(mktemp -d)"
           PREVIOUS_PACK="$(bash scripts/fetch_previous_pack.sh \
-            "$PACK_BUNDLE" "$PREVIOUS_DIR")"
+            "$PACK_BUNDLE" "$PREVIOUS_DIR" "$SIGN_IDENTITY")"
+          while IFS= read -r COMPATIBLE_PACK; do
+            NGV_SELFTEST_PACK="$COMPATIBLE_PACK" \
+              "$INSTALL_APP/Contents/MacOS/NexGenVideo"
+          done < <(find "$PREVIOUS_DIR/compatible" -maxdepth 1 -type d -name '*.ngvpack' | sort)
+          while IFS= read -r INCOMPATIBLE_PACK; do
+            NGV_SELFTEST_EXPECT_ENGINE_INCOMPATIBLE=1 \
+              NGV_SELFTEST_PACK="$INCOMPATIBLE_PACK" \
+              "$INSTALL_APP/Contents/MacOS/NexGenVideo"
+          done < <(find "$PREVIOUS_DIR/incompatible" -maxdepth 1 -type d -name '*.ngvpack' | sort)
           bash scripts/relaunch_selftest.sh \
             "$INSTALL_APP" \
             "$PREVIOUS_PACK" \

@@ -30,6 +30,12 @@ extension EditorViewModel {
                   let index = shotlist.shots.firstIndex(where: { $0.id == shotId }),
                   shotlist.shots[index].sourceMode != mode
             else { return .success(false) }
+            if mode != .imported, shotlist.shots[index].productionPlan == nil {
+                return .failure(ToolError(
+                    "Ask the assistant to re-plan this shot before changing its source to "
+                        + "\(mode.rawValue)."
+                ))
+            }
             shotlist.shots[index].sourceMode = mode
             switch mode {
             case .generated:
@@ -39,6 +45,7 @@ extension EditorViewModel {
                 }
             case .imported:
                 shotlist.shots[index].sourcePath = nil
+                shotlist.shots[index].productionPlan = nil
                 shotlist.shots[index].keyframeStrategy = .none
                 shotlist.shots[index].chainWithPreviousEnd = false
             case .aiEnhanced:

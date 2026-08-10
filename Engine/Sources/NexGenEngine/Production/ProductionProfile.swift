@@ -68,21 +68,32 @@ public enum ProductionDiscipline {
     }
 
     public static func hasTooManyVisibleCharacters(_ shot: Shot) -> Bool {
-        requiresProductionPlan(shot)
+        shot.sourceMode == .generated
             && shot.characterRefs.count > maximumGeneratedVisibleCharacters
     }
 
     public static func hasUndeclaredLongTake(_ shot: Shot) -> Bool {
-        guard requiresProductionPlan(shot),
+        guard shot.sourceMode == .generated,
               shot.durationS > normalGeneratedShotMaximumDuration,
               let plan = shot.productionPlan else { return false }
         return !plan.risks.contains(.longTake)
     }
 
     public static func hasUnanchoredCharacterBlocking(_ shot: Shot) -> Bool {
-        requiresProductionPlan(shot)
+        shot.sourceMode == .generated
             && shot.characterBlocking.contains {
-                $0.relationToSet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                $0.setAnchor?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty != false
+            }
+    }
+
+    public static func hasUnanchoredCharacterBlocking(_ step: Step) -> Bool {
+        step.sourceMode == .generated
+            && step.characterBlocking.contains {
+                $0["set_anchor"]?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty != false
             }
     }
 }
@@ -111,7 +122,7 @@ public enum ProductionProfileGuidance {
             """
         case "storyboard":
             return """
-            Keep each shot to one primary subject action and one camera movement, with no more than two visible characters. Block action against named set anchors. Make entrances, exits, screen direction, match-action cues, and continuity locks explicit.
+            Keep each generated shot to one primary subject action and one camera movement, with no more than two visible characters. Name each generated-shot blocking set_anchor separately from its spatial relation. Make entrances, exits, screen direction, match-action cues, and continuity locks explicit.
             """
         case "bible":
             return """
@@ -123,7 +134,7 @@ public enum ProductionProfileGuidance {
             """
         case "sanity":
             return """
-            Treat missing production plans, undeclared long takes, excessive visible characters, and yellow/red shots without rescue cuts as production defects. Resolve them in the owning artifact instead of explaining them away in prose.
+            Treat missing required production plans, generated-shot undeclared long takes or excessive visible characters, and yellow/red shots without rescue cuts as production defects. Resolve them in the owning artifact instead of explaining them away in prose.
             """
         case "frames":
             return """
@@ -150,7 +161,7 @@ public enum ProductionProfileGuidance {
             """
         case "shotlist":
             return """
-            Set narrative_beat on every shot. Preserve the approved causal order and make reactions or details visible instead of relying on dialogue or exposition to explain the beat.
+            Set narrative_beat on every planned generated or AI-enhanced shot. Preserve the approved causal order and make reactions or details visible instead of relying on dialogue or exposition to explain the beat.
             """
         case "sanity":
             return """

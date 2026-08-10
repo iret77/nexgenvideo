@@ -185,6 +185,7 @@ public struct CharacterBlocking: Codable, Sendable, Equatable {
     public var pose: String
     public var gaze: String
     public var relationToSet: String
+    public var setAnchor: String?
 
     private enum CodingKeys: String, CodingKey {
         case characterRef = "character_ref"
@@ -192,16 +193,19 @@ public struct CharacterBlocking: Codable, Sendable, Equatable {
         case pose
         case gaze
         case relationToSet = "relation_to_set"
+        case setAnchor = "set_anchor"
     }
 
     public init(
-        characterRef: String, position: String, pose: String, gaze: String, relationToSet: String = ""
+        characterRef: String, position: String, pose: String, gaze: String,
+        relationToSet: String = "", setAnchor: String? = nil
     ) throws {
         self.characterRef = characterRef
         self.position = position
         self.pose = pose
         self.gaze = gaze
         self.relationToSet = relationToSet
+        self.setAnchor = setAnchor
         try Self.validate(position: position, pose: pose, gaze: gaze)
     }
 
@@ -212,6 +216,7 @@ public struct CharacterBlocking: Codable, Sendable, Equatable {
         pose = try container.decode(String.self, forKey: .pose)
         gaze = try container.decode(String.self, forKey: .gaze)
         relationToSet = try container.decodeIfPresent(String.self, forKey: .relationToSet) ?? ""
+        setAnchor = try container.decodeIfPresent(String.self, forKey: .setAnchor)
         try Self.validate(position: position, pose: pose, gaze: gaze)
     }
 
@@ -710,6 +715,8 @@ public struct Shot: Codable, Sendable, Equatable {
 
 /// The shotlist. Port of `shotlist/schema.py::Shotlist`.
 public struct Shotlist: Codable, Sendable, Equatable {
+    public static let agentWriterGenerator = "shotlist-agent@write_shotlist/v4"
+
     /// No default — Python declares this a required field
     /// (`schema_: str = Field(alias="schema")`, no default value), unlike
     /// Bible/Storyboard's `schema` which do default.

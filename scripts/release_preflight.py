@@ -32,6 +32,7 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "productionProfiles",
 ]
 ENGINE_BOUNDARY_LAYOUT_CONTRACT = 5
+ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 5
 ENGINE_BOUNDARY_LAYOUTS = {
     "Shot": {
         "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
@@ -74,7 +75,7 @@ ENGINE_BOUNDARY_VALUE_LAYOUTS = {
         "end": "    private enum CodingKeys: String, CodingKey {",
         "members": [
             "var characterRef: String", "var position: String", "var pose: String",
-            "var gaze: String", "var relationToSet: String",
+            "var gaze: String", "var relationToSet: String", "var setAnchor: String?",
         ],
     },
     "Song": {
@@ -427,10 +428,10 @@ def validate_engine_boundary_abi() -> None:
             "Engine boundary layout guard must be reviewed for contract "
             f"{current}; it currently pins contract {ENGINE_BOUNDARY_LAYOUT_CONTRACT}"
         )
-    if minimum < ENGINE_BOUNDARY_LAYOUT_CONTRACT:
+    if minimum != ENGINE_BOUNDARY_COMPATIBILITY_FLOOR:
         fail(
-            "Engine boundary value layouts changed in contract "
-            f"{ENGINE_BOUNDARY_LAYOUT_CONTRACT}; minimumCompatible cannot be {minimum}"
+            "Engine minimumCompatible must match the public value-layout contract "
+            f"{ENGINE_BOUNDARY_COMPATIBILITY_FLOOR}; got {minimum}"
         )
 
     for type_name, layout in ENGINE_BOUNDARY_LAYOUTS.items():

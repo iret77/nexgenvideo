@@ -1093,14 +1093,14 @@ struct WorkflowToolsTests {
 
         try saveBrief(conceptType: .performance)
         let performancePrompt = try #require(
-            PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
+            try PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
         )
         #expect(performancePrompt.contains("Core production profile: generative_film"))
         #expect(!performancePrompt.contains("Core production profile: narrative_storytelling"))
 
         try saveBrief(conceptType: .narrative)
         let narrativePrompt = try #require(
-            PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
+            try PipelineAgentHarness().agentPrompt(dataRoot: dataRoot)
         )
         #expect(narrativePrompt.contains("Core production profile: generative_film"))
         #expect(narrativePrompt.contains("Core production profile: narrative_storytelling"))
@@ -1343,13 +1343,14 @@ struct WorkflowToolsTests {
             "pose": "standing",
             "gaze": "toward the yard",
             "relation_to_set": "",
+            "set_anchor": "   ",
         ]]
         let unanchored = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [unanchoredShot],
         ])
         #expect(unanchored.isError)
-        #expect(ToolHarness.textOf(unanchored).contains("relation_to_set"))
+        #expect(ToolHarness.textOf(unanchored).contains("required pattern"))
 
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
@@ -1363,6 +1364,14 @@ struct WorkflowToolsTests {
         var importedShot = shot
         importedShot["source_mode"] = "imported"
         importedShot["keyframe_strategy"] = "none"
+        let importedWithPlan = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [importedShot],
+        ])
+        #expect(importedWithPlan.isError)
+        #expect(ToolHarness.textOf(importedWithPlan).contains("production_plan"))
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
+
         importedShot.removeValue(forKey: "production_plan")
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
@@ -1455,8 +1464,17 @@ struct WorkflowToolsTests {
             mode: .beat
         )
         try activatePack("musicvideo", dataRoot: packageDataRoot)
+        let plan = try ShotProductionPlan(
+            primaryAction: "The subject crosses the doorway.",
+            cameraMovement: .static,
+            renderability: .green,
+            continuityLocks: []
+        )
         _ = try saveShotlist(
-            try minimalShotlist(generator: "shotlist-agent@write_shotlist"),
+            try minimalShotlist(
+                productionPlan: plan,
+                generator: Shotlist.agentWriterGenerator
+            ),
             to: packageDataRoot
         )
         let store = YAMLArtifactStore(dataRoot: packageDataRoot)
@@ -1494,6 +1512,7 @@ struct WorkflowToolsTests {
             try loadShotlist(dataRoot: workingDataRoot)
         )
         #expect(shotlist.shots.first?.sourceMode == .imported)
+        #expect(shotlist.shots.first?.productionPlan == nil)
         #expect(
             !FileManager.default.fileExists(
                 atPath: workingHome.appendingPathComponent(

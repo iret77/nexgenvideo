@@ -18,6 +18,12 @@
           "items": [
             "Agent conversations now follow streaming output through the scroll view's native size-change anchor instead of issuing reentrant scroll commands during layout."
           ]
+        },
+        {
+          "heading": "Format packs",
+          "items": [
+            "Projects pinned to an older binary contract now offer an explicit Recovery-copy upgrade to the current pack instead of opening with incompatible code."
+          ]
         }
       ]
     },

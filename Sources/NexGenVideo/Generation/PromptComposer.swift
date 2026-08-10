@@ -53,13 +53,23 @@ enum PromptComposer {
         let temporalStructure: String
 
         init(_ shot: Shot, forceHandles: Bool = false) {
+            let blockingDirectives = shot.characterBlocking.compactMap { blocking -> String? in
+                guard let anchor = blocking.setAnchor?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ), !anchor.isEmpty else { return nil }
+                return "Character blocking for \(blocking.characterRef): "
+                    + "\(blocking.pose), \(blocking.relationToSet) \(anchor), "
+                    + "gaze \(blocking.gaze)"
+            }
             camera = shot.cameraSetup?.promptProse() ?? ""
             cameraMovement = shot.productionPlan?.cameraMovement.promptProse(
                 detail: shot.productionPlan?.cameraMovementDetail
             ) ?? ""
             composition = shot.framing?.compositionProse ?? ""
-            videoDirectives = shot.productionPlan?.providerDirectives ?? []
-            imageDirectives = shot.productionPlan?.stillProviderDirectives ?? []
+            videoDirectives = (shot.productionPlan?.providerDirectives ?? [])
+                + blockingDirectives
+            imageDirectives = (shot.productionPlan?.stillProviderDirectives ?? [])
+                + blockingDirectives
             spec = ComplianceLinter.ShotSpec(
                 framing: shot.framing?.rawValue,
                 cameraHeight: shot.cameraSetup?.height.rawValue,

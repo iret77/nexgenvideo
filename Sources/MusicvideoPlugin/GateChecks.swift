@@ -646,6 +646,28 @@ enum MusicvideoGateChecks {
                 "Can't approve \"shotlist\": its mode or budget doesn't match the brief."
             )
         }
+        let importedPlans = shotlist.shots.filter {
+            $0.sourceMode == .imported && $0.productionPlan != nil
+        }
+        guard importedPlans.isEmpty else {
+            throw GateBlocked(
+                "Can't approve \"shotlist\": imported shots must omit production_plan "
+                    + "(e.g. \(importedPlans.prefix(3).map(\.id).joined(separator: ", ")))."
+            )
+        }
+        if shotlist.generator == Shotlist.agentWriterGenerator {
+            let missingPlans = shotlist.shots.filter {
+                ProductionDiscipline.requiresProductionPlan($0)
+                    && $0.productionPlan == nil
+            }
+            guard missingPlans.isEmpty else {
+                throw GateBlocked(
+                    "Can't approve \"shotlist\": canonical agent-written generated and "
+                        + "AI-enhanced shots require production_plan (e.g. "
+                        + "\(missingPlans.prefix(3).map(\.id).joined(separator: ", ")))."
+                )
+            }
+        }
         let analysis = try analysisObject(dataRoot: dataRoot, phase: "shotlist")
         let measuredBPM = number(analysis["bpm"]) ?? 0
         let measuredMultiplier = number(analysis["tempo_multiplier"]) ?? 0
@@ -1172,6 +1194,16 @@ enum MusicvideoGateChecks {
                 throw GateBlocked(
                     "Can't approve \"storyboard\": section \(section.id) step ids "
                         + "must be gapless and ordered."
+                )
+            }
+            let unanchoredSteps = section.steps.filter(
+                ProductionDiscipline.hasUnanchoredCharacterBlocking
+            )
+            guard unanchoredSteps.isEmpty else {
+                throw GateBlocked(
+                    "Can't approve \"storyboard\": generated character blocking must "
+                        + "name a non-empty set_anchor (e.g. "
+                        + "\(unanchoredSteps.prefix(3).map(\.id).joined(separator: ", ")))."
                 )
             }
             guard ["low", "mid", "high", "drop"].contains(section.energy),

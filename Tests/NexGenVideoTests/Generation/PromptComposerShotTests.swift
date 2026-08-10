@@ -11,12 +11,15 @@ struct PromptComposerShotTests {
     static func shot(
         height: CameraHeight,
         framing: Framing,
-        productionPlan: ShotProductionPlan? = nil
+        productionPlan: ShotProductionPlan? = nil,
+        characterBlocking: [CharacterBlocking] = []
     ) throws -> Shot {
         try Shot(id: "s001", section: "verse", timeStart: 0, timeEnd: 4, durationS: 4,
                  type: .performance, description: "d", visualPrompt: "p", mood: "m",
+                 characterRefs: characterBlocking.map(\.characterRef),
                  keyframeStrategy: .start, framing: framing,
                  cameraSetup: CameraSetup(height: height, angle: .frontal),
+                 characterBlocking: characterBlocking,
                  productionPlan: productionPlan)
     }
 
@@ -81,5 +84,40 @@ struct PromptComposerShotTests {
         #expect(image.text.contains("Continuity lock: red jacket remains zipped"))
         #expect(video.text.contains("single controlled dolly-in"))
         #expect(!image.text.contains("single controlled dolly-in"))
+    }
+
+    @Test("named blocking anchors project into video and still prompts")
+    func projectsBlockingAnchor() async throws {
+        let blocking = try CharacterBlocking(
+            characterRef: "performer",
+            position: "left third",
+            pose: "standing",
+            gaze: "toward the yard",
+            relationToSet: "beside the",
+            setAnchor: "hall doorway"
+        )
+        let shot = try Self.shot(
+            height: .eyeLevel,
+            framing: .full,
+            characterBlocking: [blocking]
+        )
+        let projection = PromptComposer.ShotProjection(shot)
+        let video = try await PromptComposer.compose(
+            intent: "the performer waits",
+            modality: .video,
+            modelId: "fal/seedance-2.0",
+            projectDir: nil,
+            shot: projection
+        )
+        let image = try await PromptComposer.compose(
+            intent: "the performer waits",
+            modality: .image,
+            modelId: "openai/gpt-image-2",
+            projectDir: nil,
+            shot: projection
+        )
+
+        #expect(video.text.contains("hall doorway"))
+        #expect(image.text.contains("hall doorway"))
     }
 }

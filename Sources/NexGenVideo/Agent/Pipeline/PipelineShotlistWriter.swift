@@ -45,6 +45,18 @@ enum PipelineShotlistWriter {
                 "concept_type": brief?.conceptType.rawValue ?? "",
             ])
 
+        let importedPlans = shotlist.shots.filter {
+            $0.sourceMode == .imported && $0.productionPlan != nil
+        }
+        guard importedPlans.isEmpty else {
+            throw ToolError(
+                "Imported shots use their existing footage as production truth and omit "
+                    + "production_plan (e.g. "
+                    + importedPlans.prefix(3).map(\.id).joined(separator: ", ")
+                    + ")."
+            )
+        }
+
         if profileIDs.contains(.generativeFilm) {
             let missingPlans = shotlist.shots.filter {
                 ProductionDiscipline.requiresProductionPlan($0)
@@ -85,7 +97,7 @@ enum PipelineShotlistWriter {
             }
             guard unanchoredBlocking.isEmpty else {
                 throw ToolError(
-                    "Generated character blocking must name relation_to_set for a set anchor "
+                    "Generated character blocking must name set_anchor separately from relation_to_set "
                         + "(e.g. "
                         + unanchoredBlocking.prefix(3).map(\.id).joined(separator: ", ")
                         + ")."

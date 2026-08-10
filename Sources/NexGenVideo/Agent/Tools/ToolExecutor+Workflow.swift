@@ -2223,7 +2223,10 @@ extension ToolExecutor {
         guard let shot else { return [:] }
         let blocking = shot.characterBlocking
         let blockingExpected = blocking
-            .map { "\($0.characterRef)@\($0.position) (\($0.pose), gaze=\($0.gaze))" }
+            .map {
+                "\($0.characterRef)@\($0.position) (\($0.pose), gaze=\($0.gaze), "
+                    + "anchor=\($0.setAnchor ?? ""), relation=\($0.relationToSet))"
+            }
             .joined(separator: "; ")
         let gazeExpected = blocking
             .map { "\($0.characterRef): \($0.gaze)" }

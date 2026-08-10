@@ -436,7 +436,7 @@ extension ToolExecutor {
             "project": projectName(dataRoot: root),
             "song": songObject,
             "generated": currentTimestamp(),
-            "generator": "shotlist-agent@write_shotlist",
+            "generator": Shotlist.agentWriterGenerator,
             "budget_eur": brief.budgetEur,
             "shots": shots,
         ]

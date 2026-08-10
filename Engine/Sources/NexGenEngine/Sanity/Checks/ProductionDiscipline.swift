@@ -39,7 +39,7 @@ public func productionRenderabilityCheck(_ ctx: AuditContext) throws -> [Finding
                 level: .error,
                 code: "BLOCKING_ANCHOR_MISSING",
                 shotId: shot.id,
-                message: "Generated character blocking must name its relation to a set anchor."
+                message: "Generated character blocking must name set_anchor separately from relation_to_set."
             ))
         }
 
@@ -75,10 +75,11 @@ public func narrativeStructureCheck(_ ctx: AuditContext) throws -> [Finding] {
 
     let grouped = Dictionary(grouping: ctx.shotlist.shots) { $0.section ?? "__unsectioned__" }
     for section in grouped.keys.sorted() {
-        let shots = grouped[section] ?? []
-        guard shots.count >= 3 else { continue }
-        guard shots.allSatisfy({ $0.productionPlan != nil }) else { continue }
-        let beats = shots.sorted {
+        let plannedShots = (grouped[section] ?? []).filter {
+            $0.productionPlan != nil
+        }
+        guard plannedShots.count >= 3 else { continue }
+        let beats = plannedShots.sorted {
             $0.timeStart == $1.timeStart
                 ? $0.id < $1.id
                 : $0.timeStart < $1.timeStart
@@ -89,17 +90,16 @@ public func narrativeStructureCheck(_ ctx: AuditContext) throws -> [Finding] {
             continue
         }
         let actionIndex = beats.firstIndex(of: .action)
-        let contextIndex = beats.firstIndex { $0 == .establish || $0 == .atmosphere }
-        let consequenceIndex = beats.firstIndex { $0 == .reaction || $0 == .detail || $0 == .transition }
-        let contextAfterAction: Bool
-        let consequenceBeforeAction: Bool
-        if let actionIndex {
-            contextAfterAction = contextIndex.map { $0 > actionIndex } ?? false
-            consequenceBeforeAction = consequenceIndex.map { $0 < actionIndex } ?? false
-        } else {
-            contextAfterAction = false
-            consequenceBeforeAction = false
-        }
+        let hasContextBeforeAction = actionIndex.map { index in
+            beats[..<index].contains {
+                $0 == .establish || $0 == .atmosphere
+            }
+        } ?? false
+        let hasConsequenceAfterAction = actionIndex.map { index in
+            beats[beats.index(after: index)...].contains {
+                $0 == .reaction || $0 == .detail || $0 == .transition
+            }
+        } ?? false
         if actionIndex == nil {
             findings.append(Finding(
                 level: .warn,
@@ -107,14 +107,14 @@ public func narrativeStructureCheck(_ ctx: AuditContext) throws -> [Finding] {
                 message: "Section \(section) has no observable action beat."
             ))
         }
-        if contextIndex == nil || contextAfterAction {
+        if !hasContextBeforeAction {
             findings.append(Finding(
                 level: .warn,
                 code: "NARRATIVE_CONTEXT_MISSING",
                 message: "Section \(section) has no establish or atmosphere beat before its action."
             ))
         }
-        if consequenceIndex == nil || consequenceBeforeAction {
+        if !hasConsequenceAfterAction {
             findings.append(Finding(
                 level: .warn,
                 code: "NARRATIVE_CONSEQUENCE_MISSING",

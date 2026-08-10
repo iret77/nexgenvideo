@@ -95,8 +95,7 @@ The bible IDs are fixed by the bible agent (read them via
 - `step.camera_setup` → `shot.camera_setup` (MANDATORY — triplet
   height + angle + lens_hint)
 - `step.character_blocking` → `shot.character_blocking` (MANDATORY for
-  shots with ≥2 `character_refs`; every entry keeps its object- or
-  zone-anchored `relation_to_set`)
+  shots with ≥2 `character_refs`)
 - Cut-grammar markers / plausibility markers: `cut_ok:` /
   `plausibility_ok:` notes set in `step.notes` are copied 1:1 into
   `shot.notes` — otherwise the sanity checks fire again.
@@ -230,6 +229,9 @@ live, or mixed. Each shot carries a `source_mode`:
   leave `reference_image_refs` empty. The source video is the sole
   conditioning truth for this mode.
 
+Follow the injected core production-profile guidance for `production_plan`
+ownership and blocking-anchor requirements; do not restate that doctrine here.
+
 **Ask the user early** which shots are live vs generated — before you
 write prompts, so live shots get shooting specs and enhanced shots route
 to the edit path. Set `source_mode` per shot accordingly. When unstated,
@@ -293,7 +295,7 @@ camera / lighting directives, and hallucinate on longer sentences.
 - `visual_prompt` (mandatory)
 - `motion` (mandatory)
 - `camera_setup.note` (mandatory)
-- `character_blocking[].position / pose / gaze / relation_to_set`
+- every provider-facing string in `character_blocking`
 - `composition` (in Storyboard.Step)
 
 **May remain in the active conversation language established by the

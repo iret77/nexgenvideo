@@ -9,17 +9,27 @@ for narrative/hybrid projects. The host composes only the profiles active for th
 planned packs can register the same profiles without copying them. `shotlist/v4` persists the
 structured per-shot production plan while older projects migrate without invented creative values.
 
-The owner authorized the current CI build incident and merge to `main` on 2026-08-10. No CI run has
-been dispatched yet. Claude Opus/max and Gemini independently reviewed the release scope; every
-evidence-backed finding was corrected and the release review gate passed.
+The owner authorized the current CI build incident and merge to `main` on 2026-08-10. Claude Opus/max
+and Gemini independently reviewed the release scope; their
+evidence-backed findings were corrected before the first CI run. That run built the app successfully,
+then caught two missing inner `try` markers in test compilation and an ABI-incompatible historical
+pack in the relaunch fixture. The independent spec gate rejected the first attempted fixture because
+it masked compatibility with real pinned releases. The release gate now uses the published contract-2
+and contract-4 packs as historical evidence but rejects them before mapping because contract 5
+changes public value layouts. CI verifies those real packs fail through the engine-contract gate and
+uses an explicitly same-contract lifecycle fixture only for the update/relaunch UI test. Opening a
+project pinned to an ABI-incompatible pack offers an explicit transactional Recovery-copy upgrade to
+the current pack; it never silently changes the saved binding. The same gate prompted correction of
+the remaining production-plan schema, imported-shot, anchor, and profile-documentation drift. The
+corrected gates must pass before the CI retry.
 
 Current non-build verification: `git diff --check`, JSON/plist parsing, `lint_app_theme.py`, and
 `release_preflight.py` pass for 1.1.0. Codex self-review corrected the prompt source-of-truth,
 legacy-compatibility, transcript-scroll edges, pack ABI floor, deterministic sanity order,
 project-specific profile activation, and still/video prompt separation. The release preflight now
 pins the transitive stored-value and enum layouts used across the pack boundary so an incompatible
-pack floor cannot ship silently. Swift compilation and runtime tests remain unverified until the
-authorized GitHub Actions run completes.
+pack floor cannot ship silently. The production target compiled in the first CI run; complete test
+and runtime verification remain pending until the authorized retry completes.
 
 ## Previous release blocker
 
@@ -70,11 +80,13 @@ in-the-moment `build now`.
 ## Working state
 
 - Branch: `codex/integrate-film-production-core-1-1-build`
-- App candidate: `1.1.0`, `CFBundleVersion` `77`. No CI run has been dispatched.
+- App candidate: `1.1.0`, `CFBundleVersion` `77`. The first authorized CI run exposed test-fixture
+  and test-compilation defects; one bundled retry is pending after the corrected gates pass.
 - Musicvideo pack candidate: `0.1.0`, project schema `musicvideo/1.0.0`
-- Engine binary contract: current `5`, minimum compatible `2`
+- Engine binary contract: current `5`, minimum compatible `5`; CI proves earlier stable packs are
+  rejected before mapping and keeps its same-contract restart fixture separate from ABI evidence.
 - The production-profile and transcript-hang corrections are integrated locally. They have not been
-  pushed, reviewed by CI, merged, or released.
+  merged or released; the initial feature commit is pushed and its CI findings are corrected locally.
 
 ## Binding product contracts
 

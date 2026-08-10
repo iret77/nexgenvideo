@@ -29,7 +29,7 @@ Packaged phase prose is guidance inside this state machine, never the state mach
 | Treatment | `write_treatment` | versioned treatment plus `treatment/current.md` |
 | Storyboard | `write_storyboard` | versioned storyboard plus `storyboard/current.yaml` |
 | Bible | `write_bible` | `bible/bible.yaml`, generated-asset proof, and referenced files |
-| Shot List | `PipelineShotlistWriter` via `write_shotlist` or native source-mode edit | latest versioned shot list with per-shot production plans |
+| Shot List | `PipelineShotlistWriter` via `write_shotlist` or native source-mode edit | latest versioned shot list with source-mode-owned production plans |
 | Sanity | `run_sanity` | `sanity/report.json` |
 | Frames | `run_phase`, `record_render`, `save_frame_audit` | role-aware Frames manifest, exact images, exact audits |
 | Render | `run_phase`, `record_render` | final render manifest, render-proof sidecar, exact videos |
@@ -83,9 +83,11 @@ the current phase's capability set is rejected before it can spend money or muta
 - Every media path referenced by the Shot List is part of its exact-byte lineage. Replacing an
   AI-enhancement source or explicit reference at the same path invalidates Shot List and every
   downstream phase.
-- Every newly agent-written Shot List carries a schema-validated `production_plan` per shot. Active
-  core production profiles determine which conditional fields and sanity checks apply. Legacy shot
-  lists remain readable without invented values and are explicitly warned until revised. Prompt
+- Every newly agent-written generated or AI-enhanced Shot List shot carries a schema-validated
+  `production_plan`; imported shots omit it. Active core production profiles determine which
+  conditional fields and sanity checks apply. Legacy shot lists remain readable without invented
+  values and are explicitly warned until revised. The approval gate enforces plan ownership for the
+  canonical agent writer while preserving that explicit legacy tolerance. Prompt
   compilation projects the approved action, camera move, continuity locks, and match-action cue;
   render iteration returns that exact plan and its rescue cut.
 - Analysis binds to the exact track hash. Frames bind each required role to its exact image hash,
@@ -123,8 +125,9 @@ The release suite must fail if:
 - a Render passes with missing, stale, substituted, or unplanned conditioning input;
 - host intake appears in an unsupported phase or violates the locked startup sequence;
 - an imported-only project cannot create and approve valid empty Frames/Render artifacts.
-- a new agent-written shot omits its production plan, a narrative/hybrid shot omits its narrative
-  beat, or a generated long take reaches Sanity without a declared risk and rescue cut.
+- a new agent-written generated or AI-enhanced shot omits its production plan, a narrative/hybrid
+  planned shot omits its narrative beat, or a generated long take reaches Sanity without a declared
+  risk and rescue cut.
 
 macOS execution evidence comes only from the GitHub Actions release workflow. Local Swift builds and
 tests are prohibited.

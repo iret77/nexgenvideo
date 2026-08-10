@@ -81,7 +81,10 @@ struct GateGuardTests {
 
     private func shotlist(
         duration: Double = 12,
-        keyframeStrategy: KeyframeStrategy = .start
+        keyframeStrategy: KeyframeStrategy = .start,
+        sourceMode: SourceMode = .generated,
+        productionPlan: ShotProductionPlan? = nil,
+        generator: String = "test"
     ) throws -> Shotlist {
         let song = try Song(
             title: "song",
@@ -97,10 +100,12 @@ struct GateGuardTests {
             timeEnd: duration,
             durationS: duration,
             type: .performance,
+            sourceMode: sourceMode,
             description: "A complete shot",
             visualPrompt: "A performer holds the opening pose in a measured wide frame.",
             mood: "restrained",
-            keyframeStrategy: keyframeStrategy
+            keyframeStrategy: keyframeStrategy,
+            productionPlan: productionPlan
         )
         return try Shotlist(
             schema_: shotlistSchemaVersion,
@@ -108,7 +113,7 @@ struct GateGuardTests {
             project: "demo",
             song: song,
             generated: "2026-07-26T00:00:00Z",
-            generator: "test",
+            generator: generator,
             shots: [shot]
         )
     }
@@ -132,7 +137,8 @@ struct GateGuardTests {
     }
 
     private func storyboardSteps(
-        locationView: String = "wide"
+        locationView: String = "wide",
+        firstBlocking: [[String: String]] = []
     ) throws -> [Step] {
         try (1...4).map { index in
             try Step(
@@ -147,7 +153,8 @@ struct GateGuardTests {
                     "height": "eye_level",
                     "angle": "frontal",
                     "lens_hint": "wide",
-                ]
+                ],
+                characterBlocking: index == 1 ? firstBlocking : []
             )
         }
     }
@@ -463,10 +470,40 @@ struct GateGuardTests {
         try StoryboardStore.save(valid, to: root)
         try MusicvideoGateChecks.requireRealStoryboard(dataRoot: root)
 
-        let truncated = try Storyboard(
+        let unanchored = try Storyboard(
             meta: try StoryboardMeta(
                 project: "demo",
                 version: 2,
+                generated: "2026-07-26T00:00:00Z",
+                summaryOneline: "An unanchored opening."
+            ),
+            sections: [
+                try Section(
+                    id: "intro",
+                    label: "intro",
+                    timeStart: 0,
+                    timeEnd: 12,
+                    energy: "low",
+                    function: "aufbau",
+                    steps: try storyboardSteps(firstBlocking: [[
+                        "character_ref": "performer",
+                        "position": "left third",
+                        "pose": "standing",
+                        "gaze": "toward the yard",
+                        "relation_to_set": "screen-left",
+                    ]])
+                ),
+            ]
+        )
+        try StoryboardStore.save(unanchored, to: root)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealStoryboard(dataRoot: root)
+        }
+
+        let truncated = try Storyboard(
+            meta: try StoryboardMeta(
+                project: "demo",
+                version: 3,
                 generated: "2026-07-26T00:00:00Z",
                 summaryOneline: "An incomplete opening."
             ),
@@ -488,7 +525,7 @@ struct GateGuardTests {
         }
     }
 
-    @Test("planning gates accept one coherent artifact chain")
+    @Test("planning gates accept coherent artifacts and enforce shot plan ownership")
     func coherentPlanningArtifacts() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -599,6 +636,49 @@ struct GateGuardTests {
         try MusicvideoGateChecks.requireRealBible(dataRoot: root)
 
         _ = try saveShotlist(try shotlist(), to: root)
+        try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+
+        _ = try saveShotlist(
+            try shotlist(generator: "shotlist-agent@write_shotlist"),
+            to: root
+        )
+        try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+
+        _ = try saveShotlist(
+            try shotlist(generator: Shotlist.agentWriterGenerator),
+            to: root
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+        }
+
+        let plan = try ShotProductionPlan(
+            primaryAction: "The performer holds the opening pose.",
+            cameraMovement: .static,
+            narrativeBeat: .establish,
+            renderability: .green,
+            continuityLocks: []
+        )
+        _ = try saveShotlist(
+            try shotlist(
+                keyframeStrategy: .none,
+                sourceMode: .imported,
+                productionPlan: plan,
+                generator: Shotlist.agentWriterGenerator
+            ),
+            to: root
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+        }
+
+        _ = try saveShotlist(
+            try shotlist(
+                productionPlan: plan,
+                generator: Shotlist.agentWriterGenerator
+            ),
+            to: root
+        )
         try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
     }
 

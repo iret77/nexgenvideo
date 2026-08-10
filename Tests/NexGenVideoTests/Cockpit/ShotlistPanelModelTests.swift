@@ -37,6 +37,16 @@ struct ShotlistPanelModelTests {
         #expect(shots[0].sourceModeTag == .generated)
     }
 
+    @Test("production-plan presence is available to source-mode controls")
+    func productionPlanPresence() throws {
+        let planned = try decodeShots(
+            #"{"shots":[{"id":"s1","production_plan":{"primary_action":"walk"}}]}"#
+        )
+        let unplanned = try decodeShots(#"{"shots":[{"id":"s2"}]}"#)
+        #expect(planned[0].hasProductionPlan)
+        #expect(!unplanned[0].hasProductionPlan)
+    }
+
     @Test("SourceModeTag maps to the specified SF Symbols and engine mode")
     func tagSymbolsAndEngineMode() {
         #expect(SourceModeTag.generated.symbol == "sparkles")
