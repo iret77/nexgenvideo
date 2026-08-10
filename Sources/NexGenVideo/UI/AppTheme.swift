@@ -498,10 +498,10 @@ enum AppTheme {
         // that the "Choose a format" sheet shows its pack cards without scrolling.
         static let homeDefault = NSSize(width: 1440, height: 1040)
         static let homeMin = NSSize(width: 760, height: 720)
-        // Deliberately large caps: the actual open size is min(88% width, 92% height, cap, screen), so
-        // these caps rarely bind — the window opens at ~90% of whatever display it lands on, generous
-        // on small screens and large ones alike.
-        static let projectDefault = NSSize(width: 2560, height: 1600)
+        static let projectWidthFraction: CGFloat = 0.88
+        static let projectHeightFraction: CGFloat = 0.96
+        // The screen fraction governs Retina-scaled displays; the cap bounds unusually large desktops.
+        static let projectDefault = NSSize(width: 2560, height: 1800)
         static let projectMin = NSSize(width: 960, height: 640)
         static let splash = NSSize(width: 600, height: 400)
         static let fallbackVisibleFrame = NSSize(width: 1440, height: 900)

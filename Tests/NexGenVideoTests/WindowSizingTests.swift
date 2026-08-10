@@ -15,7 +15,7 @@ struct WindowSizingTests {
         #expect(size.height <= visible.height)
         #expect(size.width >= AppTheme.Window.projectMin.width)
         #expect(size.height >= AppTheme.Window.projectMin.height)
-        #expect(size.height > 700)  // enough height for a usable editor
+        #expect(abs(size.height - 779.52) < 0.01)
     }
 
     // A desktop smaller than projectMin (a small external display or a scaled "more space"
@@ -27,12 +27,23 @@ struct WindowSizingTests {
         #expect(size.height <= visible.height)
     }
 
-    // A large display: the default is capped at projectDefault, not the full screen.
-    @Test func defaultCapsOnBigScreen() {
+    // A large display gets the explicitly approved taller 2560×1800 editor, not the old 2560×1600.
+    @Test func defaultIsTallerOnBigScreen() {
         let visible = NSRect(x: 0, y: 0, width: 3840, height: 2160)
         let size = VideoProject.defaultProjectContentSize(visible: visible)
-        #expect(size.width == AppTheme.Window.projectDefault.width)
-        #expect(size.height == AppTheme.Window.projectDefault.height)
+        #expect(size.width == 2560)
+        #expect(size.height == 1800)
+    }
+
+    @Test func defaultIsTallerAtRetinaFiveKPointSize() {
+        let visible = NSRect(x: 0, y: 0, width: 2560, height: 1415)
+        let size = VideoProject.defaultProjectContentSize(visible: visible)
+        #expect(abs(size.width - 2252.8) < 0.01)
+        #expect(abs(size.height - 1358.4) < 0.01)
+    }
+
+    @Test func tallerDefaultRetiresThePreviousSavedFrameOnce() {
+        #expect(VideoProject.projectWindowFrameAutosaveName == "NexGenVideoWindow-v5")
     }
 
     // A frame saved on a larger, since-disconnected display is shrunk + nudged fully on-screen.

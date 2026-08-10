@@ -574,16 +574,16 @@ final class VideoProject: NSDocument {
 
     // MARK: - Window setup
 
-    /// First-launch default: a fraction of the VISIBLE screen (menu bar + Dock excluded), capped at
-    /// `projectDefault` on big displays and floored at `projectMin`, ~16:10 — enough height for the
-    /// timeline + panels while always fitting the desktop.
+    nonisolated static let projectWindowFrameAutosaveName = "NexGenVideoWindow-v5"
+
+    /// Screen-relative initial content size, capped and floored without exceeding the desktop.
     nonisolated static func defaultProjectContentSize(visible: NSRect) -> NSSize {
         let cap = AppTheme.Window.projectDefault
         let floor = AppTheme.Window.projectMin
         // The visible frame is a hard ceiling: on a desktop smaller than `projectMin`
         // the floor would otherwise push the window past the screen edge.
-        let w = min(max(visible.width * 0.88, floor.width), cap.width, visible.width)
-        let h = min(max(visible.height * 0.92, floor.height), cap.height, visible.height)
+        let w = min(max(visible.width * AppTheme.Window.projectWidthFraction, floor.width), cap.width, visible.width)
+        let h = min(max(visible.height * AppTheme.Window.projectHeightFraction, floor.height), cap.height, visible.height)
         return NSSize(width: w, height: h)
     }
 
@@ -634,11 +634,13 @@ final class VideoProject: NSDocument {
         hostingController.safeAreaRegions = []
 
         let window = NSWindow(contentViewController: hostingController)
-        // Autosave "-v4": bumping the key discards stale too-short frames saved by an earlier build, so
-        // the tall default (92% of the visible screen) applies again on next launch. A saved frame always
-        // wins over a changed default — bumping the key is the only way to retire a bad one.
-        let restored = window.setFrameUsingName("NexGenVideoWindow-v4")
-        window.setFrameAutosaveName("NexGenVideoWindow-v4")
+        // Custom chrome owns the titlebar row; install it before applying content-size geometry.
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        // v5 retires the previous saved default once; later user resizing remains preserved.
+        let restored = window.setFrameUsingName(Self.projectWindowFrameAutosaveName)
+        window.setFrameAutosaveName(Self.projectWindowFrameAutosaveName)
         // Compute the visible frame AFTER restore so a frame saved on a different or
         // since-changed display clamps against the screen it actually lands on, not the
         // window's initial screen.
@@ -657,11 +659,6 @@ final class VideoProject: NSDocument {
             window.center()
         }
         window.appearance = NSAppearance(named: .darkAqua)
-        // FCP-style chrome: hide the system title, extend content beneath the transparent titlebar —
-        // TitleBarView owns that row (name · Edit|Produce · pipeline health).
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
         // Background-drag fought the timeline: dragging a clip also dragged the whole window (both
         // moved at once). The window still drags by its transparent titlebar row.
         window.isMovableByWindowBackground = false

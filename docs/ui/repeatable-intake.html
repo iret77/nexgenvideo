@@ -154,6 +154,8 @@
     <li>On the first empty item, a visible <code>Skip</code> action ends the entire optional step.</li>
     <li>After one item was attached, the next empty item shows <code>Done</code>.
       It ends the repeatable step without creating an empty item.</li>
+    <li>Once the current item contains a name or reference image, completion and close stay disabled.
+      A visible <code>Clear item</code> action resets that unsubmitted draft.</li>
     <li>Disabled controls use the shared app-wide button treatment: muted text, non-accented
       background, reduced opacity, and no hover response.</li>
   </ul>
@@ -193,7 +195,7 @@
         <div class="field">AI Cat</div>
         <div class="file"><span class="symbol">▧</span>ai-cat.png<span class="remove">●</span></div>
         <div class="add">Add another image…</div>
-        <div class="footer"><button>Done</button><button class="primary">Attach</button></div>
+        <div class="footer"><button>Clear item</button><button disabled>Done</button><button class="primary">Attach</button></div>
       </div>
     </div>
   </div>

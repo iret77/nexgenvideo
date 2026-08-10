@@ -1,5 +1,28 @@
 import SwiftUI
 
+enum ProjectCardControl {
+    case primary
+    case removal
+}
+
+enum ProjectCardAction: Equatable {
+    case open
+    case confirmDeletion
+    case removeFromRecents
+    case none
+}
+
+struct ProjectCardInteractionPolicy {
+    static func action(for control: ProjectCardControl, isAccessible: Bool) -> ProjectCardAction {
+        switch (control, isAccessible) {
+        case (.primary, true): .open
+        case (.primary, false): .none
+        case (.removal, true): .confirmDeletion
+        case (.removal, false): .removeFromRecents
+        }
+    }
+}
+
 struct ProjectCard: View {
     let entry: ProjectEntry
     let onOpen: (URL) -> Void
@@ -11,9 +34,66 @@ struct ProjectCard: View {
 
     private let cardRadius: CGFloat = AppTheme.Radius.mdLg
 
+    private var showsActiveHover: Bool {
+        entry.isAccessible && isHovered
+    }
+
     var body: some View {
+        ZStack(alignment: .topTrailing) {
+            openButton
+            if isHovered {
+                removeButton
+            }
+        }
+        .opacity(entry.isAccessible ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled)
+        .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
+                .strokeBorder(
+                    AppTheme.Text.primaryColor.opacity(showsActiveHover ? AppTheme.Opacity.muted : AppTheme.Opacity.hint),
+                    lineWidth: AppTheme.BorderWidth.hairline
+                )
+        )
+        .shadow(showsActiveHover ? AppTheme.Shadow.cardHover : AppTheme.Shadow.cardRest)
+        .scaleEffect(showsActiveHover ? 1.03 : 1.0)
+        .padding(AppTheme.Spacing.xs)
+        .animation(.spring(response: AppTheme.Anim.cardSpringResponse, dampingFraction: AppTheme.Anim.cardSpringDamping), value: isHovered)
+        .onHover { isHovered = $0 }
+        .contextMenu {
+            if entry.isAccessible {
+                Button("Open") { onOpen(entry.url) }
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.selectFile(entry.url.path, inFileViewerRootedAtPath: entry.url.deletingLastPathComponent().path)
+                }
+                Divider() // app-theme: native-menu-divider
+            }
+            Button("Remove from Recents") { onRemove(entry.url) }
+            Button("Delete Project", role: .destructive) { showDeleteConfirmation = true }
+        }
+        .alert("Delete \"\(entry.name)\"?", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                ProjectRegistry.shared.delete(entry.url)
+            }
+        } message: {
+            Text("The project will be moved to the Trash.")
+        }
+        .task(id: entry.lastOpenedDate) { await loadThumbnail(for: entry.url) }
+    }
+
+    private var openButton: some View {
+        Button {
+            perform(.primary)
+        } label: {
+            cardContent
+        }
+        .buttonStyle(.plain)
+        .disabled(!entry.isAccessible)
+        .accessibilityLabel(entry.isAccessible ? "Open \(entry.name)" : "\(entry.name), unavailable")
+    }
+
+    private var cardContent: some View {
         ZStack(alignment: .bottomLeading) {
-            // Thumbnail
             AppTheme.Background.placeholderColor
                 .aspectRatio(5.0/4.0, contentMode: .fit)
                 .overlay {
@@ -44,11 +124,7 @@ struct ProjectCard: View {
                     }
                 }
                 .clipped()
-                .onTapGesture {
-                    if entry.isAccessible { onOpen(entry.url) }
-                }
 
-            // Bottom gradient + label overlay
             LinearGradient(
                 stops: [
                     .init(color: AppTheme.Background.clearColor, location: 0),
@@ -73,61 +149,43 @@ struct ProjectCard: View {
             .padding(.horizontal, AppTheme.Spacing.md)
             .padding(.bottom, AppTheme.Spacing.smMd)
         }
-        .opacity(entry.isAccessible ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled)
-        .overlay(alignment: .topTrailing) {
-            if isHovered {
-                // A present file → delete to Trash; a missing one → just drop it from Recents (there's
-                // nothing to Trash), so a gone project is one click to clear instead of a dead tile.
-                Button {
-                    if entry.isAccessible { showDeleteConfirmation = true } else { onRemove(entry.url) }
-                } label: {
-                    Image(systemName: entry.isAccessible ? "trash.fill" : "xmark")
-                        .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
-                        .foregroundStyle(
-                            entry.isAccessible ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor
-                        )
-                        .frame(width: AppTheme.IconSize.lgXl, height: AppTheme.IconSize.lgXl)
-                        .glassEffect(.regular, in: .circle)
-                }
-                .buttonStyle(.plain)
-                .help(entry.isAccessible ? "Delete project" : "Remove from Recents")
-                .padding(AppTheme.Spacing.smMd)
-                .transition(.opacity.combined(with: .scale))
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
-                .strokeBorder(
-                    AppTheme.Text.primaryColor.opacity(isHovered ? AppTheme.Opacity.muted : AppTheme.Opacity.hint),
-                    lineWidth: AppTheme.BorderWidth.hairline
+    }
+
+    private var removeButton: some View {
+        Button {
+            perform(.removal)
+        } label: {
+            Image(systemName: entry.isAccessible ? "trash.fill" : "xmark")
+                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                .foregroundStyle(
+                    entry.isAccessible ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor
                 )
+                .frame(width: AppTheme.IconSize.lgXl, height: AppTheme.IconSize.lgXl)
+                .glassEffect(.regular, in: .circle)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(entry.isAccessible ? "Delete project" : "Remove from Recents")
+        .accessibilityLabel(
+            entry.isAccessible
+                ? "Delete \(entry.name)"
+                : "Remove \(entry.name) from Recents"
         )
-        .shadow(isHovered ? AppTheme.Shadow.cardHover : AppTheme.Shadow.cardRest)
-        .scaleEffect(isHovered ? 1.03 : 1.0)
-        .padding(AppTheme.Spacing.xs)
-        .animation(.spring(response: AppTheme.Anim.cardSpringResponse, dampingFraction: AppTheme.Anim.cardSpringDamping), value: isHovered)
-        .onHover { isHovered = $0 }
-        .contextMenu {
-            if entry.isAccessible {
-                Button("Open") { onOpen(entry.url) }
-                Button("Reveal in Finder") {
-                    NSWorkspace.shared.selectFile(entry.url.path, inFileViewerRootedAtPath: entry.url.deletingLastPathComponent().path)
-                }
-                Divider() // app-theme: native-menu-divider
-            }
-            Button("Remove from Recents") { onRemove(entry.url) }
-            Button("Delete Project", role: .destructive) { showDeleteConfirmation = true }
+        .padding(AppTheme.Spacing.smMd)
+        .transition(.opacity.combined(with: .scale))
+    }
+
+    private func perform(_ control: ProjectCardControl) {
+        switch ProjectCardInteractionPolicy.action(for: control, isAccessible: entry.isAccessible) {
+        case .open:
+            onOpen(entry.url)
+        case .confirmDeletion:
+            showDeleteConfirmation = true
+        case .removeFromRecents:
+            onRemove(entry.url)
+        case .none:
+            break
         }
-        .alert("Delete \"\(entry.name)\"?", isPresented: $showDeleteConfirmation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                ProjectRegistry.shared.delete(entry.url)
-            }
-        } message: {
-            Text("The project will be moved to the Trash.")
-        }
-        .task(id: entry.lastOpenedDate) { await loadThumbnail(for: entry.url) }
     }
 
     private static let relativeDateFormatter: RelativeDateTimeFormatter = {

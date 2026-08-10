@@ -301,6 +301,25 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         return hasFiles
     }
 
+    func permitsCompletion(
+        hasFiles: Bool,
+        direction: String,
+        isSubmitting: Bool
+    ) -> Bool {
+        guard !isSubmitting,
+              let intake = fileIntake,
+              !intake.required,
+              intake.completionLabel != nil else { return false }
+        return !hasFiles && direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func hasRepeatableIntakeDraft(hasFiles: Bool, direction: String) -> Bool {
+        guard purpose == .workflowIntake,
+              fileIntake?.namePrompt != nil,
+              fileIntake?.completionLabel != nil else { return false }
+        return hasFiles || !direction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Parse the `show_dialog` tool args. Throws with actionable messages so the agent can repair.
     static func parse(_ args: [String: Any]) throws -> AgentDialog {
         guard let title = (args["title"] as? String)?.trimmingCharacters(in: .whitespaces), !title.isEmpty else {

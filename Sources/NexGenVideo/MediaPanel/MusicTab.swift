@@ -135,12 +135,13 @@ struct MusicTab: View {
                         // Route through the ONE shared handler (audit #3). It dispatches on the
                         // dialog's `.generationIntent` purpose to the intent sink installed below.
                         onSubmit: { result in
-                            genDialog = nil
-                            dialogPreselected = [:]
                             editor.agentService.submitDialog(dialog, result: result)
+                            dismissGenerationDialog()
                         },
-                        onCancel: { genDialog = nil; dialogPreselected = [:] }
+                        onComplete: dismissGenerationDialog,
+                        onCancel: dismissGenerationDialog
                     )
+                    .id(dialog.id)
                     .padding(.bottom, AppTheme.Spacing.sm)
                 }
                 generateBar
@@ -152,6 +153,7 @@ struct MusicTab: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppTheme.Background.surfaceColor)
+        .onDisappear { dismissGenerationDialog() }
     }
 
     private var sourceSection: some View {
@@ -378,6 +380,12 @@ struct MusicTab: View {
             prompt = trimmed
             performGenerate(intent: trimmed, model: model)
         }
+    }
+
+    private func dismissGenerationDialog() {
+        editor.agentService.onGenerationDialogIntent = nil
+        genDialog = nil
+        dialogPreselected = [:]
     }
 
     /// A music-shaping dialog seeded for the current model — mood (single) + character (multi) as
