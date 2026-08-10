@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import NexGenVideo
 import NexGenEngine
@@ -120,6 +121,17 @@ struct ToolDefinitionContractTests {
                 blockingRequired.contains("set_anchor")
                     == (sourceMode == SourceMode.generated.rawValue)
             )
+            if sourceMode == SourceMode.generated.rawValue {
+                let blockingProperties = try #require(
+                    blockingItems["properties"] as? [String: [String: Any]]
+                )
+                let relation = try #require(blockingProperties["relation_to_set"])
+                let anchor = try #require(blockingProperties["set_anchor"])
+                #expect(relation["pattern"] != nil)
+                let pattern = try #require(anchor["pattern"] as? String)
+                #expect("screen-right".range(of: pattern, options: .regularExpression) == nil)
+                #expect("hall doorway".range(of: pattern, options: .regularExpression) != nil)
+            }
         }
     }
 
@@ -150,6 +162,17 @@ struct ToolDefinitionContractTests {
                 required.contains("set_anchor")
                     == (sourceMode == SourceMode.generated.rawValue)
             )
+            if sourceMode == SourceMode.generated.rawValue {
+                let properties = try #require(
+                    blockingItems["properties"] as? [String: [String: Any]]
+                )
+                let relation = try #require(properties["relation_to_set"])
+                let anchor = try #require(properties["set_anchor"])
+                #expect(relation["pattern"] != nil)
+                let pattern = try #require(anchor["pattern"] as? String)
+                #expect("screen-right".range(of: pattern, options: .regularExpression) == nil)
+                #expect("hall doorway".range(of: pattern, options: .regularExpression) != nil)
+            }
         }
     }
 

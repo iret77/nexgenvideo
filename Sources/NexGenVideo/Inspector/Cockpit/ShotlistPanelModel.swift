@@ -68,8 +68,11 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
         visualPrompt = try c.decodeIfPresent(String.self, forKey: .visualPrompt) ?? ""
         framing = try c.decodeIfPresent(String.self, forKey: .framing)
         mood = try c.decodeIfPresent(String.self, forKey: .mood) ?? ""
-        hasProductionPlan = c.contains(.productionPlan)
-            && !(try c.decodeNil(forKey: .productionPlan))
+        if c.contains(.productionPlan) {
+            hasProductionPlan = try !c.decodeNil(forKey: .productionPlan)
+        } else {
+            hasProductionPlan = false
+        }
         characterRefs = try c.decodeIfPresent([String].self, forKey: .characterRefs) ?? []
         locationRef = try c.decodeIfPresent(String.self, forKey: .locationRef)
         propRefs = try c.decodeIfPresent([String].self, forKey: .propRefs) ?? []

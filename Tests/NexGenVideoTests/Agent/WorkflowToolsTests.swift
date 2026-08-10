@@ -1352,6 +1352,38 @@ struct WorkflowToolsTests {
         #expect(unanchored.isError)
         #expect(ToolHarness.textOf(unanchored).contains("required pattern"))
 
+        var directionOnlyShot = unanchoredShot
+        directionOnlyShot["character_blocking"] = [[
+            "character_ref": "performer",
+            "position": "near the doorway",
+            "pose": "standing",
+            "gaze": "toward the yard",
+            "relation_to_set": "beside the doorway",
+            "set_anchor": "screen-right",
+        ]]
+        let directionOnly = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [directionOnlyShot],
+        ])
+        #expect(directionOnly.isError)
+        #expect(ToolHarness.textOf(directionOnly).contains("required pattern"))
+
+        var missingRelationShot = unanchoredShot
+        missingRelationShot["character_blocking"] = [[
+            "character_ref": "performer",
+            "position": "near the doorway",
+            "pose": "standing",
+            "gaze": "toward the yard",
+            "relation_to_set": "",
+            "set_anchor": "hall doorway",
+        ]]
+        let missingRelation = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [missingRelationShot],
+        ])
+        #expect(missingRelation.isError)
+        #expect(ToolHarness.textOf(missingRelation).contains("required pattern"))
+
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [shot],

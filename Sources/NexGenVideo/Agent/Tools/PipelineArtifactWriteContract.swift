@@ -108,6 +108,13 @@ enum PipelineArtifactWriteContract {
     private static var nonEmptyString: [String: Any] {
         ["type": "string", "minLength": 1, "pattern": #"\S"#]
     }
+    private static var setAnchorString: [String: Any] {
+        [
+            "type": "string",
+            "minLength": 1,
+            "pattern": #"^(?!\s*(?:(?:[Ss][Cc][Rr][Ee][Ee][Nn]|[Cc][Aa][Mm][Ee][Rr][Aa]|[Ff][Rr][Aa][Mm][Ee])[\s_-]*)?(?:[Ll][Ee][Ff][Tt]|[Rr][Ii][Gg][Hh][Tt]|[Cc][Ee][Nn][Tt](?:[Ee][Rr]|[Rr][Ee]))\s*$).*\S.*$"#,
+        ]
+    }
     private static var number: [String: Any] { ["type": "number"] }
     private static var integer: [String: Any] { ["type": "integer"] }
     private static var boolean: [String: Any] { ["type": "boolean"] }
@@ -212,8 +219,8 @@ enum PipelineArtifactWriteContract {
             "position": string,
             "pose": string,
             "gaze": string,
-            "relation_to_set": string,
-            "set_anchor": nonEmptyString,
+            "relation_to_set": requiresSetAnchor ? nonEmptyString : string,
+            "set_anchor": requiresSetAnchor ? setAnchorString : nonEmptyString,
         ]
         var required = [
             "character_ref", "position", "pose", "gaze", "relation_to_set",
@@ -454,8 +461,8 @@ enum PipelineArtifactWriteContract {
             "position": string,
             "pose": string,
             "gaze": string,
-            "relation_to_set": string,
-            "set_anchor": nonEmptyString,
+            "relation_to_set": requiresSetAnchor ? nonEmptyString : string,
+            "set_anchor": requiresSetAnchor ? setAnchorString : nonEmptyString,
         ]
         var required = [
             "character_ref", "position", "pose", "gaze", "relation_to_set",

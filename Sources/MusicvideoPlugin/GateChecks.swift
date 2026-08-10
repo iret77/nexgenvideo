@@ -1202,7 +1202,8 @@ enum MusicvideoGateChecks {
             guard unanchoredSteps.isEmpty else {
                 throw GateBlocked(
                     "Can't approve \"storyboard\": generated character blocking must "
-                        + "name a non-empty set_anchor (e.g. "
+                        + "name a non-directional set_anchor and a non-empty "
+                        + "relation_to_set (e.g. "
                         + "\(unanchoredSteps.prefix(3).map(\.id).joined(separator: ", ")))."
                 )
             }

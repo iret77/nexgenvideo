@@ -63,6 +63,13 @@ public enum ProductionDiscipline {
     public static let maximumGeneratedVisibleCharacters = 2
     public static let normalGeneratedShotMaximumDuration = 12.0
 
+    private static let directionOnlySetAnchors: Set<String> = [
+        "left", "right", "center", "centre",
+        "screen left", "screen right", "screen center", "screen centre",
+        "camera left", "camera right", "camera center", "camera centre",
+        "frame left", "frame right", "frame center", "frame centre",
+    ]
+
     public static func requiresProductionPlan(_ shot: Shot) -> Bool {
         shot.sourceMode != .imported
     }
@@ -82,19 +89,38 @@ public enum ProductionDiscipline {
     public static func hasUnanchoredCharacterBlocking(_ shot: Shot) -> Bool {
         shot.sourceMode == .generated
             && shot.characterBlocking.contains {
-                $0.setAnchor?.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                ).isEmpty != false
+                !hasValidSetAnchor(
+                    $0.setAnchor,
+                    relationToSet: $0.relationToSet
+                )
             }
     }
 
     public static func hasUnanchoredCharacterBlocking(_ step: Step) -> Bool {
         step.sourceMode == .generated
             && step.characterBlocking.contains {
-                $0["set_anchor"]?.trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                ).isEmpty != false
+                !hasValidSetAnchor(
+                    $0["set_anchor"],
+                    relationToSet: $0["relation_to_set"]
+                )
             }
+    }
+
+    private static func hasValidSetAnchor(
+        _ setAnchor: String?,
+        relationToSet: String?
+    ) -> Bool {
+        guard let setAnchor,
+              !setAnchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let relationToSet,
+              !relationToSet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        let normalized = setAnchor.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return !directionOnlySetAnchors.contains(normalized)
     }
 }
 

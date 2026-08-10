@@ -39,7 +39,7 @@ public func productionRenderabilityCheck(_ ctx: AuditContext) throws -> [Finding
                 level: .error,
                 code: "BLOCKING_ANCHOR_MISSING",
                 shotId: shot.id,
-                message: "Generated character blocking must name set_anchor separately from relation_to_set."
+                message: "Generated character blocking must name a non-directional set_anchor and a non-empty relation_to_set."
             ))
         }
 

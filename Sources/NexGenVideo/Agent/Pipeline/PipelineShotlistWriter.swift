@@ -97,7 +97,8 @@ enum PipelineShotlistWriter {
             }
             guard unanchoredBlocking.isEmpty else {
                 throw ToolError(
-                    "Generated character blocking must name set_anchor separately from relation_to_set "
+                    "Generated character blocking must name a non-directional set_anchor and "
+                        + "a non-empty relation_to_set "
                         + "(e.g. "
                         + unanchoredBlocking.prefix(3).map(\.id).joined(separator: ", ")
                         + ")."

@@ -235,6 +235,49 @@ struct ProductionDisciplineTests {
         #expect(try productionRenderabilityCheck(ctx).map(\.code) == ["BLOCKING_ANCHOR_MISSING"])
     }
 
+    @Test("screen direction alone cannot substitute for a named set anchor")
+    func screenDirectionIsNotAnchor() throws {
+        let blocking = try CharacterBlocking(
+            characterRef: "subject",
+            position: "right third",
+            pose: "standing",
+            gaze: "toward the hall",
+            relationToSet: "beside the doorway",
+            setAnchor: "screen-right"
+        )
+        let shot = try Self.shot(
+            characters: ["subject"],
+            plan: Self.plan(),
+            characterBlocking: [blocking]
+        )
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            productionProfileIDs: [.generativeFilm]
+        )
+        #expect(try productionRenderabilityCheck(ctx).map(\.code) == ["BLOCKING_ANCHOR_MISSING"])
+    }
+
+    @Test("a named anchor still requires its spatial relationship")
+    func namedAnchorRequiresRelationship() throws {
+        let blocking = try CharacterBlocking(
+            characterRef: "subject",
+            position: "right third",
+            pose: "standing",
+            gaze: "toward the hall",
+            setAnchor: "hall doorway"
+        )
+        let shot = try Self.shot(
+            characters: ["subject"],
+            plan: Self.plan(),
+            characterBlocking: [blocking]
+        )
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            productionProfileIDs: [.generativeFilm]
+        )
+        #expect(try productionRenderabilityCheck(ctx).map(\.code) == ["BLOCKING_ANCHOR_MISSING"])
+    }
+
     @Test("a named set anchor satisfies generated blocking")
     func namedSetAnchor() throws {
         let blocking = try CharacterBlocking(

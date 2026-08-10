@@ -490,7 +490,8 @@ struct GateGuardTests {
                         "position": "left third",
                         "pose": "standing",
                         "gaze": "toward the yard",
-                        "relation_to_set": "screen-left",
+                        "relation_to_set": "beside the gate",
+                        "set_anchor": "screen-left",
                     ]])
                 ),
             ]
