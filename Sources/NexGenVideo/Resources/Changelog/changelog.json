@@ -2,6 +2,18 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.0.9",
+      "date": "2026-08-10",
+      "sections": [
+        {
+          "heading": "Stability",
+          "items": [
+            "Importing or relinking large media now keeps hashing and file copies off the main thread, with visible progress, cancellation, and rollback on failure."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.8",
       "date": "2026-08-10",
       "sections": [

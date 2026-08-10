@@ -293,15 +293,22 @@ final class AgentService {
         }
         switch dialog.purpose {
         case .chatClarification:
-            let imported = importDialogFiles(result.fileURLs)
-            sendDialogResponse(
-                dialog,
-                result: result,
-                attached: imported.mentions,
-                presentedAttachmentNames: imported.mentions.map(\.displayName),
-                userNotice: imported.failureNotice,
-                agentContext: imported.failureContext
-            )
+            guard !result.fileURLs.isEmpty else {
+                sendDialogResponse(dialog, result: result)
+                return
+            }
+            Task { [weak self] in
+                guard let self else { return }
+                let imported = await self.importDialogFiles(result.fileURLs)
+                self.sendDialogResponse(
+                    dialog,
+                    result: result,
+                    attached: imported.mentions,
+                    presentedAttachmentNames: imported.mentions.map(\.displayName),
+                    userNotice: imported.failureNotice,
+                    agentContext: imported.failureContext
+                )
+            }
         case .generationIntent:
             break
         case .workflowIntake:
@@ -744,21 +751,36 @@ final class AgentService {
         }
     }
 
-    private func importDialogFiles(_ urls: [URL]) -> DialogFileImport {
+    private func importDialogFiles(_ urls: [URL]) async -> DialogFileImport {
         guard let editor, !urls.isEmpty else { return DialogFileImport() }
         var imported = DialogFileImport()
         var mentions: [AgentMention] = []
+        var assets: [MediaAsset] = []
+        var pendingURLs: [URL] = []
         for url in urls {
-            // Reuse library picks; import only files that are not assets yet.
             let target = url.standardizedFileURL.resolvingSymlinksInPath()
-            let existing = editor.mediaAssets.first {
+            if let existing = editor.mediaAssets.first(where: {
                 $0.url.standardizedFileURL.resolvingSymlinksInPath() == target
+            }) {
+                assets.append(existing)
+            } else {
+                pendingURLs.append(url)
             }
-            guard let asset = existing ?? editor.addMediaAsset(from: url) else {
-                let reason = editor.mediaPanelToast?.message ?? "The file couldn't be copied into the project."
-                imported.failures.append("\(url.lastPathComponent): \(reason)")
-                continue
+        }
+        if !pendingURLs.isEmpty {
+            let summary = await editor.importFinderItems(pendingURLs, into: nil)
+            for assetID in summary.assetIDs {
+                if let asset = editor.mediaAssets.first(where: { $0.id == assetID }) {
+                    assets.append(asset)
+                }
             }
+            if let failure = summary.failure {
+                imported.failures.append(failure)
+            } else if summary.assetIDs.count != pendingURLs.count {
+                imported.failures.append("One or more files couldn't be copied into the project.")
+            }
+        }
+        for asset in assets {
             let displayName = Self.disambiguatedMentionName(for: asset, existing: mentions)
             mentions.append(AgentMention(displayName: displayName, mediaRef: asset.id, type: asset.type))
         }

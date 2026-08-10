@@ -285,7 +285,7 @@ struct PreviewContainerView: View {
         panel.message = "Choose the source file for this clip"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            editor.relinkAsset(id: assetId, to: url)
+            Task { await editor.relinkAsset(id: assetId, to: url) }
         }
     }
 
@@ -297,8 +297,14 @@ struct PreviewContainerView: View {
         panel.message = "Choose the folder that holds your media"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            let result = editor.relinkOfflineAssets(fromFolder: url)
-            editor.mediaPanelToast = "Relinked \(result.relinked) of \(result.total) offline clips."
+            Task {
+                let result = await editor.relinkOfflineAssets(fromFolder: url)
+                if let failure = result.failure {
+                    editor.mediaPanelToast = MediaPanelToast(message: failure)
+                } else {
+                    editor.mediaPanelToast = "Relinked \(result.relinked) of \(result.total) offline clips."
+                }
+            }
         }
     }
 

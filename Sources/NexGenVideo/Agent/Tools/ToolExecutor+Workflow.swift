@@ -1136,7 +1136,7 @@ extension ToolExecutor {
 
     // MARK: - Render manifest
 
-    func nextRenderShotTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func nextRenderShotTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         guard let shotlist = try readShotlist(dataRoot: root) else {
@@ -1168,7 +1168,7 @@ extension ToolExecutor {
             } else {
                 frames = nil
             }
-            let pending = nextFrameRole(
+            let pending = await nextFrameRole(
                 shotlist: shotlist,
                 manifest: frames,
                 editor: editor,
@@ -1215,7 +1215,7 @@ extension ToolExecutor {
         if let frameRole { body["role"] = frameRole }
         if phase != "frames", shot.sourceMode == .aiEnhanced {
             guard let sourcePath = shot.sourcePath,
-                  let source = resolveRenderedAsset(
+                  let source = await resolveRenderedAsset(
                       sourcePath,
                       editor: editor,
                       dataRoot: root
@@ -1260,7 +1260,7 @@ extension ToolExecutor {
            shot.chainWithPreviousEnd,
            let predId = ChainContinuity.chainPredecessor(shotlist, shotId: shotId),
            let lastFrame = renderManifest?.entries[predId]?.lastFramePath,
-           let asset = resolveRenderedAsset(lastFrame, editor: editor, dataRoot: root) {
+           let asset = await resolveRenderedAsset(lastFrame, editor: editor, dataRoot: root) {
             body["chain_start_frame_media_ref"] = asset.id
             body["chain_start_frame_path"] = lastFrame
         }
@@ -1273,7 +1273,11 @@ extension ToolExecutor {
             .referencePlanProvider?.planReferences(dataRoot: root, shotId: shotId) {
             var refImages: [[String: Any]] = []
             for ref in plan.refs {
-                guard let asset = resolveRenderedAsset(ref.path, editor: editor, dataRoot: root) else { continue }
+                guard let asset = await resolveRenderedAsset(
+                    ref.path,
+                    editor: editor,
+                    dataRoot: root
+                ) else { continue }
                 refImages.append([
                     "media_ref": asset.id, "path": ref.path, "kind": ref.kind,
                     "view": ref.view, "score": ref.score, "purpose": ref.purpose,
@@ -1535,7 +1539,7 @@ extension ToolExecutor {
                     "A rendered result needs output pointing to completed project media."
                 )
             }
-            guard let asset = resolveRenderedAsset(
+            guard let asset = await resolveRenderedAsset(
                 submitted,
                 editor: editor,
                 dataRoot: root
@@ -1579,7 +1583,7 @@ extension ToolExecutor {
             if phase == "frames" {
                 updatedFrames = try updatedFramesManifest(
                     shot: shot,
-                    output: asset.id,
+                    asset: asset,
                     role: args.string("role"),
                     shotlist: shotlist,
                     editor: editor,
@@ -1596,11 +1600,14 @@ extension ToolExecutor {
         // against what `next_render_shot` planned. Read off the submitted GenerationInput — the record
         // of the real submission — not off the agent's say-so.
         if status == .rendered, let output, !output.isEmpty {
+            guard let completedAsset else {
+                throw ToolError("The rendered output was not registered as project media.")
+            }
             let entryProof = try stampRenderInputs(
                 &manifest,
                 shotId: shotId,
                 output: output,
-                assetId: completedAsset?.id,
+                asset: completedAsset,
                 editor: editor,
                 dataRoot: root
             )
@@ -2115,7 +2122,10 @@ extension ToolExecutor {
         return candidate
     }
 
-    func cropToAspectTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func cropToAspectTool(
+        _ editor: EditorViewModel,
+        _ args: [String: Any]
+    ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let aspect = try args.requireString("aspect")
         let anchor = CropAnchor(rawValue: args.string("anchor") ?? "center") ?? .center
@@ -2140,7 +2150,7 @@ extension ToolExecutor {
         } catch {
             throw ToolError("crop_to_aspect failed: \(error)")
         }
-        let asset = try requiredDurableAsset(
+        let asset = try await requiredDurableAsset(
             for: dest,
             editor: editor,
             context: "crop_to_aspect created the crop but couldn't register it"
@@ -2272,7 +2282,7 @@ extension ToolExecutor {
     /// rather than duplicating. The beat math is the engine's pure `BeatAssembly.plan`; this handler
     /// resolves each shot's rendered file, drives the timeline, and reports what landed and what was
     /// skipped.
-    func assembleTimelineTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
+    func assembleTimelineTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = args.string("phase") ?? "final"
 
@@ -2315,7 +2325,11 @@ extension ToolExecutor {
                 skipped.append((shot.id, "not rendered yet"))
                 continue
             }
-            guard let asset = try requiredRenderedAsset(output, editor: editor, dataRoot: root) else {
+            guard let asset = try await requiredRenderedAsset(
+                output,
+                editor: editor,
+                dataRoot: root
+            ) else {
                 skipped.append((shot.id, "rendered output not found on disk: \(output)"))
                 continue
             }
@@ -2330,7 +2344,7 @@ extension ToolExecutor {
         }
 
         let placements = BeatAssembly.plan(beats: grid.beats, downbeats: grid.downbeats, fps: fps, shots: planInputs)
-        let song = try resolveSongAsset(dataRoot: root, editor: editor)
+        let song = try await resolveSongAsset(dataRoot: root, editor: editor)
         var sidecar = try loadAssemblySidecar(dataRoot: root)
 
         var placedCount = 0
@@ -2449,7 +2463,7 @@ extension ToolExecutor {
         manifest: FramesManifest?,
         editor: EditorViewModel,
         dataRoot: URL
-    ) -> (shot: Shot, role: String)? {
+    ) async -> (shot: Shot, role: String)? {
         for shot in shotlist.shots where shot.sourceMode == .generated {
             let roles: [String]
             switch shot.keyframeStrategy {
@@ -2465,7 +2479,7 @@ extension ToolExecutor {
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !frame.runwayModel
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      resolveRenderedAsset(
+                      await resolveRenderedAsset(
                           frame.path,
                           editor: editor,
                           dataRoot: dataRoot
@@ -2479,7 +2493,7 @@ extension ToolExecutor {
 
     private func updatedFramesManifest(
         shot: Shot,
-        output: String,
+        asset: MediaAsset,
         role requestedRole: String?,
         shotlist: Shotlist,
         editor: EditorViewModel,
@@ -2501,11 +2515,7 @@ extension ToolExecutor {
                     + "role '\(role)' is not valid for it."
             )
         }
-        guard let asset = resolveRenderedAsset(
-            output,
-            editor: editor,
-            dataRoot: dataRoot
-        ), let gi = asset.generationInput else {
+        guard let gi = asset.generationInput else {
             throw ToolError(
                 "The frame has no generation provenance. Record the completed result "
                     + "returned by a schema-validated generate_image call."
@@ -2567,15 +2577,10 @@ extension ToolExecutor {
     /// Semantic slots are authoritative; model lookup is only for older generated media.
     private func stampRenderInputs(
         _ manifest: inout RenderManifest, shotId: String, output: String,
-        assetId: String?, editor: EditorViewModel,
+        asset: MediaAsset, editor: EditorViewModel,
         dataRoot: URL
     ) throws -> RenderProofEntry {
         guard var entry = manifest.entries[shotId],
-              let asset = resolveRenderedAsset(
-                  assetId ?? output,
-                  editor: editor,
-                  dataRoot: dataRoot
-              ),
               let gi = asset.generationInput else {
             throw ToolError(
                 "The rendered video has no generation provenance. Record the completed "
@@ -2735,7 +2740,11 @@ extension ToolExecutor {
     private func recordChainLastFrame(shotId: String, output: String, phase: String, editor: EditorViewModel, dataRoot: URL) async {
         guard let shotlist = (try? loadShotlist(dataRoot: dataRoot)) ?? nil,
               ChainContinuity.needsLastFrame(shotlist, shotId: shotId),
-              let asset = resolveRenderedAsset(output, editor: editor, dataRoot: dataRoot) else { return }
+              let asset = await resolveRenderedAsset(
+                output,
+                editor: editor,
+                dataRoot: dataRoot
+              ) else { return }
         let dest = asset.url.deletingPathExtension().appendingPathExtension("last_frame.png")
         do {
             try await LastFrameExtractor.extractLastFrame(video: asset.url, dest: dest)
@@ -2751,7 +2760,11 @@ extension ToolExecutor {
         try? saveRenderManifest(manifest, dataRoot: dataRoot)
     }
 
-    private func resolveRenderedAsset(_ output: String, editor: EditorViewModel, dataRoot: URL) -> MediaAsset? {
+    private func resolveRenderedAsset(
+        _ output: String,
+        editor: EditorViewModel,
+        dataRoot: URL
+    ) async -> MediaAsset? {
         if let asset = editor.mediaAssets.first(where: { $0.id == output }) {
             return projectLocalRegularURL(
                 asset.url,
@@ -2766,15 +2779,15 @@ extension ToolExecutor {
         if let asset = existingProjectAsset(at: target, editor: editor) {
             return asset
         }
-        return editor.addMediaAsset(from: target)
+        return await editor.addMediaAsset(from: target)
     }
 
     private func requiredRenderedAsset(
         _ output: String,
         editor: EditorViewModel,
         dataRoot: URL
-    ) throws -> MediaAsset? {
-        if let asset = resolveRenderedAsset(
+    ) async throws -> MediaAsset? {
+        if let asset = await resolveRenderedAsset(
             output,
             editor: editor,
             dataRoot: dataRoot
@@ -2835,7 +2848,10 @@ extension ToolExecutor {
 
     /// The single song in `audio/` as a media asset (imported once, reused after), or nil when there
     /// isn't exactly one song to anchor to.
-    private func resolveSongAsset(dataRoot: URL, editor: EditorViewModel) throws -> MediaAsset? {
+    private func resolveSongAsset(
+        dataRoot: URL,
+        editor: EditorViewModel
+    ) async throws -> MediaAsset? {
         let songs = AudioProjectLayout.songFiles(dataRoot: dataRoot)
         guard songs.count == 1, let songURL = songs.first else { return nil }
         if let anchorId = editor.mediaManifest.songAnchorAssetId,
@@ -2843,7 +2859,7 @@ extension ToolExecutor {
             return anchored
         }
         let idsBefore = Set(editor.mediaAssets.map(\.id))
-        let asset = try requiredDurableAsset(
+        let asset = try await requiredDurableAsset(
             for: songURL,
             editor: editor,
             context: "assemble_timeline found the project song but couldn't register it"
@@ -2858,16 +2874,8 @@ extension ToolExecutor {
         for fileURL: URL,
         editor: EditorViewModel,
         context: String
-    ) throws -> MediaAsset {
-        let durableURL: URL
-        do {
-            durableURL = try editor.durableProjectMediaURL(for: fileURL)
-        } catch {
-            editor.mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
-            Log.project.error("media durability failed error=\(error.localizedDescription)")
-            throw ToolError("\(context): \(error.localizedDescription)")
-        }
-        guard let asset = existingOrImportedAsset(durableURL, editor: editor) else {
+    ) async throws -> MediaAsset {
+        guard let asset = await existingOrImportedAsset(fileURL, editor: editor) else {
             let reason = editor.mediaPanelToast?.message ?? "the copied media could not be imported"
             throw ToolError("\(context): \(reason)")
         }
@@ -2875,14 +2883,17 @@ extension ToolExecutor {
     }
 
     /// Reuse the library asset already backed by `fileURL`, else import it.
-    private func existingOrImportedAsset(_ fileURL: URL, editor: EditorViewModel) -> MediaAsset? {
+    private func existingOrImportedAsset(
+        _ fileURL: URL,
+        editor: EditorViewModel
+    ) async -> MediaAsset? {
         let target = fileURL.standardizedFileURL.resolvingSymlinksInPath()
         if let existing = editor.mediaAssets.first(where: {
             $0.url.standardizedFileURL.resolvingSymlinksInPath() == target
         }) {
             return existing
         }
-        return editor.addMediaAsset(from: fileURL)
+        return await editor.addMediaAsset(from: fileURL)
     }
 
     /// Re-run state: the ids of the assembly video/audio tracks, persisted next to the other pipeline

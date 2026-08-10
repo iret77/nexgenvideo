@@ -5,7 +5,7 @@ import Testing
 @Suite("ToolExecutor — durable media import")
 @MainActor
 struct ImportMediaDurabilityTests {
-    @Test func completedImportMarksProjectChanged() throws {
+    @Test func completedImportMarksProjectChanged() async throws {
         let editor = EditorViewModel()
         let source = FileManager.default.temporaryDirectory
             .appendingPathComponent("tool-change-count-\(UUID().uuidString).mp4")
@@ -22,7 +22,7 @@ struct ImportMediaDurabilityTests {
         var changeCount = 0
         editor.onPipelineChanged = { changeCount += 1 }
 
-        _ = try editor.addMediaAssetThrowing(from: source)
+        _ = try await editor.addMediaAssetThrowing(from: source)
 
         #expect(changeCount == 1)
     }

@@ -2,10 +2,10 @@
 
 ## Current release blocker
 
-App 1.0.7 regressed two user actions: `Done` on an empty repeated character/location card was routed
+App 1.0.8 contains the corrections for two user actions regressed in 1.0.7: `Done` on an empty repeated character/location card was routed
 through the attachment validator and failed with “Choose at least one reference image”; the Trash
 control on a Home project card competed with the card-wide open gesture and could open the project on
-its first click. The staged 1.0.8 correction gives completion its own guarded workflow action and makes
+its first click. The correction gives completion its own guarded workflow action and makes
 Home open/removal exclusive sibling buttons with a fully owned hit area. A filled intake draft keeps
 `Done` and close unavailable until the user attaches it or explicitly clears the item.
 
@@ -15,8 +15,14 @@ autosave key once so the prior saved frame cannot win over the corrected default
 
 The same review exposed a pre-existing generation-dialog defect: the Music tab owned its dialog
 locally while `AgentService.submitDialog` required it to be the composer-owned pending dialog. The
-staged correction accepts that explicit generation-intent path and clears its submission identity
-after every synchronous delivery. The consolidated corrections remain unverified until macOS CI passes.
+correction accepts that explicit generation-intent path and clears its submission identity after every
+synchronous delivery.
+
+The remaining release blocker was media import/relink (#282): single-file paths still scanned, hashed,
+and copied synchronously on `MainActor`. The 1.0.9 working tree routes every local, dialog, tool,
+remote, pasted-image, and relink path through one serialized async transaction with SHA-256 identity,
+visible progress/cancel, rollback, idempotent reimport, and transactional undo/redo. The consolidated
+1.0.9 correction remains unverified until macOS CI passes.
 
 ## Objective
 
@@ -33,6 +39,8 @@ release blockers:
    Brief intake remained open after Audio Analysis;
 7. the first watchdog implementation inherited `@MainActor` isolation for a timer callback executed
    on its background queue, causing Swift 6 to terminate app 1.0.1 at the first timer tick.
+8. media import and relink still performed scan, hashing, and copy work on `MainActor`, with incomplete
+   cancellation, rollback, content verification, and close/undo lifetime guarantees.
 
 Never build or test locally. GitHub Actions on `macos-26` is the only Swift/build verification
 surface. Do not dispatch CI, merge, publish, or build a DMG without the owner's explicit
@@ -40,8 +48,8 @@ in-the-moment `build now`.
 
 ## Working state
 
-- Branch: `codex/fix-intake-project-card-actions`
-- App candidate: `1.0.8`, `CFBundleVersion` `75`. No CI has run; release is not published.
+- Branch: `codex/fix-release-blockers-279-287`
+- App candidate: `1.0.9`, `CFBundleVersion` `76`. No CI has run; release is not published.
 - Musicvideo pack candidate: `0.0.16`, project schema `musicvideo/1.0.0`
 - Engine binary contract: current `4`, minimum compatible `2`
 - The commit containing this handoff is the one consolidated correction; read its live CI and release
@@ -190,6 +198,20 @@ The locked source documents are:
 - `SIGTRAP` is no longer intercepted by the app crash handler. Swift executor and runtime traps now
   retain their original faulting stack in the native macOS crash report.
 
+### Media import and relink
+
+- One serialized editor-owned queue now handles file/folder import, dialog and composer attachments,
+  pasted images, tool/remote imports, generated workflow media, and single/folder relinking.
+- Directory scans, SHA-256 hashing, copies, and rollback run off `MainActor`; only a completed plan
+  mutates the media library and manifest.
+- Cancellation generations invalidate the active operation and every already queued batch, while a
+  later import can wait for the canceled tail and proceed normally.
+- Digest-named reuse is verified from actual bytes. Reimport is idempotent, corrupt destinations fail
+  closed, and same-size/same-mtime changed content cannot alias an existing asset.
+- Import undo/redo moves created files through a transactional working-copy stash. Project close
+  cancels and awaits the import tail before discarding the working copy.
+- A shared Left Sidebar progress banner exposes real item progress and Cancel from every sidebar tab.
+
 ## Verification completed without a local build
 
 - `git diff --check`
@@ -228,9 +250,10 @@ The locked source documents are:
   SwiftUI background, incomplete ancestor tests, asynchronous close transitions, dirty declines,
   focus-ring ordering, and main-thread copies are corrected. A bounded Gemini 3.1 Pro review of the
   corrected diff returned no findings.
-- The independent Codex spec reviewer returned `VERDICT: PASS`. The `spec-check` wrapper still exited
-  2 because its parser treated CLI metadata before the repeated final verdict as an unclear result;
-  no spec deviation was reported.
+- Claude Fable 5 at XHigh reviewed the final #282 transaction and returned PASS. Its remaining
+  low-severity progress-visibility finding was corrected by moving the banner above every Left Sidebar
+  tab.
+- The independent Codex text-conformance and degraded visual `spec-check` gates both returned PASS.
 - No Swift build or test has been run locally.
 
 ## Release procedure for this batch
