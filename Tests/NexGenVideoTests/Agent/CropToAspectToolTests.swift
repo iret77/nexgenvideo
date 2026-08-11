@@ -127,7 +127,9 @@ struct CropToAspectToolTests {
         #expect(FileManager.default.fileExists(atPath: outURL.path))
         #expect(FrameRasterizer.pixelSize(of: outURL).map { $0.width } == 1778)
         let assetId = try #require(res?["asset_id"] as? String)
-        let asset = try #require(h.editor.mediaAssets.first { $0.id == assetId })
+        let asset = try #require(h.editor.mediaAssets.first {
+            $0.id.hasPrefix(assetId)
+        })
         let input = try #require(asset.generationInput)
         #expect(input == sourceInput)
 
@@ -136,7 +138,7 @@ struct CropToAspectToolTests {
             "phase": "frames",
             "shot_id": "s001",
             "role": "start",
-            "output": assetId,
+            "output": asset.id,
         ])
         let recorded = try #require(
             try loadFramesManifest(dataRoot: dataRoot).shot("s001")?

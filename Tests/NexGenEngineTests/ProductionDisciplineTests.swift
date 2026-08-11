@@ -117,7 +117,8 @@ struct ProductionDisciplineTests {
             id: "trio",
             name: "Trio",
             visualPrompt: "Three performers in matching stage clothes.",
-            memberCount: 3
+            memberCount: 3,
+            referenceImages: ["bible/trio.png"]
         )
         let bible = try Bible(
             project: "production-test",

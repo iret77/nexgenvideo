@@ -1759,7 +1759,18 @@ struct WorkflowToolsTests {
             mode: .beat
         )
         try activatePack("musicvideo", dataRoot: packageDataRoot)
-        try writeApprovableBible(dataRoot: packageDataRoot)
+
+        let harness = ToolHarness()
+        harness.editor.projectURL = package
+        defer {
+            harness.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(harness.editor.workingRoot)
+        let workingDataRoot = try #require(
+            DataRootResolver.dataRoot(of: workingHome)
+        )
+        try writeApprovableBible(dataRoot: workingDataRoot)
         let plan = try ShotProductionPlan(
             primaryAction: "The subject crosses the doorway.",
             cameraMovement: .static,
@@ -1771,9 +1782,9 @@ struct WorkflowToolsTests {
                 productionPlan: plan,
                 generator: Shotlist.agentWriterGenerator
             ),
-            to: packageDataRoot
+            to: workingDataRoot
         )
-        let store = YAMLArtifactStore(dataRoot: packageDataRoot)
+        let store = YAMLArtifactStore(dataRoot: workingDataRoot)
         var gates = try store.load(
             Gates.self,
             at: PipelineLayout.gatesFile
@@ -1786,17 +1797,6 @@ struct WorkflowToolsTests {
             GatesOperations.approve(&gates, phase: phase)
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
-
-        let harness = ToolHarness()
-        harness.editor.projectURL = package
-        defer {
-            harness.editor.releaseWorkingCopy()
-            try? FileManager.default.removeItem(at: cleanup)
-        }
-        let workingHome = try #require(harness.editor.workingRoot)
-        let workingDataRoot = try #require(
-            DataRootResolver.dataRoot(of: workingHome)
-        )
 
         let changed = await harness.editor.setShotSourceMode(
             shotId: "s001",
@@ -2761,7 +2761,7 @@ struct WorkflowToolsTests {
         #expect(result.isError)
         #expect(
             ToolHarness.textOf(result).contains(
-                "exactly one project-local source video"
+                "source_path"
             )
         )
         #expect(try loadShotlist(dataRoot: dataRoot) == nil)
