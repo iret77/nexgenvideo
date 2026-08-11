@@ -54,7 +54,11 @@ struct GenerationRequest {
     /// A precompiled prompt + token from the agent's `compile_prompt` tool. When present the
     /// controller validates it through the gate instead of composing (the token proves it came from
     /// the engine composer this run).
-    let precompiled: (text: String, token: String)?
+    let precompiled: (
+        text: String,
+        token: String,
+        binding: PromptBinding
+    )?
     /// Pro raw-prompt escape (origin `.agentTool` only) — bypasses compilation exactly as
     /// `PromptCompiler.enforceGate` allows today.
     let rawPrompt: Bool
@@ -69,7 +73,11 @@ struct GenerationRequest {
         durationSeconds: Double? = nil,
         placement: Placement,
         origin: Origin,
-        precompiled: (text: String, token: String)? = nil,
+        precompiled: (
+            text: String,
+            token: String,
+            binding: PromptBinding
+        )? = nil,
         rawPrompt: Bool = false,
         submission: Submission
     ) {
@@ -233,23 +241,39 @@ enum GenerationController {
             if request.rawPrompt {
                 do {
                     try PromptCompiler.enforceGate(
-                        args: ["rawPrompt": true], prompt: intent, modelId: request.modelId)
+                        args: [
+                            "rawPrompt": true,
+                            "shotId": "none",
+                        ],
+                        prompt: intent,
+                        modelId: request.modelId,
+                        editor: editor)
                 } catch let e as ToolError {
                     throw GenerationRequestError.gate(e.message)
                 }
                 return (intent, [])
             }
-            guard !intent.isEmpty else { return ("", []) }
             if let precompiled = request.precompiled {
                 do {
                     try PromptCompiler.enforceGate(
-                        args: ["compileToken": precompiled.token],
-                        prompt: precompiled.text, modelId: request.modelId)
+                        args: [
+                            "compileToken": precompiled.token,
+                            "shotId": precompiled.binding.shotId,
+                        ],
+                        prompt: precompiled.text,
+                        modelId: request.modelId,
+                        editor: editor)
                 } catch let e as ToolError {
                     throw GenerationRequestError.gate(e.message)
                 }
                 return (precompiled.text, [])
             }
+            guard intent.isEmpty else {
+                throw GenerationRequestError.gate(
+                    "Agent generation requires a validated compile_prompt result."
+                )
+            }
+            return ("", [])
         }
 
         // Empty intent: nothing to compose (a chip-only music dialog, or audio scored from a video).

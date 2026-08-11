@@ -76,19 +76,38 @@ struct AssembleTimelineTests {
         let outB = projectHome.appendingPathComponent("s002.mp4")
         try Data("clipA".utf8).write(to: outA)
         try Data("clipB".utf8).write(to: outB)
-        let generationInput = GenerationInput(
-            prompt: "Compiled provider prompt.",
-            model: "video-model",
-            duration: 1,
-            aspectRatio: "16:9"
+        let currentShotlist = try #require(
+            try loadShotlist(dataRoot: workingDataRoot)
         )
+        func generationInput(for shotId: String) throws -> GenerationInput {
+            let shot = try #require(
+                currentShotlist.shots.first { $0.id == shotId }
+            )
+            let requirements = shot.videoProductionPromptRequirements
+                .joined(separator: ". ")
+            var input = GenerationInput(
+                prompt: "Compiled provider prompt."
+                    + (requirements.isEmpty ? "" : " \(requirements)"),
+                model: "video-model",
+                duration: 1,
+                aspectRatio: "16:9"
+            )
+            input.promptShotId = shotId
+            input.promptProjectKey = harness.editor.projectId
+                ?? workingDataRoot.standardizedFileURL
+                    .resolvingSymlinksInPath().path
+            input.promptShotFingerprint = try PromptCompiler.shotFingerprint(
+                shot
+            )
+            return input
+        }
         harness.editor.mediaAssets.append(
             MediaAsset(
                 id: "s001-video",
                 url: outA,
                 type: .video,
                 name: "s001",
-                generationInput: generationInput
+                generationInput: try generationInput(for: "s001")
             )
         )
         harness.editor.mediaAssets.append(
@@ -97,7 +116,7 @@ struct AssembleTimelineTests {
                 url: outB,
                 type: .video,
                 name: "s002",
-                generationInput: generationInput
+                generationInput: try generationInput(for: "s002")
             )
         )
         return (

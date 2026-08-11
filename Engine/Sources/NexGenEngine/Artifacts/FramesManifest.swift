@@ -9,8 +9,8 @@ public enum FramesManifestReconciliationError: Swift.Error, Sendable, Equatable 
 }
 
 /// Per-frame generation manifest — records each generated keyframe together with the
-/// EXACT prompt sent to the image provider (`provider_prompt`), for reproducibility +
-/// audit and for the frame sanity checks (ratio / size / builder-bypass). Generic like
+/// exact prompt sent to the image provider (`provider_prompt`), for reproducibility + audit and
+/// for the frame sanity checks (ratio / size / builder-bypass). Generic like
 /// `RenderManifest`: the app's frame-recording path writes it, a format pack's checks
 /// read it. Port of `frames/schema.py::FramesManifest`. Frames are nested under
 /// `shots[].frames[]` with a `role` (start/end) — the shot id lives on the parent
@@ -158,8 +158,8 @@ public struct FrameEntry: Codable, Sendable, Equatable {
     /// Image-provider model id.
     public var runwayModel: String
     public var approved: Bool
-    /// The EXACT string sent to the image provider. Empty only for legacy / bypassed
-    /// frames — which is what `builder_bypass` flags.
+    /// The exact instruction sent to the image provider.
+    /// Empty only for legacy / bypassed frames — which is what `builder_bypass` flags.
     public var providerPrompt: String
     public var multiRefHints: [String]
 

@@ -2,6 +2,36 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.1.0",
+      "date": "2026-08-10",
+      "sections": [
+        {
+          "heading": "Production planning",
+          "items": [
+            "Reusable production profiles now carry renderability, continuity, rescue-cut, and narrative-beat discipline across compatible format packs.",
+            "New generated and AI-enhanced shots store structured production plans while imported footage and existing projects keep their real source truth without invented creative decisions.",
+            "Compiled provider prompts and generated media are now bound to the exact project, shot, approved action, camera move, rescue cut, and production plan through final render approval.",
+            "Frames and renders with prompts from an older production-plan revision are regenerated instead of being treated as complete.",
+            "AI-enhanced renders now require the exact project-local source declared by the Shot List before generation can start.",
+            "Still-frame prompts reject camera-motion language, and ensemble member counts now enforce the two-visible-character generation limit."
+          ]
+        },
+        {
+          "heading": "Stability",
+          "items": [
+            "Agent conversations now follow streaming output through the scroll view's native size-change anchor instead of issuing reentrant scroll commands during layout.",
+            "Native Shot List edits now share the pipeline execution lock and crash-recovery marker with agent edits."
+          ]
+        },
+        {
+          "heading": "Format packs",
+          "items": [
+            "Compatible projects keep opening their exact pinned format-pack version under engine contract 5; genuinely incompatible packs offer an explicit Recovery-copy upgrade instead of loading unsafe code."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.9",
       "date": "2026-08-10",
       "sections": [

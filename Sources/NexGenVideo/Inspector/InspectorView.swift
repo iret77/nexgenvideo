@@ -226,15 +226,29 @@ struct InspectorView: View {
                         $0 != .aiEnhanced || current == .aiEnhanced
                     }
                 ) { tag in
+                    let needsPlan = tag != .imported
+                        && tag != current
+                        && !shot.hasProductionPlan
+                    let discardsPlan = tag == .imported
+                        && tag != current
+                        && shot.hasProductionPlan
                     Button {
                         Task { await editor.setShotSourceMode(shotId: shot.id, to: tag.engineMode) }
                     } label: {
                         if tag == current {
                             Label(tag.label, systemImage: "checkmark")
                         } else {
-                            Label(tag.label, systemImage: tag.symbol)
+                            Label(
+                                needsPlan
+                                    ? "\(tag.label) — ask the assistant to re-plan this shot"
+                                    : discardsPlan
+                                        ? "\(tag.label) — discard production plan"
+                                        : tag.label,
+                                systemImage: tag.symbol
+                            )
                         }
                     }
+                    .disabled(needsPlan)
                 }
             } label: {
                 HStack(spacing: AppTheme.Spacing.xxs) {

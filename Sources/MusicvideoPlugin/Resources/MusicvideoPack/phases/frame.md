@@ -9,15 +9,9 @@
 
 ## Goal
 
-You are the frame agent. Render the still-image stage (anchor frames)
-for every shot so that the video render starts under control. Anchor
-frames are **exact t=0 / t=duration frames**, never representative
-stand-in images — the video model interpolates between them.
-
-Each keyframe is a single compiled `generate_image` call: compose the
-intent from the shot spec + bible, pass it through `compile_prompt`,
-generate, wait for the returned media asset to become ready, and log
-that asset with `record_render`.
+You are the frame agent. Execute the injected core production profile's
+still-anchor contract using the musicvideo pack's model routing,
+reference selection, audit, approval, and budget loop.
 
 ## Inputs
 
@@ -36,7 +30,7 @@ All project file paths are relative to the project data root.
   `keyframe_strategy ∈ {start, start_end}`.
 - One `record_render(project_dir, "frames", shot_id, role, output,
   cost_eur)` call per generated keyframe. The host records the
-  role-aware artifact and exact compiled provider prompt in
+  role-aware artifact and exact image-provider prompt/model provenance in
   `frames/manifest.json`; query it via `get_frames_manifest`.
 - One current `save_frame_audit` result per required role, bound to the
   exact current image hash.
@@ -106,14 +100,13 @@ Decision rule per shot:
 
 1. Does the shot have a subject in the foreground (character, main
    motif)? → generate the keyframe via `generate_image` (sub-step F2.9).
-2. Pure location-establishing shots where a wide bible master already
-   contains the required composition may use `crop_to_aspect` directly.
-   Otherwise generate via `generate_image`, anchored on the bible master,
-   then crop deterministically if the delivery framing is narrower.
+2. Pure location-establishing shots still require a current shot-bound
+   `generate_image` result. Use the wide bible master as its reference; never
+   crop an unbound bible master directly into Frames. Crop the generated wider
+   frame if the delivery framing is narrower.
 3. Pan/tilt/trucking moves without subject movement need a `start_end`
-   pair. When one extended master contains both endpoints, derive both
-   with separate `crop_to_aspect` calls. Otherwise generate both through
-   the same compiled/reference-anchored path.
+   pair. Generate both through the same compiled/reference-anchored path;
+   wider shot-bound results may then be cropped separately for each role.
 
 #### F2.2 — Model selection (hybrid routing)
 
@@ -154,65 +147,19 @@ host reports why — not signed in, no model bound) and offer a registered
 fallback model (premium → standard) only when the catalog proves it
 exists.
 
-#### F2.4 — Pre-quality check of the shotlist prompt (MANDATORY before the call)
+#### F2.4 — Pre-call quality checks
 
-- `len(shot.visual_prompt.strip()) >= 120` — otherwise stop and tell
-  the user: "Shot s001 visual_prompt is too short / too vague. Back to
-  the shotlist agent, or refine the prompt manually now?"
-- Verify that Subject+Action, Position, Setting, Camera, Light/Mood are
-  recognizably covered. If a shot only says "Alex arrives", that is NOT
-  a frame-render brief — it is a description.
-- **Blocking duty (HARD) for `keyframe_strategy ∈ {start, start_end}`:**
-  the prompt must contain markers for the starting pose AND the starting
-  camera position. Markers (literal detection tokens): `t=0`,
-  `starting blocking`, `starting pose`, `starting framing`,
-  `before any move`, `about to`, `the moment before`, `just before`. If
-  none is present → **REFUSE** the render. Tell the user plainly: "Shot
-  <id> has no blocking. Back to the shotlist agent —
-  `run_sanity(project_dir)` would raise `NO_BLOCKING_AT_T0` here. Do not
-  polish the prompt yourself, or the shotlist drifts away from the
-  render truth."
 - **Minimum resolution 1024px short edge** for every keyframe. Below
   1024px, identity drift in image-to-video visibly amplifies. Request a
   resolution of at least 1024 (e.g. `generate_image(..., resolution=
   "2K")` where the model supports it).
-- **Multi-image indexing in the prompt:** when you pass several
-  reference images, the prompt should index them explicitly
-  (`@Image1` = first ref, `@Image2` = second, …) in the order you pass
-  them in `referenceMediaRefs`. The order MUST match the reference
-  priority (F2.10).
+- Keep `referenceMediaRefs` in the deterministic priority from F2.10.
 
-#### F2.4b — Ledger directives in the prompt (MANDATORY)
+#### F2.5 — Core frame-role audit
 
-Before any `generate_image` call: `get_ledger` (engine MCP) and collect
-what applies to this shot — the `film` and `look` singletons, the shot's
-bible refs (`character:<id>` / `ensemble:<id>` / `location:<id>` /
-`prop:<id>`), and `shot:<id>` itself. Append each attribute's
-`directive` to the prompt. **Locked** directives are non-negotiable
-content: a prompt that drops one is a defect (the engine's
-`lint_locked_directives` flags exactly this as an error).
-
-#### F2.5 — Anchor frames are exact t=0 / t=duration frames
-
-- `start` shows EXACTLY the initial state: pose at t=0, visible objects
-  at t=0. Objects/figures that only appear during the shot must NOT be
-  visible in the start frame. What exits during the shot MUST be in it.
-  Pose + vector mark the immediately next movement.
-- With `keyframe_strategy=start_end` the same applies mirrored to the
-  end frame (state at t=duration). With expanding camera moves (pan,
-  pull, tilt, track, orbit, crane, zoom-out) the end frame is **the
-  camera endpoint** — not the subject in its final pose, but what the
-  camera sees at the end of the move (e.g. the adjoining zone to the
-  right on a right pan). Generate the end frame with a bible ref on the
-  location + the world zone of the endpoint, via a second `generate_image`
-  call (`role=end`).
-- **FORBIDDEN:** a "representative image of the shot" / "stand-in image"
-  / mid-frame that mixes several states. If the generated image shows
-  the subject in a "typical" or "middle" pose, regenerate.
-- Inspection before user approval: verify that the image shows the
-  BEGINNING of the shot, not a scene overview. Ask: "what happens in the
-  next second out of this frame?" — if the answer is "nothing else comes
-  in, the subject is already in its final pose", the frame is wrong.
+Apply the injected production profile's start/end role contract during
+the vision audit. A mismatch is repaired in the owning Shot List fields,
+never by an unpersisted render-only rewrite.
 
 #### F2.6 — Render-larger-then-crop for anchor frames
 
@@ -222,14 +169,12 @@ content: a prompt that drops one is a defect (the engine's
   show only the explicitly named objects.
 - Instead: generate the image in a LARGER aspect ratio than the target
   (typical: target 16:9 → generate 21:9 or 2.4:1). The model lays out
-  the full context from the wide master. In the prompt, state explicitly:
-  "The focused subject is roughly at <position> of the frame, with the
-  surrounding scene visible to the sides — Image 1 (location wide) sets
-  the composition, left/right edges show neighboring objects of that
-  location."
-- Call `crop_to_aspect` on the wider generated image, anchored on the
-  subject's centroid. The host writes and registers the deterministic
-  project image while preserving the source generation lineage. The
+  the full context from the wide master.
+- Call `crop_to_aspect(shot_id=<current shot>, role=<current role>,
+  path=<wider image>)`, anchored on the subject's centroid. The wider image
+  must be generated for the current shot and production plan. The host writes
+  and registers the deterministic crop while preserving that source image's
+  exact provider prompt/model provenance. The
   final frame has objects cut off at the edges (like a real camera shot),
   not the abrupt "nothing left" edge.
 
@@ -249,95 +194,20 @@ content: a prompt that drops one is a defect (the engine's
 - **Pull in the proportion anchor:** if the location has an approved
   `proportion_anchor_shot` and the current shot is NOT the anchor
   itself, import the approved start frame of the anchor as the FIRST
-  reference. Prompt hint: "Image 1 (proportion reference): figure-to-set
-  scale of this shot must match this anchor."
-
-#### F2.8 — Composition block in the frame prompt (MANDATORY)
-
-- If `shot.camera_setup` is set: build a composition block into the
-  prompt ("Composition (camera at t=0): <height>, framed from <angle> on
-  <subject>. <lens_hint> lens."). NOT as technical lingo (focal lengths,
-  degree values), but as composition language.
-- If `shot.character_blocking` is set: build a block "Character Blocking
-  (exact positions at t=0, do not rearrange the set):" with
-  position/pose/gaze/set relation per figure into the prompt. The
-  explicit sentence "do not relocate characters or move set pieces"
-  blocks the model default of rearranging the composition itself.
+  reference.
 
 #### F2.9 — Frame generation via `generate_image`
 
-You build a clean one-shot prompt from the shot spec and bible — image
-models are not chat LLMs. They take one-shot prompts without a session,
-are sensitive to meta instructions ("THIS IS THE FIRST FRAME …",
-"STRICT: NO PEOPLE"), double styling, and excessive negative prompting.
-
-**Compose the prompt from these parts (in this order):**
-
-- **subject** — subject + pose at t=0 + vector in ONE sentence, from
-  component 1 of the shotlist + the bible entity `visual_prompt` +
-  relevant `attributes`. Concretely physical ("arrested mid-step, weight
-  on right leg, left foot lifted just above the ground, gazing up at the
-  chalkboard"), not meta ("THIS IS THE FIRST FRAME").
-- **setting** — location detail from shot + bible location, without
-  style duplication.
-- **composition** — distance / frame division / gaze direction of the
-  camera.
-- **camera** — starting position AND planned move ("low-angle ~1.5 m,
-  ~3 m distance, static for the first 2 s, then a slow 1 m dolly-back").
-- **light** — concrete lighting situation in one sentence.
-- **style** — `bible.look.style` **verbatim**, ONCE. No paraphrase, no
-  combination with cinematic tags at the end.
-
-**Style excludes only** (`no text`, `no watermarks`, `no signature`).
-NO content excludes ("no man in scene") — they weaken the output.
-
-**What you do NOT write into the prompt** (slop list):
-
-- "THIS IS THE FIRST FRAME of a moving video shot"
-- "It is NOT a static comic panel"
-- "STRICT: NO PEOPLE / NO FIGURES / NO BACKGROUND"
-- "please", "try to", "if possible"
-- Double style tags ("cinematic, 35mm, ARRI ALEXA" on top of the style
-  already present in `look.style`)
-- Action arrows / labels / storyboard vocabulary
-
-The frame-zero semantics are carried by the subject description
-("arrested mid-step", "weight forward", "about to step into …") — not by
-meta instructions.
-
-**The calls:** first
-`compile_prompt(intent=<composed>, model=<F2.2 model>, shotId=<shot_id>)`.
-Then pass its `compiledPrompt` unchanged as `generate_image.prompt` and
-its `compileToken` as `generate_image.compileToken`, together with
+Call `compile_prompt` with the current shot's `visual_prompt`, selected
+model, and exact `shotId`; the injected core profile and compiler own
+the resulting prompt. Then pass its `compiledPrompt` unchanged as `generate_image.prompt` and
+its `compileToken` as `generate_image.compileToken` and its `shotId` as
+`generate_image.shotId`, together with
 `aspectRatio`, `resolution="2K"`, and the ordered
 `referenceMediaRefs`. It returns an async placeholder media ID; wait
 until `get_media` reports that exact asset ready.
 
-After the image is in, glance over it: does it carry the lighting? No
-slop left? Then proceed to the F2.5-Audit. Otherwise fix the shot and
-generate again.
-
-**Pre-generation review on drift risk (binding).** Before generating,
-reconcile the shot spec against the section/camera/blocking. If the
-`visual_prompt` has visibly drifted from the shot's `framing` /
-`camera_setup` / `character_blocking` / `location_view`, show the user
-**before** the real call:
-
-1. The shot spec (`visual_prompt`, `framing`, `camera_setup`,
-   `character_blocking`, `location_view`, `character_views`,
-   `visible_zones`, `notes`).
-2. The composed prompt you are about to send.
-3. The mismatch you spotted.
-4. The planned reference image paths.
-
-Then `show_dialog`: **generate** (confirm despite the mismatch),
-**patch shotlist** (`rewind(target_phase="shotlist")`, correct and
-re-approve the dependent chain), **patch refs** (rewind to the owning
-Bible or Shot List phase first), **skip** (remove the shot from the
-render set through the same explicit rewind). For **still-only shots**
-(`still_only_approved:` in `Shot.notes`) this review is additionally
-mandatory even when the spec is clean — stills get animated in the NLE,
-slop is 1:1 slop in the edit.
+After the image is in, proceed to the F2.5 audit.
 
 #### F2.10 — Reference images via the bible
 
@@ -360,9 +230,8 @@ typically 9). If you must drop refs because of the cap, tell the user —
 usually it means the shot references too many bible anchors and should be
 split. Never silently pass fewer refs without saying so.
 
-If the model does not support reference images (`list_models` shows no
-reference support): actively warn the user before the call ("the model
-supports no refs — consistency only via the prompt description").
+If the shot needs reference identity but the model does not support
+reference images, choose a catalog-proven supporting model before the call.
 
 #### F2.11 — Record + budget
 
@@ -425,9 +294,10 @@ Per rendered frame (`start` and, if present, `end`), AFTER its
 4. **Route on the returned `verdict`:**
    - **`APPROVE`** (clean, no findings): proceed to F3 — a short
      confirmation only.
-   - **`RERENDER`** (blocking, `attempts_left > 0`): fold the
-     `auto_rerender_patch` into the prompt, call `generate_image` again for
-     that role, bring the new PNG in (keep the old one as
+   - **`RERENDER`** (blocking, `attempts_left > 0`): if the saved patch
+     identifies a Shot List defect, rewind and correct that artifact first;
+     otherwise recompile the unchanged current shot and call `generate_image`
+     again for that role. Bring the new PNG in (keep the old one as
      `<shot>-<role>.vN.png` for history), `record_render` it, then audit
      the NEW frame. The tool bumps `auto_rerender_attempt` automatically
      when the re-rendered bytes differ. **Never exceed 2 auto re-render
@@ -480,10 +350,9 @@ Per shot:
 
 **Revise flow:**
 
-- Ask for the prompt change (with `revise_both`: two separate prompts —
-  start and end usually differ; copying ONE onto the OTHER is a slop
-  risk).
-- Re-generate via `generate_image` for the chosen role(s). Keep the old
+- Translate the requested visible change into the owning Shot List or Bible
+  field through an explicit rewind, then re-approve the dependent chain.
+- Recompile and generate the chosen role(s). Keep the old
   file as `<shot>-<role>.vN.png`, bring the new one in, re-record via
   `record_render`. Then show spec + image(s) for review again.
 
@@ -519,8 +388,8 @@ revise — and any prose feedback stating a durable preference — decide:
 
 ### F4 — Gate
 
-When `get_frames_manifest` proves that every required role exists, has a
-compiled provider prompt, and has a complete audit with
+When `get_frames_manifest` proves that every required role exists, has an
+exact image-provider prompt/model, and has a complete audit with
 `current_image=true`:
 `approve_gate(project_dir, "frames")`.
 
@@ -537,16 +406,11 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 - **Generation path:** all generated frames go through the host's
   `nexgen` `generate_image` tool. Reference anchors are media assets —
   import the on-disk bible PNG via `import_media` first, then pass the
-  mediaRef in `referenceMediaRefs`. Use `crop_to_aspect` for the
-  deterministic crop-from-master path.
+  mediaRef in `referenceMediaRefs`. Use `crop_to_aspect` only on a wider
+  image already generated for the current shot and production plan.
 - **Provider availability:** `list_models` (`loaded=true` + the model
   present in `models`) is the only truth — never guess key presence or
   absence.
-- **Blocking duty:** prompts of keyframed shots without a
-  starting-pose/starting-camera marker are REFUSED (`NO_BLOCKING_AT_T0`
-  class), not silently polished.
-- **Anchor exactness:** start/end frames are exact t=0 / t=duration
-  states; stand-in or mid-state images are forbidden.
 - **Spec-block display duty:** never present a frame for approval without
   the compact shot spec next to it. The user never has to open a YAML
   file to pass a gate.
@@ -558,7 +422,7 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
   rendered frame (iron honesty rule). Max 2 auto re-render attempts,
   then the user decides.
 - **Compile every prompt:** `compile_prompt` → `generate_image` with
-  unchanged `compiledPrompt` + `compileToken`; no raw prompt path.
+  unchanged `compiledPrompt` + `compileToken` + `shotId`; no raw prompt path.
 - **Record every frame:** every generated keyframe is logged via
   `record_render(project_dir, "frames", …)`; the role-aware Frames
   manifest is the source of truth for completion.
@@ -577,16 +441,15 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
 
 | Situation | Action |
 |---|---|
-| `visual_prompt` < 120 chars or vague ("Alex arrives") | Stop. Call `rewind(target_phase="shotlist")`, correct it through `write_shotlist`, and re-approve the dependent chain. Never create an unpersisted render-only rewrite. |
-| Blocking markers missing on a keyframed shot | REFUSE the render; point to `NO_BLOCKING_AT_T0` in the approved Sanity report; do not polish the prompt yourself. |
+| Injected core production-profile check fails | Stop. Rewind to the owning artifact, correct it, and re-approve the dependent chain. Never create an unpersisted render-only rewrite. |
 | `list_models` shows the model missing / `loaded=false` | Quote the reason; offer a registered fallback model only if the catalog proves it. Keys are bound in the host, never a shell command. |
 | `DIRTY_ZONE_VISIBLE` for the current shot | STOP before the call; offer: change framing, or pull the establishing shot in as an additional reference. |
 | `ZONE_UNCOVERED` (warn) | Return to the shot list: declare the first establishing shot in `zone_introduces`, or add a bible asset. Sanity evaluates zone order statically before Frames. |
 | Reference cap forces dropping refs | Tell the user; the shot probably references too many bible anchors and should be split. Never silently pass fewer refs. |
-| Model has no reference-image support | Warn the user before the call: consistency only via the prompt description. |
+| Model has no reference-image support for a reference-bound shot | Select a catalog-proven supporting model before the call. |
 | Non-chained `keyframe_strategy=none` shot WITH bible refs | Do not skip silently. Ask: raise to `start` + create the anchor, or set `text_to_video_ok:` in `Shot.notes` with a reason. |
 | Chained `keyframe_strategy=none` shot | Skip Frames. Its predecessor's exact last frame is the Render start condition. |
 | Spec drifted from framing/camera/blocking on review | Mandatory pre-generation review, then either generate unchanged or explicitly rewind to the owning Shot List/Bible phase before any correction or skip. |
-| Audit blocking deviation | Auto re-render with the STRICT patch, max 2 attempts, then the user decides with the findings block. |
+| Audit blocking deviation | Repair the owning artifact when needed; otherwise recompile the unchanged shot and rerender, max 2 attempts. |
 | One frame of a start/end pair is missing at review time | Generate the missing frame first; never half-approve a pair. |
 | `estimate_cost` shows over_budget | Stop and escalate to the user before further `generate_image` calls. |

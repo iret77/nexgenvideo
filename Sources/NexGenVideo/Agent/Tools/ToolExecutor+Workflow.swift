@@ -1212,6 +1212,25 @@ extension ToolExecutor {
             "camera": shot.cameraSetup.map { $0.promptProse() as Any } ?? NSNull(),
             "chain_with_previous_end": shot.chainWithPreviousEnd,
         ]
+        if let plan = shot.productionPlan {
+            body["production_plan"] = [
+                "primary_action": plan.primaryAction,
+                "camera_movement": plan.cameraMovement.rawValue,
+                "camera_movement_detail": plan.cameraMovementDetail.map { $0 as Any } ?? NSNull(),
+                "narrative_beat": plan.narrativeBeat.map { $0.rawValue as Any } ?? NSNull(),
+                "renderability": plan.renderability.rawValue,
+                "risks": plan.risks.map(\.rawValue),
+                "rescue_cut": plan.rescueCut.map { $0 as Any } ?? NSNull(),
+                "match_action_cue": plan.matchActionCue.map { $0 as Any } ?? NSNull(),
+                "continuity_locks": plan.continuityLocks,
+                "blocking_anchors": plan.blockingAnchors.map {
+                    [
+                        "character_ref": $0.characterRef,
+                        "set_anchor": $0.setAnchor,
+                    ]
+                },
+            ]
+        }
         if let frameRole { body["role"] = frameRole }
         if phase != "frames", shot.sourceMode == .aiEnhanced {
             guard let sourcePath = shot.sourcePath,
@@ -1313,6 +1332,15 @@ extension ToolExecutor {
               ).isEmpty,
               !proof.generationModel.trimmingCharacters(
                 in: .whitespacesAndNewlines
+              ).isEmpty,
+              ComplianceLinter.lintLockedDirectives(
+                proof.providerPrompt,
+                lockedDirectives: shot.videoProductionPromptRequirements
+              ).isEmpty,
+              ProductionPromptPolicy.videoPromptViolations(
+                proof.providerPrompt,
+                expectedMovement: shot.productionPlan?.cameraMovement,
+                expectedMovementDetail: shot.productionPlan?.cameraMovementDetail
               ).isEmpty,
               (try? FileDigest.sha256(of: url)) == proof.outputSha256 else {
             return false
@@ -1608,6 +1636,7 @@ extension ToolExecutor {
                 shotId: shotId,
                 output: output,
                 asset: completedAsset,
+                shot: shot,
                 editor: editor,
                 dataRoot: root
             )
@@ -1878,7 +1907,8 @@ extension ToolExecutor {
         let shot = shotlist?.shots.first { $0.id == shotId }
         let expected = frameAuditExpected(
             for: shot,
-            brief: try readBriefIfPresent(dataRoot: root)
+            brief: try readBriefIfPresent(dataRoot: root),
+            bible: try loadBible(dataRoot: root)
         )
 
         guard let rawChecks = args["checks"] as? [String: Any] else {
@@ -2128,19 +2158,68 @@ extension ToolExecutor {
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let aspect = try args.requireString("aspect")
+        let shotId = try args.requireString("shot_id")
+        let role = args.string("role") ?? "start"
         let anchor = CropAnchor(rawValue: args.string("anchor") ?? "center") ?? .center
         let home = FrameInventory.projectHome(of: root)
+        guard let shotlist = try readShotlist(dataRoot: root),
+              let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
+            throw ToolError("No current shot '\(shotId)' is available for crop provenance.")
+        }
+        guard shot.sourceMode == .generated, shot.keyframeStrategy != .none else {
+            throw ToolError("\(shotId) does not accept a generated Frames crop.")
+        }
+        let roles = shot.keyframeStrategy == .startEnd
+            ? ["start", "end"]
+            : ["start"]
+        guard roles.contains(role) else {
+            throw ToolError(
+                "\(shotId) uses keyframe_strategy=\(shot.keyframeStrategy.rawValue); "
+                    + "role '\(role)' is not valid for it."
+            )
+        }
         guard let (masterURL, _) = resolveAuditedFrame(
-            shotId: args.string("shot_id") ?? "", role: args.string("role") ?? "start",
+            shotId: shotId, role: role,
             explicitPath: args.string("path"), home: home, dataRoot: root)
         else {
-            throw ToolError("No source image for crop_to_aspect. Pass `path`, or a `shot_id` whose frame "
-                + "is recorded in the frames manifest.")
+            throw ToolError("No source image for crop_to_aspect. Pass `path`, or record the target "
+                + "shot's requested frame first.")
         }
-        let sourceInput = editor.mediaAssets.first {
+        let canonicalMaster = masterURL.standardizedFileURL
+            .resolvingSymlinksInPath()
+        let sourceAsset = editor.mediaAssets.reversed().first {
             $0.url.standardizedFileURL.resolvingSymlinksInPath()
-                == masterURL.standardizedFileURL.resolvingSymlinksInPath()
-        }?.generationInput
+                == canonicalMaster
+        }
+        let projectKey = editor.projectId ?? root.standardizedFileURL
+            .resolvingSymlinksInPath().path
+        let shotFingerprint = try PromptCompiler.shotFingerprint(shot)
+        let sourceInput = sourceAsset?.generationInput
+        let providerPrompt = sourceInput?.prompt.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ) ?? ""
+        let generationModel = sourceInput?.model.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ) ?? ""
+        guard let sourceInput,
+              sourceInput.promptShotId == shot.id,
+              sourceInput.promptProjectKey == projectKey,
+              sourceInput.promptShotFingerprint == shotFingerprint,
+              !providerPrompt.isEmpty,
+              !generationModel.isEmpty,
+              ProductionPromptPolicy.stillPromptViolations(
+                providerPrompt
+              ).isEmpty,
+              ComplianceLinter.lintLockedDirectives(
+                providerPrompt,
+                lockedDirectives: shot.stillProductionPromptRequirements
+              ).isEmpty else {
+            throw ToolError(
+                "crop_to_aspect requires a current shot-bound generated image. "
+                    + "Generate the wider frame for this shot first; an unbound Bible "
+                    + "master cannot enter Frames directly."
+            )
+        }
         let mediaDir = home.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         let dest = mediaDir.appendingPathComponent(
             "\(masterURL.deletingPathExtension().lastPathComponent)-crop-\(aspect.replacingOccurrences(of: ":", with: "x")).png")
@@ -2206,11 +2285,16 @@ extension ToolExecutor {
 
     /// Machine-derived `expected` per standard audit key, from the shot spec. Port of the Python
     /// audit-skeleton derivation (`frames/audit.py::skeleton`). Empty shot ⇒ empty expecteds.
-    private func frameAuditExpected(for shot: Shot?, brief: Brief?) -> [String: String] {
+    private func frameAuditExpected(for shot: Shot?, brief: Brief?, bible: Bible?) -> [String: String] {
         guard let shot else { return [:] }
+        let productionPlan = shot.productionPlan
         let blocking = shot.characterBlocking
         let blockingExpected = blocking
-            .map { "\($0.characterRef)@\($0.position) (\($0.pose), gaze=\($0.gaze))" }
+            .map {
+                "\($0.characterRef)@\($0.position) (\($0.pose), gaze=\($0.gaze), "
+                    + "anchor=\(productionPlan?.setAnchor(for: $0.characterRef) ?? ""), "
+                    + "relation=\($0.relationToSet))"
+            }
             .joined(separator: "; ")
         let gazeExpected = blocking
             .map { "\($0.characterRef): \($0.gaze)" }
@@ -2219,7 +2303,7 @@ extension ToolExecutor {
         if !(brief?.allowTextOverlays ?? false) { forbidden.append("no text overlays / title cards") }
         forbidden.append("no characters beyond declared character_refs")
         return [
-            "character_count": "\(shot.characterRefs.count)",
+            "character_count": "\(ProductionDiscipline.visibleCharacterCount(shot, bible: bible))",
             "framing": shot.framing?.rawValue ?? "",
             "camera_angle": shot.cameraSetup?.angle.rawValue ?? "",
             "camera_height": shot.cameraSetup?.height.rawValue ?? "",
@@ -2479,6 +2563,13 @@ extension ToolExecutor {
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !frame.runwayModel
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      ComplianceLinter.lintLockedDirectives(
+                        frame.providerPrompt,
+                        lockedDirectives: shot.stillProductionPromptRequirements
+                      ).isEmpty,
+                      ProductionPromptPolicy.stillPromptViolations(
+                        frame.providerPrompt
+                      ).isEmpty,
                       await resolveRenderedAsset(
                           frame.path,
                           editor: editor,
@@ -2502,7 +2593,7 @@ extension ToolExecutor {
         guard shot.sourceMode == .generated,
               shot.keyframeStrategy != .none else {
             throw ToolError(
-                "\(shot.id) does not require provider-rendered keyframes."
+                "\(shot.id) does not require generated keyframes."
             )
         }
         let role = requestedRole ?? "start"
@@ -2518,12 +2609,12 @@ extension ToolExecutor {
         guard let gi = asset.generationInput else {
             throw ToolError(
                 "The frame has no generation provenance. Record the completed result "
-                    + "returned by a schema-validated generate_image call."
+                    + "returned by generate_image or crop_to_aspect."
             )
         }
         guard !gi.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ToolError(
-                "The frame has no compiled provider prompt and cannot enter the "
+                "The frame has no exact generation instruction and cannot enter the "
                     + "authoritative Frames manifest."
             )
         }
@@ -2577,7 +2668,7 @@ extension ToolExecutor {
     /// Semantic slots are authoritative; model lookup is only for older generated media.
     private func stampRenderInputs(
         _ manifest: inout RenderManifest, shotId: String, output: String,
-        asset: MediaAsset, editor: EditorViewModel,
+        asset: MediaAsset, shot: Shot, editor: EditorViewModel,
         dataRoot: URL
     ) throws -> RenderProofEntry {
         guard var entry = manifest.entries[shotId],
@@ -2585,6 +2676,22 @@ extension ToolExecutor {
             throw ToolError(
                 "The rendered video has no generation provenance. Record the completed "
                     + "result returned by a schema-validated generate_video call."
+            )
+        }
+        guard gi.promptShotId == shotId else {
+            throw ToolError(
+                "The rendered media was not compiled for shot '\(shotId)'. "
+                    + "Generate it with that shotId before recording it."
+            )
+        }
+        let projectKey = editor.projectId ?? dataRoot.standardizedFileURL
+            .resolvingSymlinksInPath().path
+        let shotFingerprint = try PromptCompiler.shotFingerprint(shot)
+        guard gi.promptProjectKey == projectKey,
+              gi.promptShotFingerprint == shotFingerprint else {
+            throw ToolError(
+                "The rendered media was not compiled for this project's current "
+                    + "shot production plan. Generate it again before recording it."
             )
         }
         let providerPrompt = gi.prompt.trimmingCharacters(
@@ -2596,6 +2703,31 @@ extension ToolExecutor {
         guard !providerPrompt.isEmpty, !generationModel.isEmpty else {
             throw ToolError(
                 "The rendered video has no compiled provider prompt or generation model."
+            )
+        }
+        let requirements = manifest.phase == "frames"
+            ? shot.stillProductionPromptRequirements
+            : shot.videoProductionPromptRequirements
+        let policyViolations = manifest.phase == "frames"
+            ? ProductionPromptPolicy.stillPromptViolations(providerPrompt)
+            : ProductionPromptPolicy.videoPromptViolations(
+                providerPrompt,
+                expectedMovement: shot.productionPlan?.cameraMovement,
+                expectedMovementDetail: shot.productionPlan?.cameraMovementDetail
+            )
+        guard policyViolations.isEmpty else {
+            throw ToolError(
+                "The rendered media's provider prompt violates shot '\(shotId)'s "
+                    + "current production plan: \(policyViolations.joined(separator: "; "))."
+            )
+        }
+        guard ComplianceLinter.lintLockedDirectives(
+            providerPrompt,
+            lockedDirectives: requirements
+        ).isEmpty else {
+            throw ToolError(
+                "The rendered media's provider prompt does not match shot '\(shotId)'s "
+                    + "current production plan."
             )
         }
         let outputDigest: String
@@ -2760,7 +2892,7 @@ extension ToolExecutor {
         try? saveRenderManifest(manifest, dataRoot: dataRoot)
     }
 
-    private func resolveRenderedAsset(
+    func resolveRenderedAsset(
         _ output: String,
         editor: EditorViewModel,
         dataRoot: URL

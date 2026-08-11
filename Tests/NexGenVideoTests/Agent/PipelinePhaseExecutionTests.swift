@@ -10,6 +10,36 @@ import Testing
     .timeLimit(.minutes(1))
 )
 struct PipelinePhaseExecutionTests {
+    @Test("native mutations and phase jobs exclude each other")
+    func mutationReservation() async {
+        let coordinator = PipelinePhaseRunCoordinator()
+        let state = PipelinePhaseExecutionState()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        let mutation = coordinator.beginMutation(
+            projectRoot: root,
+            label: "Shot List edit"
+        )
+        #expect(mutation != nil)
+        #expect(coordinator.runningPhase(projectRoot: root) == "Shot List edit")
+
+        let outcome = await coordinator.run(
+            projectRoot: root,
+            phase: "shotlist",
+            sourceFilename: nil,
+            runner: { _ in },
+            progressRunner: nil,
+            state: state
+        )
+        #expect(outcome == .refused(activePhase: "Shot List edit"))
+
+        let waiter = Task { await coordinator.waitUntilIdle(projectRoot: root) }
+        await Task.yield()
+        coordinator.endMutation(projectRoot: root, id: try! #require(mutation))
+        await waiter.value
+        #expect(coordinator.runningPhase(projectRoot: root) == nil)
+    }
+
     @Test("approval control fails closed for blocked, writing, and running states")
     func approvalControlPredicate() {
         #expect(PipelineApprovalControl.isEnabled(

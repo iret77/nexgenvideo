@@ -1,14 +1,9 @@
 import Foundation
 import NexGenEngine
 
-/// Seedance discipline — prompt-quality + camera-move-count + duration bands for
-/// video generation. Port of `sanity/checks/seedance_camera.py` (sources: Apiyi /
-/// Higgsfield / WaveSpeed Seedance 2.0 prompt guides). Operates on the shotlist's
-/// `visual_prompt`/`duration_s` only (seam-free), and — like the Python — is NOT
-/// provider-gated: the prompt heuristics (slop, lighting, technical lingo, jitter
-/// tokens) are good hygiene for any generator, and the 4–15s band is Seedance's,
-/// applied as the default video model. Findings mirror the reference codes and
-/// severities exactly.
+/// Seedance prompt-quality and duration discipline for video generation.
+/// Operates on the frame-zero subject and duration; camera truth is validated
+/// separately from the structured production plan.
 enum SeedanceTokens {
     /// Vague praise that pulls generators toward generic output (Apiyi / OpenAI cookbook).
     static let slop = [
@@ -18,20 +13,6 @@ enum SeedanceTokens {
     ]
     /// Tokens that reproducibly induce jitter (Apiyi: "fast").
     static let hardBlock = ["fast", "very fast", "super fast", "lightning fast"]
-    /// Lighting markers (EN + DE — shotlists are often authored in German, translated at render).
-    static let light = [
-        "light", "lit", "lighting", "sunlight", "moonlight", "lamp",
-        "backlit", "rim light", "rim-light", "shadow", "silhouette",
-        "golden hour", "blue hour", "neon", "fluorescent", "overcast",
-        "candle", "spot", "key light", "ambient", "diffuse", "harsh",
-        "soft", "hard light", "natural light", "volumetric", "practical light",
-        "tungsten", "daylight", "dusk", "dawn", "twilight",
-        "licht", "beleucht", "schatten", "sonnenlicht", "mondlicht",
-        "mittagslicht", "gegenlicht", "kerzenlicht", "lampenlicht",
-        "sonnenaufgang", "sonnenuntergang", "daemmer", "dämmer",
-        "morgenlicht", "abendlicht", "goldene stunde", "blaue stunde",
-        "weich", "hart", "diffus",
-    ]
     /// mm / f-stop / ISO / fps / degree specs — generators ignore or corrupt them.
     static let technicalLingo = #"\b(?:\d+\s*mm|f[/.]?\d+(?:\.\d+)?|iso\s*\d+|\d+\s*fps|\d+\s*°)\b"#
 }
@@ -51,15 +32,12 @@ extension MusicvideoChecks {
                         + "'brisk', 'urgent' for fast). Sanity blocks the render until the word is gone."))
             }
 
-            // 2. Slop adjectives without any lighting phrase.
+            // 2. Slop adjectives do not belong in the frame-zero subject.
             let hasSlop = SeedanceTokens.slop.contains { matchesWord($0, in: pLow) }
-            let hasLight = SeedanceTokens.light.contains { pLow.contains($0) }
-            if hasSlop && !hasLight {
+            if hasSlop {
                 out.append(Finding(level: .error, code: "PROMPT_QUALITY_KILLER", shotId: shot.id,
-                    message: "slop adjectives ('cinematic'/'epic'/'stunning'/'gorgeous') with no concrete "
-                        + "lighting phrase. Apiyi: lighting is a higher quality lever than 10 more adjectives. "
-                        + "Add a concrete phrase ('warm golden hour from camera left, long soft shadow') OR "
-                        + "drop the slop words. Intentional? 'slop_ok: <reason>' in Shot.notes."))
+                    message: "generic praise ('cinematic'/'epic'/'stunning'/'gorgeous') in visual_prompt. "
+                        + "Replace it with a concrete frame-zero subject detail."))
             }
 
             // 3. Technical lingo (mm / f-stop / ISO / fps / degrees).
@@ -72,25 +50,7 @@ extension MusicvideoChecks {
                         + "field', 'normal lens feel', 'wide-angle distortion'. Sanity blocks the render."))
             }
 
-            // 4. No lighting marker at all in a substantial prompt.
-            if !hasLight && p.count > 80 {
-                out.append(Finding(level: .error, code: "PROMPT_MISSING_LIGHTING", shotId: shot.id,
-                    message: "no lighting marker in visual_prompt. Apiyi/Higgsfield: lighting is the highest "
-                        + "quality lever — without it the output is generic. Add a concrete lighting phrase "
-                        + "('warm golden hour from camera left, long soft shadows' or 'cool blue moonlight, "
-                        + "high contrast'). Sanity blocks the render."))
-            }
-
-            // 5. More than one camera-move category — Seedance wants exactly one per shot.
-            let cats = CameraMoves.moveCategories(p)
-            if cats.count > 1 {
-                out.append(Finding(level: .error, code: "MULTIPLE_CAMERA_MOVES", shotId: shot.id,
-                    message: "\(cats.count) distinct camera moves detected (\(cats.joined(separator: ", "))). "
-                        + "Seedance 2.0 relies on exactly ONE move per shot — combinations reproducibly induce "
-                        + "jitter. Split the step in two or pick one move."))
-            }
-
-            // 6/7. Seedance duration band: hard cap 15s (warn), provider min 4s (info, rounds up).
+            // 4/5. Seedance duration band: hard cap 15s (warn), provider min 4s (info, rounds up).
             if shot.durationS > 15.0 {
                 out.append(Finding(level: .warn, code: "SHOT_OVER_SEEDANCE_CAP", shotId: shot.id,
                     message: String(format: "duration_s=%.1fs > Seedance-2 hard cap 15s. The render dispatcher "

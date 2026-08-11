@@ -1,5 +1,7 @@
+import Foundation
 import Testing
 @testable import NexGenVideo
+import NexGenEngine
 
 @Suite("Agent tool semantic contracts")
 struct ToolDefinitionContractTests {
@@ -86,6 +88,206 @@ struct ToolDefinitionContractTests {
 
         let empty = await harness.runRaw("show_blocks", args: ["blocks": []])
         #expect(ToolHarness.textOf(empty).contains("expected at least 1 item"))
+
+        let unboundGeneration = await harness.runRaw(
+            "generate_video",
+            args: ["prompt": "compiled"]
+        )
+        #expect(
+            ToolHarness.textOf(unboundGeneration)
+                .contains("missing required field 'shotId'")
+        )
+    }
+
+    @Test("every generation tool requires the compile-time shot binding")
+    func generationSchemasRequireShotBinding() throws {
+        for name in [
+            ToolName.generateVideo,
+            .generateImage,
+            .generateAudio,
+        ] {
+            let tool = try #require(
+                ToolDefinitions.all.first { $0.name == name }
+            )
+            let required = Set(
+                tool.inputSchema["required"] as? [String] ?? []
+            )
+            let properties = try #require(
+                schemaProperties(tool.inputSchema["properties"])
+            )
+            #expect(required.contains("shotId"))
+            #expect(properties["shotId"] != nil)
+        }
+    }
+
+    @Test("write_shotlist schema binds production plans to generated source modes")
+    func shotlistProductionPlanSchema() throws {
+        let tool = try #require(
+            ToolDefinitions.all.first { $0.name == .writeShotlist }
+        )
+        let root = try #require(schemaProperties(tool.inputSchema["properties"]))
+        let shots = try #require(root["shots"])
+        let items = try #require(shots["items"] as? [String: Any])
+        let variants = try #require(items["anyOf"] as? [[String: Any]])
+        #expect(variants.count == 3)
+
+        for variant in variants {
+            let properties = try #require(schemaProperties(variant["properties"]))
+            let source = try #require(properties["source_mode"])
+            let sourceModes = try #require(source["enum"] as? [String])
+            let sourceMode = try #require(sourceModes.first)
+            let required = Set(variant["required"] as? [String] ?? [])
+            let blocking = try #require(properties["character_blocking"])
+            let blockingItems = try #require(blocking["items"] as? [String: Any])
+            let blockingRequired = Set(blockingItems["required"] as? [String] ?? [])
+            let propViews = try #require(properties["prop_views"])
+            let propViewItems = try #require(propViews["items"] as? [String: Any])
+            let propViewProperties = try #require(
+                propViewItems["properties"] as? [String: [String: Any]]
+            )
+            let propPattern = try #require(propViewProperties["prop"]?["pattern"] as? String)
+            #expect(
+                "__ngv_internal.production_plan.v1".range(
+                    of: propPattern,
+                    options: .regularExpression
+                ) == nil
+            )
+            #expect("hero_prop".range(of: propPattern, options: .regularExpression) != nil)
+            if sourceMode == SourceMode.imported.rawValue {
+                #expect(properties["production_plan"] == nil)
+                #expect(!required.contains("production_plan"))
+            } else {
+                let plan = try #require(properties["production_plan"])
+                #expect(required.contains("production_plan"))
+                let planProperties = try #require(schemaProperties(plan["properties"]))
+                let planRequired = Set(plan["required"] as? [String] ?? [])
+                let primaryAction = try #require(planProperties["primary_action"])
+                let primaryActionPattern = try #require(primaryAction["pattern"] as? String)
+                let movementDetail = try #require(planProperties["camera_movement_detail"])
+                let anchors = try #require(planProperties["blocking_anchors"])
+                let anchorItems = try #require(anchors["items"] as? [String: Any])
+                let anchorProperties = try #require(
+                    anchorItems["properties"] as? [String: [String: Any]]
+                )
+                let anchor = try #require(anchorProperties["set_anchor"])
+                let pattern = try #require(anchor["pattern"] as? String)
+                #expect(planRequired.contains("blocking_anchors"))
+                #expect(
+                    primaryAction["maxLength"] as? Int
+                        == ShotProductionPlan.singleDirectiveMaximumLength
+                )
+                #expect(movementDetail["pattern"] as? String == primaryActionPattern)
+                #expect(
+                    "The performer opens the door and enters.".range(
+                        of: primaryActionPattern,
+                        options: .regularExpression
+                    ) == nil
+                )
+                #expect(
+                    "The performer opens the door.".range(
+                        of: primaryActionPattern,
+                        options: .regularExpression
+                    ) != nil
+                )
+                #expect("screen-right".range(of: pattern, options: .regularExpression) == nil)
+                #expect("hall doorway".range(of: pattern, options: .regularExpression) != nil)
+            }
+            #expect(
+                required.contains("source_path")
+                    == (sourceMode == SourceMode.aiEnhanced.rawValue)
+            )
+            if sourceMode == SourceMode.aiEnhanced.rawValue {
+                #expect(properties["source_path"]?["minLength"] as? Int == 1)
+                #expect(properties["source_path"]?["pattern"] != nil)
+            }
+            #expect(!blockingRequired.contains("set_anchor"))
+            if sourceMode == SourceMode.generated.rawValue {
+                let blockingProperties = try #require(
+                    blockingItems["properties"] as? [String: [String: Any]]
+                )
+                let relation = try #require(blockingProperties["relation_to_set"])
+                #expect(relation["pattern"] != nil)
+            }
+        }
+    }
+
+    @Test("video generation binds AI-enhanced shots to the declared source")
+    func videoGenerationSourceContract() throws {
+        #expect(throws: Never.self) {
+            try ToolExecutor.validateVideoShotSourceContract(
+                sourceMode: .aiEnhanced,
+                modelRequiresSourceVideo: true,
+                submittedSourceId: "declared-source",
+                expectedSourceId: "declared-source"
+            )
+        }
+        for submitted in [nil, "substituted-source"] as [String?] {
+            #expect(throws: ToolError.self) {
+                try ToolExecutor.validateVideoShotSourceContract(
+                    sourceMode: .aiEnhanced,
+                    modelRequiresSourceVideo: true,
+                    submittedSourceId: submitted,
+                    expectedSourceId: "declared-source"
+                )
+            }
+        }
+        #expect(throws: ToolError.self) {
+            try ToolExecutor.validateVideoShotSourceContract(
+                sourceMode: .aiEnhanced,
+                modelRequiresSourceVideo: false,
+                submittedSourceId: "declared-source",
+                expectedSourceId: "declared-source"
+            )
+        }
+        #expect(throws: ToolError.self) {
+            try ToolExecutor.validateVideoShotSourceContract(
+                sourceMode: .generated,
+                modelRequiresSourceVideo: true,
+                submittedSourceId: "source",
+                expectedSourceId: nil
+            )
+        }
+    }
+
+    @Test("write_storyboard schema requires anchors only for generated blocking")
+    func storyboardBlockingAnchorSchema() throws {
+        let tool = try #require(
+            ToolDefinitions.all.first { $0.name == .writeStoryboard }
+        )
+        let root = try #require(schemaProperties(tool.inputSchema["properties"]))
+        let sections = try #require(root["sections"])
+        let sectionItems = try #require(sections["items"] as? [String: Any])
+        let sectionProperties = try #require(
+            schemaProperties(sectionItems["properties"])
+        )
+        let steps = try #require(sectionProperties["steps"])
+        let stepItems = try #require(steps["items"] as? [String: Any])
+        let variants = try #require(stepItems["anyOf"] as? [[String: Any]])
+        #expect(variants.count == SourceMode.allCases.count)
+
+        for variant in variants {
+            let properties = try #require(schemaProperties(variant["properties"]))
+            let source = try #require(properties["source_mode"])
+            let sourceMode = try #require((source["enum"] as? [String])?.first)
+            let blocking = try #require(properties["character_blocking"])
+            let blockingItems = try #require(blocking["items"] as? [String: Any])
+            let required = Set(blockingItems["required"] as? [String] ?? [])
+            #expect(
+                required.contains("set_anchor")
+                    == (sourceMode == SourceMode.generated.rawValue)
+            )
+            if sourceMode == SourceMode.generated.rawValue {
+                let properties = try #require(
+                    blockingItems["properties"] as? [String: [String: Any]]
+                )
+                let relation = try #require(properties["relation_to_set"])
+                let anchor = try #require(properties["set_anchor"])
+                #expect(relation["pattern"] != nil)
+                let pattern = try #require(anchor["pattern"] as? String)
+                #expect("screen-right".range(of: pattern, options: .regularExpression) == nil)
+                #expect("hall doorway".range(of: pattern, options: .regularExpression) != nil)
+            }
+        }
     }
 
     @Test("agent dialogs cannot claim or replace host workflow intake")
@@ -252,6 +454,18 @@ struct ToolDefinitionContractTests {
                 seenDynamicMaps: &seenDynamicMaps,
                 failures: &failures
             )
+        }
+
+        if let alternatives = schema["anyOf"] as? [[String: Any]] {
+            for (index, alternative) in alternatives.enumerated() {
+                auditObjectSchemas(
+                    alternative,
+                    path: "\(path).anyOf[\(index)]",
+                    dynamicMaps: dynamicMaps,
+                    seenDynamicMaps: &seenDynamicMaps,
+                    failures: &failures
+                )
+            }
         }
     }
 

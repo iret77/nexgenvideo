@@ -11,6 +11,24 @@ extension EditorViewModel {
               let dataRoot = DataRootResolver.dataRoot(of: home) else {
             return false
         }
+        guard let mutationID = pipelinePhaseRunCoordinator.beginMutation(
+            projectRoot: dataRoot,
+            label: "Shot List edit"
+        ) else {
+            let active = pipelinePhaseRunCoordinator.runningPhase(
+                projectRoot: dataRoot
+            ) ?? "pipeline work"
+            mediaPanelToast = MediaPanelToast(
+                message: "Can't edit the Shot List while \(active) is running."
+            )
+            return false
+        }
+        defer {
+            pipelinePhaseRunCoordinator.endMutation(
+                projectRoot: dataRoot,
+                id: mutationID
+            )
+        }
         do {
             try pipelineAgentHarness.guardPhaseWork(
                 phase: "shotlist",
@@ -24,34 +42,27 @@ extension EditorViewModel {
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             return false
         }
+        guard let workingCopyKey = openWorkingCopyKey else {
+            mediaPanelToast = MediaPanelToast(
+                message: "The project working copy is unavailable. Reopen the project before editing."
+            )
+            return false
+        }
+        do {
+            try ProjectWorkingCopy.markDirty(key: workingCopyKey)
+        } catch {
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            return false
+        }
+        let trustedPack = declaredPluginName
         let result: Result<Bool, ToolError> = await Task.detached {
-            guard var shotlist = (try? loadShotlist(dataRoot: dataRoot)) ?? nil,
-                  let index = shotlist.shots.firstIndex(where: { $0.id == shotId }),
-                  shotlist.shots[index].sourceMode != mode
-            else { return .success(false) }
-            shotlist.shots[index].sourceMode = mode
-            switch mode {
-            case .generated:
-                shotlist.shots[index].sourcePath = nil
-                if shotlist.shots[index].keyframeStrategy == .none {
-                    shotlist.shots[index].keyframeStrategy = .start
-                }
-            case .imported:
-                shotlist.shots[index].sourcePath = nil
-                shotlist.shots[index].keyframeStrategy = .none
-                shotlist.shots[index].chainWithPreviousEnd = false
-            case .aiEnhanced:
-                shotlist.shots[index].keyframeStrategy = .none
-                shotlist.shots[index].chainWithPreviousEnd = false
-                shotlist.shots[index].referenceImageRefs = []
-                shotlist.shots[index].seedanceInputMode = .keyframe
-            }
             do {
-                _ = try PipelineShotlistWriter.write(
-                    shotlist,
-                    dataRoot: dataRoot
-                )
-                return .success(true)
+                return .success(try PipelineShotlistWriter.setSourceMode(
+                    shotId: shotId,
+                    to: mode,
+                    dataRoot: dataRoot,
+                    declaredPack: trustedPack
+                ))
             } catch let error as ToolError {
                 return .failure(error)
             } catch {

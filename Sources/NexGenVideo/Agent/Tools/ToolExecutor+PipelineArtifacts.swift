@@ -311,6 +311,17 @@ extension ToolExecutor {
             as: Storyboard.self,
             label: "storyboard"
         )
+        let unanchoredSteps = storyboard.allSteps().filter(
+            ProductionDiscipline.hasUnanchoredCharacterBlocking
+        )
+        guard unanchoredSteps.isEmpty else {
+            throw ToolError(
+                "Storyboard rejected: generated character blocking must name a concrete "
+                    + "set_anchor from that step's prop_request or visible_zones and a non-empty "
+                    + "relation_to_set (e.g. "
+                    + "\(unanchoredSteps.prefix(3).map(\.id).joined(separator: ", ")))."
+            )
+        }
         let url: URL
         do {
             url = try StoryboardStore.save(storyboard, to: root)
@@ -436,7 +447,7 @@ extension ToolExecutor {
             "project": projectName(dataRoot: root),
             "song": songObject,
             "generated": currentTimestamp(),
-            "generator": "shotlist-agent@write_shotlist",
+            "generator": Shotlist.agentWriterGenerator,
             "budget_eur": brief.budgetEur,
             "shots": shots,
         ]
@@ -450,7 +461,8 @@ extension ToolExecutor {
         )
         let url = try PipelineShotlistWriter.write(
             shotlist,
-            dataRoot: root
+            dataRoot: root,
+            declaredPack: editor.declaredPluginName
         )
         return try jsonResult([
             "written": true,

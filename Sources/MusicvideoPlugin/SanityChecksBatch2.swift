@@ -154,8 +154,8 @@ extension MusicvideoChecks {
                         + "ohnehin tragt. Text-Verdopplung untergewichtet "
                         + "die Ref und kann Konflikte mit dem Sheet-Stand "
                         + "erzeugen. Empfehlung: detaillierte Listen aus "
-                        + "dem visual_prompt streichen, nur Action/Camera/"
-                        + "Light beibehalten. Escape: `ref_setting_ok: "
+                        + "dem visual_prompt streichen und nur den konkreten "
+                        + "Frame-zero-Subjektzustand beibehalten. Escape: `ref_setting_ok: "
                         + "<Grund>` in Shot.notes, wenn ein bestimmtes "
                         + "Detail unbedingt im Prompt stehen muss."))
             }
@@ -219,7 +219,7 @@ extension MusicvideoChecks {
     /// Literality + bible completeness on shot prompts: metaphors rendered
     /// literally, undefined crowds, and title cards / text overlays. Port of the
     /// three literal_check findings wired from `sanity/checks/prompts.py`
-    /// (PROMPT_TOO_SHORT/THIN/GENERIC and NO_BLOCKING_AT_T0 stay in their own
+    /// (PROMPT_TOO_SHORT/GENERIC and NO_BLOCKING_AT_T0 stay in their own
     /// checks and are out of scope here).
     public static let literalCheck: SanityCheck = { ctx in
         var out: [Finding] = []

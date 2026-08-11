@@ -72,9 +72,8 @@ anything:
 The storyboard phase runs **before** the shotlist (storyboard agent,
 gate `storyboard`). The shotlist builds on the approved
 `storyboard/current.yaml` — it adopts the step sequences, maps them to
-concrete shot IDs, and fills the five `visual_prompt` components from the
-storyboard step fields (`subject`, `camera`, `setting_hint`, plus the
-bible `visual_prompt` for identities).
+concrete shot IDs, and maps the storyboard fields into the shot schema
+under the injected core production-profile guidance.
 
 Per storyboard step, typically exactly **1 shot** is created in the
 shotlist. IDs gapless in section order: `s001`, `s002`, …
@@ -113,57 +112,51 @@ measured analysis; never supply or invent them. The tool validates every
 required and enum field before writing. On a validation error, fix the
 named field and call it again; don't guess.
 
-### 4. Derive the tempo class from BPM — it determines shot pacing
+### 4. Apply the pack-owned music pacing
 
-Get `song.bpm` from the analysis and classify it:
+Use the approved analysis `perceived_bpm` to classify the edit:
 
-| Band | BPM | ASL target | typical ASL range | hard_cap per shot |
-|---|---|---|---|---|
-| uptempo_dance | 120+ | ~1.5 s | 1-2 s | 4 s |
-| midtempo_pop | 90-120 | ~3 s | 2-4 s | 6 s |
-| downtempo_soul | 60-90 | ~4 s | 3-5 s | 8 s |
-| arthouse_slow | <60 | ~6.5 s | 5-8 s | 12 s |
+| Band | BPM | ASL range | Hard cap |
+|---|---:|---:|---:|
+| uptempo_dance | 120+ | 1–2 s | 4 s |
+| midtempo_pop | 90–120 | 2–4 s | 6 s |
+| downtempo_soul | 60–90 | 3–5 s | 8 s |
+| arthouse_slow | <60 | 5–8 s | 12 s |
 
-**These values are not options** — they are the viewing habits of the
-form. Ignoring them produces a video that feels wrong — too sluggish
-for uptempo, chopped up for a ballad. Adoption is mandatory, not a
-recommendation. The tempo band is the pacing constraint during local
-shot construction (Step 6).
+The core profile owns each shot's atomic action and renderability; this
+pack owns editorial pacing across those shots. Never add actions to pad a
+shot. If an approved interval exceeds its tempo cap or stretches one action,
+rewind Storyboard and split it into additional atomic coverage/reaction/detail
+steps, shorten it on measured boundaries, or record deliberate stillness as
+`pacing_ok: <reason>` in the shot notes. Sanity independently emits
+`SHOT_OVER_TEMPO_CAP`, aggregate ASL warnings, and
+`SHOT_PACING_IMPLAUSIBLE`.
 
 ### 5. Build the shot list according to `brief.project_mode`
 
-- **beat**: 20-50 short shots, `time_start`/`time_end` exactly from
-  `analysis.downbeats`.
+- **beat**: align the approved storyboard steps to measured downbeats.
 - **phrase**: DEFERRED — not selectable in the brief (it needs per-line
   lyric timing / forced alignment, which the analysis doesn't produce
   yet). You should never see `project_mode: phrase`; if you do, fall back
   to `section`. The alignment-based construction below stays as the spec
   for when forced alignment lands.
-  One or more shots per lyric phrase from
-  `analysis.alignment`, depending on the phrase duration and the
-  tempo-band ASL. An 8-second phrase in mid-tempo (target 3 s, cap 6 s)
-  is split into 2-3 shots, not mapped as one shot. One shot per phrase
-  is only permissible when the phrase duration lies within the ASL
-  range of the tempo band. Rule of thumb:
-  `n_shots_per_phrase = max(1, round(phrase_duration / asl_target))`.
-  `time_start` = `alignment[i].start` (snapped to a downbeat) for the
-  first shot of the phrase, then split evenly on downbeats. The last
-  shot of the phrase ends at `alignment[i+1].start` (or
-  `alignment[i].end` for the last phrase of a section). Instrumental
-  passages between vocal phrases are inserted as their own shots — also
-  portioned by tempo-band ASL, not as one long hold (except a
-  deliberate breathing-space breaker, at most one or two per song).
-- **section**: 1 shot per section from
+  Map approved storyboard steps to the measured lyric alignment without
+  inventing extra actions or splitting a step solely to hit an average
+  shot length.
+- **section**: map the approved storyboard steps to
   `analysis.interpretation.section_labels`.
 - **multicam**: 2-5 cameras, each `time_start=0.0` /
   `time_end=song.duration_s`.
 
+Use measured downbeats/sections for placement and the pack tempo band for
+editorial validation. Never split an atomic step by inventing compound action.
+
 ### 6. Per shot
 
 - Derive `type`, `description`, `visual_prompt`, `mood` from the
-  storyboard step. Convert the step fields (`subject` + `camera` +
-  `setting_hint`) into the five mandatory components of the
-  `visual_prompt` (see Mandatory rules, rule 8).
+  storyboard step. Keep `visual_prompt` within the injected core profile;
+  camera, composition, blocking, continuity, and action remain in their
+  structured fields.
 - Reference `character_refs`, `location_ref`, `prop_refs` from bible
   IDs.
 - `character_views` (dict[str, str]): adopt from
@@ -229,6 +222,9 @@ live, or mixed. Each shot carries a `source_mode`:
   leave `reference_image_refs` empty. The source video is the sole
   conditioning truth for this mode.
 
+Follow the injected core production-profile guidance for `production_plan`
+ownership and blocking-anchor requirements; do not restate that doctrine here.
+
 **Ask the user early** which shots are live vs generated — before you
 write prompts, so live shots get shooting specs and enhanced shots route
 to the edit path. Set `source_mode` per shot accordingly. When unstated,
@@ -247,25 +243,9 @@ invalid timing, IDs, mode fields, blocking references, or duration data
 without changing the current version. For `ai_enhanced`, it also rejects
 a missing, external, substituted, or non-video `source_path`.
 
-Then inspect the written artifact before presenting it. In particular,
-every shot with
-`keyframe_strategy ∈ {start, start_end}` must explicitly name the
-starting pose **and** the starting camera position in the
-`visual_prompt` before any frame may be rendered. "Alex arrives" is not
-enough — that is the action arc, not second 0.
-
-For every such shot, component 1 (Subject + Starting Blocking + Vector)
-must explicitly contain:
-- starting pose ("standing in the school gate, left leg forward, gaze
-  down, bag loose in her right hand")
-- movement intent ("about to walk into the courtyard — t=0 is the
-  moment before the first step")
-
-And component 4 (Camera) must explicitly contain:
-- starting framing ("camera at ~3 m distance, slightly elevated, static
-  for the first 2 s")
-- movement from the starting framing ("then a slow 1 m pull-back as Alex
-  starts walking")
+Then inspect the written artifact before presenting it. The canonical writer
+enforces the injected core production profile. Repair the named owning field;
+never compensate with extra prompt prose.
 
 After the user approves the structurally valid shot list, the dedicated
 Sanity phase runs `run_sanity` over the now-approved plan. Do not call
@@ -284,15 +264,14 @@ distribution, sanity status) for the orchestrator flow.
 ### Rule 1 — Provider fields are written in ENGLISH
 
 Image and video models are predominantly trained on English caption
-pairs. English prompts hit subject, camera, lighting and style far more
-precisely. Non-English prompts produce softer outputs, often ignore
-camera / lighting directives, and hallucinate on longer sentences.
+pairs. Keep every provider-facing structured field in English so the
+host can compile it without translation drift.
 
 **English is required for all fields that go to the provider:**
 - `visual_prompt` (mandatory)
 - `motion` (mandatory)
 - `camera_setup.note` (mandatory)
-- `character_blocking[].position / pose / gaze / relation_to_set`
+- every provider-facing string in `character_blocking`
 - `composition` (in Storyboard.Step)
 
 **May remain in the active conversation language established by the
@@ -318,11 +297,9 @@ not imply a user-facing language):
 ```yaml
 # CORRECT
 visual_prompt: |
-  young teacher in her mid-30s, short brown hair, round glasses,
-  navy cardigan, standing in the open school gate, left foot one
-  step forward, gaze slightly downcast, bag loose in her right hand,
-  about to walk into the courtyard. Warm midday sunlight from camera
-  left, long soft shadows on the gravel.
+  A young teacher in a navy cardigan stands in the open school gate,
+  weight over her forward left foot, gaze down, bag loose in her right
+  hand, poised for the first step into the courtyard.
 description: "The teacher enters the courtyard through the school gate."
 notes: "Opening moment, before the first contact with the students."
 
@@ -570,8 +547,8 @@ The shotlist is the spec for image/video models that render everything
    bible entity (`Character` or `Ensemble`) and be referenced in the
    shot (`character_refs` / `ensemble_refs`).
    - ✗ "Crowd cheers" without `ensemble_refs`.
-     ✓ First extend the bible with e.g. `Ensemble(id="western_crowd",
-     member_count=8, members_description=…)`, then reference it.
+     ✓ Declare the group in the bible, reference it explicitly, and follow the
+     injected core production-profile guidance for the chosen source mode.
    - If a shot needs a new group that is not yet in the bible: STOP,
      update the bible (or resolve the shot differently) before you
      write the prompt.
@@ -596,8 +573,7 @@ discipline, the checks are only a backstop.
 
 For shots WITHOUT `character_refs` (empty street, detail insert,
 tumbleweed, cutaway to an object) the blocking validator applies a
-figure-less skip — the pose/vector requirement is waived, only the
-camera anchor remains. **But:** the validator searches the
+figure-less skip — the pose/vector requirement is waived. **But:** the validator searches the
 `visual_prompt` for person-hint tokens (`figure`, `person`, `subject`,
 `character`, `people` etc.) and lifts the skip as soon as it finds one.
 Common own-goals in figure-less shots:
@@ -617,91 +593,16 @@ If the sanity audit still reports `NO_BLOCKING_AT_T0` for a figure-less
 shot: check the prompt, remove the token or negate it unambiguously. Do
 not reflexively write pose+vector into figure-less shots.
 
-### Rule 8 — `visual_prompt`: mandatory structure (5 components)
+### Rule 8 — Further rules
 
-Every `visual_prompt` MUST contain all five components, otherwise the
-rendered image misses the shot. At least **120 characters**, no
-adjective soup. Write in present-tense action, not in adjectives.
-
-| Component | Content | Example |
-|---|---|---|
-| **1. Subject + Starting Blocking + Vector** | WHO, in which **starting pose** at t=0 (standing leg, weight, gaze, hands), and in which direction they are about to move | "Alex, a young teacher, stands right in the open school gate, left leg one step forward, gaze slightly downcast toward the courtyard, bag loose in her right hand. She is about to walk into the courtyard — t=0 is the moment before the first step" |
-| **2. Position / Composition** | Distance (wide/medium/close), frame layout, camera viewing direction | "medium-wide shot, Alex left of frame center, the image axis opens to the right toward the courtyard interior" |
-| **3. Setting** | Location detail, time of day, weather, visible bible location | "schoolyard of a 1970s school building, paved ground, large poplar on the right, soft morning sun" |
-| **4. Camera (start framing + move)** | **Starting position of the camera** + planned movement over the shot duration | "camera slightly elevated (~1.80 m), ~3 m distance in front of Alex, static 35mm framing for the first 2 s, then a slow 1 m pull-back as Alex starts walking" |
-| **5. Light + Mood** | Concrete lighting situation, mood in 1-2 words | "warm morning light from the left, long soft shadow, calm and inviting" |
-
-**Frame-zero requirement:** with `keyframe_strategy=start` or
-`start_end`, component 1 must explicitly describe the **starting pose**
-(the image visible at second 0 — before the movement), and component 4
-the **starting camera position** before any camera move. "Alex arrives"
-is not enough. The frame agent renders exactly this one moment.
-
-**With `keyframe_strategy=start`:** write explicitly "This is the FIRST
-frame of the action — the moment Alex enters the schoolyard, not the
-end". Otherwise the frame model likely renders the middle or end of the
-movement.
-
-**With `keyframe_strategy=start_end`:** two separate prompts — start and
-end. Name explicitly what changes between start and end (position, pose,
-gaze, facial expression).
-
-**Strictly forbidden** in the `visual_prompt`:
-- bible IDs as literals ("alex" or "classroom_70s") — the
-  **description** of the entity belongs in, the ID does not. Identity
-  travels via the reference images.
-- Generic adjective chains ("epic, cinematic, masterpiece, beautiful")
-  without a concrete visual motif.
-- Shot duration / cutting remarks — those live elsewhere in the schema.
-
-### Rule 9 — Further rules
-
-- Shot durations follow the tempo band (see Step 4). In `beat` mode,
-  *additionally* cut at least on downbeats, not on every beat.
+- In `beat` mode, align approved shot boundaries to downbeats without
+  splitting an atomic storyboard step into extra actions.
 - `character_refs` / `prop_refs` / `location_ref` only when the entity
   is actually in the frame. Set them consistently — the frame agent
   passes the bible sheets as references to the image generation; that is
   the main path to consistent characters.
-- `description` is human-readable, one sentence. `visual_prompt` is
-  image-generator food, considerably longer and more structured.
-
-### Rule 10 — Pacing discipline (MANDATORY)
-
-Video models stretch under-specified action across the full clip
-length — it looks like slow motion. For every shot, check the **action
-density** of the spec: does `visual_prompt` + `motion` +
-`character_blocking` contain enough distinct action beats for the
-planned `duration_s`?
-
-**Rule of thumb:** a new action beat every 3-4 seconds. Single-state
-shots ("sits at desk, papers in front of him") over 5+ seconds are the
-slow-motion risk.
-
-Two legitimate resolutions:
-
-1. **Write more action beats** (preferred for active shots). Write the
-   action as a mini-timeline with `then` connectors — the model reads
-   that as sequential choreography:
-   ```
-   visual_prompt: AI Cat sits at the desk, then reaches for a rolled
-   paper, unrolls it, reads briefly, then sets it down on the keyboard.
-   ```
-   Instead of just: `AI Cat sits at desk, papers in front of him`.
-
-2. **Deliberately accept idle bracketing** (for contemplative shots).
-   The builder then injects a choreography instruction: _"Open with ~1s
-   of settled idle, perform the action at a natural tempo, then hold a
-   relaxed idle pose until the end. Do NOT slow the action down to fill
-   the duration."_ If the stillness is intended: `pacing_ok: <reason>`
-   in `Shot.notes`.
-
-**Sanity check `SHOT_PACING_IMPLAUSIBLE`** (warn, bidirectional):
-- `slow_motion_risk`: too few beats — the builder switches to idle
-  bracketing. If the shot can take more action: resolution 1.
-- `rushed_risk`: too many beats in too short a shot — split the shot or
-  reduce the beats.
-
-Escape (in both directions): `pacing_ok: <reason>` in `Shot.notes`.
+- `description` is human-readable, one sentence. Author `visual_prompt`
+  exactly as required by the injected production profile.
 
 ## Failure modes & escalation
 

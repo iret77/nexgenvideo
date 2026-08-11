@@ -79,6 +79,8 @@ gehostete Generierung will, nutzt das Original-Produkt — nicht diesen Fork.
    **Render-Manifest + Cost-Guard**, State-Aggregator, Projekt-Layout/Paths, Frame-Compliance. In den
    App-Binary **hineinkompiliert** — kein Python, kein venv, kein Subprozess. Die Engine **komponiert
    Prompts + erzwingt die Disziplin**; der Host führt die Provider-Calls aus (mit den Keychain-Keys).
+   Wiederverwendbare Film-Doktrin wird als **Production Profile** registriert und von mehreren Packs
+   komponiert; die verbindliche Grenze steht in [PRODUCTION_PROFILES.md](PRODUCTION_PROFILES.md).
    Ihre Tools sind erstklassige `nexgen`-MCP-Tools (M7).
 3. **Format-Packs (dünn, nativ)** — die **einzige** Daseinsberechtigung eines Packs ist
    **kategoriespezifisches Wissen**, das *nicht* jedes Videoformat braucht. Ein Pack ist ein
@@ -119,6 +121,8 @@ keine Runtime-Bootstrap-Reibung. Ein eigenes `nexgen-core`-Repo bräuchte es nur
 **Faustregel:** *Braucht es jedes Videoformat? → Core. Nur diese Kategorie? → Plugin.* Früher war
 `musicvideo` ein All-in-One-Tool **nur** für Musikvideos. Künftig ist die All-in-One-**Konsistenz-/
 Produktions-Maschinerie der Core**, und ein Pack ist eine **dünne Kategorie-Schicht** darauf.
+Formatübergreifende Varianten dieser Maschinerie (etwa generative Renderability oder narratives
+Storytelling) sind aktivierbare Core-Profile, keine kopierten Pack-Prompts.
 
 **CORE (nexgen + Generic Engine) — die Konsistenz-Maschinerie, von allen Packs genutzt:**
 Asset-Graph-**Bible** (`bible`), **Anker-Maximierung** (`render/identity_anchor`), **3D-Clay/Marble-

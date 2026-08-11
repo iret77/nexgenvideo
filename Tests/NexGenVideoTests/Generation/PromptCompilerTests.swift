@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import NexGenEngine
 
 @testable import NexGenVideo
 
@@ -42,6 +43,81 @@ struct PromptCompilerTests {
         #expect(!PromptCompiler.validate(token: compiled.token, text: compiled.text + "!", modelId: "fal-ai/veo3"))
     }
 
+    @Test func tokenIsBoundToProjectShotAndPlanFingerprint() {
+        let first = PromptBinding(
+            projectKey: "/project-a/pipeline",
+            shotId: "s001",
+            shotFingerprint: "plan-a"
+        )
+        let token = PromptCompiler.token(
+            for: "compiled",
+            modelId: "fal-ai/veo3",
+            binding: first
+        )
+        #expect(PromptCompiler.validate(
+            token: token,
+            text: "compiled",
+            modelId: "fal-ai/veo3",
+            binding: first
+        ))
+        for changed in [
+            PromptBinding(
+                projectKey: "/project-b/pipeline",
+                shotId: "s001",
+                shotFingerprint: "plan-a"
+            ),
+            PromptBinding(
+                projectKey: "/project-a/pipeline",
+                shotId: "s002",
+                shotFingerprint: "plan-a"
+            ),
+            PromptBinding(
+                projectKey: "/project-a/pipeline",
+                shotId: "s001",
+                shotFingerprint: "plan-b"
+            ),
+        ] {
+            #expect(!PromptCompiler.validate(
+                token: token,
+                text: "compiled",
+                modelId: "fal-ai/veo3",
+                binding: changed
+            ))
+        }
+    }
+
+    @Test func shotBoundImageCompilationRejectsNonGeneratedSourcesBeforeBinding() async throws {
+        var shot = try Shot(
+            id: "s001",
+            timeStart: 0,
+            timeEnd: 4,
+            durationS: 4,
+            type: .performance,
+            description: "Performance",
+            visualPrompt: "A performer holds a measured opening pose.",
+            mood: "focused"
+        )
+        for sourceMode in [SourceMode.imported, .aiEnhanced] {
+            shot.sourceMode = sourceMode
+            let projection = PromptComposer.ShotProjection(shot)
+            await #expect(throws: ToolError.self) {
+                _ = try await PromptCompiler.compile(
+                    intent: "A performer holds a measured opening pose.",
+                    modelId: "openai/gpt-image-2",
+                    modality: .image,
+                    editor: nil,
+                    shotId: "s001",
+                    shot: projection
+                )
+            }
+        }
+        #expect(throws: Never.self) {
+            try PromptCompiler.validateImageShotSourceContract(
+                sourceMode: .generated
+            )
+        }
+    }
+
     // MARK: Gate — token mint / validate / enforce (unchanged by the #114 refactor)
 
     @Test func gateRejectsUncompiledAndFabricatedTokens() async throws {
@@ -77,6 +153,13 @@ struct PromptCompilerTests {
         UserDefaults.standard.set(true, forKey: key)
         #expect(throws: Never.self) {
             try PromptCompiler.enforceGate(args: ["rawPrompt": true], prompt: "raw", modelId: "fal-ai/veo3")
+        }
+        #expect(throws: ToolError.self) {
+            try PromptCompiler.enforceGate(
+                args: ["rawPrompt": true, "shotId": "s001"],
+                prompt: "raw",
+                modelId: "fal-ai/veo3"
+            )
         }
     }
 }

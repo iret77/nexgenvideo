@@ -152,9 +152,9 @@ struct SanityChecksTests {
         #expect(findings[0].message == "shotlist mode=section, brief project_mode=beat")
     }
 
-    // MARK: - prompt_quality: length thresholds
+    // MARK: - prompt_quality: concrete-subject floor
 
-    @Test("prompt_quality flags prompts under 60 chars as PROMPT_TOO_SHORT error")
+    @Test("prompt_quality flags prompts too short to identify a subject")
     func promptQualityFlagsTooShort() throws {
         let shotlist = try Self.shotlist(
             [try Self.shot(idx: 1, start: 0.0, end: 4.0, prompt: "too short")], durationS: 4.0
@@ -166,35 +166,20 @@ struct SanityChecksTests {
         #expect(findings[0].shotId == "s001")
     }
 
-    @Test("prompt_quality flags prompts between 60 and 119 chars as PROMPT_THIN warn")
-    func promptQualityFlagsThin() throws {
-        // Exactly 90 chars: long enough to clear PROMPT_TOO_SHORT (<60), short of PROMPT_THIN's 120 boundary.
-        let prompt = String(repeating: "a", count: 90)
-        let shotlist = try Self.shotlist(
-            [try Self.shot(idx: 1, start: 0.0, end: 4.0, prompt: prompt)], durationS: 4.0
-        )
-        let findings = try promptQualityCheck(AuditContext(shotlist: shotlist))
-        #expect(findings.count == 1)
-        #expect(findings[0].level == .warn)
-        #expect(findings[0].code == "PROMPT_THIN")
-    }
-
-    @Test("prompt_quality does not flag length issues at or above 120 chars")
-    func promptQualityCleanAtThinBoundary() throws {
-        let prompt = String(repeating: "a", count: 120)
+    @Test("prompt_quality accepts a concise concrete subject")
+    func promptQualityAcceptsConciseSubject() throws {
+        let prompt = "A hand grips the latch."
         let shotlist = try Self.shotlist(
             [try Self.shot(idx: 1, start: 0.0, end: 4.0, prompt: prompt)], durationS: 4.0
         )
         let findings = try promptQualityCheck(AuditContext(shotlist: shotlist))
         #expect(!findings.contains { $0.code == "PROMPT_TOO_SHORT" })
-        #expect(!findings.contains { $0.code == "PROMPT_THIN" })
     }
 
     // MARK: - prompt_quality: PROMPT_GENERIC token list + length gate
 
     @Test("prompt_quality flags a generic token under 200 chars as PROMPT_GENERIC warn")
     func promptQualityFlagsGeneric() throws {
-        // 120+ chars so it clears PROMPT_THIN, contains "epic", stays under 200.
         let prompt = "An epic wide shot of the hero standing tall against a dramatic sky, "
             + "camera slowly pushing in, golden hour light."
         let shotlist = try Self.shotlist(
@@ -240,12 +225,11 @@ struct SanityChecksTests {
 
     @Test("prompt_quality measures the trimmed prompt length")
     func promptQualityTrimsWhitespace() throws {
-        let padded = "  " + String(repeating: "a", count: 50) + "  "
+        let padded = "  tiny  "
         let shotlist = try Self.shotlist(
             [try Self.shot(idx: 1, start: 0.0, end: 4.0, prompt: padded)], durationS: 4.0
         )
         let findings = try promptQualityCheck(AuditContext(shotlist: shotlist))
-        // Trimmed length is 50 (< 60) -> PROMPT_TOO_SHORT, not PROMPT_THIN.
         #expect(findings.contains { $0.code == "PROMPT_TOO_SHORT" })
     }
 

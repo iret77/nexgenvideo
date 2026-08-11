@@ -1,7 +1,7 @@
 import Foundation
 
 struct MediaManifest: Codable, Sendable, Equatable {
-    static let currentVersion = 5
+    static let currentVersion = 6
 
     var version: Int = currentVersion
     var entries: [MediaManifestEntry] = []
@@ -70,6 +70,10 @@ struct GenerationInput: Codable, Sendable, Equatable {
     /// backward-compatible: manifests written before this field decode with `intent == nil`, and a
     /// rerun then falls back to the stored `prompt`. (#114)
     var intent: String? = nil
+    /// Exact compile-time pipeline identity. Nil only for legacy or non-shot media.
+    var promptShotId: String? = nil
+    var promptProjectKey: String? = nil
+    var promptShotFingerprint: String? = nil
     var model: String
     var duration: Int
     var aspectRatio: String

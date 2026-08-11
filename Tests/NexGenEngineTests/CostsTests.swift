@@ -182,7 +182,7 @@ struct CostsTests {
             timeStart: 16.0, timeEnd: 24.0, sourceMode: .imported
         )
         let shotlist = try Shotlist(
-            schema_: "shotlist/v3", mode: .section, project: "p", song: song,
+            schema_: shotlistSchemaVersion, mode: .section, project: "p", song: song,
             generated: "2026-01-01", generator: "test", shots: [generatedShot, enhancedShot, liveShot]
         )
         let est = estimate(
@@ -312,7 +312,7 @@ struct CostsTests {
             ),
         ]
         let shotlist = try Shotlist(
-            schema_: "shotlist/v3", mode: .section, project: "p", song: song,
+            schema_: shotlistSchemaVersion, mode: .section, project: "p", song: song,
             generated: "2026-01-01", generator: "test", shots: shots
         )
         let est = estimate(

@@ -42,16 +42,35 @@ enum PromptComposer {
     /// camera/composition projection in `frames/generate.py::_payload_from_shot` + the per-frame
     /// `lint_prompt_against_shot` call.
     struct ShotProjection: Sendable {
+        let sourceMode: SourceMode
         let camera: String
+        let cameraMovement: String
+        let cameraMovementKind: CameraMovement?
+        let cameraMovementDetail: String?
         let composition: String
+        let videoSubject: String?
+        let videoDirectives: [String]
+        let imageDirectives: [String]
         let spec: ComplianceLinter.ShotSpec
         /// The deterministic cut-handle timing for this shot (#213), empty when it carries no handle.
         /// `forceHandles` is the project-wide override (brief.cut_handles_mode == with_overlap).
         let temporalStructure: String
 
         init(_ shot: Shot, forceHandles: Bool = false) {
+            let productionPlan = shot.productionPlan
+            sourceMode = shot.sourceMode
             camera = shot.cameraSetup?.promptProse() ?? ""
+            cameraMovement = productionPlan?.cameraMovement.promptProse(
+                detail: productionPlan?.cameraMovementDetail
+            ) ?? ""
+            cameraMovementKind = productionPlan?.cameraMovement
+            cameraMovementDetail = productionPlan?.cameraMovementDetail
             composition = shot.framing?.compositionProse ?? ""
+            videoSubject = productionPlan?.primaryAction
+            videoDirectives = (productionPlan?.providerDirectives ?? [])
+                + shot.productionBlockingDirectives
+            imageDirectives = (productionPlan?.stillProviderDirectives ?? [])
+                + shot.productionBlockingDirectives
             spec = ComplianceLinter.ShotSpec(
                 framing: shot.framing?.rawValue,
                 cameraHeight: shot.cameraSetup?.height.rawValue,
@@ -74,6 +93,9 @@ enum PromptComposer {
         aspectRatio: String = "",
         durationSeconds: Double? = nil,
         projectDir: URL?,
+        setting: String = "",
+        lighting: String = "",
+        style: String = "",
         shot: ShotProjection? = nil,
         preserveComposition: Bool = false
     ) async throws -> Composition {
@@ -100,26 +122,48 @@ enum PromptComposer {
         var notes: [String] = []
         switch modality {
         case .video:
+            let acceptsFreeContext = shot == nil
             var payload = PromptPayload(
-                subject: trimmed,
+                subject: shot?.videoSubject ?? trimmed,
+                setting: acceptsFreeContext ? normalize(setting) : "",
+                style: acceptsFreeContext ? normalize(style) : "",
+                light: acceptsFreeContext ? normalize(lighting) : "",
                 durationS: durationSeconds,
                 aspectRatio: aspectRatio,
-                directives: directives.all
+                directives: directives.all + (shot?.videoDirectives ?? [])
+                    + [shot?.cameraMovement ?? ""].filter { !$0.isEmpty }
             )
             if let shot {
-                payload.camera = shot.camera; payload.composition = shot.composition
+                payload.camera = shot.camera
+                payload.composition = shot.composition
                 payload.temporalStructure = shot.temporalStructure
             }
             composed = PromptGenerator.buildVideoPrompt(modelID: engineModelID(modelId), payload: payload)
+            if let shot,
+               let violation = ProductionPromptPolicy.videoPromptViolations(
+                   composed,
+                   expectedMovement: shot.cameraMovementKind,
+                   expectedMovementDetail: shot.cameraMovementDetail
+               ).first {
+                throw ComposeError.lintBlocked(code: "PRODUCTION_PLAN_CAMERA_CONFLICT", message: violation)
+            }
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .image:
+            let acceptsFreeContext = shot == nil
             var payload = PromptPayload(
                 subject: trimmed,
+                setting: acceptsFreeContext ? normalize(setting) : "",
+                style: acceptsFreeContext ? normalize(style) : "",
+                light: acceptsFreeContext ? normalize(lighting) : "",
                 aspectRatio: aspectRatio,
-                directives: directives.all
+                directives: directives.all + (shot?.imageDirectives ?? [])
             )
             if let shot { payload.camera = shot.camera; payload.composition = shot.composition }
             composed = try PromptGenerator.buildImagePrompt(modelID: engineModelID(modelId), payload: payload)
+            if shot != nil,
+               let violation = ProductionPromptPolicy.stillPromptViolations(composed).first {
+                throw ComposeError.lintBlocked(code: "STILL_PROMPT_CAMERA_MOTION", message: violation)
+            }
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .audio, .music:
             // No engine audio builder — merge locked directives into the intent (the historical

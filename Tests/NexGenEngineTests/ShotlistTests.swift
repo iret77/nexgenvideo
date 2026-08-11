@@ -37,9 +37,20 @@ struct ShotlistTests {
 
     @Test("shotlist round-trips through encode/decode (port of test_shotlist_round_trip)")
     func shotlistRoundTrip() throws {
+        let plan = try ShotProductionPlan(
+            primaryAction: "The performer opens the door.",
+            cameraMovement: .dollyIn,
+            narrativeBeat: .action,
+            renderability: .yellow,
+            risks: [.identityDrift],
+            rescueCut: "Cut from the door handle to the performer inside.",
+            matchActionCue: "Hand reaches the handle.",
+            continuityLocks: ["blue coat", "door opens screen-right"]
+        )
         let shot = try Shot(
             id: "s001", section: "verse", timeStart: 0.0, timeEnd: 4.0, durationS: 4.0,
-            type: .performance, description: "d", visualPrompt: "p", mood: "m"
+            type: .performance, description: "d", visualPrompt: "p", mood: "m",
+            productionPlan: plan
         )
         let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 4.0)
         let sl = try Shotlist(
@@ -50,8 +61,161 @@ struct ShotlistTests {
         let yaml = try YAMLCoding.encode(sl)
         let again = try YAMLCoding.decode(Shotlist.self, from: yaml)
 
+        #expect(yaml.contains("production_plan:"))
+        #expect(!yaml.contains("__ngv_internal.production_plan"))
         #expect(again.shots[0].id == "s001")
+        #expect(again.shots[0].productionPlan == plan)
         #expect(again.mode == .section)
+    }
+
+    @Test("green production plans reject risks")
+    func greenPlanRejectsRisks() {
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer turns.",
+                cameraMovement: .static,
+                renderability: .green,
+                risks: [.identityDrift]
+            )
+        }
+    }
+
+    @Test("production plans require one subject action and one camera movement clause")
+    func productionPlanDirectivesAreAtomic() throws {
+        for action in [
+            "The performer opens the door and enters.",
+            "The performer opens the door or steps back.",
+            "The performer opens the door but stays outside.",
+            "The performer opens the door, then enters.",
+            "The performer opens the door; the performer enters.",
+        ] {
+            #expect(throws: ShotProductionPlan.ValidationError.self) {
+                _ = try ShotProductionPlan(
+                    primaryAction: action,
+                    cameraMovement: .static,
+                    renderability: .green
+                )
+            }
+        }
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer opens the door.",
+                cameraMovement: .other,
+                cameraMovementDetail: "pedestal up and pan right",
+                renderability: .green
+            )
+        }
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer opens the door.",
+                cameraMovement: .dollyIn,
+                cameraMovementDetail: "pan left",
+                renderability: .green
+            )
+        }
+        _ = try ShotProductionPlan(
+            primaryAction: "The performer opens the door.",
+            cameraMovement: .other,
+            cameraMovementDetail: "single pedestal rise",
+            renderability: .green
+        )
+    }
+
+    @Test("yellow and red production plans require a risk and rescue cut")
+    func riskyPlansRequireRescue() {
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer turns.",
+                cameraMovement: .static,
+                renderability: .yellow
+            )
+        }
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer turns.",
+                cameraMovement: .static,
+                renderability: .red,
+                risks: [.identityDrift]
+            )
+        }
+    }
+
+    @Test("production plans reject empty and duplicate continuity locks")
+    func continuityLocksAreUsable() {
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer turns.",
+                cameraMovement: .static,
+                renderability: .green,
+                continuityLocks: [" "]
+            )
+        }
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer turns.",
+                cameraMovement: .static,
+                renderability: .green,
+                continuityLocks: ["Blue coat", " blue coat "]
+            )
+        }
+    }
+
+    @Test("production blocking anchors normalize character references and reject duplicates")
+    func blockingAnchorsAreDeterministic() throws {
+        let plan = try ShotProductionPlan(
+            primaryAction: "The performer turns.",
+            cameraMovement: .static,
+            renderability: .green,
+            blockingAnchors: [
+                ProductionBlockingAnchor(
+                    characterRef: " Performer ",
+                    setAnchor: "hall doorway"
+                ),
+            ]
+        )
+        #expect(plan.setAnchor(for: "performer") == "hall doorway")
+        #expect(plan.setAnchor(for: " PERFORMER ") == "hall doorway")
+
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer turns.",
+                cameraMovement: .static,
+                renderability: .green,
+                blockingAnchors: [
+                    ProductionBlockingAnchor(characterRef: "Performer", setAnchor: "door"),
+                    ProductionBlockingAnchor(characterRef: " performer ", setAnchor: "window"),
+                ]
+            )
+        }
+    }
+
+    @Test("production plan carrier is reserved and fails closed when corrupted")
+    func productionPlanCarrierFailsClosed() throws {
+        let storageKey = "__ngv_internal.production_plan.v1"
+        #expect(throws: Shot.ValidationError.self) {
+            _ = try Shot(
+                id: "s001", section: "verse", timeStart: 0, timeEnd: 4, durationS: 4,
+                type: .performance, description: "d", visualPrompt: "p", mood: "m",
+                propViews: [storageKey: "injected"]
+            )
+        }
+
+        var shot = try Self.shot()
+        shot.propViews[storageKey] = "not-base64"
+        #expect(throws: Shot.ValidationError.self) {
+            try shot.validate()
+        }
+        do {
+            _ = try YAMLCoding.encode(shot)
+            Issue.record("corrupt production plan carrier encoded successfully")
+        } catch EncodingError.invalidValue(_, let context) {
+            #expect(
+                context.underlyingError as? Shot.ValidationError ==
+                    .invalidProductionPlanCarrier
+            )
+        } catch {
+            Issue.record("unexpected encoding error: \(error)")
+        }
     }
 
     // MARK: - source_mode (hybrid production, issue #129)
@@ -113,7 +277,7 @@ struct ShotlistTests {
 
     @Test("shotlistSchemaVersion constant")
     func schemaVersionConstant() {
-        #expect(shotlistSchemaVersion == "shotlist/v3")
+        #expect(shotlistSchemaVersion == "shotlist/v4")
     }
 
     @Test("schema_ has no default — constructing requires an explicit value")
@@ -121,19 +285,22 @@ struct ShotlistTests {
         // Compiles only because `schema_:` must be passed explicitly (no default
         // parameter value on Shotlist.init) — this test's mere existence with an
         // explicit argument documents/enforces that.
-        let sl = try Self.shotlist(schema_: "shotlist/v3")
-        #expect(sl.schema_ == "shotlist/v3")
+        let sl = try Self.shotlist(schema_: "shotlist/v4")
+        #expect(sl.schema_ == "shotlist/v4")
     }
 
     // MARK: - schema tolerant-read
 
-    @Test("legacy schema versions v1 and v2 decode without throwing", arguments: ["shotlist/v1", "shotlist/v2"])
+    @Test(
+        "legacy schema versions decode without throwing",
+        arguments: ["shotlist/v1", "shotlist/v2", "shotlist/v3"]
+    )
     func legacySchemaVersionsAccepted(_ schemaValue: String) throws {
         let sl = try Self.shotlist(schema_: schemaValue)
         #expect(sl.schema_ == schemaValue)
     }
 
-    @Test("unknown schema versions throw", arguments: ["shotlist/v4", "shotlist/v0"])
+    @Test("unknown schema versions throw", arguments: ["shotlist/v5", "shotlist/v0"])
     func unknownSchemaVersionsThrow(_ schemaValue: String) {
         #expect(throws: Shotlist.ValidationError.self) {
             _ = try Self.shotlist(schema_: schemaValue)

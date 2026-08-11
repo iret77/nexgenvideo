@@ -19,9 +19,23 @@ struct ExpandingCameraTests {
         #expect(!CameraMoves.isExpandingMove(""))
     }
 
-    static func shot(_ id: String, prompt: String, strategy: KeyframeStrategy, notes: String? = nil) throws -> Shot {
-        try Shot(id: id, section: "verse", timeStart: 0, timeEnd: 4, durationS: 4, type: .performance,
-                 description: "d", visualPrompt: prompt, mood: "m", keyframeStrategy: strategy, notes: notes)
+    static func shot(
+        _ id: String,
+        prompt: String,
+        strategy: KeyframeStrategy,
+        movement: CameraMovement = .static,
+        movementDetail: String? = nil,
+        notes: String? = nil
+    ) throws -> Shot {
+        let plan = try ShotProductionPlan(
+            primaryAction: "The performer waits.",
+            cameraMovement: movement,
+            cameraMovementDetail: movementDetail,
+            renderability: .green
+        )
+        return try Shot(id: id, section: "verse", timeStart: 0, timeEnd: 4, durationS: 4, type: .performance,
+                 description: "d", visualPrompt: prompt, mood: "m", keyframeStrategy: strategy,
+                 notes: notes, productionPlan: plan)
     }
 
     static func shotlist(_ shots: [Shot]) throws -> Shotlist {
@@ -34,7 +48,10 @@ struct ExpandingCameraTests {
 
     @Test("an expanding move without an end frame is flagged")
     func expandingFlags() throws {
-        let shots = try [Self.shot("s001", prompt: "slow pan across the neon street", strategy: .start)]
+        let shots = try [Self.shot(
+            "s001", prompt: "the performer holds a measured pose", strategy: .start,
+            movement: .pan
+        )]
         let findings = try MusicvideoChecks.expandingCameraCheck(AuditContext(shotlist: try Self.shotlist(shots)))
         #expect(findings.contains {
             $0.code == "EXPANDING_CAMERA_NEEDS_END_FRAME" || $0.code == "EXPANDING_CAMERA_NO_END_KEYFRAME_SUPPORT"
@@ -43,8 +60,11 @@ struct ExpandingCameraTests {
 
     @Test("keyframe_end_skip_ok suppresses; a static shot is clean")
     func escapeAndStatic() throws {
-        let escaped = try Self.shot("s001", prompt: "slow pan", strategy: .start, notes: "keyframe_end_skip_ok: pure sky")
-        let staticShot = try Self.shot("s002", prompt: "locked-off wide, static", strategy: .start)
+        let escaped = try Self.shot(
+            "s001", prompt: "the performer holds a measured pose", strategy: .start,
+            movement: .pan, notes: "keyframe_end_skip_ok: pure sky"
+        )
+        let staticShot = try Self.shot("s002", prompt: "the performer waits", strategy: .start)
         let findings = try MusicvideoChecks.expandingCameraCheck(
             AuditContext(shotlist: try Self.shotlist([escaped, staticShot])))
         #expect(!findings.contains { $0.code.hasPrefix("EXPANDING_CAMERA") })

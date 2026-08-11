@@ -81,7 +81,10 @@ struct GateGuardTests {
 
     private func shotlist(
         duration: Double = 12,
-        keyframeStrategy: KeyframeStrategy = .start
+        keyframeStrategy: KeyframeStrategy = .start,
+        sourceMode: SourceMode = .generated,
+        productionPlan: ShotProductionPlan? = nil,
+        generator: String = "test"
     ) throws -> Shotlist {
         let song = try Song(
             title: "song",
@@ -97,10 +100,12 @@ struct GateGuardTests {
             timeEnd: duration,
             durationS: duration,
             type: .performance,
+            sourceMode: sourceMode,
             description: "A complete shot",
             visualPrompt: "A performer holds the opening pose in a measured wide frame.",
             mood: "restrained",
-            keyframeStrategy: keyframeStrategy
+            keyframeStrategy: keyframeStrategy,
+            productionPlan: productionPlan
         )
         return try Shotlist(
             schema_: shotlistSchemaVersion,
@@ -108,7 +113,7 @@ struct GateGuardTests {
             project: "demo",
             song: song,
             generated: "2026-07-26T00:00:00Z",
-            generator: "test",
+            generator: generator,
             shots: [shot]
         )
     }
@@ -132,7 +137,8 @@ struct GateGuardTests {
     }
 
     private func storyboardSteps(
-        locationView: String = "wide"
+        locationView: String = "wide",
+        firstBlocking: [[String: String]] = []
     ) throws -> [Step] {
         try (1...4).map { index in
             try Step(
@@ -147,7 +153,8 @@ struct GateGuardTests {
                     "height": "eye_level",
                     "angle": "frontal",
                     "lens_hint": "wide",
-                ]
+                ],
+                characterBlocking: index == 1 ? firstBlocking : []
             )
         }
     }
@@ -463,10 +470,41 @@ struct GateGuardTests {
         try StoryboardStore.save(valid, to: root)
         try MusicvideoGateChecks.requireRealStoryboard(dataRoot: root)
 
-        let truncated = try Storyboard(
+        let unanchored = try Storyboard(
             meta: try StoryboardMeta(
                 project: "demo",
                 version: 2,
+                generated: "2026-07-26T00:00:00Z",
+                summaryOneline: "An unanchored opening."
+            ),
+            sections: [
+                try Section(
+                    id: "intro",
+                    label: "intro",
+                    timeStart: 0,
+                    timeEnd: 12,
+                    energy: "low",
+                    function: "aufbau",
+                    steps: try storyboardSteps(firstBlocking: [[
+                        "character_ref": "performer",
+                        "position": "left third",
+                        "pose": "standing",
+                        "gaze": "toward the yard",
+                        "relation_to_set": "beside the gate",
+                        "set_anchor": "screen-left",
+                    ]])
+                ),
+            ]
+        )
+        try StoryboardStore.save(unanchored, to: root)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealStoryboard(dataRoot: root)
+        }
+
+        let truncated = try Storyboard(
+            meta: try StoryboardMeta(
+                project: "demo",
+                version: 3,
                 generated: "2026-07-26T00:00:00Z",
                 summaryOneline: "An incomplete opening."
             ),
@@ -488,7 +526,7 @@ struct GateGuardTests {
         }
     }
 
-    @Test("planning gates accept one coherent artifact chain")
+    @Test("planning gates accept coherent artifacts and enforce shot plan ownership")
     func coherentPlanningArtifacts() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -599,6 +637,55 @@ struct GateGuardTests {
         try MusicvideoGateChecks.requireRealBible(dataRoot: root)
 
         _ = try saveShotlist(try shotlist(), to: root)
+        try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+
+        _ = try saveShotlist(
+            try shotlist(generator: "shotlist-agent@write_shotlist"),
+            to: root
+        )
+        try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+
+        _ = try saveShotlist(
+            try shotlist(generator: "shotlist-agent@write_shotlist/v3"),
+            to: root
+        )
+        try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+
+        _ = try saveShotlist(
+            try shotlist(generator: Shotlist.agentWriterGenerator),
+            to: root
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+        }
+
+        let plan = try ShotProductionPlan(
+            primaryAction: "The performer holds the opening pose.",
+            cameraMovement: .static,
+            narrativeBeat: .establish,
+            renderability: .green,
+            continuityLocks: []
+        )
+        _ = try saveShotlist(
+            try shotlist(
+                keyframeStrategy: .none,
+                sourceMode: .imported,
+                productionPlan: plan,
+                generator: Shotlist.agentWriterGenerator
+            ),
+            to: root
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+        }
+
+        _ = try saveShotlist(
+            try shotlist(
+                productionPlan: plan,
+                generator: Shotlist.agentWriterGenerator
+            ),
+            to: root
+        )
         try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
     }
 
@@ -721,14 +808,24 @@ struct GateGuardTests {
     func framesRequirement() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        _ = try saveShotlist(try shotlist(), to: root)
+        let plan = try ShotProductionPlan(
+            primaryAction: "The performer crosses the doorway.",
+            cameraMovement: .static,
+            renderability: .green,
+            continuityLocks: ["red scarf stays tied at the left shoulder"]
+        )
+        let current = try shotlist(productionPlan: plan)
+        _ = try saveShotlist(current, to: root)
         let image = root.appendingPathComponent("media/s001-start.png")
         try FileManager.default.createDirectory(
             at: image.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         try Data("frame-v1".utf8).write(to: image)
-        try saveFramesManifest(
+        let prompt = try #require(current.shots.first)
+            .stillProductionPromptRequirements
+            .joined(separator: ". ")
+        func frames(_ providerPrompt: String) -> FramesManifest {
             FramesManifest(
                 project: "demo",
                 generated: "2026-07-26T00:00:00Z",
@@ -741,14 +838,14 @@ struct GateGuardTests {
                                 role: "start",
                                 path: "media/s001-start.png",
                                 runwayModel: "image-model",
-                                providerPrompt: "A compiled provider prompt."
+                                providerPrompt: providerPrompt
                             ),
                         ]
                     ),
                 ]
-            ),
-            dataRoot: root
-        )
+            )
+        }
+        try saveFramesManifest(frames(prompt), dataRoot: root)
         let digest = SHA256.hash(data: try Data(contentsOf: image))
             .map { String(format: "%02x", $0) }
             .joined()
@@ -769,6 +866,21 @@ struct GateGuardTests {
         )
         try MusicvideoGateChecks.requireRealFrames(dataRoot: root)
 
+        try saveFramesManifest(
+            frames("A compiled prompt for another shot."),
+            dataRoot: root
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealFrames(dataRoot: root)
+        }
+        try saveFramesManifest(
+            frames(prompt + ". The view glides forward."),
+            dataRoot: root
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealFrames(dataRoot: root)
+        }
+        try saveFramesManifest(frames(prompt), dataRoot: root)
         try Data("frame-v2".utf8).write(to: image)
         #expect(throws: GateBlocked.self) {
             try MusicvideoGateChecks.requireRealFrames(dataRoot: root)
@@ -815,6 +927,74 @@ struct GateGuardTests {
         try MusicvideoGateChecks.requireRealRender(dataRoot: root)
 
         try Data("replacement".utf8).write(to: video)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        }
+    }
+
+    @Test("render gate binds the provider prompt to the current production plan")
+    func renderPromptProductionPlanRequirement() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let plan = try ShotProductionPlan(
+            primaryAction: "The performer crosses the doorway.",
+            cameraMovement: .dollyIn,
+            renderability: .green,
+            matchActionCue: "Cut as the right foot reaches the threshold.",
+            continuityLocks: ["red scarf stays tied at the left shoulder"]
+        )
+        let current = try shotlist(
+            keyframeStrategy: .none,
+            productionPlan: plan
+        )
+        _ = try saveShotlist(current, to: root)
+        let video = root.appendingPathComponent("media/s001.mp4")
+        try FileManager.default.createDirectory(
+            at: video.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("video".utf8).write(to: video)
+        var manifest = RenderManifest(project: "demo", phase: "final")
+        record(
+            &manifest,
+            shotId: "s001",
+            output: "media/s001.mp4",
+            costEur: 1,
+            phase: "final"
+        )
+        try saveRenderManifest(manifest, dataRoot: root)
+        let prompt = try #require(current.shots.first)
+            .videoProductionPromptRequirements
+            .joined(separator: ". ")
+        func proof(_ providerPrompt: String) throws -> RenderProofManifest {
+            RenderProofManifest(
+                project: "demo",
+                phase: "final",
+                entries: [
+                    "s001": RenderProofEntry(
+                        shotId: "s001",
+                        output: "media/s001.mp4",
+                        outputSha256: try FileDigest.sha256(of: video),
+                        providerPrompt: providerPrompt,
+                        generationModel: "video-model"
+                    ),
+                ]
+            )
+        }
+        try saveRenderProofManifest(try proof(prompt), dataRoot: root)
+        try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+
+        try saveRenderProofManifest(
+            try proof("A compiled prompt for another shot."),
+            dataRoot: root
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        }
+        try saveRenderProofManifest(
+            try proof(prompt + ". The view pans right."),
+            dataRoot: root
+        )
         #expect(throws: GateBlocked.self) {
             try MusicvideoGateChecks.requireRealRender(dataRoot: root)
         }

@@ -302,8 +302,13 @@ private func validateToolInput(
     if let alternatives = schema["anyOf"] as? [[String: Any]] {
         var firstError: ToolError?
         var matchingTypeError: ToolError?
+        var preferredError: ToolError?
+        let preferredAlternative = preferredAnyOfAlternative(
+            for: value,
+            in: alternatives
+        )
         var matches = false
-        for alternative in alternatives {
+        for (index, alternative) in alternatives.enumerated() {
             do {
                 try validateToolInput(in: value, against: alternative, path: path)
                 matches = true
@@ -313,10 +318,13 @@ private func validateToolInput(
                 if schemaTypeMatches(value, type: alternative["type"] as? String) {
                     matchingTypeError = matchingTypeError ?? error
                 }
+                if preferredAlternative == index {
+                    preferredError = error
+                }
             }
         }
         if !matches {
-            throw matchingTypeError ?? firstError
+            throw preferredError ?? matchingTypeError ?? firstError
                 ?? ToolError("\(path): does not match any allowed schema")
         }
     }
@@ -375,7 +383,21 @@ private func validateToolInput(
             )
         }
     case "string":
-        guard value is String else { throw ToolError("\(path): expected string") }
+        guard let string = value as? String else {
+            throw ToolError("\(path): expected string")
+        }
+        if let minimum = schema["minLength"] as? Int,
+           string.count < minimum {
+            throw ToolError("\(path): expected at least \(minimum) character(s)")
+        }
+        if let maximum = schema["maxLength"] as? Int,
+           string.count > maximum {
+            throw ToolError("\(path): expected at most \(maximum) character(s)")
+        }
+        if let pattern = schema["pattern"] as? String,
+           string.range(of: pattern, options: .regularExpression) == nil {
+            throw ToolError("\(path): does not match required pattern")
+        }
     case "integer":
         guard isJSONNumber(value, integerOnly: true) else {
             throw ToolError("\(path): expected integer")
@@ -405,6 +427,24 @@ private func validateToolInput(
             )
         }
     }
+}
+
+private func preferredAnyOfAlternative(
+    for value: Any,
+    in alternatives: [[String: Any]]
+) -> Int? {
+    guard let object = value as? [String: Any] else { return nil }
+    for key in object.keys.sorted() {
+        guard let string = object[key] as? String else { continue }
+        let matches = alternatives.indices.filter { index in
+            let properties = objectSchemaProperties(
+                alternatives[index]["properties"]
+            )
+            return (properties[key]?["enum"] as? [String])?.contains(string) == true
+        }
+        if matches.count == 1 { return matches[0] }
+    }
+    return nil
 }
 
 private func schemaTypeMatches(_ value: Any, type: String?) -> Bool {

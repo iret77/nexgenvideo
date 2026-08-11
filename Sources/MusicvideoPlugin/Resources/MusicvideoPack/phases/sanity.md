@@ -91,9 +91,9 @@ explicitly every time; no implicit carry-over.
 - Brief ↔ shotlist mode consistency (error)
 - Reference-budget per shot (warn `REF_BUDGET_EXCEEDED` when the planned
   bible refs exceed the model capability limit)
-- Tempo pacing (BPM class vs. shot duration → `SHOT_OVER_TEMPO_CAP`,
-  `PACING_TOO_MANY_BREAKERS`, `PACING_DRIFT`)
 - Structural blocking for start keyframes (`NO_BLOCKING_AT_T0`)
+- Music tempo caps and aggregate ASL (`SHOT_OVER_TEMPO_CAP`, pacing warnings)
+- Per-shot action density (`SHOT_PACING_IMPLAUSIBLE`)
 
 ### 3. Interpret the report with the user
 

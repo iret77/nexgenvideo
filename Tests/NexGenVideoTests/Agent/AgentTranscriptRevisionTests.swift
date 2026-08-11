@@ -1,26 +1,11 @@
+import SwiftUI
 import Testing
 @testable import NexGenVideo
 
-@Suite("Agent transcript revision")
+@Suite("Agent transcript scrolling")
 @MainActor
 struct AgentTranscriptRevisionTests {
-    @Test func advancesForReplacementAndInPlaceGrowth() {
-        let service = AgentService()
-        let initialRevision = service.transcriptRevision
-
-        service.messages = [
-            AgentMessage(role: .assistant, blocks: [.text("Working")]),
-        ]
-
-        #expect(service.transcriptRevision == initialRevision &+ 1)
-        let replacementRevision = service.transcriptRevision
-
-        service.messages[0].blocks.append(.text("Still working"))
-
-        #expect(service.transcriptRevision == replacementRevision &+ 1)
-    }
-
-    @Test func runningToolTurnFollowsItsPersistentTail() {
+    @Test func runningToolTurnProjectsItsPersistentTail() {
         let activityMessage = AgentMessage(
             role: .assistant,
             blocks: [
@@ -43,13 +28,9 @@ struct AgentTranscriptRevisionTests {
             if case .activity(let activity) = $0 { return activity.isRunning }
             return false
         })
-        #expect(AgentTranscriptScrollPolicy.targetID(
-            entries: entries,
-            isStreaming: true
-        ) == entries.last?.id)
     }
 
-    @Test func plainStreamingTurnFollowsTheIndicator() {
+    @Test func plainStreamingTurnProjectsWithoutAnActivity() {
         let entries = AgentTranscriptProjection.entries(
             messages: [
                 AgentMessage(role: .assistant, blocks: [.text("Preparing")]),
@@ -57,10 +38,10 @@ struct AgentTranscriptRevisionTests {
             isStreaming: true
         )
 
-        #expect(AgentTranscriptScrollPolicy.targetID(
-            entries: entries,
-            isStreaming: true
-        ) == "streaming-indicator")
+        #expect(!entries.contains {
+            if case .activity = $0 { return true }
+            return false
+        })
     }
 
     @Test func scrollDistanceOnlyPinsAwayBeyondTheThreshold() {
@@ -76,5 +57,50 @@ struct AgentTranscriptRevisionTests {
             containerHeight: 250,
             threshold: 60
         ))
+    }
+
+    @Test func everyObservedUserScrollPhaseUsesMeasuredGeometry() {
+        for phase in [ScrollPhase.interacting, .decelerating, .idle] {
+            #expect(AgentTranscriptScrollPolicy.pinState(
+                for: phase,
+                suppressProgrammaticUpdate: false,
+                contentHeight: 1_000,
+                contentOffsetY: 700,
+                containerHeight: 250,
+                threshold: 60
+            ) == false)
+            #expect(AgentTranscriptScrollPolicy.pinState(
+                for: phase,
+                suppressProgrammaticUpdate: false,
+                contentHeight: 1_000,
+                contentOffsetY: 680,
+                containerHeight: 250,
+                threshold: 60
+            ) == true)
+        }
+        #expect(AgentTranscriptScrollPolicy.pinState(
+            for: .animating,
+            suppressProgrammaticUpdate: false,
+            contentHeight: 1_000,
+            contentOffsetY: 680,
+            containerHeight: 250,
+            threshold: 60
+        ) == nil)
+        #expect(AgentTranscriptScrollPolicy.pinState(
+            for: .idle,
+            suppressProgrammaticUpdate: true,
+            contentHeight: 1_000,
+            contentOffsetY: 680,
+            containerHeight: 250,
+            threshold: 60
+        ) == nil)
+        #expect(AgentTranscriptScrollPolicy.pinState(
+            for: .idle,
+            suppressProgrammaticUpdate: false,
+            contentHeight: 1_000,
+            contentOffsetY: 680,
+            containerHeight: 250,
+            threshold: 60
+        ) == true)
     }
 }

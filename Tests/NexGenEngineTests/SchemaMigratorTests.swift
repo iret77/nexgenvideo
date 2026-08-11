@@ -121,7 +121,7 @@ struct SchemaMigratorTests {
     /// look for `shotlist/current.yaml`, so a shotlist was invisible to it — always `.missing`, never
     /// migratable. Uses the real fixture, downgraded, so this runs against a shotlist the engine
     /// actually writes.
-    @Test("a shotlist is found at its real versioned path and lifted v1 -> v3")
+    @Test("a shotlist is found at its real versioned path and lifted v1 -> v4")
     func migratesShotlistAtVersionedPath() throws {
         let root = try scratch()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -131,7 +131,7 @@ struct SchemaMigratorTests {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let downgraded = try String(contentsOf: fixture, encoding: .utf8)
-            .replacingOccurrences(of: "schema: shotlist/v3", with: "schema: shotlist/v1")
+            .replacingOccurrences(of: "schema: shotlist/v4", with: "schema: shotlist/v1")
         try downgraded.write(to: url, atomically: true, encoding: .utf8)
 
         // The check must SEE it — the bug this guards is it reporting `.missing`.
@@ -143,8 +143,8 @@ struct SchemaMigratorTests {
         let results = try SchemaMigrator.migrateProject(dataRoot: root)
         let shotlist = try #require(results.first { $0.artifact.hasPrefix("shotlist/") })
         #expect(shotlist.from == "shotlist/v1")
-        #expect(shotlist.to == "shotlist/v3")
-        #expect(schemaField(at: url) == "shotlist/v3")
+        #expect(shotlist.to == "shotlist/v4")
+        #expect(schemaField(at: url) == "shotlist/v4")
         // Shots survive the round-trip intact.
         let migrated = try #require(try loadShotlist(dataRoot: root))
         #expect(migrated.shots.map(\.id) == ["s001", "s002", "s003", "s004"])
@@ -159,7 +159,7 @@ struct SchemaMigratorTests {
         let fixture = try String(
             contentsOf: DataRootResolverTests.fixtureHome()
                 .appendingPathComponent("pipeline/shotlist/v1.yaml"), encoding: .utf8)
-        try fixture.replacingOccurrences(of: "schema: shotlist/v3", with: "schema: shotlist/v1")
+        try fixture.replacingOccurrences(of: "schema: shotlist/v4", with: "schema: shotlist/v1")
             .write(to: dir.appendingPathComponent("v1.yaml"), atomically: true, encoding: .utf8)
         try fixture.write(to: dir.appendingPathComponent("v2.yaml"), atomically: true, encoding: .utf8)
 

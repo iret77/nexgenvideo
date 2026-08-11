@@ -1,11 +1,8 @@
 import Foundation
 
-/// Per-shot visual-prompt quality (length + generic-slop heuristics).
+/// Per-shot frame-zero subject quality.
 ///
-/// - `PROMPT_TOO_SHORT` (error): a prompt this short cannot carry the required
-///   components (subject+action / position / setting / camera / light+mood).
-/// - `PROMPT_THIN` (warn): borderline — one of those components is probably
-///   too terse.
+/// - `PROMPT_TOO_SHORT` (error): a prompt this short cannot identify a concrete subject.
 /// - `PROMPT_GENERIC` (warn): generic adjectives ("epic", "cinematic
 ///   masterpiece") without concrete image description — slop risk.
 ///
@@ -14,8 +11,7 @@ import Foundation
 /// the engine because they depend on pack-specific validators. Port of
 /// `sanity/checks/prompt_quality.py::check`.
 public let promptQualityCheck: SanityCheck = { ctx in
-    let shortLen = 60
-    let thinLen = 120
+    let shortLen = 12
     let genericTokens = ["epic", "cinematic masterpiece"]
     let genericMaxLen = 200
 
@@ -28,20 +24,7 @@ public let promptQualityCheck: SanityCheck = { ctx in
                     level: .error,
                     code: "PROMPT_TOO_SHORT",
                     shotId: shot.id,
-                    message:
-                        "visual_prompt only \(p.count) chars — missing required components "
-                        + "(subject+action / position / setting / camera / light+mood)"
-                )
-            )
-        } else if p.count < thinLen {
-            out.append(
-                Finding(
-                    level: .warn,
-                    code: "PROMPT_THIN",
-                    shotId: shot.id,
-                    message:
-                        "visual_prompt only \(p.count) chars — one of the required components "
-                        + "is probably too terse"
+                    message: "visual_prompt only \(p.count) chars — no concrete frame-zero subject"
                 )
             )
         }

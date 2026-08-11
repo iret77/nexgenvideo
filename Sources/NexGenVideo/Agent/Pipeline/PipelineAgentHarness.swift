@@ -187,13 +187,48 @@ final class PipelineAgentHarness {
 
         var phase: String? { snapshot.nextPhase }
 
-        var agentPrompt: String? {
+        func agentPrompt() throws -> String? {
             let progress = PackProgress(
                 nextPhase: snapshot.nextPhase,
                 approvedPhases: snapshot.phases.filter(\.approved).count,
                 totalPhases: snapshot.phases.count
             )
-            return pack.starters(for: progress).first?.prompt
+            let prompt = pack.starters(for: progress).first?.prompt
+            guard let phase = snapshot.nextPhase else { return prompt }
+            guard let prompt else { return nil }
+            let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+            let brief: Brief?
+            if FileManager.default.fileExists(atPath: briefURL.path) {
+                do {
+                    brief = try YAMLArtifactStore(dataRoot: dataRoot).load(
+                        Brief.self,
+                        at: PipelineLayout.briefFile
+                    )
+                } catch {
+                    throw ToolError(
+                        "The Brief is unreadable. Repair or restore it before continuing: "
+                            + error.localizedDescription
+                    )
+                }
+            } else if snapshot.phases.first(where: { $0.phase == "brief" })?.approved == true {
+                throw ToolError(
+                    "The approved Brief is missing. Repair or restore it before continuing."
+                )
+            } else {
+                brief = nil
+            }
+            let registry = PackCatalog.registry(activePack: packName)
+            let activeIDs = registry.activeProductionProfileIDs(metadata: [
+                "concept_type": brief?.conceptType.rawValue ?? "",
+            ])
+            let guidance = ProductionProfileGuidance.instructions(
+                for: phase,
+                profiles: registry.productionProfiles.filter {
+                    activeIDs.contains($0.id)
+                }
+            )
+            guard !guidance.isEmpty else { return prompt }
+            return "\(prompt)\n\nFollow these active core production profiles:\n\n\(guidance)"
         }
     }
 
@@ -335,10 +370,20 @@ final class PipelineAgentHarness {
                   context.manifest.steps(for: phase),
                   dataRoot: dataRoot,
                   ledger: ledger
-              ) else {
+        ) else {
+            let prompt: String?
+            do {
+                prompt = try context.agentPrompt()
+            } catch {
+                return Reconciliation(
+                    isReady: false,
+                    agentPrompt: nil,
+                    failure: error.localizedDescription
+                )
+            }
             return Reconciliation(
                 isReady: true,
-                agentPrompt: context.agentPrompt,
+                agentPrompt: prompt,
                 failure: nil
             )
         }
@@ -435,7 +480,7 @@ final class PipelineAgentHarness {
         return try loadContext(
             dataRoot: dataRoot,
             packName: packName
-        ).agentPrompt
+        ).agentPrompt()
     }
 
     func guardAgentDecision(editor: EditorViewModel) throws {

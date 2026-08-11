@@ -39,6 +39,16 @@ enum MusicvideoGateChecks {
         }
     }
 
+    private static func promptContains(
+        _ prompt: String,
+        requirements: [String]
+    ) -> Bool {
+        ComplianceLinter.lintLockedDirectives(
+            prompt,
+            lockedDirectives: requirements
+        ).isEmpty
+    }
+
     private static func existingProjectFile(
         _ rawPath: String,
         dataRoot: URL
@@ -646,6 +656,28 @@ enum MusicvideoGateChecks {
                 "Can't approve \"shotlist\": its mode or budget doesn't match the brief."
             )
         }
+        let importedPlans = shotlist.shots.filter {
+            $0.sourceMode == .imported && $0.productionPlan != nil
+        }
+        guard importedPlans.isEmpty else {
+            throw GateBlocked(
+                "Can't approve \"shotlist\": imported shots must omit production_plan "
+                    + "(e.g. \(importedPlans.prefix(3).map(\.id).joined(separator: ", ")))."
+            )
+        }
+        if Shotlist.requiresProductionPlan(forGenerator: shotlist.generator) {
+            let missingPlans = shotlist.shots.filter {
+                ProductionDiscipline.requiresProductionPlan($0)
+                    && $0.productionPlan == nil
+            }
+            guard missingPlans.isEmpty else {
+                throw GateBlocked(
+                    "Can't approve \"shotlist\": canonical agent-written generated and "
+                        + "AI-enhanced shots require production_plan (e.g. "
+                        + "\(missingPlans.prefix(3).map(\.id).joined(separator: ", ")))."
+                )
+            }
+        }
         let analysis = try analysisObject(dataRoot: dataRoot, phase: "shotlist")
         let measuredBPM = number(analysis["bpm"]) ?? 0
         let measuredMultiplier = number(analysis["tempo_multiplier"]) ?? 0
@@ -1174,6 +1206,17 @@ enum MusicvideoGateChecks {
                         + "must be gapless and ordered."
                 )
             }
+            let unanchoredSteps = section.steps.filter(
+                ProductionDiscipline.hasUnanchoredCharacterBlocking
+            )
+            guard unanchoredSteps.isEmpty else {
+                throw GateBlocked(
+                    "Can't approve \"storyboard\": generated character blocking must "
+                        + "name a set_anchor from that step's prop_request or visible_zones and a non-empty "
+                        + "relation_to_set (e.g. "
+                        + "\(unanchoredSteps.prefix(3).map(\.id).joined(separator: ", ")))."
+                )
+            }
             guard ["low", "mid", "high", "drop"].contains(section.energy),
                   ["aufbau", "refrain", "kontrast", "aufloesung"]
                     .contains(section.function),
@@ -1342,6 +1385,23 @@ enum MusicvideoGateChecks {
                         "Can't approve \"frames\": \(shot.id)-\(role) has no compiled provider prompt."
                     )
                 }
+                guard promptContains(
+                    frame.providerPrompt,
+                    requirements: shot.stillProductionPromptRequirements
+                ) else {
+                    throw GateBlocked(
+                        "Can't approve \"frames\": \(shot.id)-\(role)'s provider prompt "
+                            + "doesn't contain its current production-plan directives."
+                    )
+                }
+                guard ProductionPromptPolicy.stillPromptViolations(
+                    frame.providerPrompt
+                ).isEmpty else {
+                    throw GateBlocked(
+                        "Can't approve \"frames\": \(shot.id)-\(role)'s provider prompt "
+                            + "contains camera motion."
+                    )
+                }
                 guard !frame.runwayModel
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw GateBlocked(
@@ -1455,19 +1515,28 @@ enum MusicvideoGateChecks {
                   !output.isEmpty,
                   p?.shotId == $0,
                   p?.output == output,
+                  let proofEntry = p,
+                  let shot = shotlist.shots.first(where: {
+                      $0.id == proofEntry.shotId
+                  }),
                   let providerPrompt = p?.providerPrompt,
                   !providerPrompt.trimmingCharacters(
                     in: .whitespacesAndNewlines
+                  ).isEmpty,
+                  promptContains(
+                    providerPrompt,
+                    requirements: shot.videoProductionPromptRequirements
+                  ),
+                  ProductionPromptPolicy.videoPromptViolations(
+                    providerPrompt,
+                    expectedMovement: shot.productionPlan?.cameraMovement,
+                    expectedMovementDetail: shot.productionPlan?.cameraMovementDetail
                   ).isEmpty,
                   let generationModel = p?.generationModel,
                   !generationModel.trimmingCharacters(
                     in: .whitespacesAndNewlines
                   ).isEmpty,
                   let outputSha256 = p?.outputSha256,
-                  let proofEntry = p,
-                  let shot = shotlist.shots.first(where: {
-                      $0.id == proofEntry.shotId
-                  }),
                   renderConditioningMatches(
                     shot: shot,
                     proof: proofEntry,

@@ -25,6 +25,8 @@ public let coreChecks: [String: SanityCheck] = [
     "coverage": coverageCheck,
     "mode_match": modeMatchCheck,
     "prompt_quality": promptQualityCheck,
+    "production_renderability": productionRenderabilityCheck,
+    "narrative_structure": narrativeStructureCheck,
     "source_mode_coverage": sourceModeCoverageCheck,
 ]
 

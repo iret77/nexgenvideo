@@ -535,11 +535,26 @@ final class AppState {
                 )
                 return false
             }
+            guard case .bound(let source) = ProjectPluginSettings.bindingResolution(
+                projectURL: projectURL
+            ) else {
+                notify(
+                    message: "The project format pack is incompatible",
+                    informative: "\(reason) Restore or upgrade the project's format settings before opening it."
+                )
+                return false
+            }
             guard confirm(
-                message: "Update the “\(id)” format pack",
-                informative: "\(reason) The project stays closed until the pack runs on this build.",
-                action: "Update") else { return false }
-            return await installPack(id: id, version: nil, for: projectURL)
+                message: "Upgrade this project to the current “\(id)” format pack",
+                informative: "\(reason) NexGenVideo will install the compatible pack and upgrade "
+                    + "a Recovery copy. The saved project stays untouched until Save.",
+                action: "Upgrade Project") else { return false }
+            return await installPack(
+                id: id,
+                version: nil,
+                for: projectURL,
+                upgradeFrom: source
+            )
         }
     }
 
@@ -672,7 +687,8 @@ final class AppState {
     private func installPack(
         id: String,
         version: String?,
-        for projectURL: URL
+        for projectURL: URL,
+        upgradeFrom source: ProjectPackBinding? = nil
     ) async -> Bool {
         let progress = PackInstallProgress(packID: id)
         progress.show()
@@ -687,6 +703,11 @@ final class AppState {
             manager.catalog.first {
                 $0.id == id && $0.version == requiredVersion
             }
+        } ?? source.flatMap { _ in
+            PluginManager.selectCompatiblePerPack(
+                manager.catalog,
+                appVersion: AppVersion.marketing
+            ).first { $0.id == id }
         } ?? Self.catalogEntry(id: id, rows: manager.rows(activePluginName: nil))
         guard let entry else {
             progress.close()
@@ -696,13 +717,50 @@ final class AppState {
                        : "It isn't in the plugin library for this version of NexGenVideo.")
             return false
         }
-        guard await manager.install(entry) else {
-            progress.close()
-            notify(message: "Couldn't install the “\(id)” format pack",
-                   informative: manager.lastError ?? "The install didn't complete.")
-            return false
+        let upgradeTarget = source.flatMap { _ in
+            ProjectPackBinding(
+                id: entry.id,
+                version: entry.version,
+                projectSchema: entry.projectSchema
+            )
+        }
+        let targetIsInstalled = upgradeTarget.flatMap {
+            PluginLoader.usableInstalledInfo(for: $0)
+        } != nil
+        if !targetIsInstalled {
+            guard await manager.install(entry) else {
+                progress.close()
+                notify(message: "Couldn't install the “\(id)” format pack",
+                       informative: manager.lastError ?? "The install didn't complete.")
+                return false
+            }
         }
         progress.close()
+
+        if let source {
+            guard let target = upgradeTarget,
+                  target.id == source.id, target != source,
+                  let installed = PluginLoader.usableInstalledInfo(for: target),
+                  ProjectPackMigration.upgradeKind(source: source, target: target) == .bindingOnly
+                    || installed.info.migratesFrom.contains(source.projectSchema) else {
+                notify(
+                    message: "This project can't use the installed format-pack update",
+                    informative: "The saved project is untouched. Install a pack that declares "
+                        + "a compatible upgrade from \(source.projectSchema)."
+                )
+                return false
+            }
+            do {
+                ProjectPackMigration.commit(try ProjectPackMigration.prepareSchedule(
+                    projectURL: projectURL,
+                    source: source,
+                    target: target
+                ))
+            } catch {
+                NSAlert(error: error).runModal()
+                return false
+            }
+        }
 
         switch ProjectPackGate.evaluate(projectURL: projectURL) {
         case .satisfied:

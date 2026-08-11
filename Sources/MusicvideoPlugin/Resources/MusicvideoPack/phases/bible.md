@@ -229,8 +229,8 @@ canonical sheet path with exact prompt/model/hash provenance.
 4. **Compile:** `compile_prompt(intent=<composed>, model=<model>,
    shotId="none")`. A Bible sheet is not a shot; `none` is deliberate
    here.
-5. **Generate:** pass the returned `compiledPrompt` and `compileToken`
-   unchanged to `generate_image`, with
+5. **Generate:** pass the returned `compiledPrompt`, `compileToken`, and
+   `shotId="none"` unchanged to `generate_image`, with
    `aspectRatio=<square or the entity's natural ratio>` and
    `referenceMediaRefs=[...]`. The call returns an async placeholder
    asset; wait until it is ready (`get_media` shows its
@@ -296,7 +296,8 @@ anchor the views on a single world-model panorama:
 
 - Compile the empty-location intent with
   `compile_prompt(model="marble/marble-1.1", shotId="none")`, then pass
-  its output unchanged to `generate_image` using **`marble/marble-1.1`**
+  its output and `shotId="none"` unchanged to `generate_image` using
+  **`marble/marble-1.1`**
   (the Marble world-model). The intent describes the empty location ("Empty
   <location-type>. <wall-precise constraints>. Empty environment, only
   architecture visible."). Marble returns an **equirectangular

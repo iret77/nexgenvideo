@@ -2,8 +2,16 @@ import Foundation
 import NexGenEngine
 
 enum PipelineShotlistWriter {
-    static func write(_ shotlist: Shotlist, dataRoot: URL) throws -> URL {
-        try validate(shotlist, dataRoot: dataRoot)
+    static func write(
+        _ shotlist: Shotlist,
+        dataRoot: URL,
+        declaredPack: String?
+    ) throws -> URL {
+        try validate(
+            shotlist,
+            dataRoot: dataRoot,
+            declaredPack: declaredPack
+        )
         do {
             return try saveShotlist(shotlist, to: dataRoot)
         } catch {
@@ -11,7 +19,187 @@ enum PipelineShotlistWriter {
         }
     }
 
-    static func validate(_ shotlist: Shotlist, dataRoot: URL) throws {
+    static func setSourceMode(
+        shotId: String,
+        to mode: SourceMode,
+        dataRoot: URL,
+        declaredPack: String?
+    ) throws -> Bool {
+        guard var shotlist = try loadShotlist(dataRoot: dataRoot),
+              let index = shotlist.shots.firstIndex(where: { $0.id == shotId }),
+              shotlist.shots[index].sourceMode != mode else {
+            return false
+        }
+        guard mode == .imported || shotlist.shots[index].productionPlan != nil else {
+            throw ToolError(
+                "Ask the assistant to re-plan this shot before changing its source to "
+                    + "\(mode.rawValue)."
+            )
+        }
+        shotlist.shots[index].sourceMode = mode
+        switch mode {
+        case .generated:
+            shotlist.shots[index].sourcePath = nil
+            if shotlist.shots[index].keyframeStrategy == .none {
+                shotlist.shots[index].keyframeStrategy = .start
+            }
+        case .imported:
+            shotlist.shots[index].sourcePath = nil
+            shotlist.shots[index].productionPlan = nil
+            shotlist.shots[index].keyframeStrategy = .none
+            shotlist.shots[index].chainWithPreviousEnd = false
+        case .aiEnhanced:
+            shotlist.shots[index].keyframeStrategy = .none
+            shotlist.shots[index].chainWithPreviousEnd = false
+            shotlist.shots[index].referenceImageRefs = []
+            shotlist.shots[index].seedanceInputMode = .keyframe
+        }
+        _ = try write(
+            shotlist,
+            dataRoot: dataRoot,
+            declaredPack: declaredPack
+        )
+        return true
+    }
+
+    static func validate(
+        _ shotlist: Shotlist,
+        dataRoot: URL,
+        declaredPack: String?
+    ) throws {
+        do {
+            try shotlist.validate()
+        } catch {
+            throw ToolError("The Shot List is invalid: \(error.localizedDescription)")
+        }
+        let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+        let brief: Brief?
+        if FileManager.default.fileExists(atPath: briefURL.path) {
+            do {
+                brief = try YAMLArtifactStore(dataRoot: dataRoot).load(
+                    Brief.self,
+                    at: PipelineLayout.briefFile
+                )
+            } catch {
+                throw ToolError(
+                    "The Brief is unreadable. Repair or restore it before writing the Shot List: "
+                        + error.localizedDescription
+                )
+            }
+        } else {
+            brief = nil
+        }
+        let bibleURL = PipelineLayout.url(
+            PipelineLayout.bibleFile,
+            in: dataRoot
+        )
+        let bible: Bible?
+        if FileManager.default.fileExists(atPath: bibleURL.path) {
+            do {
+                bible = try loadBible(dataRoot: dataRoot)
+            } catch {
+                throw ToolError(
+                    "The Bible is unreadable. Repair or restore it before writing the Shot List: "
+                        + error.localizedDescription
+                )
+            }
+        } else {
+            bible = nil
+        }
+        let activePack: String?
+        do {
+            activePack = try ProjectPluginSettings.resolvedPlugin(
+                projectURL: FrameInventory.projectHome(of: dataRoot),
+                declaredPack: declaredPack
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
+        }
+        let profileIDs = PackCatalog.registry(activePack: activePack)
+            .activeProductionProfileIDs(metadata: [
+                "concept_type": brief?.conceptType.rawValue ?? "",
+            ])
+
+        let importedPlans = shotlist.shots.filter {
+            $0.sourceMode == .imported && $0.productionPlan != nil
+        }
+        guard importedPlans.isEmpty else {
+            throw ToolError(
+                "Imported shots use their existing footage as production truth and omit "
+                    + "production_plan (e.g. "
+                    + importedPlans.prefix(3).map(\.id).joined(separator: ", ")
+                    + ")."
+            )
+        }
+
+        if profileIDs.contains(.generativeFilm) {
+            let missingPlans = shotlist.shots.filter {
+                ProductionDiscipline.requiresProductionPlan($0)
+                    && $0.productionPlan == nil
+            }
+            guard !Shotlist.requiresProductionPlan(forGenerator: shotlist.generator)
+                    || missingPlans.isEmpty else {
+                throw ToolError(
+                    "Every new shot requires production_plan (e.g. "
+                        + missingPlans.prefix(3).map(\.id).joined(separator: ", ")
+                        + ")."
+                )
+            }
+            let crowded = shotlist.shots.filter {
+                $0.productionPlan != nil
+                    && ProductionDiscipline.hasTooManyVisibleCharacters(
+                        $0,
+                        bible: bible
+                    )
+            }
+            guard crowded.isEmpty else {
+                throw ToolError(
+                    "Generated shots may contain at most two visible characters; split "
+                        + crowded.prefix(3).map(\.id).joined(separator: ", ")
+                        + " into simpler shots."
+                )
+            }
+            let undeclaredLongTakes = shotlist.shots.filter(
+                ProductionDiscipline.hasUndeclaredLongTake
+            )
+            guard undeclaredLongTakes.isEmpty else {
+                throw ToolError(
+                    "Generated shots over 12 seconds must declare long_take and a rescue cut "
+                        + "(e.g. "
+                        + undeclaredLongTakes.prefix(3).map(\.id).joined(separator: ", ")
+                        + ")."
+                )
+            }
+            let unanchoredBlocking = shotlist.shots.filter {
+                $0.productionPlan != nil
+                    && ProductionDiscipline.hasUnanchoredCharacterBlocking($0)
+            }
+            guard unanchoredBlocking.isEmpty else {
+                throw ToolError(
+                    "Generated character blocking must pair a production_plan.blocking_anchors "
+                        + "entry that exactly matches the shot's prop_refs or visible_zones with "
+                        + "a non-empty character_blocking.relation_to_set "
+                        + "(e.g. "
+                        + unanchoredBlocking.prefix(3).map(\.id).joined(separator: ", ")
+                        + ")."
+                )
+            }
+        }
+
+        if profileIDs.contains(.narrativeStorytelling) {
+            let missingBeats = shotlist.shots.filter {
+                $0.productionPlan != nil && $0.productionPlan?.narrativeBeat == nil
+            }
+            guard missingBeats.isEmpty else {
+                throw ToolError(
+                    "Narrative and hybrid projects require narrative_beat for every planned shot "
+                        + "(e.g. "
+                        + missingBeats.prefix(3).map(\.id).joined(separator: ", ")
+                        + ")."
+                )
+            }
+        }
+
         for shot in shotlist.shots {
             for reference in shot.referenceImageRefs {
                 guard let url = projectFileURL(

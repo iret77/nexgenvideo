@@ -218,10 +218,19 @@ enum NativeCockpitReader {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         let brief = try? store.load(Brief.self, at: PipelineLayout.briefFile)
         let bible = (try? loadBible(dataRoot: dataRoot)) ?? nil
-        let checks = PackCatalog.registry(activePack: activePack).sanityChecks
+        let registry = PackCatalog.registry(activePack: activePack)
+        let productionProfileIDs = registry.activeProductionProfileIDs(metadata: [
+            "concept_type": brief?.conceptType.rawValue ?? "",
+        ])
         return audit(
-            AuditContext(shotlist: shotlist, brief: brief, bible: bible, extra: ["data_root": dataRoot.path]),
-            checks: checks
+            AuditContext(
+                shotlist: shotlist,
+                brief: brief,
+                bible: bible,
+                extra: ["data_root": dataRoot.path],
+                productionProfileIDs: productionProfileIDs
+            ),
+            checks: registry.sanityChecks
         )
     }
 

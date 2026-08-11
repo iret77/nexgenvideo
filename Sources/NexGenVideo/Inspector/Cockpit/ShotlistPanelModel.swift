@@ -40,6 +40,7 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
     var visualPrompt: String
     var framing: String?
     var mood: String
+    var hasProductionPlan: Bool
     // Bible provenance: entity ids this shot uses (the object graph's shot↔entity edges).
     var characterRefs: [String]
     var locationRef: String?
@@ -48,6 +49,7 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, section, type, description, framing, mood
         case sourceMode = "source_mode"
+        case productionPlan = "production_plan"
         case durationS = "duration_s"
         case visualPrompt = "visual_prompt"
         case characterRefs = "character_refs"
@@ -66,6 +68,11 @@ struct ShotSummary: Decodable, Sendable, Equatable, Identifiable {
         visualPrompt = try c.decodeIfPresent(String.self, forKey: .visualPrompt) ?? ""
         framing = try c.decodeIfPresent(String.self, forKey: .framing)
         mood = try c.decodeIfPresent(String.self, forKey: .mood) ?? ""
+        if c.contains(.productionPlan) {
+            hasProductionPlan = try !c.decodeNil(forKey: .productionPlan)
+        } else {
+            hasProductionPlan = false
+        }
         characterRefs = try c.decodeIfPresent([String].self, forKey: .characterRefs) ?? []
         locationRef = try c.decodeIfPresent(String.self, forKey: .locationRef)
         propRefs = try c.decodeIfPresent([String].self, forKey: .propRefs) ?? []

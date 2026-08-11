@@ -217,6 +217,7 @@ struct AgentPanelView: View {
     private var scrollToLatestButton: some View {
         Button {
             isUserPinnedAway = false
+            programmaticScrollPending = true
             scrollToLatestRequest &+= 1
         } label: {
             Image(systemName: "arrow.down")
@@ -234,6 +235,7 @@ struct AgentPanelView: View {
 
     @State private var showHistory = false
     @State private var isUserPinnedAway = false
+    @State private var programmaticScrollPending = false
     @State private var scrollToLatestRequest: UInt = 0
     @State private var showPluginLauncher = false
     @State private var discoveredPlugins: [PluginCommandCatalog.PluginInfo] = []
@@ -372,6 +374,10 @@ struct AgentPanelView: View {
                 scrollingMessages(entries: entries)
             }
         }
+        .onChange(of: service.currentSessionId) { _, _ in
+            isUserPinnedAway = false
+            programmaticScrollPending = false
+        }
     }
 
     private func scrollingMessages(entries: [AgentTranscriptEntry]) -> some View {
@@ -395,6 +401,9 @@ struct AgentPanelView: View {
                     }
                     errorBanner
                         .padding(.top, AppTheme.Spacing.sm)
+                    AppTheme.Background.clearColor
+                        .frame(height: AppTheme.Spacing.none)
+                        .id(AgentTranscriptScrollPolicy.endID)
                 }
                 .padding(.horizontal, AppTheme.Spacing.lgXl)
                 .padding(.top, AppTheme.Spacing.sm)
@@ -403,28 +412,33 @@ struct AgentPanelView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollIndicators(.never)
-            .onScrollPhaseChange { oldPhase, newPhase, context in
-                guard newPhase == .interacting
+            .id(service.currentSessionId)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(
+                isUserPinnedAway ? nil : .bottom,
+                for: .sizeChanges
+            )
+            .onScrollPhaseChange { _, newPhase, context in
+                let suppressProgrammaticUpdate = programmaticScrollPending
+                if newPhase == .interacting
                         || newPhase == .decelerating
-                        || (newPhase == .idle && oldPhase != .animating)
-                else { return }
-                isUserPinnedAway = AgentTranscriptScrollPolicy.isAwayFromBottom(
+                        || newPhase == .idle {
+                    programmaticScrollPending = false
+                }
+                guard let away = AgentTranscriptScrollPolicy.pinState(
+                    for: newPhase,
+                    suppressProgrammaticUpdate: suppressProgrammaticUpdate,
                     contentHeight: context.geometry.contentSize.height,
                     contentOffsetY: context.geometry.contentOffset.y,
                     containerHeight: context.geometry.containerSize.height,
                     threshold: AppTheme.ComponentSize.agentScrollAwayThreshold
-                )
-            }
-            .onChange(of: service.transcriptRevision) { _, _ in
-                guard !isUserPinnedAway else { return }
-                scrollToBottom(proxy, entries: entries)
-            }
-            .onChange(of: service.isStreaming) { _, _ in
-                guard !isUserPinnedAway else { return }
-                scrollToBottom(proxy, entries: entries)
+                ) else { return }
+                if away != isUserPinnedAway {
+                    isUserPinnedAway = away
+                }
             }
             .onChange(of: scrollToLatestRequest) { _, _ in
-                scrollToBottom(proxy, entries: entries)
+                scrollToBottom(proxy)
             }
         }
     }
@@ -543,16 +557,10 @@ struct AgentPanelView: View {
         }
     }
 
-    private func scrollToBottom(
-        _ proxy: ScrollViewProxy,
-        entries: [AgentTranscriptEntry]
-    ) {
-        let target = AgentTranscriptScrollPolicy.targetID(
-            entries: entries,
-            isStreaming: service.isStreaming
-        )
-        if let target {
-            proxy.scrollTo(target, anchor: .bottom)
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            await Task.yield()
+            proxy.scrollTo(AgentTranscriptScrollPolicy.endID, anchor: .bottom)
         }
     }
 
