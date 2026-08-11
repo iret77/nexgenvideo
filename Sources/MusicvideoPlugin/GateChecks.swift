@@ -1212,7 +1212,7 @@ enum MusicvideoGateChecks {
             guard unanchoredSteps.isEmpty else {
                 throw GateBlocked(
                     "Can't approve \"storyboard\": generated character blocking must "
-                        + "name a non-directional set_anchor and a non-empty "
+                        + "name a set_anchor from that step's prop_request or visible_zones and a non-empty "
                         + "relation_to_set (e.g. "
                         + "\(unanchoredSteps.prefix(3).map(\.id).joined(separator: ", ")))."
                 )
@@ -1529,7 +1529,8 @@ enum MusicvideoGateChecks {
                   ),
                   ProductionPromptPolicy.videoPromptViolations(
                     providerPrompt,
-                    expectedMovement: shot.productionPlan?.cameraMovement
+                    expectedMovement: shot.productionPlan?.cameraMovement,
+                    expectedMovementDetail: shot.productionPlan?.cameraMovementDetail
                   ).isEmpty,
                   let generationModel = p?.generationModel,
                   !generationModel.trimmingCharacters(

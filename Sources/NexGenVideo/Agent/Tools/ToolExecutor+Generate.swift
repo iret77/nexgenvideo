@@ -21,6 +21,7 @@ extension ToolExecutor {
                 ? try await generateVideoEdit(editor, args, prompt: prompt, model: model)
                 : try await generateVideoText(editor, args, prompt: prompt, model: model)
         case .image:
+            try enforceImageShotSourceContract(editor: editor, args: args)
             return try await generateImage(editor, args, prompt: prompt)
         case .audio:
             throw ToolError("internal: audio generation is dispatched via the async path")
@@ -31,6 +32,25 @@ extension ToolExecutor {
         case .document:
             throw ToolError("Documents are source material you import, not something this tool generates.")
         }
+    }
+
+    private func enforceImageShotSourceContract(
+        editor: EditorViewModel,
+        args: [String: Any]
+    ) throws {
+        let shotId = try args.requireString("shotId")
+        guard shotId != "none" else { return }
+        guard let root = editor.workingRoot.flatMap({
+            DataRootResolver.dataRoot(of: $0)
+        }), let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil,
+              let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
+            throw ToolError(
+                "Shot-bound generation requires the current project shotlist."
+            )
+        }
+        try PromptCompiler.validateImageShotSourceContract(
+            sourceMode: shot.sourceMode
+        )
     }
 
     private func enforceVideoShotSourceContract(
@@ -235,6 +255,11 @@ extension ToolExecutor {
         }
         let sourceAsset = try asset(sourceRef, editor: editor, label: "Source video")
         let trimmed = try trimmedSource(args, editor: editor, source: sourceAsset)
+        let (precompiled, raw) = try Self.agentPrompt(
+            args,
+            prompt: prompt,
+            editor: editor
+        )
 
         // Cost-Guard (M7): approval before spend. Edit is source-driven, so a swap stays within the
         // other source-requiring video models (a text-to-video model can't service an edit).
@@ -260,11 +285,6 @@ extension ToolExecutor {
         let name = args.string("name")
         let folderId = sourceAsset.folderId
         let placeholderDuration = trimmed?.durationSeconds ?? (sourceAsset.duration > 0 ? sourceAsset.duration : 5)
-        let (precompiled, raw) = try Self.agentPrompt(
-            args,
-            prompt: prompt,
-            editor: editor
-        )
 
         let request = GenerationRequest(
             modality: .video, modelId: model.id, intent: prompt,
@@ -301,6 +321,11 @@ extension ToolExecutor {
         var duration = args.int("duration") ?? model.durations.first ?? 0
         var aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
         var resolution = args.string("resolution") ?? model.resolutions?.first
+        let (precompiled, raw) = try Self.agentPrompt(
+            args,
+            prompt: prompt,
+            editor: editor
+        )
 
         // Cost-Guard (M7): the user's final word before this render spends money. Over the
         // auto-approve ceiling → wait for a tap; a swap re-derives options against the chosen model.
@@ -350,11 +375,6 @@ extension ToolExecutor {
             args, editor: editor, fallbackReferences: inputAssets.textToVideoReferences
         )
         let name = args.string("name")
-        let (precompiled, raw) = try Self.agentPrompt(
-            args,
-            prompt: prompt,
-            editor: editor
-        )
 
         let request = GenerationRequest(
             modality: .video, modelId: model.id, intent: prompt,
@@ -398,6 +418,11 @@ extension ToolExecutor {
         var aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
         var resolution = args.string("resolution") ?? model.resolutions?.first
         var quality = args.string("quality") ?? model.qualities?.last
+        let (precompiled, raw) = try Self.agentPrompt(
+            args,
+            prompt: prompt,
+            editor: editor
+        )
 
         // Cost-Guard (M7): approval before spend. Marble is excluded as a swap target — it is a
         // reference-driven world generator, not a drop-in cheaper image model.
@@ -426,11 +451,6 @@ extension ToolExecutor {
         }
         let folderId = try resolveFolderId(args, editor: editor, fallbackReferences: refs)
         let name = args.string("name")
-        let (precompiled, raw) = try Self.agentPrompt(
-            args,
-            prompt: prompt,
-            editor: editor
-        )
 
         func genInput(_ compiled: String) -> GenerationInput {
             var input = GenerationInput(

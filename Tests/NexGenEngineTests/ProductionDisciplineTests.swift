@@ -31,7 +31,8 @@ struct ProductionDisciplineTests {
         section: String? = "scene",
         sourceMode: SourceMode = .generated,
         cameraId: String? = nil,
-        characterBlocking: [CharacterBlocking] = []
+        characterBlocking: [CharacterBlocking] = [],
+        visibleZones: [String] = []
     ) throws -> Shot {
         try Shot(
             id: id,
@@ -45,6 +46,7 @@ struct ProductionDisciplineTests {
             visualPrompt: "Static wide shot of a subject crossing a doorway.",
             mood: "controlled",
             characterRefs: characters,
+            visibleZones: visibleZones,
             characterBlocking: characterBlocking,
             cameraId: cameraId,
             productionPlan: plan
@@ -280,10 +282,11 @@ struct ProductionDisciplineTests {
             plan: Self.plan(blockingAnchors: [
                 ProductionBlockingAnchor(
                     characterRef: "subject",
-                    setAnchor: "screen-right"
+                    setAnchor: "screen-left edge"
                 ),
             ]),
-            characterBlocking: [blocking]
+            characterBlocking: [blocking],
+            visibleZones: ["screen-left edge"]
         )
         let ctx = AuditContext(
             shotlist: try Self.shotlist([shot]),
@@ -334,13 +337,41 @@ struct ProductionDisciplineTests {
                     setAnchor: "hall doorway"
                 ),
             ]),
-            characterBlocking: [blocking]
+            characterBlocking: [blocking],
+            visibleZones: ["hall doorway"]
         )
         let ctx = AuditContext(
             shotlist: try Self.shotlist([shot]),
             productionProfileIDs: [.generativeFilm]
         )
         #expect(try productionRenderabilityCheck(ctx).isEmpty)
+    }
+
+    @Test("an undeclared phrase cannot masquerade as a set anchor")
+    func undeclaredSetAnchor() throws {
+        let blocking = try CharacterBlocking(
+            characterRef: "subject",
+            position: "right third",
+            pose: "standing",
+            gaze: "toward the hall",
+            relationToSet: "beside the doorway"
+        )
+        let shot = try Self.shot(
+            characters: ["subject"],
+            plan: Self.plan(blockingAnchors: [
+                ProductionBlockingAnchor(
+                    characterRef: "subject",
+                    setAnchor: "unrelated phrase"
+                ),
+            ]),
+            characterBlocking: [blocking],
+            visibleZones: ["hall doorway"]
+        )
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            productionProfileIDs: [.generativeFilm]
+        )
+        #expect(try productionRenderabilityCheck(ctx).map(\.code) == ["BLOCKING_ANCHOR_MISSING"])
     }
 
     @Test("narrative profiles require a beat on every shot")

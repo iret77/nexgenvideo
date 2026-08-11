@@ -73,7 +73,7 @@ struct AgentTranscriptLayoutPolicyTests {
 
     @Test func sidebarKeepsTranscriptContainerFreeOfSecondaryLayers() throws {
         let source = try sourceFile("Sources/NexGenVideo/Editor/LeftSidebarView.swift")
-        let start = try #require(source.range(of: "Group {"))
+        let start = try #require(source.range(of: "var body: some View"))
         let end = try #require(source.range(
             of: "private var tabStrip",
             range: start.upperBound..<source.endIndex

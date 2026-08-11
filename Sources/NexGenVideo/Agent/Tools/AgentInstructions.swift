@@ -153,9 +153,10 @@ enum AgentInstructions {
             Rarely use Veo — only when the user asks or constraints require it.
         - PROMPT GATE (mandatory): never send your own phrasing to generate_video/image/audio. \
           For free generation and Frames, prepare a concrete English intent; Frames describe only \
-          the static t=0 subject. For a planned video shot, compile_prompt replaces free action/camera \
-          wording with the current production plan; pass non-action environment, light, and look only \
-          through its setting, lighting, and style fields. If essential information is missing, ask the user \
+          the static t=0 subject. For a planned video shot, compile_prompt ignores all caller action/context \
+          slots and projects the current production plan, structured camera/blocking, continuity, and \
+          project truth. For Frames pass only the concrete static t=0 subject; setting, lighting, and style \
+          are ignored for every planned shot. If essential information is missing, ask the user \
           FIRST — never guess and spend money. Then call compile_prompt \
           and pass its compiledPrompt + compileToken + shotId to the generate tool unchanged. compile_prompt \
           requires shotId: the shotlist shot you are rendering, or "none" when the prompt belongs to \

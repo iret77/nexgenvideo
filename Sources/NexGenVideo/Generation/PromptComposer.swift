@@ -42,9 +42,11 @@ enum PromptComposer {
     /// camera/composition projection in `frames/generate.py::_payload_from_shot` + the per-frame
     /// `lint_prompt_against_shot` call.
     struct ShotProjection: Sendable {
+        let sourceMode: SourceMode
         let camera: String
         let cameraMovement: String
         let cameraMovementKind: CameraMovement?
+        let cameraMovementDetail: String?
         let composition: String
         let videoSubject: String?
         let videoDirectives: [String]
@@ -56,11 +58,13 @@ enum PromptComposer {
 
         init(_ shot: Shot, forceHandles: Bool = false) {
             let productionPlan = shot.productionPlan
+            sourceMode = shot.sourceMode
             camera = shot.cameraSetup?.promptProse() ?? ""
             cameraMovement = productionPlan?.cameraMovement.promptProse(
                 detail: productionPlan?.cameraMovementDetail
             ) ?? ""
             cameraMovementKind = productionPlan?.cameraMovement
+            cameraMovementDetail = productionPlan?.cameraMovementDetail
             composition = shot.framing?.compositionProse ?? ""
             videoSubject = productionPlan?.primaryAction
             videoDirectives = (productionPlan?.providerDirectives ?? [])
@@ -118,11 +122,12 @@ enum PromptComposer {
         var notes: [String] = []
         switch modality {
         case .video:
+            let acceptsFreeContext = shot == nil
             var payload = PromptPayload(
                 subject: shot?.videoSubject ?? trimmed,
-                setting: normalize(setting),
-                style: normalize(style),
-                light: normalize(lighting),
+                setting: acceptsFreeContext ? normalize(setting) : "",
+                style: acceptsFreeContext ? normalize(style) : "",
+                light: acceptsFreeContext ? normalize(lighting) : "",
                 durationS: durationSeconds,
                 aspectRatio: aspectRatio,
                 directives: directives.all + (shot?.videoDirectives ?? [])
@@ -137,17 +142,19 @@ enum PromptComposer {
             if let shot,
                let violation = ProductionPromptPolicy.videoPromptViolations(
                    composed,
-                   expectedMovement: shot.cameraMovementKind
+                   expectedMovement: shot.cameraMovementKind,
+                   expectedMovementDetail: shot.cameraMovementDetail
                ).first {
                 throw ComposeError.lintBlocked(code: "PRODUCTION_PLAN_CAMERA_CONFLICT", message: violation)
             }
             notes.append(contentsOf: try lint(composed, lockedDirectives: directives.locked))
         case .image:
+            let acceptsFreeContext = shot == nil
             var payload = PromptPayload(
                 subject: trimmed,
-                setting: normalize(setting),
-                style: normalize(style),
-                light: normalize(lighting),
+                setting: acceptsFreeContext ? normalize(setting) : "",
+                style: acceptsFreeContext ? normalize(style) : "",
+                light: acceptsFreeContext ? normalize(lighting) : "",
                 aspectRatio: aspectRatio,
                 directives: directives.all + (shot?.imageDirectives ?? [])
             )

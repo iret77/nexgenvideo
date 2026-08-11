@@ -36,7 +36,7 @@ engine/nexgen_engine/
   state/ show/ mcp_server/
 plugins/musicvideo/
   analysis/* patterns/* cover/* brainstorm/*  (audio DSP, mood/tempo/genre, art)
-  sanity_checks/{tempo,pacing,pattern_drift}  (registered into the engine framework)
+  sanity_checks/{tempo,pattern_drift}  (registered into the engine framework)
   tempo_policy, duration_policy               (mode→duration/cost bands)
   .claude/phases/{analysis,cover,…}
 ```
@@ -54,12 +54,12 @@ plugins/musicvideo/
 | `sanity/{audit,blocking_validator,models}` + `checks/<generic>` | engine | Audit framework + ~23 generic checks. |
 | `common/tempo` | engine (framework) | `classify()`/`asl_violation()` generic; `TEMPO_BANDS` come from the pack. |
 | `analysis/*`, `patterns/*`, `cover/*`, `brainstorm/*` | **pack** | Audio DSP, mood/tempo/genre, album art, music brainstorming. |
-| `sanity/checks/{tempo,pacing,pattern_drift}` | **pack** | Registered into the engine sanity framework. |
+| `sanity/checks/{tempo,pattern_drift}` | **pack** | Registered into the engine sanity framework. |
 | `.claude/phases/{analysis,cover}`, `skills/doctor` | **pack** | Music-only workflows. |
 
 ## Riskiest seams (music assumptions leaking into generic code)
 
-1. **`Shot.duration_s` ↔ `Mode` + `perceived_bpm`** — `shotlist/schema.py` `MODE_DURATION_RANGES`, `sanity/checks/tempo.py` (reads `song.perceived_bpm`), `render/costs.py` (mode-aware multipliers). → Engine `DurationPolicy` interface; the music pack registers BPM-aware bands. Tempo/pacing checks move to the pack.
+1. **`Shot.duration_s` ↔ `Mode` + `perceived_bpm`** — `shotlist/schema.py` `MODE_DURATION_RANGES`, `sanity/checks/tempo.py` (reads `song.perceived_bpm`), `render/costs.py` (mode-aware multipliers). → Engine `DurationPolicy` interface; the music pack registers BPM-aware bands. Tempo checks move to the pack.
 2. **`StepFunction.REFRAIN_ANCHOR` / lyrics anchoring** — `storyboard/schema.py`, `brief/schema.py` `LyricsIntegration`. → Generalize to `STRUCTURAL_ANCHOR` + a generic `anchor_point_type/ref` on `Shot`; pack maps refrain/chorus aliases.
 3. **`common/tempo.classify(mode)` ASL scaling** — phrase/section 2.5×/4.0× scaling is music-only. → `TempoClassifier` base in engine, `MusicTempoPolicy` override in the pack.
 

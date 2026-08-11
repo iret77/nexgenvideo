@@ -55,6 +55,23 @@ enum CameraMoves {
         }
         return false
     }
+
+    static func isExpandingMove(
+        _ movement: CameraMovement,
+        detail: String?
+    ) -> Bool {
+        switch movement {
+        case .pan, .tilt, .dollyOut, .tracking, .crane, .orbit:
+            return true
+        case .zoom:
+            let text = detail?.lowercased() ?? ""
+            return zoomExpandingPatterns.contains { text.contains($0) }
+        case .other:
+            return isExpandingMove(detail ?? "")
+        case .static, .dollyIn, .handheld:
+            return false
+        }
+    }
 }
 
 extension MusicvideoChecks {
@@ -84,8 +101,11 @@ extension MusicvideoChecks {
                 break
             }
             if notes.contains("keyframe_end_skip_ok:") { continue }
-            let cameraText = shot.visualPrompt + " " + (shot.motion ?? "")
-            guard CameraMoves.isExpandingMove(cameraText) else { continue }
+            guard let plan = shot.productionPlan,
+                  CameraMoves.isExpandingMove(
+                    plan.cameraMovement,
+                    detail: plan.cameraMovementDetail
+                  ) else { continue }
             let supportsEnd = ModelCapabilities.capability(costs.runwayModel(for: shot, phase: .final))?.supportsKeyframeEnd ?? false
             if supportsEnd {
                 out.append(Finding(level: .warn, code: "EXPANDING_CAMERA_NEEDS_END_FRAME", shotId: shot.id,

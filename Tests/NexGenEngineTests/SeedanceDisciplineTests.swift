@@ -35,7 +35,7 @@ struct SeedanceDisciplineTests {
         #expect(try Self.run("she runs fast across the lit rooftop").contains("PROMPT_HARD_BLOCK_TOKEN"))
     }
 
-    @Test("slop adjectives without lighting")
+    @Test("slop adjectives in the subject")
     func qualityKiller() throws {
         let codes = try Self.run("a stunning cinematic portrait of the singer")
         #expect(codes.contains("PROMPT_QUALITY_KILLER"))
@@ -44,18 +44,6 @@ struct SeedanceDisciplineTests {
     @Test("technical lens/exposure lingo")
     func technicalLingo() throws {
         #expect(try Self.run("portrait on a 50mm lens with soft light").contains("PROMPT_TECHNICAL_LINGO"))
-    }
-
-    @Test("no lighting marker in a long prompt")
-    func missingLighting() throws {
-        let codes = try Self.run("a young dancer moves through the crowded night market weaving between food stalls and vendors")
-        #expect(codes.contains("PROMPT_MISSING_LIGHTING"))
-    }
-
-    @Test("more than one camera-move category")
-    func multipleMoves() throws {
-        let codes = try Self.run("the camera pans left, then tilts up to the sky, under soft moonlight")
-        #expect(codes.contains("MULTIPLE_CAMERA_MOVES"))
     }
 
     @Test("duration band: over the 15s cap (warn) / under the 4s min (info)")

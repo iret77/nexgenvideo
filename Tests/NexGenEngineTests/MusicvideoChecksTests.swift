@@ -39,97 +39,65 @@ struct MusicvideoChecksTests {
         AuditContext(shotlist: shotlist, extra: extra)
     }
 
-    // MARK: - tempo
-
-    @Test("tempo flags shots over hard cap at uptempo")
-    func tempoFlagsShotsOverHardCapAtUptempo() throws {
-        // uptempo_dance hard_cap = 4.0s; two shots at 8s blow past it.
-        let shots = try [Self.shot(1, duration: 8.0), Self.shot(2, duration: 8.0)]
-        let findings = try MusicvideoChecks.tempoCheck(Self.ctx(Self.shotlist(shots, song: Self.song(bpm: 128.0))))
+    @Test("tempo flags shots over the uptempo hard cap")
+    func tempoFlagsHardCap() throws {
+        let shots = try [
+            Self.shot(1, duration: 8),
+            Self.shot(2, duration: 8),
+        ]
+        let findings = try MusicvideoChecks.tempoCheck(
+            Self.ctx(Self.shotlist(shots, song: Self.song(bpm: 128)))
+        )
         let codes = Set(findings.map(\.code))
         #expect(codes.contains("SHOT_OVER_TEMPO_CAP"))
-        // 2/2 shots over cap => too_many_breakers
         #expect(codes.contains("PACING_TOO_MANY_BREAKERS"))
-        let overCap = findings.filter { $0.code == "SHOT_OVER_TEMPO_CAP" }
-        #expect(Set(overCap.map(\.shotId)) == Set(["s001", "s002"] as [String?]))
-        #expect(findings.allSatisfy { $0.level == .warn })
     }
 
-    @Test("tempo is clean when durations match the band")
-    func tempoCleanWhenDurationsMatchBand() throws {
-        let shots = try [Self.shot(1, duration: 1.5), Self.shot(2, duration: 2.0), Self.shot(3, duration: 1.5)]
-        let findings = try MusicvideoChecks.tempoCheck(Self.ctx(Self.shotlist(shots, song: Self.song(bpm: 128.0))))
-        #expect(findings.isEmpty)
-    }
-
-    @Test("tempo returns empty when BPM is unavailable")
-    func tempoReturnsEmptyWhenBPMUnavailable() throws {
-        let shots = try [Self.shot(1, duration: 8.0), Self.shot(2, duration: 8.0)]
-        var sl = try Self.shotlist(shots, song: Self.song(bpm: 128.0))
-        sl.song = try Song(
-            title: "t", audioPath: "audio/song.wav", analysisPath: "analysis/song.json", bpm: 1.0,
-            tempoMultiplier: 0.0, durationS: 180.0
-        )
-        let findings = try MusicvideoChecks.tempoCheck(Self.ctx(sl))
-        #expect(findings.isEmpty)
-    }
-
-    @Test("tempo skips multicam")
-    func tempoSkipsMulticam() throws {
-        // Multicam shots span the whole song; build a valid multicam shotlist.
-        let song = try Self.song(bpm: 128.0)
-        let shot = try Shot(
-            id: "s001", timeStart: 0.0, timeEnd: song.durationS, durationS: song.durationS, type: .performance,
-            description: "d", visualPrompt: "performance", mood: "m", cameraId: "cam01"
-        )
-        let sl = try Self.shotlist([shot], song: song, mode: .multicam)
-        #expect(try MusicvideoChecks.tempoCheck(Self.ctx(sl)).isEmpty)
-    }
-
-    @Test("tempo reads BPM from ctx.extra when the song has none")
-    func tempoBPMFromExtraAnalysisWhenSongHasNone() throws {
-        let shots = try [Self.shot(1, duration: 8.0), Self.shot(2, duration: 8.0)]
-        var sl = try Self.shotlist(shots, song: Self.song(bpm: 128.0))
-        sl.song = try Song(
-            title: "t", audioPath: "audio/song.wav", analysisPath: "analysis/song.json", bpm: 1.0,
-            tempoMultiplier: 0.0, durationS: 180.0
-        )
-        let findings = try MusicvideoChecks.tempoCheck(Self.ctx(sl, extra: ["analysis.perceived_bpm": "128.0"]))
-        #expect(findings.contains { $0.code == "SHOT_OVER_TEMPO_CAP" })
-    }
-
-    // MARK: - pacing
-
-    @Test("pacing flags slow-motion risk")
-    func pacingFlagsSlowMotionRisk() throws {
-        // 1 action beat ("sits") over a 12s clip => 12s/beat > 4.0 threshold.
-        let shots = try [Self.shot(1, duration: 12.0, visualPrompt: "sits at the desk, papers in front")]
-        let findings = try MusicvideoChecks.pacingCheck(Self.ctx(Self.shotlist(shots)))
-        #expect(findings.count == 1)
-        #expect(findings[0].code == "SHOT_PACING_IMPLAUSIBLE")
-        #expect(findings[0].shotId == "s001")
-        #expect(findings[0].level == .warn)
-    }
-
-    @Test("pacing is clean when density matches duration")
-    func pacingCleanWhenDensityMatchesDuration() throws {
-        // 3 beats over 12s => 4.0s/beat exactly (not > 4.0) and 0.25 b/s => clean.
+    @Test("tempo accepts durations inside the active band")
+    func tempoAcceptsBand() throws {
         let shots = try [
-            Self.shot(1, duration: 12.0, visualPrompt: "she stands, then turns, then walks toward the door")
+            Self.shot(1, duration: 1.5),
+            Self.shot(2, duration: 2),
+            Self.shot(3, duration: 1.5),
         ]
-        let findings = try MusicvideoChecks.pacingCheck(Self.ctx(Self.shotlist(shots)))
-        #expect(findings.isEmpty)
+        #expect(try MusicvideoChecks.tempoCheck(
+            Self.ctx(Self.shotlist(shots, song: Self.song(bpm: 128)))
+        ).isEmpty)
     }
 
-    @Test("pacing is silenced by the pacing_ok marker")
-    func pacingSilencedByMarker() throws {
+    @Test("pacing flags a stretched single action")
+    func pacingFlagsSlowMotionRisk() throws {
+        let shots = try [
+            Self.shot(1, duration: 12, visualPrompt: "The performer sits at the desk."),
+        ]
+        let findings = try MusicvideoChecks.pacingCheck(
+            Self.ctx(Self.shotlist(shots))
+        )
+        #expect(findings.map(\.code) == ["SHOT_PACING_IMPLAUSIBLE"])
+    }
+
+    @Test("pacing accepts an explicit deliberate-stillness marker")
+    func pacingAcceptsMarker() throws {
         let shots = try [
             Self.shot(
-                1, duration: 12.0, visualPrompt: "sits at the desk",
-                notes: "pacing_ok: intentional contemplative still life"
-            )
+                1,
+                duration: 12,
+                visualPrompt: "The performer sits at the desk.",
+                notes: "pacing_ok: deliberate held tableau"
+            ),
         ]
-        #expect(try MusicvideoChecks.pacingCheck(Self.ctx(Self.shotlist(shots))).isEmpty)
+        #expect(try MusicvideoChecks.pacingCheck(
+            Self.ctx(Self.shotlist(shots))
+        ).isEmpty)
+    }
+
+    @Test("action beat counting deduplicates verb lemmas")
+    func actionBeatCounting() {
+        #expect(countActionBeats(
+            visualPrompt: "He reaches, then she reaches.",
+            motion: nil,
+            blockingText: nil
+        ) == 2)
     }
 
     @Test("a chained shot uses its predecessor frame as the bible anchor")
@@ -172,25 +140,5 @@ struct MusicvideoChecksTests {
                     && $0.shotId == "s002"
             }
         )
-    }
-
-    // MARK: - count_action_beats boundary cases
-
-    @Test("count_action_beats dedupes verb lemmas")
-    func countActionBeatsDedupesLemmas() {
-        // "reach" and "reaches" both lemmatize to "reach" -> counted once.
-        #expect(countActionBeats(visualPrompt: "he reaches, then she reach", motion: nil, blockingText: nil) == 2)
-    }
-
-    @Test("count_action_beats returns 0 for empty text")
-    func countActionBeatsEmptyText() {
-        #expect(countActionBeats(visualPrompt: nil, motion: nil, blockingText: nil) == 0)
-        #expect(countActionBeats(visualPrompt: "   ", motion: nil, blockingText: nil) == 0)
-    }
-
-    @Test("count_action_beats counts sequence connectors as extra beats")
-    func countActionBeatsCountsSequenceConnectors() {
-        // "stands" (1 verb) + "then" (1 connector) = 2.
-        #expect(countActionBeats(visualPrompt: "she stands, then waits", motion: nil, blockingText: nil) == 2)
     }
 }

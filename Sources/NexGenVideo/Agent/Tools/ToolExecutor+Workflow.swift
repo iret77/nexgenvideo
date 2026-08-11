@@ -1339,7 +1339,8 @@ extension ToolExecutor {
               ).isEmpty,
               ProductionPromptPolicy.videoPromptViolations(
                 proof.providerPrompt,
-                expectedMovement: shot.productionPlan?.cameraMovement
+                expectedMovement: shot.productionPlan?.cameraMovement,
+                expectedMovementDetail: shot.productionPlan?.cameraMovementDetail
               ).isEmpty,
               (try? FileDigest.sha256(of: url)) == proof.outputSha256 else {
             return false
@@ -2157,19 +2158,68 @@ extension ToolExecutor {
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let aspect = try args.requireString("aspect")
+        let shotId = try args.requireString("shot_id")
+        let role = args.string("role") ?? "start"
         let anchor = CropAnchor(rawValue: args.string("anchor") ?? "center") ?? .center
         let home = FrameInventory.projectHome(of: root)
+        guard let shotlist = try readShotlist(dataRoot: root),
+              let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
+            throw ToolError("No current shot '\(shotId)' is available for crop provenance.")
+        }
+        guard shot.sourceMode == .generated, shot.keyframeStrategy != .none else {
+            throw ToolError("\(shotId) does not accept a generated Frames crop.")
+        }
+        let roles = shot.keyframeStrategy == .startEnd
+            ? ["start", "end"]
+            : ["start"]
+        guard roles.contains(role) else {
+            throw ToolError(
+                "\(shotId) uses keyframe_strategy=\(shot.keyframeStrategy.rawValue); "
+                    + "role '\(role)' is not valid for it."
+            )
+        }
         guard let (masterURL, _) = resolveAuditedFrame(
-            shotId: args.string("shot_id") ?? "", role: args.string("role") ?? "start",
+            shotId: shotId, role: role,
             explicitPath: args.string("path"), home: home, dataRoot: root)
         else {
-            throw ToolError("No source image for crop_to_aspect. Pass `path`, or a `shot_id` whose frame "
-                + "is recorded in the frames manifest.")
+            throw ToolError("No source image for crop_to_aspect. Pass `path`, or record the target "
+                + "shot's requested frame first.")
         }
-        let sourceInput = editor.mediaAssets.first {
+        let canonicalMaster = masterURL.standardizedFileURL
+            .resolvingSymlinksInPath()
+        let sourceAsset = editor.mediaAssets.reversed().first {
             $0.url.standardizedFileURL.resolvingSymlinksInPath()
-                == masterURL.standardizedFileURL.resolvingSymlinksInPath()
-        }?.generationInput
+                == canonicalMaster
+        }
+        let projectKey = editor.projectId ?? root.standardizedFileURL
+            .resolvingSymlinksInPath().path
+        let shotFingerprint = try PromptCompiler.shotFingerprint(shot)
+        let sourceInput = sourceAsset?.generationInput
+        let providerPrompt = sourceInput?.prompt.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ) ?? ""
+        let generationModel = sourceInput?.model.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ) ?? ""
+        guard let sourceInput,
+              sourceInput.promptShotId == shot.id,
+              sourceInput.promptProjectKey == projectKey,
+              sourceInput.promptShotFingerprint == shotFingerprint,
+              !providerPrompt.isEmpty,
+              !generationModel.isEmpty,
+              ProductionPromptPolicy.stillPromptViolations(
+                providerPrompt
+              ).isEmpty,
+              ComplianceLinter.lintLockedDirectives(
+                providerPrompt,
+                lockedDirectives: shot.stillProductionPromptRequirements
+              ).isEmpty else {
+            throw ToolError(
+                "crop_to_aspect requires a current shot-bound generated image. "
+                    + "Generate the wider frame for this shot first; an unbound Bible "
+                    + "master cannot enter Frames directly."
+            )
+        }
         let mediaDir = home.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         let dest = mediaDir.appendingPathComponent(
             "\(masterURL.deletingPathExtension().lastPathComponent)-crop-\(aspect.replacingOccurrences(of: ":", with: "x")).png")
@@ -2543,7 +2593,7 @@ extension ToolExecutor {
         guard shot.sourceMode == .generated,
               shot.keyframeStrategy != .none else {
             throw ToolError(
-                "\(shot.id) does not require provider-rendered keyframes."
+                "\(shot.id) does not require generated keyframes."
             )
         }
         let role = requestedRole ?? "start"
@@ -2559,12 +2609,12 @@ extension ToolExecutor {
         guard let gi = asset.generationInput else {
             throw ToolError(
                 "The frame has no generation provenance. Record the completed result "
-                    + "returned by a schema-validated generate_image call."
+                    + "returned by generate_image or crop_to_aspect."
             )
         }
         guard !gi.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ToolError(
-                "The frame has no compiled provider prompt and cannot enter the "
+                "The frame has no exact generation instruction and cannot enter the "
                     + "authoritative Frames manifest."
             )
         }
@@ -2662,7 +2712,8 @@ extension ToolExecutor {
             ? ProductionPromptPolicy.stillPromptViolations(providerPrompt)
             : ProductionPromptPolicy.videoPromptViolations(
                 providerPrompt,
-                expectedMovement: shot.productionPlan?.cameraMovement
+                expectedMovement: shot.productionPlan?.cameraMovement,
+                expectedMovementDetail: shot.productionPlan?.cameraMovementDetail
             )
         guard policyViolations.isEmpty else {
             throw ToolError(

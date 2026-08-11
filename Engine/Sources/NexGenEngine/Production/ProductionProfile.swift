@@ -63,13 +63,6 @@ public enum ProductionDiscipline {
     public static let maximumGeneratedVisibleCharacters = 2
     public static let normalGeneratedShotMaximumDuration = 12.0
 
-    private static let directionOnlySetAnchors: Set<String> = [
-        "left", "right", "center", "centre",
-        "screen left", "screen right", "screen center", "screen centre",
-        "camera left", "camera right", "camera center", "camera centre",
-        "frame left", "frame right", "frame center", "frame centre",
-    ]
-
     public static func requiresProductionPlan(_ shot: Shot) -> Bool {
         shot.sourceMode != .imported
     }
@@ -110,7 +103,8 @@ public enum ProductionDiscipline {
             && shot.characterBlocking.contains {
                 !hasValidSetAnchor(
                     plan?.setAnchor(for: $0.characterRef),
-                    relationToSet: $0.relationToSet
+                    relationToSet: $0.relationToSet,
+                    declaredAnchors: shot.visibleZones + shot.propRefs
                 )
             }
     }
@@ -120,26 +114,48 @@ public enum ProductionDiscipline {
             && step.characterBlocking.contains {
                 !hasValidSetAnchor(
                     $0["set_anchor"],
-                    relationToSet: $0["relation_to_set"]
+                    relationToSet: $0["relation_to_set"],
+                    declaredAnchors: step.visibleZones + step.propRequest
                 )
             }
     }
 
     private static func hasValidSetAnchor(
         _ setAnchor: String?,
-        relationToSet: String?
+        relationToSet: String?,
+        declaredAnchors: [String]
     ) -> Bool {
         guard let setAnchor,
               !setAnchor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !isDirectionOnlyAnchor(setAnchor),
               let relationToSet,
               !relationToSet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }
-        let normalized = setAnchor.lowercased()
+        let normalized = normalizeAnchor(setAnchor)
+        return declaredAnchors.contains {
+            normalizeAnchor($0) == normalized
+        }
+    }
+
+    private static let directionOnlyAnchorTokens: Set<String> = [
+        "the", "of", "screen", "camera", "frame", "image", "shot", "stage",
+        "upper", "lower", "top", "bottom", "left", "right", "center", "centre",
+        "middle", "foreground", "background", "front", "back", "near", "far",
+        "edge", "side", "third", "corner", "area", "region", "zone", "quadrant",
+        "portion", "plane",
+    ]
+
+    private static func isDirectionOnlyAnchor(_ value: String) -> Bool {
+        let tokens = normalizeAnchor(value).split(separator: " ").map(String.init)
+        return !tokens.isEmpty && tokens.allSatisfy(directionOnlyAnchorTokens.contains)
+    }
+
+    private static func normalizeAnchor(_ value: String) -> String {
+        value.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-        return !directionOnlySetAnchors.contains(normalized)
     }
 }
 
@@ -167,7 +183,7 @@ public enum ProductionProfileGuidance {
             """
         case "storyboard":
             return """
-            Keep each generated step to one primary subject action and one camera movement, with no more than two visible characters. Put each generated-step physical set landmark in character_blocking.set_anchor and its spatial relation in character_blocking.relation_to_set. Make entrances, exits, and screen direction explicit in the storyboard fields and notes accepted by the writer.
+            Keep each generated step to one primary subject action and one camera movement, with no more than two visible characters. Every character_blocking.set_anchor must exactly name one of that step's visible_zones or prop_request entries; put its spatial relation in character_blocking.relation_to_set. Make entrances, exits, and screen direction explicit in the storyboard fields and notes accepted by the writer.
             """
         case "bible":
             return """
@@ -175,7 +191,7 @@ public enum ProductionProfileGuidance {
             """
         case "shotlist":
             return """
-            Give every generated or AI-enhanced shot a production_plan; imported shots omit it. Generated shots should normally last 4–12 seconds, contain one primary action, one camera movement, and at most two visible characters. Rate renderability green/yellow/red; explicitly assess readable in-frame text, mirrors/reflections, fine hand actions, close eating/drinking, dense face crowds, continuous fights, physics showcases, vehicle mechanics, identity drift, non-English lip sync, long takes, aggressive camera moves, and complex interactions. Add a rescue cut for every yellow/red shot, and record continuity locks plus match-action cues.
+            Give every generated or AI-enhanced shot a production_plan; imported shots omit it. Generated shots should normally last 4–12 seconds, contain one primary action, one camera movement, and at most two visible characters. Every production_plan.blocking_anchors value must exactly name one of that shot's visible_zones or prop_refs entries. Keep visual_prompt to one present-tense sentence describing only the concrete frame-zero subject state: identity, pose, weight, gaze, hands, and impending movement vector. Camera, composition, blocking anchors, continuity, and action stay in their structured fields. Rate renderability green/yellow/red; explicitly assess readable in-frame text, mirrors/reflections, fine hand actions, close eating/drinking, dense face crowds, continuous fights, physics showcases, vehicle mechanics, identity drift, non-English lip sync, long takes, aggressive camera moves, and complex interactions. Add a rescue cut for every yellow/red shot, and record continuity locks plus match-action cues.
             """
         case "sanity":
             return """
@@ -183,7 +199,7 @@ public enum ProductionProfileGuidance {
             """
         case "frames":
             return """
-            Generate and approve still anchors only for generated shots whose keyframe strategy requires them. Skip imported and AI-enhanced shots. Carry forward the generated shot's named characters, locations, props, continuity locks, and exact camera setup; do not invent substitutes.
+            Generate and approve still anchors only for generated shots whose keyframe strategy requires them. Skip imported and AI-enhanced shots. A start frame is the exact state at t=0; an end frame is the exact state at t=duration, including the camera endpoint. Never use a representative mid-state. Pass only the shot's concrete frame-role subject as compile_prompt intent. The compiler owns structured camera, composition, blocking, continuity, and all applicable locked ledger directives; do not reconstruct or append those fields in phase prose. Caller setting, lighting, and style are ignored for shot-bound frames. Carry forward named characters, locations, props, and reference truth without substitutes.
             """
         case "render":
             return """

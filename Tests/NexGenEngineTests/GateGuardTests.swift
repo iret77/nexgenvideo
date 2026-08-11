@@ -930,13 +930,6 @@ struct GateGuardTests {
         #expect(throws: GateBlocked.self) {
             try MusicvideoGateChecks.requireRealRender(dataRoot: root)
         }
-        try saveRenderProofManifest(
-            try proof(prompt + ". The view pans right."),
-            dataRoot: root
-        )
-        #expect(throws: GateBlocked.self) {
-            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
-        }
     }
 
     @Test("render gate binds the provider prompt to the current production plan")
@@ -993,6 +986,13 @@ struct GateGuardTests {
 
         try saveRenderProofManifest(
             try proof("A compiled prompt for another shot."),
+            dataRoot: root
+        )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealRender(dataRoot: root)
+        }
+        try saveRenderProofManifest(
+            try proof(prompt + ". The view pans right."),
             dataRoot: root
         )
         #expect(throws: GateBlocked.self) {

@@ -390,6 +390,10 @@ private func validateToolInput(
            string.count < minimum {
             throw ToolError("\(path): expected at least \(minimum) character(s)")
         }
+        if let maximum = schema["maxLength"] as? Int,
+           string.count > maximum {
+            throw ToolError("\(path): expected at most \(maximum) character(s)")
+        }
         if let pattern = schema["pattern"] as? String,
            string.range(of: pattern, options: .regularExpression) == nil {
             throw ToolError("\(path): does not match required pattern")

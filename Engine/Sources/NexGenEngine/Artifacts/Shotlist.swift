@@ -308,6 +308,7 @@ public enum CameraMovement: String, Codable, Sendable, CaseIterable {
     case other
 
     public func promptProse(detail: String? = nil) -> String {
+        let normalizedDetail = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
         let movement: String
         switch self {
         case .static: movement = "locked-off static camera"
@@ -320,10 +321,10 @@ public enum CameraMovement: String, Codable, Sendable, CaseIterable {
         case .crane: movement = "single controlled crane move"
         case .orbit: movement = "single controlled orbit"
         case .zoom: movement = "single controlled optical zoom"
-        case .other: movement = detail ?? "single controlled camera movement"
+        case .other: movement = normalizedDetail ?? "single controlled camera movement"
         }
         guard self != .other,
-              let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let detail = normalizedDetail,
               !detail.isEmpty else { return movement }
         return "\(movement): \(detail)"
     }
@@ -377,6 +378,10 @@ public struct ProductionBlockingAnchor: Codable, Sendable, Equatable {
 }
 
 public struct ShotProductionPlan: Codable, Sendable, Equatable {
+    public static let singleDirectiveMaximumLength = 240
+    public static let singleDirectiveSchemaPattern =
+        #"^(?!.*\b(?:[Aa][Nn][Dd]|[Aa][Ss]|[Aa][Ff][Tt][Ee][Rr]|[Bb][Ee][Ff][Oo][Rr][Ee]|[Bb][Uu][Tt]|[Dd][Uu][Rr][Ii][Nn][Gg]|[Ff][Oo][Ll][Ll][Oo][Ww][Ee][Dd]\s+[Bb][Yy]|[Nn][Ee][Xx][Tt]|[Nn][Oo][Rr]|[Oo][Nn][Cc][Ee]|[Oo][Rr]|[Pp][Ll][Uu][Ss]|[Ss][Ii][Mm][Uu][Ll][Tt][Aa][Nn][Ee][Oo][Uu][Ss][Ll][Yy]|[Ss][Uu][Bb][Ss][Ee][Qq][Uu][Ee][Nn][Tt][Ll][Yy]|[Tt][Hh][Ee][Nn]|[Uu][Nn][Tt][Ii][Ll]|[Ww][Hh][Ee][Nn]|[Ww][Hh][Ii][Ll][Ee]|[Yy][Ee][Tt])\b)(?!.*[,;:&+/—→\r\n])(?!.*[.!?].*\S).*\S[.!?]?\s*$"#
+
     public var primaryAction: String
     public var cameraMovement: CameraMovement
     public var cameraMovementDetail: String?
@@ -444,7 +449,9 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
 
     public enum ValidationError: Swift.Error, Sendable, Equatable {
         case emptyPrimaryAction
+        case compoundPrimaryAction
         case missingCameraMovementDetail
+        case invalidCameraMovementDetail
         case greenShotDeclaresRisks
         case riskyShotMissingRisks
         case riskyShotMissingRescueCut
@@ -456,14 +463,32 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
     }
 
     public func validate() throws {
-        guard !primaryAction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let normalizedAction = primaryAction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedAction.isEmpty else {
             throw ValidationError.emptyPrimaryAction
         }
-        if cameraMovement == .other {
-            guard let cameraMovementDetail,
-                  !cameraMovementDetail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw ValidationError.missingCameraMovementDetail
+        guard Self.isSingleDirective(normalizedAction) else {
+            throw ValidationError.compoundPrimaryAction
+        }
+        if let cameraMovementDetail {
+            let normalizedDetail = cameraMovementDetail.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedDetail.isEmpty else {
+                if cameraMovement == .other {
+                    throw ValidationError.missingCameraMovementDetail
+                }
+                throw ValidationError.invalidCameraMovementDetail
             }
+            guard Self.isSingleDirective(normalizedDetail) else {
+                throw ValidationError.invalidCameraMovementDetail
+            }
+            guard ProductionPromptPolicy.cameraMovementDetailViolations(
+                normalizedDetail,
+                expectedMovement: cameraMovement
+            ).isEmpty else {
+                throw ValidationError.invalidCameraMovementDetail
+            }
+        } else if cameraMovement == .other {
+            throw ValidationError.missingCameraMovementDetail
         }
         guard Set(risks).count == risks.count else {
             throw ValidationError.duplicateRisks
@@ -498,6 +523,11 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
                 throw ValidationError.riskyShotMissingRescueCut
             }
         }
+    }
+
+    private static func isSingleDirective(_ value: String) -> Bool {
+        value.count <= singleDirectiveMaximumLength
+            && value.range(of: singleDirectiveSchemaPattern, options: .regularExpression) != nil
     }
 
     public var providerDirectives: [String] {

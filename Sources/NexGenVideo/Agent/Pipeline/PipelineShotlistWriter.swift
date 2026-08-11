@@ -176,9 +176,9 @@ enum PipelineShotlistWriter {
             }
             guard unanchoredBlocking.isEmpty else {
                 throw ToolError(
-                    "Generated character blocking must pair a non-directional "
-                        + "production_plan.blocking_anchors entry with a non-empty "
-                        + "character_blocking.relation_to_set "
+                    "Generated character blocking must pair a production_plan.blocking_anchors "
+                        + "entry that exactly matches the shot's prop_refs or visible_zones with "
+                        + "a non-empty character_blocking.relation_to_set "
                         + "(e.g. "
                         + unanchoredBlocking.prefix(3).map(\.id).joined(separator: ", ")
                         + ")."

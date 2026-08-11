@@ -161,6 +161,9 @@ struct ToolDefinitionContractTests {
                 #expect(required.contains("production_plan"))
                 let planProperties = try #require(schemaProperties(plan["properties"]))
                 let planRequired = Set(plan["required"] as? [String] ?? [])
+                let primaryAction = try #require(planProperties["primary_action"])
+                let primaryActionPattern = try #require(primaryAction["pattern"] as? String)
+                let movementDetail = try #require(planProperties["camera_movement_detail"])
                 let anchors = try #require(planProperties["blocking_anchors"])
                 let anchorItems = try #require(anchors["items"] as? [String: Any])
                 let anchorProperties = try #require(
@@ -169,6 +172,23 @@ struct ToolDefinitionContractTests {
                 let anchor = try #require(anchorProperties["set_anchor"])
                 let pattern = try #require(anchor["pattern"] as? String)
                 #expect(planRequired.contains("blocking_anchors"))
+                #expect(
+                    primaryAction["maxLength"] as? Int
+                        == ShotProductionPlan.singleDirectiveMaximumLength
+                )
+                #expect(movementDetail["pattern"] as? String == primaryActionPattern)
+                #expect(
+                    "The performer opens the door and enters.".range(
+                        of: primaryActionPattern,
+                        options: .regularExpression
+                    ) == nil
+                )
+                #expect(
+                    "The performer opens the door.".range(
+                        of: primaryActionPattern,
+                        options: .regularExpression
+                    ) != nil
+                )
                 #expect("screen-right".range(of: pattern, options: .regularExpression) == nil)
                 #expect("hall doorway".range(of: pattern, options: .regularExpression) != nil)
             }

@@ -74,8 +74,11 @@ struct PromptComposerShotTests {
             shot: projection
         )
         let image = try await PromptComposer.compose(
-            intent: "the performer holds the marked t=0 pose under soft window light",
+            intent: "the performer holds the marked t=0 pose",
             modality: .image, modelId: "openai/gpt-image-2", projectDir: nil,
+            setting: "caller supplied rehearsal room",
+            lighting: "caller supplied window light",
+            style: "caller supplied oil paint",
             shot: projection
         )
 
@@ -88,14 +91,18 @@ struct PromptComposerShotTests {
         #expect(video.text.contains("single controlled dolly-in"))
         #expect(!video.text.contains("runs away"))
         #expect(!video.text.contains("pans right"))
-        #expect(video.text.contains("inside the red rehearsal room"))
-        #expect(video.text.contains("soft window light from camera left"))
-        #expect(video.text.contains("restrained hand-drawn animation"))
+        #expect(!video.text.contains("inside the red rehearsal room"))
+        #expect(!video.text.contains("soft window light from camera left"))
+        #expect(!video.text.contains("restrained hand-drawn animation"))
         #expect(!image.text.contains("single controlled dolly-in"))
         #expect(!image.text.contains("35mm follow"))
+        #expect(!image.text.contains("caller supplied rehearsal room"))
+        #expect(!image.text.contains("caller supplied window light"))
+        #expect(!image.text.contains("caller supplied oil paint"))
         #expect(ProductionPromptPolicy.videoPromptViolations(
             video.text,
-            expectedMovement: plan.cameraMovement
+            expectedMovement: plan.cameraMovement,
+            expectedMovementDetail: plan.cameraMovementDetail
         ).isEmpty)
         #expect(ProductionPromptPolicy.stillPromptViolations(image.text).isEmpty)
         #expect(ComplianceLinter.lintLockedDirectives(
@@ -134,12 +141,56 @@ struct PromptComposerShotTests {
 
     @Test("camera-motion synonyms are rejected independently of exact plan prose")
     func rejectsCameraMotionSynonyms() {
+        #expect(!ProductionPromptPolicy.stillPromptViolations("Static subject, pan left").isEmpty)
+        #expect(!ProductionPromptPolicy.stillPromptViolations("Static subject, tilt up").isEmpty)
+        #expect(!ProductionPromptPolicy.stillPromptViolations("Static subject, zoom in").isEmpty)
         #expect(!ProductionPromptPolicy.stillPromptViolations(
             "Static subject while the camera glides forward"
         ).isEmpty)
+        for prompt in [
+            "Static subject while the camera dollies forward",
+            "Static subject while the camera dollies backward",
+            "Static subject while the camera is dollying",
+            "Static subject while the camera drifts forward",
+            "Static subject while the camera creeps in",
+            "Static subject while the camera eases back",
+            "Static subject while the camera floats past",
+            "Static subject while the camera crawls closer",
+            "Static subject while the camera swoops down",
+            "Static subject while the frame rises",
+            "Static subject while the view descends",
+        ] {
+            #expect(!ProductionPromptPolicy.stillPromptViolations(prompt).isEmpty)
+        }
+        #expect(!ProductionPromptPolicy.videoPromptViolations(
+            "Locked-off static camera. The camera dollies forward.",
+            expectedMovement: .static,
+            expectedMovementDetail: nil
+        ).isEmpty)
         #expect(!ProductionPromptPolicy.videoPromptViolations(
             "Single controlled dolly-in. The view pans right.",
-            expectedMovement: .dollyIn
+            expectedMovement: .dollyIn,
+            expectedMovementDetail: nil
+        ).isEmpty)
+        #expect(!ProductionPromptPolicy.videoPromptViolations(
+            "Single controlled pan. The camera pans right.",
+            expectedMovement: .pan,
+            expectedMovementDetail: nil
+        ).isEmpty)
+        #expect(!ProductionPromptPolicy.videoPromptViolations(
+            "Single controlled pan. Single controlled pan.",
+            expectedMovement: .pan,
+            expectedMovementDetail: nil
+        ).isEmpty)
+        #expect(ProductionPromptPolicy.videoPromptViolations(
+            "Single pedestal rise.",
+            expectedMovement: .other,
+            expectedMovementDetail: "single pedestal rise"
+        ).isEmpty)
+        #expect(!ProductionPromptPolicy.videoPromptViolations(
+            "Single pedestal rise. The camera pans right.",
+            expectedMovement: .other,
+            expectedMovementDetail: "single pedestal rise"
         ).isEmpty)
     }
 

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import NexGenEngine
 
 @testable import NexGenVideo
 
@@ -82,6 +83,38 @@ struct PromptCompilerTests {
                 modelId: "fal-ai/veo3",
                 binding: changed
             ))
+        }
+    }
+
+    @Test func shotBoundImageCompilationRejectsNonGeneratedSourcesBeforeBinding() async throws {
+        var shot = try Shot(
+            id: "s001",
+            timeStart: 0,
+            timeEnd: 4,
+            durationS: 4,
+            type: .performance,
+            description: "Performance",
+            visualPrompt: "A performer holds a measured opening pose.",
+            mood: "focused"
+        )
+        for sourceMode in [SourceMode.imported, .aiEnhanced] {
+            shot.sourceMode = sourceMode
+            let projection = PromptComposer.ShotProjection(shot)
+            await #expect(throws: ToolError.self) {
+                _ = try await PromptCompiler.compile(
+                    intent: "A performer holds a measured opening pose.",
+                    modelId: "openai/gpt-image-2",
+                    modality: .image,
+                    editor: nil,
+                    shotId: "s001",
+                    shot: projection
+                )
+            }
+        }
+        #expect(throws: Never.self) {
+            try PromptCompiler.validateImageShotSourceContract(
+                sourceMode: .generated
+            )
         }
     }
 

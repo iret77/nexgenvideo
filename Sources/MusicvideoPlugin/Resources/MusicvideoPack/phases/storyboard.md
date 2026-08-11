@@ -94,10 +94,9 @@ What you derive from it:
   SHOTLIST. You do NOT have to hit this distribution per section — but
   the shotlist total should approach the pattern. Sanity check
   `PATTERN_DRIFT` warns at >25 pp deviation per slot.
-- **`asl_range`** — typical shot duration in the pattern. If your tempo
-  band demands otherwise, the tempo band takes precedence (the
-  tempo-band table lives in the shotlist phase), but the pattern
-  supplies the default span.
+- **`asl_range`** — an editorial reference for the pattern. The injected
+  core production profile and the approved atomic story action remain
+  authoritative for generated-shot duration.
 - **`camera_vocabulary`** — preferred movement language. Choose camera
   setups (height/angle/lens) freely, but derive movement descriptions
   from this vocabulary.
@@ -143,7 +142,7 @@ Per step:
 | `function` | Tag from story / mood-insert / performance / cutaway / structural-anchor / transition |
 | `source_mode` | `generated`, `imported`, or `ai_enhanced` |
 | `subject` | Who does WHAT in which **starting pose** + vector: "Alex stands in the school gate, left leg forward, about to step in" |
-| `camera` | **Starting framing + EXACTLY ONE move category**: "low angle ~1.5 m, static 2 s, then slow pull-back 1 m". Combinations like "push-in into orbit" or "pan into tracking" are forbidden — at most one move category per step. Allowed categories: push / pull / pan / tilt / track / orbit / crane / zoom / aerial / handheld. "static" counts as 0 and may be combined with one other category. |
+| `camera` | Starting framing and movement intent in the structured storyboard camera field; the injected core production profile defines and validates movement cardinality. |
 | `framing` | One exact framing enum: wide / full / ms / mcu / cu / ecu / ots / pov / insert / aerial |
 | `camera_setup` | Structured height, angle, lens hint, and optional note |
 | `character_blocking` | Exact starting position, pose, gaze, and set relation per character |
@@ -391,7 +390,7 @@ planned per shot — the shotlist agent carries it into the shot fields.
 
 - **Never** assume bible IDs in `setting_hint` / `prop_request` — they
   don't exist yet. Plain text.
-- **Never** write out final visual_prompt components — that is the
+- **Never** write the final frame-zero `visual_prompt` — that is the
   shotlist's job.
 - **Never** trigger an image render.
 - Step IDs gapless, function tags balanced, refrain anchor consistent

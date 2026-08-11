@@ -108,6 +108,14 @@ enum PipelineArtifactWriteContract {
     private static var nonEmptyString: [String: Any] {
         ["type": "string", "minLength": 1, "pattern": #"\S"#]
     }
+    private static var singleProductionDirective: [String: Any] {
+        [
+            "type": "string",
+            "minLength": 1,
+            "maxLength": ShotProductionPlan.singleDirectiveMaximumLength,
+            "pattern": ShotProductionPlan.singleDirectiveSchemaPattern,
+        ]
+    }
     private static var setAnchorString: [String: Any] {
         [
             "type": "string",
@@ -435,9 +443,9 @@ enum PipelineArtifactWriteContract {
 
     private static var productionPlan: [String: Any] { object(
         [
-            "primary_action": string,
+            "primary_action": singleProductionDirective,
             "camera_movement": enumeration(CameraMovement.allCases.map(\.rawValue)),
-            "camera_movement_detail": string,
+            "camera_movement_detail": singleProductionDirective,
             "narrative_beat": enumeration(NarrativeBeat.allCases.map(\.rawValue)),
             "renderability": enumeration(RenderabilityRating.allCases.map(\.rawValue)),
             "risks": array(enumeration(RenderabilityRisk.allCases.map(\.rawValue))),

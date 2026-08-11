@@ -66,12 +66,15 @@ enum PromptCompiler {
         shotId: String = "none",
         shot: PromptComposer.ShotProjection? = nil
     ) async throws -> CompiledPrompt {
-        let binding = try currentBinding(editor: editor, shotId: shotId)
         guard shotId == "none" || shot != nil else {
             throw ToolError(
                 "Shot-bound compilation requires the current shot projection."
             )
         }
+        if shotId != "none", case .image = modality, let shot {
+            try validateImageShotSourceContract(sourceMode: shot.sourceMode)
+        }
+        let binding = try currentBinding(editor: editor, shotId: shotId)
         let composed = try await PromptComposer.compose(
             intent: intent,
             modality: modality,
@@ -124,6 +127,17 @@ enum PromptCompiler {
             + "\(binding.shotFingerprint)|\(modelId)|\(text)"
         let digest = SHA256.hash(data: Data(material.utf8))
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func validateImageShotSourceContract(
+        sourceMode: SourceMode
+    ) throws {
+        guard sourceMode == .generated else {
+            throw ToolError(
+                "Only generated shots can use shot-bound image generation. "
+                    + "Imported and AI-enhanced shots never enter Frames."
+            )
+        }
     }
 
     static func validate(

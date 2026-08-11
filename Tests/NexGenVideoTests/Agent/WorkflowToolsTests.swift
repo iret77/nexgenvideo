@@ -1255,6 +1255,65 @@ struct WorkflowToolsTests {
         #expect(cost?.keys.contains("next_phase") == true)
     }
 
+    @Test("storyboard writer rejects declared direction-only set anchors")
+    func storyboardWriterRejectsDirectionOnlySetAnchors() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        let steps: [[String: Any]] = (1...4).map { index in
+            var blocking: [[String: Any]] = []
+            if index == 1 {
+                blocking = [[
+                    "character_ref": "performer",
+                    "position": "left third",
+                    "pose": "standing",
+                    "gaze": "toward camera",
+                    "relation_to_set": "beside the screen edge",
+                    "set_anchor": "screen-left edge",
+                ]]
+            }
+            return [
+                "id": "intro.\(String(format: "%02d", index))",
+                "function": "story",
+                "source_mode": "generated",
+                "subject": "The performer waits.",
+                "camera": "Wide static frame.",
+                "setting_hint": "yard, from the gate",
+                "location_view_request": "wide",
+                "character_view_request": [],
+                "prop_request": [],
+                "framing": "wide",
+                "visible_zones": ["screen-left edge"],
+                "zone_introduces": index == 1 ? ["screen-left edge"] : [],
+                "camera_setup": [
+                    "height": "eye_level",
+                    "angle": "frontal",
+                    "lens_hint": "wide",
+                ],
+                "character_blocking": blocking,
+            ]
+        }
+
+        let result = await h.runRaw("write_storyboard", args: [
+            "project_dir": dataRoot.path,
+            "origin": "agent_proposal",
+            "summary_oneline": "The performer waits.",
+            "sections": [[
+                "id": "intro",
+                "label": "intro",
+                "time_start": 0,
+                "time_end": 12,
+                "energy": "low",
+                "function": "aufbau",
+                "steps": steps,
+            ]],
+        ])
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("concrete set_anchor"))
+        #expect(try StoryboardStore.load(dataRoot: dataRoot, version: .current) == nil)
+    }
+
     @Test("typed planning writers persist engine-valid artifacts")
     func typedPlanningWritersPersistArtifacts() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
@@ -1463,6 +1522,26 @@ struct WorkflowToolsTests {
         #expect(missingBeat.isError)
         #expect(ToolHarness.textOf(missingBeat).contains("narrative_beat"))
 
+        var oversizedShot = shot
+        var oversizedPlan = try #require(
+            oversizedShot["production_plan"] as? [String: Any]
+        )
+        oversizedPlan["primary_action"] = String(
+            repeating: "x",
+            count: ShotProductionPlan.singleDirectiveMaximumLength + 1
+        )
+        oversizedShot["production_plan"] = oversizedPlan
+        let oversized = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [oversizedShot],
+        ])
+        #expect(oversized.isError)
+        #expect(
+            ToolHarness.textOf(oversized).contains(
+                "expected at most \(ShotProductionPlan.singleDirectiveMaximumLength) character(s)"
+            )
+        )
+
         var unanchoredShot = shot
         unanchoredShot["character_refs"] = ["performer"]
         unanchoredShot["character_blocking"] = [[
@@ -1507,6 +1586,43 @@ struct WorkflowToolsTests {
         ])
         #expect(directionOnly.isError)
         #expect(ToolHarness.textOf(directionOnly).contains("required pattern"))
+
+        var disguisedDirectionShot = unanchoredShot
+        disguisedDirectionShot["visible_zones"] = ["screen-left edge"]
+        var disguisedDirectionPlan = try #require(
+            disguisedDirectionShot["production_plan"] as? [String: Any]
+        )
+        disguisedDirectionPlan["blocking_anchors"] = [[
+            "character_ref": "performer",
+            "set_anchor": "screen-left edge",
+        ]]
+        disguisedDirectionShot["production_plan"] = disguisedDirectionPlan
+        let disguisedDirection = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [disguisedDirectionShot],
+        ])
+        #expect(disguisedDirection.isError)
+        #expect(
+            ToolHarness.textOf(disguisedDirection).contains(
+                "prop_refs or visible_zones"
+            )
+        )
+
+        var undeclaredAnchorShot = unanchoredShot
+        var undeclaredAnchorPlan = try #require(
+            undeclaredAnchorShot["production_plan"] as? [String: Any]
+        )
+        undeclaredAnchorPlan["blocking_anchors"] = [[
+            "character_ref": "performer",
+            "set_anchor": "upper left",
+        ]]
+        undeclaredAnchorShot["production_plan"] = undeclaredAnchorPlan
+        let undeclaredAnchor = await h.runRaw("write_shotlist", args: [
+            "project_dir": dataRoot.path,
+            "shots": [undeclaredAnchorShot],
+        ])
+        #expect(undeclaredAnchor.isError)
+        #expect(ToolHarness.textOf(undeclaredAnchor).contains("prop_refs or visible_zones"))
 
         var missingRelationShot = unanchoredShot
         missingRelationShot["character_blocking"] = [[
@@ -2627,7 +2743,7 @@ struct WorkflowToolsTests {
             "transition_in": "hard_cut",
             "transition_out": "hard_cut",
             "production_plan": [
-                "primary_action": "Preserve and restyle the imported performance.",
+                "primary_action": "Restyle the imported performance.",
                 "camera_movement": "static",
                 "narrative_beat": "action",
                 "renderability": "green",

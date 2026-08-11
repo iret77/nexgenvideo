@@ -1,14 +1,10 @@
 import Foundation
 
-/// Structural blocking validation for a shot's visual prompt — a faithful port of the original
-/// `sanity/blocking_validator.py`. A shot with `keyframe_strategy ∈ {start, start_end}` must cover
-/// THREE axes in its `visual_prompt`, not magic strings:
+/// Structural subject-blocking validation for a shot's frame-zero prompt. A shot with
+/// `keyframe_strategy ∈ {start, start_end}` must cover two axes in `visual_prompt`:
 ///   POSE   — a present-tense pose verb AND a body-part detail,
 ///   VECTOR — the next-movement intent,
-///   CAMERA — a framing anchor AND a camera-move marker.
-/// A figure-less cutaway (no character refs and no person hint) skips POSE/VECTOR; CAMERA stays
-/// mandatory (even an empty room needs a framing). This blocks both the old "START FRAME:" magic
-/// preamble and empty stub prompts.
+/// A figure-less cutaway skips both; camera truth remains in the structured shot fields.
 public enum BlockingValidator {
     public struct Result: Sendable, Equatable {
         public let ok: Bool
@@ -25,17 +21,6 @@ public enum BlockingValidator {
     private static let vectorMarkers = ["about to", "im begriff", "im moment vor", "kurz bevor",
         "kurz davor", "gleich wird", "gleich setzt", "wird gleich", "wird sich gleich", "bevor er",
         "bevor sie", "bevor das", "dabei zu", "im ansatz"]
-    private static let cameraFramingMarkers = ["wide shot", "wide-shot", "medium shot", "medium-shot",
-        "wide-angle", "close-up", "close up", "extreme close", "totale", "halbtotale", "halbnah",
-        "amerikanisch", "establishing shot", "großaufnahme", "nahaufnahme", "mm-look", "kamera bei",
-        "camera at", "framing bei"]
-    private static let cameraFramingPatterns = [#"\b(\d+)\s*mm\b"#, #"\b(\d+(?:\.\d+)?)\s*m\b"#,
-        #"\bgroß(?:aufnahme)?\b"#, #"\bwide\b(?=[\s,;:.\-])"#, #"\bclose\b(?=[\s,;:.\-])"#,
-        #"\bmedium\b(?=[\s,;:.\-])"#]
-    private static let cameraMoveMarkers = ["statisch", "static", "still", "dolly", "kran", "crane",
-        "schwenk", "rückfahrt", "vorfahrt", "tracking", "fahrt", "rückwärts", "vorwärts", "neigung",
-        "push-in", "pull-out"]
-    private static let cameraMovePatterns = [#"\bpan\b"#, #"\btilt\b"#, #"\bzoom\b"#]
     private static let personTokens = ["person", "mensch", "menschen", "figur", "figuren", "mann",
         "männer", "frau", "frauen", "junge", "jungen", "mädchen", "kind", "kinder", "leute", "darsteller",
         "schüler", "lehrer", "passant", "people", "character", "man", "woman", "boy", "girl", "child",
@@ -60,10 +45,6 @@ public enum BlockingValidator {
         return false
     }
 
-    private static func hasAnyPattern(_ text: String, _ patterns: [String]) -> Bool {
-        patterns.contains { regexMatches(text, $0) }
-    }
-
     public static func hasPersonHint(_ visualPrompt: String) -> Bool {
         guard !visualPrompt.isEmpty else { return false }
         var textLower = visualPrompt.lowercased()
@@ -76,7 +57,7 @@ public enum BlockingValidator {
         return !regexMatches(textLower, negationBeforePerson)
     }
 
-    /// Validate the three axes. Only meaningful for `keyframe_strategy ∈ {start, start_end}`.
+    /// Validate the subject axes. Only meaningful for `keyframe_strategy ∈ {start, start_end}`.
     public static func validate(visualPrompt: String, hasCharacters: Bool) -> Result {
         let text = visualPrompt.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let figureless = !(hasCharacters || hasPersonHint(visualPrompt))
@@ -85,10 +66,6 @@ public enum BlockingValidator {
         let poseBodyOK = figureless || hasAny(text, poseBodyParts)
         let poseOK = figureless || (poseVerbOK && poseBodyOK)
         let vectorOK = figureless || hasAny(text, vectorMarkers)
-
-        let camFrame = hasAny(text, cameraFramingMarkers) || hasAnyPattern(text, cameraFramingPatterns)
-        let camMove = hasAny(text, cameraMoveMarkers) || hasAnyPattern(text, cameraMovePatterns)
-        let cameraOK = camFrame && camMove
 
         var reasons: [String] = []
         if !poseOK {
@@ -101,12 +78,6 @@ public enum BlockingValidator {
         if !vectorOK {
             reasons.append("VECTOR missing: needs the next-movement intent (e.g. 'about to …', 'kurz bevor …').")
         }
-        if !cameraOK {
-            var missing: [String] = []
-            if !camFrame { missing.append("a framing anchor (medium/wide/close or ~Xm/Xmm)") }
-            if !camMove { missing.append("a camera-move marker (static/dolly/pan/…)") }
-            reasons.append("CAMERA missing: " + missing.joined(separator: " AND ") + ".")
-        }
-        return Result(ok: poseOK && vectorOK && cameraOK, reasons: reasons)
+        return Result(ok: poseOK && vectorOK, reasons: reasons)
     }
 }

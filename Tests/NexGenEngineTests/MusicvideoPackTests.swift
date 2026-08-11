@@ -14,6 +14,7 @@ struct MusicvideoPackTests {
         #expect(reg.engine.projectDirs.contains("audio"))
         #expect(reg.engine.projectDirs.contains("analysis"))
         #expect(reg.engine.sanityChecks["tempo"] != nil)
+        #expect(reg.engine.sanityChecks["pacing"] != nil)
         #expect(reg.engine.phases["analysis"] != nil)
         #expect(reg.engine.progressPhaseRunners["analysis"] != nil)
         #expect(reg.engine.productionProfiles.map(\.id) == [

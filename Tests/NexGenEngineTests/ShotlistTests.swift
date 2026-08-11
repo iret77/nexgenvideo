@@ -80,6 +80,47 @@ struct ShotlistTests {
         }
     }
 
+    @Test("production plans require one subject action and one camera movement clause")
+    func productionPlanDirectivesAreAtomic() throws {
+        for action in [
+            "The performer opens the door and enters.",
+            "The performer opens the door or steps back.",
+            "The performer opens the door but stays outside.",
+            "The performer opens the door, then enters.",
+            "The performer opens the door; the performer enters.",
+        ] {
+            #expect(throws: ShotProductionPlan.ValidationError.self) {
+                _ = try ShotProductionPlan(
+                    primaryAction: action,
+                    cameraMovement: .static,
+                    renderability: .green
+                )
+            }
+        }
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer opens the door.",
+                cameraMovement: .other,
+                cameraMovementDetail: "pedestal up and pan right",
+                renderability: .green
+            )
+        }
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer opens the door.",
+                cameraMovement: .dollyIn,
+                cameraMovementDetail: "pan left",
+                renderability: .green
+            )
+        }
+        _ = try ShotProductionPlan(
+            primaryAction: "The performer opens the door.",
+            cameraMovement: .other,
+            cameraMovementDetail: "single pedestal rise",
+            renderability: .green
+        )
+    }
+
     @Test("yellow and red production plans require a risk and rescue cut")
     func riskyPlansRequireRescue() {
         #expect(throws: ShotProductionPlan.ValidationError.self) {
