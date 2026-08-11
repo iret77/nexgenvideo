@@ -17,16 +17,46 @@ public struct AuditContext: Sendable {
     public var brief: Brief?
     public var bible: Bible?
     public var extra: [String: String]?
-    public var productionProfileIDs: Set<ProductionProfileID>
+
+    private static let productionProfileKey = "__ngv_internal.production_profile_ids.v1"
 
     public init(
-        shotlist: Shotlist, brief: Brief? = nil, bible: Bible? = nil, extra: [String: String]? = nil,
-        productionProfileIDs: Set<ProductionProfileID> = []
+        shotlist: Shotlist, brief: Brief? = nil, bible: Bible? = nil, extra: [String: String]? = nil
     ) {
         self.shotlist = shotlist
         self.brief = brief
         self.bible = bible
         self.extra = extra
+    }
+
+    public var productionProfileIDs: Set<ProductionProfileID> {
+        get {
+            guard let encoded = extra?[Self.productionProfileKey],
+                  let data = encoded.data(using: .utf8),
+                  let ids = try? JSONDecoder().decode([String].self, from: data) else {
+                return []
+            }
+            return Set(ids.map { ProductionProfileID(rawValue: $0) })
+        }
+        set {
+            let hadExtra = extra != nil
+            var values = extra ?? [:]
+            if newValue.isEmpty {
+                values.removeValue(forKey: Self.productionProfileKey)
+            } else {
+                let data = try! JSONEncoder().encode(newValue.map(\.rawValue).sorted())
+                values[Self.productionProfileKey] = String(decoding: data, as: UTF8.self)
+            }
+            extra = values.isEmpty && !hadExtra ? nil : values
+        }
+    }
+
+    public init(
+        shotlist: Shotlist, brief: Brief? = nil, bible: Bible? = nil,
+        extra: [String: String]? = nil,
+        productionProfileIDs: Set<ProductionProfileID>
+    ) {
+        self.init(shotlist: shotlist, brief: brief, bible: bible, extra: extra)
         self.productionProfileIDs = productionProfileIDs
     }
 }

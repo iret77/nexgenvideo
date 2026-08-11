@@ -9,7 +9,7 @@
           "heading": "Production planning",
           "items": [
             "Reusable production profiles now carry renderability, continuity, rescue-cut, and narrative-beat discipline across compatible format packs.",
-        "New generated and AI-enhanced shots store structured production plans while imported footage and existing projects keep their real source truth without invented creative decisions.",
+            "New generated and AI-enhanced shots store structured production plans while imported footage and existing projects keep their real source truth without invented creative decisions.",
             "Compiled provider prompts and render tasks now preserve the approved primary action, camera movement, continuity locks, and match-action cue."
           ]
         },
@@ -22,7 +22,7 @@
         {
           "heading": "Format packs",
           "items": [
-            "Projects pinned to an older binary contract now offer an explicit Recovery-copy upgrade to the current pack instead of opening with incompatible code."
+            "Compatible projects keep opening their exact pinned format-pack version under engine contract 5; genuinely incompatible packs offer an explicit Recovery-copy upgrade instead of loading unsafe code."
           ]
         }
       ]

@@ -655,7 +655,7 @@ enum MusicvideoGateChecks {
                     + "(e.g. \(importedPlans.prefix(3).map(\.id).joined(separator: ", ")))."
             )
         }
-        if shotlist.generator == Shotlist.agentWriterGenerator {
+        if Shotlist.requiresProductionPlan(forGenerator: shotlist.generator) {
             let missingPlans = shotlist.shots.filter {
                 ProductionDiscipline.requiresProductionPlan($0)
                     && $0.productionPlan == nil

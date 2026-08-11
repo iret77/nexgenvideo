@@ -110,27 +110,45 @@ struct ToolDefinitionContractTests {
             let blocking = try #require(properties["character_blocking"])
             let blockingItems = try #require(blocking["items"] as? [String: Any])
             let blockingRequired = Set(blockingItems["required"] as? [String] ?? [])
+            let propViews = try #require(properties["prop_views"])
+            let propViewItems = try #require(propViews["items"] as? [String: Any])
+            let propViewProperties = try #require(
+                propViewItems["properties"] as? [String: [String: Any]]
+            )
+            let propPattern = try #require(propViewProperties["prop"]?["pattern"] as? String)
+            #expect(
+                "__ngv_internal.production_plan.v1".range(
+                    of: propPattern,
+                    options: .regularExpression
+                ) == nil
+            )
+            #expect("hero_prop".range(of: propPattern, options: .regularExpression) != nil)
             if sourceMode == SourceMode.imported.rawValue {
                 #expect(properties["production_plan"] == nil)
                 #expect(!required.contains("production_plan"))
             } else {
-                #expect(properties["production_plan"] != nil)
+                let plan = try #require(properties["production_plan"])
                 #expect(required.contains("production_plan"))
+                let planProperties = try #require(schemaProperties(plan["properties"]))
+                let planRequired = Set(plan["required"] as? [String] ?? [])
+                let anchors = try #require(planProperties["blocking_anchors"])
+                let anchorItems = try #require(anchors["items"] as? [String: Any])
+                let anchorProperties = try #require(
+                    anchorItems["properties"] as? [String: [String: Any]]
+                )
+                let anchor = try #require(anchorProperties["set_anchor"])
+                let pattern = try #require(anchor["pattern"] as? String)
+                #expect(planRequired.contains("blocking_anchors"))
+                #expect("screen-right".range(of: pattern, options: .regularExpression) == nil)
+                #expect("hall doorway".range(of: pattern, options: .regularExpression) != nil)
             }
-            #expect(
-                blockingRequired.contains("set_anchor")
-                    == (sourceMode == SourceMode.generated.rawValue)
-            )
+            #expect(!blockingRequired.contains("set_anchor"))
             if sourceMode == SourceMode.generated.rawValue {
                 let blockingProperties = try #require(
                     blockingItems["properties"] as? [String: [String: Any]]
                 )
                 let relation = try #require(blockingProperties["relation_to_set"])
-                let anchor = try #require(blockingProperties["set_anchor"])
                 #expect(relation["pattern"] != nil)
-                let pattern = try #require(anchor["pattern"] as? String)
-                #expect("screen-right".range(of: pattern, options: .regularExpression) == nil)
-                #expect("hall doorway".range(of: pattern, options: .regularExpression) != nil)
             }
         }
     }

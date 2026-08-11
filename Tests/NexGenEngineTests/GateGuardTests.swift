@@ -646,6 +646,12 @@ struct GateGuardTests {
         try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
 
         _ = try saveShotlist(
+            try shotlist(generator: "shotlist-agent@write_shotlist/v3"),
+            to: root
+        )
+        try MusicvideoGateChecks.requireRealShotlist(dataRoot: root)
+
+        _ = try saveShotlist(
             try shotlist(generator: Shotlist.agentWriterGenerator),
             to: root
         )

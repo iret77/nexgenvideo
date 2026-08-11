@@ -87,10 +87,11 @@ public enum ProductionDiscipline {
     }
 
     public static func hasUnanchoredCharacterBlocking(_ shot: Shot) -> Bool {
-        shot.sourceMode == .generated
+        let plan = shot.productionPlan
+        return shot.sourceMode == .generated
             && shot.characterBlocking.contains {
                 !hasValidSetAnchor(
-                    $0.setAnchor,
+                    plan?.setAnchor(for: $0.characterRef),
                     relationToSet: $0.relationToSet
                 )
             }
@@ -140,7 +141,7 @@ public enum ProductionProfileGuidance {
             switch phase {
         case "production_design":
             return """
-            Build reusable production assets before shots: a style anchor, character sheets for every visible state, and location geometry with named zones, camera anchors, and reverse views. Treat identity, scale, wardrobe, props, lighting, and screen direction as continuity facts.
+            Define the style layer before shots: visual vocabulary, mood, color language, lighting intent, and continuity requirements. Keep character sheets, location geometry, reverse views, and prop sheets in the later Bible phase.
             """
         case "treatment":
             return """
@@ -148,7 +149,7 @@ public enum ProductionProfileGuidance {
             """
         case "storyboard":
             return """
-            Keep each generated shot to one primary subject action and one camera movement, with no more than two visible characters. Name each generated-shot blocking set_anchor separately from its spatial relation. Make entrances, exits, screen direction, match-action cues, and continuity locks explicit.
+            Keep each generated step to one primary subject action and one camera movement, with no more than two visible characters. Put each generated-step physical set landmark in character_blocking.set_anchor and its spatial relation in character_blocking.relation_to_set. Make entrances, exits, and screen direction explicit in the storyboard fields and notes accepted by the writer.
             """
         case "bible":
             return """
@@ -164,7 +165,7 @@ public enum ProductionProfileGuidance {
             """
         case "frames":
             return """
-            Generate and approve still anchors before motion. Carry forward the shot's named characters, locations, props, continuity locks, and exact camera setup; do not invent substitutes during frame generation.
+            Generate and approve still anchors only for generated shots whose keyframe strategy requires them. Skip imported and AI-enhanced shots. Carry forward the generated shot's named characters, locations, props, continuity locks, and exact camera setup; do not invent substitutes.
             """
         case "render":
             return """

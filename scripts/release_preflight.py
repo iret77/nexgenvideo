@@ -32,7 +32,7 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "productionProfiles",
 ]
 ENGINE_BOUNDARY_LAYOUT_CONTRACT = 5
-ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 5
+ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 2
 ENGINE_BOUNDARY_LAYOUTS = {
     "Shot": {
         "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
@@ -47,7 +47,7 @@ ENGINE_BOUNDARY_LAYOUTS = {
             "propRefs", "propViews", "cameraId", "cameraLabel", "redo",
             "sceneVideoProvider", "seedanceInputMode", "referenceImageRefs",
             "chainWithPreviousEnd", "transitionIn", "transitionOut", "notes",
-            "sourcePath", "productionPlan",
+            "sourcePath",
         ],
     },
     "AuditContext": {
@@ -55,7 +55,7 @@ ENGINE_BOUNDARY_LAYOUTS = {
         "start": "public struct AuditContext: Sendable {",
         "end": "    public init(",
         "properties": [
-            "shotlist", "brief", "bible", "extra", "productionProfileIDs",
+            "shotlist", "brief", "bible", "extra",
         ],
     },
 }
@@ -75,7 +75,7 @@ ENGINE_BOUNDARY_VALUE_LAYOUTS = {
         "end": "    private enum CodingKeys: String, CodingKey {",
         "members": [
             "var characterRef: String", "var position: String", "var pose: String",
-            "var gaze: String", "var relationToSet: String", "var setAnchor: String?",
+            "var gaze: String", "var relationToSet: String",
         ],
     },
     "Song": {
@@ -88,6 +88,14 @@ ENGINE_BOUNDARY_VALUE_LAYOUTS = {
             "var tempoMultiplier: Double", "var durationS: Double",
         ],
     },
+    "ProductionBlockingAnchor": {
+        "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
+        "start": "public struct ProductionBlockingAnchor: Codable, Sendable, Equatable {",
+        "end": "    private enum CodingKeys: String, CodingKey {",
+        "members": [
+            "var characterRef: String", "var setAnchor: String",
+        ],
+    },
     "ShotProductionPlan": {
         "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
         "start": "public struct ShotProductionPlan: Codable, Sendable, Equatable {",
@@ -98,6 +106,7 @@ ENGINE_BOUNDARY_VALUE_LAYOUTS = {
             "var renderability: RenderabilityRating", "var risks: [RenderabilityRisk]",
             "var rescueCut: String?", "var matchActionCue: String?",
             "var continuityLocks: [String]",
+            "var blockingAnchors: [ProductionBlockingAnchor]",
         ],
     },
     "Shotlist": {

@@ -144,11 +144,15 @@ enum AgentTranscriptScrollPolicy {
 
     static func pinState(
         for phase: ScrollPhase,
+        suppressProgrammaticUpdate: Bool,
         contentHeight: CGFloat,
         contentOffsetY: CGFloat,
         containerHeight: CGFloat,
         threshold: CGFloat
     ) -> Bool? {
+        if suppressProgrammaticUpdate && (phase == .animating || phase == .idle) {
+            return nil
+        }
         guard phase == .interacting || phase == .decelerating || phase == .idle else {
             return nil
         }

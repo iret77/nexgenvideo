@@ -284,8 +284,7 @@ struct PipelineAgentContractTests {
         _ = try PipelineShotlistWriter.write(
             shotlist,
             dataRoot: dataRoot,
-            declaredPack: nil,
-            enforceProductionPlans: false
+            declaredPack: nil
         )
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
 
@@ -294,8 +293,7 @@ struct PipelineAgentContractTests {
             _ = try PipelineShotlistWriter.write(
                 shotlist,
                 dataRoot: dataRoot,
-                declaredPack: nil,
-                enforceProductionPlans: false
+                declaredPack: nil
             )
         }
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)

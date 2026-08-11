@@ -73,6 +73,10 @@ release or a wasted CI cycle.
   The `.ngvpack` is compiled separately and bakes in ivar offsets; inserting a property in the middle
   shifts everything below it and the shipped pack crashes on launch. CI builds host and pack from one
   tree, so it will never reproduce this.
+- **Never add stored properties to a public value type crossing the pack boundary while older pack
+  contracts remain compatible.** End placement does not make a Swift struct layout additive. Preserve
+  its stored layout (use a new type or an ABI-safe existing carrier) or raise the compatibility floor,
+  which requires an explicit owner decision because exact pinned packs would stop opening.
 - **A pack resolves the host engine via an `@executable_path/../Frameworks` rpath, and the load must
   be verified by actually loading it** (`NGV_SELFTEST_PACK`, see `Sources/NexGenVideo/Plugins/PackSelfTest.swift`).
   Static `otool` / `nm` checks have twice passed while the shipped pack failed with "Damaged pack /
@@ -193,7 +197,7 @@ release or a wasted CI cycle.
   a mandate; apply it with judgement, and surface genuine conflicts as a decision point.
 - **Specs that are locked stay locked:** `docs/PROJECT_STORAGE.md`, `docs/PATTERN_FIT_CONTRACT.md`,
   `docs/PLUGIN_STANDARD.md`, `docs/MUSICVIDEO_START_CONTRACT.md`,
-  `docs/PIPELINE_AGENT_HARNESS.md`. Deviating requires stopping and asking, not a quiet
+  `docs/PIPELINE_AGENT_HARNESS.md`, `docs/PRODUCTION_PROFILES.md`. Deviating requires stopping and asking, not a quiet
   reinterpretation.
 - **No quick wins.** Partial fixes and shortcuts are not robust enough to ship; implement the
   complete, correct solution.

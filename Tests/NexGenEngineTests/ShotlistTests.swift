@@ -61,6 +61,8 @@ struct ShotlistTests {
         let yaml = try YAMLCoding.encode(sl)
         let again = try YAMLCoding.decode(Shotlist.self, from: yaml)
 
+        #expect(yaml.contains("production_plan:"))
+        #expect(!yaml.contains("__ngv_internal.production_plan"))
         #expect(again.shots[0].id == "s001")
         #expect(again.shots[0].productionPlan == plan)
         #expect(again.mode == .section)
@@ -114,6 +116,56 @@ struct ShotlistTests {
                 renderability: .green,
                 continuityLocks: ["Blue coat", " blue coat "]
             )
+        }
+    }
+
+    @Test("production blocking anchors normalize character references and reject duplicates")
+    func blockingAnchorsAreDeterministic() throws {
+        let plan = try ShotProductionPlan(
+            primaryAction: "The performer turns.",
+            cameraMovement: .static,
+            renderability: .green,
+            blockingAnchors: [
+                ProductionBlockingAnchor(
+                    characterRef: " Performer ",
+                    setAnchor: "hall doorway"
+                ),
+            ]
+        )
+        #expect(plan.setAnchor(for: "performer") == "hall doorway")
+        #expect(plan.setAnchor(for: " PERFORMER ") == "hall doorway")
+
+        #expect(throws: ShotProductionPlan.ValidationError.self) {
+            _ = try ShotProductionPlan(
+                primaryAction: "The performer turns.",
+                cameraMovement: .static,
+                renderability: .green,
+                blockingAnchors: [
+                    ProductionBlockingAnchor(characterRef: "Performer", setAnchor: "door"),
+                    ProductionBlockingAnchor(characterRef: " performer ", setAnchor: "window"),
+                ]
+            )
+        }
+    }
+
+    @Test("production plan carrier is reserved and fails closed when corrupted")
+    func productionPlanCarrierFailsClosed() throws {
+        let storageKey = "__ngv_internal.production_plan.v1"
+        #expect(throws: Shot.ValidationError.self) {
+            _ = try Shot(
+                id: "s001", section: "verse", timeStart: 0, timeEnd: 4, durationS: 4,
+                type: .performance, description: "d", visualPrompt: "p", mood: "m",
+                propViews: [storageKey: "injected"]
+            )
+        }
+
+        var shot = try Self.shot()
+        shot.propViews[storageKey] = "not-base64"
+        #expect(throws: Shot.ValidationError.self) {
+            try shot.validate()
+        }
+        #expect(throws: Shot.ValidationError.self) {
+            _ = try YAMLCoding.encode(shot)
         }
     }
 

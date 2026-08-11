@@ -5,14 +5,12 @@ enum PipelineShotlistWriter {
     static func write(
         _ shotlist: Shotlist,
         dataRoot: URL,
-        declaredPack: String?,
-        enforceProductionPlans: Bool
+        declaredPack: String?
     ) throws -> URL {
         try validate(
             shotlist,
             dataRoot: dataRoot,
-            declaredPack: declaredPack,
-            enforceProductionPlans: enforceProductionPlans
+            declaredPack: declaredPack
         )
         do {
             return try saveShotlist(shotlist, to: dataRoot)
@@ -21,16 +19,76 @@ enum PipelineShotlistWriter {
         }
     }
 
+    static func setSourceMode(
+        shotId: String,
+        to mode: SourceMode,
+        dataRoot: URL,
+        declaredPack: String?
+    ) throws -> Bool {
+        guard var shotlist = try loadShotlist(dataRoot: dataRoot),
+              let index = shotlist.shots.firstIndex(where: { $0.id == shotId }),
+              shotlist.shots[index].sourceMode != mode else {
+            return false
+        }
+        guard mode == .imported || shotlist.shots[index].productionPlan != nil else {
+            throw ToolError(
+                "Ask the assistant to re-plan this shot before changing its source to "
+                    + "\(mode.rawValue)."
+            )
+        }
+        shotlist.shots[index].sourceMode = mode
+        switch mode {
+        case .generated:
+            shotlist.shots[index].sourcePath = nil
+            if shotlist.shots[index].keyframeStrategy == .none {
+                shotlist.shots[index].keyframeStrategy = .start
+            }
+        case .imported:
+            shotlist.shots[index].sourcePath = nil
+            shotlist.shots[index].productionPlan = nil
+            shotlist.shots[index].keyframeStrategy = .none
+            shotlist.shots[index].chainWithPreviousEnd = false
+        case .aiEnhanced:
+            shotlist.shots[index].keyframeStrategy = .none
+            shotlist.shots[index].chainWithPreviousEnd = false
+            shotlist.shots[index].referenceImageRefs = []
+            shotlist.shots[index].seedanceInputMode = .keyframe
+        }
+        _ = try write(
+            shotlist,
+            dataRoot: dataRoot,
+            declaredPack: declaredPack
+        )
+        return true
+    }
+
     static func validate(
         _ shotlist: Shotlist,
         dataRoot: URL,
-        declaredPack: String?,
-        enforceProductionPlans: Bool
+        declaredPack: String?
     ) throws {
-        let brief = try? YAMLArtifactStore(dataRoot: dataRoot).load(
-            Brief.self,
-            at: PipelineLayout.briefFile
-        )
+        do {
+            try shotlist.validate()
+        } catch {
+            throw ToolError("The Shot List is invalid: \(error.localizedDescription)")
+        }
+        let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+        let brief: Brief?
+        if FileManager.default.fileExists(atPath: briefURL.path) {
+            do {
+                brief = try YAMLArtifactStore(dataRoot: dataRoot).load(
+                    Brief.self,
+                    at: PipelineLayout.briefFile
+                )
+            } catch {
+                throw ToolError(
+                    "The Brief is unreadable. Repair or restore it before writing the Shot List: "
+                        + error.localizedDescription
+                )
+            }
+        } else {
+            brief = nil
+        }
         let activePack: String?
         do {
             activePack = try ProjectPluginSettings.resolvedPlugin(
@@ -62,7 +120,8 @@ enum PipelineShotlistWriter {
                 ProductionDiscipline.requiresProductionPlan($0)
                     && $0.productionPlan == nil
             }
-            guard !enforceProductionPlans || missingPlans.isEmpty else {
+            guard !Shotlist.requiresProductionPlan(forGenerator: shotlist.generator)
+                    || missingPlans.isEmpty else {
                 throw ToolError(
                     "Every new shot requires production_plan (e.g. "
                         + missingPlans.prefix(3).map(\.id).joined(separator: ", ")
@@ -97,8 +156,9 @@ enum PipelineShotlistWriter {
             }
             guard unanchoredBlocking.isEmpty else {
                 throw ToolError(
-                    "Generated character blocking must name a non-directional set_anchor and "
-                        + "a non-empty relation_to_set "
+                    "Generated character blocking must pair a non-directional "
+                        + "production_plan.blocking_anchors entry with a non-empty "
+                        + "character_blocking.relation_to_set "
                         + "(e.g. "
                         + unanchoredBlocking.prefix(3).map(\.id).joined(separator: ", ")
                         + ")."

@@ -21,8 +21,9 @@ Always active for the musicvideo pack and reusable by any pack that generates mo
 
 - Build named style, character, location, prop, geometry, and reverse-view anchors before shots.
 - Plan one primary action, one camera movement, and at most two visible characters per generated shot.
-- Anchor generated character blocking through a non-empty `set_anchor` naming an object or set zone;
-  keep its spatial relationship in `relation_to_set`. Screen direction alone is not an anchor.
+- Anchor generated character blocking through a non-empty `production_plan.blocking_anchors` entry
+  naming an object or set zone; keep its spatial relationship in `character_blocking.relation_to_set`.
+  Screen direction alone is not an anchor.
 - Treat 4–12 seconds as the normal generated-shot range; longer shots declare `long_take` risk.
 - Rate renderability `green`, `yellow`, or `red`; every yellow/red shot declares risks and a rescue cut.
 - Persist continuity locks and match-action cues instead of relying on prompt prose.
@@ -48,6 +49,7 @@ imported shots omit it because their existing footage is the production truth:
 - `renderability`, `risks`, and optional `rescue_cut`
 - optional `match_action_cue`
 - `continuity_locks`
+- `blocking_anchors`, keyed by character reference for every generated-shot blocking entry
 
 Older shot lists migrate losslessly with no invented plan. They remain readable and receive only a
 non-blocking missing-plan warning until revised. New writes require the structure through the tool

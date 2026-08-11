@@ -217,6 +217,7 @@ struct AgentPanelView: View {
     private var scrollToLatestButton: some View {
         Button {
             isUserPinnedAway = false
+            programmaticScrollPending = true
             scrollToLatestRequest &+= 1
         } label: {
             Image(systemName: "arrow.down")
@@ -234,6 +235,7 @@ struct AgentPanelView: View {
 
     @State private var showHistory = false
     @State private var isUserPinnedAway = false
+    @State private var programmaticScrollPending = false
     @State private var scrollToLatestRequest: UInt = 0
     @State private var showPluginLauncher = false
     @State private var discoveredPlugins: [PluginCommandCatalog.PluginInfo] = []
@@ -374,6 +376,7 @@ struct AgentPanelView: View {
         }
         .onChange(of: service.currentSessionId) { _, _ in
             isUserPinnedAway = false
+            programmaticScrollPending = false
         }
     }
 
@@ -416,8 +419,15 @@ struct AgentPanelView: View {
                 for: .sizeChanges
             )
             .onScrollPhaseChange { _, newPhase, context in
+                let suppressProgrammaticUpdate = programmaticScrollPending
+                if newPhase == .interacting
+                        || newPhase == .decelerating
+                        || newPhase == .idle {
+                    programmaticScrollPending = false
+                }
                 guard let away = AgentTranscriptScrollPolicy.pinState(
                     for: newPhase,
+                    suppressProgrammaticUpdate: suppressProgrammaticUpdate,
                     contentHeight: context.geometry.contentSize.height,
                     contentOffsetY: context.geometry.contentOffset.y,
                     containerHeight: context.geometry.containerSize.height,

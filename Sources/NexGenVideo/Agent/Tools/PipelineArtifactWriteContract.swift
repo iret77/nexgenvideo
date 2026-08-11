@@ -115,6 +115,13 @@ enum PipelineArtifactWriteContract {
             "pattern": #"^(?!\s*(?:(?:[Ss][Cc][Rr][Ee][Ee][Nn]|[Cc][Aa][Mm][Ee][Rr][Aa]|[Ff][Rr][Aa][Mm][Ee])[\s_-]*)?(?:[Ll][Ee][Ff][Tt]|[Rr][Ii][Gg][Hh][Tt]|[Cc][Ee][Nn][Tt](?:[Ee][Rr]|[Rr][Ee]))\s*$).*\S.*$"#,
         ]
     }
+    private static var publicKeyString: [String: Any] {
+        [
+            "type": "string",
+            "minLength": 1,
+            "pattern": #"^(?!__ngv_internal\.).+"#,
+        ]
+    }
     private static var number: [String: Any] { ["type": "number"] }
     private static var integer: [String: Any] { ["type": "integer"] }
     private static var boolean: [String: Any] { ["type": "boolean"] }
@@ -343,7 +350,7 @@ enum PipelineArtifactWriteContract {
         var properties = shotProperties
         properties["source_mode"] = enumeration([sourceMode.rawValue])
         properties["character_blocking"] = array(characterBlocking(
-            requiresSetAnchor: sourceMode == .generated
+            requiresRelationToSet: sourceMode == .generated
         ))
         var required = shotRequired
         if requiresProductionPlan {
@@ -376,9 +383,9 @@ enum PipelineArtifactWriteContract {
             "visible_zones": stringArray,
             "zone_introduces": stringArray,
             "camera_setup": cameraSetup,
-            "character_blocking": array(characterBlocking(requiresSetAnchor: false)),
+            "character_blocking": array(characterBlocking(requiresRelationToSet: false)),
             "prop_refs": stringArray,
-            "prop_views": keyValueArray(key: "prop", value: "view"),
+            "prop_views": publicKeyValueArray(key: "prop", value: "view"),
             "camera_id": string,
             "camera_label": string,
             "redo": boolean,
@@ -433,6 +440,13 @@ enum PipelineArtifactWriteContract {
             "rescue_cut": string,
             "match_action_cue": string,
             "continuity_locks": stringArray,
+            "blocking_anchors": array(object(
+                [
+                    "character_ref": nonEmptyString,
+                    "set_anchor": setAnchorString,
+                ],
+                required: ["character_ref", "set_anchor"]
+            )),
         ],
         required: [
             "primary_action",
@@ -440,6 +454,7 @@ enum PipelineArtifactWriteContract {
             "renderability",
             "risks",
             "continuity_locks",
+            "blocking_anchors",
         ]
     ) }
 
@@ -454,20 +469,18 @@ enum PipelineArtifactWriteContract {
     ) }
 
     private static func characterBlocking(
-        requiresSetAnchor: Bool
+        requiresRelationToSet: Bool
     ) -> [String: Any] {
-        let properties = [
+        let properties: [String: [String: Any]] = [
             "character_ref": string,
             "position": string,
             "pose": string,
             "gaze": string,
-            "relation_to_set": requiresSetAnchor ? nonEmptyString : string,
-            "set_anchor": requiresSetAnchor ? setAnchorString : nonEmptyString,
+            "relation_to_set": requiresRelationToSet ? nonEmptyString : string,
         ]
-        var required = [
+        let required = [
             "character_ref", "position", "pose", "gaze", "relation_to_set",
         ]
-        if requiresSetAnchor { required.append("set_anchor") }
         return object(properties, required: required)
     }
 
@@ -483,6 +496,16 @@ enum PipelineArtifactWriteContract {
         array(object(
             [
                 key: string,
+                value: string,
+            ],
+            required: [key, value]
+        ))
+    }
+
+    private static func publicKeyValueArray(key: String, value: String) -> [String: Any] {
+        array(object(
+            [
+                key: publicKeyString,
                 value: string,
             ],
             required: [key, value]

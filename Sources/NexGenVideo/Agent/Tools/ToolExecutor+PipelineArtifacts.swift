@@ -451,8 +451,7 @@ extension ToolExecutor {
         let url = try PipelineShotlistWriter.write(
             shotlist,
             dataRoot: root,
-            declaredPack: editor.declaredPluginName,
-            enforceProductionPlans: true
+            declaredPack: editor.declaredPluginName
         )
         return try jsonResult([
             "written": true,

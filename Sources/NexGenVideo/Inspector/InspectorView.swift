@@ -229,6 +229,9 @@ struct InspectorView: View {
                     let needsPlan = tag != .imported
                         && tag != current
                         && !shot.hasProductionPlan
+                    let discardsPlan = tag == .imported
+                        && tag != current
+                        && shot.hasProductionPlan
                     Button {
                         Task { await editor.setShotSourceMode(shotId: shot.id, to: tag.engineMode) }
                     } label: {
@@ -238,7 +241,9 @@ struct InspectorView: View {
                             Label(
                                 needsPlan
                                     ? "\(tag.label) — ask the assistant to re-plan this shot"
-                                    : tag.label,
+                                    : discardsPlan
+                                        ? "\(tag.label) — discard production plan"
+                                        : tag.label,
                                 systemImage: tag.symbol
                             )
                         }

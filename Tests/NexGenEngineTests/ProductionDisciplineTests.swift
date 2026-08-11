@@ -7,7 +7,8 @@ struct ProductionDisciplineTests {
         beat: NarrativeBeat? = .action,
         rating: RenderabilityRating = .green,
         risks: [RenderabilityRisk] = [],
-        rescue: String? = nil
+        rescue: String? = nil,
+        blockingAnchors: [ProductionBlockingAnchor] = []
     ) throws -> ShotProductionPlan {
         try ShotProductionPlan(
             primaryAction: "The subject crosses the doorway.",
@@ -16,7 +17,8 @@ struct ProductionDisciplineTests {
             renderability: rating,
             risks: risks,
             rescueCut: rescue,
-            continuityLocks: ["subject exits screen-right"]
+            continuityLocks: ["subject exits screen-right"],
+            blockingAnchors: blockingAnchors
         )
     }
 
@@ -236,18 +238,22 @@ struct ProductionDisciplineTests {
     }
 
     @Test("screen direction alone cannot substitute for a named set anchor")
-    func screenDirectionIsNotAnchor() throws {
+    func directionOnlySetAnchorIsRejected() throws {
         let blocking = try CharacterBlocking(
             characterRef: "subject",
             position: "right third",
             pose: "standing",
             gaze: "toward the hall",
-            relationToSet: "beside the doorway",
-            setAnchor: "screen-right"
+            relationToSet: "beside the doorway"
         )
         let shot = try Self.shot(
             characters: ["subject"],
-            plan: Self.plan(),
+            plan: Self.plan(blockingAnchors: [
+                ProductionBlockingAnchor(
+                    characterRef: "subject",
+                    setAnchor: "screen-right"
+                ),
+            ]),
             characterBlocking: [blocking]
         )
         let ctx = AuditContext(
@@ -263,12 +269,16 @@ struct ProductionDisciplineTests {
             characterRef: "subject",
             position: "right third",
             pose: "standing",
-            gaze: "toward the hall",
-            setAnchor: "hall doorway"
+            gaze: "toward the hall"
         )
         let shot = try Self.shot(
             characters: ["subject"],
-            plan: Self.plan(),
+            plan: Self.plan(blockingAnchors: [
+                ProductionBlockingAnchor(
+                    characterRef: "subject",
+                    setAnchor: "hall doorway"
+                ),
+            ]),
             characterBlocking: [blocking]
         )
         let ctx = AuditContext(
@@ -285,12 +295,16 @@ struct ProductionDisciplineTests {
             position: "right third",
             pose: "standing",
             gaze: "toward the hall",
-            relationToSet: "beside the doorway",
-            setAnchor: "hall doorway"
+            relationToSet: "beside the doorway"
         )
         let shot = try Self.shot(
             characters: ["subject"],
-            plan: Self.plan(),
+            plan: Self.plan(blockingAnchors: [
+                ProductionBlockingAnchor(
+                    characterRef: "subject",
+                    setAnchor: "hall doorway"
+                ),
+            ]),
             characterBlocking: [blocking]
         )
         let ctx = AuditContext(

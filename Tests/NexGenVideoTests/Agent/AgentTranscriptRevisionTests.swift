@@ -63,6 +63,7 @@ struct AgentTranscriptRevisionTests {
         for phase in [ScrollPhase.interacting, .decelerating, .idle] {
             #expect(AgentTranscriptScrollPolicy.pinState(
                 for: phase,
+                suppressProgrammaticUpdate: false,
                 contentHeight: 1_000,
                 contentOffsetY: 700,
                 containerHeight: 250,
@@ -70,6 +71,7 @@ struct AgentTranscriptRevisionTests {
             ) == false)
             #expect(AgentTranscriptScrollPolicy.pinState(
                 for: phase,
+                suppressProgrammaticUpdate: false,
                 contentHeight: 1_000,
                 contentOffsetY: 680,
                 containerHeight: 250,
@@ -78,10 +80,27 @@ struct AgentTranscriptRevisionTests {
         }
         #expect(AgentTranscriptScrollPolicy.pinState(
             for: .animating,
+            suppressProgrammaticUpdate: false,
             contentHeight: 1_000,
             contentOffsetY: 680,
             containerHeight: 250,
             threshold: 60
         ) == nil)
+        #expect(AgentTranscriptScrollPolicy.pinState(
+            for: .idle,
+            suppressProgrammaticUpdate: true,
+            contentHeight: 1_000,
+            contentOffsetY: 680,
+            containerHeight: 250,
+            threshold: 60
+        ) == nil)
+        #expect(AgentTranscriptScrollPolicy.pinState(
+            for: .idle,
+            suppressProgrammaticUpdate: false,
+            contentHeight: 1_000,
+            contentOffsetY: 680,
+            containerHeight: 250,
+            threshold: 60
+        ) == true)
     }
 }

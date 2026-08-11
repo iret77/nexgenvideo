@@ -93,12 +93,23 @@ struct PromptComposerShotTests {
             position: "left third",
             pose: "standing",
             gaze: "toward the yard",
-            relationToSet: "beside the",
-            setAnchor: "hall doorway"
+            relationToSet: "beside the doorway"
+        )
+        let plan = try ShotProductionPlan(
+            primaryAction: "the performer waits",
+            cameraMovement: .static,
+            renderability: .green,
+            blockingAnchors: [
+                ProductionBlockingAnchor(
+                    characterRef: "performer",
+                    setAnchor: "hall doorway"
+                ),
+            ]
         )
         let shot = try Self.shot(
             height: .eyeLevel,
             framing: .full,
+            productionPlan: plan,
             characterBlocking: [blocking]
         )
         let projection = PromptComposer.ShotProjection(shot)

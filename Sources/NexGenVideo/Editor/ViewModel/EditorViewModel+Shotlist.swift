@@ -26,42 +26,13 @@ extension EditorViewModel {
         }
         let trustedPack = declaredPluginName
         let result: Result<Bool, ToolError> = await Task.detached {
-            guard var shotlist = (try? loadShotlist(dataRoot: dataRoot)) ?? nil,
-                  let index = shotlist.shots.firstIndex(where: { $0.id == shotId }),
-                  shotlist.shots[index].sourceMode != mode
-            else { return .success(false) }
-            if mode != .imported, shotlist.shots[index].productionPlan == nil {
-                return .failure(ToolError(
-                    "Ask the assistant to re-plan this shot before changing its source to "
-                        + "\(mode.rawValue)."
-                ))
-            }
-            shotlist.shots[index].sourceMode = mode
-            switch mode {
-            case .generated:
-                shotlist.shots[index].sourcePath = nil
-                if shotlist.shots[index].keyframeStrategy == .none {
-                    shotlist.shots[index].keyframeStrategy = .start
-                }
-            case .imported:
-                shotlist.shots[index].sourcePath = nil
-                shotlist.shots[index].productionPlan = nil
-                shotlist.shots[index].keyframeStrategy = .none
-                shotlist.shots[index].chainWithPreviousEnd = false
-            case .aiEnhanced:
-                shotlist.shots[index].keyframeStrategy = .none
-                shotlist.shots[index].chainWithPreviousEnd = false
-                shotlist.shots[index].referenceImageRefs = []
-                shotlist.shots[index].seedanceInputMode = .keyframe
-            }
             do {
-                _ = try PipelineShotlistWriter.write(
-                    shotlist,
+                return .success(try PipelineShotlistWriter.setSourceMode(
+                    shotId: shotId,
+                    to: mode,
                     dataRoot: dataRoot,
-                    declaredPack: trustedPack,
-                    enforceProductionPlans: false
-                )
-                return .success(true)
+                    declaredPack: trustedPack
+                ))
             } catch let error as ToolError {
                 return .failure(error)
             } catch {

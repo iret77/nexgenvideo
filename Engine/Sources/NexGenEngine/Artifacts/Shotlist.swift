@@ -185,7 +185,6 @@ public struct CharacterBlocking: Codable, Sendable, Equatable {
     public var pose: String
     public var gaze: String
     public var relationToSet: String
-    public var setAnchor: String?
 
     private enum CodingKeys: String, CodingKey {
         case characterRef = "character_ref"
@@ -193,19 +192,16 @@ public struct CharacterBlocking: Codable, Sendable, Equatable {
         case pose
         case gaze
         case relationToSet = "relation_to_set"
-        case setAnchor = "set_anchor"
     }
 
     public init(
-        characterRef: String, position: String, pose: String, gaze: String,
-        relationToSet: String = "", setAnchor: String? = nil
+        characterRef: String, position: String, pose: String, gaze: String, relationToSet: String = ""
     ) throws {
         self.characterRef = characterRef
         self.position = position
         self.pose = pose
         self.gaze = gaze
         self.relationToSet = relationToSet
-        self.setAnchor = setAnchor
         try Self.validate(position: position, pose: pose, gaze: gaze)
     }
 
@@ -216,7 +212,6 @@ public struct CharacterBlocking: Codable, Sendable, Equatable {
         pose = try container.decode(String.self, forKey: .pose)
         gaze = try container.decode(String.self, forKey: .gaze)
         relationToSet = try container.decodeIfPresent(String.self, forKey: .relationToSet) ?? ""
-        setAnchor = try container.decodeIfPresent(String.self, forKey: .setAnchor)
         try Self.validate(position: position, pose: pose, gaze: gaze)
     }
 
@@ -366,6 +361,21 @@ public enum RenderabilityRisk: String, Codable, Sendable, CaseIterable, Hashable
     case complexInteraction = "complex_interaction"
 }
 
+public struct ProductionBlockingAnchor: Codable, Sendable, Equatable {
+    public var characterRef: String
+    public var setAnchor: String
+
+    private enum CodingKeys: String, CodingKey {
+        case characterRef = "character_ref"
+        case setAnchor = "set_anchor"
+    }
+
+    public init(characterRef: String, setAnchor: String) {
+        self.characterRef = characterRef
+        self.setAnchor = setAnchor
+    }
+}
+
 public struct ShotProductionPlan: Codable, Sendable, Equatable {
     public var primaryAction: String
     public var cameraMovement: CameraMovement
@@ -376,6 +386,7 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
     public var rescueCut: String?
     public var matchActionCue: String?
     public var continuityLocks: [String]
+    public var blockingAnchors: [ProductionBlockingAnchor]
 
     private enum CodingKeys: String, CodingKey {
         case primaryAction = "primary_action"
@@ -387,6 +398,7 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
         case rescueCut = "rescue_cut"
         case matchActionCue = "match_action_cue"
         case continuityLocks = "continuity_locks"
+        case blockingAnchors = "blocking_anchors"
     }
 
     public init(
@@ -398,7 +410,8 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
         risks: [RenderabilityRisk] = [],
         rescueCut: String? = nil,
         matchActionCue: String? = nil,
-        continuityLocks: [String] = []
+        continuityLocks: [String] = [],
+        blockingAnchors: [ProductionBlockingAnchor] = []
     ) throws {
         self.primaryAction = primaryAction
         self.cameraMovement = cameraMovement
@@ -409,6 +422,7 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
         self.rescueCut = rescueCut
         self.matchActionCue = matchActionCue
         self.continuityLocks = continuityLocks
+        self.blockingAnchors = blockingAnchors
         try validate()
     }
 
@@ -423,6 +437,8 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
         rescueCut = try container.decodeIfPresent(String.self, forKey: .rescueCut)
         matchActionCue = try container.decodeIfPresent(String.self, forKey: .matchActionCue)
         continuityLocks = try container.decodeIfPresent([String].self, forKey: .continuityLocks) ?? []
+        blockingAnchors =
+            try container.decodeIfPresent([ProductionBlockingAnchor].self, forKey: .blockingAnchors) ?? []
         try validate()
     }
 
@@ -435,6 +451,8 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
         case duplicateRisks
         case emptyContinuityLock
         case duplicateContinuityLocks
+        case emptyBlockingAnchor
+        case duplicateBlockingAnchors
     }
 
     public func validate() throws {
@@ -459,6 +477,18 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
         guard Set(normalizedLocks).count == normalizedLocks.count else {
             throw ValidationError.duplicateContinuityLocks
         }
+        let normalizedAnchors = blockingAnchors.map {
+            (
+                $0.characterRef.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                $0.setAnchor.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        guard normalizedAnchors.allSatisfy({ !$0.0.isEmpty && !$0.1.isEmpty }) else {
+            throw ValidationError.emptyBlockingAnchor
+        }
+        guard Set(normalizedAnchors.map { $0.0 }).count == normalizedAnchors.count else {
+            throw ValidationError.duplicateBlockingAnchors
+        }
         if renderability == .green {
             guard risks.isEmpty else { throw ValidationError.greenShotDeclaresRisks }
         } else {
@@ -481,6 +511,13 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
 
     public var stillProviderDirectives: [String] {
         continuityLocks.map { "Continuity lock: \($0)" }
+    }
+
+    public func setAnchor(for characterRef: String) -> String? {
+        let key = characterRef.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return blockingAnchors.first {
+            $0.characterRef.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == key
+        }?.setAnchor
     }
 }
 
@@ -525,7 +562,8 @@ public struct Shot: Codable, Sendable, Equatable {
     public var transitionOut: TransitionType
     public var notes: String?
     public var sourcePath: String?
-    public var productionPlan: ShotProductionPlan?
+
+    private static let productionPlanStorageKey = "__ngv_internal.production_plan.v1"
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -567,6 +605,32 @@ public struct Shot: Codable, Sendable, Equatable {
         case productionPlan = "production_plan"
     }
 
+    public var productionPlan: ShotProductionPlan? {
+        get { try? decodedProductionPlan() }
+        set {
+            guard let newValue else {
+                propViews.removeValue(forKey: Self.productionPlanStorageKey)
+                return
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try! encoder.encode(newValue)
+            propViews[Self.productionPlanStorageKey] = data.base64EncodedString()
+        }
+    }
+
+    private func decodedProductionPlan() throws -> ShotProductionPlan? {
+        guard let encoded = propViews[Self.productionPlanStorageKey] else { return nil }
+        guard let data = Data(base64Encoded: encoded) else {
+            throw ValidationError.invalidProductionPlanCarrier
+        }
+        do {
+            return try JSONDecoder().decode(ShotProductionPlan.self, from: data)
+        } catch {
+            throw ValidationError.invalidProductionPlanCarrier
+        }
+    }
+
     public init(
         id: String, section: String? = nil, timeStart: Double, timeEnd: Double, durationS: Double,
         type: ShotType, sourceMode: SourceMode = .generated, description: String, visualPrompt: String,
@@ -581,9 +645,11 @@ public struct Shot: Codable, Sendable, Equatable {
         seedanceInputMode: SeedanceInputMode = .keyframe, referenceImageRefs: [String] = [],
         chainWithPreviousEnd: Bool = false,
         transitionIn: TransitionType = .hardCut, transitionOut: TransitionType = .hardCut,
-        notes: String? = nil, sourcePath: String? = nil,
-        productionPlan: ShotProductionPlan? = nil
+        notes: String? = nil, sourcePath: String? = nil
     ) throws {
+        guard propViews[Self.productionPlanStorageKey] == nil else {
+            throw ValidationError.reservedPropViewKey
+        }
         self.id = id
         self.section = section
         self.timeStart = timeStart
@@ -620,6 +686,45 @@ public struct Shot: Codable, Sendable, Equatable {
         self.transitionOut = transitionOut
         self.notes = notes
         self.sourcePath = sourcePath
+        try validate()
+    }
+
+    public init(
+        id: String, section: String? = nil, timeStart: Double, timeEnd: Double, durationS: Double,
+        type: ShotType, sourceMode: SourceMode = .generated, description: String, visualPrompt: String,
+        motion: String? = nil, mood: String,
+        lyricsExcerpt: String? = nil, characterRefs: [String] = [], characterViews: [String: String] = [:],
+        locationRef: String? = nil, locationView: String? = nil, modelSuggestion: ModelSuggestion? = nil,
+        keyframeStrategy: KeyframeStrategy = .start, framing: Framing? = nil, visibleZones: [String] = [],
+        zoneIntroduces: [String] = [], cameraSetup: CameraSetup? = nil,
+        characterBlocking: [CharacterBlocking] = [], propRefs: [String] = [],
+        propViews: [String: String] = [:], cameraId: String? = nil, cameraLabel: String? = nil,
+        redo: Bool = false, sceneVideoProvider: SceneVideoProvider = .fal,
+        seedanceInputMode: SeedanceInputMode = .keyframe, referenceImageRefs: [String] = [],
+        chainWithPreviousEnd: Bool = false,
+        transitionIn: TransitionType = .hardCut, transitionOut: TransitionType = .hardCut,
+        notes: String? = nil, sourcePath: String? = nil,
+        productionPlan: ShotProductionPlan?
+    ) throws {
+        try self.init(
+            id: id, section: section, timeStart: timeStart, timeEnd: timeEnd,
+            durationS: durationS, type: type, sourceMode: sourceMode,
+            description: description, visualPrompt: visualPrompt, motion: motion,
+            mood: mood, lyricsExcerpt: lyricsExcerpt, characterRefs: characterRefs,
+            characterViews: characterViews, locationRef: locationRef,
+            locationView: locationView, modelSuggestion: modelSuggestion,
+            keyframeStrategy: keyframeStrategy, framing: framing,
+            visibleZones: visibleZones, zoneIntroduces: zoneIntroduces,
+            cameraSetup: cameraSetup, characterBlocking: characterBlocking,
+            propRefs: propRefs, propViews: propViews, cameraId: cameraId,
+            cameraLabel: cameraLabel, redo: redo,
+            sceneVideoProvider: sceneVideoProvider,
+            seedanceInputMode: seedanceInputMode,
+            referenceImageRefs: referenceImageRefs,
+            chainWithPreviousEnd: chainWithPreviousEnd,
+            transitionIn: transitionIn, transitionOut: transitionOut,
+            notes: notes, sourcePath: sourcePath
+        )
         self.productionPlan = productionPlan
         try validate()
     }
@@ -653,7 +758,12 @@ public struct Shot: Codable, Sendable, Equatable {
         characterBlocking =
             try container.decodeIfPresent([CharacterBlocking].self, forKey: .characterBlocking) ?? []
         propRefs = try container.decodeIfPresent([String].self, forKey: .propRefs) ?? []
-        propViews = try container.decodeIfPresent([String: String].self, forKey: .propViews) ?? [:]
+        let decodedPropViews =
+            try container.decodeIfPresent([String: String].self, forKey: .propViews) ?? [:]
+        guard decodedPropViews[Self.productionPlanStorageKey] == nil else {
+            throw ValidationError.reservedPropViewKey
+        }
+        propViews = decodedPropViews
         cameraId = try container.decodeIfPresent(String.self, forKey: .cameraId)
         cameraLabel = try container.decodeIfPresent(String.self, forKey: .cameraLabel)
         redo = try container.decodeIfPresent(Bool.self, forKey: .redo) ?? false
@@ -673,6 +783,50 @@ public struct Shot: Codable, Sendable, Equatable {
         try validate()
     }
 
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(section, forKey: .section)
+        try container.encode(timeStart, forKey: .timeStart)
+        try container.encode(timeEnd, forKey: .timeEnd)
+        try container.encode(durationS, forKey: .durationS)
+        try container.encode(type, forKey: .type)
+        try container.encode(sourceMode, forKey: .sourceMode)
+        try container.encode(description, forKey: .description)
+        try container.encode(visualPrompt, forKey: .visualPrompt)
+        try container.encodeIfPresent(motion, forKey: .motion)
+        try container.encode(mood, forKey: .mood)
+        try container.encodeIfPresent(lyricsExcerpt, forKey: .lyricsExcerpt)
+        try container.encode(characterRefs, forKey: .characterRefs)
+        try container.encode(characterViews, forKey: .characterViews)
+        try container.encodeIfPresent(locationRef, forKey: .locationRef)
+        try container.encodeIfPresent(locationView, forKey: .locationView)
+        try container.encodeIfPresent(modelSuggestion, forKey: .modelSuggestion)
+        try container.encode(keyframeStrategy, forKey: .keyframeStrategy)
+        try container.encodeIfPresent(framing, forKey: .framing)
+        try container.encode(visibleZones, forKey: .visibleZones)
+        try container.encode(zoneIntroduces, forKey: .zoneIntroduces)
+        try container.encodeIfPresent(cameraSetup, forKey: .cameraSetup)
+        try container.encode(characterBlocking, forKey: .characterBlocking)
+        try container.encode(propRefs, forKey: .propRefs)
+        try container.encode(
+            propViews.filter { $0.key != Self.productionPlanStorageKey },
+            forKey: .propViews
+        )
+        try container.encodeIfPresent(cameraId, forKey: .cameraId)
+        try container.encodeIfPresent(cameraLabel, forKey: .cameraLabel)
+        try container.encode(redo, forKey: .redo)
+        try container.encode(sceneVideoProvider, forKey: .sceneVideoProvider)
+        try container.encode(seedanceInputMode, forKey: .seedanceInputMode)
+        try container.encode(referenceImageRefs, forKey: .referenceImageRefs)
+        try container.encode(chainWithPreviousEnd, forKey: .chainWithPreviousEnd)
+        try container.encode(transitionIn, forKey: .transitionIn)
+        try container.encode(transitionOut, forKey: .transitionOut)
+        try container.encodeIfPresent(notes, forKey: .notes)
+        try container.encodeIfPresent(sourcePath, forKey: .sourcePath)
+        try container.encodeIfPresent(try decodedProductionPlan(), forKey: .productionPlan)
+    }
+
     public enum ValidationError: Swift.Error, Sendable, Equatable {
         case invalidShotId(String)
         case invalidCameraId(String)
@@ -680,6 +834,8 @@ public struct Shot: Codable, Sendable, Equatable {
         case timeEndNotAfterStart(id: String, timeStart: Double, timeEnd: Double)
         case durationInconsistent(id: String, durationS: Double, implied: Double)
         case blockingRefNotInCharacterRefs(id: String, ref: String, characterRefs: [String])
+        case reservedPropViewKey
+        case invalidProductionPlanCarrier
     }
 
     /// Port of `Shot._shot_id_pattern`, `_camera_id_pattern`, the `time_start`
@@ -709,13 +865,22 @@ public struct Shot: Codable, Sendable, Equatable {
                 )
             }
         }
-        try productionPlan?.validate()
+        try decodedProductionPlan()?.validate()
     }
 }
 
 /// The shotlist. Port of `shotlist/schema.py::Shotlist`.
 public struct Shotlist: Codable, Sendable, Equatable {
+    public static let agentWriterIdentity = "shotlist-agent@write_shotlist"
     public static let agentWriterGenerator = "shotlist-agent@write_shotlist/v4"
+
+    public static func requiresProductionPlan(forGenerator value: String) -> Bool {
+        if value == agentWriterIdentity { return false }
+        let prefix = agentWriterIdentity + "/v"
+        guard value.hasPrefix(prefix),
+              let version = Int(value.dropFirst(prefix.count)) else { return false }
+        return version >= 4
+    }
 
     /// No default — Python declares this a required field
     /// (`schema_: str = Field(alias="schema")`, no default value), unlike
@@ -797,6 +962,7 @@ public struct Shotlist: Codable, Sendable, Equatable {
         }
         guard budgetEur > 0 else { throw ValidationError.budgetNotPositive(budgetEur) }
         guard !shots.isEmpty else { throw ValidationError.emptyShots }
+        for shot in shots { try shot.validate() }
 
         let ids = shots.map(\.id)
         guard Set(ids).count == ids.count else { throw ValidationError.duplicateShotIds(ids) }

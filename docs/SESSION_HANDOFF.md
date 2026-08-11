@@ -14,14 +14,13 @@ and Gemini independently reviewed the release scope; their
 evidence-backed findings were corrected before the first CI run. That run built the app successfully,
 then caught two missing inner `try` markers in test compilation and an ABI-incompatible historical
 pack in the relaunch fixture. The independent spec gate rejected the first attempted fixture because
-it masked compatibility with real pinned releases. The release gate now uses the published contract-2
-and contract-4 packs as historical evidence but rejects them before mapping because contract 5
-changes public value layouts. CI verifies those real packs fail through the engine-contract gate and
-uses an explicitly same-contract lifecycle fixture only for the update/relaunch UI test. Opening a
-project pinned to an ABI-incompatible pack offers an explicit transactional Recovery-copy upgrade to
-the current pack; it never silently changes the saved binding. The same gate prompted correction of
-the remaining production-plan schema, imported-shot, anchor, and profile-documentation drift. The
-corrected gates must pass before the CI retry.
+it masked compatibility with real pinned releases. The final implementation preserves every existing
+public value layout: contract 5 adds its production plan through an ABI-safe carrier, so published
+contract-2 and contract-4 packs remain directly loadable at their exact pinned versions. CI loads
+every available compatible historical pack through the real app binary before exercising the latest
+compatible pack in the update/relaunch flow. The same gate prompted correction of the remaining
+production-plan schema, imported-shot, anchor, and profile-documentation drift. The corrected gates
+must pass before the CI retry.
 
 Current non-build verification: `git diff --check`, JSON/plist parsing, `lint_app_theme.py`, and
 `release_preflight.py` pass for 1.1.0. Codex self-review corrected the prompt source-of-truth,

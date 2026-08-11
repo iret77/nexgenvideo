@@ -1223,6 +1223,12 @@ extension ToolExecutor {
                 "rescue_cut": plan.rescueCut.map { $0 as Any } ?? NSNull(),
                 "match_action_cue": plan.matchActionCue.map { $0 as Any } ?? NSNull(),
                 "continuity_locks": plan.continuityLocks,
+                "blocking_anchors": plan.blockingAnchors.map {
+                    [
+                        "character_ref": $0.characterRef,
+                        "set_anchor": $0.setAnchor,
+                    ]
+                },
             ]
         }
         if let frameRole { body["role"] = frameRole }
@@ -2221,11 +2227,13 @@ extension ToolExecutor {
     /// audit-skeleton derivation (`frames/audit.py::skeleton`). Empty shot ⇒ empty expecteds.
     private func frameAuditExpected(for shot: Shot?, brief: Brief?) -> [String: String] {
         guard let shot else { return [:] }
+        let productionPlan = shot.productionPlan
         let blocking = shot.characterBlocking
         let blockingExpected = blocking
             .map {
                 "\($0.characterRef)@\($0.position) (\($0.pose), gaze=\($0.gaze), "
-                    + "anchor=\($0.setAnchor ?? ""), relation=\($0.relationToSet))"
+                    + "anchor=\(productionPlan?.setAnchor(for: $0.characterRef) ?? ""), "
+                    + "relation=\($0.relationToSet))"
             }
             .joined(separator: "; ")
         let gazeExpected = blocking

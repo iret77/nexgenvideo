@@ -249,9 +249,16 @@ public enum MusicvideoChecks {
 
     private static func shotContentTokens(_ shot: Shot) -> Set<String> {
         var t = contentTokens(shot.visualPrompt).union(contentTokens(shot.motion))
+        let productionPlan = shot.productionPlan
         let blocking = shot.characterBlocking
             .flatMap {
-                [$0.pose, $0.position, $0.gaze, $0.setAnchor ?? "", $0.relationToSet]
+                [
+                    $0.pose,
+                    $0.position,
+                    $0.gaze,
+                    productionPlan?.setAnchor(for: $0.characterRef) ?? "",
+                    $0.relationToSet,
+                ]
             }
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
             .joined(separator: " ")
@@ -697,11 +704,17 @@ private func checkShotPacing(
 }
 
 /// Concatenate blocking fields into beat-source text for pacing checks.
-private func blockingText(_ blocking: [CharacterBlocking]) -> String? {
+private func blockingText(_ blocking: [CharacterBlocking], plan: ShotProductionPlan?) -> String? {
     guard !blocking.isEmpty else { return nil }
     var parts: [String] = []
     for b in blocking {
-        for value in [b.position, b.pose, b.gaze, b.setAnchor ?? "", b.relationToSet] {
+        for value in [
+            b.position,
+            b.pose,
+            b.gaze,
+            plan?.setAnchor(for: b.characterRef) ?? "",
+            b.relationToSet,
+        ] {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { parts.append(trimmed) }
         }
@@ -721,7 +734,7 @@ extension MusicvideoChecks {
                 durationS: shot.durationS,
                 visualPrompt: shot.visualPrompt,
                 motion: shot.motion,
-                blockingText: blockingText(shot.characterBlocking),
+                blockingText: blockingText(shot.characterBlocking, plan: shot.productionPlan),
                 notes: shot.notes
             )
             for hit in hits {

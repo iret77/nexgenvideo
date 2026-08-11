@@ -1310,6 +1310,7 @@ struct WorkflowToolsTests {
                 "renderability": "green",
                 "risks": [],
                 "continuity_locks": [],
+                "blocking_anchors": [],
             ],
         ]
         var missingPlanShot = shot
@@ -1343,8 +1344,13 @@ struct WorkflowToolsTests {
             "pose": "standing",
             "gaze": "toward the yard",
             "relation_to_set": "",
+        ]]
+        var unanchoredPlan = try #require(unanchoredShot["production_plan"] as? [String: Any])
+        unanchoredPlan["blocking_anchors"] = [[
+            "character_ref": "performer",
             "set_anchor": "   ",
         ]]
+        unanchoredShot["production_plan"] = unanchoredPlan
         let unanchored = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [unanchoredShot],
@@ -1359,8 +1365,15 @@ struct WorkflowToolsTests {
             "pose": "standing",
             "gaze": "toward the yard",
             "relation_to_set": "beside the doorway",
+        ]]
+        var directionOnlyPlan = try #require(
+            directionOnlyShot["production_plan"] as? [String: Any]
+        )
+        directionOnlyPlan["blocking_anchors"] = [[
+            "character_ref": "performer",
             "set_anchor": "screen-right",
         ]]
+        directionOnlyShot["production_plan"] = directionOnlyPlan
         let directionOnly = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [directionOnlyShot],
@@ -1375,8 +1388,15 @@ struct WorkflowToolsTests {
             "pose": "standing",
             "gaze": "toward the yard",
             "relation_to_set": "",
+        ]]
+        var missingRelationPlan = try #require(
+            missingRelationShot["production_plan"] as? [String: Any]
+        )
+        missingRelationPlan["blocking_anchors"] = [[
+            "character_ref": "performer",
             "set_anchor": "hall doorway",
         ]]
+        missingRelationShot["production_plan"] = missingRelationPlan
         let missingRelation = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [missingRelationShot],
@@ -1576,8 +1596,25 @@ struct WorkflowToolsTests {
             _ = try PipelineShotlistWriter.write(
                 try minimalShotlist(),
                 dataRoot: dataRoot,
-                declaredPack: "musicvideo",
-                enforceProductionPlans: false
+                declaredPack: "musicvideo"
+            )
+        }
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
+    }
+
+    @Test("shotlist writes fail closed when the Brief is unreadable")
+    func shotlistWriteRejectsUnreadableBrief() throws {
+        let (_, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try Data("{broken".utf8).write(
+            to: PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+        )
+
+        #expect(throws: ToolError.self) {
+            _ = try PipelineShotlistWriter.write(
+                try minimalShotlist(),
+                dataRoot: dataRoot,
+                declaredPack: nil
             )
         }
         #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
@@ -2351,6 +2388,7 @@ struct WorkflowToolsTests {
                 "renderability": "green",
                 "risks": [],
                 "continuity_locks": [],
+                "blocking_anchors": [],
             ],
         ]
 
