@@ -1753,12 +1753,11 @@ struct WorkflowToolsTests {
             isDirectory: true
         )
         try Fixtures.prepareProjectPackage(at: package)
-        let packageDataRoot = try ProjectScaffold.initProject(
+        _ = try ProjectScaffold.initProject(
             home: package,
             name: "demo",
             mode: .beat
         )
-        try activatePack("musicvideo", dataRoot: packageDataRoot)
 
         let harness = ToolHarness()
         harness.editor.projectURL = package
@@ -1770,50 +1769,20 @@ struct WorkflowToolsTests {
         let workingDataRoot = try #require(
             DataRootResolver.dataRoot(of: workingHome)
         )
-        try writeApprovableBible(dataRoot: workingDataRoot)
         let plan = try ShotProductionPlan(
             primaryAction: "The subject crosses the doorway.",
             cameraMovement: .static,
-            narrativeBeat: .action,
             renderability: .green,
             continuityLocks: []
         )
-        let source = workingHome.appendingPathComponent(
-            "media/source.mp4"
-        )
-        try FileManager.default.createDirectory(
-            at: source.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data("source".utf8).write(to: source)
-        var initialShotlist = try minimalShotlist(
-            productionPlan: plan,
-            generator: Shotlist.agentWriterGenerator
-        )
-        initialShotlist.shots[0].sourceMode = .aiEnhanced
-        initialShotlist.shots[0].sourcePath = "media/source.mp4"
-        initialShotlist.shots[0].keyframeStrategy = .none
         _ = try saveShotlist(
-            initialShotlist,
+            try minimalShotlist(productionPlan: plan),
             to: workingDataRoot
         )
-        let store = YAMLArtifactStore(dataRoot: workingDataRoot)
-        var gates = try store.load(
-            Gates.self,
-            at: PipelineLayout.gatesFile
-        )
-        let order = PhaseOrder.merged(
-            packPlacements: PackCatalog.registry(activePack: "musicvideo")
-                .phasePlacements
-        )
-        for phase in order.prefix(while: { $0 != "shotlist" }) {
-            GatesOperations.approve(&gates, phase: phase)
-        }
-        try store.save(gates, to: PipelineLayout.gatesFile)
 
         let changed = await harness.editor.setShotSourceMode(
             shotId: "s001",
-            to: .generated
+            to: .imported
         )
 
         #expect(changed)
@@ -1823,8 +1792,8 @@ struct WorkflowToolsTests {
         let shotlist = try #require(
             try loadShotlist(dataRoot: workingDataRoot)
         )
-        #expect(shotlist.shots.first?.sourceMode == .generated)
-        #expect(shotlist.shots.first?.productionPlan == plan)
+        #expect(shotlist.shots.first?.sourceMode == .imported)
+        #expect(shotlist.shots.first?.productionPlan == nil)
         #expect(shotlist.shots.first?.sourcePath == nil)
         #expect(
             !FileManager.default.fileExists(
