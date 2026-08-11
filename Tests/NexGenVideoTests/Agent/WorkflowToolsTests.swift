@@ -1774,14 +1774,27 @@ struct WorkflowToolsTests {
         let plan = try ShotProductionPlan(
             primaryAction: "The subject crosses the doorway.",
             cameraMovement: .static,
+            narrativeBeat: .action,
             renderability: .green,
             continuityLocks: []
         )
+        let source = workingHome.appendingPathComponent(
+            "media/source.mp4"
+        )
+        try FileManager.default.createDirectory(
+            at: source.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("source".utf8).write(to: source)
+        var initialShotlist = try minimalShotlist(
+            productionPlan: plan,
+            generator: Shotlist.agentWriterGenerator
+        )
+        initialShotlist.shots[0].sourceMode = .aiEnhanced
+        initialShotlist.shots[0].sourcePath = "media/source.mp4"
+        initialShotlist.shots[0].keyframeStrategy = .none
         _ = try saveShotlist(
-            try minimalShotlist(
-                productionPlan: plan,
-                generator: Shotlist.agentWriterGenerator
-            ),
+            initialShotlist,
             to: workingDataRoot
         )
         let store = YAMLArtifactStore(dataRoot: workingDataRoot)
@@ -1800,7 +1813,7 @@ struct WorkflowToolsTests {
 
         let changed = await harness.editor.setShotSourceMode(
             shotId: "s001",
-            to: .imported
+            to: .generated
         )
 
         #expect(changed)
@@ -1810,8 +1823,9 @@ struct WorkflowToolsTests {
         let shotlist = try #require(
             try loadShotlist(dataRoot: workingDataRoot)
         )
-        #expect(shotlist.shots.first?.sourceMode == .imported)
-        #expect(shotlist.shots.first?.productionPlan == nil)
+        #expect(shotlist.shots.first?.sourceMode == .generated)
+        #expect(shotlist.shots.first?.productionPlan == plan)
+        #expect(shotlist.shots.first?.sourcePath == nil)
         #expect(
             !FileManager.default.fileExists(
                 atPath: workingHome.appendingPathComponent(
