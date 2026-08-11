@@ -160,9 +160,9 @@ public enum ProductionPromptPolicy {
     private static func detectedMovementOccurrences(
         in prompt: String
     ) -> [(category: String, count: Int)] {
-        var detected = movementPatterns.compactMap { pattern in
+        var detected: [(category: String, count: Int)] = movementPatterns.compactMap { pattern in
             let count = Rx.allGroup0(prompt, pattern.expression).count
-            return count == 0 ? nil : (pattern.category, count)
+            return count == 0 ? nil : (category: pattern.category, count: count)
         }
         if detected.contains(where: { $0.category != "generic" }) {
             detected.removeAll { $0.category == "generic" }
