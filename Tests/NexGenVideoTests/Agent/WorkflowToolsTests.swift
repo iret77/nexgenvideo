@@ -1779,6 +1779,15 @@ struct WorkflowToolsTests {
             try minimalShotlist(productionPlan: plan),
             to: workingDataRoot
         )
+        let store = YAMLArtifactStore(dataRoot: workingDataRoot)
+        var gates = try store.load(
+            Gates.self,
+            at: PipelineLayout.gatesFile
+        )
+        for phase in coreGatePhases.prefix(while: { $0 != "shotlist" }) {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
 
         let changed = await harness.editor.setShotSourceMode(
             shotId: "s001",
