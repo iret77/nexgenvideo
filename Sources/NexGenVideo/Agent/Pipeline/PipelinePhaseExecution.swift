@@ -135,7 +135,14 @@ final class PipelinePhaseRunCoordinator {
         let task: Task<PipelinePhaseRunOutcome, Never>
     }
 
+    private struct Mutation {
+        let id: UUID
+        let label: String
+    }
+
     private var jobs: [Key: Job] = [:]
+    private var mutations: [Key: Mutation] = [:]
+    private var mutationWaiters: [Key: [CheckedContinuation<Void, Never>]] = [:]
 
     private func key(for projectRoot: URL) -> Key {
         Key(
@@ -145,17 +152,39 @@ final class PipelinePhaseRunCoordinator {
     }
 
     var hasRunningJobs: Bool {
-        !jobs.isEmpty
+        !jobs.isEmpty || !mutations.isEmpty
     }
 
     func runningPhase(projectRoot: URL) -> String? {
-        jobs[key(for: projectRoot)]?.phase
+        let key = key(for: projectRoot)
+        return jobs[key]?.phase ?? mutations[key]?.label
+    }
+
+    func beginMutation(projectRoot: URL, label: String) -> UUID? {
+        let key = key(for: projectRoot)
+        guard jobs[key] == nil, mutations[key] == nil else { return nil }
+        let id = UUID()
+        mutations[key] = Mutation(id: id, label: label)
+        return id
+    }
+
+    func endMutation(projectRoot: URL, id: UUID) {
+        let key = key(for: projectRoot)
+        guard mutations[key]?.id == id else { return }
+        mutations.removeValue(forKey: key)
+        let waiters = mutationWaiters.removeValue(forKey: key) ?? []
+        for waiter in waiters { waiter.resume() }
     }
 
     func waitUntilIdle(projectRoot: URL) async {
         let key = key(for: projectRoot)
         if let job = jobs[key] {
             _ = await job.task.value
+        }
+        if mutations[key] != nil {
+            await withCheckedContinuation { continuation in
+                mutationWaiters[key, default: []].append(continuation)
+            }
         }
     }
 
@@ -170,6 +199,9 @@ final class PipelinePhaseRunCoordinator {
         onJoin: @escaping @MainActor @Sendable () async -> Void = {}
     ) async -> PipelinePhaseRunOutcome {
         let key = key(for: projectRoot)
+        if let mutation = mutations[key] {
+            return .refused(activePhase: mutation.label)
+        }
         if let existing = jobs[key] {
             guard existing.phase == phase else {
                 return .refused(activePhase: existing.phase)

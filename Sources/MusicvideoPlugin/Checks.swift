@@ -405,9 +405,13 @@ public enum MusicvideoChecks {
                 out.append(Finding(level: .error, code: "KEYFRAME_END_NOT_SUPPORTED", shotId: shot.id,
                     message: "\(model) doesn't support an end keyframe."))
             }
-            if shot.characterRefs.count > cap.maxCharactersInFrame {
+            let visibleCharacterCount = ProductionDiscipline.visibleCharacterCount(
+                shot,
+                bible: ctx.bible
+            )
+            if visibleCharacterCount > cap.maxCharactersInFrame {
                 out.append(Finding(level: .warn, code: "TOO_MANY_CHARACTERS", shotId: shot.id,
-                    message: "\(shot.characterRefs.count) characters > \(model) stable max "
+                    message: "\(visibleCharacterCount) characters > \(model) stable max "
                         + "\(cap.maxCharactersInFrame)."))
             }
         }

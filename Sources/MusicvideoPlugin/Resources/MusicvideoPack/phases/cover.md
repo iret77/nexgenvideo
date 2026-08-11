@@ -92,11 +92,14 @@ Compose the cover prompt from the subject hint + the format layout note
 chosen bible sheets via `import_media(source={path:...})` and pass the
 mediaRefs in `generate_image(..., referenceMediaRefs=[...])`. Confirm
 generation availability first via `list_models` (`loaded=true` + the
-model present in `models`).
+model present in `models`). Compile the cover intent with
+`compile_prompt(..., shotId="none")` first.
 
 ```
 generate_image(
-  prompt="<concrete motif, format layout, bible.look.style verbatim>",
+  prompt=<compiledPrompt>,
+  compileToken=<compileToken>,
+  shotId="none",
   model="<chosen image model>",
   aspectRatio="1:1 | 16:9 | 9:16 per the format",
   referenceMediaRefs=[<imported bible refs>],

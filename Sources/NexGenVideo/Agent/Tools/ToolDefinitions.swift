@@ -295,10 +295,13 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .compilePrompt,
-            description: "MANDATORY before any generate_* call: compiles user/agent intent into the final model prompt. NGV never sends raw prompts to content models — several cheap LLM turns are cheaper than one failed render. YOUR part of the contract before calling: translate the intent to English, resolve contradictions, and if essential information is missing (subject, style, format), ASK THE USER FIRST — never guess and spend money. The tool merges the project's locked ledger directives, enforces the model's prompt limits, and returns { compiledPrompt, compileToken, notes }. Pass compiledPrompt AND compileToken to the generate tool unchanged. shotId is REQUIRED and has no default: pass the shotlist shot id when compiling a shot (from next_render_shot), or the literal \"none\" when this prompt genuinely belongs to no shot (a cover, a bible sheet, a free request). A real shot id projects the shot's declared camera and framing into the prompt from the spec and runs the compliance drift check; \"none\" compiles free intent with neither. Choose deliberately — passing \"none\" for a shot silently throws away its camera projection and its drift check.",
+            description: "MANDATORY before any generate_* call: compiles schema-separated context into the final model prompt. NGV never sends raw prompts to content models. For shotId=\"none\", intent is the English subject/action. For a planned video shot, the engine replaces intent action/camera wording with the current production plan's single primary action and one camera movement; preserve non-action context only through setting, lighting, and style. For Frames, intent is the concrete static t=0 subject; the engine supplies structured camera/blocking and rejects camera-motion language. The tool merges applicable locked directives, rejects production-plan conflicts, enforces model limits, and returns { compiledPrompt, compileToken, shotId, notes }. Pass compiledPrompt, compileToken, AND shotId to the generate tool unchanged. shotId is REQUIRED: use the current shotlist id from next_render_shot, or literal \"none\" only when the prompt belongs to no shot.",
             inputSchema: objectSchema(
                 properties: [
-                    "intent": ["type": "string", "description": "The prepared, English, contradiction-free generation intent."],
+                    "intent": ["type": "string", "description": "English free intent for shotId=\"none\"; a concrete static t=0 subject for Frames. Planned video action/camera wording is ignored and replaced by the current structured production plan."],
+                    "setting": ["type": "string", "description": "Optional English environment context. For a planned video this is the only caller-owned setting slot."],
+                    "lighting": ["type": "string", "description": "Optional English lighting context. For a planned video this is the only caller-owned lighting slot."],
+                    "style": ["type": "string", "description": "Optional English visual-style context. For a planned video this is the only caller-owned style slot."],
                     "model": ["type": "string", "description": "Target model id from list_models — limits and dialect are model-specific."],
                     "shotId": ["type": "string", "description": "REQUIRED. The shotlist shot being rendered (e.g. 's003'), or \"none\" when this prompt belongs to no shot. A shot id projects the shot's structured camera + framing into the prompt from the spec and runs the compliance drift linter; \"none\" does neither."],
                 ],
@@ -673,12 +676,13 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .generateVideo,
-            description: "Starts an async AI video generation. Returns a placeholder asset ID immediately; generation runs in the background and the asset becomes usable in add_clips once ready. Costs real money and is not undoable. PROMPT GATE: 'prompt' must be the compiledPrompt returned by compile_prompt, passed together with its compileToken — never your own phrasing. Raw prompts (rawPrompt=true) work only when the user enabled the pro setting.",
+            description: "Starts an async AI video generation. Returns a placeholder asset ID immediately; generation runs in the background and the asset becomes usable in add_clips once ready. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. Raw prompts work only for shotId=none when the user enabled the pro setting.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
                     "rawPrompt": ["type": "boolean", "description": "Pro escape hatch: send the prompt uncompiled. Only works when the user enabled Raw prompts in Settings."],
                     "prompt": ["type": "string", "description": "Text description of the video to generate"],
+                    "shotId": ["type": "string", "description": "The exact shotId returned by compile_prompt, including the literal 'none' for free generation."],
                     "name": ["type": "string", "description": "Display name for the asset in the media library. Defaults to first 30 chars of prompt."],
                     "model": ["type": "string", "description": "Model ID (e.g. 'veo3.1-fast'). Use list_models to see options. Defaults to first available model."],
                     "duration": ["type": "integer", "description": "Duration in seconds. Valid values depend on model."],
@@ -686,24 +690,25 @@ enum ToolDefinitions {
                     "resolution": ["type": "string", "description": "Resolution (e.g. '720p', '1080p', '4k')"],
                     "startFrameMediaRef": ["type": "string", "description": "Media asset ID to use as the first frame (image-to-video)"],
                     "endFrameMediaRef": ["type": "string", "description": "Media asset ID to use as the last frame (supported by some models)"],
-                    "sourceVideoMediaRef": ["type": "string", "description": "Media asset ID of a source video (required by video-to-video edit models; ignores duration/aspectRatio/resolution)"],
+                    "sourceVideoMediaRef": ["type": "string", "description": "Media asset ID of a source video. For an AI-enhanced pipeline shot this must be the exact source_video_media_ref returned by next_render_shot; the host rejects substitutions before generation."],
                     "sourceClipId": ["type": "string", "description": "Optional. Clip id (from get_timeline) referencing sourceVideoMediaRef. When set and the clip is trimmed, only the clip's visible range is sent to the model, not the full source — matches the UI's 'Use trimmed portion only'."],
                     "referenceImageMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of image references. Covers both reference-to-video generation (Seedance, Kling V3/O3 elements, Grok — refer as @Image1/@Element1 in prompt) and the single-image ref used by video-to-video edit models (Kling V3 Motion Control). See list_models maxReferenceImages for per-model cap."],
                     "referenceVideoMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of video references (Seedance only). Refer to them as @Video1, @Video2. See maxReferenceVideos and maxCombinedVideoRefSeconds."],
                     "referenceAudioMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of audio references (Seedance only). Refer to them as @Audio1, @Audio2. See maxReferenceAudios and maxCombinedAudioRefSeconds."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
-                required: ["prompt"]
+                required: ["prompt", "shotId"]
             )
         ),
         AgentTool(
             name: .generateImage,
-            description: "Starts an async AI image generation. Returns a placeholder asset ID immediately; generation runs in the background. Costs real money and is not undoable. PROMPT GATE: `prompt` must be the `compiledPrompt` returned by `compile_prompt`, passed together with its `compileToken` — never your own phrasing. Raw prompts work only through the explicit pro escape hatch.",
+            description: "Starts an async AI image generation. Returns a placeholder asset ID immediately; generation runs in the background. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. Raw prompts work only for shotId=none through the explicit pro escape hatch.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
                     "rawPrompt": ["type": "boolean", "description": "Pro escape hatch: send the prompt uncompiled. Only works when the user enabled Raw prompts in Settings."],
                     "prompt": ["type": "string", "description": "Text description of the image to generate"],
+                    "shotId": ["type": "string", "description": "The exact shotId returned by compile_prompt, including the literal 'none' for free generation."],
                     "name": ["type": "string", "description": "Display name for the asset in the media library. Defaults to first 30 chars of prompt."],
                     "model": ["type": "string", "description": "Model ID (e.g. 'nano-banana-pro'). Use list_models to see options. Defaults to first available model."],
                     "aspectRatio": ["type": "string", "description": "Aspect ratio (e.g. '16:9', '9:16')"],
@@ -712,7 +717,7 @@ enum ToolDefinitions {
                     "referenceMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs to use as reference images"],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
-                required: ["prompt"]
+                required: ["prompt", "shotId"]
             )
         ),
         AgentTool(
@@ -723,6 +728,7 @@ enum ToolDefinitions {
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
                     "rawPrompt": ["type": "boolean", "description": "Pro escape hatch: send the prompt uncompiled. Only works when the user enabled Raw prompts in Settings."],
                     "prompt": ["type": "string", "description": "Required for TTS (the text to speak) and text-to-music (style/mood/genre; MiniMax needs ≥10 chars). For Lyria 3 Pro, include lyrics, tempo, language, and vocal style directly in the prompt. Optional style guide for video-to-music models."],
+                    "shotId": ["type": "string", "description": "The exact shotId returned by compile_prompt; use the literal 'none' for audio that belongs to no pipeline shot."],
                     "name": ["type": "string", "description": "Display name for the asset in the media library. Defaults to first 30 chars of prompt."],
                     "model": ["type": "string", "description": "Model ID. Use list_models with type='audio' to see options and their 'inputs'. Defaults to the first model."],
                     "voice": ["type": "string", "description": "TTS only. Voice preset name. list_models shows voicesSample (first 3) + voiceCount; any voice supported by the model is accepted. Defaults to the model's defaultVoice. Ignored by music models."],
@@ -735,7 +741,7 @@ enum ToolDefinitions {
                     "videoSourceMediaRef": ["type": "string", "description": "Video-to-audio models only. Score this existing video asset instead of a timeline span. Mutually exclusive with the videoSource frames."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
-                required: []
+                required: ["shotId"]
             )
         ),
         AgentTool(

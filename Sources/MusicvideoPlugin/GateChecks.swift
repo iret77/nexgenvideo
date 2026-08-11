@@ -39,6 +39,16 @@ enum MusicvideoGateChecks {
         }
     }
 
+    private static func promptContains(
+        _ prompt: String,
+        requirements: [String]
+    ) -> Bool {
+        ComplianceLinter.lintLockedDirectives(
+            prompt,
+            lockedDirectives: requirements
+        ).isEmpty
+    }
+
     private static func existingProjectFile(
         _ rawPath: String,
         dataRoot: URL
@@ -1375,6 +1385,23 @@ enum MusicvideoGateChecks {
                         "Can't approve \"frames\": \(shot.id)-\(role) has no compiled provider prompt."
                     )
                 }
+                guard promptContains(
+                    frame.providerPrompt,
+                    requirements: shot.stillProductionPromptRequirements
+                ) else {
+                    throw GateBlocked(
+                        "Can't approve \"frames\": \(shot.id)-\(role)'s provider prompt "
+                            + "doesn't contain its current production-plan directives."
+                    )
+                }
+                guard ProductionPromptPolicy.stillPromptViolations(
+                    frame.providerPrompt
+                ).isEmpty else {
+                    throw GateBlocked(
+                        "Can't approve \"frames\": \(shot.id)-\(role)'s provider prompt "
+                            + "contains camera motion."
+                    )
+                }
                 guard !frame.runwayModel
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw GateBlocked(
@@ -1488,19 +1515,27 @@ enum MusicvideoGateChecks {
                   !output.isEmpty,
                   p?.shotId == $0,
                   p?.output == output,
+                  let proofEntry = p,
+                  let shot = shotlist.shots.first(where: {
+                      $0.id == proofEntry.shotId
+                  }),
                   let providerPrompt = p?.providerPrompt,
                   !providerPrompt.trimmingCharacters(
                     in: .whitespacesAndNewlines
+                  ).isEmpty,
+                  promptContains(
+                    providerPrompt,
+                    requirements: shot.videoProductionPromptRequirements
+                  ),
+                  ProductionPromptPolicy.videoPromptViolations(
+                    providerPrompt,
+                    expectedMovement: shot.productionPlan?.cameraMovement
                   ).isEmpty,
                   let generationModel = p?.generationModel,
                   !generationModel.trimmingCharacters(
                     in: .whitespacesAndNewlines
                   ).isEmpty,
                   let outputSha256 = p?.outputSha256,
-                  let proofEntry = p,
-                  let shot = shotlist.shots.first(where: {
-                      $0.id == proofEntry.shotId
-                  }),
                   renderConditioningMatches(
                     shot: shot,
                     proof: proofEntry,

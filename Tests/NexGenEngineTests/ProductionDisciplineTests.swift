@@ -109,6 +109,35 @@ struct ProductionDisciplineTests {
         #expect(codes == ["TOO_MANY_VISIBLE_CHARACTERS", "LONG_TAKE_RISK_UNDECLARED"])
     }
 
+    @Test("ensemble members count toward the generated-shot visibility limit")
+    func ensembleMemberCount() throws {
+        let ensemble = try Ensemble(
+            id: "trio",
+            name: "Trio",
+            visualPrompt: "Three performers in matching stage clothes.",
+            memberCount: 3
+        )
+        let bible = try Bible(
+            project: "production-test",
+            generated: "2026-08-08T00:00:00Z",
+            generator: "test",
+            ensembles: [ensemble]
+        )
+        let shot = try Self.shot(
+            characters: ["trio"],
+            plan: Self.plan()
+        )
+        let ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            bible: bible,
+            productionProfileIDs: [.generativeFilm]
+        )
+        #expect(
+            try productionRenderabilityCheck(ctx).map(\.code)
+                == ["TOO_MANY_VISIBLE_CHARACTERS"]
+        )
+    }
+
     @Test("declared long takes carry a rescue cut")
     func declaredLongTake() throws {
         let shot = try Self.shot(

@@ -282,8 +282,8 @@ are sensitive to meta instructions ("THIS IS THE FIRST FRAME …",
   style duplication.
 - **composition** — distance / frame division / gaze direction of the
   camera.
-- **camera** — starting position AND planned move ("low-angle ~1.5 m,
-  ~3 m distance, static for the first 2 s, then a slow 1 m dolly-back").
+- **camera** — use the injected core production-profile guidance and the
+  structured shot camera; do not reconstruct this clause in pack prose.
 - **light** — concrete lighting situation in one sentence.
 - **style** — `bible.look.style` **verbatim**, ONCE. No paraphrase, no
   combination with cinematic tags at the end.
@@ -308,7 +308,8 @@ meta instructions.
 **The calls:** first
 `compile_prompt(intent=<composed>, model=<F2.2 model>, shotId=<shot_id>)`.
 Then pass its `compiledPrompt` unchanged as `generate_image.prompt` and
-its `compileToken` as `generate_image.compileToken`, together with
+its `compileToken` as `generate_image.compileToken` and its `shotId` as
+`generate_image.shotId`, together with
 `aspectRatio`, `resolution="2K"`, and the ordered
 `referenceMediaRefs`. It returns an async placeholder media ID; wait
 until `get_media` reports that exact asset ready.
@@ -558,7 +559,7 @@ frame (keep the old one as `*-vN.png`), re-record via `record_render`.
   rendered frame (iron honesty rule). Max 2 auto re-render attempts,
   then the user decides.
 - **Compile every prompt:** `compile_prompt` → `generate_image` with
-  unchanged `compiledPrompt` + `compileToken`; no raw prompt path.
+  unchanged `compiledPrompt` + `compileToken` + `shotId`; no raw prompt path.
 - **Record every frame:** every generated keyframe is logged via
   `record_render(project_dir, "frames", …)`; the role-aware Frames
   manifest is the source of truth for completion.

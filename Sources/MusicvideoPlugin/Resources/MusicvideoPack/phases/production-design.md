@@ -151,8 +151,8 @@ Procedure:
 3. Compile the lighting intent first with
    `compile_prompt(intent=<lighting prompt>,
    model=<brief.bible_image_model>, shotId="none")`. Pass its
-   `compiledPrompt` and `compileToken` unchanged to `generate_image`
-   (project aspect ratio). When `get_media` reports the returned asset
+   `compiledPrompt`, `compileToken`, and `shotId="none"` unchanged to
+   `generate_image` (project aspect ratio). When `get_media` reports the returned asset
    ready, call `copy_project_file(media=<asset id>,
    to="production_design/lighting_anchor.png")` (a single still — no
    timeline placement is needed here). Confirm availability first via

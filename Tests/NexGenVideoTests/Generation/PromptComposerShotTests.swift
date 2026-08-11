@@ -57,7 +57,7 @@ struct PromptComposerShotTests {
         let plan = try ShotProductionPlan(
             primaryAction: "the performer raises one hand",
             cameraMovement: .dollyIn,
-            cameraMovementDetail: "from full shot to medium close-up",
+            cameraMovementDetail: "35mm follow from full shot to medium close-up",
             narrativeBeat: .reaction,
             renderability: .green,
             matchActionCue: "raised hand reaches eye level",
@@ -66,12 +66,15 @@ struct PromptComposerShotTests {
         let shot = try Self.shot(height: .eyeLevel, framing: .full, productionPlan: plan)
         let projection = PromptComposer.ShotProjection(shot)
         let video = try await PromptComposer.compose(
-            intent: "the performer stands in the marked position",
+            intent: "the performer runs away while the camera pans right",
             modality: .video, modelId: "fal/seedance-2.0", projectDir: nil,
+            setting: "inside the red rehearsal room",
+            lighting: "soft window light from camera left",
+            style: "restrained hand-drawn animation",
             shot: projection
         )
         let image = try await PromptComposer.compose(
-            intent: "the performer stands in the marked position",
+            intent: "the performer holds the marked t=0 pose under soft window light",
             modality: .image, modelId: "openai/gpt-image-2", projectDir: nil,
             shot: projection
         )
@@ -83,7 +86,81 @@ struct PromptComposerShotTests {
         #expect(video.text.contains("Continuity lock: red jacket remains zipped"))
         #expect(image.text.contains("Continuity lock: red jacket remains zipped"))
         #expect(video.text.contains("single controlled dolly-in"))
+        #expect(!video.text.contains("runs away"))
+        #expect(!video.text.contains("pans right"))
+        #expect(video.text.contains("inside the red rehearsal room"))
+        #expect(video.text.contains("soft window light from camera left"))
+        #expect(video.text.contains("restrained hand-drawn animation"))
         #expect(!image.text.contains("single controlled dolly-in"))
+        #expect(!image.text.contains("35mm follow"))
+        #expect(ProductionPromptPolicy.videoPromptViolations(
+            video.text,
+            expectedMovement: plan.cameraMovement
+        ).isEmpty)
+        #expect(ProductionPromptPolicy.stillPromptViolations(image.text).isEmpty)
+        #expect(ComplianceLinter.lintLockedDirectives(
+            video.text,
+            lockedDirectives: shot.videoProductionPromptRequirements
+        ).isEmpty)
+        #expect(ComplianceLinter.lintLockedDirectives(
+            image.text,
+            lockedDirectives: shot.stillProductionPromptRequirements
+        ).isEmpty)
+    }
+
+    @Test("planned still compilation blocks synonym camera motion in caller intent")
+    func blocksStillCameraMotion() async throws {
+        let plan = try ShotProductionPlan(
+            primaryAction: "the performer raises one hand",
+            cameraMovement: .dollyIn,
+            renderability: .green
+        )
+        let shot = try Self.shot(
+            height: .eyeLevel,
+            framing: .full,
+            productionPlan: plan
+        )
+
+        await #expect(throws: PromptComposer.ComposeError.self) {
+            try await PromptComposer.compose(
+                intent: "the performer holds still while the view glides forward",
+                modality: .image,
+                modelId: "openai/gpt-image-2",
+                projectDir: nil,
+                shot: PromptComposer.ShotProjection(shot)
+            )
+        }
+    }
+
+    @Test("camera-motion synonyms are rejected independently of exact plan prose")
+    func rejectsCameraMotionSynonyms() {
+        #expect(!ProductionPromptPolicy.stillPromptViolations(
+            "Static subject while the camera glides forward"
+        ).isEmpty)
+        #expect(!ProductionPromptPolicy.videoPromptViolations(
+            "Single controlled dolly-in. The view pans right.",
+            expectedMovement: .dollyIn
+        ).isEmpty)
+    }
+
+    @Test("risky plans project their exact rescue cut into render requirements")
+    func projectsRescueCut() throws {
+        let plan = try ShotProductionPlan(
+            primaryAction: "the performer turns toward the doorway",
+            cameraMovement: .static,
+            renderability: .yellow,
+            risks: [.complexInteraction],
+            rescueCut: "cut to a close reaction at the doorway"
+        )
+        let shot = try Self.shot(
+            height: .eyeLevel,
+            framing: .full,
+            productionPlan: plan
+        )
+
+        #expect(shot.videoProductionPromptRequirements.contains(
+            "Approved rescue-cut fallback: cut to a close reaction at the doorway"
+        ))
     }
 
     @Test("named blocking anchors project into video and still prompts")

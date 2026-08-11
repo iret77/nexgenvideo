@@ -12,6 +12,11 @@ extension ToolExecutor {
             guard let model = VideoModelConfig.allModels.first(where: { $0.id == modelId }) else {
                 throw ToolError("Unknown model '\(modelId)'. Available: \(VideoModelConfig.allModels.map(\.id).joined(separator: ", "))")
             }
+            try await enforceVideoShotSourceContract(
+                editor: editor,
+                args: args,
+                model: model
+            )
             return model.requiresSourceVideo
                 ? try await generateVideoEdit(editor, args, prompt: prompt, model: model)
                 : try await generateVideoText(editor, args, prompt: prompt, model: model)
@@ -25,6 +30,76 @@ extension ToolExecutor {
             throw ToolError("Lottie animations aren't generated through this tool.")
         case .document:
             throw ToolError("Documents are source material you import, not something this tool generates.")
+        }
+    }
+
+    private func enforceVideoShotSourceContract(
+        editor: EditorViewModel,
+        args: [String: Any],
+        model: VideoModelConfig
+    ) async throws {
+        let shotId = try args.requireString("shotId")
+        guard shotId != "none" else { return }
+        guard let root = editor.workingRoot.flatMap({
+            DataRootResolver.dataRoot(of: $0)
+        }), let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil,
+              let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
+            throw ToolError(
+                "Shot-bound generation requires the current project shotlist."
+            )
+        }
+        let submittedSourceId = args.string("sourceVideoMediaRef")
+        let expectedSourceId: String?
+        if shot.sourceMode == .aiEnhanced {
+            guard let sourcePath = shot.sourcePath,
+                  let source = await resolveRenderedAsset(
+                      sourcePath,
+                      editor: editor,
+                      dataRoot: root
+                  ) else {
+                throw ToolError(
+                    "Shot '\(shotId)' has no current project-local source_path."
+                )
+            }
+            expectedSourceId = source.id
+        } else {
+            expectedSourceId = nil
+        }
+        try Self.validateVideoShotSourceContract(
+            sourceMode: shot.sourceMode,
+            modelRequiresSourceVideo: model.requiresSourceVideo,
+            submittedSourceId: submittedSourceId,
+            expectedSourceId: expectedSourceId
+        )
+    }
+
+    static func validateVideoShotSourceContract(
+        sourceMode: SourceMode,
+        modelRequiresSourceVideo: Bool,
+        submittedSourceId: String?,
+        expectedSourceId: String?
+    ) throws {
+        switch sourceMode {
+        case .aiEnhanced:
+            guard modelRequiresSourceVideo,
+                  let expectedSourceId,
+                  submittedSourceId == expectedSourceId else {
+                throw ToolError(
+                    "AI-enhanced generation must use the exact source_path media "
+                        + "returned by next_render_shot with a source-video model."
+                )
+            }
+        case .generated:
+            guard !modelRequiresSourceVideo, submittedSourceId == nil else {
+                throw ToolError(
+                    "Generated shots cannot select source footage. Declare an "
+                        + "AI-enhanced shot with source_path instead."
+                )
+            }
+        case .imported:
+            throw ToolError(
+                "Imported shots use their existing footage and cannot run generate_video."
+            )
         }
     }
 
@@ -44,9 +119,40 @@ extension ToolExecutor {
     }
 
     /// The agent's precompiled prompt (from compile_prompt) + token, or nil for the raw-prompt escape.
-    private static func agentPrompt(_ args: [String: Any], prompt: String) -> (precompiled: (text: String, token: String)?, raw: Bool) {
-        if args.bool("rawPrompt") == true { return (nil, true) }
-        return ((text: prompt, token: args.string("compileToken") ?? ""), false)
+    private static func agentPrompt(
+        _ args: [String: Any],
+        prompt: String,
+        editor: EditorViewModel
+    ) throws -> (
+        precompiled: (text: String, token: String, binding: PromptBinding)?,
+        raw: Bool
+    ) {
+        let shotId = try args.requireString("shotId")
+        if args.bool("rawPrompt") == true {
+            guard shotId == "none" else {
+                throw ToolError(
+                    "Raw prompts cannot render a pipeline shot. Compile the current shot first."
+                )
+            }
+            return (nil, true)
+        }
+        if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard shotId == "none" else {
+                throw ToolError(
+                    "A shot-bound generation requires a compiled prompt."
+                )
+            }
+            return (nil, false)
+        }
+        let binding = try PromptCompiler.currentBinding(
+            editor: editor,
+            shotId: shotId
+        )
+        return ((
+            text: prompt,
+            token: args.string("compileToken") ?? "",
+            binding: binding
+        ), false)
     }
 
     // MARK: - Cost-Guard (M7) — the user's final word on paid agent renders
@@ -154,16 +260,23 @@ extension ToolExecutor {
         let name = args.string("name")
         let folderId = sourceAsset.folderId
         let placeholderDuration = trimmed?.durationSeconds ?? (sourceAsset.duration > 0 ? sourceAsset.duration : 5)
-        let (precompiled, raw) = Self.agentPrompt(args, prompt: prompt)
+        let (precompiled, raw) = try Self.agentPrompt(
+            args,
+            prompt: prompt,
+            editor: editor
+        )
 
         let request = GenerationRequest(
             modality: .video, modelId: model.id, intent: prompt,
             placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
             precompiled: precompiled, rawPrompt: raw,
             submission: .video(make: { compiled in
-                let genInput = GenerationInput(
+                var genInput = GenerationInput(
                     prompt: compiled, model: model.id, duration: Int(sourceAsset.duration.rounded()),
                     aspectRatio: "", resolution: nil)
+                genInput.promptShotId = precompiled?.binding.shotId
+                genInput.promptProjectKey = precompiled?.binding.projectKey
+                genInput.promptShotFingerprint = precompiled?.binding.shotFingerprint
                 return VideoGenerationSubmission.make(
                     genInput: genInput, model: model, inputAssets: inputAssets,
                     placeholderDuration: placeholderDuration, trimmedSourceOverride: trimmed,
@@ -237,7 +350,11 @@ extension ToolExecutor {
             args, editor: editor, fallbackReferences: inputAssets.textToVideoReferences
         )
         let name = args.string("name")
-        let (precompiled, raw) = Self.agentPrompt(args, prompt: prompt)
+        let (precompiled, raw) = try Self.agentPrompt(
+            args,
+            prompt: prompt,
+            editor: editor
+        )
 
         let request = GenerationRequest(
             modality: .video, modelId: model.id, intent: prompt,
@@ -245,9 +362,12 @@ extension ToolExecutor {
             placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
             precompiled: precompiled, rawPrompt: raw,
             submission: .video(make: { compiled in
-                let genInput = GenerationInput(
+                var genInput = GenerationInput(
                     prompt: compiled, model: model.id, duration: duration,
                     aspectRatio: aspectRatio, resolution: resolution)
+                genInput.promptShotId = precompiled?.binding.shotId
+                genInput.promptProjectKey = precompiled?.binding.projectKey
+                genInput.promptShotFingerprint = precompiled?.binding.shotFingerprint
                 return VideoGenerationSubmission.make(
                     genInput: genInput, model: model, inputAssets: inputAssets,
                     placeholderDuration: Double(max(1, duration)),
@@ -306,12 +426,20 @@ extension ToolExecutor {
         }
         let folderId = try resolveFolderId(args, editor: editor, fallbackReferences: refs)
         let name = args.string("name")
-        let (precompiled, raw) = Self.agentPrompt(args, prompt: prompt)
+        let (precompiled, raw) = try Self.agentPrompt(
+            args,
+            prompt: prompt,
+            editor: editor
+        )
 
         func genInput(_ compiled: String) -> GenerationInput {
-            GenerationInput(
+            var input = GenerationInput(
                 prompt: compiled, model: modelId, duration: 0,
                 aspectRatio: aspectRatio, resolution: resolution, quality: quality)
+            input.promptShotId = precompiled?.binding.shotId
+            input.promptProjectKey = precompiled?.binding.projectKey
+            input.promptShotFingerprint = precompiled?.binding.shotFingerprint
+            return input
         }
         let preflight: GenerationController.Preflight = {
             model.validate(
@@ -382,20 +510,25 @@ extension ToolExecutor {
     func compilePrompt(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let intent = try args.requireString("intent")
         let modelId = ModelCatalog.shared.internalId(forLogical: try args.requireString("model"))
+        let shotId = try args.requireString("shotId")
         // #231: `shotId` is REQUIRED and has no default — "none" is the explicit free-intent choice. It
         // used to be optional, so forgetting it degraded the compile silently: no camera projection from
         // the spec, no drift lint, no error. The contract now forces the decision instead of asking the
         // agent to remember it; an unknown id is refused rather than quietly treated as free intent.
-        let projection = try shotProjection(try args.requireString("shotId"), editor: editor)
-        // Same contract as before ({ compiledPrompt, compileToken, notes }); composition now runs the
-        // ENGINE path (PromptComposer: ledger directives + provider builder + PromptLinter) instead of
+        let projection = try shotProjection(shotId, editor: editor)
+        // Composition runs the engine path (ledger directives + provider builder + PromptLinter) instead of
         // the old local ledger text-append, then the gate mints the token over the result.
         let compiled = try await PromptCompiler.compile(
             intent: intent, modelId: modelId,
-            modality: PromptCompiler.modalityForModel(modelId), editor: editor, shot: projection)
+            modality: PromptCompiler.modalityForModel(modelId), editor: editor,
+            setting: args.string("setting") ?? "",
+            lighting: args.string("lighting") ?? "",
+            style: args.string("style") ?? "",
+            shotId: shotId, shot: projection)
         let body: [String: Any] = [
             "compiledPrompt": compiled.text,
             "compileToken": compiled.token,
+            "shotId": compiled.binding.shotId,
             "notes": compiled.notes,
         ]
         guard let json = Self.jsonString(body) else { return .error("Failed to encode compiled prompt") }
@@ -412,8 +545,13 @@ extension ToolExecutor {
     /// normal state, not a violation — only a real miss against a real shotlist is an error.
     private func shotProjection(_ shotId: String, editor: EditorViewModel) throws -> PromptComposer.ShotProjection? {
         guard shotId != "none" else { return nil }
-        guard let root = editor.workingRoot.flatMap({ DataRootResolver.dataRoot(of: $0) }),
-              let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil else { return nil }
+        guard let root = editor.workingRoot.flatMap({
+            DataRootResolver.dataRoot(of: $0)
+        }), let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil else {
+            throw ToolError(
+                "Shot-bound compilation requires an open project with a current shotlist."
+            )
+        }
         guard let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
             throw ToolError(
                 "No shot '\(shotId)' in the shotlist. Pass a real shot id from next_render_shot, or "
@@ -479,7 +617,11 @@ extension ToolExecutor {
         let styleInstructions = model.supportsStyleInstructions ? args.string("styleInstructions") : nil
         let name = args.string("name")
         let folderId = try resolveFolderId(args, editor: editor)
-        let (precompiled, raw) = Self.agentPrompt(args, prompt: prompt)
+        let (precompiled, raw) = try Self.agentPrompt(
+            args,
+            prompt: prompt,
+            editor: editor
+        )
 
         // Cost-Guard (M7): the user's final word before this paid audio render. No swap — audio models
         // vary by category/voice/inputs, so an alternative isn't a drop-in; approval only.
@@ -496,11 +638,14 @@ extension ToolExecutor {
                 styleInstructions: styleInstructions,
                 instrumental: model.supportsInstrumental ? instrumental : false,
                 durationSeconds: durationSeconds, videoURL: videoURL)
-            let genInput = GenerationInput(
+            var genInput = GenerationInput(
                 prompt: compiled, model: model.id, duration: durationSeconds ?? 0,
                 aspectRatio: "", resolution: nil, voice: params.voice, lyrics: params.lyrics,
                 styleInstructions: params.styleInstructions,
                 instrumental: model.supportsInstrumental ? instrumental : nil)
+            genInput.promptShotId = precompiled?.binding.shotId
+            genInput.promptProjectKey = precompiled?.binding.projectKey
+            genInput.promptShotFingerprint = precompiled?.binding.shotFingerprint
             return AudioGenerationSubmission.make(
                 genInput: genInput, model: model, params: params, name: name, folderId: folderId)
         }

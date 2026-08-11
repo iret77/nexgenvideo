@@ -208,18 +208,10 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    from the approved Shot List; use that exact media ref and never choose
    or substitute a source yourself.
 2. **Determine the model** (step 2) and confirm it via `list_models`.
-3. **Build the clip prompt** from `shot.visual_prompt` + `shot.motion`
-   (Subject → Action → Environment → Camera → Style → Constraints, kept
-   tight, ~60–100 words). Compile it with `compile_prompt(intent, model,
-   shotId=<shot_id>)`. `shotId` is REQUIRED and has no default: the shot's
-   declared camera + framing are projected into the prompt deterministically
-   and the drift linter runs — heed any `CAMERA_/FRAMING_/GAZE_/SETTING_`
-   note it returns. Here it is always the real shot id; `"none"` exists only
-   for prompts that belong to no shot, and using it for a shot throws away
-   the camera projection and the drift check.
-   The style already sits in `shot.visual_prompt` from the bible look —
-   **never** append freehand extra style tags ("cinematic, ARRI ALEXA")
-   and never quality killers ("epic / stunning / amazing").
+3. **Compile the current shot:** call `compile_prompt` with the real
+   `shotId` and model. The injected core production profile owns the
+   provider action, camera, continuity, blocking, and rescue-cut clauses;
+   do not reconstruct them in pack prose or substitute `shotId="none"`.
 4. **Keyframe / reference selection:**
    - `source_mode=ai_enhanced`: pass the exact
      `source_video_media_ref` as `sourceVideoMediaRef`. Pass no start/end
@@ -246,7 +238,7 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
      (no start frame). Sanity has already blocked the other case
      (`MISSING_BIBLE_ANCHOR_FOR_T2V`).
 5. **Render:** `generate_video(prompt=<compiledPrompt>,
-   compileToken=<compileToken>, model=<model>,
+   compileToken=<compileToken>, shotId=<shot_id>, model=<model>,
    duration=<shot.duration_s>, aspectRatio=<brief aspect>,
    resolution=<brief.final_resolution for final / a cheaper res for
    preview>, startFrameMediaRef=..., endFrameMediaRef=...,

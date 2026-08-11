@@ -173,11 +173,10 @@ struct GenerationControllerTests {
 
     @Test func agentToolWithoutTokenIsGateBlocked() async {
         let editor = stubEditor(projectURL: nil)
-        // origin .agentTool with a non-empty intent but no valid compileToken → gate rejects.
+        // origin .agentTool with a non-empty intent but no compile result → gate rejects.
         let request = GenerationRequest(
             modality: .video, modelId: "fal-ai/veo3", intent: "a red car",
             placement: .mediaLibrary(folderId: nil), origin: .agentTool,
-            precompiled: (text: "a red car", token: "deadbeefdeadbeef"),
             submission: .video(make: { compiled in
                 let genInput = GenerationInput(prompt: compiled, model: "fal-ai/veo3", duration: 5, aspectRatio: "16:9")
                 return VideoGenerationSubmission(

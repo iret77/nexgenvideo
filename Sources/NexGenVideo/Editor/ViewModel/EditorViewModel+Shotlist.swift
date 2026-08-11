@@ -11,6 +11,24 @@ extension EditorViewModel {
               let dataRoot = DataRootResolver.dataRoot(of: home) else {
             return false
         }
+        guard let mutationID = pipelinePhaseRunCoordinator.beginMutation(
+            projectRoot: dataRoot,
+            label: "Shot List edit"
+        ) else {
+            let active = pipelinePhaseRunCoordinator.runningPhase(
+                projectRoot: dataRoot
+            ) ?? "pipeline work"
+            mediaPanelToast = MediaPanelToast(
+                message: "Can't edit the Shot List while \(active) is running."
+            )
+            return false
+        }
+        defer {
+            pipelinePhaseRunCoordinator.endMutation(
+                projectRoot: dataRoot,
+                id: mutationID
+            )
+        }
         do {
             try pipelineAgentHarness.guardPhaseWork(
                 phase: "shotlist",
@@ -20,6 +38,18 @@ extension EditorViewModel {
         } catch let error as ToolError {
             mediaPanelToast = MediaPanelToast(message: error.message)
             return false
+        } catch {
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            return false
+        }
+        guard let workingCopyKey = openWorkingCopyKey else {
+            mediaPanelToast = MediaPanelToast(
+                message: "The project working copy is unavailable. Reopen the project before editing."
+            )
+            return false
+        }
+        do {
+            try ProjectWorkingCopy.markDirty(key: workingCopyKey)
         } catch {
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
             return false

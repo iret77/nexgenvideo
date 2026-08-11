@@ -63,17 +63,32 @@ struct WorkflowToolsTests {
         _ id: String,
         at url: URL,
         to harness: ToolHarness,
+        dataRoot: URL,
         model: String = "video-model",
-        sourceVideoAssetId: String? = nil
+        sourceVideoAssetId: String? = nil,
+        shotId: String = "s001"
     ) throws {
         try Data(id.utf8).write(to: url)
+        let shot = try #require(
+            try loadShotlist(dataRoot: dataRoot)?.shots.first {
+                $0.id == shotId
+            }
+        )
+        let requirements = shot.videoProductionPromptRequirements
+            .joined(separator: ". ")
+        let prompt = "Compiled provider prompt for \(id)."
+            + (requirements.isEmpty ? "" : " \(requirements)")
         var input = GenerationInput(
-            prompt: "Compiled provider prompt for \(id).",
+            prompt: prompt,
             model: model,
             duration: 4,
             aspectRatio: "16:9"
         )
         input.sourceVideoAssetId = sourceVideoAssetId
+        input.promptShotId = shotId
+        input.promptProjectKey = dataRoot.standardizedFileURL
+            .resolvingSymlinksInPath().path
+        input.promptShotFingerprint = try PromptCompiler.shotFingerprint(shot)
         harness.editor.mediaAssets.append(
             MediaAsset(
                 id: id,
@@ -186,6 +201,118 @@ struct WorkflowToolsTests {
             "figures": "artist_only",
             "lyrics_integration": "literal",
         ]
+    }
+
+    private func writeApprovableBible(dataRoot: URL) throws {
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        try store.save(
+            try Brief(
+                project: "demo",
+                generated: "2026-07-26T00:00:00Z",
+                mission: .demo,
+                targetPlatform: "YouTube",
+                aspectRatio: .landscape16x9,
+                projectMode: "section",
+                budgetEur: 50,
+                conceptType: .narrative,
+                visualMedium: .animation2d,
+                visualMediumNotes: "restrained hand-drawn animation",
+                tone: [.quiet],
+                figures: .none,
+                lyricsIntegration: .metaphorical
+            ),
+            to: PipelineLayout.briefFile
+        )
+        try store.save(
+            try ProductionDesign(
+                project: "demo",
+                generated: "2026-07-26T00:00:00Z",
+                generator: "test",
+                visualMedium: .animation2d,
+                visualMediumNotes: "restrained hand-drawn animation",
+                colorScript: ["intro": "Muted blue dawn."]
+            ),
+            to: "production_design/production_design.yaml"
+        )
+        let steps = try (1...4).map { index in
+            try Step(
+                id: "intro.\(String(format: "%02d", index))",
+                function: index == 1 ? .transition : .story,
+                subject: "The performer holds opening pose \(index).",
+                camera: "Wide static frame.",
+                settingHint: "yard, from the gate",
+                locationViewRequest: "wide",
+                framing: "wide",
+                cameraSetup: [
+                    "height": "eye_level",
+                    "angle": "frontal",
+                    "lens_hint": "wide",
+                ]
+            )
+        }
+        try StoryboardStore.save(
+            try Storyboard(
+                meta: try StoryboardMeta(
+                    project: "demo",
+                    version: 1,
+                    generated: "2026-07-26T00:00:00Z",
+                    summaryOneline: "A restrained dawn."
+                ),
+                sections: [
+                    try Section(
+                        id: "intro",
+                        label: "intro",
+                        timeStart: 0,
+                        timeEnd: 4,
+                        energy: "low",
+                        function: "aufbau",
+                        steps: steps
+                    ),
+                ]
+            ),
+            to: dataRoot
+        )
+
+        let anchor = dataRoot.appendingPathComponent("bible/yard-wide.png")
+        try FileManager.default.createDirectory(
+            at: anchor.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("anchor".utf8).write(to: anchor)
+        try store.save(
+            try Bible(
+                project: "demo",
+                generated: "2026-07-26T00:00:00Z",
+                generator: "test",
+                look: LookGuide(style: "restrained hand-drawn animation"),
+                locations: [
+                    try Location(
+                        id: "yard",
+                        name: "Schoolyard",
+                        visualPrompt: "A quiet schoolyard at blue hour.",
+                        sheets: ["wide": "bible/yard-wide.png"]
+                    ),
+                ]
+            ),
+            to: PipelineLayout.bibleFile
+        )
+        try savePipelineAssetProof(
+            PipelineAssetProof(
+                project: "demo",
+                scope: "bible",
+                entries: [
+                    "bible/yard-wide.png": PipelineAssetProofEntry(
+                        path: "bible/yard-wide.png",
+                        sha256: try FileDigest.sha256(of: anchor),
+                        providerPrompt: "Compiled sheet prompt",
+                        generationModel: "image-model",
+                        sourceMediaId: "generated-sheet"
+                    ),
+                ]
+            ),
+            dataRoot: dataRoot
+        )
+        try MusicvideoGateChecks.requireRealBible(dataRoot: dataRoot)
     }
 
     // MARK: - init_project → get_project_state
@@ -1343,7 +1470,7 @@ struct WorkflowToolsTests {
             "position": "near the doorway",
             "pose": "standing",
             "gaze": "toward the yard",
-            "relation_to_set": "",
+            "relation_to_set": "beside the doorway",
         ]]
         var unanchoredPlan = try #require(unanchoredShot["production_plan"] as? [String: Any])
         unanchoredPlan["blocking_anchors"] = [[
@@ -1402,7 +1529,7 @@ struct WorkflowToolsTests {
             "shots": [missingRelationShot],
         ])
         #expect(missingRelation.isError)
-        #expect(ToolHarness.textOf(missingRelation).contains("required pattern"))
+        #expect(ToolHarness.textOf(missingRelation).contains("expected at least 1 character"))
 
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
@@ -1516,6 +1643,7 @@ struct WorkflowToolsTests {
             mode: .beat
         )
         try activatePack("musicvideo", dataRoot: packageDataRoot)
+        try writeApprovableBible(dataRoot: packageDataRoot)
         let plan = try ShotProductionPlan(
             primaryAction: "The subject crosses the doorway.",
             cameraMovement: .static,
@@ -1560,6 +1688,9 @@ struct WorkflowToolsTests {
         )
 
         #expect(changed)
+        #expect(FileManager.default.fileExists(
+            atPath: workingHome.appendingPathComponent(".ngv-dirty").path
+        ))
         let shotlist = try #require(
             try loadShotlist(dataRoot: workingDataRoot)
         )
@@ -1679,7 +1810,8 @@ struct WorkflowToolsTests {
         try addGeneratedVideo(
             "s001-video",
             at: video,
-            to: h
+            to: h,
+            dataRoot: dataRoot
         )
 
         let recorded = try await h.runOK("record_render", args: [
@@ -1758,7 +1890,12 @@ struct WorkflowToolsTests {
                 )
             )
         )
-        try addGeneratedVideo("current-video", at: video, to: h)
+        try addGeneratedVideo(
+            "current-video",
+            at: video,
+            to: h,
+            dataRoot: dataRoot
+        )
 
         _ = try await h.runOK("record_render", args: [
             "project_dir": dataRoot.path,
@@ -1776,6 +1913,94 @@ struct WorkflowToolsTests {
                 == "Compiled provider prompt for current-video."
         )
         #expect(proof.entries["s001"]?.generationModel == "video-model")
+    }
+
+    @Test("record_render rejects media compiled for another shot")
+    func renderManifestRejectsAnotherShotBinding() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        _ = try saveShotlist(
+            try minimalShotlist(keyframeStrategy: .none),
+            to: dataRoot
+        )
+        let video = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("wrong-shot.mp4")
+        try addGeneratedVideo(
+            "wrong-shot",
+            at: video,
+            to: h,
+            dataRoot: dataRoot
+        )
+        let asset = try #require(
+            h.editor.mediaAssets.first { $0.id == "wrong-shot" }
+        )
+        var input = try #require(asset.generationInput)
+        input.promptShotId = "s999"
+        asset.generationInput = input
+
+        let result = await h.runRaw("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s001",
+            "output": "wrong-shot",
+        ])
+
+        #expect(result.isError)
+        #expect(
+            ToolHarness.textOf(result)
+                .contains("was not compiled for shot 's001'")
+        )
+    }
+
+    @Test("record_render rejects media compiled before the shot plan changed")
+    func renderManifestRejectsStalePlanBinding() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let firstPlan = try ShotProductionPlan(
+            primaryAction: "The performer crosses the doorway.",
+            cameraMovement: .static,
+            renderability: .green
+        )
+        _ = try saveShotlist(
+            try minimalShotlist(
+                keyframeStrategy: .none,
+                productionPlan: firstPlan
+            ),
+            to: dataRoot
+        )
+        let video = FrameInventory.projectHome(of: dataRoot)
+            .appendingPathComponent("stale-plan.mp4")
+        try addGeneratedVideo(
+            "stale-plan",
+            at: video,
+            to: h,
+            dataRoot: dataRoot
+        )
+        let revisedPlan = try ShotProductionPlan(
+            primaryAction: "The performer stops inside the doorway.",
+            cameraMovement: .dollyIn,
+            renderability: .green
+        )
+        _ = try saveShotlist(
+            try minimalShotlist(
+                keyframeStrategy: .none,
+                productionPlan: revisedPlan
+            ),
+            to: dataRoot
+        )
+
+        let result = await h.runRaw("record_render", args: [
+            "project_dir": dataRoot.path,
+            "phase": "preview",
+            "shot_id": "s001",
+            "output": "stale-plan",
+        ])
+
+        #expect(result.isError)
+        #expect(
+            ToolHarness.textOf(result)
+                .contains("current shot production plan")
+        )
     }
 
     @Test("next render shot hands a chained shot the predecessor's exact last frame")
@@ -1830,7 +2055,12 @@ struct WorkflowToolsTests {
         let home = FrameInventory.projectHome(of: dataRoot)
         let firstVideo = home.appendingPathComponent("s001.mp4")
         let lastFrame = home.appendingPathComponent("s001-last.png")
-        try addGeneratedVideo("s001-video", at: firstVideo, to: h)
+        try addGeneratedVideo(
+            "s001-video",
+            at: firstVideo,
+            to: h,
+            dataRoot: dataRoot
+        )
         try addGeneratedImage("s001-last", at: lastFrame, to: h)
         var manifest = RenderManifest(project: "demo", phase: "preview")
         record(
@@ -2009,6 +2239,10 @@ struct WorkflowToolsTests {
                 aspectRatio: "16:9"
             )
             input.intent = "Frame \(id)"
+            input.promptShotId = "s001"
+            input.promptProjectKey = dataRoot.standardizedFileURL
+                .resolvingSymlinksInPath().path
+            input.promptShotFingerprint = try PromptCompiler.shotFingerprint(shot)
             h.editor.mediaAssets.append(
                 MediaAsset(
                     id: id,
@@ -2133,7 +2367,12 @@ struct WorkflowToolsTests {
         )
         let video = FrameInventory.projectHome(of: dataRoot)
             .appendingPathComponent("s001.mp4")
-        try addGeneratedVideo("s001-video", at: video, to: h)
+        try addGeneratedVideo(
+            "s001-video",
+            at: video,
+            to: h,
+            dataRoot: dataRoot
+        )
         let asset = try #require(
             h.editor.mediaAssets.first { $0.id == "s001-video" }
         )
@@ -2255,14 +2494,18 @@ struct WorkflowToolsTests {
         try addGeneratedVideo(
             "s002-video",
             at: home.appendingPathComponent("s002.mp4"),
-            to: h
+            to: h,
+            dataRoot: dataRoot,
+            shotId: "s002"
         )
         try addGeneratedVideo(
             "s003-video",
             at: home.appendingPathComponent("s003.mp4"),
             to: h,
+            dataRoot: dataRoot,
             model: "runway/aleph2",
-            sourceVideoAssetId: "s003-source"
+            sourceVideoAssetId: "s003-source",
+            shotId: "s003"
         )
 
         // s001 is imported → skipped; the first render shot is the generated s002.
@@ -2310,7 +2553,9 @@ struct WorkflowToolsTests {
         try addGeneratedVideo(
             "s002-video",
             at: home.appendingPathComponent("s002.mp4"),
-            to: h
+            to: h,
+            dataRoot: dataRoot,
+            shotId: "s002"
         )
         _ = try await h.runOK("record_render", args: [
             "project_dir": dataRoot.path,

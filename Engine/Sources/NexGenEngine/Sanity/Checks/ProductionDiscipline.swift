@@ -16,7 +16,10 @@ public func productionRenderabilityCheck(_ ctx: AuditContext) throws -> [Finding
             continue
         }
 
-        if ProductionDiscipline.hasTooManyVisibleCharacters(shot) {
+        if ProductionDiscipline.hasTooManyVisibleCharacters(
+            shot,
+            bible: ctx.bible
+        ) {
             findings.append(Finding(
                 level: .error,
                 code: "TOO_MANY_VISIBLE_CHARACTERS",
@@ -89,23 +92,19 @@ public func narrativeStructureCheck(_ ctx: AuditContext) throws -> [Finding] {
            beats.allSatisfy({ $0 == .performance || $0 == .atmosphere }) {
             continue
         }
-        let actionIndex = beats.firstIndex(of: .action)
-        let hasContextBeforeAction = actionIndex.map { index in
-            beats[..<index].contains {
-                $0 == .establish || $0 == .atmosphere
-            }
-        } ?? false
-        let hasConsequenceAfterAction = actionIndex.map { index in
-            beats[beats.index(after: index)...].contains {
-                $0 == .reaction || $0 == .detail || $0 == .transition
-            }
-        } ?? false
-        if actionIndex == nil {
+        guard let actionIndex = beats.firstIndex(of: .action) else {
             findings.append(Finding(
                 level: .warn,
                 code: "NARRATIVE_ACTION_MISSING",
                 message: "Section \(section) has no observable action beat."
             ))
+            continue
+        }
+        let hasContextBeforeAction = beats[..<actionIndex].contains {
+            $0 == .establish || $0 == .atmosphere
+        }
+        let hasConsequenceAfterAction = beats[beats.index(after: actionIndex)...].contains {
+            $0 == .reaction || $0 == .detail || $0 == .transition
         }
         if !hasContextBeforeAction {
             findings.append(Finding(

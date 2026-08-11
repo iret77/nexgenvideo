@@ -74,9 +74,27 @@ public enum ProductionDiscipline {
         shot.sourceMode != .imported
     }
 
-    public static func hasTooManyVisibleCharacters(_ shot: Shot) -> Bool {
+    public static func visibleCharacterCount(
+        _ shot: Shot,
+        bible: Bible?
+    ) -> Int {
+        let ensembleCounts = Dictionary(
+            uniqueKeysWithValues: (bible?.ensembles ?? []).map {
+                ($0.id, $0.memberCount)
+            }
+        )
+        return shot.characterRefs.reduce(into: 0) { count, reference in
+            count += ensembleCounts[reference] ?? 1
+        }
+    }
+
+    public static func hasTooManyVisibleCharacters(
+        _ shot: Shot,
+        bible: Bible? = nil
+    ) -> Bool {
         shot.sourceMode == .generated
-            && shot.characterRefs.count > maximumGeneratedVisibleCharacters
+            && visibleCharacterCount(shot, bible: bible)
+                > maximumGeneratedVisibleCharacters
     }
 
     public static func hasUndeclaredLongTake(_ shot: Shot) -> Bool {

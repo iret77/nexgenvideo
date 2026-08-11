@@ -28,6 +28,12 @@ enum PackSelfTest {
             exit(1)
         }
         if record.state == .loaded {
+            if ProcessInfo.processInfo.environment["NGV_SELFTEST_LOAD_ONLY"] == "1" {
+                FileHandle.standardOutput.write(
+                    Data("SELFTEST_PACK_OK loaded compatible \(record.id) v\(record.version)\n".utf8)
+                )
+                exit(0)
+            }
             if let reason = requiredResourceFailure(record) {
                 FileHandle.standardError.write(Data("SELFTEST_PACK_FAIL \(record.id): \(reason)\n".utf8))
                 exit(1)

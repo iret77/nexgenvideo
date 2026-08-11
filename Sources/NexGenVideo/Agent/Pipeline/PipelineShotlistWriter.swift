@@ -89,6 +89,23 @@ enum PipelineShotlistWriter {
         } else {
             brief = nil
         }
+        let bibleURL = PipelineLayout.url(
+            PipelineLayout.bibleFile,
+            in: dataRoot
+        )
+        let bible: Bible?
+        if FileManager.default.fileExists(atPath: bibleURL.path) {
+            do {
+                bible = try loadBible(dataRoot: dataRoot)
+            } catch {
+                throw ToolError(
+                    "The Bible is unreadable. Repair or restore it before writing the Shot List: "
+                        + error.localizedDescription
+                )
+            }
+        } else {
+            bible = nil
+        }
         let activePack: String?
         do {
             activePack = try ProjectPluginSettings.resolvedPlugin(
@@ -130,7 +147,10 @@ enum PipelineShotlistWriter {
             }
             let crowded = shotlist.shots.filter {
                 $0.productionPlan != nil
-                    && ProductionDiscipline.hasTooManyVisibleCharacters($0)
+                    && ProductionDiscipline.hasTooManyVisibleCharacters(
+                        $0,
+                        bible: bible
+                    )
             }
             guard crowded.isEmpty else {
                 throw ToolError(

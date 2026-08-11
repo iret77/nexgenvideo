@@ -88,6 +88,36 @@ struct ToolDefinitionContractTests {
 
         let empty = await harness.runRaw("show_blocks", args: ["blocks": []])
         #expect(ToolHarness.textOf(empty).contains("expected at least 1 item"))
+
+        let unboundGeneration = await harness.runRaw(
+            "generate_video",
+            args: ["prompt": "compiled"]
+        )
+        #expect(
+            ToolHarness.textOf(unboundGeneration)
+                .contains("missing required field 'shotId'")
+        )
+    }
+
+    @Test("every generation tool requires the compile-time shot binding")
+    func generationSchemasRequireShotBinding() throws {
+        for name in [
+            ToolName.generateVideo,
+            .generateImage,
+            .generateAudio,
+        ] {
+            let tool = try #require(
+                ToolDefinitions.all.first { $0.name == name }
+            )
+            let required = Set(
+                tool.inputSchema["required"] as? [String] ?? []
+            )
+            let properties = try #require(
+                schemaProperties(tool.inputSchema["properties"])
+            )
+            #expect(required.contains("shotId"))
+            #expect(properties["shotId"] != nil)
+        }
     }
 
     @Test("write_shotlist schema binds production plans to generated source modes")
@@ -142,6 +172,14 @@ struct ToolDefinitionContractTests {
                 #expect("screen-right".range(of: pattern, options: .regularExpression) == nil)
                 #expect("hall doorway".range(of: pattern, options: .regularExpression) != nil)
             }
+            #expect(
+                required.contains("source_path")
+                    == (sourceMode == SourceMode.aiEnhanced.rawValue)
+            )
+            if sourceMode == SourceMode.aiEnhanced.rawValue {
+                #expect(properties["source_path"]?["minLength"] as? Int == 1)
+                #expect(properties["source_path"]?["pattern"] != nil)
+            }
             #expect(!blockingRequired.contains("set_anchor"))
             if sourceMode == SourceMode.generated.rawValue {
                 let blockingProperties = try #require(
@@ -150,6 +188,44 @@ struct ToolDefinitionContractTests {
                 let relation = try #require(blockingProperties["relation_to_set"])
                 #expect(relation["pattern"] != nil)
             }
+        }
+    }
+
+    @Test("video generation binds AI-enhanced shots to the declared source")
+    func videoGenerationSourceContract() throws {
+        #expect(throws: Never.self) {
+            try ToolExecutor.validateVideoShotSourceContract(
+                sourceMode: .aiEnhanced,
+                modelRequiresSourceVideo: true,
+                submittedSourceId: "declared-source",
+                expectedSourceId: "declared-source"
+            )
+        }
+        for submitted in [nil, "substituted-source"] as [String?] {
+            #expect(throws: ToolError.self) {
+                try ToolExecutor.validateVideoShotSourceContract(
+                    sourceMode: .aiEnhanced,
+                    modelRequiresSourceVideo: true,
+                    submittedSourceId: submitted,
+                    expectedSourceId: "declared-source"
+                )
+            }
+        }
+        #expect(throws: ToolError.self) {
+            try ToolExecutor.validateVideoShotSourceContract(
+                sourceMode: .aiEnhanced,
+                modelRequiresSourceVideo: false,
+                submittedSourceId: "declared-source",
+                expectedSourceId: "declared-source"
+            )
+        }
+        #expect(throws: ToolError.self) {
+            try ToolExecutor.validateVideoShotSourceContract(
+                sourceMode: .generated,
+                modelRequiresSourceVideo: true,
+                submittedSourceId: "source",
+                expectedSourceId: nil
+            )
         }
     }
 

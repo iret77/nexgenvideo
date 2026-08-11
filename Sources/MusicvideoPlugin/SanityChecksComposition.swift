@@ -182,9 +182,13 @@ extension MusicvideoChecks {
                             + "fall back to 'frontal into camera'. Set the gaze direction explicitly ('at "
                             + "notebook', 'toward Mark', 'into camera', 'down at floor')."))
                 }
-            } else if shot.characterRefs.count >= 2 {
+            } else if ProductionDiscipline.visibleCharacterCount(shot, bible: ctx.bible) >= 2 {
+                let visibleCharacterCount = ProductionDiscipline.visibleCharacterCount(
+                    shot,
+                    bible: ctx.bible
+                )
                 out.append(Finding(level: .warn, code: "MISSING_CHARACTER_BLOCKING", shotId: shot.id,
-                    message: "shot with \(shot.characterRefs.count) characters but no character_blocking. The "
+                    message: "shot with \(visibleCharacterCount) characters but no character_blocking. The "
                         + "model arranges the composition itself — typical slop (characters frontal/centered, "
                         + "set re-arranged). Set position/pose/gaze/set-relation per character."))
             }

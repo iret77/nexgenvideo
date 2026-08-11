@@ -164,8 +164,16 @@ struct ShotlistTests {
         #expect(throws: Shot.ValidationError.self) {
             try shot.validate()
         }
-        #expect(throws: Shot.ValidationError.self) {
+        do {
             _ = try YAMLCoding.encode(shot)
+            Issue.record("corrupt production plan carrier encoded successfully")
+        } catch EncodingError.invalidValue(_, let context) {
+            #expect(
+                context.underlyingError as? Shot.ValidationError ==
+                    .invalidProductionPlanCarrier
+            )
+        } catch {
+            Issue.record("unexpected encoding error: \(error)")
         }
     }
 

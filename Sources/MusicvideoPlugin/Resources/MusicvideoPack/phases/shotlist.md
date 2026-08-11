@@ -573,8 +573,8 @@ The shotlist is the spec for image/video models that render everything
    bible entity (`Character` or `Ensemble`) and be referenced in the
    shot (`character_refs` / `ensemble_refs`).
    - ✗ "Crowd cheers" without `ensemble_refs`.
-     ✓ First extend the bible with e.g. `Ensemble(id="western_crowd",
-     member_count=8, members_description=…)`, then reference it.
+     ✓ Declare the group in the bible, reference it explicitly, and follow the
+     injected core production-profile guidance for the chosen source mode.
    - If a shot needs a new group that is not yet in the bible: STOP,
      update the bible (or resolve the shot differently) before you
      write the prompt.

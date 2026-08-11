@@ -1333,6 +1333,14 @@ extension ToolExecutor {
               !proof.generationModel.trimmingCharacters(
                 in: .whitespacesAndNewlines
               ).isEmpty,
+              ComplianceLinter.lintLockedDirectives(
+                proof.providerPrompt,
+                lockedDirectives: shot.videoProductionPromptRequirements
+              ).isEmpty,
+              ProductionPromptPolicy.videoPromptViolations(
+                proof.providerPrompt,
+                expectedMovement: shot.productionPlan?.cameraMovement
+              ).isEmpty,
               (try? FileDigest.sha256(of: url)) == proof.outputSha256 else {
             return false
         }
@@ -1627,6 +1635,7 @@ extension ToolExecutor {
                 shotId: shotId,
                 output: output,
                 asset: completedAsset,
+                shot: shot,
                 editor: editor,
                 dataRoot: root
             )
@@ -1897,7 +1906,8 @@ extension ToolExecutor {
         let shot = shotlist?.shots.first { $0.id == shotId }
         let expected = frameAuditExpected(
             for: shot,
-            brief: try readBriefIfPresent(dataRoot: root)
+            brief: try readBriefIfPresent(dataRoot: root),
+            bible: try loadBible(dataRoot: root)
         )
 
         guard let rawChecks = args["checks"] as? [String: Any] else {
@@ -2225,7 +2235,7 @@ extension ToolExecutor {
 
     /// Machine-derived `expected` per standard audit key, from the shot spec. Port of the Python
     /// audit-skeleton derivation (`frames/audit.py::skeleton`). Empty shot ⇒ empty expecteds.
-    private func frameAuditExpected(for shot: Shot?, brief: Brief?) -> [String: String] {
+    private func frameAuditExpected(for shot: Shot?, brief: Brief?, bible: Bible?) -> [String: String] {
         guard let shot else { return [:] }
         let productionPlan = shot.productionPlan
         let blocking = shot.characterBlocking
@@ -2243,7 +2253,7 @@ extension ToolExecutor {
         if !(brief?.allowTextOverlays ?? false) { forbidden.append("no text overlays / title cards") }
         forbidden.append("no characters beyond declared character_refs")
         return [
-            "character_count": "\(shot.characterRefs.count)",
+            "character_count": "\(ProductionDiscipline.visibleCharacterCount(shot, bible: bible))",
             "framing": shot.framing?.rawValue ?? "",
             "camera_angle": shot.cameraSetup?.angle.rawValue ?? "",
             "camera_height": shot.cameraSetup?.height.rawValue ?? "",
@@ -2503,6 +2513,13 @@ extension ToolExecutor {
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       !frame.runwayModel
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      ComplianceLinter.lintLockedDirectives(
+                        frame.providerPrompt,
+                        lockedDirectives: shot.stillProductionPromptRequirements
+                      ).isEmpty,
+                      ProductionPromptPolicy.stillPromptViolations(
+                        frame.providerPrompt
+                      ).isEmpty,
                       await resolveRenderedAsset(
                           frame.path,
                           editor: editor,
@@ -2601,7 +2618,7 @@ extension ToolExecutor {
     /// Semantic slots are authoritative; model lookup is only for older generated media.
     private func stampRenderInputs(
         _ manifest: inout RenderManifest, shotId: String, output: String,
-        asset: MediaAsset, editor: EditorViewModel,
+        asset: MediaAsset, shot: Shot, editor: EditorViewModel,
         dataRoot: URL
     ) throws -> RenderProofEntry {
         guard var entry = manifest.entries[shotId],
@@ -2609,6 +2626,22 @@ extension ToolExecutor {
             throw ToolError(
                 "The rendered video has no generation provenance. Record the completed "
                     + "result returned by a schema-validated generate_video call."
+            )
+        }
+        guard gi.promptShotId == shotId else {
+            throw ToolError(
+                "The rendered media was not compiled for shot '\(shotId)'. "
+                    + "Generate it with that shotId before recording it."
+            )
+        }
+        let projectKey = editor.projectId ?? dataRoot.standardizedFileURL
+            .resolvingSymlinksInPath().path
+        let shotFingerprint = try PromptCompiler.shotFingerprint(shot)
+        guard gi.promptProjectKey == projectKey,
+              gi.promptShotFingerprint == shotFingerprint else {
+            throw ToolError(
+                "The rendered media was not compiled for this project's current "
+                    + "shot production plan. Generate it again before recording it."
             )
         }
         let providerPrompt = gi.prompt.trimmingCharacters(
@@ -2620,6 +2653,30 @@ extension ToolExecutor {
         guard !providerPrompt.isEmpty, !generationModel.isEmpty else {
             throw ToolError(
                 "The rendered video has no compiled provider prompt or generation model."
+            )
+        }
+        let requirements = manifest.phase == "frames"
+            ? shot.stillProductionPromptRequirements
+            : shot.videoProductionPromptRequirements
+        let policyViolations = manifest.phase == "frames"
+            ? ProductionPromptPolicy.stillPromptViolations(providerPrompt)
+            : ProductionPromptPolicy.videoPromptViolations(
+                providerPrompt,
+                expectedMovement: shot.productionPlan?.cameraMovement
+            )
+        guard policyViolations.isEmpty else {
+            throw ToolError(
+                "The rendered media's provider prompt violates shot '\(shotId)'s "
+                    + "current production plan: \(policyViolations.joined(separator: "; "))."
+            )
+        }
+        guard ComplianceLinter.lintLockedDirectives(
+            providerPrompt,
+            lockedDirectives: requirements
+        ).isEmpty else {
+            throw ToolError(
+                "The rendered media's provider prompt does not match shot '\(shotId)'s "
+                    + "current production plan."
             )
         }
         let outputDigest: String
@@ -2784,7 +2841,7 @@ extension ToolExecutor {
         try? saveRenderManifest(manifest, dataRoot: dataRoot)
     }
 
-    private func resolveRenderedAsset(
+    func resolveRenderedAsset(
         _ output: String,
         editor: EditorViewModel,
         dataRoot: URL

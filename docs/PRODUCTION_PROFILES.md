@@ -20,7 +20,8 @@ project metadata so the engine does not learn pack-specific concepts.
 Always active for the musicvideo pack and reusable by any pack that generates moving images.
 
 - Build named style, character, location, prop, geometry, and reverse-view anchors before shots.
-- Plan one primary action, one camera movement, and at most two visible characters per generated shot.
+- Plan one primary action, one camera movement, and at most two visible characters per generated shot;
+  an ensemble contributes its declared `member_count`, not one reference.
 - Anchor generated character blocking through a non-empty `production_plan.blocking_anchors` entry
   naming an object or set zone; keep its spatial relationship in `character_blocking.relation_to_set`.
   Screen direction alone is not an anchor.
@@ -55,11 +56,20 @@ Older shot lists migrate losslessly with no invented plan. They remain readable 
 non-blocking missing-plan warning until revised. New writes require the structure through the tool
 schema; once a plan exists, active profiles enforce all of its conditional fields.
 
-`compile_prompt(shotId:)` projects the approved primary action as a deterministic single-action
-directive, plus camera movement, blocking anchors, continuity locks, and the match-action cue, into
-video prompts. Still-image prompts receive blocking anchors and continuity locks only, so a motion
-instruction cannot leak into a frame anchor. `next_render_shot` returns the same plan, including the
-rescue cut, so rendering cannot silently substitute an improvised execution strategy.
+`compile_prompt(shotId:)` replaces unstructured caller-supplied video text with the approved primary
+action while retaining caller context only through schema-separated setting, lighting, and style slots.
+It projects the action as a deterministic single-action directive, plus camera movement, blocking anchors,
+continuity locks, the match-action cue, and any declared rescue cut, into video prompts. Still-image
+prompts retain only the caller's concrete t=0 subject plus structured camera, blocking anchors, and
+continuity locks; a shared engine policy rejects camera-motion language during compilation and again at
+Frames approval. The same policy rejects
+video camera movement outside the current plan during compilation and Render approval.
+`next_render_shot` returns the same plan, including the rescue cut, so rendering cannot silently
+substitute an improvised execution strategy.
+The compile token is bound to the open project, shot id, and exact current shot-plan fingerprint;
+generation preserves all three binding values in media provenance, `record_render` rejects project,
+shot, or plan reassignment, and the Frames/Render gates independently require the current plan's
+deterministic directives in the stored provider prompt.
 
 ## Pack composition
 

@@ -10,13 +10,17 @@
           "items": [
             "Reusable production profiles now carry renderability, continuity, rescue-cut, and narrative-beat discipline across compatible format packs.",
             "New generated and AI-enhanced shots store structured production plans while imported footage and existing projects keep their real source truth without invented creative decisions.",
-            "Compiled provider prompts and render tasks now preserve the approved primary action, camera movement, continuity locks, and match-action cue."
+            "Compiled provider prompts and generated media are now bound to the exact project, shot, approved action, camera move, rescue cut, and production plan through final render approval.",
+            "Frames and renders with prompts from an older production-plan revision are regenerated instead of being treated as complete.",
+            "AI-enhanced renders now require the exact project-local source declared by the Shot List before generation can start.",
+            "Still-frame prompts reject camera-motion language, and ensemble member counts now enforce the two-visible-character generation limit."
           ]
         },
         {
           "heading": "Stability",
           "items": [
-            "Agent conversations now follow streaming output through the scroll view's native size-change anchor instead of issuing reentrant scroll commands during layout."
+            "Agent conversations now follow streaming output through the scroll view's native size-change anchor instead of issuing reentrant scroll commands during layout.",
+            "Native Shot List edits now share the pipeline execution lock and crash-recovery marker with agent edits."
           ]
         },
         {

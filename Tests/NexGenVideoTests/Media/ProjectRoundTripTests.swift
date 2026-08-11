@@ -224,7 +224,7 @@ struct ProjectRoundTripTests {
             "song-1": "song",
             "proj-1": "style",
         ]
-        #expect(manifest.version == 5)
+        #expect(manifest.version == 6)
         #expect(try roundTrip(manifest) == manifest)
     }
 

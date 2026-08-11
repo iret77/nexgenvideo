@@ -506,6 +506,11 @@ public struct ShotProductionPlan: Codable, Sendable, Equatable {
         if let cue = matchActionCue?.trimmingCharacters(in: .whitespacesAndNewlines), !cue.isEmpty {
             directives.append("Match-action cue: \(cue)")
         }
+        if renderability != .green,
+           let rescueCut = rescueCut?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rescueCut.isEmpty {
+            directives.append("Approved rescue-cut fallback: \(rescueCut)")
+        }
         return directives
     }
 
@@ -617,6 +622,35 @@ public struct Shot: Codable, Sendable, Equatable {
             let data = try! encoder.encode(newValue)
             propViews[Self.productionPlanStorageKey] = data.base64EncodedString()
         }
+    }
+
+    public var productionBlockingDirectives: [String] {
+        guard let productionPlan else { return [] }
+        return characterBlocking.compactMap { blocking in
+            guard let anchor = productionPlan.setAnchor(
+                for: blocking.characterRef
+            )?.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ), !anchor.isEmpty else { return nil }
+            return "Character blocking for \(blocking.characterRef): "
+                + "\(blocking.pose), \(blocking.relationToSet) \(anchor), "
+                + "gaze \(blocking.gaze)"
+        }
+    }
+
+    public var videoProductionPromptRequirements: [String] {
+        guard let productionPlan else { return [] }
+        return [
+            productionPlan.cameraMovement.promptProse(
+                detail: productionPlan.cameraMovementDetail
+            ),
+        ] + productionPlan.providerDirectives + productionBlockingDirectives
+    }
+
+    public var stillProductionPromptRequirements: [String] {
+        guard let productionPlan else { return [] }
+        return productionPlan.stillProviderDirectives
+            + productionBlockingDirectives
     }
 
     private func decodedProductionPlan() throws -> ShotProductionPlan? {

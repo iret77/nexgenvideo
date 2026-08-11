@@ -357,6 +357,10 @@ enum PipelineArtifactWriteContract {
             properties["production_plan"] = productionPlan
             required.append("production_plan")
         }
+        if sourceMode == .aiEnhanced {
+            properties["source_path"] = nonEmptyString
+            required.append("source_path")
+        }
         return object(properties, required: required)
     }
 

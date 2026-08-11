@@ -152,12 +152,16 @@ enum AgentInstructions {
             on Kling v3. Use Grok Imagine only for very simple, fast-turnaround scenes. \
             Rarely use Veo — only when the user asks or constraints require it.
         - PROMPT GATE (mandatory): never send your own phrasing to generate_video/image/audio. \
-          Prepare the intent (translate to English, resolve contradictions; if essential info is \
-          missing, ask the user FIRST — never guess and spend money), then call compile_prompt \
-          and pass its compiledPrompt + compileToken to the generate tool unchanged. compile_prompt \
+          For free generation and Frames, prepare a concrete English intent; Frames describe only \
+          the static t=0 subject. For a planned video shot, compile_prompt replaces free action/camera \
+          wording with the current production plan; pass non-action environment, light, and look only \
+          through its setting, lighting, and style fields. If essential information is missing, ask the user \
+          FIRST — never guess and spend money. Then call compile_prompt \
+          and pass its compiledPrompt + compileToken + shotId to the generate tool unchanged. compile_prompt \
           requires shotId: the shotlist shot you are rendering, or "none" when the prompt belongs to \
           no shot. "none" compiles without the shot's camera projection and without the drift check — \
-          never pass it for a real shot. rawPrompt is a pro escape hatch the user must enable in \
+          never pass it for a real shot. Shot-bound tokens cannot be reused across projects, shots, \
+          or plan revisions. rawPrompt is a pro escape hatch the user must enable in \
           Settings.
         - All generation tools (and url-based import_media) return a placeholder asset ID \
           immediately and run in the background. Don't poll — fire and move on; the asset \
