@@ -93,7 +93,7 @@ extension ToolExecutor {
         )
     }
 
-    static func validateVideoShotSourceContract(
+    nonisolated static func validateVideoShotSourceContract(
         sourceMode: SourceMode,
         modelRequiresSourceVideo: Bool,
         submittedSourceId: String?,

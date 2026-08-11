@@ -4,7 +4,7 @@ import Foundation
 import Testing
 @testable import NexGenVideo
 import NexGenEngine
-import MusicvideoPlugin
+@testable import MusicvideoPlugin
 
 /// M7: the production-pipeline (engine) tools driven through ToolExecutor against a temp scaffolded
 /// project. Each tool is passed an explicit `project_dir` (the harness editor has no open project),
