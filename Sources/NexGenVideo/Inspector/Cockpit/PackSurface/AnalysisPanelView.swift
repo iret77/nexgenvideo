@@ -107,6 +107,9 @@ struct AnalysisPanelView: View {
                 if !data.hasCanonicalStructure {
                     structureBanner(data)
                 }
+                if data.requiresStructureReview {
+                    structureReviewBanner(data)
+                }
                 if !data.nonSuccessStageDiagnostics.isEmpty {
                     stageDiagnosticsBanner(data)
                 }
@@ -120,7 +123,10 @@ struct AnalysisPanelView: View {
                     degradedBanner
                 }
                 if let hierarchy = data.canonicalHierarchy, !hierarchy.isEmpty {
-                    labelledBlock("Structure hierarchy", detail: structureProvenance(data)) {
+                    labelledBlock(
+                        data.hasNestedHierarchy ? "Structure hierarchy" : "Song structure",
+                        detail: structureProvenance(data)
+                    ) {
                         StructureHierarchyList(sections: hierarchy)
                     }
                 }
@@ -176,6 +182,36 @@ struct AnalysisPanelView: View {
         )
     }
 
+    private func structureReviewBanner(_ data: AnalysisSurfaceData) -> some View {
+        HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Status.warningColor)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text("Review section boundaries")
+                    .font(.system(
+                        size: AppTheme.FontSize.xs,
+                        weight: AppTheme.FontWeight.semibold
+                    ))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                Text(data.structureResolution?.detail ?? "Some boundaries have one acoustic detector source.")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(AppTheme.Spacing.md)
+        .background(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.faint))
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .strokeBorder(
+                    AppTheme.Status.warningColor.opacity(AppTheme.Opacity.moderate),
+                    lineWidth: AppTheme.BorderWidth.hairline
+                )
+        )
+    }
+
     private func stageDiagnosticsBanner(_ data: AnalysisSurfaceData) -> some View {
         let failures = data.nonSuccessStageDiagnostics
         return HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
@@ -216,7 +252,13 @@ struct AnalysisPanelView: View {
         let method = resolution.method.replacingOccurrences(of: "_", with: " ")
         let segments = resolution.hierarchy?.segments.count ?? 0
         let phrases = resolution.hierarchy?.phrases.count ?? 0
-        return "\(method) · \(segments) segments · \(phrases) phrases · \(resolution.candidateBoundaryCount) diagnostic change points"
+        var parts = [method]
+        if segments > 0 || phrases > 0 {
+            parts.append("\(segments) segments")
+            parts.append("\(phrases) phrases")
+        }
+        parts.append("\(resolution.candidateBoundaryCount) measured candidates")
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder

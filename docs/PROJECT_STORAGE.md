@@ -113,5 +113,6 @@ until Save. Upgrade intent remains durable until Save; a crash resumes the targe
 Recovery copy, while closing without saving cancels the upgrade.
 The Music Video `musicvideo/2.0.0` migration resets Analysis and every downstream
 approval in the transactional Recovery copy because `analysis/v3` requires a newly
-measured Music Understanding hierarchy. Existing artifacts remain available for
+measured adaptive structure-resolution record with independently gated boundary
+evidence. Existing artifacts remain available for
 inspection but cannot authorize further phase execution.

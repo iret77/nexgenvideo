@@ -27,7 +27,8 @@ precondition(
 let package = Package(
     name: "NexGenVideo",
     defaultLocalization: "en",
-    // CI boots macOS 26; LSMinimumSystemVersion sets the shipped app's macOS 27 product floor.
+    // macOS 26 is the newest released product floor. Xcode 27 keeps the dormant
+    // Music Understanding adapter compiling behind its macOS 27 availability gate.
     platforms: [.macOS(.v26)],
     products: [
         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),

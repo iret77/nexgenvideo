@@ -54,11 +54,30 @@ struct ConsolidatorTests {
         #expect(Consolidator.snap(10.3, downbeats: []) == 10.3)
     }
 
-    @Test("correlated local-change detectors cannot resolve song form")
-    func nativeCandidatesRemainDiagnostic() {
+    @Test("one downbeat cannot establish a canonical bar grid")
+    func singleDownbeatNeedsReview() {
+        let result = Consolidator.consolidateDetailed(
+            candidates: [
+                Self.sections(boundaries: [16], duration: 32, source: "librosa"),
+                Self.sections(boundaries: [16.4], duration: 32, source: "essentia"),
+            ],
+            alignment: nil,
+            alignmentReport: nil,
+            downbeats: [0],
+            durationS: 32
+        )
+
+        #expect(result.resolution.status == .needsReview)
+        #expect(result.resolution.acceptedBoundaryCount == 0)
+        #expect(result.resolution.boundaryEvidence.isEmpty)
+        #expect(result.sections.count == 1)
+    }
+
+    @Test("independent native candidates resolve bar-aligned song form")
+    func nativeCandidatesResolveSongForm() {
         let candidates = [
-            Self.sections(boundaries: [8, 16, 24, 32, 40, 48], duration: 64, source: "librosa"),
-            Self.sections(boundaries: [8.5, 16.5, 24.5, 32.5, 40.5, 48.5], duration: 64, source: "essentia"),
+            Self.sections(boundaries: [16, 40], duration: 64, source: "librosa"),
+            Self.sections(boundaries: [16.5, 40.5], duration: 64, source: "essentia"),
         ]
         let result = Consolidator.consolidateDetailed(
             candidates: candidates,
@@ -68,12 +87,14 @@ struct ConsolidatorTests {
             durationS: 64
         )
 
-        #expect(result.resolution.status == .needsReview)
-        #expect(result.resolution.method == "unresolved")
-        #expect(result.resolution.candidateBoundaryCount == 12)
-        #expect(result.resolution.acceptedBoundaryCount == 0)
-        #expect(result.sections.count == 1)
-        #expect(result.sections[0].source == "unresolved_structure")
+        #expect(result.resolution.status == .resolved)
+        #expect(result.resolution.method == "per_boundary_evidence")
+        #expect(result.resolution.candidateBoundaryCount == 4)
+        #expect(result.resolution.acceptedBoundaryCount == 2)
+        #expect(result.sections.map(\.start) == [0, 16, 40])
+        #expect(result.sections.dropFirst().allSatisfy {
+            $0.source == "measured_consensus"
+        })
     }
 
     @Test("complete system hierarchy resolves canonical sections")
@@ -92,7 +113,7 @@ struct ConsolidatorTests {
         )
 
         #expect(result.resolution.status == .resolved)
-        #expect(result.resolution.version == "system-structure/v3")
+        #expect(result.resolution.version == "adaptive-structure/v4")
         #expect(result.resolution.method == "music_understanding_hierarchy")
         #expect(result.resolution.detectorSources == ["apple_music_understanding"])
         #expect(result.resolution.candidateBoundaryCount == 12)
@@ -207,5 +228,93 @@ struct ConsolidatorTests {
         #expect(result.sections.map(\.start) == [0, 16, 40])
         #expect(result.sections.map(\.label) == ["intro", "verse", "chorus"])
         #expect(result.resolution.resolvedAlignmentMarkerCount == 3)
+    }
+
+    @Test("reliable lyrics preserve a measured instrumental outro")
+    func lyricsAndConsensusResolveOutro() {
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nopen words\n[Chorus]\nwide open",
+            transcript: [
+                .init(text: "open", start: 16.1, end: 16.3),
+                .init(text: "words", start: 16.3, end: 16.5),
+                .init(text: "wide", start: 40.1, end: 40.3),
+                .init(text: "open", start: 40.3, end: 40.5),
+            ]
+        )
+        let candidates = [
+            Self.sections(boundaries: [16, 40, 58], duration: 64, source: "librosa"),
+            Self.sections(boundaries: [16.4, 40.4, 58.4], duration: 64, source: "essentia"),
+        ]
+        let result = Consolidator.consolidateDetailed(
+            candidates: candidates,
+            alignment: report.lines,
+            alignmentReport: report,
+            downbeats: stride(from: 0.0, through: 64.0, by: 2.0).map { $0 },
+            durationS: 64
+        )
+
+        #expect(result.resolution.status == .resolved)
+        #expect(result.sections.map(\.start) == [0, 16, 40, 58])
+        #expect(result.sections.map(\.label) == [nil, "verse", "chorus", nil])
+        #expect(result.resolution.boundaryEvidence.last?.kind == .detectorConsensus)
+    }
+
+    @Test("reliable vocal alignment recovers a missed structural change")
+    func vocalAlignmentRecoversMissedBoundary() {
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nopen words\n[Bridge]\nwide open",
+            transcript: [
+                .init(text: "open", start: 16.1, end: 16.3),
+                .init(text: "words", start: 16.3, end: 16.5),
+                .init(text: "wide", start: 40.1, end: 40.3),
+                .init(text: "open", start: 40.3, end: 40.5),
+            ]
+        )
+        let result = Consolidator.consolidateDetailed(
+            candidates: [
+                Self.sections(boundaries: [58], duration: 64, source: "librosa"),
+                Self.sections(boundaries: [58.4], duration: 64, source: "essentia"),
+            ],
+            alignment: report.lines,
+            alignmentReport: report,
+            downbeats: stride(from: 0.0, through: 64.0, by: 2.0).map { $0 },
+            durationS: 64
+        )
+
+        #expect(result.resolution.status == .resolved)
+        #expect(result.sections.map(\.start) == [0, 16, 40, 58])
+        #expect(result.sections[1].source == "measured_vocal_alignment")
+        #expect(result.sections[2].source == "measured_vocal_alignment")
+        #expect(result.resolution.boundaryEvidence.filter {
+            $0.kind == .lyricsAlignedVocal
+        }.count == 2)
+    }
+
+    @Test("late lyric marker uses nearby internal acoustic evidence")
+    func lateLyricMarkerUsesInternalEvidence() {
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nopen words\n[Outro]\nfinal words",
+            transcript: [
+                .init(text: "open", start: 0.1, end: 0.3),
+                .init(text: "words", start: 0.3, end: 0.5),
+                .init(text: "final", start: 63.5, end: 63.7),
+                .init(text: "words", start: 63.7, end: 63.9),
+            ]
+        )
+        let result = Consolidator.consolidateDetailed(
+            candidates: [
+                Self.sections(boundaries: [62], duration: 64, source: "librosa"),
+                Self.sections(boundaries: [62.4], duration: 64, source: "essentia"),
+            ],
+            alignment: report.lines,
+            alignmentReport: report,
+            downbeats: stride(from: 0.0, through: 64.0, by: 2.0).map { $0 },
+            durationS: 64
+        )
+
+        #expect(result.resolution.status == .resolved)
+        #expect(result.sections.map(\.start) == [0, 62])
+        #expect(result.sections[1].label == "outro")
+        #expect(result.resolution.boundaryEvidence[0].kind == .lyricsSupportedAcoustic)
     }
 }

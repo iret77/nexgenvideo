@@ -331,9 +331,10 @@ public enum MusicvideoAnalysisRunner {
 
         if musicUnderstanding != nil,
            let index = diagnostics.firstIndex(where: { $0.stage == "music_understanding" }) {
-            let resolved = canonical.structureResolution.status == .resolved
+            let hierarchyResolved = canonical.structureResolution.method
+                == "music_understanding_hierarchy"
             let detail: String
-            switch (resolved, systemRhythmApplied) {
+            switch (hierarchyResolved, systemRhythmApplied) {
             case (true, true):
                 detail = "Measured rhythm and a verified section/segment/phrase hierarchy on device."
             case (true, false):
@@ -345,7 +346,7 @@ public enum MusicvideoAnalysisRunner {
             }
             diagnostics[index] = StageDiagnostic(
                 stage: "music_understanding",
-                status: resolved && systemRhythmApplied ? .succeeded : .degraded,
+                status: hierarchyResolved && systemRhythmApplied ? .succeeded : .degraded,
                 detail: detail
             )
         }
@@ -461,8 +462,11 @@ public enum MusicvideoAnalysisRunner {
         var canonicalStages = pipelineStages.filter {
             $0 != "music_understanding" && $0 != "structure"
         }
-        if consolidation.resolution.status == .resolved {
-            canonicalStages.append(contentsOf: ["structure", "music_understanding"])
+        if consolidation.resolution.status != .needsReview {
+            canonicalStages.append("structure")
+        }
+        if consolidation.resolution.method == "music_understanding_hierarchy" {
+            canonicalStages.append("music_understanding")
         }
         let downbeatSource = Analysis.DownbeatSource(rawValue: raw.downbeatSource) ?? .librosaHeuristic
         let interpretation = consolidation.anomalies.isEmpty

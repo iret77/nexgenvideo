@@ -47,7 +47,7 @@
 	<key>CFBundleVersion</key>
 	<string>84</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>27.0</string>
+	<string>26.0</string>
 	<key>NGVPluginCatalogURL</key>
 	<string>https://github.com/iret77/nexgenvideo/releases/download/plugins/catalog.json</string>
 	<key>NSHighResolutionCapable</key>

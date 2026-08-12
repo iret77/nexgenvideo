@@ -22,25 +22,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  runtime-gate:
-    name: macOS 27 Runtime Gate
-    # Linux rejects missing runtime configuration before any macOS runner is allocated.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - name: Require a configured macOS 27 runner
-        env:
-          RUNTIME_RUNNER: ${{ vars.NGV_MACOS_27_RUNNER }}
-        run: |
-          set -euo pipefail
-          [ -n "$RUNTIME_RUNNER" ] \
-            || { echo "::error::NGV_MACOS_27_RUNNER is not configured; set it only to a runner label verified to boot macOS 27."; exit 1; }
-          [[ "$RUNTIME_RUNNER" =~ ^[A-Za-z0-9._-]+$ ]] \
-            || { echo "::error::NGV_MACOS_27_RUNNER must be one exact runner label"; exit 1; }
-
   source-gate:
     name: Private Fixture Gate
-    needs: runtime-gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -157,21 +140,22 @@ jobs:
   analyze:
     name: Analyze Private Example
     needs: build-runtime-harness
-    # Apple Music Understanding must execute on the configured macOS 27 runtime.
-    runs-on: ${{ vars.NGV_MACOS_27_RUNNER || 'ubuntu-24.04' }}
+    # The production floor is the newest released macOS; pin it so this acceptance run
+    # cannot silently switch to the dormant macOS 27 Music Understanding adapter.
+    runs-on: macos-26
     # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - name: Require the Music Understanding runtime
+      - name: Require the macOS 26 production runtime
         shell: bash
         run: |
           set -euo pipefail
           runtime_version="$(sw_vers -productVersion)"
           runtime_major="${runtime_version%%.*}"
-          if [ "$runtime_major" -lt 27 ]; then
-            echo "::error::Private audio analysis requires macOS 27 at runtime; this runner boots macOS $runtime_version."
+          if [ "$runtime_major" -ne 26 ]; then
+            echo "::error::Private audio analysis must exercise macOS 26; this runner boots macOS $runtime_version."
             exit 1
           fi
 
@@ -244,11 +228,11 @@ jobs:
           REPORT_DIGEST="$(oras push \
             --no-tty \
             --registry-config "$RUNNER_TEMP/oras-auth.json" \
-            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v2 \
+            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v3 \
             --format 'go-template={{.digest}}' \
             "$REPORT_REFERENCE" \
             analysis.json:application/vnd.nexgenvideo.analysis.v3+json \
-            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v2+json)"
+            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v3+json)"
           echo "reference=${REPORT_REFERENCE%:*}@$REPORT_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Verify report package isolation

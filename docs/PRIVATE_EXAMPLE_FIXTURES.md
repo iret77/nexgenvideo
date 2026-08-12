@@ -69,21 +69,21 @@ any macOS runner receives private data.
 ## Analysis run
 
 `.github/workflows/private-example-analysis.yml` is manual-only. Before allocating a macOS runner it
-requires an exact `NGV_MACOS_27_RUNNER` repository-variable label. Until GitHub offers such a runner,
-the Linux runtime gate fails immediately and no macOS job is allocated. The remaining Linux gate
-requires the centrally configured exact fixture digest, validates the dataset id, verifies that both
+uses a Linux source gate that requires the centrally configured exact fixture digest, validates the
+dataset id, verifies that both
 private packages are unlinked, confirms that its dedicated package secret exists, and rejects the
 current index or reachable repository history if any blob matches private fixture content. It removes
 its temporary media and registry credentials before the macOS job can start.
 
 The `xcode-27` build job first bundles the app and external pack without access to private fixture
 data, wraps both in a one-day runtime-harness artifact that preserves executable modes and framework
-symlinks, and transfers that artifact to the configured macOS 27 runtime runner. The runtime job then:
+symlinks, and transfers that artifact to the pinned GitHub-hosted macOS 26 runner. The runtime job then:
 
 1. verifies the booted macOS version before downloading any artifact or private data;
 2. restores the prebuilt app and external `.ngvpack` with their runtime layout intact;
 3. pulls and verifies the private fixture by digest;
-4. runs the headless app self-test with AVFoundation and the pack's real analysis phase;
+4. configures the exact production audio runtime and runs the headless app self-test through the
+   external pack's real analysis phase;
 5. applies the pack's independent pre-interpretation gate;
 6. checks duration, BPM, boundary reduction, and every ordered section boundary against private,
    independently produced expectations; and
@@ -98,6 +98,7 @@ paths, source names, lyrics, labels, hashes, or media content.
 No media, lyrics, analysis, or provenance file is uploaded as a public Actions artifact. The macOS
 job removes its fixture, report, and registry-auth directories after publication or failure.
 
-The real Music Understanding run requires macOS 27 at runtime. Once a runner label is configured, the
-runtime job verifies `sw_vers` before downloading the runtime harness or private data; compiling
-against the macOS 27 SDK is not treated as runtime evidence.
+The acceptance run requires macOS 26 exactly and verifies `sw_vers` before downloading private data.
+This proves the shipping neural beat, stem, transcription, harmony, and evidence-resolution path.
+The dormant Music Understanding adapter is compiled with the macOS 27 SDK but is intentionally not
+activated by this production-floor test.

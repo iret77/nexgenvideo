@@ -60,7 +60,7 @@ jobs:
     # Smoke-test that the debug .app still assembles (no secrets, no local build) and keep it as a CI
     # artifact. The public `dev-latest` download is the SIGNED + notarized DMG published by release.yml
     # — ci.yml no longer writes that release.
-    # Xcode 27 provides the macOS 27 SDK used by the app and format pack.
+    # Xcode 27 compiles the macOS 26 app and its availability-gated macOS 27 adapter.
     runs-on: xcode-27
     # Cost ceiling on a 10x-billed runner; the real job takes ~4.5 min.
     timeout-minutes: 20

@@ -3,25 +3,26 @@
   "entries": [
     {
       "version": "2.0.0",
-      "date": "2026-08-12",
+      "date": "2026-08-13",
       "sections": [
         {
           "heading": "Platform",
           "items": [
-            "NexGenVideo now requires the latest macOS, currently macOS 27, so it can use the newest native media capabilities without a backward-compatibility layer."
+            "NexGenVideo requires the latest released macOS, currently macOS 26. The macOS 27 Music Understanding adapter remains dormant until that OS ships."
           ]
         },
         {
           "heading": "Audio analysis",
           "items": [
-            "Song rhythm and form now come from Apple Music Understanding's on-device beat, bar, section, segment, and phrase measurements.",
-            "Native MFCC and Mel change points remain visible as diagnostics but can no longer become canonical song sections.",
+            "The macOS 26 production pipeline now runs the same on-device decoder, stem separation, Whisper lyric alignment, neural beat grid, harmony recognition, and evidence-based structure resolver in the app and private acceptance workflow.",
+            "Canonical song sections now require independently reproducible bar-aligned acoustic or lyric evidence, while strong instrumental intro and outro boundaries remain available alongside fully resolved lyric markers.",
+            "Apple Music Understanding's section, segment, and phrase hierarchy is preserved as a stronger availability-gated strategy for macOS 27.",
             "Out-of-order and non-finite system rhythm samples are normalized deterministically before structural validation.",
-            "System rhythm and structure are validated independently; either one blocks approval when inconsistent without discarding the other's valid evidence.",
+            "Optional system rhythm and structure are validated independently before either is selected as canonical evidence.",
             "The Analysis surface now shows exact nested section, segment, and phrase ranges and opens from both its cockpit tab and the Pipeline phase row.",
             "Re-running analysis keeps the last-known measurements visible under runner-reported progress until the replacement artifact is ready.",
             "Xcode 27 builds now compile Metal resources from source and stage consumer-derived binary frameworks through explicit, independently verified runtime boundaries.",
-            "Upgrading an existing Music Video project resets Audio Analysis and downstream approvals so the new measured hierarchy is established before work continues."
+            "Upgrading an existing Music Video project resets Audio Analysis and downstream approvals so the new measured evidence record is established before work continues."
           ]
         }
       ]

@@ -171,9 +171,9 @@
       <code>prose</code>→Story, <code>review</code>→Review, <code>choice</code>→in-chat
       (<code>PipelinePanelView.surfaceIcon</code>). There is <b>no surface type for pack-specific
       structured data</b>.</li>
-    <li>The <code>analysis</code> phase measures BPM, beats, bars, and the complete
-      section/segment/phrase hierarchy with Apple Music Understanding, while native DSP supplies key,
-      energy, tempo, and diagnostic local-change candidates. It writes
+    <li>The <code>analysis</code> phase measures BPM, beats, bars, and canonical song sections through
+      the macOS 26 on-device production stack. On macOS 27, Apple Music Understanding can additionally
+      supply a complete section/segment/phrase hierarchy. It writes
       <code>analysis/&lt;song&gt;.json</code>, which downstream beat planning consumes — but nothing
       <i>renders</i> it. It is invisible (on disk) or ephemeral (chat).</li>
     <li>Per the platform split (generic Swift host + thin format-packs), a pack must <b>not</b> ship a
@@ -193,11 +193,12 @@
     <li>A pack surface is <b>read-only ground truth</b>. Measured values (BPM, beats, downbeats,
       sections) are never editable here — lyrics <i>label</i> sections, they never move the measured
       boundaries. Editing belongs to the agent flow, not this panel.</li>
-    <li>Raw <code>structure_candidates</code> are diagnostics, not sections. The panel renders section
-      bands, the section count, and the section list only when
-      <code>structure_resolution.status</code> is <code>resolved</code> from a complete Apple
-      section/segment/phrase hierarchy. Lyric markers may label a nearby system-measured section;
-      they never create or move a timestamp.</li>
+    <li>Raw <code>structure_candidates</code> are evidence, not sections. The panel renders canonical
+      section bands only when <code>structure_resolution.status</code> is <code>resolved</code> or
+      <code>review_required</code> and every boundary has a reproducible measured evidence record.
+      A complete Apple hierarchy may enrich those sections on macOS 27. Lyric text supplies labels;
+      timing comes only from structural detectors or reliably aligned on-device word timestamps
+      snapped to the measured bar grid.</li>
     <li>Non-success <code>stage_diagnostics</code> are visible in one compact warning block. An empty
       optional result is never silently presented as successful analysis.</li>
   </ul>
@@ -322,7 +323,7 @@
           </div>
         </div>
 
-        <div class="tl-head"><span class="t">Structure hierarchy</span><span class="src">Apple Music Understanding · exact measured ranges</span></div>
+        <div class="tl-head"><span class="t">Structure hierarchy</span><span class="src">macOS 27 enhancement · exact measured ranges</span></div>
         <div class="seclist">
           <div class="row"><span class="sw" style="background:#6fb2ff"></span><span class="nm">Intro</span><span class="lab">section</span><span class="tc">0:00.00 – 0:27.00</span></div>
           <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">0:00.00 – 0:27.00</span></div>
@@ -402,8 +403,8 @@
         </div>
         <div class="banner err" style="margin-top:var(--s-md)">
           <span>⨯</span>
-          <span><b>Section structure unresolved.</b> Apple Music Understanding did not return a
-          complete verified hierarchy. Diagnostic change points cannot replace it, so approval remains unavailable.</span>
+          <span><b>Section structure unresolved.</b> The measured bar grid and acoustic evidence could
+          not establish a reproducible section timeline, so approval remains unavailable.</span>
         </div>
         <div class="tl-head"><span class="t">Beat grid</span><span class="src">measured · 24 downbeats</span></div>
         <div class="timeline">

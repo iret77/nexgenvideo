@@ -24,24 +24,23 @@ All file paths below are relative to the **project data root**.
   intake — read it, don't offer it; see A1 step 3)
 - For A2: `analysis/<song>.json` — written by the A1 run with
   `schema=analysis/v3`, carrying **measured** `beats`, `downbeats`,
-  `bpm`, the system-measured `sections`/`segments`/`phrases` hierarchy,
-  diagnostic `structure_candidates`,
+  `bpm`, canonical `sections`, measured `structure_candidates`,
   `structure_resolution`, `stage_diagnostics`, `energy_curve`, `tempo_curve`.
 
 ## What the analysis actually produces (read this first)
 
-`run_phase("analysis")` analyzes the real audio on device. Apple Music
-Understanding supplies the canonical `beats`, `downbeats`
-(`downbeat_source: "music-understanding"`), `bpm`, and complete
-`sections`/`segments`/`phrases` hierarchy. The consolidator preserves those
-measured ranges, verifies complete contiguous section coverage, verifies that
-every lower-level range is nested under a populated parent, and requires each
-internal section start to lie within 0.5 seconds of the measured bar grid.
-Native DSP still measures `energy_curve`,
-`tempo_curve`, key, and local-change candidates, but its
-`structure_candidates` are diagnostic evidence only and never become canonical
-song-form boundaries. `structure_resolution` records the verified system
-hierarchy and `stage_diagnostics` records every unavailable, failed, or degraded
+`run_phase("analysis")` analyzes the real audio on device. On macOS 26, an
+on-device neural model supplies the canonical beat/downbeat grid, two independent
+acoustic detectors measure structural candidates, and reliable forced lyric
+alignment corroborates and labels nearby measured boundaries. The consolidator
+snaps accepted boundaries to that measured bar grid, rejects dense phrase-level
+fragments, preserves strong instrumental terminal boundaries, and records the
+evidence for every canonical section in `structure_resolution`.
+
+The macOS 27 Apple Music Understanding adapter is preserved behind an availability
+gate. Once that OS ships, a complete verified section/segment/phrase hierarchy can
+be selected as the stronger runtime strategy. It is not required by the macOS 26
+production path. `stage_diagnostics` records every unavailable, failed, or degraded
 stage instead of hiding it.
 
 Optional signals — stems, forced lyric alignment, musical key, and
@@ -49,8 +48,10 @@ Optional signals — stems, forced lyric alignment, musical key, and
 model/provider succeeds**. Read `stage_diagnostics` before interpreting an
 empty field: unavailable, failed, degraded, and not-applicable are distinct
 states. Never fabricate a missing signal. Section **timing** comes only from
-the measured system hierarchy; lyrics can label a nearby measured system
-boundary, never introduce or move one.
+measured audio evidence. Lyrics text supplies labels only. A reliably aligned
+Whisper word anchor may establish its measured bar boundary when the structural
+detectors miss the transition; an unaligned lyric marker can never introduce or
+move timing.
 
 The `run_phase("analysis")` result you receive already contains the
 measured grid — the `downbeats` times and the `sections` table with real
@@ -68,9 +69,9 @@ for timing; do not describe the song's structure from "listening".
     `anomalies`, `overall_character`.
 - **Gate (HARD — enforced by the engine).** `approve_gate("analysis")` is
   **rejected** unless (a) a real analysis artifact exists with non-empty
-  `beats` AND `downbeats`, (b) `structure_resolution.status` is `resolved` and
-  every canonical boundary validates against its persisted Apple system
-  hierarchy, AND (c) A2 is
+  `beats` AND `downbeats`, (b) `structure_resolution.status` is `resolved` or
+  `review_required` and every canonical boundary independently validates against
+  its persisted measured evidence, AND (c) A2 is
   done: `interpretation.section_labels` is written through the typed tool (the
   measured sections are labeled). Run the DSP for real, THEN interpret, THEN approve — approving
   right after the DSP run is refused. After writing the interpretation, give a
@@ -108,8 +109,8 @@ Is there an audio file in `audio/`?
 
 `run_phase(project_dir, "analysis")`
 
-This decodes the song and runs the on-device system analysis plus native feature
-diagnostics, writing `analysis/<song>.json` and returning the measured `bpm`,
+This decodes the song and runs the complete on-device analysis stack,
+writing `analysis/<song>.json` and returning the measured `bpm`,
 `downbeats`, and `sections` table. If it
 returns `{"error": "phase_failed", ...}`, the song couldn't be decoded — tell
 the user what the detail says (e.g. the file isn't a valid audio file) and ask
@@ -133,6 +134,12 @@ If `structure_resolution.status` is `needs_review`, stop before A2. Report
 its `detail` and the non-success `stage_diagnostics` exactly. Re-running is
 appropriate only after the reported evidence failure has changed; prose,
 label aggregation, or invented timestamps cannot resolve it.
+
+If `structure_resolution.status` is `review_required`, continue to A2 but
+keep every `single_detector` section label explicitly provisional. Before
+requesting approval, show the user `structure_resolution.detail` and the exact
+times of all single-detector boundaries. The approval request is the user's
+review decision; never summarize this state as fully resolved consensus.
 
 ### A2 — Precondition
 
@@ -189,7 +196,7 @@ Call `write_analysis_interpretation` exactly once with:
   - Labels from {intro, verse1, verse2, ..., pre-chorus, chorus1,
     chorus2, ..., bridge, breakdown, outro}
 - `anomalies`: keep every entry the consolidator pre-flagged
-  (`system_structure_unavailable`, unresolved lyric markers, and other
+  (unresolved or colliding lyric markers, detector divergence, and other
   persisted stage evidence) and add your own
   observations.
 - `overall_character`: 2-3 sentences from the tempo-curve dynamics and
@@ -202,16 +209,21 @@ Never hand-edit or rewrite the measured analysis artifact.
 
 ### Orientation on the v3 fields
 
-- `sections[]`: the verified top level of the system-measured hierarchy — the
-  source of truth for section timing. Label them; do not move them.
-- `downbeats[]`: the system-measured bar grid. Every internal section boundary
-  lies within 0.5 seconds of one; the measured section range is never snapped.
-- `structure_candidates[]`: native MFCC/Mel local-change candidates retained
-  for diagnostics; they never define the canonical timeline.
-- `structure_resolution`: the verified system hierarchy. Do not proceed when
-  its status is `needs_review`. `resolved` means complete, contiguous sections
-  plus nested segments and phrases with exact boundary evidence. Reliable lyric
-  evidence may label a nearby section boundary without changing its timing.
+- `sections[]`: the canonical, contiguous song sections. On macOS 26 each
+  internal boundary is snapped to the measured bar grid and carries acoustic
+  detector consensus, reliable forced-alignment evidence, or explicitly
+  reviewable single-detector evidence. Label them; do not move them.
+- `downbeats[]`: the measured bar grid used by the selected runtime strategy.
+  Native evidence boundaries are exact entries on this grid.
+- `structure_candidates[]`: the persisted independent librosa and essentia
+  measurements from which the macOS 26 resolver selects acoustic boundaries.
+- `structure_resolution`: the independently reproducible selection record.
+  Do not proceed when its status is `needs_review`. `resolved` and
+  `review_required` provide complete contiguous sections plus exact per-boundary
+  evidence. A nested section/segment/phrase `hierarchy` exists only when the
+  availability-gated Apple Music Understanding strategy resolved on macOS 27.
+  Reliable forced alignment may provide a vocal time anchor; lyric text supplies
+  the marker label and never invents timing.
 - `stage_diagnostics`: explicit outcome of every optional analysis stage.
 - `energy_curve`, `tempo_curve`: for assessing dynamics.
 - Present only when their model/provider succeeded: `alignment`, `stems`,
@@ -244,5 +256,9 @@ Never hand-edit or rewrite the measured analysis artifact.
 - Instrumental track / no lyrics → label sections conservatively from the
   measured boundaries and flag low confidence; never invent labels as fact.
 - `needs_review` structure → stop before interpretation; labels and prose cannot
-  repair missing measured system timing. Re-run only after the reported system
-  analysis failure has changed.
+  repair a missing bar grid or acoustic evidence. Report the persisted detail
+  and stage diagnostics. Re-run only after the relevant input or failed analysis
+  stage has changed.
+- `review_required` structure → interpret provisionally, surface every
+  single-detector boundary and the resolution detail, then let the user's
+  explicit approval decide whether to continue or re-analyze.

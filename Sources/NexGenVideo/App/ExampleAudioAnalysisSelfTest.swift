@@ -6,7 +6,7 @@ import NexGenEngine
 @MainActor
 enum ExampleAudioAnalysisSelfTest {
     private static let manifestSchema = "nexgenvideo.example-fixtures/v1"
-    private static let reportSchema = "nexgenvideo.example-analysis-report/v2"
+    private static let reportSchema = "nexgenvideo.example-analysis-report/v3"
 
     private struct Configuration {
         let packURL: URL
@@ -143,12 +143,14 @@ enum ExampleAudioAnalysisSelfTest {
         let artifactWriteGate: String
         let immutableFixtureReference: String
         let optionalAudioML: OptionalAudioML
+        let systemStructure: String
 
         enum CodingKeys: String, CodingKey {
             case fixtureIntegrity = "fixture_integrity"
             case artifactWriteGate = "artifact_write_gate"
             case immutableFixtureReference = "immutable_fixture_reference"
             case optionalAudioML = "optional_audio_ml"
+            case systemStructure = "system_structure"
         }
     }
 
@@ -157,11 +159,6 @@ enum ExampleAudioAnalysisSelfTest {
         let stemSeparation: String
         let beatGrid: String
         let chordRecognition: String
-
-        var allUnavailable: Bool {
-            [transcription, stemSeparation, beatGrid, chordRecognition]
-                .allSatisfy { $0 == "unavailable" }
-        }
 
         enum CodingKeys: String, CodingKey {
             case transcription
@@ -274,17 +271,10 @@ enum ExampleAudioAnalysisSelfTest {
         }
         let packTreeSHA256 = try directoryTreeSHA256(configuration.packURL)
         let registry = PackCatalog.registry(activePack: record.id)
-        let optionalAudioML = OptionalAudioML(
-            transcription: registry.transcriber == nil ? "unavailable" : "available",
-            stemSeparation: registry.stemSeparator == nil ? "unavailable" : "available",
-            beatGrid: registry.beatDetector == nil ? "unavailable" : "available",
-            chordRecognition: registry.chordRecognizer == nil ? "unavailable" : "available"
-        )
-        guard optionalAudioML.allUnavailable else {
-            throw Failure("decoder-only self-test registry unexpectedly contains optional audio ML")
+        AudioAnalysisRuntime.configure(registry)
+        guard registry.musicUnderstandingAnalyzer == nil else {
+            throw Failure("the macOS 26 acceptance run unexpectedly activated the macOS 27 adapter")
         }
-        registry.registerAudioDecoder(AVFoundationAudioDecoder())
-        registry.registerMusicUnderstandingAnalyzer(AppleMusicUnderstandingAnalyzer())
         guard let runner = registry.phases["analysis"],
               let artifactGate = registry.artifactWriteRequirements["analysis"] else {
             throw Failure("loaded musicvideo pack has no complete analysis contract")
@@ -324,38 +314,51 @@ enum ExampleAudioAnalysisSelfTest {
               let resolution = object["structure_resolution"] as? [String: Any],
               let status = resolution["status"] as? String,
               let method = resolution["method"] as? String,
-              let hierarchy = resolution["hierarchy"] as? [String: Any],
-              let hierarchySections = hierarchy["sections"] as? [[String: Any]],
-              let hierarchySegments = hierarchy["segments"] as? [[String: Any]],
-              let hierarchyPhrases = hierarchy["phrases"] as? [[String: Any]],
               let candidateCount = integer(resolution["candidate_boundary_count"]),
               let acceptedCount = integer(resolution["accepted_boundary_count"]) else {
             throw Failure("canonical analysis is missing its measured summary or resolution record")
         }
-        guard status == "resolved",
-              method == "music_understanding_hierarchy",
-              hierarchy["source"] as? String == "apple_music_understanding",
-              hierarchySections.count == sections.count,
-              !hierarchySegments.isEmpty,
-              !hierarchyPhrases.isEmpty else {
-            throw Failure("canonical structure is not usable: \(status)")
+        guard status == "resolved" else {
+            throw Failure("canonical structure status is \(status), expected resolved")
+        }
+        guard method == "per_boundary_evidence" else {
+            throw Failure("canonical structure method is \(method), expected per_boundary_evidence")
+        }
+        guard resolution["hierarchy"] == nil else {
+            throw Failure("macOS 26 analysis unexpectedly persisted a system hierarchy")
+        }
+        let downbeatSource = object["downbeat_source"] as? String ?? "missing"
+        guard downbeatSource == Analysis.DownbeatSource.beatTransformer.rawValue else {
+            throw Failure("downbeat source is \(downbeatSource), expected beat-transformer")
         }
         guard sections.count == acceptedCount + 1 else {
             throw Failure("canonical section count does not match accepted boundary evidence")
         }
         guard diagnostic(diagnostics, stage: "native_dsp", status: "succeeded"),
-              diagnostic(diagnostics, stage: "music_understanding", status: "succeeded"),
-              diagnostic(diagnostics, stage: "stem_separation", status: "unavailable"),
-              diagnostic(diagnostics, stage: "neural_beat_grid", status: "not_applicable"),
-              diagnostic(diagnostics, stage: "chord_recognition", status: "unavailable") else {
-            throw Failure("analysis did not exercise system hierarchy with its declared fallbacks")
+              diagnostic(diagnostics, stage: "music_understanding", status: "unavailable"),
+              diagnostic(diagnostics, stage: "stem_separation", status: "succeeded"),
+              diagnostic(diagnostics, stage: "neural_beat_grid", status: "succeeded"),
+              diagnostic(diagnostics, stage: "chord_recognition", status: "succeeded") else {
+            throw Failure("analysis did not exercise the complete macOS 26 production stack")
         }
         if !lyricsFiles.isEmpty {
             guard diagnostic(diagnostics, stage: "lyrics_input", status: "succeeded"),
-                  diagnostic(diagnostics, stage: "lyrics_alignment", status: "unavailable") else {
-                throw Failure("lyrics fallback diagnostics do not match the decoder-only contract")
+                  diagnostic(diagnostics, stage: "lyrics_alignment", status: "succeeded") else {
+                throw Failure("the production lyric alignment did not resolve the fixture")
             }
         }
+        func verifiedStatus(_ stage: String) -> String {
+            diagnostic(diagnostics, stage: stage, status: "succeeded")
+                ? "succeeded" : "failed"
+        }
+        let optionalAudioML = OptionalAudioML(
+            transcription: lyricsFiles.isEmpty
+                ? "not_applicable"
+                : verifiedStatus("lyrics_alignment"),
+            stemSeparation: verifiedStatus("stem_separation"),
+            beatGrid: verifiedStatus("neural_beat_grid"),
+            chordRecognition: verifiedStatus("chord_recognition")
+        )
         guard abs(duration - expectations.audio.durationS) <= expectations.audio.durationToleranceS else {
             throw Failure(
                 "duration \(duration)s is outside the fixture expectation "
@@ -405,6 +408,9 @@ enum ExampleAudioAnalysisSelfTest {
         }) else {
             throw Failure("analysis artifact leaked a runner-local path")
         }
+        let hierarchy = resolution["hierarchy"] as? [String: Any]
+        let segmentCount = (hierarchy?["segments"] as? [[String: Any]])?.count ?? 0
+        let phraseCount = (hierarchy?["phrases"] as? [[String: Any]])?.count ?? 0
 
         let summary = AnalysisSummary(
             artifact: "analysis.json",
@@ -416,8 +422,8 @@ enum ExampleAudioAnalysisSelfTest {
             sectionCount: sections.count,
             structureStatus: status,
             structureMethod: method,
-            segmentCount: hierarchySegments.count,
-            phraseCount: hierarchyPhrases.count,
+            segmentCount: segmentCount,
+            phraseCount: phraseCount,
             candidateBoundaryCount: candidateCount,
             acceptedBoundaryCount: acceptedCount,
             sectionBoundaryTimesS: sectionBoundaryTimes
@@ -602,7 +608,8 @@ enum ExampleAudioAnalysisSelfTest {
                 fixtureIntegrity: "passed",
                 artifactWriteGate: "passed",
                 immutableFixtureReference: "passed",
-                optionalAudioML: optionalAudioML
+                optionalAudioML: optionalAudioML,
+                systemStructure: "unavailable_on_macos_26"
             )
         )
         let encoder = JSONEncoder()

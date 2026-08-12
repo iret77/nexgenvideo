@@ -23,8 +23,21 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
     var hasBeatGrid: Bool { !beats.isEmpty }
 
     var canonicalHierarchy: [HierarchySection]? {
-        guard let resolution = structureResolution,
-              resolution.status == "resolved",
+        guard let resolution = structureResolution else { return nil }
+        if [
+            "per_boundary_evidence",
+            "homogeneous_consensus",
+            "phrase_filtered_acoustic",
+        ].contains(resolution.method) {
+            guard ["resolved", "review_required"].contains(resolution.status),
+                  resolution.hierarchy == nil,
+                  resolution.acceptedBoundaryCount == max(0, sections.count - 1),
+                  validCanonicalSections else { return nil }
+            return sections.enumerated().map {
+                HierarchySection(id: $0.offset, section: $0.element, segments: [])
+            }
+        }
+        guard resolution.status == "resolved",
               resolution.method == "music_understanding_hierarchy",
               let hierarchy = resolution.hierarchy,
               hierarchy.source == "apple_music_understanding" else { return nil }
@@ -58,6 +71,14 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
     }
 
     var hasCanonicalStructure: Bool { canonicalHierarchy != nil }
+
+    var hasNestedHierarchy: Bool {
+        canonicalHierarchy?.contains { !$0.segments.isEmpty } == true
+    }
+
+    var requiresStructureReview: Bool {
+        structureResolution?.status == "review_required" && hasCanonicalStructure
+    }
 
     var nonSuccessStageDiagnostics: [StageDiagnostic] {
         stageDiagnostics.filter { $0.status != "succeeded" && $0.status != "not_applicable" }
@@ -178,6 +199,23 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
                 && child.start >= parent.start && child.end <= parent.end
         }
         return matches.count == 1 ? matches[0] : nil
+    }
+
+    private var validCanonicalSections: Bool {
+        guard durationS.isFinite,
+              durationS > 0,
+              !sections.isEmpty,
+              sections.first?.index == 0,
+              (sections.first?.start ?? .infinity) <= 0.05,
+              abs((sections.last?.end ?? 0) - durationS) <= 0.05 else { return false }
+        return sections.allSatisfy {
+            $0.start.isFinite && $0.end.isFinite
+                && $0.start >= 0 && $0.end > $0.start
+                && $0.end <= durationS + 0.05
+        } && zip(sections, sections.dropFirst()).allSatisfy {
+            abs($0.0.end - $0.1.start) <= 0.001
+                && $0.0.index + 1 == $0.1.index
+        }
     }
 }
 

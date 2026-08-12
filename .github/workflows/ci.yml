@@ -30,7 +30,7 @@ jobs:
   build-test:
     name: Build & Test
     needs: source-gate
-    # Xcode 27 provides the macOS 27 SDK used by the latest-macOS-only product.
+    # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
     runs-on: xcode-27
     # Real runs take ~5.5 min. This is a COST CEILING, not a budget: a hung job on a 10x-billed macOS
     # runner burns the timeout in quota minutes, so keep it just far enough above the real duration.

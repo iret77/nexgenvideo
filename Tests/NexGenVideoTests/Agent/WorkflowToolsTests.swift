@@ -189,7 +189,7 @@ struct WorkflowToolsTests {
                 ]],
             ],
             "structure_resolution": [
-                "version": "system-structure/v3",
+                "version": "adaptive-structure/v4",
                 "status": "resolved",
                 "method": "music_understanding_hierarchy",
                 "detector_sources": ["apple_music_understanding"],
@@ -273,7 +273,7 @@ struct WorkflowToolsTests {
             "sections": [["index": 0, "start": 0.0, "end": 12.0, "cluster": 0]],
         ]]
         object["structure_resolution"] = [
-            "version": "system-structure/v3",
+            "version": "adaptive-structure/v4",
             "status": "needs_review",
             "method": "unresolved",
             "detector_sources": ["librosa"],

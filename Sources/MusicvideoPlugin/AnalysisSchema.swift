@@ -1,7 +1,7 @@
 import Foundation
 import NexGenEngine
 
-/// Schema v3 requires verified Music Understanding rhythm and structure.
+/// Schema v3 requires verified measured rhythm and per-boundary structure evidence.
 public let analysisSchemaVersion = "analysis/v3"
 
 /// Port of `analysis_schema.py::AnalysisSection`.
@@ -12,7 +12,7 @@ public struct AnalysisSection: Codable, Sendable, Equatable {
     public var cluster: Int
     /// Narrative, set by the analysis agent.
     public var label: String?
-    /// Canonical provenance, currently the measured system hierarchy.
+    /// Canonical provenance for the selected runtime structure strategy.
     public var source: String?
     public var confidence: Double?
 

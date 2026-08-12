@@ -10,7 +10,7 @@
 ## 1. Was NexGenVideo ist
 
 NexGenVideo ist ein **KI-nativer macOS-Videoeditor**, technischer Fork von
-`palmier-io/palmier-pro` (Swift 6.2, SwiftUI + AppKit, AVFoundation, latest macOS only — currently macOS 27, arm64,
+`palmier-io/palmier-pro` (Swift 6.2, SwiftUI + AppKit, AVFoundation, latest released macOS only — currently macOS 26, arm64,
 non-sandboxed Developer-ID-App), aber **in sich vollständig autonom**: nutzbar **ohne jede
 Verbindung, Referenz oder Abhängigkeit zum Upstream-Projekt oder dessen Diensten**.
 

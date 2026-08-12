@@ -1,6 +1,6 @@
 # NexGenVideo
 
-AI-native macOS video editor. Swift 6.2, SwiftUI + AppKit, AVFoundation. Latest macOS only (currently macOS 27), arm64 only. Non-sandboxed Developer ID app.
+AI-native macOS video editor. Swift 6.2, SwiftUI + AppKit, AVFoundation. Latest released macOS only (currently macOS 26), arm64 only. Non-sandboxed Developer ID app.
 
 ## Concept — read first
 
@@ -74,15 +74,13 @@ release or a wasted CI cycle.
 ### Platform policy
 
 - **NexGenVideo is built primarily for its owner and supports only the newest macOS.** The current
-  distribution floor is macOS 27. Backward compatibility with older macOS releases is not a product
+  distribution floor is macOS 26. Backward compatibility with older macOS releases is not a product
   goal; users who need it may maintain a fork.
-- **Adopt useful new Apple platform APIs immediately.** Raise the product minimum instead of carrying
-  a lower deployment target that blocks a materially better native implementation.
-- GitHub's `xcode-27` preview runner currently boots macOS 26 while providing the macOS 27 SDK. The
-  SwiftPM platform declaration remains a CI execution floor only so tests can run there; the shipped
-  app's `LSMinimumSystemVersion` is the authoritative product floor and must remain macOS 27 or newer.
-- The private Music Understanding fixture workflow must fail closed unless `NGV_MACOS_27_RUNNER`
-  names one exact GitHub Actions runner label verified to boot macOS 27 or newer.
+- **Adopt useful new Apple platform APIs when their macOS release ships.** Beta-only implementations
+  may remain compiled behind availability gates, but they must not raise the distribution floor or
+  replace the production path before that macOS version is released.
+- Xcode 27 provides the SDK needed to preserve the future Music Understanding adapter. The shipped
+  app and production acceptance workflow remain pinned to macOS 26 until macOS 27 is released.
 
 ### The plugin pack — two ways to ship a crash CI cannot catch
 

@@ -12,6 +12,151 @@ enum MusicvideoGateChecks {
         let label: String
     }
 
+    private struct StructuralCandidateBoundary {
+        let time: Double
+        let source: String
+        let key: String
+    }
+
+    private struct StructuralEvidenceGroup {
+        let time: Double
+        let sources: Set<String>
+        let candidateKeys: Set<String>
+    }
+
+    private struct PersistedAlignmentMarker {
+        let marker: String
+        let start: Double
+        let reliable: Bool
+    }
+
+    private static func persistedAlignmentMarkers(
+        _ object: [String: Any]
+    ) -> [PersistedAlignmentMarker] {
+        (object["alignment"] as? [[String: Any]] ?? []).compactMap { line in
+            guard let marker = line["section_marker"] as? String,
+                  !marker.isEmpty,
+                  let start = number(line["start"]),
+                  start.isFinite,
+                  start >= 0 else { return nil }
+            let words = line["words"] as? [[String: Any]] ?? []
+            let anchorStarts = words.compactMap { word -> Double? in
+                guard number(word["score"]) != nil,
+                      let anchorStart = number(word["start"]),
+                      anchorStart.isFinite,
+                      anchorStart >= 0 else { return nil }
+                return anchorStart
+            }
+            let requiredAnchors = words.count == 1 ? 1 : 2
+            let startsAtFirstAnchor = anchorStarts.min().map {
+                abs($0 - start) <= 0.001
+            } == true
+            return PersistedAlignmentMarker(
+                marker: marker,
+                start: start,
+                reliable: anchorStarts.count >= requiredAnchors && startsAtFirstAnchor
+            )
+        }.sorted { $0.start < $1.start }
+    }
+
+    private static func requireLyricMarkerLabels(
+        sections: [[String: Any]],
+        markers: [(time: Double, marker: String)]
+    ) throws {
+        var labelsByStart: [Double: String] = [:]
+        for section in sections {
+            guard let start = number(section["start"]),
+                  let label = section["label"] as? String else { continue }
+            let roundedStart = (start * 1000).rounded() / 1000
+            guard labelsByStart[roundedStart] == nil else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": canonical sections contain a duplicate boundary."
+                )
+            }
+            labelsByStart[roundedStart] = label
+        }
+        for evidence in markers {
+            guard let actual = labelsByStart[evidence.time],
+                  LyricsAlignment.normalizeMarker(actual)
+                    == LyricsAlignment.normalizeMarker(evidence.marker) else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": section at \(evidence.time)s must retain lyric marker "
+                        + "\"\(evidence.marker)\" in its label. Re-run "
+                        + "write_analysis_interpretation with one label per measured section."
+                )
+            }
+        }
+    }
+
+    private static func structuralEvidence(
+        _ rawCandidates: [[String: Any]],
+        downbeats: [Double],
+        duration: Double
+    ) -> (
+        candidateCount: Int,
+        detectorSources: Set<String>,
+        groups: [Double: StructuralEvidenceGroup]
+    ) {
+        var detectorSources: Set<String> = []
+        var seen: Set<String> = []
+        var boundaries: [StructuralCandidateBoundary] = []
+        for candidate in rawCandidates {
+            guard let source = candidate["source"] as? String,
+                  let sections = candidate["sections"] as? [[String: Any]],
+                  !sections.isEmpty else { continue }
+            detectorSources.insert(source)
+            for section in sections {
+                guard let start = number(section["start"]),
+                      start > 0.01,
+                      start < duration - 0.01 else { continue }
+                let rounded = (start * 1000).rounded() / 1000
+                let key = "\(source)\u{1f}\(rounded)"
+                if seen.insert(key).inserted {
+                    boundaries.append(
+                        StructuralCandidateBoundary(time: rounded, source: source, key: key)
+                    )
+                }
+            }
+        }
+        let sorted = boundaries.sorted {
+            $0.time == $1.time ? $0.source < $1.source : $0.time < $1.time
+        }
+        var rawGroups: [[StructuralCandidateBoundary]] = []
+        for boundary in sorted {
+            if let first = rawGroups.last?.first,
+               boundary.time - first.time <= Consolidator.toleranceS {
+                rawGroups[rawGroups.count - 1].append(boundary)
+            } else {
+                rawGroups.append([boundary])
+            }
+        }
+        var combined: [Double: StructuralEvidenceGroup] = [:]
+        for group in rawGroups {
+            guard !downbeats.isEmpty else { continue }
+            let mean = group.reduce(0.0) { $0 + $1.time } / Double(group.count)
+            guard let snapped = downbeats.min(by: {
+                abs($0 - mean) < abs($1 - mean)
+            }) else { continue }
+            let time = (snapped * 1000).rounded() / 1000
+            let sources = Set(group.map(\.source))
+            let keys = Set(group.map(\.key))
+            if let prior = combined[time] {
+                combined[time] = StructuralEvidenceGroup(
+                    time: time,
+                    sources: prior.sources.union(sources),
+                    candidateKeys: prior.candidateKeys.union(keys)
+                )
+            } else {
+                combined[time] = StructuralEvidenceGroup(
+                    time: time,
+                    sources: sources,
+                    candidateKeys: keys
+                )
+            }
+        }
+        return (seen.count, detectorSources, combined)
+    }
+
     private static func structuralCandidateCount(
         _ rawCandidates: [[String: Any]],
         duration: Double
@@ -600,6 +745,36 @@ enum MusicvideoGateChecks {
                     + "Re-run run_phase(\"analysis\")."
             )
         }
+        let resolutionObject = obj["structure_resolution"] as? [String: Any]
+        let resolutionMethod = resolutionObject?["method"] as? String
+        if resolutionObject?["status"] as? String == "needs_review",
+           resolutionMethod == "unresolved" {
+            let detail = resolutionObject?["detail"] as? String
+                ?? "The measured bar grid or acoustic structure evidence is incomplete."
+            throw GateBlocked(
+                "Can't approve \"analysis\": native structure remains unresolved. \(detail) "
+                    + "Inspect the recorded stage diagnostics and change the analysis input before retrying."
+            )
+        }
+        if let resolutionMethod, [
+            "per_boundary_evidence",
+            "homogeneous_consensus",
+            "phrase_filtered_acoustic",
+        ].contains(resolutionMethod) {
+            try requireEvidenceStructure(
+                object: obj,
+                duration: duration,
+                downbeats: downbeatValues
+            )
+            if requiresInterpretation {
+                try requireAnalysisInterpretation(
+                    object: obj,
+                    duration: duration,
+                    dataRoot: dataRoot
+                )
+            }
+            return
+        }
         guard obj["downbeat_source"] as? String
                 == Analysis.DownbeatSource.musicUnderstanding.rawValue else {
             throw GateBlocked(
@@ -781,16 +956,7 @@ enum MusicvideoGateChecks {
                 "Can't approve \"analysis\": lyric alignment evidence counts are missing."
             )
         }
-        let markerLines = (obj["alignment"] as? [[String: Any]] ?? []).compactMap {
-            line -> (marker: String, start: Double, reliable: Bool)? in
-            guard let marker = line["section_marker"] as? String,
-                  !marker.isEmpty,
-                  let start = number(line["start"]) else { return nil }
-            let words = line["words"] as? [[String: Any]] ?? []
-            let requiredAnchors = words.count == 1 ? 1 : 2
-            let anchors = words.filter { number($0["score"]) != nil }.count
-            return (marker, start, anchors >= requiredAnchors)
-        }.sorted { $0.start < $1.start }
+        let markerLines = persistedAlignmentMarkers(obj)
         let reliableAlignment = markerCount > 0
             && markerLines.count == markerCount
             && markerLines.allSatisfy { $0.reliable }
@@ -811,11 +977,6 @@ enum MusicvideoGateChecks {
                 expectedLyricEvidence[closest] = marker.marker
             }
         }
-        let labelsByStart = Dictionary(uniqueKeysWithValues: sections.compactMap { section -> (Double, String)? in
-            guard let start = number(section["start"]),
-                  let label = section["label"] as? String else { return nil }
-            return ((start * 1000).rounded() / 1000, label)
-        })
         var recordedLyricEvidence: [Double: String] = [:]
         for record in boundaryRecords where record["lyric_marker"] != nil {
             guard let time = number(record["time"]),
@@ -834,23 +995,379 @@ enum MusicvideoGateChecks {
                     + "Re-run run_phase(\"analysis\")."
             )
         }
-        for (time, expected) in recordedLyricEvidence {
-            guard let actual = labelsByStart[time],
-                  LyricsAlignment.normalizeMarker(actual)
-                    == LyricsAlignment.normalizeMarker(expected) else {
+        try requireLyricMarkerLabels(
+            sections: sections,
+            markers: recordedLyricEvidence.map { ($0.key, $0.value) }
+        )
+
+        if requiresInterpretation {
+            try requireAnalysisInterpretation(
+                object: obj,
+                duration: duration,
+                dataRoot: dataRoot
+            )
+        }
+    }
+
+    private static func requireEvidenceStructure(
+        object: [String: Any],
+        duration: Double,
+        downbeats: [Double]
+    ) throws {
+        guard let source = object["downbeat_source"] as? String,
+              Analysis.DownbeatSource(rawValue: source) != nil else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": the measured bar grid has no valid provenance."
+            )
+        }
+        let diagnostics = object["stage_diagnostics"] as? [[String: Any]] ?? []
+        guard diagnostics.contains(where: {
+            $0["stage"] as? String == "native_dsp"
+                && $0["status"] as? String == "succeeded"
+        }) else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": the native acoustic measurement record is missing."
+            )
+        }
+        if source == Analysis.DownbeatSource.beatTransformer.rawValue {
+            guard diagnostics.contains(where: {
+                $0["stage"] as? String == "neural_beat_grid"
+                    && $0["status"] as? String == "succeeded"
+            }) else {
                 throw GateBlocked(
-                    "Can't approve \"analysis\": section at \(time)s must retain lyric marker "
-                        + "\"\(expected)\" in its label. Re-run "
-                        + "write_analysis_interpretation with one label per measured section."
+                    "Can't approve \"analysis\": the neural beat-grid provenance is missing."
+                )
+            }
+        }
+        let sections = object["sections"] as? [[String: Any]] ?? []
+        let structureStages = (object["pipeline_stages"] as? [String] ?? [])
+            .filter { $0 == "structure" }
+        let systemStages = (object["pipeline_stages"] as? [String] ?? [])
+            .filter { $0 == "music_understanding" }
+        guard let resolution = object["structure_resolution"] as? [String: Any],
+              resolution["version"] as? String == Consolidator.resolutionVersion,
+              let status = resolution["status"] as? String,
+              ["resolved", "review_required"].contains(status),
+              let method = resolution["method"] as? String,
+              [
+                "per_boundary_evidence",
+                "homogeneous_consensus",
+                "phrase_filtered_acoustic",
+              ].contains(method),
+              resolution["hierarchy"] == nil,
+              integer(resolution["minimum_section_bars"])
+                == Consolidator.minimumConsensusBars,
+              let acceptedBoundaryCount = integer(resolution["accepted_boundary_count"]),
+              acceptedBoundaryCount == max(0, sections.count - 1),
+              let recordedCandidateCount = integer(resolution["candidate_boundary_count"]),
+              let recordedConsensusCount = integer(resolution["consensus_boundary_count"]),
+              let discardedBoundaryCount = integer(resolution["discarded_boundary_count"]),
+              discardedBoundaryCount >= 0,
+              let boundaryRecords = resolution["boundary_evidence"] as? [[String: Any]],
+              boundaryRecords.count == acceptedBoundaryCount,
+              structureStages.count == 1,
+              systemStages.isEmpty else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": the measured section structure is unresolved or its "
+                    + "evidence record is invalid. Re-run run_phase(\"analysis\"); labels cannot "
+                    + "repair uncertain timing."
+            )
+        }
+
+        let barIntervals = zip(downbeats, downbeats.dropFirst())
+            .map { $0.1 - $0.0 }
+            .filter { $0 > 0.01 }
+            .sorted()
+        guard let medianBar = barIntervals.isEmpty
+            ? nil
+            : barIntervals[barIntervals.count / 2] else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": the bar grid cannot establish a bar duration."
+            )
+        }
+        let rebuilt = structuralEvidence(
+            object["structure_candidates"] as? [[String: Any]] ?? [],
+            downbeats: downbeats,
+            duration: duration
+        )
+        let allowedDetectorSources: Set<String> = [
+            StructureCandidate.Source.librosa.rawValue,
+            StructureCandidate.Source.essentia.rawValue,
+        ]
+        let actualConsensusCount = rebuilt.groups.values
+            .filter { $0.sources.count >= 2 }
+            .count
+        guard rebuilt.detectorSources.isSubset(of: allowedDetectorSources),
+              rebuilt.candidateCount == recordedCandidateCount,
+              rebuilt.detectorSources
+                == Set(resolution["detector_sources"] as? [String] ?? []),
+              actualConsensusCount == recordedConsensusCount else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": structure_resolution no longer matches the persisted "
+                    + "detector candidates. Re-run run_phase(\"analysis\")."
+            )
+        }
+
+        var evidenceKinds: [Double: String] = [:]
+        var evidenceRecords: [Double: [String: Any]] = [:]
+        var consumedCandidateKeys: Set<String> = []
+        for record in boundaryRecords {
+            guard let rawTime = number(record["time"]),
+                  let kind = record["kind"] as? String else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": a boundary evidence record is incomplete."
+                )
+            }
+            let time = (rawTime * 1000).rounded() / 1000
+            guard [
+                "detector_consensus",
+                "lyrics_supported_acoustic",
+                "lyrics_aligned_vocal",
+                "single_detector",
+            ].contains(kind), evidenceKinds[time] == nil else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": a boundary evidence record no longer matches detector output."
+                )
+            }
+            let sources = Set(record["detector_sources"] as? [String] ?? [])
+            if kind == "lyrics_aligned_vocal" {
+                guard sources == ["whisper_alignment"] else {
+                    throw GateBlocked(
+                        "Can't approve \"analysis\": a vocal-alignment boundary has invalid provenance."
+                    )
+                }
+            } else {
+                guard let group = rebuilt.groups[time],
+                      sources == group.sources else {
+                    throw GateBlocked(
+                        "Can't approve \"analysis\": a boundary evidence record no longer matches detector output."
+                    )
+                }
+                consumedCandidateKeys.formUnion(group.candidateKeys)
+            }
+            evidenceKinds[time] = kind
+            evidenceRecords[time] = record
+        }
+        guard discardedBoundaryCount == rebuilt.candidateCount - consumedCandidateKeys.count else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": accepted and discarded detector evidence is inconsistent."
+            )
+        }
+
+        var internalStarts: [Double] = []
+        for (index, section) in sections.enumerated() {
+            guard integer(section["index"]) == index,
+                  let start = number(section["start"]),
+                  let end = number(section["end"]),
+                  end > start,
+                  let sectionSource = section["source"] as? String else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": a canonical section is invalid or unresolved."
+                )
+            }
+            guard start <= 0.01 || downbeats.contains(where: {
+                abs($0 - start) <= 0.001
+            }) else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": section boundary \(start)s is not on the measured bar grid."
+                )
+            }
+            if start <= 0.01 {
+                guard sectionSource == "measured_track_extent" else {
+                    throw GateBlocked(
+                        "Can't approve \"analysis\": the opening section lacks track-extent provenance."
+                    )
+                }
+                continue
+            }
+            let boundary = (start * 1000).rounded() / 1000
+            internalStarts.append(boundary)
+            guard let kind = evidenceKinds[boundary],
+                  (kind == "detector_consensus" && sectionSource == "measured_consensus")
+                    || (kind == "lyrics_supported_acoustic"
+                        && sectionSource == "measured_alignment_fusion")
+                    || (kind == "lyrics_aligned_vocal"
+                        && sectionSource == "measured_vocal_alignment")
+                    || (kind == "single_detector"
+                        && sectionSource == "measured_phrase_filtered") else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": section boundary \(start)s does not match its provenance."
                 )
             }
         }
 
-        guard requiresInterpretation else { return }
-        // A2 gate: system analysis measures the grid, but the phase still needs interpretation.
-        let interpretation = obj["interpretation"] as? [String: Any]
+        guard let markerCount = integer(resolution["alignment_marker_count"]),
+              let resolvedMarkerCount = integer(resolution["resolved_alignment_marker_count"]),
+              markerCount >= 0,
+              resolvedMarkerCount >= 0,
+              resolvedMarkerCount <= markerCount else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": lyric alignment evidence counts are missing."
+            )
+        }
+        let markerLines = persistedAlignmentMarkers(object)
+        let alignmentIsReliable = markerCount > 0
+            && markerLines.count == markerCount
+            && markerLines.allSatisfy { $0.reliable }
+        let markerTolerance = max(Consolidator.toleranceS, medianBar)
+        var reconstructedMarkers: [Double: String] = [:]
+        var reconstructedKinds: [Double: String] = [:]
+        var reconstructedResolvedCount = 0
+        if alignmentIsReliable {
+            for marker in markerLines {
+                guard let target = downbeats.min(by: {
+                    abs($0 - marker.start) < abs($1 - marker.start)
+                }) else { continue }
+                let roundedTarget = (target * 1000).rounded() / 1000
+                if roundedTarget <= markerTolerance {
+                    if reconstructedMarkers[0] == nil {
+                        reconstructedMarkers[0] = marker.marker
+                        reconstructedResolvedCount += 1
+                    }
+                    continue
+                }
+                let match = rebuilt.groups.values
+                    .filter {
+                        $0.time > 0.01
+                            && $0.time < duration - 0.01
+                            && abs($0.time - roundedTarget) <= markerTolerance
+                    }
+                    .sorted {
+                        let leftDistance = abs($0.time - roundedTarget)
+                        let rightDistance = abs($1.time - roundedTarget)
+                        if leftDistance != rightDistance { return leftDistance < rightDistance }
+                        if $0.sources.count != $1.sources.count {
+                            return $0.sources.count > $1.sources.count
+                        }
+                        return $0.time < $1.time
+                    }
+                    .first
+                let boundaryTime = match?.time ?? roundedTarget
+                if boundaryTime > 0.01,
+                   boundaryTime < duration - 0.01,
+                   reconstructedMarkers[boundaryTime] == nil {
+                    reconstructedMarkers[boundaryTime] = marker.marker
+                    reconstructedKinds[boundaryTime] = match == nil
+                        ? "lyrics_aligned_vocal"
+                        : "lyrics_supported_acoustic"
+                    reconstructedResolvedCount += 1
+                }
+            }
+        }
+        let recordedLyricEvidence = evidenceRecords.compactMap {
+            time, record -> (Double, String)? in
+            guard let kind = record["kind"] as? String,
+                  ["lyrics_supported_acoustic", "lyrics_aligned_vocal"].contains(kind),
+                  let marker = record["lyric_marker"] as? String else { return nil }
+            return (time, marker)
+        }
+        guard reconstructedResolvedCount == resolvedMarkerCount,
+              recordedLyricEvidence.allSatisfy({
+                  reconstructedMarkers[$0.0] == $0.1
+              }),
+              recordedLyricEvidence.count
+                == reconstructedMarkers.keys.filter({ $0 > 0.01 }).count else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": lyric-selected boundaries no longer match reliable alignment evidence."
+            )
+        }
+        try requireLyricMarkerLabels(
+            sections: sections,
+            markers: recordedLyricEvidence.map { ($0.0, $0.1) }
+        )
+
+        let allMarkersResolved = alignmentIsReliable
+            && markerCount == resolvedMarkerCount
+        let homogeneousConsensus = rebuilt.candidateCount == 0
+            && rebuilt.detectorSources.count >= 2
+        var expectedKinds: [Double: String] = [:]
+        for time in reconstructedMarkers.keys where time > 0.01 {
+            expectedKinds[time] = reconstructedKinds[time]
+        }
+        let roundedDuration = (duration * 1000).rounded() / 1000
+        let endpoints: Set<Double> = [0, roundedDuration]
+        let minimumSpan = medianBar * Double(Consolidator.minimumConsensusBars)
+        let minimumTerminalSpan = medianBar * Double(Consolidator.minimumTerminalBars)
+        let consensusByStrength = rebuilt.groups.values
+            .filter { $0.sources.count >= 2 }
+            .sorted {
+                if $0.sources.count != $1.sources.count {
+                    return $0.sources.count > $1.sources.count
+                }
+                return $0.time < $1.time
+            }
+        if allMarkersResolved {
+            let lastMarker = reconstructedMarkers.keys.max() ?? 0
+            if let terminal = rebuilt.groups.values
+                .filter { $0.sources.count >= 2 }
+                .sorted(by: { $0.time > $1.time })
+                .first(where: {
+                    $0.time - lastMarker >= minimumSpan
+                        && duration - $0.time >= minimumTerminalSpan
+                }) {
+                expectedKinds[terminal.time] = "detector_consensus"
+            }
+        } else {
+            for group in consensusByStrength {
+                guard group.time > 0.01, group.time < duration - 0.01 else { continue }
+                let occupied = endpoints.union(expectedKinds.keys)
+                if occupied.allSatisfy({ abs($0 - group.time) >= minimumSpan }) {
+                    expectedKinds[group.time] = "detector_consensus"
+                }
+            }
+        }
+        let hasAcceptedConsensus = expectedKinds.values.contains("detector_consensus")
+        let expectedStatus: String
+        if rebuilt.detectorSources.isEmpty {
+            expectedStatus = "needs_review"
+        } else if allMarkersResolved || hasAcceptedConsensus || homogeneousConsensus {
+            expectedStatus = "resolved"
+        } else {
+            expectedStatus = "review_required"
+            for group in rebuilt.groups.values.sorted(by: {
+                if $0.sources.count != $1.sources.count {
+                    return $0.sources.count > $1.sources.count
+                }
+                return $0.time < $1.time
+            }) {
+                guard group.time > 0.01,
+                      group.time < duration - 0.01,
+                      expectedKinds[group.time] == nil else { continue }
+                let occupied = endpoints.union(expectedKinds.keys)
+                if occupied.allSatisfy({ abs($0 - group.time) >= minimumSpan }) {
+                    expectedKinds[group.time] = "single_detector"
+                }
+            }
+        }
+        let expectedMethod: String
+        if expectedStatus == "needs_review" {
+            expectedMethod = "unresolved"
+        } else if homogeneousConsensus {
+            expectedMethod = "homogeneous_consensus"
+        } else if expectedStatus == "review_required" {
+            expectedMethod = "phrase_filtered_acoustic"
+        } else {
+            expectedMethod = "per_boundary_evidence"
+        }
+        guard status == expectedStatus,
+              method == expectedMethod,
+              evidenceKinds == expectedKinds,
+              Set(internalStarts) == Set(expectedKinds.keys) else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": canonical boundary selection was not independently reproduced."
+            )
+        }
+    }
+
+    private static func requireAnalysisInterpretation(
+        object: [String: Any],
+        duration: Double,
+        dataRoot: URL
+    ) throws {
+        let sections = object["sections"] as? [[String: Any]] ?? []
+        let interpretation = object["interpretation"] as? [String: Any]
         let sectionLabels = interpretation?["section_labels"] as? [[String: Any]] ?? []
-        let multiplier = (obj["tempo_multiplier"] as? NSNumber)?.doubleValue ?? .nan
+        let multiplier = (object["tempo_multiplier"] as? NSNumber)?.doubleValue ?? .nan
         guard [0.5, 1.0, 2.0].contains(where: {
             abs($0 - multiplier) < 0.000_001
         }) else {
@@ -861,9 +1378,10 @@ enum MusicvideoGateChecks {
         }
         guard !sections.isEmpty, sectionLabels.count == sections.count else {
             throw GateBlocked(
-                "Can't approve \"analysis\" yet: the measured sections aren't interpreted. Complete A2 — "
-                    + "settle the tempo multiplier and call write_analysis_interpretation (one label per "
-                    + "measured section) — then approve. System analysis measures the grid; A2 names it.")
+                "Can't approve \"analysis\" yet: the measured sections aren't interpreted. "
+                    + "Set the tempo multiplier and call write_analysis_interpretation with "
+                    + "one label per measured section."
+            )
         }
         let measuredIndexes = Set(sections.compactMap { integer($0["index"]) })
         let labeledIndexes = Set(sectionLabels.compactMap { label -> Int? in
@@ -873,9 +1391,7 @@ enum MusicvideoGateChecks {
                   let confidenceValue = label["confidence"],
                   let confidence = (confidenceValue as? NSNumber)?.doubleValue
                     ?? (confidenceValue as? String).flatMap(Double.init),
-                  (0...1).contains(confidence) else {
-                return nil
-            }
+                  (0...1).contains(confidence) else { return nil }
             return index
         })
         guard measuredIndexes.count == sections.count,
@@ -888,8 +1404,7 @@ enum MusicvideoGateChecks {
         let overall = interpretation?["overall_character"] as? String ?? ""
         guard !overall.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw GateBlocked(
-                "Can't approve \"analysis\": overall_character is missing from the "
-                    + "persisted interpretation."
+                "Can't approve \"analysis\": overall_character is missing from the persisted interpretation."
             )
         }
         let timeline = try measuredSections(dataRoot: dataRoot, phase: "analysis")
@@ -899,15 +1414,14 @@ enum MusicvideoGateChecks {
               first.start <= tolerance,
               abs(last.end - duration) <= tolerance else {
             throw GateBlocked(
-                "Can't approve \"analysis\": interpreted sections don't cover the "
-                    + "complete measured song."
+                "Can't approve \"analysis\": interpreted sections don't cover the complete measured song."
             )
         }
         for pair in zip(timeline, timeline.dropFirst()) {
             guard abs(pair.0.end - pair.1.start) <= tolerance else {
                 throw GateBlocked(
-                    "Can't approve \"analysis\": interpreted sections contain a gap "
-                        + "or overlap around \(pair.0.end)s."
+                    "Can't approve \"analysis\": interpreted sections contain a gap or overlap "
+                        + "around \(pair.0.end)s."
                 )
             }
         }

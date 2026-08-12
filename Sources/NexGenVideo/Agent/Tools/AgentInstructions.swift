@@ -258,8 +258,8 @@ enum AgentInstructions {
           run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
           downbeat times, canonical sections, structure_resolution, and stage_diagnostics. Use the \
-          section table verbatim only when structure_resolution.status is resolved from the complete \
-          Apple Music Understanding section/segment/phrase hierarchy. Stop on needs_review because \
+          section table verbatim only when structure_resolution.status is resolved or review_required \
+          and every boundary carries measured evidence. Stop on needs_review because \
           labels cannot repair missing measured timing. Then persist only the interpretation with \
           write_analysis_interpretation. Never edit the measured analysis JSON. Use run_phase for \
           compute phases; drive the planning phases yourself. \
@@ -269,7 +269,7 @@ enum AgentInstructions {
         - GATES ARE HARD (deterministic, engine-enforced). Some gates refuse approval until their real \
           artifact exists — approve_gate("analysis") and set_gate_state to an approved state are \
           REJECTED unless run_phase("analysis") produced beats + downbeats and independently \
-          verifiable Apple system-hierarchy evidence for every section boundary. Never describe a \
+          verifiable measured evidence for every section boundary. Never describe a \
           song's tempo/structure from "listening" or infer it — you cannot; run the analysis and use \
           its measured output. If a gate blocks you, the message says what's missing: satisfy it, don't \
           work around it. This is by design — it prevents advancing the pipeline on invented facts.

@@ -79,6 +79,51 @@ struct PackSurfaceTests {
         #expect(data.nonSuccessStageDiagnostics.map(\.status) == ["unavailable"])
     }
 
+    @Test("macOS 26 evidence-resolved sections are canonical without a nested hierarchy")
+    func decodesEvidenceResolvedStructure() throws {
+        let json = """
+        {
+          "song_path":"audio/song.mp3","duration_s":64,"bpm":120,
+          "beats":[0,0.5,1],"downbeats":[0,2,4],
+          "sections":[
+            {"index":0,"start":0,"end":16,"source":"measured_track_extent"},
+            {"index":1,"start":16,"end":40,"source":"measured_consensus"},
+            {"index":2,"start":40,"end":64,"source":"measured_alignment_fusion"}
+          ],
+          "structure_resolution":{
+            "status":"resolved","method":"per_boundary_evidence",
+            "candidate_boundary_count":4,"accepted_boundary_count":2,
+            "discarded_boundary_count":0,
+            "detail":"Every boundary has measured evidence."
+          }
+        }
+        """
+        let data = try JSONDecoder().decode(
+            AnalysisSurfaceData.self,
+            from: Data(json.utf8)
+        )
+
+        #expect(data.hasCanonicalStructure)
+        #expect(!data.hasNestedHierarchy)
+        #expect(!data.requiresStructureReview)
+        #expect(data.canonicalHierarchy?.map(\.section.start) == [0, 16, 40])
+        #expect(data.canonicalHierarchy?.allSatisfy { $0.segments.isEmpty } == true)
+
+        let review = json.replacingOccurrences(
+            of: "\"status\":\"resolved\"",
+            with: "\"status\":\"review_required\""
+        ).replacingOccurrences(
+            of: "\"method\":\"per_boundary_evidence\"",
+            with: "\"method\":\"phrase_filtered_acoustic\""
+        )
+        let reviewData = try JSONDecoder().decode(
+            AnalysisSurfaceData.self,
+            from: Data(review.utf8)
+        )
+        #expect(reviewData.hasCanonicalStructure)
+        #expect(reviewData.requiresStructureReview)
+    }
+
     @Test("perceivedBpm applies the confirmed tempo multiplier")
     func perceivedBpmUsesMultiplier() throws {
         let json = Self.analysisJSON.replacingOccurrences(of: "\"tempo_multiplier\": 1.0", with: "\"tempo_multiplier\": 2.0")

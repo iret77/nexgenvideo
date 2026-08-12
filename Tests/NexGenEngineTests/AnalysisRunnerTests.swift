@@ -195,7 +195,7 @@ struct AnalysisRunnerPlumbingTests {
             sections: [AnalysisSection(index: 0, start: 0.0, end: 12.0, cluster: 0, source: "consolidated")]
         )
         let resolution = Consolidator.StructureResolution(
-            version: "system-structure/v3", status: .resolved,
+            version: "adaptive-structure/v4", status: .resolved,
             method: "music_understanding_hierarchy", detectorSources: ["apple_music_understanding"],
             minimumSectionBars: 0,
             candidateBoundaryCount: 0, consensusBoundaryCount: 0,
