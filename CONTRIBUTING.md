@@ -20,7 +20,9 @@ cd nexgenvideo
 
 Keep changes focused and open a pull request. Do not build, test, launch the app,
 or run `scripts/dev.sh` locally. NexGenVideo targets the latest macOS on Apple
-Silicon, and its authoritative verification runs only in GitHub Actions on `xcode-27`.
+Silicon, and its authoritative verification runs only in GitHub Actions. Builds,
+unit tests, and bundles use `xcode-27`; runtime-only APIs may require a configured
+runner that boots the current product minimum.
 
 ## Verification
 

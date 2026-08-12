@@ -13,8 +13,10 @@ section of `musicvideo/docs/v1-studio-plan.md`.
 
 ## Verification
 
-Never build, test, or launch the app locally. GitHub Actions on `xcode-27` is the
-only verification surface; do not run `scripts/dev.sh` or start a local dev server.
+Never build, test, or launch the app locally. GitHub Actions is the only verification surface:
+builds, unit tests, and bundles run on `xcode-27`; runtime tests of latest-macOS-only APIs run on a
+configured Actions runner that boots the current product minimum. Do not run `scripts/dev.sh` or
+start a local dev server.
 
 ## Code style
 
@@ -59,7 +61,9 @@ release or a wasted CI cycle.
 
 ### Building and releasing
 
-- **Never build locally.** CI (`xcode-27`) is the only verification surface.
+- **Never build locally.** GitHub Actions is the only verification surface. Use `xcode-27` for
+  builds, unit tests, and bundles; use a configured current-macOS runtime runner only for tests that
+  execute APIs unavailable on the `xcode-27` runner's older booted OS.
 - **Never merge to `main` or dispatch `release.yml` without the owner's explicit, in-the-moment
   "build now".** Stage the work, hold, ask. Concept approval is not build approval.
 - **One batch, one release.** Collect fixes and release once. Never propose an intermediate or
@@ -77,6 +81,8 @@ release or a wasted CI cycle.
 - GitHub's `xcode-27` preview runner currently boots macOS 26 while providing the macOS 27 SDK. The
   SwiftPM platform declaration remains a CI execution floor only so tests can run there; the shipped
   app's `LSMinimumSystemVersion` is the authoritative product floor and must remain macOS 27 or newer.
+- The private Music Understanding fixture workflow must fail closed unless `NGV_MACOS_27_RUNNER`
+  names one exact GitHub Actions runner label verified to boot macOS 27 or newer.
 
 ### The plugin pack — two ways to ship a crash CI cannot catch
 

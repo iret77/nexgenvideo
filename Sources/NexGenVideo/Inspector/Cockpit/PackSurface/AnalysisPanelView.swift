@@ -1,8 +1,46 @@
+import Foundation
 import SwiftUI
 
 // The `beatAnalysis` cockpit surface (musicvideo song analysis): read-only measured ground truth —
 // tempo, key, beat grid, sections — rendered from `analysis/<song>.json` via the host primitives.
 // No mutations: lyrics label the sections, they never move the measured boundaries.
+
+struct AnalysisRemeasurementPresentation: Equatable {
+    let trackName: String
+    let completedUnitCount: Int
+    let totalUnitCount: Int
+
+    static func current(
+        execution: PipelinePhaseExecutionSnapshot?,
+        dataRoot: URL?,
+        fallbackTrackName: String
+    ) -> Self? {
+        guard let execution,
+              execution.isRunning,
+              execution.phase == "analysis",
+              let dataRoot,
+              execution.projectRootPath == canonicalPath(dataRoot) else { return nil }
+        let total = max(0, execution.totalUnitCount)
+        let completed = min(max(0, execution.completedUnitCount), total)
+        let source = execution.sourceFilename?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = fallbackTrackName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trackName: String
+        if let source, !source.isEmpty {
+            trackName = source
+        } else {
+            trackName = fallback.isEmpty ? "Assigned track" : fallback
+        }
+        return Self(
+            trackName: trackName,
+            completedUnitCount: completed,
+            totalUnitCount: total
+        )
+    }
+
+    private static func canonicalPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+}
 
 struct AnalysisPanelView: View {
     @Environment(EditorViewModel.self) private var editor
@@ -21,7 +59,9 @@ struct AnalysisPanelView: View {
         VStack(spacing: AppTheme.Spacing.none) { content }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .task(id: editor.projectURL) { await load() }
-            .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
+            .onChange(of: editor.engineStateRevision) { _, _ in
+                Task { await load(showProgress: false) }
+            }
     }
 
     @ViewBuilder
@@ -39,8 +79,21 @@ struct AnalysisPanelView: View {
             CockpitStateView.empty(icon: "waveform", title: "No analysis yet",
                                    message: "Run the analysis phase to measure this song.")
         case .loaded(.some(let data)):
-            loadedBody(data)
+            loadedPanel(data)
         }
+    }
+
+    private func loadedPanel(_ data: AnalysisSurfaceData) -> some View {
+        loadedBody(data)
+            .overlay {
+                if let progress = AnalysisRemeasurementPresentation.current(
+                    execution: editor.pipelinePhaseExecution.snapshot,
+                    dataRoot: editor.workingRoot.flatMap(DataRootResolver.dataRoot),
+                    fallbackTrackName: data.trackName
+                ) {
+                    remeasurementOverlay(progress)
+                }
+            }
     }
 
     @ViewBuilder
@@ -203,19 +256,74 @@ struct AnalysisPanelView: View {
         )
     }
 
+    private func remeasurementOverlay(
+        _ progress: AnalysisRemeasurementPresentation
+    ) -> some View {
+        VStack {
+            Spacer()
+            VStack(spacing: AppTheme.Spacing.smMd) {
+                Image(systemName: "music.note")
+                    .font(.system(size: AppTheme.FontSize.title1))
+                    .foregroundStyle(AppTheme.Accent.timecodeColor)
+                Text("Re-measuring \(progress.trackName)")
+                    .font(.system(
+                        size: AppTheme.FontSize.md,
+                        weight: AppTheme.FontWeight.semibold
+                    ))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("A new analysis is running; the last-known grid stays until it completes.")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .multilineTextAlignment(.center)
+                if progress.totalUnitCount > 0 {
+                    ProgressView(
+                        value: Double(progress.completedUnitCount),
+                        total: Double(progress.totalUnitCount)
+                    )
+                    .progressViewStyle(.linear)
+                    .tint(AppTheme.Accent.timecodeColor)
+                    Text("\(progress.completedUnitCount) of \(progress.totalUnitCount)")
+                        .font(.system(size: AppTheme.FontSize.xxs).monospacedDigit())
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .padding(AppTheme.Spacing.lg)
+            .frame(maxWidth: AppTheme.ComponentSize.packSurfaceProgressMaxWidth)
+            .background(AppTheme.Background.raisedColor)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                    .strokeBorder(
+                        AppTheme.Border.subtleColor,
+                        lineWidth: AppTheme.BorderWidth.hairline
+                    )
+            )
+            Spacer()
+        }
+        .padding(AppTheme.Spacing.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.medium))
+        .allowsHitTesting(false)
+    }
+
     private func centeredProgress() -> some View {
         VStack { Spacer(); ProgressView().controlSize(.small); Spacer() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func load() async {
+    private func load(showProgress: Bool = true) async {
         guard let dir = editor.workingRoot else {
             state = .failed(.noProject)
             return
         }
         loadToken += 1
         let token = loadToken
-        state = .loading
+        if showProgress { state = .loading }
         let data = await Task.detached { () -> AnalysisSurfaceData? in
             guard let root = NativeCockpitReader.dataRoot(of: dir) else { return nil }
             return AnalysisSurfaceData.load(dataRoot: root)

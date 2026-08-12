@@ -332,19 +332,21 @@ public enum MusicvideoAnalysisRunner {
         if musicUnderstanding != nil,
            let index = diagnostics.firstIndex(where: { $0.stage == "music_understanding" }) {
             let resolved = canonical.structureResolution.status == .resolved
+            let detail: String
+            switch (resolved, systemRhythmApplied) {
+            case (true, true):
+                detail = "Measured rhythm and a verified section/segment/phrase hierarchy on device."
+            case (true, false):
+                detail = "Verified the measured section/segment/phrase hierarchy; retained fallback rhythm because the system rhythm report was inconsistent."
+            case (false, true):
+                detail = "Measured canonical rhythm, but the section/segment/phrase hierarchy was invalid."
+            case (false, false):
+                detail = "System rhythm was inconsistent and the section/segment/phrase hierarchy was invalid."
+            }
             diagnostics[index] = StageDiagnostic(
                 stage: "music_understanding",
                 status: resolved && systemRhythmApplied ? .succeeded : .degraded,
-                detail: switch (resolved, systemRhythmApplied) {
-                case (true, true):
-                    "Measured rhythm and a verified section/segment/phrase hierarchy on device."
-                case (true, false):
-                    "Verified the measured section/segment/phrase hierarchy; retained fallback rhythm because the system rhythm report was inconsistent."
-                case (false, true):
-                    "Measured canonical rhythm, but the section/segment/phrase hierarchy was invalid."
-                case (false, false):
-                    "System rhythm was inconsistent and the section/segment/phrase hierarchy was invalid."
-                }
+                detail: detail
             )
         }
 

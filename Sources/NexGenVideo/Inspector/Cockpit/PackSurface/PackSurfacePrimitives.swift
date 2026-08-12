@@ -44,7 +44,12 @@ struct StatTile: Identifiable, Equatable {
 /// A wrapping row of stat tiles (label + value).
 struct StatRow: View {
     let tiles: [StatTile]
-    private let columns = [GridItem(.adaptive(minimum: 116), spacing: AppTheme.Spacing.sm)]
+    private let columns = [
+        GridItem(
+            .adaptive(minimum: AppTheme.ComponentSize.packSurfaceStatTileMinWidth),
+            spacing: AppTheme.Spacing.sm
+        ),
+    ]
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: AppTheme.Spacing.sm) {

@@ -19,6 +19,7 @@
             "Out-of-order and non-finite system rhythm samples are normalized deterministically before structural validation.",
             "System rhythm and structure are validated independently; either one blocks approval when inconsistent without discarding the other's valid evidence.",
             "The Analysis surface now shows exact nested section, segment, and phrase ranges and opens from both its cockpit tab and the Pipeline phase row.",
+            "Re-running analysis keeps the last-known measurements visible under runner-reported progress until the replacement artifact is ready.",
             "Upgrading an existing Music Video project resets Audio Analysis and downstream approvals so the new measured hierarchy is established before work continues."
           ]
         }

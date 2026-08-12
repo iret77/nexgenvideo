@@ -309,6 +309,8 @@ enum AppTheme {
     enum ComponentSize {
         static let statusDotDiameter: CGFloat = 8
         static let thinkingDotDiameter: CGFloat = 5
+        static let packSurfaceStatTileMinWidth: CGFloat = 116
+        static let packSurfaceProgressMaxWidth: CGFloat = 360
         static let toolbarZoomWidth: CGFloat = 100
         static let homeSidebarWidth: CGFloat = 220
         static let homeCardOverlayHeight: CGFloat = 60

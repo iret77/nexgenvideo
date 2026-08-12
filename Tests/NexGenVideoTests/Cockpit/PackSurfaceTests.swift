@@ -138,6 +138,63 @@ struct PackSurfaceTests {
         #expect(PackSurfaceFormat.measuredTimecode(71.234) == "1:11.23")
     }
 
+    @Test("the analysis panel projects only its active project analysis run over last-known data")
+    func remeasurementPresentationIsProjectAndPhaseBound() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("analysis-panel-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let running = PipelinePhaseExecutionSnapshot(
+            runID: UUID(),
+            projectRootPath: root.standardizedFileURL.resolvingSymlinksInPath().path,
+            phase: "analysis",
+            sourceFilename: "song.mp3",
+            stageID: "measure_structure",
+            completedUnitCount: 3,
+            totalUnitCount: 7,
+            nextStageID: "align_lyrics",
+            status: .running
+        )
+
+        let presentation = AnalysisRemeasurementPresentation.current(
+            execution: running,
+            dataRoot: root,
+            fallbackTrackName: "fallback.mp3"
+        )
+        #expect(presentation?.trackName == "song.mp3")
+        #expect(presentation?.completedUnitCount == 3)
+        #expect(presentation?.totalUnitCount == 7)
+
+        var completed = running
+        completed.status = .completed
+        #expect(AnalysisRemeasurementPresentation.current(
+            execution: completed,
+            dataRoot: root,
+            fallbackTrackName: "fallback.mp3"
+        ) == nil)
+        let otherPhase = PipelinePhaseExecutionSnapshot(
+            runID: UUID(),
+            projectRootPath: running.projectRootPath,
+            phase: "brief",
+            sourceFilename: running.sourceFilename,
+            stageID: running.stageID,
+            completedUnitCount: running.completedUnitCount,
+            totalUnitCount: running.totalUnitCount,
+            nextStageID: running.nextStageID,
+            status: .running
+        )
+        #expect(AnalysisRemeasurementPresentation.current(
+            execution: otherPhase,
+            dataRoot: root,
+            fallbackTrackName: "fallback.mp3"
+        ) == nil)
+        #expect(AnalysisRemeasurementPresentation.current(
+            execution: running,
+            dataRoot: root.appendingPathComponent("other"),
+            fallbackTrackName: "fallback.mp3"
+        ) == nil)
+    }
+
     @Test("ContractData decodes pack-contributed cockpit_surfaces; legacy files decode empty")
     func contractCockpitSurfaces() throws {
         let json = """
