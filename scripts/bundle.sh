@@ -30,7 +30,7 @@ fi
 if [ -f "$ROOT/$ENV_FILE" ]; then
   echo "==> Loading $ENV_FILE"
   set -a
-  # shellcheck disable=SC1091
+  # shellcheck disable=SC1090
   . "$ROOT/$ENV_FILE"
   set +a
 fi
@@ -142,8 +142,8 @@ fi
 
 echo "==> Building ($CONFIG)"
 swift build -c "$CONFIG"
-BIN="$(swift build -c "$CONFIG" --show-bin-path)/NexGenVideo"
-SPARKLE_FW="$ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+BIN_DIRECTORY="$(swift build -c "$CONFIG" --show-bin-path)"
+BIN="$BIN_DIRECTORY/NexGenVideo"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
@@ -170,45 +170,19 @@ else
 fi
 
 cp "$RESOURCES/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
-cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/Sparkle.framework"
 
-# Vendored whisper.cpp (on-device ASR) — embed its framework so the app's AudioTranscribing seam
-# resolves @rpath/whisper.framework/Versions/Current/whisper via the @executable_path/../Frameworks
-# rpath added below. macOS/arm64 slice only (see Vendor/README.md).
-WHISPER_FW="$ROOT/Vendor/whisper.xcframework/macos-arm64_x86_64/whisper.framework"
-if [ -d "$WHISPER_FW" ]; then
-  cp -R "$WHISPER_FW" "$APP/Contents/Frameworks/whisper.framework"
-else
-  echo "!! missing vendored whisper.framework at $WHISPER_FW — the app links it and won't launch" >&2
-  exit 1
-fi
-
-# ONNX Runtime (Demucs + Beat This! inference) — a downloaded pod-archive binaryTarget. Locate the
-# macOS slice under SwiftPM's artifacts and embed it like the other frameworks.
-ORT_FW="$(find "$ROOT/.build/artifacts" -type d -name onnxruntime.framework -path '*macos*' 2>/dev/null | head -1)"
-if [ -n "$ORT_FW" ] && [ -d "$ORT_FW" ]; then
-  cp -R "$ORT_FW" "$APP/Contents/Frameworks/onnxruntime.framework"
-else
-  echo "!! onnxruntime.framework not found under .build/artifacts — the app links it and won't launch" >&2
-  exit 1
-fi
+"$ROOT/scripts/stage_runtime_dependencies.sh" \
+  "$APP/Contents/Frameworks" \
+  "$APP/Contents/MacOS/NexGenVideo" \
+  -- \
+  "$BIN_DIRECTORY" \
+  "$ROOT/Vendor" \
+  "$ROOT/.build/artifacts"
 
 # Stage source-controlled resources independently from compiler-generated resources.
 RES_BUNDLE="$(dirname "$BIN")/NexGenVideo_NexGenVideo.bundle"
+"$ROOT/scripts/compile_metal_resources.sh" "$ROOT/Metal" "$RES_BUNDLE"
 "$ROOT/scripts/stage_app_resources.sh" "$RESOURCES" "$RES_BUNDLE" "$APP/Contents/Resources"
-
-# The production engine is a SHARED dynamic library (libNexGenEngine.dylib), linked by BOTH the app
-# and every loadable format pack so they share one copy of the Pack/PackEntry metadata. Embed it in
-# Frameworks; the main binary already carries the @executable_path/../Frameworks rpath (added below),
-# and a plugin dylib's @rpath/libNexGenEngine.dylib dependency dyld-dedups onto this same image.
-# Format packs themselves ship OUTSIDE the app (signed .ngvpack, fetched on demand) — nothing to copy.
-ENGINE_DYLIB="$(dirname "$BIN")/libNexGenEngine.dylib"
-if [ -f "$ENGINE_DYLIB" ]; then
-  cp "$ENGINE_DYLIB" "$APP/Contents/Frameworks/libNexGenEngine.dylib"
-else
-  echo "!! missing libNexGenEngine.dylib at $ENGINE_DYLIB — the app links it dynamically and won't launch" >&2
-  exit 1
-fi
 
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/NexGenVideo"
 touch "$APP"
@@ -233,38 +207,31 @@ if [ "$MODE" = "dev" ]; then
   exit 0
 fi
 
-echo "==> Codesigning nested Sparkle helpers"
 SPARKLE_CURRENT="$APP/Contents/Frameworks/Sparkle.framework/Versions/Current"
-for helper in \
-    "$SPARKLE_CURRENT/Autoupdate" \
-    "$SPARKLE_CURRENT/Updater.app/Contents/MacOS/Updater" \
-    "$SPARKLE_CURRENT/Updater.app" \
-    "$SPARKLE_CURRENT/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" \
-    "$SPARKLE_CURRENT/XPCServices/Downloader.xpc" \
-    "$SPARKLE_CURRENT/XPCServices/Installer.xpc/Contents/MacOS/Installer" \
-    "$SPARKLE_CURRENT/XPCServices/Installer.xpc"; do
-  [ -e "$helper" ] && codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$helper"
+if [ -d "$SPARKLE_CURRENT" ]; then
+  echo "==> Codesigning nested Sparkle helpers"
+  for helper in \
+      "$SPARKLE_CURRENT/Autoupdate" \
+      "$SPARKLE_CURRENT/Updater.app/Contents/MacOS/Updater" \
+      "$SPARKLE_CURRENT/Updater.app" \
+      "$SPARKLE_CURRENT/XPCServices/Downloader.xpc/Contents/MacOS/Downloader" \
+      "$SPARKLE_CURRENT/XPCServices/Downloader.xpc" \
+      "$SPARKLE_CURRENT/XPCServices/Installer.xpc/Contents/MacOS/Installer" \
+      "$SPARKLE_CURRENT/XPCServices/Installer.xpc"; do
+    [ -e "$helper" ] && codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$helper"
+  done
+fi
+
+for framework in "$APP/Contents/Frameworks"/*.framework; do
+  [ -d "$framework" ] || continue
+  echo "==> Codesigning embedded framework $(basename "$framework")"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$framework"
 done
-
-echo "==> Codesigning Sparkle framework"
-codesign --force --options runtime --timestamp \
-  --sign "$SIGN_IDENTITY" \
-  "$APP/Contents/Frameworks/Sparkle.framework"
-
-echo "==> Codesigning embedded engine dylib"
-codesign --force --options runtime --timestamp \
-  --sign "$SIGN_IDENTITY" \
-  "$APP/Contents/Frameworks/libNexGenEngine.dylib"
-
-echo "==> Codesigning embedded whisper framework"
-codesign --force --options runtime --timestamp \
-  --sign "$SIGN_IDENTITY" \
-  "$APP/Contents/Frameworks/whisper.framework"
-
-echo "==> Codesigning embedded onnxruntime framework"
-codesign --force --options runtime --timestamp \
-  --sign "$SIGN_IDENTITY" \
-  "$APP/Contents/Frameworks/onnxruntime.framework"
+for dylib in "$APP/Contents/Frameworks"/*.dylib; do
+  [ -f "$dylib" ] || continue
+  echo "==> Codesigning embedded library $(basename "$dylib")"
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$dylib"
+done
 
 echo "==> Codesigning main app"
 codesign --force --options runtime --timestamp \

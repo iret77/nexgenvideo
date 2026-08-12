@@ -3,7 +3,7 @@ using namespace metal;
 
 // Per-pixel hue curves. Sampled at the pixel's hue from a 256-wide 1D LUT
 // (R=Δhue, G=satScale, B=Δlum). Sat-gated so near-grays stay neutral. Display-space HSV.
-// Compiled to a CI kernel by the MetalCIKernelPlugin (xcrun metal -fcikernel).
+// Compiled to a CI kernel by scripts/compile_metal_resources.sh.
 
 static float3 rgb2hsv(float3 c) {
     float4 K = float4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);

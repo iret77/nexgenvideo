@@ -18,6 +18,7 @@ struct AnalysisRemeasurementPresentation: Equatable {
         guard let execution,
               execution.isRunning,
               execution.phase == "analysis",
+              execution.stageID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
               let dataRoot,
               execution.projectRootPath == canonicalPath(dataRoot) else { return nil }
         let total = max(0, execution.totalUnitCount)

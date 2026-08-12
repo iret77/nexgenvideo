@@ -385,18 +385,24 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW" "$PLIST"
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
+      - name: Build the exact release test configuration
+        run: swift build -c release --build-tests
+
+      - name: Stage release test runtime inputs
+        run: scripts/stage_test_runtime.sh release
+
       - name: Test the exact release configuration
         run: |
           set +e
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
           attempts=3
           for i in $(seq 1 "$attempts"); do
-            swift test -c release 2>&1 | tee "release-test-attempt-$i.log"
+            swift test -c release --skip-build 2>&1 | tee "release-test-attempt-$i.log"
             code=${PIPESTATUS[0]}
             if [ "$code" -eq 0 ]; then
               exit 0
             fi
-            if grep -qE "✘ Test|recorded an issue" "release-test-attempt-$i.log"; then
+            if grep -qE "✘ Test|recorded an issue|Time limit was exceeded|Library not loaded|couldn.t be loaded|Failed to open test bundle" "release-test-attempt-$i.log"; then
               echo "::error::Release tests failed on attempt $i"
               exit "$code"
             fi

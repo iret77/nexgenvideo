@@ -7,21 +7,44 @@ DESTINATION="${3:?application resource destination required}"
 
 mkdir -p "$DESTINATION"
 
-for directory in Fonts Images Changelog; do
-  source="$SOURCE_ROOT/$directory"
-  if [ ! -d "$source" ]; then
-    echo "!! missing required application resource directory: $source" >&2
-    exit 1
-  fi
-  cp -R "$source" "$DESTINATION/"
-done
-
-MCP_BUNDLE="$SOURCE_ROOT/MCPB/nexgen.mcpb"
-if [ ! -f "$MCP_BUNDLE" ]; then
-  echo "!! missing required application resource: $MCP_BUNDLE" >&2
+MANIFEST="$SOURCE_ROOT/AppResources.txt"
+if [ ! -f "$MANIFEST" ]; then
+  echo "!! missing application resource manifest: $MANIFEST" >&2
   exit 1
 fi
-cp "$MCP_BUNDLE" "$DESTINATION/"
+
+resource_count=0
+destinations=()
+while IFS= read -r entry || [ -n "$entry" ]; do
+  entry="${entry%$'\r'}"
+  [ -n "$entry" ] || continue
+  case "$entry" in
+    /*|../*|*/../*|*/..) echo "!! invalid application resource path: $entry" >&2; exit 1 ;;
+  esac
+  source="$SOURCE_ROOT/$entry"
+  if [ ! -e "$source" ]; then
+    echo "!! missing required application resource: $source" >&2
+    exit 1
+  fi
+  destination_name="$(basename "$entry")"
+  if [ "${#destinations[@]}" -gt 0 ]; then
+    for existing_name in "${destinations[@]}"; do
+      if [ "$existing_name" = "$destination_name" ]; then
+        echo "!! duplicate application resource destination: $destination_name" >&2
+        exit 1
+      fi
+    done
+  fi
+  destinations+=("$destination_name")
+  target="$DESTINATION/$destination_name"
+  rm -rf "$target"
+  cp -R "$source" "$target"
+  resource_count=$((resource_count + 1))
+done < "$MANIFEST"
+if [ "$resource_count" -eq 0 ]; then
+  echo "!! application resource manifest is empty: $MANIFEST" >&2
+  exit 1
+fi
 
 metallib_count=0
 for metallib in "$BUILD_BUNDLE"/*.metallib; do

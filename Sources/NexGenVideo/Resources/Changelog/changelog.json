@@ -20,7 +20,7 @@
             "System rhythm and structure are validated independently; either one blocks approval when inconsistent without discarding the other's valid evidence.",
             "The Analysis surface now shows exact nested section, segment, and phrase ranges and opens from both its cockpit tab and the Pipeline phase row.",
             "Re-running analysis keeps the last-known measurements visible under runner-reported progress until the replacement artifact is ready.",
-            "Xcode 27 builds now stage static app resources and local binary test frameworks through explicit, independently verified runtime boundaries.",
+            "Xcode 27 builds now compile Metal resources from source and stage consumer-derived binary frameworks through explicit, independently verified runtime boundaries.",
             "Upgrading an existing Music Video project resets Audio Analysis and downstream approvals so the new measured hierarchy is established before work continues."
           ]
         }

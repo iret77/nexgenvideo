@@ -123,9 +123,40 @@ jobs:
           rm -rf "$RUNNER_TEMP/source-fixture-package" "$RUNNER_TEMP/source-fixture-data"
           rm -f "$RUNNER_TEMP/oras-auth.json"
 
+  build-runtime-harness:
+    name: Build Private Analysis Harness
+    needs: source-gate
+    # Compilation and bundling stay on the designated Xcode 27 build runner.
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-xcode-27
+
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+
+      - name: Bundle real app and external pack
+        run: |
+          set -euo pipefail
+          scripts/bundle.sh debug
+          scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
+          tar -czf "$RUNNER_TEMP/runtime-harness.tar.gz" \
+            -C .build \
+            NexGenVideo.app \
+            plugins/musicvideo.ngvpack
+
+      - name: Transfer runtime harness
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-analysis-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runtime-harness.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   analyze:
     name: Analyze Private Example
-    needs: source-gate
+    needs: build-runtime-harness
     # Apple Music Understanding must execute on the configured macOS 27 runtime.
     runs-on: ${{ vars.NGV_MACOS_27_RUNNER || 'ubuntu-24.04' }}
     # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
@@ -144,7 +175,19 @@ jobs:
             exit 1
           fi
 
-      - uses: ./.github/actions/setup-xcode-27
+      - name: Download runtime harness
+        uses: actions/download-artifact@v4
+        with:
+          name: private-analysis-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runtime-harness
+
+      - name: Restore runtime harness
+        run: |
+          set -euo pipefail
+          mkdir -p .build
+          tar -xzf "$RUNNER_TEMP/runtime-harness/runtime-harness.tar.gz" -C .build
+          [ -x .build/NexGenVideo.app/Contents/MacOS/NexGenVideo ]
+          [ -d .build/plugins/musicvideo.ngvpack ]
 
       - name: Install pinned ORAS CLI
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
@@ -179,14 +222,6 @@ jobs:
             --archive "$PACKAGE_DIR/examples.tar.gz" \
             --manifest "$PACKAGE_DIR/fixtures.manifest.json" \
             --destination "$EXTRACT_DIR"
-
-      - uses: ./.github/actions/cache-swiftpm-dependencies
-
-      - name: Bundle real app and external pack
-        run: |
-          set -euo pipefail
-          scripts/bundle.sh debug
-          scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
 
       - name: Run exact-file analysis through the real app and pack
         env:
@@ -232,4 +267,5 @@ jobs:
         if: ${{ always() }}
         run: |
           rm -rf "$RUNNER_TEMP/fixture-package" "$RUNNER_TEMP/fixture-data" "$RUNNER_TEMP/analysis-report"
+          rm -rf "$RUNNER_TEMP/runtime-harness" .build/NexGenVideo.app .build/plugins
           rm -f "$RUNNER_TEMP/oras-auth.json"

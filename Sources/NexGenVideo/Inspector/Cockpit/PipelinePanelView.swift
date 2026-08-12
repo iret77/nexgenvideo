@@ -353,21 +353,8 @@ struct PipelinePanelView: View {
         } label: {
             Text("Approve")
                 .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
-                .foregroundStyle(
-                    enabled ? AppTheme.Accent.timecodeColor : AppTheme.Text.mutedColor
-                )
-                .padding(.horizontal, AppTheme.Spacing.sm)
-                .padding(.vertical, AppTheme.Spacing.xxs)
-                .background(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                        .fill(
-                            enabled
-                                ? AppTheme.Accent.timecodeColor.opacity(AppTheme.Opacity.faint)
-                                : AppTheme.Background.raisedColor
-                        )
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.inlineAction(.approval))
         .disabled(!enabled)
         .help(
             enabled
@@ -570,20 +557,8 @@ struct PipelinePanelView: View {
                     Text(route.label)
                 }
                 .font(.system(size: AppTheme.FontSize.xxs))
-                .foregroundStyle(
-                    isPackRoute ? AppTheme.Accent.pack
-                        : (isEnabled ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
-                )
-                .padding(.horizontal, isPackRoute ? AppTheme.Spacing.xs : AppTheme.Spacing.none)
-                .padding(.vertical, isPackRoute ? AppTheme.Spacing.xxs : AppTheme.Spacing.none)
-                .background(
-                    isPackRoute
-                        ? AppTheme.Accent.pack.opacity(AppTheme.Opacity.faint)
-                        : AppTheme.Background.clearColor
-                )
-                .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.xs))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.inlineAction(isPackRoute ? .pack : .neutral))
             .disabled(!isEnabled)
             .help(isEnabled
                   ? "Open \(route.label) to read this phase's work · compute: \(route.taskClass)"

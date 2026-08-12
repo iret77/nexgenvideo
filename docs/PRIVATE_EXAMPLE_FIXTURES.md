@@ -76,15 +76,18 @@ private packages are unlinked, confirms that its dedicated package secret exists
 current index or reachable repository history if any blob matches private fixture content. It removes
 its temporary media and registry credentials before the macOS job can start.
 
-The macOS job then:
+The `xcode-27` build job first bundles the app and external pack without access to private fixture
+data, wraps both in a one-day runtime-harness artifact that preserves executable modes and framework
+symlinks, and transfers that artifact to the configured macOS 27 runtime runner. The runtime job then:
 
-1. pulls and verifies the private fixture by digest;
-2. bundles the real app and external `.ngvpack`;
-3. runs the headless app self-test with AVFoundation and the pack's real analysis phase;
-4. applies the pack's independent pre-interpretation gate;
-5. checks duration, BPM, boundary reduction, and every ordered section boundary against private,
+1. verifies the booted macOS version before downloading any artifact or private data;
+2. restores the prebuilt app and external `.ngvpack` with their runtime layout intact;
+3. pulls and verifies the private fixture by digest;
+4. runs the headless app self-test with AVFoundation and the pack's real analysis phase;
+5. applies the pack's independent pre-interpretation gate;
+6. checks duration, BPM, boundary reduction, and every ordered section boundary against private,
    independently produced expectations; and
-6. pushes `analysis.json` plus `provenance.json` to the private report package.
+7. pushes `analysis.json` plus `provenance.json` to the private report package.
 
 The provenance record links the result to the immutable fixture reference, tree and file digests,
 loaded pack version and bundle-tree digest, commit, workflow run, measured summary, actual optional
@@ -96,5 +99,5 @@ No media, lyrics, analysis, or provenance file is uploaded as a public Actions a
 job removes its fixture, report, and registry-auth directories after publication or failure.
 
 The real Music Understanding run requires macOS 27 at runtime. Once a runner label is configured, the
-macOS job verifies `sw_vers` before downloading private data or building; compiling against the macOS
-27 SDK is not treated as runtime evidence.
+runtime job verifies `sw_vers` before downloading the runtime harness or private data; compiling
+against the macOS 27 SDK is not treated as runtime evidence.

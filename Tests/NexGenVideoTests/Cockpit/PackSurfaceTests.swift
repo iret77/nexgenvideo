@@ -193,6 +193,13 @@ struct PackSurfaceTests {
             dataRoot: root.appendingPathComponent("other"),
             fallbackTrackName: "fallback.mp3"
         ) == nil)
+        var awaitingFirstStage = running
+        awaitingFirstStage.stageID = nil
+        #expect(AnalysisRemeasurementPresentation.current(
+            execution: awaitingFirstStage,
+            dataRoot: root,
+            fallbackTrackName: "fallback.mp3"
+        ) == nil)
     }
 
     @Test("ContractData decodes pack-contributed cockpit_surfaces; legacy files decode empty")
