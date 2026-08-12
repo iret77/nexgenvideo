@@ -48,6 +48,9 @@ jobs:
       - name: Build
         run: swift build
 
+      - name: Stage local binary frameworks for tests
+        run: scripts/stage_test_frameworks.sh "$(swift build --show-bin-path)"
+
       - name: Test
         shell: bash
         run: |

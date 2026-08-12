@@ -193,35 +193,9 @@ else
   exit 1
 fi
 
-# Flatten SwiftPM's resource bundle into the app's Resources tree.
+# Stage source-controlled resources independently from compiler-generated resources.
 RES_BUNDLE="$(dirname "$BIN")/NexGenVideo_NexGenVideo.bundle"
-if [ -d "$RES_BUNDLE/Fonts" ]; then
-  cp -R "$RES_BUNDLE/Fonts" "$APP/Contents/Resources/"
-else
-  echo "!! missing Fonts/ in SwiftPM resource bundle at $RES_BUNDLE" >&2
-  exit 1
-fi
-if [ -f "$RES_BUNDLE/nexgen.mcpb" ]; then
-  cp "$RES_BUNDLE/nexgen.mcpb" "$APP/Contents/Resources/"
-else
-  echo "!! missing nexgen.mcpb in SwiftPM resource bundle at $RES_BUNDLE" >&2
-  exit 1
-fi
-if [ -d "$RES_BUNDLE/Images" ]; then
-  cp -R "$RES_BUNDLE/Images" "$APP/Contents/Resources/"
-fi
-if [ -d "$RES_BUNDLE/Changelog" ]; then
-  cp -R "$RES_BUNDLE/Changelog" "$APP/Contents/Resources/"
-else
-  echo "!! missing Changelog/ in SwiftPM resource bundle at $RES_BUNDLE" >&2
-  exit 1
-fi
-
-if ! ls "$RES_BUNDLE"/*.metallib >/dev/null 2>&1; then
-  echo "!! no .metallib in SwiftPM resource bundle at $RES_BUNDLE — Metal effects would be missing" >&2
-  exit 1
-fi
-cp "$RES_BUNDLE"/*.metallib "$APP/Contents/Resources/"
+"$ROOT/scripts/stage_app_resources.sh" "$RESOURCES" "$RES_BUNDLE" "$APP/Contents/Resources"
 
 # The production engine is a SHARED dynamic library (libNexGenEngine.dylib), linked by BOTH the app
 # and every loadable format pack so they share one copy of the Pack/PackEntry metadata. Embed it in
