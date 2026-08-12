@@ -41,6 +41,8 @@ jobs:
       - name: Show toolchain
         run: swift --version
 
+      - uses: ./.github/actions/setup-xcode-27
+
       - name: Cache SwiftPM
         uses: actions/cache@v4
         with:

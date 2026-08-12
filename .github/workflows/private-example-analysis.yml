@@ -142,6 +142,8 @@ jobs:
             exit 1
           fi
 
+      - uses: ./.github/actions/setup-xcode-27
+
       - name: Install pinned ORAS CLI
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
         with:

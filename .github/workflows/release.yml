@@ -281,6 +281,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: ./.github/actions/setup-xcode-27
+
       - name: Resolve version + mode
         run: |
           set -euo pipefail
