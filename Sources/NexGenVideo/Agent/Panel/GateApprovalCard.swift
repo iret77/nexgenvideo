@@ -14,9 +14,9 @@ struct GateApprovalCard: View {
             return "Review the exact measured sections in Analysis first."
         }
         switch surface ?? "" {
-        case "review": "Read it in the Review tab first."
-        case "prose": "Read it in the Story tab first."
-        default: nil
+        case "review": return "Read it in the Review tab first."
+        case "prose": return "Read it in the Story tab first."
+        default: return nil
         }
     }
 
