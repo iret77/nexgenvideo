@@ -12,7 +12,7 @@ struct ConsolidatorTests {
         return zip(times, times.dropFirst()).enumerated().map { item in
             let index = item.offset
             let pair = item.element
-            AnalysisSection(
+            return AnalysisSection(
                 index: index, start: pair.0, end: pair.1, cluster: index, source: source
             )
         }
