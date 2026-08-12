@@ -1298,10 +1298,10 @@ enum MusicvideoGateChecks {
             }
         if allMarkersResolved {
             let lastMarker = reconstructedMarkers.keys.max() ?? 0
-            if let terminal = rebuilt.groups.values
+            let terminalGroups = rebuilt.groups.values
                 .filter { $0.sources.count >= 2 }
                 .sorted(by: { $0.time > $1.time })
-                .first(where: {
+            if let terminal = terminalGroups.first(where: {
                     $0.time - lastMarker >= minimumSpan
                         && duration - $0.time >= minimumTerminalSpan
                 }) {
