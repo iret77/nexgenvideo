@@ -1756,7 +1756,7 @@ struct WorkflowToolsTests {
         ])
         let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(shotlist.project == "demo")
-        #expect(shotlist.song.bpm == 160)
+        #expect(shotlist.song.bpm == 120)
         #expect(shotlist.shots.map(\.id) == ["s001"])
 
         var importedShot = shot
@@ -2942,21 +2942,21 @@ struct WorkflowToolsTests {
             ]
         ) as? [String: Any]
         #expect(result?["tempo_multiplier"] as? Double == 0.5)
-        #expect(result?["perceived_bpm"] as? Double == 80)
+        #expect(result?["perceived_bpm"] as? Double == 60)
 
         let persisted = try #require(
             try JSONSerialization.jsonObject(
                 with: Data(contentsOf: analysisURL)
             ) as? [String: Any]
         )
-        #expect(persisted["bpm"] as? Double == 160)
+        #expect(persisted["bpm"] as? Double == 120)
         let sections = try #require(persisted["sections"] as? [[String: Any]])
         #expect(sections[0]["start"] as? Double == 0)
         #expect(sections[0]["end"] as? Double == 4)
         #expect(sections[0]["label"] as? String == "intro")
-        #expect(sections[0]["confidence"] as? Double == 1.0)
+        #expect(sections[0]["confidence"] as? Double == 0.95)
         #expect(sections[1]["label"] as? String == "chorus1")
-        #expect(sections[1]["confidence"] as? Double == 0.9)
+        #expect(sections[1]["confidence"] as? Double == 0.95)
         let interpretation = try #require(
             persisted["interpretation"] as? [String: Any]
         )

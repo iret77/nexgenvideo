@@ -35,7 +35,7 @@ struct PluginCatalogPublicationTests {
             "displayName": "Music Video",
             "version": "1.0.0",
             "projectSchema": "musicvideo/2.0.0",
-            "migratesFrom": ["musicvideo/legacy"],
+            "migratesFrom": ["musicvideo/legacy", "musicvideo/1.0.0"],
             "minAppVersion": "1.0.0",
             "zip": "musicvideo.ngvpack.zip",
             "sha256": sha256,
