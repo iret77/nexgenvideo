@@ -89,7 +89,7 @@ struct AnalysisPanelView: View {
                 if let progress = AnalysisRemeasurementPresentation.current(
                     execution: editor.pipelinePhaseExecution.snapshot,
                     dataRoot: editor.workingRoot.flatMap {
-                        DataRootResolver.dataRoot(of: $0)
+                        NativeCockpitReader.dataRoot(of: $0)
                     },
                     fallbackTrackName: data.trackName
                 ) {
