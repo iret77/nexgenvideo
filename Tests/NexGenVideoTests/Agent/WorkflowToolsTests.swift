@@ -3035,7 +3035,7 @@ struct WorkflowToolsTests {
         )
 
         #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("canonical section structure is unresolved"))
+        #expect(ToolHarness.textOf(result).contains("native structure remains unresolved"))
         #expect(try Data(contentsOf: analysisURL) == before)
     }
 

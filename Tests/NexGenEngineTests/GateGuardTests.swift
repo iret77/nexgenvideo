@@ -486,8 +486,7 @@ struct GateGuardTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let url = try writeConsolidatedAnalysis(
             root,
-            detectorBoundaries: [[23.3], [25.1]],
-            includeSystemHierarchy: false
+            detectorBoundaries: [[23.3], [25.1]]
         )
         var object = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
