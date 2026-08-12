@@ -9,10 +9,25 @@ esac
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SWIFT="${NGV_SWIFT:-swift}"
+XCRUN="${NGV_XCRUN:-xcrun}"
 VENDOR_ARTIFACT_ROOT="${NGV_VENDOR_ARTIFACT_ROOT:-$ROOT/Vendor}"
 SWIFTPM_ARTIFACT_ROOT="${NGV_SWIFTPM_ARTIFACT_ROOT:-$ROOT/.build/artifacts}"
 if ! command -v "$SWIFT" >/dev/null 2>&1; then
   echo "!! swift is required to locate built test products" >&2
+  exit 1
+fi
+if ! command -v "$XCRUN" >/dev/null 2>&1; then
+  echo "!! xcrun is required to locate the active Swift runtime" >&2
+  exit 1
+fi
+
+SWIFT_RUNTIME_ROOT="${NGV_SWIFT_RUNTIME_ROOT:-}"
+if [ -z "$SWIFT_RUNTIME_ROOT" ]; then
+  SWIFT_EXECUTABLE="$("$XCRUN" --find swift)"
+  SWIFT_RUNTIME_ROOT="$(cd "$(dirname "$SWIFT_EXECUTABLE")/../lib/swift/macosx" && pwd)"
+fi
+if [ ! -d "$SWIFT_RUNTIME_ROOT" ]; then
+  echo "!! active Swift runtime root does not exist: $SWIFT_RUNTIME_ROOT" >&2
   exit 1
 fi
 BIN_DIRECTORY="$("$SWIFT" build -c "$CONFIGURATION" --show-bin-path)"
@@ -46,4 +61,5 @@ fi
   -- \
   "$BIN_DIRECTORY" \
   "$VENDOR_ARTIFACT_ROOT" \
-  "$SWIFTPM_ARTIFACT_ROOT"
+  "$SWIFTPM_ARTIFACT_ROOT" \
+  "$SWIFT_RUNTIME_ROOT"

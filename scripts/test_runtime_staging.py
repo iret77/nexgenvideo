@@ -244,7 +244,7 @@ class RuntimeStagingTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("no declared macOS arm64 artifact provides", result.stderr)
 
-    def test_runtime_dependency_staging_fails_on_ambiguous_artifacts(self):
+    def test_runtime_dependency_staging_uses_declared_root_precedence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             consumer = root / "consumer"
@@ -259,6 +259,43 @@ class RuntimeStagingTests(unittest.TestCase):
             second.mkdir()
             self.write_framework(first, "Shared")
             self.write_framework(second, "Shared")
+            (first / "Shared.framework/Versions/A/Shared").write_text("first")
+            (second / "Shared.framework/Versions/A/Shared").write_text("second")
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            environment = os.environ.copy()
+            environment["NGV_XCRUN"] = str(self.write_fake_xcrun(root))
+
+            subprocess.run(
+                [
+                    ROOT / "scripts/stage_runtime_dependencies.sh",
+                    bin_directory / "PackageFrameworks",
+                    consumer,
+                    "--",
+                    first,
+                    second,
+                ],
+                check=True,
+                env=environment,
+            )
+
+            staged = bin_directory / "PackageFrameworks/Shared.framework/Versions/A/Shared"
+            self.assertEqual(staged.read_text(), "first")
+
+    def test_runtime_dependency_staging_fails_on_ambiguity_within_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            consumer = root / "consumer"
+            consumer.write_text("test")
+            consumer.with_suffix(".deps").write_text(
+                "@rpath/Shared.framework/Versions/A/Shared "
+                "(compatibility version 1.0.0)\n"
+            )
+            artifacts = root / "artifacts"
+            (artifacts / "first").mkdir(parents=True)
+            (artifacts / "second").mkdir(parents=True)
+            self.write_framework(artifacts / "first", "Shared")
+            self.write_framework(artifacts / "second", "Shared")
             bin_directory = root / "bin"
             bin_directory.mkdir()
             environment = os.environ.copy()
@@ -270,8 +307,7 @@ class RuntimeStagingTests(unittest.TestCase):
                     bin_directory / "PackageFrameworks",
                     consumer,
                     "--",
-                    first,
-                    second,
+                    artifacts,
                 ],
                 capture_output=True,
                 text=True,
@@ -318,8 +354,10 @@ class RuntimeStagingTests(unittest.TestCase):
             (bin_directory / "NexGenVideo_NexGenVideo.bundle").mkdir()
             vendor = root / "vendor"
             artifacts = root / "artifacts"
+            swift_runtime = root / "swift-runtime"
             vendor.mkdir()
             artifacts.mkdir()
+            swift_runtime.mkdir()
             for name, framework in (
                 ("NexGenVideoTests", "whisper"),
                 ("NexGenEngineTests", "Sparkle"),
@@ -332,6 +370,16 @@ class RuntimeStagingTests(unittest.TestCase):
                     "(compatibility version 1.0.0)\n"
                 )
                 self.write_framework(artifacts, framework)
+            app_tests = (
+                bin_directory
+                / "NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests"
+            )
+            with app_tests.with_suffix(".deps").open("a") as dependencies:
+                dependencies.write(
+                    "@rpath/Testing.framework/Versions/A/Testing "
+                    "(compatibility version 1.0.0)\n"
+                )
+            self.write_framework(swift_runtime, "Testing")
             fake_swift = root / "swift"
             fake_swift.write_text(f"#!/bin/bash\nprintf '%s\\n' '{bin_directory}'\n")
             fake_swift.chmod(0o700)
@@ -340,6 +388,7 @@ class RuntimeStagingTests(unittest.TestCase):
             environment["NGV_XCRUN"] = str(self.write_fake_xcrun(root))
             environment["NGV_VENDOR_ARTIFACT_ROOT"] = str(vendor)
             environment["NGV_SWIFTPM_ARTIFACT_ROOT"] = str(artifacts)
+            environment["NGV_SWIFT_RUNTIME_ROOT"] = str(swift_runtime)
 
             subprocess.run(
                 [ROOT / "scripts/stage_test_runtime.sh", "debug"],
@@ -350,6 +399,7 @@ class RuntimeStagingTests(unittest.TestCase):
             runtime = bin_directory / "PackageFrameworks"
             self.assertTrue((runtime / "whisper.framework").is_dir())
             self.assertTrue((runtime / "Sparkle.framework").is_dir())
+            self.assertTrue((runtime / "Testing.framework").is_dir())
             self.assertGreater(
                 len(list((bin_directory / "NexGenVideo_NexGenVideo.bundle").glob("*.metallib"))),
                 0,

@@ -94,23 +94,29 @@ resolve_framework() {
   local match_count=0
   local root candidate binary
   for root in "${roots[@]}"; do
+    selected=""
+    match_count=0
     while IFS= read -r candidate; do
       binary="$candidate/$executable"
       [ -f "$binary" ] || continue
       is_macos_arm64 "$binary" || continue
       selected="$candidate"
       match_count=$((match_count + 1))
-    done < <(find "$root" -path "$DESTINATION" -prune -o -type d -name "$framework" -print)
+    done < <(
+      find "$root" -path "$DESTINATION" -prune -o \
+        -type d -name "$framework" -print -prune
+    )
+    if [ "$match_count" -gt 1 ]; then
+      echo "!! ambiguous macOS arm64 artifact for @rpath/$framework/$executable in $root ($match_count matches)" >&2
+      exit 1
+    fi
+    if [ "$match_count" -eq 1 ]; then
+      cp -R "$selected" "$DESTINATION/$framework"
+      return
+    fi
   done
-  if [ "$match_count" -eq 0 ]; then
-    echo "!! no declared macOS arm64 artifact provides @rpath/$framework/$executable" >&2
-    exit 1
-  fi
-  if [ "$match_count" -ne 1 ]; then
-    echo "!! ambiguous macOS arm64 artifact for @rpath/$framework/$executable ($match_count matches)" >&2
-    exit 1
-  fi
-  cp -R "$selected" "$DESTINATION/$framework"
+  echo "!! no declared macOS arm64 artifact provides @rpath/$framework/$executable" >&2
+  exit 1
 }
 
 resolve_dylib() {
@@ -121,22 +127,25 @@ resolve_dylib() {
   local root candidate
   filename="$(basename "$relative")"
   for root in "${roots[@]}"; do
+    selected=""
+    match_count=0
     while IFS= read -r candidate; do
       is_macos_arm64 "$candidate" || continue
       selected="$candidate"
       match_count=$((match_count + 1))
     done < <(find "$root" -path "$DESTINATION" -prune -o -type f -name "$filename" -print)
+    if [ "$match_count" -gt 1 ]; then
+      echo "!! ambiguous macOS arm64 artifact for @rpath/$relative in $root ($match_count matches)" >&2
+      exit 1
+    fi
+    if [ "$match_count" -eq 1 ]; then
+      mkdir -p "$(dirname "$DESTINATION/$relative")"
+      cp "$selected" "$DESTINATION/$relative"
+      return
+    fi
   done
-  if [ "$match_count" -eq 0 ]; then
-    echo "!! no declared macOS arm64 artifact provides @rpath/$relative" >&2
-    exit 1
-  fi
-  if [ "$match_count" -ne 1 ]; then
-    echo "!! ambiguous macOS arm64 artifact for @rpath/$relative ($match_count matches)" >&2
-    exit 1
-  fi
-  mkdir -p "$(dirname "$DESTINATION/$relative")"
-  cp "$selected" "$DESTINATION/$relative"
+  echo "!! no declared macOS arm64 artifact provides @rpath/$relative" >&2
+  exit 1
 }
 
 for consumer in "${consumers[@]}"; do
