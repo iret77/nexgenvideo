@@ -26,4 +26,4 @@ No. There is no login and no hosted service. Keys live in your macOS Keychain; p
 
 **What platforms does it support?**
 
-macOS 26 (Tahoe) on Apple Silicon.
+The latest macOS (currently macOS 27) on Apple Silicon. Compatibility with older macOS releases is not maintained.

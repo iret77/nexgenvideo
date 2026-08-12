@@ -10,9 +10,13 @@
 ## 1. Was NexGenVideo ist
 
 NexGenVideo ist ein **KI-nativer macOS-Videoeditor**, technischer Fork von
-`palmier-io/palmier-pro` (Swift 6.2, SwiftUI + AppKit, AVFoundation, macOS 26, arm64,
+`palmier-io/palmier-pro` (Swift 6.2, SwiftUI + AppKit, AVFoundation, latest macOS only — currently macOS 27, arm64,
 non-sandboxed Developer-ID-App), aber **in sich vollständig autonom**: nutzbar **ohne jede
 Verbindung, Referenz oder Abhängigkeit zum Upstream-Projekt oder dessen Diensten**.
+
+Das Projekt ist Open Source, wird aber primär für seinen Owner entwickelt. Es unterstützt bewusst
+nur das jeweils neueste macOS und übernimmt nützliche neue Apple-APIs unmittelbar; Kompatibilität
+mit älteren macOS-Versionen ist kein Produktziel und kann bei Bedarf in Forks gepflegt werden.
 
 Kernidee: **Du arbeitest in NexGen mit Claude bidirektional zusammen.** Claude bedient alle
 Tools, generiert und orchestriert die Projektarbeit; du schaust über die NexGen-UI zu und
@@ -304,7 +308,7 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 ## 11. Build-/CI-Realität (verbindlich)
 
 **Kein lokaler Build — niemals.** Verifikation ausschließlich über **GitHub Actions**
-(`ci.yml`, `macos-26`, `swift build` + `swift test`). Signiert + notarisiert über **unsere eigene
+(`ci.yml`, `xcode-27`, `swift build` + `swift test`). Signiert + notarisiert über **unsere eigene
 high5 Developer ID** (`release.yml`, App-Store-Connect-API-Key, EdDSA-Sparkle-Key). `dev-latest` =
 rollendes signiertes Prerelease als öffentlicher Direktlink **für die App (DMG)**; die Format-Packs
 laufen über den davon entkoppelten, append-only `plugins`-Kanal. PRs immer `--repo iret77/nexgenvideo`.

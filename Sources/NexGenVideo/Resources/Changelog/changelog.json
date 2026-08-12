@@ -2,6 +2,27 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "2.0.0",
+      "date": "2026-08-12",
+      "sections": [
+        {
+          "heading": "Platform",
+          "items": [
+            "NexGenVideo now requires the latest macOS, currently macOS 27, so it can use the newest native media capabilities without a backward-compatibility layer."
+          ]
+        },
+        {
+          "heading": "Audio analysis",
+          "items": [
+            "Song rhythm and form now come from Apple Music Understanding's on-device beat, bar, section, segment, and phrase measurements.",
+            "Native MFCC and Mel change points remain visible as diagnostics but can no longer become canonical song sections.",
+            "Incomplete or inconsistent system hierarchy data blocks approval instead of producing plausible but unreliable section labels.",
+            "Upgrading an existing Music Video project resets Audio Analysis and downstream approvals so the new measured hierarchy is established before work continues."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.1.1",
       "date": "2026-08-12",
       "sections": [

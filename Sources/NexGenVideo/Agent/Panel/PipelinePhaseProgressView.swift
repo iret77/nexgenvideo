@@ -122,9 +122,9 @@ private struct PipelinePhaseProgressPresentation {
         case "separate_stems":
             title = "Isolating vocals and stems"
             detail = "Separating the mix for cleaner musical and lyric analysis."
-        case "detect_beat_grid":
-            title = "Detecting tempo and beat grid"
-            detail = "Measuring beats, downbeats and tempo from the track."
+        case "resolve_beat_grid":
+            title = "Resolving tempo and beat grid"
+            detail = "Validating the measured rhythm grid for the track."
         case "detect_harmony":
             title = "Detecting key and chords"
             detail = "Reading the harmonic structure of the track."

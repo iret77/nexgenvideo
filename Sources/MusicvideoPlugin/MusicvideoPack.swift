@@ -5,7 +5,7 @@ import NexGenEngine
 /// (id/version/minAppVersion/displayName/tagline) mirrors `plugins/musicvideo.json`,
 /// which the release assembles into the `.ngvpack`'s Info.plist `NGVMinAppVersion` —
 /// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
-let musicvideoMinAppVersion = "1.1.1"
+let musicvideoMinAppVersion = "2.0.0"
 
 /// The musicvideo pack — registers music-specific behavior into the generic
 /// engine. Port of `nexgen_pack_musicvideo/pack.py`.
@@ -35,20 +35,33 @@ public struct MusicDurationPolicy: DurationPolicy {
 ///
 /// The `analysis` phase runner (M8c) locates the song in the project's
 /// `audio/` dir, decodes it via the host-injected `AudioPCMDecoding`, runs the
-/// native DSP pipeline, and persists `analysis/<song>.json`. It resolves the
+/// system music analysis plus native feature diagnostics, and persists
+/// `analysis/<song>.json`. It resolves the
 /// decoder from the registry at run time — nil decoder → an actionable error,
 /// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.1.1"
+    public let version = "0.2.0"
 
     static let productionProfiles: [ProductionProfile] = [
         StandardProductionProfiles.generativeFilm,
         StandardProductionProfiles.narrativeStorytelling,
     ]
 
-    private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
-        _ = projectURL
+    private static func migrateToMeasuredStructure(_ projectURL: URL) throws {
+        guard let dataRoot = DataRootResolver.dataRoot(of: projectURL) else {
+            throw GateBlocked(
+                "Can't upgrade the Music Video project: its pipeline data root is invalid."
+            )
+        }
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        _ = try GatesOperations.rewindTo(
+            &gates,
+            target: "analysis",
+            order: MusicvideoPipelineLineage.phases
+        )
+        try store.save(gates, to: PipelineLayout.gatesFile)
     }
 
     /// Values mirror the retired `plugins/musicvideo/ngv-plugin.json`. The badge ships INSIDE the
@@ -156,8 +169,13 @@ public struct MusicvideoPack: Pack {
     public func register(_ registry: EngineRegistry) {
         registry.registerProjectSchemaMigration(
             from: "musicvideo/legacy",
-            to: "musicvideo/1.0.0",
-            migrate: Self.adoptLegacyProjectSchema
+            to: "musicvideo/2.0.0",
+            migrate: Self.migrateToMeasuredStructure
+        )
+        registry.registerProjectSchemaMigration(
+            from: "musicvideo/1.0.0",
+            to: "musicvideo/2.0.0",
+            migrate: Self.migrateToMeasuredStructure
         )
         // Wiring-liveness probe: proves this pack's code is actually installed into the registry the
         // runtime built for a session (not silently absent). See PackWiring.
@@ -208,26 +226,53 @@ public struct MusicvideoPack: Pack {
             guard let registry, let decoder = registry.audioDecoder else {
                 throw MusicvideoAnalysisRunner.RunError.noDecoder
             }
-            _ = try MusicvideoAnalysisRunner.run(
-                dataRoot: dataRoot, decoder: decoder,
-                transcriber: registry.transcriber,
-                separator: registry.stemSeparator,
-                beatDetector: registry.beatDetector,
-                chordRecognizer: registry.chordRecognizer)
+            if let analyzer = registry.musicUnderstandingAnalyzer {
+                _ = try MusicvideoAnalysisRunner.runWithSystemAnalysis(
+                    dataRoot: dataRoot,
+                    decoder: decoder,
+                    transcriber: registry.transcriber,
+                    separator: registry.stemSeparator,
+                    beatDetector: registry.beatDetector,
+                    chordRecognizer: registry.chordRecognizer,
+                    musicUnderstandingAnalyzer: analyzer
+                )
+            } else {
+                _ = try MusicvideoAnalysisRunner.run(
+                    dataRoot: dataRoot,
+                    decoder: decoder,
+                    transcriber: registry.transcriber,
+                    separator: registry.stemSeparator,
+                    beatDetector: registry.beatDetector,
+                    chordRecognizer: registry.chordRecognizer
+                )
+            }
         }
         registry.registerProgressPhaseRunner("analysis") { [weak registry] dataRoot, progress in
             guard let registry, let decoder = registry.audioDecoder else {
                 throw MusicvideoAnalysisRunner.RunError.noDecoder
             }
-            _ = try MusicvideoAnalysisRunner.run(
-                dataRoot: dataRoot,
-                decoder: decoder,
-                transcriber: registry.transcriber,
-                separator: registry.stemSeparator,
-                beatDetector: registry.beatDetector,
-                chordRecognizer: registry.chordRecognizer,
-                progress: progress
-            )
+            if let analyzer = registry.musicUnderstandingAnalyzer {
+                _ = try MusicvideoAnalysisRunner.runWithSystemAnalysis(
+                    dataRoot: dataRoot,
+                    decoder: decoder,
+                    transcriber: registry.transcriber,
+                    separator: registry.stemSeparator,
+                    beatDetector: registry.beatDetector,
+                    chordRecognizer: registry.chordRecognizer,
+                    musicUnderstandingAnalyzer: analyzer,
+                    progress: progress
+                )
+            } else {
+                _ = try MusicvideoAnalysisRunner.run(
+                    dataRoot: dataRoot,
+                    decoder: decoder,
+                    transcriber: registry.transcriber,
+                    separator: registry.stemSeparator,
+                    beatDetector: registry.beatDetector,
+                    chordRecognizer: registry.chordRecognizer,
+                    progress: progress
+                )
+            }
         }
         // #174: the one-song contract is load-bearing — analysis is meaningless without exactly one
         // song in audio/. Pin it to the engine so a missing/duplicate song blocks the phase upfront.

@@ -159,23 +159,23 @@ struct WorkflowToolsTests {
             withIntermediateDirectories: true
         )
         let object: [String: Any] = [
-            "schema": "analysis/v2",
+            "schema": "analysis/v3",
             "project": "demo",
             "song_path": "audio/song.wav",
             "song_sha256": songHash,
             "sample_rate": 44_100,
             "duration_s": 12,
-            "bpm": 160,
-            "beats": [0.0, 0.5, 1.0],
+            "bpm": 120,
+            "beats": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
             "downbeats": [0.0, 2.0, 4.0],
             "sections": [
                 [
                     "index": 0, "start": 0.0, "end": 4.0, "cluster": 0,
-                    "source": "measured_track_extent", "confidence": 1.0,
+                    "label": "intro", "source": "measured_system_hierarchy", "confidence": 0.95,
                 ],
                 [
                     "index": 1, "start": 4.0, "end": 12.0, "cluster": 1,
-                    "source": "measured_alignment_fusion", "confidence": 0.9,
+                    "label": "verse", "source": "measured_system_hierarchy", "confidence": 0.95,
                 ],
             ],
             "structure_candidates": [
@@ -189,25 +189,46 @@ struct WorkflowToolsTests {
                 ]],
             ],
             "structure_resolution": [
-                "version": "bar-consensus/v1",
+                "version": "system-structure/v3",
                 "status": "resolved",
-                "method": "per_boundary_evidence",
-                "detector_sources": ["essentia", "librosa"],
-                "minimum_section_bars": 8,
+                "method": "music_understanding_hierarchy",
+                "detector_sources": ["apple_music_understanding"],
+                "minimum_section_bars": 0,
                 "candidate_boundary_count": 2,
-                "consensus_boundary_count": 1,
+                "consensus_boundary_count": 0,
                 "alignment_marker_count": 2,
                 "resolved_alignment_marker_count": 2,
                 "accepted_boundary_count": 1,
-                "discarded_boundary_count": 0,
-                "boundary_evidence": [[
-                    "time": 4.0,
-                    "kind": "lyrics_supported_acoustic",
-                    "detector_sources": ["essentia", "librosa"],
-                    "lyric_marker": "verse",
-                ]],
-                "detail": "Every lyric section marker selected a measured acoustic boundary.",
+                "discarded_boundary_count": 2,
+                "boundary_evidence": [
+                    [
+                        "time": 0.0,
+                        "kind": "system_hierarchy",
+                        "detector_sources": ["apple_music_understanding"],
+                        "lyric_marker": "intro",
+                    ],
+                    [
+                        "time": 4.0,
+                        "kind": "system_hierarchy",
+                        "detector_sources": ["apple_music_understanding"],
+                        "lyric_marker": "verse",
+                    ],
+                ],
+                "hierarchy": [
+                    "source": "apple_music_understanding",
+                    "sections": [["start": 0.0, "end": 4.0], ["start": 4.0, "end": 12.0]],
+                    "segments": [["start": 0.0, "end": 4.0], ["start": 4.0, "end": 12.0]],
+                    "phrases": [["start": 0.0, "end": 4.0], ["start": 4.0, "end": 12.0]],
+                ],
+                "detail": "Measured system hierarchy.",
             ],
+            "downbeat_source": "music-understanding",
+            "pipeline_stages": ["structure", "music_understanding"],
+            "stage_diagnostics": [[
+                "stage": "music_understanding",
+                "status": "succeeded",
+                "detail": "Measured system hierarchy.",
+            ]],
             "alignment": [
                 ["start": 0.0, "end": 1.0, "text": "opening line", "section_marker": "intro", "words": [
                     ["text": "opening", "start": 0.0, "end": 0.4, "score": 1.0],
@@ -235,7 +256,7 @@ struct WorkflowToolsTests {
         return analysis
     }
 
-    private func writeReviewRequiredAnalysis(dataRoot: URL) throws -> URL {
+    private func writeUnresolvedAnalysis(dataRoot: URL) throws -> URL {
         let url = try writeMeasuredAnalysis(dataRoot: dataRoot)
         var object = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
@@ -245,18 +266,18 @@ struct WorkflowToolsTests {
             "start": 0.0,
             "end": 12.0,
             "cluster": 0,
-            "source": "measured_track_extent",
+            "source": "unresolved_structure",
         ]]
         object["structure_candidates"] = [[
             "source": "librosa",
             "sections": [["index": 0, "start": 0.0, "end": 12.0, "cluster": 0]],
         ]]
         object["structure_resolution"] = [
-            "version": "bar-consensus/v1",
-            "status": "review_required",
-            "method": "phrase_filtered_acoustic",
+            "version": "system-structure/v3",
+            "status": "needs_review",
+            "method": "unresolved",
             "detector_sources": ["librosa"],
-            "minimum_section_bars": 8,
+            "minimum_section_bars": 0,
             "candidate_boundary_count": 0,
             "consensus_boundary_count": 0,
             "alignment_marker_count": 0,
@@ -264,7 +285,7 @@ struct WorkflowToolsTests {
             "accepted_boundary_count": 0,
             "discarded_boundary_count": 0,
             "boundary_evidence": [],
-            "detail": "Single-detector full-track structure requires review.",
+            "detail": "No complete system hierarchy is available.",
         ]
         object["alignment"] = []
         try JSONSerialization.data(withJSONObject: object).write(to: url)
@@ -2958,12 +2979,12 @@ struct WorkflowToolsTests {
         #expect(!String(decoding: encoded, as: UTF8.self).contains(#"audio\/song.wav"#))
     }
 
-    @Test("write_analysis_interpretation accepts a measured review-required structure")
-    func writeAnalysisInterpretationForReviewRequiredStructure() async throws {
+    @Test("write_analysis_interpretation rejects an unresolved structure")
+    func writeAnalysisInterpretationRejectsUnresolvedFixture() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
-        _ = try writeReviewRequiredAnalysis(dataRoot: dataRoot)
+        _ = try writeUnresolvedAnalysis(dataRoot: dataRoot)
 
         let result = await h.runRaw(
             "write_analysis_interpretation",
@@ -2980,7 +3001,7 @@ struct WorkflowToolsTests {
             ]
         )
 
-        #expect(!result.isError)
+        #expect(result.isError)
     }
 
     @Test("write_analysis_interpretation cannot hide unresolved section timing")

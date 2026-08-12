@@ -1,6 +1,6 @@
 # NexGenVideo
 
-AI-native macOS video editor. Swift 6.2, SwiftUI + AppKit, AVFoundation. macOS 26 only, arm64 only. Non-sandboxed Developer ID app.
+AI-native macOS video editor. Swift 6.2, SwiftUI + AppKit, AVFoundation. Latest macOS only (currently macOS 27), arm64 only. Non-sandboxed Developer ID app.
 
 ## Concept — read first
 
@@ -13,7 +13,7 @@ section of `musicvideo/docs/v1-studio-plan.md`.
 
 ## Verification
 
-Never build, test, or launch the app locally. GitHub Actions on `macos-26` is the
+Never build, test, or launch the app locally. GitHub Actions on `xcode-27` is the
 only verification surface; do not run `scripts/dev.sh` or start a local dev server.
 
 ## Code style
@@ -59,13 +59,24 @@ release or a wasted CI cycle.
 
 ### Building and releasing
 
-- **Never build locally.** CI (macos-26) is the only verification surface.
+- **Never build locally.** CI (`xcode-27`) is the only verification surface.
 - **Never merge to `main` or dispatch `release.yml` without the owner's explicit, in-the-moment
   "build now".** Stage the work, hold, ask. Concept approval is not build approval.
 - **One batch, one release.** Collect fixes and release once. Never propose an intermediate or
   partial release, and never split scope that was agreed as a single batch.
 - `gh` resolves to the upstream `palmier-io/palmier-pro` remote. **Always pass
   `--repo iret77/nexgenvideo`.**
+
+### Platform policy
+
+- **NexGenVideo is built primarily for its owner and supports only the newest macOS.** The current
+  distribution floor is macOS 27. Backward compatibility with older macOS releases is not a product
+  goal; users who need it may maintain a fork.
+- **Adopt useful new Apple platform APIs immediately.** Raise the product minimum instead of carrying
+  a lower deployment target that blocks a materially better native implementation.
+- GitHub's `xcode-27` preview runner currently boots macOS 26 while providing the macOS 27 SDK. The
+  SwiftPM platform declaration remains a CI execution floor only so tests can run there; the shipped
+  app's `LSMinimumSystemVersion` is the authoritative product floor and must remain macOS 27 or newer.
 
 ### The plugin pack — two ways to ship a crash CI cannot catch
 

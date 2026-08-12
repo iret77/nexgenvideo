@@ -1,11 +1,14 @@
 import Foundation
 import NexGenEngine
 
-/// Fuses acoustic candidates and reliable lyric evidence into one bar-aligned timeline.
+/// Resolves a canonical song-form hierarchy from measured system analysis.
 public enum Consolidator {
+    static let resolutionVersion = "system-structure/v3"
+    static let systemSource = "apple_music_understanding"
     public static let toleranceS = 2.0
     public static let downbeatSnapS = 0.5
-    static let minimumConsensusBars = 8
+    private static let sourceCoverageToleranceS = 0.05
+    private static let rangeContinuityToleranceS = 0.001
 
     public struct Anomaly: Sendable, Equatable {
         public let kind: String
@@ -20,14 +23,11 @@ public enum Consolidator {
 
     enum ResolutionStatus: String, Codable, Sendable {
         case resolved
-        case reviewRequired = "review_required"
         case needsReview = "needs_review"
     }
 
     enum BoundaryEvidenceKind: String, Codable, Sendable {
-        case detectorConsensus = "detector_consensus"
-        case lyricsSupportedAcoustic = "lyrics_supported_acoustic"
-        case singleDetector = "single_detector"
+        case systemHierarchy = "system_hierarchy"
     }
 
     struct BoundaryEvidence: Codable, Sendable, Equatable {
@@ -43,6 +43,13 @@ public enum Consolidator {
         }
     }
 
+    struct StructureHierarchy: Codable, Sendable, Equatable {
+        let source: String
+        let sections: [MeasuredMusicRange]
+        let segments: [MeasuredMusicRange]
+        let phrases: [MeasuredMusicRange]
+    }
+
     struct StructureResolution: Codable, Sendable, Equatable {
         let version: String
         let status: ResolutionStatus
@@ -56,10 +63,11 @@ public enum Consolidator {
         let acceptedBoundaryCount: Int
         let discardedBoundaryCount: Int
         let boundaryEvidence: [BoundaryEvidence]
+        let hierarchy: StructureHierarchy?
         let detail: String
 
         enum CodingKeys: String, CodingKey {
-            case version, status, method, detail
+            case version, status, method, hierarchy, detail
             case detectorSources = "detector_sources"
             case minimumSectionBars = "minimum_section_bars"
             case candidateBoundaryCount = "candidate_boundary_count"
@@ -78,24 +86,11 @@ public enum Consolidator {
         let resolution: StructureResolution
     }
 
-    private struct BoundaryGroup {
-        let time: Double
-        let times: [Double]
-        let sources: Set<String>
-    }
-
     struct CandidateSeries: Sendable {
         let source: String
         let sections: [AnalysisSection]
     }
 
-    private struct SelectedBoundary {
-        let group: BoundaryGroup
-        let kind: BoundaryEvidenceKind
-        let lyricMarker: String?
-    }
-
-    /// Fixed-span clustering prevents transitive micro-boundary chains.
     static func clusterBoundaries(
         _ boundaries: [(t: Double, source: String)], tolerance: Double
     ) -> [(t: Double, sources: [String])] {
@@ -130,7 +125,8 @@ public enum Consolidator {
         alignment: [AlignmentLine]?,
         alignmentReport: LyricsAlignment.Result?,
         downbeats: [Double],
-        durationS: Double
+        durationS: Double,
+        musicUnderstanding: MusicUnderstandingMeasurement? = nil
     ) -> DetailedResult {
         let series = candidates.map { sections in
             CandidateSeries(
@@ -143,7 +139,8 @@ public enum Consolidator {
             alignment: alignment,
             alignmentReport: alignmentReport,
             downbeats: downbeats,
-            durationS: durationS
+            durationS: durationS,
+            musicUnderstanding: musicUnderstanding
         )
     }
 
@@ -152,297 +149,256 @@ public enum Consolidator {
         alignment: [AlignmentLine]?,
         alignmentReport: LyricsAlignment.Result?,
         downbeats: [Double],
-        durationS: Double
+        durationS: Double,
+        musicUnderstanding: MusicUnderstandingMeasurement? = nil
     ) -> DetailedResult {
-        let grid = downbeats
-            .filter { $0 >= 0 && $0 <= durationS }
-            .sorted()
-        let barDuration = medianPositiveDifference(grid) ?? max(1.0, toleranceS)
-        let agreementTolerance = toleranceS
-        let markerTolerance = max(agreementTolerance, barDuration)
-        let minimumConsensusSpan = barDuration * Double(minimumConsensusBars)
-
-        var detectorBoundaries: [(t: Double, source: String)] = []
-        var detectorSources: Set<String> = []
-        for candidate in candidateSeries where !candidate.sections.isEmpty {
-            detectorSources.insert(candidate.source)
-            for section in candidate.sections {
-                guard section.start > 0.01, section.start < durationS - 0.01 else { continue }
-                detectorBoundaries.append((round1000(section.start), candidate.source))
-            }
-        }
-
-        var deduplicated: [(t: Double, source: String)] = []
-        var seen: Set<String> = []
-        for boundary in detectorBoundaries.sorted(by: boundaryOrder) {
-            let key = "\(boundary.source)\u{1f}\(round1000(boundary.t))"
-            if seen.insert(key).inserted { deduplicated.append(boundary) }
-        }
-
-        let rawGroups: [BoundaryGroup] = groupedBoundaryRecords(
-            deduplicated, tolerance: agreementTolerance
-        ).map { matching in
-            let mean = matching.reduce(0.0) { $0 + $1.t } / Double(matching.count)
-            return BoundaryGroup(
-                time: round1000(nearestGridPoint(mean, grid: grid)),
-                times: matching.map(\.t),
-                sources: Set(matching.map(\.source))
+        let native = nativeBoundarySummary(candidateSeries, durationS: durationS)
+        guard let measurement = musicUnderstanding,
+              let hierarchy = normalizedHierarchy(
+                measurement,
+                downbeats: downbeats,
+                durationS: durationS
+              ) else {
+            return unresolvedResult(
+                nativeCandidateCount: native.count,
+                nativeSources: native.sources,
+                markerCount: alignmentReport?.markerCount
+                    ?? (alignment ?? []).filter { $0.sectionMarker != nil }.count,
+                durationS: durationS
             )
         }
-        let groups = Dictionary(grouping: rawGroups, by: \.time)
-            .map { time, matching in
-                BoundaryGroup(
-                    time: time,
-                    times: matching.flatMap(\.times),
-                    sources: matching.reduce(into: Set<String>()) { $0.formUnion($1.sources) }
-                )
-            }
-            .sorted { $0.time < $1.time }
-        let consensusGroups = groups.filter { $0.sources.count >= 2 }
 
         var anomalies: [Anomaly] = []
-        let singleSourceCount = groups.filter { $0.sources.count == 1 }.count
-        if singleSourceCount > 0 {
-            anomalies.append(
-                Anomaly(
-                    kind: "single_detector_boundary_evidence",
-                    time: 0,
-                    detail: "Found \(singleSourceCount) acoustic boundary groups without independent detector agreement."
-                )
-            )
-        }
-        for group in groups {
-            guard group.sources.count >= 2,
-                  let minimum = group.times.min(), let maximum = group.times.max(),
-                  maximum - minimum > downbeatSnapS else { continue }
-            anomalies.append(
-                Anomaly(
-                    kind: "boundary_divergence",
-                    time: group.time,
-                    detail: "Detector spread \(String(format: "%.3f", maximum - minimum))s converged on this downbeat."
-                )
-            )
-        }
-
-        let endpoints: Set<Double> = [0, round1000(durationS)]
-        var selected: [Double: SelectedBoundary] = [:]
         var labels: [Double: String] = [:]
-        var markerBoundaries: Set<Double> = []
         var resolvedMarkers = 0
-        let markers = (alignment ?? [])
+        let markerLines = (alignment ?? [])
             .filter { $0.sectionMarker != nil }
             .sorted { $0.start < $1.start }
-        let alignmentIsReliable = alignmentReport?.hasReliableStructureEvidence == true
-        if alignmentIsReliable {
-            for marker in markers {
-                let target = round1000(nearestGridPoint(marker.start, grid: grid))
-                if target <= markerTolerance {
-                    guard markerBoundaries.insert(0).inserted else {
-                        anomalies.append(
-                            Anomaly(
-                                kind: "colliding_lyric_markers",
-                                time: 0,
-                                detail: "Multiple lyric section markers resolve to the opening boundary."
-                            )
-                        )
-                        continue
-                    }
-                    labels[0] = marker.sectionMarker
-                    resolvedMarkers += 1
-                    continue
-                }
-                let matches = groups
-                    .filter {
-                        $0.time > 0.01
-                            && $0.time < durationS - 0.01
-                            && abs($0.time - target) <= markerTolerance
-                    }
-                    .sorted {
-                        let leftDistance = abs($0.time - target)
-                        let rightDistance = abs($1.time - target)
-                        if leftDistance != rightDistance { return leftDistance < rightDistance }
-                        if $0.sources.count != $1.sources.count { return $0.sources.count > $1.sources.count }
-                        return $0.time < $1.time
-                    }
-                guard let match = matches.first else {
+        if alignmentReport?.hasReliableStructureEvidence == true {
+            let starts = hierarchy.sections.map(\.start)
+            let medianBar = medianPositiveDifference(downbeats) ?? toleranceS
+            let markerTolerance = max(toleranceS, medianBar)
+            for marker in markerLines {
+                guard let name = marker.sectionMarker,
+                      let closest = starts.min(by: {
+                          abs($0 - marker.start) < abs($1 - marker.start)
+                      }),
+                      abs(closest - marker.start) <= markerTolerance,
+                      labels[closest] == nil else {
                     anomalies.append(
                         Anomaly(
                             kind: "unresolved_lyric_marker",
-                            time: target,
-                            detail: "No acoustic boundary supports \(marker.sectionMarker ?? "section") near this bar."
+                            time: round1000(marker.start),
+                            detail: "No unique system section boundary supports this lyric marker."
                         )
                     )
                     continue
                 }
-                guard markerBoundaries.insert(match.time).inserted else {
-                    anomalies.append(
-                        Anomaly(
-                            kind: "colliding_lyric_markers",
-                            time: match.time,
-                            detail: "Multiple lyric section markers resolve to the same acoustic boundary."
-                        )
-                    )
-                    continue
-                }
-                selected[match.time] = SelectedBoundary(
-                    group: match,
-                    kind: .lyricsSupportedAcoustic,
-                    lyricMarker: marker.sectionMarker
-                )
-                labels[match.time] = marker.sectionMarker
+                labels[closest] = name
                 resolvedMarkers += 1
             }
         }
 
-        let allMarkersResolved = alignmentIsReliable
-            && !markers.isEmpty
-            && resolvedMarkers == markers.count
-        if !allMarkersResolved {
-            let consensusByStrength = consensusGroups.sorted {
-                if $0.sources.count != $1.sources.count { return $0.sources.count > $1.sources.count }
-                return $0.time < $1.time
-            }
-            for group in consensusByStrength {
-                guard group.time > 0.01, group.time < durationS - 0.01 else { continue }
-                let occupied = endpoints.union(selected.keys)
-                if occupied.allSatisfy({ abs($0 - group.time) >= minimumConsensusSpan }) {
-                    selected[group.time] = SelectedBoundary(
-                        group: group,
-                        kind: .detectorConsensus,
-                        lyricMarker: nil
-                    )
-                }
-            }
-        }
-
-        let homogeneousConsensus = deduplicated.isEmpty && detectorSources.count >= 2
-        let hasAcceptedConsensus = selected.values.contains { $0.kind == .detectorConsensus }
-        var status: ResolutionStatus
-        if grid.isEmpty || detectorSources.isEmpty {
-            status = .needsReview
-        } else if allMarkersResolved || hasAcceptedConsensus || homogeneousConsensus {
-            status = .resolved
-        } else {
-            status = .reviewRequired
-            let fallbackByStrength = groups.sorted {
-                if $0.sources.count != $1.sources.count { return $0.sources.count > $1.sources.count }
-                return $0.time < $1.time
-            }
-            for group in fallbackByStrength {
-                guard group.time > 0.01, group.time < durationS - 0.01,
-                      selected[group.time] == nil else { continue }
-                let occupied = endpoints.union(selected.keys)
-                if occupied.allSatisfy({ abs($0 - group.time) >= minimumConsensusSpan }) {
-                    selected[group.time] = SelectedBoundary(
-                        group: group,
-                        kind: .singleDetector,
-                        lyricMarker: nil
-                    )
-                }
-            }
-        }
-
-        let times = endpoints.union(selected.keys).sorted()
-        let acceptedInternal = selected.count
-        let method: String
-        if status == .needsReview {
-            method = "unresolved"
-        } else if homogeneousConsensus {
-            method = "homogeneous_consensus"
-        } else if status == .reviewRequired {
-            method = "phrase_filtered_acoustic"
-        } else {
-            method = "per_boundary_evidence"
-        }
-
-        let detail: String
-        switch status {
-        case .resolved where homogeneousConsensus:
-            detail = "Independent acoustic detectors found no internal structural boundary."
-        case .resolved:
-            detail = "Every canonical boundary has corroborated acoustic or lyric-alignment evidence on the downbeat grid."
-        case .reviewRequired:
-            detail = "The phrase-filtered downbeat structure contains single-detector evidence; review every section before approval."
-        case .needsReview where grid.isEmpty:
-            detail = "No downbeat grid is available for a canonical bar-aligned structure."
-        case .needsReview:
-            detail = "No acoustic structure candidate is available for a canonical section timeline."
-        }
-
-        var sections: [AnalysisSection] = []
-        for (index, pair) in zip(times, times.dropFirst()).enumerated() {
-            let source: String
-            let confidence: Double
-            if status == .needsReview {
-                source = "unresolved_structure"
-                confidence = 0.3
-            } else if pair.0 <= 0.01 {
-                source = "measured_track_extent"
-                confidence = 1.0
-            } else if let evidence = selected[pair.0] {
-                switch evidence.kind {
-                case .lyricsSupportedAcoustic:
-                    source = "measured_alignment_fusion"
-                    confidence = 0.9
-                case .detectorConsensus:
-                    source = "measured_consensus"
-                    confidence = 0.8
-                case .singleDetector:
-                    source = "measured_phrase_filtered"
-                    confidence = 0.6
-                }
-            } else {
-                source = "measured_track_extent"
-                confidence = 1.0
-            }
-            sections.append(
-                AnalysisSection(
-                    index: index,
-                    start: round1000(pair.0),
-                    end: round1000(pair.1),
-                    cluster: index,
-                    label: labels[pair.0],
-                    source: source,
-                    confidence: confidence
-                )
+        let sectionStarts = hierarchy.sections.map(\.start)
+        let internalStarts = hierarchy.sections.dropFirst().map(\.start)
+        let evidence = sectionStarts.map { time in
+            BoundaryEvidence(
+                time: time,
+                kind: .systemHierarchy,
+                detectorSources: [systemSource],
+                lyricMarker: labels[time]
             )
         }
-        if sections.isEmpty, durationS > 0 {
-            sections = [
-                AnalysisSection(
-                    index: 0, start: 0, end: round1000(durationS), cluster: 0,
-                    source: "unresolved_structure", confidence: 0.3
-                )
-            ]
+        let sections = hierarchy.sections.enumerated().map { index, range in
+            AnalysisSection(
+                index: index,
+                start: range.start,
+                end: range.end,
+                cluster: index,
+                label: labels[range.start],
+                source: "measured_system_hierarchy",
+                confidence: 0.95
+            )
         }
-
-        let evidence = selected.values
-            .map { selected in
-                BoundaryEvidence(
-                    time: selected.group.time,
-                    kind: selected.kind,
-                    detectorSources: selected.group.sources.sorted(),
-                    lyricMarker: selected.lyricMarker
-                )
-            }
-            .sorted { $0.time < $1.time }
-        let acceptedCandidateCount = selected.values.reduce(0) { $0 + $1.group.times.count }
         let resolution = StructureResolution(
-            version: "bar-consensus/v1",
-            status: status,
-            method: method,
-            detectorSources: detectorSources.sorted(),
-            minimumSectionBars: minimumConsensusBars,
-            candidateBoundaryCount: deduplicated.count,
-            consensusBoundaryCount: consensusGroups.count,
-            alignmentMarkerCount: alignmentReport?.markerCount ?? markers.count,
+            version: resolutionVersion,
+            status: .resolved,
+            method: "music_understanding_hierarchy",
+            detectorSources: [systemSource],
+            minimumSectionBars: 0,
+            candidateBoundaryCount: native.count,
+            consensusBoundaryCount: 0,
+            alignmentMarkerCount: alignmentReport?.markerCount ?? markerLines.count,
             resolvedAlignmentMarkerCount: resolvedMarkers,
-            acceptedBoundaryCount: acceptedInternal,
-            discardedBoundaryCount: max(0, deduplicated.count - acceptedCandidateCount),
+            acceptedBoundaryCount: internalStarts.count,
+            discardedBoundaryCount: native.count,
             boundaryEvidence: evidence,
-            detail: detail
+            hierarchy: hierarchy,
+            detail: "Apple Music Understanding measured a complete section, segment, and phrase hierarchy; native local-change candidates were retained only as diagnostics."
         )
         return DetailedResult(sections: sections, anomalies: anomalies, resolution: resolution)
+    }
+
+    private static func unresolvedResult(
+        nativeCandidateCount: Int,
+        nativeSources: Set<String>,
+        markerCount: Int,
+        durationS: Double
+    ) -> DetailedResult {
+        let sections = durationS > 0
+            ? [
+                AnalysisSection(
+                    index: 0,
+                    start: 0,
+                    end: round1000(durationS),
+                    cluster: 0,
+                    source: "unresolved_structure",
+                    confidence: 0.0
+                ),
+            ]
+            : []
+        let detail = "No complete system section/segment/phrase hierarchy is available. Native MFCC/Mel change points are diagnostic phrase candidates, not reliable song-form boundaries."
+        return DetailedResult(
+            sections: sections,
+            anomalies: [
+                Anomaly(
+                    kind: "system_structure_unavailable",
+                    time: 0,
+                    detail: detail
+                ),
+            ],
+            resolution: StructureResolution(
+                version: resolutionVersion,
+                status: .needsReview,
+                method: "unresolved",
+                detectorSources: nativeSources.sorted(),
+                minimumSectionBars: 0,
+                candidateBoundaryCount: nativeCandidateCount,
+                consensusBoundaryCount: 0,
+                alignmentMarkerCount: markerCount,
+                resolvedAlignmentMarkerCount: 0,
+                acceptedBoundaryCount: 0,
+                discardedBoundaryCount: nativeCandidateCount,
+                boundaryEvidence: [],
+                hierarchy: nil,
+                detail: detail
+            )
+        )
+    }
+
+    private static func normalizedHierarchy(
+        _ measurement: MusicUnderstandingMeasurement,
+        downbeats: [Double],
+        durationS: Double
+    ) -> StructureHierarchy? {
+        guard durationS > 0,
+              !measurement.beats.isEmpty,
+              !downbeats.isEmpty,
+              let sections = validatedRanges(
+                measurement.sections,
+                durationS: durationS,
+                requireFullCoverage: true,
+                requireContiguous: true
+              ),
+              let segments = validatedRanges(
+                measurement.segments,
+                durationS: durationS,
+                requireFullCoverage: false,
+                requireContiguous: false
+              ),
+              let phrases = validatedRanges(
+                measurement.phrases,
+                durationS: durationS,
+                requireFullCoverage: false,
+                requireContiguous: false
+              ),
+              sections.dropFirst().allSatisfy({ section in
+                  downbeats.contains { abs($0 - section.start) <= downbeatSnapS }
+              }),
+              nested(segments, inside: sections),
+              nested(phrases, inside: segments),
+              everyParentHasChild(sections, children: segments),
+              everyParentHasChild(segments, children: phrases) else {
+            return nil
+        }
+        return StructureHierarchy(
+            source: systemSource,
+            sections: sections,
+            segments: segments,
+            phrases: phrases
+        )
+    }
+
+    private static func validatedRanges(
+        _ input: [MeasuredMusicRange],
+        durationS: Double,
+        requireFullCoverage: Bool,
+        requireContiguous: Bool
+    ) -> [MeasuredMusicRange]? {
+        guard !input.isEmpty,
+              input.allSatisfy({
+                  $0.start.isFinite && $0.end.isFinite
+                      && $0.start >= 0 && $0.end > $0.start
+                      && $0.start < durationS + sourceCoverageToleranceS
+                      && $0.end <= durationS + sourceCoverageToleranceS
+              }) else { return nil }
+        for pair in zip(input, input.dropFirst()) {
+            guard pair.1.start > pair.0.start,
+                  pair.1.start >= pair.0.end - rangeContinuityToleranceS else {
+                return nil
+            }
+            if requireContiguous,
+               abs(pair.0.end - pair.1.start) > rangeContinuityToleranceS {
+                return nil
+            }
+        }
+        if requireFullCoverage {
+            guard input[0].start <= sourceCoverageToleranceS,
+                  input[input.count - 1].end >= durationS - sourceCoverageToleranceS else {
+                return nil
+            }
+        }
+        return input
+    }
+
+    private static func nested(
+        _ children: [MeasuredMusicRange],
+        inside parents: [MeasuredMusicRange]
+    ) -> Bool {
+        children.allSatisfy { child in
+            parents.contains { parent in
+                child.start >= parent.start - rangeContinuityToleranceS
+                    && child.end <= parent.end + rangeContinuityToleranceS
+            }
+        }
+    }
+
+    private static func everyParentHasChild(
+        _ parents: [MeasuredMusicRange],
+        children: [MeasuredMusicRange]
+    ) -> Bool {
+        parents.allSatisfy { parent in
+            children.contains { child in
+                child.start >= parent.start - rangeContinuityToleranceS
+                    && child.end <= parent.end + rangeContinuityToleranceS
+            }
+        }
+    }
+
+    private static func nativeBoundarySummary(
+        _ candidates: [CandidateSeries],
+        durationS: Double
+    ) -> (count: Int, sources: Set<String>) {
+        var keys: Set<String> = []
+        var sources: Set<String> = []
+        for candidate in candidates where !candidate.sections.isEmpty {
+            sources.insert(candidate.source)
+            for section in candidate.sections
+                where section.start > 0.01 && section.start < durationS - 0.01 {
+                keys.insert("\(candidate.source)\u{1f}\(round1000(section.start))")
+            }
+        }
+        return (keys.count, sources)
     }
 
     private static func boundaryOrder(
@@ -465,13 +421,6 @@ public enum Consolidator {
             }
         }
         return groups
-    }
-
-    private static func nearestGridPoint(_ time: Double, grid: [Double]) -> Double {
-        guard let closest = grid.min(by: { abs($0 - time) < abs($1 - time) }) else {
-            return time
-        }
-        return closest
     }
 
     private static func medianPositiveDifference(_ values: [Double]) -> Double? {

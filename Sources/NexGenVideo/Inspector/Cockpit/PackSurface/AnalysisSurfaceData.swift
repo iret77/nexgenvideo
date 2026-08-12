@@ -2,7 +2,7 @@ import Foundation
 import NexGenEngine
 
 /// Host-side reader for the `beatAnalysis` cockpit surface. Decodes the fields the Analysis panel
-/// renders straight from the pack's `analysis/<song>.json` (schema `analysis/v2`) — the host owns this
+/// renders straight from the pack's `analysis/<song>.json` (schema `analysis/v3`) — the host owns this
 /// generic "measured audio analysis" shape, so it never imports the format pack's own `Analysis` type.
 /// The file is located with the public engine helper (`AudioProjectLayout`), the same one the pack uses,
 /// so both read the identical artifact under the one-song discipline.
@@ -28,11 +28,15 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
     var hasBeatGrid: Bool { !beats.isEmpty }
 
     var hasCanonicalStructure: Bool {
-        guard let status = structureResolution?.status else { return false }
-        return status == "resolved" || status == "review_required"
+        guard let resolution = structureResolution,
+              resolution.status == "resolved",
+              resolution.method == "music_understanding_hierarchy",
+              let hierarchy = resolution.hierarchy,
+              hierarchy.source == "apple_music_understanding" else { return false }
+        return hierarchy.sections.count == sections.count
+            && !hierarchy.segments.isEmpty
+            && !hierarchy.phrases.isEmpty
     }
-
-    var requiresStructureReview: Bool { structureResolution?.status == "review_required" }
 
     var nonSuccessStageDiagnostics: [StageDiagnostic] {
         stageDiagnostics.filter { $0.status != "succeeded" && $0.status != "not_applicable" }
@@ -66,10 +70,23 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
         var candidateBoundaryCount: Int
         var acceptedBoundaryCount: Int
         var discardedBoundaryCount: Int
+        var hierarchy: Hierarchy?
         var detail: String
 
+        struct Hierarchy: Decodable, Sendable, Equatable {
+            var source: String
+            var sections: [Range]
+            var segments: [Range]
+            var phrases: [Range]
+        }
+
+        struct Range: Decodable, Sendable, Equatable {
+            var start: Double
+            var end: Double
+        }
+
         enum CodingKeys: String, CodingKey {
-            case status, method, detail
+            case status, method, hierarchy, detail
             case candidateBoundaryCount = "candidate_boundary_count"
             case acceptedBoundaryCount = "accepted_boundary_count"
             case discardedBoundaryCount = "discarded_boundary_count"

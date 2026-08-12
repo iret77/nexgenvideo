@@ -101,8 +101,8 @@ public enum Preflight {
         } else {
             result.warnings.append(
                 "No lyrics (lyrics/lyrics.txt missing or empty). Without lyrics no forced alignment "
-                    + "is possible, section boundaries are detected acoustically only. If the song has "
-                    + "text: providing lyrics is worthwhile."
+                    + "is possible. The system hierarchy remains timing truth, but section labels may "
+                    + "be less certain. If the song has text, providing lyrics is worthwhile."
             )
         }
 

@@ -107,6 +107,9 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Pack-owned artifact invariants checked before a host writer may interpret a phase result.
     public private(set) var artifactWriteRequirements: [String: GateRequirement] = [:]
 
+    /// Host implementation of the system music-understanding contract.
+    public private(set) var musicUnderstandingAnalyzer: (any MusicUnderstandingAnalyzing)?
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -276,6 +279,12 @@ public final class EngineRegistry: @unchecked Sendable {
 
     public func registerChordRecognizer(_ recognizer: any AudioChordRecognizing) {
         self.chordRecognizer = recognizer
+    }
+
+    public func registerMusicUnderstandingAnalyzer(
+        _ analyzer: any MusicUnderstandingAnalyzing
+    ) {
+        musicUnderstandingAnalyzer = analyzer
     }
 
     /// Register the pack's director-pattern query surface (see `PatternProviding`).

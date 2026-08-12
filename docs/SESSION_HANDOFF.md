@@ -1,4 +1,8 @@
-# Session handoff — 2026-08-10
+# Historical session handoff — 2026-08-10
+
+> This is an immutable snapshot of the 2026-08-10 work state, retained for audit context. It is not
+> current project documentation or a binding specification. Current policy lives in `AGENTS.md` and
+> the locked documents named there.
 
 ## Current work package
 

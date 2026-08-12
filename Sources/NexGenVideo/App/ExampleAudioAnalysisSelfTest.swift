@@ -6,7 +6,7 @@ import NexGenEngine
 @MainActor
 enum ExampleAudioAnalysisSelfTest {
     private static let manifestSchema = "nexgenvideo.example-fixtures/v1"
-    private static let reportSchema = "nexgenvideo.example-analysis-report/v1"
+    private static let reportSchema = "nexgenvideo.example-analysis-report/v2"
 
     private struct Configuration {
         let packURL: URL
@@ -81,17 +81,19 @@ enum ExampleAudioAnalysisSelfTest {
         let size: Int
     }
 
-    private struct FixtureExpectations: Decodable {
+    private struct FixtureExpectations: Codable {
         let audio: AudioExpectation
     }
 
-    private struct AudioExpectation: Decodable {
+    private struct AudioExpectation: Codable {
         let path: String
         let durationS: Double
         let durationToleranceS: Double
         let bpm: Double
         let bpmTolerance: Double
         let expectBoundaryReduction: Bool
+        let sectionBoundariesS: [Double]
+        let sectionBoundaryToleranceS: Double
 
         enum CodingKeys: String, CodingKey {
             case path, bpm
@@ -99,6 +101,8 @@ enum ExampleAudioAnalysisSelfTest {
             case durationToleranceS = "duration_tolerance_s"
             case bpmTolerance = "bpm_tolerance"
             case expectBoundaryReduction = "expect_boundary_reduction"
+            case sectionBoundariesS = "section_boundaries_s"
+            case sectionBoundaryToleranceS = "section_boundary_tolerance_s"
         }
     }
 
@@ -111,6 +115,9 @@ enum ExampleAudioAnalysisSelfTest {
         let downbeatCount: Int
         let sectionCount: Int
         let structureStatus: String
+        let structureMethod: String
+        let segmentCount: Int
+        let phraseCount: Int
         let candidateBoundaryCount: Int
         let acceptedBoundaryCount: Int
         let sectionBoundaryTimesS: [Double]
@@ -122,6 +129,9 @@ enum ExampleAudioAnalysisSelfTest {
             case downbeatCount = "downbeat_count"
             case sectionCount = "section_count"
             case structureStatus = "structure_status"
+            case structureMethod = "structure_method"
+            case segmentCount = "segment_count"
+            case phraseCount = "phrase_count"
             case candidateBoundaryCount = "candidate_boundary_count"
             case acceptedBoundaryCount = "accepted_boundary_count"
             case sectionBoundaryTimesS = "section_boundary_times_s"
@@ -167,6 +177,7 @@ enum ExampleAudioAnalysisSelfTest {
         let fixtureTreeSHA256: String
         let dataset: String
         let sourceFiles: [FixtureFile]
+        let expectations: FixtureExpectations
         let packVersion: String
         let packTreeSHA256: String
         let commit: String
@@ -176,7 +187,7 @@ enum ExampleAudioAnalysisSelfTest {
         let verification: Verification
 
         enum CodingKeys: String, CodingKey {
-            case schema, dataset, commit, analysis, verification
+            case schema, dataset, expectations, commit, analysis, verification
             case fixtureReference = "fixture_reference"
             case fixtureTreeSHA256 = "fixture_tree_sha256"
             case sourceFiles = "source_files"
@@ -207,6 +218,8 @@ enum ExampleAudioAnalysisSelfTest {
                 + "bpm=\(String(format: "%.3f", summary.bpm)) "
                 + "beats=\(summary.beatCount) downbeats=\(summary.downbeatCount) "
                 + "structure_status=\(summary.structureStatus) "
+                + "structure_method=\(summary.structureMethod) "
+                + "segments=\(summary.segmentCount) phrases=\(summary.phraseCount) "
                 + "candidate_boundaries=\(summary.candidateBoundaryCount) "
                 + "accepted_boundaries=\(summary.acceptedBoundaryCount) "
                 + "sections=\(summary.sectionCount) boundaries_s=\(boundaries)\n"
@@ -271,6 +284,7 @@ enum ExampleAudioAnalysisSelfTest {
             throw Failure("decoder-only self-test registry unexpectedly contains optional audio ML")
         }
         registry.registerAudioDecoder(AVFoundationAudioDecoder())
+        registry.registerMusicUnderstandingAnalyzer(AppleMusicUnderstandingAnalyzer())
         guard let runner = registry.phases["analysis"],
               let artifactGate = registry.artifactWriteRequirements["analysis"] else {
             throw Failure("loaded musicvideo pack has no complete analysis contract")
@@ -292,7 +306,7 @@ enum ExampleAudioAnalysisSelfTest {
         for step in registry.deterministicSteps where step.phase == "analysis" {
             try step.run(dataRoot)
         }
-        try runner(dataRoot)
+        try executeRunner(runner, dataRoot: dataRoot)
         try artifactGate(dataRoot)
 
         guard let artifactURL = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
@@ -309,21 +323,32 @@ enum ExampleAudioAnalysisSelfTest {
               let diagnostics = object["stage_diagnostics"] as? [[String: Any]],
               let resolution = object["structure_resolution"] as? [String: Any],
               let status = resolution["status"] as? String,
+              let method = resolution["method"] as? String,
+              let hierarchy = resolution["hierarchy"] as? [String: Any],
+              let hierarchySections = hierarchy["sections"] as? [[String: Any]],
+              let hierarchySegments = hierarchy["segments"] as? [[String: Any]],
+              let hierarchyPhrases = hierarchy["phrases"] as? [[String: Any]],
               let candidateCount = integer(resolution["candidate_boundary_count"]),
               let acceptedCount = integer(resolution["accepted_boundary_count"]) else {
             throw Failure("canonical analysis is missing its measured summary or resolution record")
         }
-        guard ["resolved", "review_required"].contains(status) else {
+        guard status == "resolved",
+              method == "music_understanding_hierarchy",
+              hierarchy["source"] as? String == "apple_music_understanding",
+              hierarchySections.count == sections.count,
+              !hierarchySegments.isEmpty,
+              !hierarchyPhrases.isEmpty else {
             throw Failure("canonical structure is not usable: \(status)")
         }
         guard sections.count == acceptedCount + 1 else {
             throw Failure("canonical section count does not match accepted boundary evidence")
         }
         guard diagnostic(diagnostics, stage: "native_dsp", status: "succeeded"),
+              diagnostic(diagnostics, stage: "music_understanding", status: "succeeded"),
               diagnostic(diagnostics, stage: "stem_separation", status: "unavailable"),
-              diagnostic(diagnostics, stage: "neural_beat_grid", status: "unavailable"),
+              diagnostic(diagnostics, stage: "neural_beat_grid", status: "not_applicable"),
               diagnostic(diagnostics, stage: "chord_recognition", status: "unavailable") else {
-            throw Failure("analysis did not exercise the declared native-DSP fallback")
+            throw Failure("analysis did not exercise system hierarchy with its declared fallbacks")
         }
         if !lyricsFiles.isEmpty {
             guard diagnostic(diagnostics, stage: "lyrics_input", status: "succeeded"),
@@ -360,6 +385,20 @@ enum ExampleAudioAnalysisSelfTest {
         guard sectionBoundaryTimes.count == acceptedCount else {
             throw Failure("canonical boundary summary is incomplete")
         }
+        guard sectionBoundaryTimes.count == expectations.audio.sectionBoundariesS.count else {
+            throw Failure(
+                "canonical boundary count \(sectionBoundaryTimes.count) does not match the independent "
+                    + "expectation \(expectations.audio.sectionBoundariesS.count)"
+            )
+        }
+        for (actual, expected) in zip(sectionBoundaryTimes, expectations.audio.sectionBoundariesS) {
+            guard abs(actual - expected) <= expectations.audio.sectionBoundaryToleranceS else {
+                throw Failure(
+                    "section boundary \(actual)s is outside the independent expectation "
+                        + "\(expected)±\(expectations.audio.sectionBoundaryToleranceS)s"
+                )
+            }
+        }
         let artifactText = String(decoding: artifactData, as: UTF8.self)
         guard ![configuration.fixtureRoot.path, projectHome.path].contains(where: {
             artifactText.contains($0)
@@ -376,6 +415,9 @@ enum ExampleAudioAnalysisSelfTest {
             downbeatCount: downbeats.count,
             sectionCount: sections.count,
             structureStatus: status,
+            structureMethod: method,
+            segmentCount: hierarchySegments.count,
+            phraseCount: hierarchyPhrases.count,
             candidateBoundaryCount: candidateCount,
             acceptedBoundaryCount: acceptedCount,
             sectionBoundaryTimesS: sectionBoundaryTimes
@@ -384,6 +426,7 @@ enum ExampleAudioAnalysisSelfTest {
             configuration: configuration,
             manifest: manifest,
             dataset: dataset,
+            expectations: expectations,
             packVersion: record.version,
             packTreeSHA256: packTreeSHA256,
             optionalAudioML: optionalAudioML,
@@ -498,10 +541,36 @@ enum ExampleAudioAnalysisSelfTest {
         }
     }
 
+    private static func executeRunner(
+        _ runner: @escaping EngineRegistry.PhaseRunner,
+        dataRoot: URL
+    ) throws {
+        let completion = SelfTestRunnerCompletion()
+        let thread = Thread {
+            do {
+                try runner(dataRoot)
+                completion.finish(.success(()))
+            } catch {
+                completion.finish(.failure(error))
+            }
+        }
+        thread.name = "NexGenVideo example analysis"
+        thread.qualityOfService = .userInitiated
+        thread.start()
+        while !completion.isFinished {
+            _ = RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.05)
+            )
+        }
+        try completion.result().get()
+    }
+
     private static func writeReport(
         configuration: Configuration,
         manifest: FixtureManifest,
         dataset: FixtureDataset,
+        expectations: FixtureExpectations,
         packVersion: String,
         packTreeSHA256: String,
         optionalAudioML: OptionalAudioML,
@@ -522,6 +591,7 @@ enum ExampleAudioAnalysisSelfTest {
             fixtureTreeSHA256: manifest.treeSHA256,
             dataset: dataset.id,
             sourceFiles: dataset.files,
+            expectations: expectations,
             packVersion: packVersion,
             packTreeSHA256: packTreeSHA256,
             commit: configuration.commit,
@@ -543,5 +613,29 @@ enum ExampleAudioAnalysisSelfTest {
             to: configuration.reportDirectory.appendingPathComponent("provenance.json"),
             options: .atomic
         )
+    }
+}
+
+private final class SelfTestRunnerCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Result<Void, any Error>?
+
+    var isFinished: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored != nil
+    }
+
+    func finish(_ result: Result<Void, any Error>) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard stored == nil else { return }
+        stored = result
+    }
+
+    func result() -> Result<Void, any Error> {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored ?? .failure(CocoaError(.coderInvalidValue))
     }
 }

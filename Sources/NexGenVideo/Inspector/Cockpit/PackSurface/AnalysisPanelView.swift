@@ -50,8 +50,6 @@ struct AnalysisPanelView: View {
                 StatRow(tiles: stats(data))
                 if !data.hasCanonicalStructure {
                     structureBanner(data)
-                } else if data.requiresStructureReview {
-                    structureReviewBanner(data)
                 }
                 if !data.nonSuccessStageDiagnostics.isEmpty {
                     stageDiagnosticsBanner(data)
@@ -93,33 +91,6 @@ struct AnalysisPanelView: View {
             tiles.append(StatTile(label: "Sections", value: "\(d.sections.count)"))
         }
         return tiles
-    }
-
-    private func structureReviewBanner(_ data: AnalysisSurfaceData) -> some View {
-        let detail = data.structureResolution?.detail
-            ?? "Review every measured section before approval."
-        return HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.xs))
-                .foregroundStyle(AppTheme.Status.warningColor)
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                Text("Review the section structure")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                Text(detail)
-                    .font(.system(size: AppTheme.FontSize.xs))
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(AppTheme.Spacing.md)
-        .background(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.faint))
-        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .strokeBorder(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.moderate),
-                              lineWidth: AppTheme.BorderWidth.hairline)
-        )
     }
 
     private func structureBanner(_ data: AnalysisSurfaceData) -> some View {
@@ -187,7 +158,9 @@ struct AnalysisPanelView: View {
     private func structureProvenance(_ data: AnalysisSurfaceData) -> String? {
         guard let resolution = data.structureResolution else { return nil }
         let method = resolution.method.replacingOccurrences(of: "_", with: " ")
-        return "\(method) · \(resolution.candidateBoundaryCount) candidates · \(resolution.discardedBoundaryCount) discarded"
+        let segments = resolution.hierarchy?.segments.count ?? 0
+        let phrases = resolution.hierarchy?.phrases.count ?? 0
+        return "\(method) · \(segments) segments · \(phrases) phrases · \(resolution.candidateBoundaryCount) diagnostic change points"
     }
 
     @ViewBuilder

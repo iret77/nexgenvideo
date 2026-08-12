@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 
 
 SCHEMA = "nexgenvideo.example-fixtures/v1"
-EXPECTATIONS_SCHEMA = "nexgenvideo.example-fixture-expectations/v1"
+EXPECTATIONS_SCHEMA = "nexgenvideo.example-fixture-expectations/v2"
 ARCHIVE_ROOT = "examples"
 AUDIO_EXTENSIONS = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".wav"}
 LYRICS_EXTENSIONS = {".lrc", ".md", ".txt"}
@@ -73,15 +73,26 @@ def load_expectations(path: Path | None) -> dict[str, dict]:
             "bpm",
             "bpm_tolerance",
             "expect_boundary_reduction",
+            "section_boundaries_s",
+            "section_boundary_tolerance_s",
         ]
         if any(key not in audio for key in required):
             raise FixtureError(f"{dataset_id}: incomplete audio expectations")
         validate_relative_path(audio["path"])
-        for key in required[1:]:
+        for key in ["duration_s", "duration_tolerance_s", "bpm", "bpm_tolerance", "section_boundary_tolerance_s"]:
             if not isinstance(audio[key], (int, float)) or audio[key] <= 0:
                 raise FixtureError(f"{dataset_id}: {key} must be positive")
         if not isinstance(audio["expect_boundary_reduction"], bool):
             raise FixtureError(f"{dataset_id}: expect_boundary_reduction must be boolean")
+        boundaries = audio["section_boundaries_s"]
+        if (
+            not isinstance(boundaries, list)
+            or not boundaries
+            or any(not isinstance(value, (int, float)) or value <= 0 for value in boundaries)
+            or any(left >= right for left, right in zip(boundaries, boundaries[1:]))
+            or boundaries[-1] >= audio["duration_s"]
+        ):
+            raise FixtureError(f"{dataset_id}: section_boundaries_s must be a non-empty increasing list")
     return datasets
 
 

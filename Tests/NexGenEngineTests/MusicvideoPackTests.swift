@@ -53,8 +53,8 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.1.1")
-        #expect(pack.manifest.minAppVersion == "1.1.1")
+        #expect(pack.version == "0.2.0")
+        #expect(pack.manifest.minAppVersion == "2.0.0")
     }
 
     @Test("pack exposes gallery manifest and a starter")
@@ -97,13 +97,16 @@ struct MusicvideoPackTests {
         reg.load(MusicvideoPack())
         let migrations = reg.engine.projectSchemaMigrations
         #expect(migrations.contains {
-            $0.from == "musicvideo/legacy" && $0.to == "musicvideo/1.0.0"
+            $0.from == "musicvideo/legacy" && $0.to == "musicvideo/2.0.0"
         })
-        #expect(migrations.count == 1)
+        #expect(migrations.contains {
+            $0.from == "musicvideo/1.0.0" && $0.to == "musicvideo/2.0.0"
+        })
+        #expect(migrations.count == 2)
     }
 
-    @Test("legacy schema adoption preserves existing pack artifacts byte-for-byte")
-    func legacySchemaAdoptionIsDataIdentical() throws {
+    @Test("measured-structure migration rewinds analysis and downstream approvals")
+    func measuredStructureMigrationRewindsPipeline() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "musicvideo-migration-\(UUID().uuidString)",
             isDirectory: true
@@ -113,22 +116,34 @@ struct MusicvideoPackTests {
             withIntermediateDirectories: true
         )
         defer { try? FileManager.default.removeItem(at: root) }
-        let artifact = root.appendingPathComponent("project.yaml")
-        let before = Data("project: legacy\n".utf8)
-        try before.write(to: artifact)
+        let dataRoot = try ProjectScaffold.initProject(home: root, name: "Migration")
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in MusicvideoPipelineLineage.phases {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let analysis = dataRoot.appendingPathComponent("analysis/legacy.json")
+        try FileManager.default.createDirectory(
+            at: analysis.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let before = Data("{\"schema\":\"analysis/v2\"}\n".utf8)
+        try before.write(to: analysis)
 
         let reg = PackRegistry()
         reg.load(MusicvideoPack())
         let migration = try #require(
-            reg.engine.projectSchemaMigrations.first
+            reg.engine.projectSchemaMigrations.first {
+                $0.from == "musicvideo/1.0.0"
+            }
         )
         try migration.migrate(root)
 
-        #expect(try Data(contentsOf: artifact) == before)
-        #expect(
-            try FileManager.default.contentsOfDirectory(
-                atPath: root.path
-            ) == ["project.yaml"]
-        )
+        let migrated = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        #expect(MusicvideoPipelineLineage.phases.allSatisfy {
+            !migrated.get($0).approved
+        })
+        #expect(try Data(contentsOf: analysis) == before)
     }
 }

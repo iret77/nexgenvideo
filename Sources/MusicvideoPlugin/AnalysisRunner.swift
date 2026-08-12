@@ -3,7 +3,8 @@ import NexGenEngine
 
 /// The real `analysis` phase runner (M8c). Locates the song in the project's
 /// `audio/` dir, decodes it via the host-injected `AudioPCMDecoding`, runs the
-/// native DSP pipeline, and persists the canonical `analysis/<song>.json`
+/// native DSP pipeline plus the system music hierarchy, and persists the
+/// canonical `analysis/<song>.json`
 /// artifact — mirroring the retired Python `analysis/pipeline.py::run_phase`
 /// (persist path, filename, snake_case shape, `duration_s`/`bpm` rounding).
 ///
@@ -16,7 +17,7 @@ public enum MusicvideoAnalysisRunner {
         "decode_audio",
         "measure_structure",
         "separate_stems",
-        "detect_beat_grid",
+        "resolve_beat_grid",
         "detect_harmony",
         "align_lyrics",
         "write_analysis",
@@ -98,9 +99,10 @@ public enum MusicvideoAnalysisRunner {
     /// song into PCM for the DSP baseline; the optional on-device ML seams
     /// (resolved by the pack from the registry) upgrade it: `separator` isolates
     /// vocals, `transcriber` reads them, `beatDetector` supplies a neural beat
-    /// grid. Provided lyrics are force-aligned against the transcript
-    /// (`LyricsAlignment`) so the Consolidator can take the alignment section
-    /// markers as evidence for nearby acoustic boundaries. Optional ML failures
+    /// grid. Music Understanding supplies canonical rhythm and song form.
+    /// Provided lyrics are force-aligned against the transcript
+    /// (`LyricsAlignment`) so the Consolidator can use section markers as labels
+    /// for nearby system boundaries. Optional ML failures
     /// are persisted as stage diagnostics instead of being silently discarded.
     @discardableResult
     public static func run(
@@ -111,6 +113,51 @@ public enum MusicvideoAnalysisRunner {
         beatDetector: (any AudioBeatDetecting)? = nil,
         chordRecognizer: (any AudioChordRecognizing)? = nil,
         progress: (@Sendable (PhaseProgress) -> Void)? = nil
+    ) throws -> Outcome {
+        try runImpl(
+            dataRoot: dataRoot,
+            decoder: decoder,
+            transcriber: transcriber,
+            separator: separator,
+            beatDetector: beatDetector,
+            chordRecognizer: chordRecognizer,
+            musicUnderstandingAnalyzer: nil,
+            progress: progress
+        )
+    }
+
+    @discardableResult
+    static func runWithSystemAnalysis(
+        dataRoot: URL,
+        decoder: any AudioPCMDecoding,
+        transcriber: (any AudioTranscribing)? = nil,
+        separator: (any AudioStemSeparating)? = nil,
+        beatDetector: (any AudioBeatDetecting)? = nil,
+        chordRecognizer: (any AudioChordRecognizing)? = nil,
+        musicUnderstandingAnalyzer: any MusicUnderstandingAnalyzing,
+        progress: (@Sendable (PhaseProgress) -> Void)? = nil
+    ) throws -> Outcome {
+        try runImpl(
+            dataRoot: dataRoot,
+            decoder: decoder,
+            transcriber: transcriber,
+            separator: separator,
+            beatDetector: beatDetector,
+            chordRecognizer: chordRecognizer,
+            musicUnderstandingAnalyzer: musicUnderstandingAnalyzer,
+            progress: progress
+        )
+    }
+
+    private static func runImpl(
+        dataRoot: URL,
+        decoder: any AudioPCMDecoding,
+        transcriber: (any AudioTranscribing)?,
+        separator: (any AudioStemSeparating)?,
+        beatDetector: (any AudioBeatDetecting)?,
+        chordRecognizer: (any AudioChordRecognizing)?,
+        musicUnderstandingAnalyzer: (any MusicUnderstandingAnalyzing)?,
+        progress: (@Sendable (PhaseProgress) -> Void)?
     ) throws -> Outcome {
         let song = try locateSong(dataRoot: dataRoot)
         func report(_ stageIndex: Int) {
@@ -130,10 +177,70 @@ public enum MusicvideoAnalysisRunner {
         let pcm = try decoder.decode(song)
         report(1)
         var raw = AudioAnalysisPipeline.run(pcm)
-        var stages = ["load_audio", "rhythm", "structure", "features"]
+        var stages = ["load_audio", "rhythm", "features"]
         var diagnostics = [
-            StageDiagnostic(stage: "native_dsp", status: .succeeded, detail: "Measured rhythm, structure candidates, and features."),
+            StageDiagnostic(stage: "native_dsp", status: .succeeded, detail: "Measured fallback rhythm, local-change candidates, and features."),
         ]
+        var musicUnderstanding: MusicUnderstandingMeasurement?
+        var systemRhythmApplied = false
+        if let musicUnderstandingAnalyzer {
+            do {
+                let measured = try musicUnderstandingAnalyzer.analyze(song)
+                let beats = normalizedSystemTimes(measured.beats, durationS: raw.durationS)
+                let bars = normalizedSystemTimes(measured.bars, durationS: raw.durationS)
+                let bpm = measured.bpm.flatMap { value in
+                    value.isFinite && value > 0 ? Energy.round3(value) : nil
+                }
+                if SystemMusicUnderstandingContract.hasConsistentRhythm(
+                    beats: beats,
+                    bars: bars,
+                    bpm: bpm,
+                    durationS: raw.durationS
+                ), let bpm {
+                    musicUnderstanding = MusicUnderstandingMeasurement(
+                        beats: beats,
+                        bars: bars,
+                        bpm: bpm,
+                        sections: measured.sections,
+                        segments: measured.segments,
+                        phrases: measured.phrases
+                    )
+                    raw.beats = beats
+                    raw.downbeats = bars
+                    raw.downbeatSource = Analysis.DownbeatSource.musicUnderstanding.rawValue
+                    raw.bpm = bpm
+                    systemRhythmApplied = true
+                }
+                let completeHierarchy = !measured.sections.isEmpty
+                    && !measured.segments.isEmpty
+                    && !measured.phrases.isEmpty
+                diagnostics.append(
+                    StageDiagnostic(
+                        stage: "music_understanding",
+                        status: systemRhythmApplied && completeHierarchy ? .succeeded : .degraded,
+                        detail: systemRhythmApplied && completeHierarchy
+                            ? "Measured rhythm and a complete section/segment/phrase hierarchy on device."
+                            : "Music Understanding returned incomplete rhythm or structural hierarchy data."
+                    )
+                )
+            } catch {
+                diagnostics.append(
+                    StageDiagnostic(
+                        stage: "music_understanding",
+                        status: .failed,
+                        detail: error.localizedDescription
+                    )
+                )
+            }
+        } else {
+            diagnostics.append(
+                StageDiagnostic(
+                    stage: "music_understanding",
+                    status: .unavailable,
+                    detail: "No system music-structure analyzer is registered."
+                )
+            )
+        }
         var lyrics: String?
         var lyricsLoadError: String?
         do {
@@ -169,7 +276,15 @@ public enum MusicvideoAnalysisRunner {
         }
 
         report(3)
-        if let beatDetector {
+        if systemRhythmApplied {
+            diagnostics.append(
+                StageDiagnostic(
+                    stage: "neural_beat_grid",
+                    status: .notApplicable,
+                    detail: "Music Understanding supplied the canonical beat and bar grid."
+                )
+            )
+        } else if let beatDetector {
             do {
                 if let grid = try beatDetector.detectBeats(song, stems: stems),
                    !grid.beats.isEmpty, !grid.downbeats.isEmpty {
@@ -248,7 +363,20 @@ public enum MusicvideoAnalysisRunner {
             stems: stems.map { relativeStems($0, dataRoot: dataRoot) },
             lyricsAlignment: alignment, alignmentReport: alignmentReport,
             chords: chords, pipelineStages: stages,
-            songSha256: sha256(song))
+            songSha256: sha256(song),
+            musicUnderstanding: musicUnderstanding)
+
+        if musicUnderstanding != nil,
+           let index = diagnostics.firstIndex(where: { $0.stage == "music_understanding" }) {
+            let resolved = canonical.structureResolution.status == .resolved
+            diagnostics[index] = StageDiagnostic(
+                stage: "music_understanding",
+                status: resolved ? .succeeded : .degraded,
+                detail: resolved
+                    ? "Measured rhythm and a verified section/segment/phrase hierarchy on device."
+                    : "Music Understanding did not produce a valid nested structural hierarchy."
+            )
+        }
 
         let outDir = dataRoot.appendingPathComponent("analysis")
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -261,6 +389,14 @@ public enum MusicvideoAnalysisRunner {
         try data.write(to: outURL, options: .atomic)
 
         return Outcome(analysis: canonical.analysis, artifactURL: outURL, songFilename: song.lastPathComponent)
+    }
+
+    static func normalizedSystemTimes(_ values: [Double], durationS: Double) -> [Double] {
+        guard durationS > 0, durationS.isFinite else { return [] }
+        return SystemMusicUnderstandingContract.normalizedTimes(
+            values,
+            durationS: durationS
+        )
     }
 
     /// The project's provided lyrics (with `[Section]` markers / `(stage directions)`),
@@ -293,12 +429,12 @@ public enum MusicvideoAnalysisRunner {
         return Stems(vocals: rel(stems.vocals), drums: rel(stems.drums), bass: rel(stems.bass), other: rel(stems.other))
     }
 
-    /// Map the DSP-producible `AudioAnalysis` onto the canonical `Analysis` v2
-    /// schema. Both structure detectors (librosa Foote-novelty + BIC-on-MFCC
-    /// "essentia") feed the `Consolidator`, which snaps boundaries to the downbeat
-    /// grid and flags cross-detector convergence/divergence; each detector's raw
-    /// list is kept as a `structure_candidate`. Reliably aligned lyric markers
-    /// can select and label nearby acoustic candidates but never create timing.
+    /// Map the DSP-producible `AudioAnalysis` onto the canonical `Analysis` v3
+    /// schema. Music Understanding supplies the canonical beat/bar grid and
+    /// section/segment/phrase hierarchy. The native MFCC/Mel change detectors
+    /// remain persisted as diagnostic `structure_candidate` series but never
+    /// resolve song-form timing. Reliably aligned lyric markers can label a
+    /// nearby measured system boundary but never create timing.
     /// `stems` is populated when separation ran; `key` carries the DSP
     /// pipeline's Krumhansl-Schmuckler result; `chords` carry the recognizer's chord
     /// progression when a chord model is registered (empty otherwise).
@@ -326,7 +462,8 @@ public enum MusicvideoAnalysisRunner {
         lyricsAlignment: [AlignmentLine] = [], alignmentReport: LyricsAlignment.Result? = nil,
         chords: [Chord] = [],
         pipelineStages: [String] = ["load_audio", "rhythm", "structure", "features"],
-        songSha256: String? = nil
+        songSha256: String? = nil,
+        musicUnderstanding: MusicUnderstandingMeasurement? = nil
     ) throws -> CanonicalOutcome {
         func map(_ secs: [AudioSection], defaultSource: String) -> [AnalysisSection] {
             secs.map {
@@ -355,15 +492,14 @@ public enum MusicvideoAnalysisRunner {
             alignment: lyricsAlignment.isEmpty ? nil : lyricsAlignment,
             alignmentReport: alignmentReport,
             downbeats: raw.downbeats,
-            durationS: raw.durationS
+            durationS: raw.durationS,
+            musicUnderstanding: musicUnderstanding
         )
-        // Guarantee full coverage: downbeat snapping can pull the first boundary off 0 (e.g. to the
-        // first downbeat at 0.5s) and the last off the track end — clamp the endpoints so no audio
-        // falls outside a section.
-        var sections = consolidation.sections
-        if !sections.isEmpty {
-            sections[0].start = 0.0
-            sections[sections.count - 1].end = raw.durationS
+        var canonicalStages = pipelineStages.filter {
+            $0 != "music_understanding" && $0 != "structure"
+        }
+        if consolidation.resolution.status == .resolved {
+            canonicalStages.append(contentsOf: ["structure", "music_understanding"])
         }
         let downbeatSource = Analysis.DownbeatSource(rawValue: raw.downbeatSource) ?? .librosaHeuristic
         let interpretation = consolidation.anomalies.isEmpty
@@ -380,7 +516,7 @@ public enum MusicvideoAnalysisRunner {
             beats: raw.beats,
             downbeats: raw.downbeats,
             downbeatSource: downbeatSource,
-            sections: sections,
+            sections: consolidation.sections,
             stems: stems,
             alignment: lyricsAlignment,
             structureCandidates: [StructureCandidate(source: .librosa, sections: detected)]
@@ -390,7 +526,7 @@ public enum MusicvideoAnalysisRunner {
             key: raw.key,
             chordProgression: chords,
             interpretation: interpretation,
-            pipelineStages: pipelineStages,
+            pipelineStages: canonicalStages,
             songSha256: songSha256
         )
         return CanonicalOutcome(analysis: analysis, structureResolution: consolidation.resolution)

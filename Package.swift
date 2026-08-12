@@ -5,6 +5,7 @@ import PackageDescription
 let package = Package(
     name: "NexGenVideo",
     defaultLocalization: "en",
+    // CI boots macOS 26; LSMinimumSystemVersion sets the shipped app's macOS 27 product floor.
     platforms: [.macOS(.v26)],
     products: [
         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),
@@ -58,6 +59,12 @@ let package = Package(
                 .copy("Resources/MCPB/nexgen.mcpb"),
                 .copy("Resources/Images"),
                 .copy("Resources/Changelog"),
+            ],
+            linkerSettings: [
+                .unsafeFlags(
+                    ["-Xlinker", "-weak_framework", "-Xlinker", "MusicUnderstanding"],
+                    .when(platforms: [.macOS])
+                ),
             ],
             plugins: ["MetalCIKernelPlugin"]
         ),

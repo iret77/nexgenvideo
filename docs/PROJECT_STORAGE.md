@@ -111,5 +111,7 @@ host-owned project files, and atomically replaces the working copy only when eve
 succeeds. The source `.ngv` is the rollback source and stays byte-for-byte untouched
 until Save. Upgrade intent remains durable until Save; a crash resumes the target
 Recovery copy, while closing without saving cancels the upgrade.
-The first Music Video schema adoption is a binding-only restamp: `musicvideo/legacy`
-and `musicvideo/1.0.0` own identical pack artifacts.
+The Music Video `musicvideo/2.0.0` migration resets Analysis and every downstream
+approval in the transactional Recovery copy because `analysis/v3` requires a newly
+measured Music Understanding hierarchy. Existing artifacts remain available for
+inspection but cannot authorize further phase execution.

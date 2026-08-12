@@ -33,6 +33,8 @@ class ExampleFixtureBundleTests(unittest.TestCase):
                                 "bpm": 120.0,
                                 "bpm_tolerance": 1.0,
                                 "expect_boundary_reduction": True,
+                                "section_boundaries_s": [2.0, 6.0],
+                                "section_boundary_tolerance_s": 0.5,
                             }
                         }
                     },
@@ -61,6 +63,10 @@ class ExampleFixtureBundleTests(unittest.TestCase):
         self.assertTrue(
             manifest["datasets"][0]["expectations"]["audio"]["expect_boundary_reduction"]
         )
+        self.assertEqual(
+            manifest["datasets"][0]["expectations"]["audio"]["section_boundaries_s"],
+            [2.0, 6.0],
+        )
         self.assertEqual((extracted / "song_one/lyrics.txt").read_text(), "words\n")
 
     def test_archive_is_deterministic(self):
@@ -80,6 +86,13 @@ class ExampleFixtureBundleTests(unittest.TestCase):
     def test_boundary_reduction_expectation_is_required(self):
         expectations = json.loads(self.expectations.read_text(encoding="utf-8"))
         del expectations["datasets"]["song_one"]["audio"]["expect_boundary_reduction"]
+        self.expectations.write_text(json.dumps(expectations), encoding="utf-8")
+        with self.assertRaisesRegex(fixtures.FixtureError, "incomplete audio expectations"):
+            fixtures.collect_manifest(self.source, self.expectations)
+
+    def test_section_boundary_expectations_are_required(self):
+        expectations = json.loads(self.expectations.read_text(encoding="utf-8"))
+        del expectations["datasets"]["song_one"]["audio"]["section_boundaries_s"]
         self.expectations.write_text(json.dumps(expectations), encoding="utf-8")
         with self.assertRaisesRegex(fixtures.FixtureError, "incomplete audio expectations"):
             fixtures.collect_manifest(self.source, self.expectations)

@@ -7,7 +7,7 @@ struct PackSurfaceTests {
 
     private static let analysisJSON = """
     {
-      "schema": "analysis/v2",
+      "schema": "analysis/v3",
       "project": "demo",
       "song_path": "audio/midnight_drive.wav",
       "sample_rate": 44100,
@@ -15,20 +15,26 @@ struct PackSurfaceTests {
       "bpm": 128.0,
       "tempo_multiplier": 1.0,
       "key": "A minor",
-      "downbeat_source": "beat-transformer",
+      "downbeat_source": "music-understanding",
       "beats": [0.0, 0.47, 0.94, 1.41],
       "downbeats": [0.0, 1.88],
       "sections": [
-        {"index": 0, "start": 0.0, "end": 27.0, "cluster": 0, "label": "Intro", "source": "measured_track_extent"},
-        {"index": 1, "start": 27.0, "end": 71.0, "cluster": 1, "label": "Verse 1", "source": "measured_alignment_fusion"}
+        {"index": 0, "start": 0.0, "end": 27.0, "cluster": 0, "label": "Intro", "source": "measured_system_hierarchy"},
+        {"index": 1, "start": 27.0, "end": 71.0, "cluster": 1, "label": "Verse 1", "source": "measured_system_hierarchy"}
       ],
       "structure_resolution": {
         "status": "resolved",
-        "method": "per_boundary_evidence",
+        "method": "music_understanding_hierarchy",
         "candidate_boundary_count": 40,
         "accepted_boundary_count": 1,
         "discarded_boundary_count": 39,
-        "detail": "Every lyric marker selected acoustic evidence."
+        "hierarchy": {
+          "source": "apple_music_understanding",
+          "sections": [{"start":0,"end":27},{"start":27,"end":71}],
+          "segments": [{"start":0,"end":27},{"start":27,"end":71}],
+          "phrases": [{"start":0,"end":13.5},{"start":13.5,"end":27},{"start":27,"end":71}]
+        },
+        "detail": "Measured system hierarchy."
       },
       "stage_diagnostics": [
         {"stage": "lyrics_alignment", "status": "succeeded", "detail": "Anchored all markers."}
@@ -36,20 +42,20 @@ struct PackSurfaceTests {
     }
     """
 
-    @Test("AnalysisSurfaceData decodes the analysis/v2 fields the panel renders")
+    @Test("AnalysisSurfaceData decodes the analysis/v3 fields the panel renders")
     func decodesAnalysisArtifact() throws {
         let d = try JSONDecoder().decode(AnalysisSurfaceData.self, from: Data(Self.analysisJSON.utf8))
         #expect(d.trackName == "midnight_drive.wav")
         #expect(d.durationS == 222.0)
         #expect(d.perceivedBpm == 128.0)
         #expect(d.key == "A minor")
-        #expect(d.downbeatSource == "beat-transformer")
+        #expect(d.downbeatSource == "music-understanding")
         #expect(d.beats.count == 4)
         #expect(d.downbeats.count == 2)
         #expect(d.hasBeatGrid)
         #expect(d.hasCanonicalStructure)
-        #expect(!d.requiresStructureReview)
         #expect(d.structureResolution?.candidateBoundaryCount == 40)
+        #expect(d.structureResolution?.hierarchy?.segments.count == 2)
         #expect(d.stageDiagnostics.count == 1)
         #expect(d.nonSuccessStageDiagnostics.isEmpty)
         #expect(d.sections.count == 2)
@@ -97,16 +103,15 @@ struct PackSurfaceTests {
         let unresolvedData = try JSONDecoder().decode(AnalysisSurfaceData.self, from: Data(unresolved.utf8))
         #expect(!unresolvedData.hasCanonicalStructure)
 
-        let reviewRequired = Self.analysisJSON.replacingOccurrences(
-            of: "\"status\": \"resolved\"",
-            with: "\"status\": \"review_required\""
+        let wrongSource = Self.analysisJSON.replacingOccurrences(
+            of: "\"source\": \"apple_music_understanding\"",
+            with: "\"source\": \"librosa\""
         )
-        let reviewData = try JSONDecoder().decode(
+        let wrongSourceData = try JSONDecoder().decode(
             AnalysisSurfaceData.self,
-            from: Data(reviewRequired.utf8)
+            from: Data(wrongSource.utf8)
         )
-        #expect(reviewData.hasCanonicalStructure)
-        #expect(reviewData.requiresStructureReview)
+        #expect(!wrongSourceData.hasCanonicalStructure)
     }
 
     @Test("ContractData decodes pack-contributed cockpit_surfaces; legacy files decode empty")

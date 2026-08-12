@@ -224,8 +224,8 @@ Incompatible / unsigned packs become a picker row with a calm reason (e.g.
   `.ngv` package is the rollback source and changes only on the next Save. The pending
   upgrade record remains until that Save, so a crash can reopen the migrated Recovery
   copy; closing without saving cancels the upgrade and restores the source-version pin.
-  `musicvideo/legacy → musicvideo/1.0.0` is intentionally data-identical: legacy describes
-  the same artifacts before binding metadata existed, so the host changes only `ngv.json`.
+  `musicvideo/legacy|1.0.0 → musicvideo/2.0.0` transactionally resets Analysis and
+  downstream approvals because the new measured-structure artifact contract must be rerun.
 
 ## The `Pack` protocol
 

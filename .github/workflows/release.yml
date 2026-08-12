@@ -81,7 +81,7 @@ jobs:
         run: python3 scripts/lint_app_theme.py
 
       - name: Verify private fixture bundle tooling
-        run: python3 -m unittest scripts/test_example_fixture_bundle.py
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Inspect or resume release publication
         if: ${{ inputs.dry_run == false }}
@@ -273,8 +273,8 @@ jobs:
   release:
     needs: release-gate
     if: ${{ needs.release-gate.outputs.publication-resumed != 'true' }}
-    # macOS 26 is required to compile, sign, notarize, staple, and package the app.
-    runs-on: macos-26
+    # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
+    runs-on: xcode-27
     timeout-minutes: 90
     permissions:
       contents: write

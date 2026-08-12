@@ -25,7 +25,7 @@ public struct TranscriptToken: Sendable, Equatable {
 /// never transcribed is DROPPED, never fabricated. Per lyric word it emits a timestamp — matched words
 /// inherit the ASR span, intra-line gaps interpolate between the surrounding anchors. `[Section]`
 /// markers ride onto the following line. The consolidator may use a reliably anchored marker to label
-/// and select a nearby acoustic boundary, but a lyric timestamp never becomes a structural boundary.
+/// a nearby system-measured boundary, but a lyric timestamp never becomes a structural boundary.
 public enum LyricsAlignment {
     /// A lyric word: display surface + normalized matching key.
     private struct Tok { let surface: String; let key: String }
@@ -141,8 +141,8 @@ public enum LyricsAlignment {
         return out
     }
 
-    /// Align. Returns one `AlignmentLine` per MAPPED lyric line. Empty if either side is empty (caller
-    /// falls back to acoustic-only section detection).
+    /// Align. Returns one `AlignmentLine` per mapped lyric line. Empty input leaves the measured
+    /// system hierarchy unlabeled.
     public static func align(lyrics: String, transcript: [TranscriptToken]) -> [AlignmentLine] {
         alignDetailed(lyrics: lyrics, transcript: transcript).lines
     }

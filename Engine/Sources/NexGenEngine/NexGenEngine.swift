@@ -9,5 +9,5 @@
 public enum NexGenEngine {
     /// Port version. Tracks the Swift port independently of the Python engine's
     /// package version (`engine/nexgen_engine/__init__.py::__version__`).
-    public static let version = "0.2.0"
+    public static let version = "0.3.0"
 }

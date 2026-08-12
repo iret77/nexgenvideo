@@ -24,7 +24,7 @@ Independent expectations are supplied from a private JSON file when the bundle i
 
 ```json
 {
-  "schema": "nexgenvideo.example-fixture-expectations/v1",
+  "schema": "nexgenvideo.example-fixture-expectations/v2",
   "datasets": {
     "dataset_id": {
       "audio": {
@@ -33,7 +33,9 @@ Independent expectations are supplied from a private JSON file when the bundle i
         "duration_tolerance_s": 0.5,
         "bpm": 150.0,
         "bpm_tolerance": 2.0,
-        "expect_boundary_reduction": true
+        "expect_boundary_reduction": true,
+        "section_boundaries_s": [33.83, 59.20, 85.31],
+        "section_boundary_tolerance_s": 4.0
       }
     }
   }
@@ -54,7 +56,7 @@ NGV_GHCR_TOKEN_FILE=/secure/token-file \
 NGV_FIXTURE_EXPECTATIONS_FILE=/private/fixture-expectations.json \
 scripts/publish_example_fixtures.sh \
   /owner-managed/examples \
-  ghcr.io/iret77/nexgenvideo-examples:fixtures-v1
+  ghcr.io/iret77/nexgenvideo-examples:fixtures-v2
 ```
 
 The command prints the immutable `ghcr.io/...@sha256:...` reference. Its digest is stored as the
@@ -67,10 +69,12 @@ any macOS runner receives private data.
 ## Analysis run
 
 `.github/workflows/private-example-analysis.yml` is manual-only. Before allocating a macOS runner it
+requires an exact `NGV_MACOS_27_RUNNER` repository-variable label. Until GitHub offers such a runner,
+the Linux runtime gate fails immediately and no macOS job is allocated. The remaining Linux gate
 requires the centrally configured exact fixture digest, validates the dataset id, verifies that both
 private packages are unlinked, confirms that its dedicated package secret exists, and rejects the
-current index or reachable repository history if any blob matches private fixture content. The Linux gate removes its
-temporary media and registry credentials before the macOS job can start.
+current index or reachable repository history if any blob matches private fixture content. It removes
+its temporary media and registry credentials before the macOS job can start.
 
 The macOS job then:
 
@@ -78,7 +82,8 @@ The macOS job then:
 2. bundles the real app and external `.ngvpack`;
 3. runs the headless app self-test with AVFoundation and the pack's real analysis phase;
 4. applies the pack's independent pre-interpretation gate;
-5. checks the private duration/BPM expectations and raw-to-canonical boundary reduction; and
+5. checks duration, BPM, boundary reduction, and every ordered section boundary against private,
+   independently produced expectations; and
 6. pushes `analysis.json` plus `provenance.json` to the private report package.
 
 The provenance record links the result to the immutable fixture reference, tree and file digests,
@@ -89,3 +94,7 @@ structure status, raw/accepted boundary counts, and canonical boundary times. It
 paths, source names, lyrics, labels, hashes, or media content.
 No media, lyrics, analysis, or provenance file is uploaded as a public Actions artifact. The macOS
 job removes its fixture, report, and registry-auth directories after publication or failure.
+
+The real Music Understanding run requires macOS 27 at runtime. Once a runner label is configured, the
+macOS job verifies `sw_vers` before downloading private data or building; compiling against the macOS
+27 SDK is not treated as runtime evidence.

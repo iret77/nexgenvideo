@@ -10,7 +10,7 @@
   <img src="./assets/macos-badge.png" alt="Download NexGenVideo for macOS" width="180" />
 </a>
 
-<sub><i>Requires macOS 26 (Tahoe) on Apple Silicon</i></sub>
+<sub><i>Requires the latest macOS (currently macOS 27) on Apple Silicon</i></sub>
 
 <a href="https://discord.com/invite/SMVW6pKYmg"><img src="https://img.shields.io/badge/Join-Discord-5865F2?style=flat&logo=discord&logoColor=white" alt="Join Discord" /></a>
 
@@ -91,7 +91,8 @@ Generative AI features use your own provider API keys — no account or login.
 
 **What platforms does it support?**
 
-macOS 26 (Tahoe) on Apple Silicon only.
+The latest macOS (currently macOS 27) on Apple Silicon only. NexGenVideo intentionally adopts useful
+new platform APIs without maintaining compatibility with older macOS releases.
 
 See [FAQ.md](FAQ.md) for more.
 

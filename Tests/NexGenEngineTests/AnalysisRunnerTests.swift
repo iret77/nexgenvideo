@@ -20,6 +20,26 @@ struct AnalysisRunnerPlumbingTests {
         func decode(_ url: URL) throws -> PCMBuffer { buffer }
     }
 
+    struct StubMusicAnalyzer: MusicUnderstandingAnalyzing {
+        let duration: Double
+        let boundaries: [Double]
+
+        func analyze(_ audio: URL) throws -> MusicUnderstandingMeasurement {
+            let times = ([0.0] + boundaries + [duration]).sorted()
+            let sections = zip(times, times.dropFirst()).map {
+                MeasuredMusicRange(start: $0.0, end: $0.1)
+            }
+            return MusicUnderstandingMeasurement(
+                beats: stride(from: 0.0, through: duration, by: 0.5).map { $0 },
+                bars: stride(from: 0.0, through: duration, by: 2.0).map { $0 },
+                bpm: 120,
+                sections: sections,
+                segments: sections,
+                phrases: sections
+            )
+        }
+    }
+
     /// A tiny deterministic click track (few beats), enough for a valid BPM.
     static func clickTrack(bpm: Double, seconds: Double, sr: Double = analysisSampleRate) -> PCMBuffer {
         let total = Int(seconds * sr)
@@ -103,6 +123,12 @@ struct AnalysisRunnerPlumbingTests {
 
     // MARK: - Canonical mapping + encoding (no DSP)
 
+    @Test("system rhythm timestamps are finite, ordered, unique, and in range")
+    func normalizesSystemRhythmTimes() {
+        let values = [4.0, .nan, -1.0, 2.0004, 2.0003, 12.1, 0.0]
+        #expect(MusicvideoAnalysisRunner.normalizedSystemTimes(values, durationS: 12) == [0, 2, 4])
+    }
+
     @Test("AudioAnalysis maps onto the canonical Analysis schema")
     func canonicalMapping() throws {
         let raw = AudioAnalysis(
@@ -119,11 +145,9 @@ struct AnalysisRunnerPlumbingTests {
         #expect(analysis.beats == [0.5, 1.0, 1.5])
         #expect(analysis.downbeatSource == .librosaHeuristic)
         #expect(analysis.sections.count == 1)
-        // Endpoints are clamped to the full track: no audio falls outside a section even after
-        // downbeat snapping.
         #expect(analysis.sections.first?.start == 0.0)
         #expect(analysis.sections.first?.end == 12.0)
-        #expect(analysis.pipelineStages == ["load_audio", "rhythm", "structure", "features"])
+        #expect(analysis.pipelineStages == ["load_audio", "rhythm", "features"])
     }
 
     @Test("encoded artifact is snake_case, sorted, newline-terminated, and re-decodes")
@@ -134,14 +158,27 @@ struct AnalysisRunnerPlumbingTests {
             sections: [AnalysisSection(index: 0, start: 0.0, end: 12.0, cluster: 0, source: "consolidated")]
         )
         let resolution = Consolidator.StructureResolution(
-            version: "bar-consensus/v1", status: .resolved,
-            method: "homogeneous_consensus", detectorSources: ["essentia", "librosa"],
-            minimumSectionBars: Consolidator.minimumConsensusBars,
+            version: "system-structure/v3", status: .resolved,
+            method: "music_understanding_hierarchy", detectorSources: ["apple_music_understanding"],
+            minimumSectionBars: 0,
             candidateBoundaryCount: 0, consensusBoundaryCount: 0,
             alignmentMarkerCount: 0, resolvedAlignmentMarkerCount: 0,
             acceptedBoundaryCount: 0, discardedBoundaryCount: 0,
-            boundaryEvidence: [],
-            detail: "Independent acoustic detectors found no internal structural boundary."
+            boundaryEvidence: [
+                .init(
+                    time: 0,
+                    kind: .systemHierarchy,
+                    detectorSources: ["apple_music_understanding"],
+                    lyricMarker: nil
+                ),
+            ],
+            hierarchy: .init(
+                source: "apple_music_understanding",
+                sections: [.init(start: 0, end: 12)],
+                segments: [.init(start: 0, end: 12)],
+                phrases: [.init(start: 0, end: 12)]
+            ),
+            detail: "Measured system hierarchy."
         )
         let data = try MusicvideoAnalysisRunner.encodeArtifact(
             analysis,
@@ -167,6 +204,15 @@ struct AnalysisRunnerPlumbingTests {
         #expect(MusicvideoAnalysisRunner.RunError.noDecoder.description.contains("decode"))
     }
 
+    @Test("host music analyzer is injected through the engine registry")
+    func hostMusicAnalyzerInjection() {
+        let registry = EngineRegistry()
+        registry.registerMusicUnderstandingAnalyzer(
+            StubMusicAnalyzer(duration: 8, boundaries: [4])
+        )
+        #expect(registry.musicUnderstandingAnalyzer != nil)
+    }
+
     @Test("registered phase without a decoder throws noDecoder before any DSP")
     func phaseWithoutDecoder() throws {
         let dataRoot = try Self.makeProject(name: "No Decoder")
@@ -178,11 +224,12 @@ struct AnalysisRunnerPlumbingTests {
 
     // MARK: - Forced-alignment wiring (no DSP)
 
-    @Test("lyric alignment selects acoustic candidates without becoming timing truth")
-    func alignmentSelectsMeasuredSections() throws {
+    @Test("lyric alignment labels system sections without becoming timing truth")
+    func alignmentLabelsMeasuredSections() throws {
         let raw = AudioAnalysis(
             sampleRate: 22050, durationS: 40.0, bpm: 120.0,
-            beats: [], downbeats: [0.0, 10.0, 20.0, 30.0, 40.0], downbeatSource: "librosa-heuristic",
+            beats: stride(from: 0.0, through: 40.0, by: 0.5).map { $0 },
+            downbeats: [0.0, 10.0, 20.0, 30.0, 40.0], downbeatSource: "music-understanding",
             sections: [
                 AudioSection(index: 0, start: 0, end: 19.7, cluster: 0, source: "librosa"),
                 AudioSection(index: 1, start: 19.7, end: 40, cluster: 1, source: "librosa"),
@@ -199,7 +246,18 @@ struct AnalysisRunnerPlumbingTests {
         )
         let result = try MusicvideoAnalysisRunner.toCanonicalDetailed(
             raw, project: "P", songPath: "audio/s.mp3",
-            lyricsAlignment: report.lines, alignmentReport: report
+            lyricsAlignment: report.lines,
+            alignmentReport: report,
+            pipelineStages: ["music_understanding"],
+            musicUnderstanding: MusicUnderstandingMeasurement(
+                beats: raw.beats,
+                bars: raw.downbeats,
+                bpm: 120,
+                sections: [.init(start: 0, end: 20), .init(start: 20, end: 40)],
+                segments: [.init(start: 0, end: 20), .init(start: 20, end: 40)],
+                phrases: [.init(start: 0, end: 10), .init(start: 10, end: 20),
+                          .init(start: 20, end: 30), .init(start: 30, end: 40)]
+            )
         )
         #expect(result.structureResolution.status == .resolved)
         #expect(result.analysis.sections.map(\.start) == [0, 20])
@@ -321,18 +379,20 @@ struct AnalysisRunnerE2ETests {
             TranscribedWord(text: "burning", start: 5.0, end: 5.4), TranscribedWord(text: "clear", start: 5.4, end: 5.7),
             TranscribedWord(text: "and", start: 5.7, end: 5.9), TranscribedWord(text: "bright", start: 5.9, end: 6.4),
         ]
-        let outcome = try MusicvideoAnalysisRunner.run(
+        let outcome = try MusicvideoAnalysisRunner.runWithSystemAnalysis(
             dataRoot: dataRoot,
             decoder: AnalysisRunnerPlumbingTests.StubDecoder(buffer: AnalysisRunnerPlumbingTests.clickTrack(bpm: 120, seconds: 8)),
-            transcriber: StubTranscriber(words: words))
+            transcriber: StubTranscriber(words: words),
+            musicUnderstandingAnalyzer: AnalysisRunnerPlumbingTests.StubMusicAnalyzer(
+                duration: 8,
+                boundaries: [4]
+            ))
 
         #expect(outcome.analysis.alignment.count == 2)
         #expect(outcome.analysis.alignment.contains { $0.sectionMarker == "verse1" })
         #expect(outcome.analysis.pipelineStages.contains("alignment"))
-        // Lyrics label and select nearby measured boundaries; they never create timing.
-        #expect(outcome.analysis.sections.first?.source == "measured_track_extent")
-        #expect(outcome.analysis.sections.dropFirst().allSatisfy {
-            $0.source == "measured_alignment_fusion"
+        #expect(outcome.analysis.sections.allSatisfy {
+            $0.source == "measured_system_hierarchy"
         })
     }
 }

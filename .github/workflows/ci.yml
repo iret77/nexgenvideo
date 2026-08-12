@@ -25,13 +25,13 @@ jobs:
         run: python3 scripts/lint_app_theme.py
 
       - name: Verify private fixture bundle tooling
-        run: python3 -m unittest scripts/test_example_fixture_bundle.py
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
   build-test:
     name: Build & Test
     needs: source-gate
-    # NexGenVideo targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.
-    runs-on: macos-26
+    # Xcode 27 provides the macOS 27 SDK used by the latest-macOS-only product.
+    runs-on: xcode-27
     # Real runs take ~5.5 min. This is a COST CEILING, not a budget: a hung job on a 10x-billed macOS
     # runner burns the timeout in quota minutes, so keep it just far enough above the real duration.
     timeout-minutes: 20
@@ -55,7 +55,7 @@ jobs:
         shell: bash
         run: |
           set +e  # GitHub's default `-e` would abort on the first failing attempt; we handle codes below.
-          # macos-26 SIGSEGV/SIGTRAP crashes here were traced (via SWIFT_BACKTRACE) to CODE traps, not the
+          # macOS-runner SIGSEGV/SIGTRAP crashes here were traced (via SWIFT_BACKTRACE) to CODE traps, not the
           # environment: an integer-overflow trap in BICStructure (t - Int.min) and a slow lazy-global init
           # (PackKnowledge.packRoot) that starved the pool under concurrent first-touch — both fixed in the
           # sources. The "CoreData: Failed to create NSXPCConnection" line the retry keys on is benign noise

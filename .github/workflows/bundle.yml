@@ -50,7 +50,7 @@ jobs:
         run: python3 scripts/lint_app_theme.py
 
       - name: Verify private fixture bundle tooling
-        run: python3 -m unittest scripts/test_example_fixture_bundle.py
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
   bundle-app:
     name: Bundle .app
@@ -58,8 +58,8 @@ jobs:
     # Smoke-test that the debug .app still assembles (no secrets, no local build) and keep it as a CI
     # artifact. The public `dev-latest` download is the SIGNED + notarized DMG published by release.yml
     # — ci.yml no longer writes that release.
-    # macOS 26 is required to compile and load-test the macOS 26 app and format pack.
-    runs-on: macos-26
+    # Xcode 27 provides the macOS 27 SDK used by the app and format pack.
+    runs-on: xcode-27
     # Cost ceiling on a 10x-billed runner; the real job takes ~4.5 min.
     timeout-minutes: 20
     steps:
@@ -99,8 +99,8 @@ jobs:
           assert "0.0.1" in versions, f"append-only violated — older version dropped: {versions}"
           assert len(versions) > 1, f"the freshly built version was not appended: {versions}"
           fresh = next(p for p in plugins if p["id"] == "musicvideo" and p["version"] != "0.0.1")
-          assert fresh["projectSchema"] == "musicvideo/1.0.0", fresh
-          assert fresh["migratesFrom"] == ["musicvideo/legacy"], fresh
+          assert fresh["projectSchema"] == "musicvideo/2.0.0", fresh
+          assert fresh["migratesFrom"] == ["musicvideo/legacy", "musicvideo/1.0.0"], fresh
           for p in plugins:
               assert p["url"].endswith(f"{p['id']}-{p['version']}.ngvpack.zip"), f"unversioned asset URL: {p['url']}"
           print(f"catalog carries {len(versions)} musicvideo version(s): {versions}")

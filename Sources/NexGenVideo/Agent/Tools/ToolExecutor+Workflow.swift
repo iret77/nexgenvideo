@@ -3081,6 +3081,7 @@ extension ToolExecutor {
         // project PACKAGE (parent of `pipeline`), not the data root — resolve the home first.
         let registry = PackCatalog.registry(activePack: activePluginFor(dataRoot: root))
         registry.registerAudioDecoder(AVFoundationAudioDecoder())
+        registry.registerMusicUnderstandingAnalyzer(AppleMusicUnderstandingAnalyzer())
         // On-device speech recognition (whisper.cpp) for forced lyric alignment. The pack's analysis
         // runner resolves it from the registry; the model downloads on demand on first use.
         registry.registerTranscriber(WhisperCppTranscriber())
