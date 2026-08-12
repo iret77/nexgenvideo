@@ -30,8 +30,9 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "projectSchemaMigrations",
     "progressPhaseRunners",
     "productionProfiles",
+    "artifactWriteRequirements",
 ]
-ENGINE_BOUNDARY_LAYOUT_CONTRACT = 5
+ENGINE_BOUNDARY_LAYOUT_CONTRACT = 6
 ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 2
 ENGINE_BOUNDARY_LAYOUTS = {
     "Shot": {

@@ -3,6 +3,9 @@ import AppKit
 Log.bootstrap()
 AppRelaunchSelfTest.recordBootIfRequested()
 
+// CI-only exact-file analysis through the real app and private digest-pinned fixture.
+ExampleAudioAnalysisSelfTest.runIfRequested()
+
 // CI-only pack load self-test. No-op unless NGV_SELFTEST_PACK is set; when set, loads that pack with
 // the real binary + Frameworks and exits before any UI — reproduces + guards the load-time cast.
 PackSelfTest.runIfRequested()

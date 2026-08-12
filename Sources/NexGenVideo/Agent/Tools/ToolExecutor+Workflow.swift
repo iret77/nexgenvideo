@@ -3219,6 +3219,14 @@ extension ToolExecutor {
             if let src = s["source"] as? String { out["source"] = src }
             return out
         }
+        if let resolution = obj["structure_resolution"] as? [String: Any] {
+            summary["structure_resolution"] = resolution
+        }
+        let diagnostics = obj["stage_diagnostics"] as? [[String: Any]] ?? []
+        summary["stage_diagnostics"] = diagnostics.filter {
+            guard let status = $0["status"] as? String else { return true }
+            return status != "succeeded" && status != "not_applicable"
+        }
         if let source = obj["downbeat_source"] as? String { summary["downbeat_source"] = source }
         if let project = obj["project"] as? String { summary["project"] = project }
         return summary

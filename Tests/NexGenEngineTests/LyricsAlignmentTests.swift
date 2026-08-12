@@ -38,8 +38,35 @@ struct LyricsAlignmentTests {
         #expect(lines.count == 2)
         #expect(lines[0].sectionMarker == "verse1")
         #expect(lines[1].sectionMarker == "chorus")
-        // Only marker-following lines carry a marker — the Consolidator's Path A contract.
+        // Only marker-following lines carry evidence for structure fusion.
         #expect(lines.filter { $0.sectionMarker != nil }.count == 2)
+    }
+
+    @Test("structure evidence requires every marker line to have enough transcript anchors")
+    func markerReliability() {
+        let complete = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nhello world\n[Chorus]\nwide open",
+            transcript: [
+                .init(text: "hello", start: 0, end: 0.2),
+                .init(text: "world", start: 0.2, end: 0.4),
+                .init(text: "wide", start: 2, end: 2.2),
+                .init(text: "open", start: 2.2, end: 2.4),
+            ]
+        )
+        #expect(complete.hasReliableStructureEvidence)
+        #expect(complete.markerCount == 2)
+        #expect(complete.reliableMarkerCount == 2)
+
+        let partial = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nhello world\n[Chorus]\nmissing line",
+            transcript: [
+                .init(text: "hello", start: 0, end: 0.2),
+                .init(text: "world", start: 0.2, end: 0.4),
+            ]
+        )
+        #expect(!partial.hasReliableStructureEvidence)
+        #expect(partial.markerCount == 2)
+        #expect(partial.reliableMarkerCount == 1)
     }
 
     @Test("fuzzy ASR mishearing still matches the lyric word")
@@ -129,6 +156,14 @@ struct LyricsAlignmentTests {
         let parsed = LyricsAlignment.linesAndMarkers("[Verse 1]  \nMorning light is falling  ")
         #expect(parsed.count == 1)
         #expect(parsed[0] == ("Morning light is falling", "verse1"))
+    }
+
+    @Test("whitespace-only markers do not create structure evidence")
+    func whitespaceOnlyMarker() {
+        let parsed = LyricsAlignment.linesAndMarkers("[Verse]\n[   ]\nMorning light is falling")
+        #expect(parsed.count == 1)
+        #expect(parsed[0].text == "Morning light is falling")
+        #expect(parsed[0].marker == nil)
     }
 
     @Test("ad-lib ASR words between lines are not pulled into a line")

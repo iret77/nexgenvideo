@@ -19,8 +19,19 @@ struct PackSurfaceTests {
       "beats": [0.0, 0.47, 0.94, 1.41],
       "downbeats": [0.0, 1.88],
       "sections": [
-        {"index": 0, "start": 0.0, "end": 27.0, "cluster": 0, "label": "Intro", "source": "consolidated"},
-        {"index": 1, "start": 27.0, "end": 71.0, "cluster": 1, "label": "Verse 1", "source": "alignment"}
+        {"index": 0, "start": 0.0, "end": 27.0, "cluster": 0, "label": "Intro", "source": "measured_track_extent"},
+        {"index": 1, "start": 27.0, "end": 71.0, "cluster": 1, "label": "Verse 1", "source": "measured_alignment_fusion"}
+      ],
+      "structure_resolution": {
+        "status": "resolved",
+        "method": "per_boundary_evidence",
+        "candidate_boundary_count": 40,
+        "accepted_boundary_count": 1,
+        "discarded_boundary_count": 39,
+        "detail": "Every lyric marker selected acoustic evidence."
+      },
+      "stage_diagnostics": [
+        {"stage": "lyrics_alignment", "status": "succeeded", "detail": "Anchored all markers."}
       ]
     }
     """
@@ -36,9 +47,24 @@ struct PackSurfaceTests {
         #expect(d.beats.count == 4)
         #expect(d.downbeats.count == 2)
         #expect(d.hasBeatGrid)
+        #expect(d.hasCanonicalStructure)
+        #expect(!d.requiresStructureReview)
+        #expect(d.structureResolution?.candidateBoundaryCount == 40)
+        #expect(d.stageDiagnostics.count == 1)
+        #expect(d.nonSuccessStageDiagnostics.isEmpty)
         #expect(d.sections.count == 2)
         #expect(d.sections.first?.label == "Intro")
         #expect(d.sections.last?.end == 71.0)
+    }
+
+    @Test("failed, degraded, and unavailable stages remain visible")
+    func nonSuccessStageDiagnostics() throws {
+        let json = Self.analysisJSON.replacingOccurrences(
+            of: "\"status\": \"succeeded\"",
+            with: "\"status\": \"unavailable\""
+        )
+        let data = try JSONDecoder().decode(AnalysisSurfaceData.self, from: Data(json.utf8))
+        #expect(data.nonSuccessStageDiagnostics.map(\.status) == ["unavailable"])
     }
 
     @Test("perceivedBpm applies the confirmed tempo multiplier")
@@ -56,6 +82,31 @@ struct PackSurfaceTests {
         let d = try JSONDecoder().decode(AnalysisSurfaceData.self, from: Data(json.utf8))
         #expect(!d.hasBeatGrid)
         #expect(d.key == "A minor")   // still usable
+    }
+
+    @Test("missing or unresolved structure is never presented as canonical")
+    func unresolvedStructure() throws {
+        let legacy = """
+        {"song_path":"audio/song.wav","duration_s":12,"bpm":120,
+         "beats":[0,0.5],"downbeats":[0,2],"sections":[]}
+        """
+        let legacyData = try JSONDecoder().decode(AnalysisSurfaceData.self, from: Data(legacy.utf8))
+        #expect(!legacyData.hasCanonicalStructure)
+
+        let unresolved = Self.analysisJSON.replacingOccurrences(of: "\"status\": \"resolved\"", with: "\"status\": \"needs_review\"")
+        let unresolvedData = try JSONDecoder().decode(AnalysisSurfaceData.self, from: Data(unresolved.utf8))
+        #expect(!unresolvedData.hasCanonicalStructure)
+
+        let reviewRequired = Self.analysisJSON.replacingOccurrences(
+            of: "\"status\": \"resolved\"",
+            with: "\"status\": \"review_required\""
+        )
+        let reviewData = try JSONDecoder().decode(
+            AnalysisSurfaceData.self,
+            from: Data(reviewRequired.utf8)
+        )
+        #expect(reviewData.hasCanonicalStructure)
+        #expect(reviewData.requiresStructureReview)
     }
 
     @Test("ContractData decodes pack-contributed cockpit_surfaces; legacy files decode empty")

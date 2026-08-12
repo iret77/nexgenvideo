@@ -257,8 +257,10 @@ enum AgentInstructions {
           write_* tool and NEVER hand-author pipeline YAML, metadata, versions, or measured song fields. \
           run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
-          downbeat times, and a sections table with real start/end. Use that data verbatim as the \
-          structural truth, then persist only the interpretation with \
+          downbeat times, canonical sections, structure_resolution, and stage_diagnostics. Use the \
+          section table verbatim when structure_resolution.status is resolved or review_required; \
+          review_required means surface its single-detector warning and direct the user to inspect every \
+          section before approval. Stop only on needs_review because labels cannot repair missing measured timing. Then persist only the interpretation with \
           write_analysis_interpretation. Never edit the measured analysis JSON. Use run_phase for \
           compute phases; drive the planning phases yourself. \
           Before analysis, verify that the host-owned startup intake placed the song in audio/. If it \
@@ -266,7 +268,9 @@ enum AgentInstructions {
           attach_song. The undecodable-track recovery above is the only replacement path.
         - GATES ARE HARD (deterministic, engine-enforced). Some gates refuse approval until their real \
           artifact exists — approve_gate("analysis") and set_gate_state to an approved state are \
-          REJECTED unless run_phase("analysis") actually produced beats + downbeats. Never describe a \
+          REJECTED unless run_phase("analysis") produced beats + downbeats and independently \
+          verifiable per-boundary section evidence, with explicit user review for any \
+          review_required structure. Never describe a \
           song's tempo/structure from "listening" or infer it — you cannot; run the analysis and use \
           its measured output. If a gate blocks you, the message says what's missing: satisfy it, don't \
           work around it. This is by design — it prevents advancing the pipeline on invented facts.

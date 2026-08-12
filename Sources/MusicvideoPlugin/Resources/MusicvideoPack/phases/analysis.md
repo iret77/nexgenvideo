@@ -25,7 +25,7 @@ All file paths below are relative to the **project data root**.
 - For A2: `analysis/<song>.json` — written by the A1 run with
   `schema=analysis/v2`, carrying **measured** `beats`, `downbeats`,
   `bpm`, downbeat-snapped `sections`, `structure_candidates`,
-  `energy_curve`, `tempo_curve`.
+  `structure_resolution`, `stage_diagnostics`, `energy_curve`, `tempo_curve`.
 
 ## What the analysis actually produces (read this first)
 
@@ -34,17 +34,20 @@ writes measured data. It produces: `beats`, `downbeats`
 (`downbeat_source: "librosa-heuristic"`), `bpm`, `energy_curve`,
 `tempo_curve`, and `sections` whose boundaries are **snapped to the
 downbeat grid** by the consolidator. The raw detector output is kept in
-`structure_candidates`, and the consolidator pre-fills `interpretation.anomalies`
-(e.g. `single_source_boundary`, `boundary_divergence`).
+`structure_candidates`; it becomes canonical only through independent detector
+agreement, a reliably aligned lyric marker selecting nearby acoustic evidence,
+or a deterministic eight-bar phrase filter whose single-detector boundaries are
+explicitly marked for user review.
+`structure_resolution` records that decision and `stage_diagnostics` records
+optional model failures or degraded results instead of hiding them.
 
 Optional signals — stems, forced lyric alignment, musical key, and
 `chord_progression` — are produced **only when the corresponding on-device
-model/provider is available** (chords need a chord model; alignment needs a
-transcriber; stems need a separator). When one isn't installed its field
-stays empty — **never treat their absence as an error, and never fabricate
-them.** In particular: there is no
-`alignment[]` with line timings. Section **timing** comes only from the
-measured downbeats; lyrics contribute **labels**, not timing.
+model/provider succeeds**. Read `stage_diagnostics` before interpreting an
+empty field: unavailable, failed, degraded, and not-applicable are distinct
+states. Never fabricate a missing signal. Section **timing** comes only from
+measured acoustic candidates projected onto `downbeats`; lyrics can select
+and label a nearby measured boundary, never introduce one.
 
 The `run_phase("analysis")` result you receive already contains the
 measured grid — the `downbeats` times and the `sections` table with real
@@ -62,7 +65,9 @@ for timing; do not describe the song's structure from "listening".
     `anomalies`, `overall_character`.
 - **Gate (HARD — enforced by the engine).** `approve_gate("analysis")` is
   **rejected** unless (a) a real analysis artifact exists with non-empty
-  `beats` AND `downbeats` (you ran it — didn't imagine it), AND (b) A2 is
+  `beats` AND `downbeats`, (b) `structure_resolution.status` is `resolved` or
+  `review_required` and every canonical boundary validates against its persisted
+  per-boundary acoustic evidence, AND (c) A2 is
   done: `interpretation.section_labels` is written through the typed tool (the
   measured sections are labeled). Run the DSP for real, THEN interpret, THEN approve — approving
   right after the DSP run is refused. After writing the interpretation, give a
@@ -114,19 +119,29 @@ either supplied them or skipped them. Read `lyrics/lyrics.txt`; do not
 offer your own lyrics dialog.
 
 - **Present** → lyrics are **preferred over guessing** for section labels:
-  map the `[Section]` markers onto the measured sections in order. They do
-  **not** move the measured boundaries.
+  preserve lyric-derived labels already attached to their exact measured
+  sections. Never remap markers by list position.
 - **Absent** → instrumental track or the user declined. Label
   conservatively and move on.
 
 After a successful run, continue with A2.
+
+If `structure_resolution.status` is `needs_review`, stop before A2. Report
+its `detail` and the non-success `stage_diagnostics` exactly. Re-running is
+appropriate only after the reported evidence failure has changed; prose,
+label aggregation, or invented timestamps cannot resolve it.
+
+If its status is `review_required`, continue to A2 using the exact persisted
+sections, surface the single-detector warning, and direct the user to review
+every section in Analysis before requesting approval. The ordinary approval
+card is the explicit confirmation; do not auto-approve or hide the warning.
 
 ### A2 — Precondition
 
 `run_phase(project_dir, "analysis")` was executed in A1;
 `analysis/<song>.json` exists with `schema=analysis/v2` and measured
 `beats`, `downbeats`, downbeat-snapped `sections`, `structure_candidates`,
-`energy_curve`, `tempo_curve`.
+`structure_resolution`, `stage_diagnostics`, `energy_curve`, `tempo_curve`.
 
 ### A2 — Resume behavior (mandatory — check first)
 
@@ -169,14 +184,15 @@ Call `write_analysis_interpretation` exactly once with:
 
 - `section_labels`: list of `{index, label, confidence, note}`, one per
   entry in the measured `sections`.
-  - If lyrics were attached: adopt the `[Section]` markers as labels in
-    order, confidence high (0.9).
+  - If a section already carries a lyric-derived label: preserve that exact
+    marker on that exact measured boundary, confidence high (0.9).
   - Otherwise name narratively from position in the song and the
     energy/tempo curves, confidence lower.
   - Labels from {intro, verse1, verse2, ..., pre-chorus, chorus1,
     chorus2, ..., bridge, breakdown, outro}
-- `anomalies`: keep the entries the consolidator pre-flagged
-  (`single_source_boundary`, `boundary_divergence`) and add your own
+- `anomalies`: keep every entry the consolidator pre-flagged
+  (`single_detector_boundary_evidence`, `boundary_divergence`, alignment
+  evidence failures) and add your own
   observations.
 - `overall_character`: 2-3 sentences from the tempo-curve dynamics and
   the structure.
@@ -191,11 +207,18 @@ Never hand-edit or rewrite the measured analysis artifact.
 - `sections[]`: measured, downbeat-snapped boundaries — the source of
   truth for section timing. Label them; do not move them.
 - `downbeats[]`: the bar grid. Every section boundary sits on one.
-- `structure_candidates[]`: the raw detector output (one `librosa`
-  candidate today) — for your own plausibility checks.
+- `structure_candidates[]`: raw `librosa` and independent `essentia`
+  candidates — evidence, never the canonical timeline by themselves.
+- `structure_resolution`: the deterministic fusion result. Do not proceed
+  when its status is `needs_review`. `resolved` means corroborated evidence;
+  `review_required` is a measured, eight-bar phrase-filtered structure containing
+  single-detector evidence that remains visible for explicit approval. Every
+  internal boundary carries its own `boundary_evidence`; reliable lyric evidence
+  may retain a shorter acoustically supported part.
+- `stage_diagnostics`: explicit outcome of every optional analysis stage.
 - `energy_curve`, `tempo_curve`: for assessing dynamics.
-- Present only when their model/provider ran, empty otherwise (never
-  errors): `alignment`, `stems`, `key`, `chord_progression`. A non-empty
+- Present only when their model/provider succeeded: `alignment`, `stems`,
+  `key`, `chord_progression`. A non-empty
   `chord_progression` is the harmonic signal; `pipeline_stages` lists
   `chords` when it was computed.
 
@@ -205,7 +228,7 @@ Never hand-edit or rewrite the measured analysis artifact.
 - **Invent nothing.** Timing comes from the measured `downbeats`/`sections`
   only. If you didn't run analysis, you have no structure — run it. The
   analysis gate will reject approval without a real artifact.
-- On divergences (`boundary_divergence`): show them to the user explicitly.
+- Surface every non-success `stage_diagnostics` entry and structural anomaly.
 - No treatment (treatment-agent). No shotlist (shotlist-agent).
 - Never demand a shell command from the user.
 - The analysis runs via `run_phase(project_dir, "analysis")`, never via the
@@ -223,5 +246,6 @@ Never hand-edit or rewrite the measured analysis artifact.
   failed run and never ask for a file path.
 - Instrumental track / no lyrics → label sections conservatively from the
   measured boundaries and flag low confidence; never invent labels as fact.
-- `boundary_divergence` flagged by the consolidator → surface it to the
-  user before requesting the gate.
+- `needs_review` structure → stop before interpretation; labels and prose cannot
+  repair missing measured timing. `review_required` is not a dead end: show its
+  phrase-filtered sections, complete A2, and request explicit user approval.

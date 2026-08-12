@@ -40,3 +40,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .claude/worktrees/
+
+# Private real-media fixtures are distributed through private GHCR OCI artifacts only.
+/examples/
+/.private-fixtures/

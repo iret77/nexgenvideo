@@ -41,13 +41,14 @@ struct WhisperCppTranscriber: AudioTranscribing {
         params.print_timestamps = false
         params.print_special = false
         params.translate = false
-        params.detect_language = false
+        let detectsLanguage = language.isEmpty || language == "auto"
+        params.detect_language = detectsLanguage
         params.token_timestamps = true   // fills whisper_token_data.t0/t1 per token
         params.no_context = true
         params.suppress_blank = true
         params.n_threads = Int32(max(1, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
 
-        let lang = strdup(language)
+        let lang = strdup(detectsLanguage ? "auto" : language)
         defer { free(lang) }
         params.language = lang.map { UnsafePointer($0) }
 
@@ -124,7 +125,9 @@ struct WhisperCppTranscriber: AudioTranscribing {
             guard let buf = AVAudioPCMBuffer(pcmFormat: source, frameCapacity: AVAudioFrameCount(frames)) else {
                 throw TranscribeError.audioLoadFailed("could not allocate read buffer")
             }
-            try? file.read(into: buf)
+            do { try file.read(into: buf) } catch {
+                throw TranscribeError.audioLoadFailed(error.localizedDescription)
+            }
             guard let ch = buf.floatChannelData?[0] else { return [] }
             return Array(UnsafeBufferPointer(start: ch, count: Int(buf.frameLength)))
         }

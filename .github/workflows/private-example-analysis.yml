@@ -1,0 +1,210 @@
+name: Private Example Audio Analysis
+
+# ci-lint: allow-CI008 Manual workflow_dispatch is the only trigger; no commit starts this macOS job.
+
+# Real media never enters git or public Actions artifacts. A manually dispatched run pulls a
+# private, unlinked GHCR OCI artifact by immutable digest, executes the real bundled app + pack,
+# and pushes the analysis and provenance record into a second private, unlinked GHCR package.
+on:
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: "Dataset id from the private fixture manifest"
+        required: true
+        default: "claude_mouse"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-example-analysis-${{ github.ref }}-${{ inputs.dataset }}
+  cancel-in-progress: false
+
+jobs:
+  source-gate:
+    name: Private Fixture Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate dispatch contract
+        env:
+          FIXTURE_DIGEST: ${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
+          DATASET: ${{ inputs.dataset }}
+          NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$FIXTURE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::fixture_digest must be an exact lowercase sha256 digest"; exit 1; }
+          [[ "$DATASET" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
+            || { echo "::error::dataset must be a stable manifest id"; exit 1; }
+          [ -n "$NGV_GHCR_TOKEN" ] \
+            || { echo "::error::NGV_GHCR_TOKEN is not configured"; exit 1; }
+
+      - name: Verify private package isolation
+        env:
+          GH_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          PACKAGE_JSON="$(gh api /users/iret77/packages/container/nexgenvideo-examples)"
+          [ "$(jq -r '.visibility' <<<"$PACKAGE_JSON")" = "private" ] \
+            || { echo "::error::input fixture package is not private"; exit 1; }
+          [ "$(jq -r '.repository // empty' <<<"$PACKAGE_JSON")" = "" ] \
+            || { echo "::error::input fixture package is linked to a repository"; exit 1; }
+          REPORT_PACKAGE_JSON="$(gh api /users/iret77/packages/container/nexgenvideo-analysis-reports)"
+          [ "$(jq -r '.visibility' <<<"$REPORT_PACKAGE_JSON")" = "private" ] \
+            || { echo "::error::analysis report package is not private"; exit 1; }
+          [ "$(jq -r '.repository // empty' <<<"$REPORT_PACKAGE_JSON")" = "" ] \
+            || { echo "::error::analysis report package is linked to a repository"; exit 1; }
+
+      - name: Verify fixture bundle tooling
+        run: python3 -m unittest scripts/test_example_fixture_bundle.py
+
+      - name: Install pinned ORAS CLI
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
+        with:
+          version: 1.3.3
+
+      - name: Authenticate to private GHCR packages
+        env:
+          NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NGV_GHCR_TOKEN" | oras login ghcr.io \
+            --username iret77 \
+            --password-stdin \
+            --registry-config "$RUNNER_TEMP/oras-auth.json"
+
+      - name: Reject private fixture content in the repository
+        env:
+          FIXTURE_DIGEST: ${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
+        run: |
+          set -euo pipefail
+          PACKAGE_DIR="$RUNNER_TEMP/source-fixture-package"
+          EXTRACT_DIR="$RUNNER_TEMP/source-fixture-data"
+          mkdir -p "$PACKAGE_DIR"
+          oras pull \
+            --no-tty \
+            --registry-config "$RUNNER_TEMP/oras-auth.json" \
+            --output "$PACKAGE_DIR" \
+            "ghcr.io/iret77/nexgenvideo-examples@$FIXTURE_DIGEST"
+          python3 scripts/example_fixture_bundle.py extract \
+            --archive "$PACKAGE_DIR/examples.tar.gz" \
+            --manifest "$PACKAGE_DIR/fixtures.manifest.json" \
+            --destination "$EXTRACT_DIR"
+          python3 scripts/example_fixture_bundle.py check-repository \
+            --repository "$GITHUB_WORKSPACE" \
+            --manifest "$PACKAGE_DIR/fixtures.manifest.json"
+
+      - name: Remove private source-gate data and credentials
+        if: ${{ always() }}
+        run: |
+          rm -rf "$RUNNER_TEMP/source-fixture-package" "$RUNNER_TEMP/source-fixture-data"
+          rm -f "$RUNNER_TEMP/oras-auth.json"
+
+  analyze:
+    name: Analyze Private Example
+    needs: source-gate
+    # The app and AVFoundation decoder target macOS 26; no local build is permitted.
+    runs-on: macos-26
+    # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned ORAS CLI
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
+        with:
+          version: 1.3.3
+
+      - name: Authenticate to private GHCR packages
+        env:
+          NGV_GHCR_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NGV_GHCR_TOKEN" | oras login ghcr.io \
+            --username iret77 \
+            --password-stdin \
+            --registry-config "$RUNNER_TEMP/oras-auth.json"
+
+      - name: Pull and verify immutable fixtures
+        env:
+          FIXTURE_DIGEST: ${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
+        run: |
+          set -euo pipefail
+          FIXTURE_REFERENCE="ghcr.io/iret77/nexgenvideo-examples@$FIXTURE_DIGEST"
+          PACKAGE_DIR="$RUNNER_TEMP/fixture-package"
+          EXTRACT_DIR="$RUNNER_TEMP/fixture-data"
+          mkdir -p "$PACKAGE_DIR"
+          oras pull \
+            --no-tty \
+            --registry-config "$RUNNER_TEMP/oras-auth.json" \
+            --output "$PACKAGE_DIR" \
+            "$FIXTURE_REFERENCE"
+          python3 scripts/example_fixture_bundle.py extract \
+            --archive "$PACKAGE_DIR/examples.tar.gz" \
+            --manifest "$PACKAGE_DIR/fixtures.manifest.json" \
+            --destination "$EXTRACT_DIR"
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-example-analysis-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-example-analysis-${{ runner.os }}-
+
+      - name: Bundle real app and external pack
+        run: |
+          set -euo pipefail
+          scripts/bundle.sh debug
+          scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
+
+      - name: Run exact-file analysis through the real app and pack
+        env:
+          NGV_EXAMPLE_ANALYSIS_PACK: ${{ github.workspace }}/.build/plugins/musicvideo.ngvpack
+          NGV_EXAMPLE_FIXTURE_ROOT: ${{ runner.temp }}/fixture-data/examples
+          NGV_EXAMPLE_FIXTURE_MANIFEST: ${{ runner.temp }}/fixture-package/fixtures.manifest.json
+          NGV_EXAMPLE_REGISTRY_REFERENCE: ghcr.io/iret77/nexgenvideo-examples@${{ vars.NGV_EXAMPLE_FIXTURE_DIGEST }}
+          NGV_EXAMPLE_DATASET: ${{ inputs.dataset }}
+          NGV_EXAMPLE_REPORT_DIR: ${{ runner.temp }}/analysis-report
+          NGV_GIT_COMMIT: ${{ github.sha }}
+        run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
+
+      - name: Publish private analysis report
+        id: report
+        env:
+          REPORT_REFERENCE: ghcr.io/iret77/nexgenvideo-analysis-reports:${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/analysis-report"
+          REPORT_DIGEST="$(oras push \
+            --no-tty \
+            --registry-config "$RUNNER_TEMP/oras-auth.json" \
+            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v1 \
+            --format 'go-template={{.digest}}' \
+            "$REPORT_REFERENCE" \
+            analysis.json:application/vnd.nexgenvideo.analysis.v2+json \
+            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v1+json)"
+          echo "reference=${REPORT_REFERENCE%:*}@$REPORT_DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Verify report package isolation
+        env:
+          GH_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          PACKAGE_JSON="$(gh api /users/iret77/packages/container/nexgenvideo-analysis-reports)"
+          [ "$(jq -r '.visibility' <<<"$PACKAGE_JSON")" = "private" ] \
+            || { echo "::error::analysis report package is not private"; exit 1; }
+          [ "$(jq -r '.repository // empty' <<<"$PACKAGE_JSON")" = "" ] \
+            || { echo "::error::analysis report package is linked to a repository"; exit 1; }
+          printf 'Private report: `%s`\n' '${{ steps.report.outputs.reference }}' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove private runner data and credentials
+        if: ${{ always() }}
+        run: |
+          rm -rf "$RUNNER_TEMP/fixture-package" "$RUNNER_TEMP/fixture-data" "$RUNNER_TEMP/analysis-report"
+          rm -f "$RUNNER_TEMP/oras-auth.json"

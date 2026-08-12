@@ -17,6 +17,8 @@ struct MusicvideoPackTests {
         #expect(reg.engine.sanityChecks["pacing"] != nil)
         #expect(reg.engine.phases["analysis"] != nil)
         #expect(reg.engine.progressPhaseRunners["analysis"] != nil)
+        #expect(reg.engine.gateRequirements["analysis"] != nil)
+        #expect(reg.engine.artifactWriteRequirements["analysis"] != nil)
         #expect(reg.engine.productionProfiles.map(\.id) == [
             .generativeFilm,
             .narrativeStorytelling,
@@ -51,8 +53,8 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.1.0")
-        #expect(pack.manifest.minAppVersion == "1.1.0")
+        #expect(pack.version == "0.1.1")
+        #expect(pack.manifest.minAppVersion == "1.1.1")
     }
 
     @Test("pack exposes gallery manifest and a starter")

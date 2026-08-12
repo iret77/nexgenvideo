@@ -7,6 +7,37 @@ extension ToolExecutor {
         _ args: [String: Any]
     ) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
+        let resolvedPack: String?
+        do {
+            resolvedPack = try ProjectPluginSettings.resolvedPlugin(
+                projectURL: FrameInventory.projectHome(of: root),
+                declaredPack: editor.declaredPluginName
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
+        }
+        let registry = PackCatalog.registry(activePack: resolvedPack)
+        do {
+            try GateGuard.requireWiredPack(
+                declared: editor.declaredPluginName,
+                resolved: resolvedPack,
+                registry: registry
+            )
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message)
+        }
+        if resolvedPack != nil {
+            guard let requirement = registry.artifactWriteRequirements["analysis"] else {
+                throw ToolError(
+                    "The active format pack has no analysis artifact-write contract. Reopen the project."
+                )
+            }
+            do {
+                try requirement(root)
+            } catch {
+                throw ToolError(error.localizedDescription)
+            }
+        }
         let measured = try currentMeasuredAnalysis(dataRoot: root)
         let analysisURL = measured.url
         var analysis = measured.object
@@ -89,7 +120,6 @@ extension ToolExecutor {
                 "note": note,
             ])
             sections[sectionPosition]["label"] = label
-            sections[sectionPosition]["confidence"] = confidence
         }
         guard seen == Set(measuredByIndex.keys) else {
             throw ToolError(
@@ -102,17 +132,8 @@ extension ToolExecutor {
         guard !overall.isEmpty else {
             throw ToolError("overall_character is empty.")
         }
-        let detectorKinds: Set<String> = [
-            "single_source_boundary",
-            "boundary_divergence",
-        ]
         let existingInterpretation = analysis["interpretation"] as? [String: Any]
-        let detectorAnomalies = (
-            existingInterpretation?["anomalies"] as? [[String: Any]] ?? []
-        ).filter {
-            guard let kind = $0["kind"] as? String else { return false }
-            return detectorKinds.contains(kind)
-        }
+        let detectorAnomalies = existingInterpretation?["anomalies"] as? [[String: Any]] ?? []
         let submittedAnomalies = args["anomalies"] as? [[String: Any]] ?? []
         var anomalies: [[String: String]] = []
         var anomalyKeys: Set<String> = []
@@ -148,10 +169,11 @@ extension ToolExecutor {
             "overall_character": overall,
         ]
         do {
-            let output = try JSONSerialization.data(
+            var output = try JSONSerialization.data(
                 withJSONObject: analysis,
-                options: [.prettyPrinted, .sortedKeys]
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             )
+            output.append(0x0A)
             try output.write(to: analysisURL, options: .atomic)
         } catch {
             throw ToolError(

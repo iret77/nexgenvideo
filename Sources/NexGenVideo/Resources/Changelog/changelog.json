@@ -2,6 +2,20 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.1.1",
+      "date": "2026-08-12",
+      "sections": [
+        {
+          "heading": "Audio analysis",
+          "items": [
+            "Song sections now come from deterministic bar-aligned evidence fusion instead of exposing every raw detector fragment as a canonical section.",
+            "Lyrics can label and select nearby measured acoustic boundaries but can no longer replace measured timing.",
+            "Missing structural evidence blocks approval, while phrase-filtered single-detector sections and degraded analysis stages remain visible for explicit review instead of stranding the project."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.1.0",
       "date": "2026-08-10",
       "sections": [

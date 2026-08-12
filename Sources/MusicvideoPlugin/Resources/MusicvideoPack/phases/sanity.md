@@ -70,15 +70,20 @@ explicitly every time; no implicit carry-over.
 2. **Additional analysis-quality checks** (read `analysis/<song>.json`
    and supplement the engine findings — these are surfaced to the user,
    not written into the engine report):
-   - If `analysis.alignment` is empty: warn `NO_ALIGNMENT` — section
-     boundaries rest on structure detection alone. Less precise.
+   - If `analysis.structure_resolution.status == "needs_review"`: error
+     `UNRESOLVED_STRUCTURE`. This should have been blocked by the Analysis
+     gate; rewind to Analysis instead of continuing.
+   - If `analysis.structure_resolution.status == "review_required"`: preserve
+     `REVIEWED_SINGLE_DETECTOR_STRUCTURE` as diagnostic context. The Analysis
+     gate already required explicit review; do not silently relabel it resolved.
    - If `analysis.downbeat_source == "librosa-heuristic"` (or the
      analysis flags a heuristic fallback): warn `HEURISTIC_DOWNBEATS`.
-   - If `analysis.structure_candidates` contains only one entry: info
-     `SINGLE_STRUCTURE_SOURCE` — the ensemble could not consolidate.
-   - If `analysis.interpretation.anomalies` contains
-     `boundary_divergence`: pass the warning through; the user should be
-     aware of the conflicts.
+   - Surface every `stage_diagnostics` entry whose status is `failed`,
+     `degraded`, or `unavailable`; do not infer failure merely from an empty
+     optional field.
+   - Pass persisted structural anomalies through as diagnostic context.
+     They describe discarded evidence; canonical timing remains the resolved
+     sections.
 
 **What the engine audit covers (summary):**
 
@@ -155,7 +160,6 @@ instead of attempting a render.
 - **Generation unavailable** (the model missing from `list_models`, or
   `loaded=false`): surface it to the user; keys are bound in the
   host, never a shell command. Do not let the frame phase start.
-- **Analysis quality degraded** (`NO_ALIGNMENT`, `HEURISTIC_DOWNBEATS`,
-  `SINGLE_STRUCTURE_SOURCE`, `boundary_divergence` anomalies): surface
-  it to the user as warn/info so the decision to proceed is conscious,
-  not silent.
+- **Analysis quality degraded** (`HEURISTIC_DOWNBEATS`, non-success
+  `stage_diagnostics`, structural anomalies): surface it to the user as
+  warn/info so the decision to proceed is conscious, not silent.

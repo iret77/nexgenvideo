@@ -24,8 +24,8 @@ public struct TranscriptToken: Sendable, Equatable {
 /// is taken from the ASR-word span its tokens anchor to (identical to the original); a line the ASR
 /// never transcribed is DROPPED, never fabricated. Per lyric word it emits a timestamp — matched words
 /// inherit the ASR span, intra-line gaps interpolate between the surrounding anchors. `[Section]`
-/// markers ride onto the following line; the Consolidator then treats those as section-boundary truth
-/// (Path A).
+/// markers ride onto the following line. The consolidator may use a reliably anchored marker to label
+/// and select a nearby acoustic boundary, but a lyric timestamp never becomes a structural boundary.
 public enum LyricsAlignment {
     /// A lyric word: display surface + normalized matching key.
     private struct Tok { let surface: String; let key: String }
@@ -38,6 +38,23 @@ public enum LyricsAlignment {
     /// so a line the ASR truly missed finds no anchor and is dropped — near the original difflib
     /// behavior, which only ever anchored on exact tokens.
     private static let matchThreshold = 0.7
+
+    struct Result: Sendable, Equatable {
+        let lines: [AlignmentLine]
+        let lyricLineCount: Int
+        let mappedLineCount: Int
+        let lyricTokenCount: Int
+        let matchedTokenCount: Int
+        let markerCount: Int
+        let mappedMarkerCount: Int
+        let reliableMarkerCount: Int
+
+        var hasReliableStructureEvidence: Bool {
+            markerCount > 0
+                && mappedMarkerCount == markerCount
+                && reliableMarkerCount == markerCount
+        }
+    }
 
     /// Normalize a token to a comparison key: fold diacritics + case, strip non-alphanumerics.
     static func normalize(_ s: String) -> String {
@@ -99,6 +116,10 @@ public enum LyricsAlignment {
             if line.isEmpty { continue }
             if let inner = fullMatch(raw, #"^\s*\[([^\]]+)\]\s*$"#) {
                 let marker = normalizeMarker(inner)
+                guard !marker.isEmpty else {
+                    pending = nil
+                    continue
+                }
                 let hasDigit = marker.rangeOfCharacter(from: .decimalDigits) != nil
                 let hasQualifier = marker.contains("-")
                 if hasDigit || hasQualifier {
@@ -123,29 +144,53 @@ public enum LyricsAlignment {
     /// Align. Returns one `AlignmentLine` per MAPPED lyric line. Empty if either side is empty (caller
     /// falls back to acoustic-only section detection).
     public static func align(lyrics: String, transcript: [TranscriptToken]) -> [AlignmentLine] {
+        alignDetailed(lyrics: lyrics, transcript: transcript).lines
+    }
+
+    static func alignDetailed(lyrics: String, transcript: [TranscriptToken]) -> Result {
         let lyricLines = parseLyrics(lyrics)
         let asr = transcript.filter { !normalize($0.text).isEmpty }
-        guard !lyricLines.isEmpty, !asr.isEmpty else { return [] }
+        let lyricTokenCount = lyricLines.reduce(0) { $0 + $1.tokens.count }
+        let markerCount = lyricLines.filter { $0.marker != nil }.count
+        guard !lyricLines.isEmpty, !asr.isEmpty else {
+            return Result(
+                lines: [], lyricLineCount: lyricLines.count, mappedLineCount: 0,
+                lyricTokenCount: lyricTokenCount, matchedTokenCount: 0,
+                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0
+            )
+        }
         let asrKeys = asr.map { normalize($0.text) }
 
-        // Flatten lyric tokens with their line index.
+        // Flatten lyric tokens for one global sequence alignment.
         var toks: [Tok] = []
-        var lineOf: [Int] = []
-        for (li, line) in lyricLines.enumerated() {
-            for t in line.tokens { toks.append(t); lineOf.append(li) }
+        for line in lyricLines {
+            toks.append(contentsOf: line.tokens)
         }
-        guard !toks.isEmpty else { return [] }
+        guard !toks.isEmpty else {
+            return Result(
+                lines: [], lyricLineCount: lyricLines.count, mappedLineCount: 0,
+                lyricTokenCount: 0, matchedTokenCount: 0,
+                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0
+            )
+        }
 
         let matchOf = needlemanWunsch(lyric: toks.map(\.key), asr: asrKeys)
 
         // Group matched ASR indices per line (order-preserving thanks to global alignment).
         var out: [AlignmentLine] = []
+        var mappedMarkerCount = 0
+        var reliableMarkerCount = 0
         var cursor = 0
-        for (li, line) in lyricLines.enumerated() {
+        for line in lyricLines {
             let range = cursor..<(cursor + line.tokens.count)
             cursor += line.tokens.count
             let matchedAsr = range.compactMap { matchOf[$0] }
             guard let lo = matchedAsr.min(), let hi = matchedAsr.max() else { continue }  // ASR missed the line → drop
+            if line.marker != nil {
+                mappedMarkerCount += 1
+                let requiredAnchors = line.tokens.count == 1 ? 1 : 2
+                if Set(matchedAsr).count >= requiredAnchors { reliableMarkerCount += 1 }
+            }
             let lineStart = round3(asr[lo].start)
             let lineEnd = round3(max(asr[hi].end, asr[lo].start))
             out.append(AlignmentLine(
@@ -153,7 +198,16 @@ public enum LyricsAlignment {
                 words: buildWords(line: line, tokenRange: range, matchOf: matchOf, asr: asr,
                                   lineStart: lineStart, lineEnd: lineEnd)))
         }
-        return out.sorted { $0.start < $1.start }
+        return Result(
+            lines: out.sorted { $0.start < $1.start },
+            lyricLineCount: lyricLines.count,
+            mappedLineCount: out.count,
+            lyricTokenCount: lyricTokenCount,
+            matchedTokenCount: matchOf.compactMap { $0 }.count,
+            markerCount: markerCount,
+            mappedMarkerCount: mappedMarkerCount,
+            reliableMarkerCount: reliableMarkerCount
+        )
     }
 
     /// Fuzzy global alignment. Returns, per lyric token, the ASR index it anchors to (nil = gap).

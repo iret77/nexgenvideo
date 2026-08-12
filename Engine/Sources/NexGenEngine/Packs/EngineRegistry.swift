@@ -104,6 +104,9 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Reusable core production doctrine activated by a thin format pack.
     public private(set) var productionProfiles: [ProductionProfile] = []
 
+    /// Pack-owned artifact invariants checked before a host writer may interpret a phase result.
+    public private(set) var artifactWriteRequirements: [String: GateRequirement] = [:]
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -216,6 +219,13 @@ public final class EngineRegistry: @unchecked Sendable {
     /// (agent tool + Pipeline panel) before a gate is stamped.
     public func registerGateRequirement(_ phase: String, _ check: @escaping GateRequirement) {
         gateRequirements[phase] = check
+    }
+
+    public func registerArtifactWriteRequirement(
+        _ phase: String,
+        _ check: @escaping GateRequirement
+    ) {
+        artifactWriteRequirements[phase] = check
     }
 
     public func registerPhaseLineageProvider(

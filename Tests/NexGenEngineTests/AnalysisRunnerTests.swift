@@ -133,11 +133,29 @@ struct AnalysisRunnerPlumbingTests {
             beats: [0.5, 1.0], downbeats: [0.5], downbeatSource: .librosaHeuristic,
             sections: [AnalysisSection(index: 0, start: 0.0, end: 12.0, cluster: 0, source: "consolidated")]
         )
-        let data = try MusicvideoAnalysisRunner.encodeArtifact(analysis)
+        let resolution = Consolidator.StructureResolution(
+            version: "bar-consensus/v1", status: .resolved,
+            method: "homogeneous_consensus", detectorSources: ["essentia", "librosa"],
+            minimumSectionBars: Consolidator.minimumConsensusBars,
+            candidateBoundaryCount: 0, consensusBoundaryCount: 0,
+            alignmentMarkerCount: 0, resolvedAlignmentMarkerCount: 0,
+            acceptedBoundaryCount: 0, discardedBoundaryCount: 0,
+            boundaryEvidence: [],
+            detail: "Independent acoustic detectors found no internal structural boundary."
+        )
+        let data = try MusicvideoAnalysisRunner.encodeArtifact(
+            analysis,
+            structureResolution: resolution,
+            stageDiagnostics: [
+                .init(stage: "lyrics_alignment", status: .notApplicable, detail: "No lyrics were attached."),
+            ]
+        )
         #expect(data.last == 0x0A)
         let text = String(decoding: data, as: UTF8.self)
         #expect(text.contains("\"song_path\""))
         #expect(text.contains("\"downbeat_source\""))
+        #expect(text.contains("\"structure_resolution\""))
+        #expect(text.contains("\"stage_diagnostics\""))
         // Slashes in song_path are not escaped.
         #expect(text.contains("audio/song.mp3"))
         let decoded = try JSONDecoder().decode(Analysis.self, from: data)
@@ -160,29 +178,34 @@ struct AnalysisRunnerPlumbingTests {
 
     // MARK: - Forced-alignment wiring (no DSP)
 
-    @Test("lyric alignment drives section boundaries (Consolidator Path A)")
-    func alignmentDrivesSections() throws {
+    @Test("lyric alignment selects acoustic candidates without becoming timing truth")
+    func alignmentSelectsMeasuredSections() throws {
         let raw = AudioAnalysis(
-            sampleRate: 22050, durationS: 30.0, bpm: 120.0,
-            beats: [], downbeats: [0.0, 10.0, 20.0], downbeatSource: "librosa-heuristic",
-            sections: [], energyCurve: [], tempoCurve: []
+            sampleRate: 22050, durationS: 40.0, bpm: 120.0,
+            beats: [], downbeats: [0.0, 10.0, 20.0, 30.0, 40.0], downbeatSource: "librosa-heuristic",
+            sections: [
+                AudioSection(index: 0, start: 0, end: 19.7, cluster: 0, source: "librosa"),
+                AudioSection(index: 1, start: 19.7, end: 40, cluster: 1, source: "librosa"),
+            ], energyCurve: [], tempoCurve: []
         )
-        let alignment = [
-            AlignmentLine(start: 0.2, end: 9.5, text: "opening line", sectionMarker: "verse1",
-                          words: [AlignmentWord(text: "opening", start: 0.2, end: 1.0, score: 1.0)]),
-            AlignmentLine(start: 10.1, end: 19.5, text: "the hook", sectionMarker: "chorus",
-                          words: [AlignmentWord(text: "hook", start: 10.1, end: 11.0, score: 1.0)]),
-        ]
-        let a = try MusicvideoAnalysisRunner.toCanonical(
-            raw, project: "P", songPath: "audio/s.mp3", lyricsAlignment: alignment)
-        // Sections come from the alignment markers, not the (empty) DSP detector.
-        #expect(!a.sections.isEmpty)
-        #expect(a.sections.allSatisfy { $0.source == "alignment" })
-        #expect(a.sections.contains { $0.label == "verse1" })
-        #expect(a.sections.contains { $0.label == "chorus" })
-        // The alignment itself is persisted for downstream (subtitles, section review).
-        #expect(a.alignment.count == 2)
-        #expect(a.sections.first?.start == 0.0 && a.sections.last?.end == 30.0)
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse 1]\nopening line\n[Chorus]\nthe hook",
+            transcript: [
+                .init(text: "opening", start: 0.2, end: 0.5),
+                .init(text: "line", start: 0.5, end: 0.8),
+                .init(text: "the", start: 20.1, end: 20.3),
+                .init(text: "hook", start: 20.3, end: 20.6),
+            ]
+        )
+        let result = try MusicvideoAnalysisRunner.toCanonicalDetailed(
+            raw, project: "P", songPath: "audio/s.mp3",
+            lyricsAlignment: report.lines, alignmentReport: report
+        )
+        #expect(result.structureResolution.status == .resolved)
+        #expect(result.analysis.sections.map(\.start) == [0, 20])
+        #expect(result.analysis.sections.map(\.label) == ["verse1", "chorus"])
+        #expect(result.analysis.alignment.count == 2)
+        #expect(result.analysis.sections.last?.end == 40.0)
     }
 
     @Test("stems are persisted project-relative")
@@ -211,12 +234,24 @@ struct AnalysisRunnerPlumbingTests {
     @Test("loadLyrics reads the single lyric file; empty dir → nil")
     func loadLyrics() throws {
         let dataRoot = try Self.makeProject(name: "Lyrics")
-        #expect(MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot) == nil)
+        #expect(try MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot) == nil)
         let lyricsDir = dataRoot.appendingPathComponent("lyrics")
         try FileManager.default.createDirectory(at: lyricsDir, withIntermediateDirectories: true)
         try "[Verse 1]\nHello world".write(
             to: lyricsDir.appendingPathComponent("song.txt"), atomically: true, encoding: .utf8)
-        #expect(MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot)?.contains("Hello world") == true)
+        #expect(try MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot)?.contains("Hello world") == true)
+    }
+
+    @Test("loadLyrics rejects ambiguous lyric inputs")
+    func loadLyricsRejectsSeveralFiles() throws {
+        let dataRoot = try Self.makeProject(name: "Several Lyrics")
+        let lyricsDir = dataRoot.appendingPathComponent("lyrics")
+        try FileManager.default.createDirectory(at: lyricsDir, withIntermediateDirectories: true)
+        try "first".write(to: lyricsDir.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+        try "second".write(to: lyricsDir.appendingPathComponent("b.md"), atomically: true, encoding: .utf8)
+        #expect(throws: MusicvideoAnalysisRunner.RunError.self) {
+            try MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot)
+        }
     }
 }
 
@@ -294,7 +329,10 @@ struct AnalysisRunnerE2ETests {
         #expect(outcome.analysis.alignment.count == 2)
         #expect(outcome.analysis.alignment.contains { $0.sectionMarker == "verse1" })
         #expect(outcome.analysis.pipelineStages.contains("alignment"))
-        // Alignment markers drive the section boundaries.
-        #expect(outcome.analysis.sections.allSatisfy { $0.source == "alignment" })
+        // Lyrics label and select nearby measured boundaries; they never create timing.
+        #expect(outcome.analysis.sections.first?.source == "measured_track_extent")
+        #expect(outcome.analysis.sections.dropFirst().allSatisfy {
+            $0.source == "measured_alignment_fusion"
+        })
     }
 }

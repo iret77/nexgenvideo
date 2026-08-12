@@ -3,9 +3,8 @@ import Foundation
 /// Second, independent structure detector: BIC (Bayesian Information Criterion)
 /// segmentation on MFCC features. Port of `structure/essentia_detector.py`, which
 /// used Essentia's `SBic` — optional and absent on most installs, so the
-/// consolidator's cross-detector convergence (`single_source_boundary` /
-/// `boundary_divergence`) ran starved with only the librosa detector: every
-/// boundary was single-source. This restores the second opinion.
+/// consolidator otherwise had only the librosa detector and could not establish
+/// independent boundary agreement. This restores the second opinion.
 ///
 /// DIVERGENCE FROM Essentia SBic: SBic is a two-resolution sweep with its own
 /// parameters (cpw/inc1/inc2/size1/size2). This is a single-pass local-BIC

@@ -10,6 +10,9 @@ struct GateApprovalCard: View {
     let onDecline: () -> Void
 
     private var reviewHint: String? {
+        if approval.phase == "analysis" {
+            return "Review the exact measured sections in Analysis first."
+        }
         switch surface ?? "" {
         case "review": "Read it in the Review tab first."
         case "prose": "Read it in the Story tab first."

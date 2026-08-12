@@ -24,6 +24,9 @@ jobs:
       - name: Enforce AppTheme
         run: python3 scripts/lint_app_theme.py
 
+      - name: Verify private fixture bundle tooling
+        run: python3 -m unittest scripts/test_example_fixture_bundle.py
+
   build-test:
     name: Build & Test
     needs: source-gate

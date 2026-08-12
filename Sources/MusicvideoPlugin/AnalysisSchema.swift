@@ -23,7 +23,7 @@ public struct AnalysisSection: Codable, Sendable, Equatable {
     public var cluster: Int
     /// Narrative, set by the analysis agent.
     public var label: String?
-    /// "alignment" | "essentia" | "librosa" | "consolidated".
+    /// Canonical provenance such as track extent, detector consensus, lyric fusion, or phrase filtering.
     public var source: String?
     public var confidence: Double?
 

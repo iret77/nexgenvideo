@@ -5,7 +5,7 @@ import NexGenEngine
 /// (id/version/minAppVersion/displayName/tagline) mirrors `plugins/musicvideo.json`,
 /// which the release assembles into the `.ngvpack`'s Info.plist `NGVMinAppVersion` —
 /// the value the load gate checks BEFORE loading this code. Keep the two in lockstep.
-let musicvideoMinAppVersion = "1.1.0"
+let musicvideoMinAppVersion = "1.1.1"
 
 /// The musicvideo pack — registers music-specific behavior into the generic
 /// engine. Port of `nexgen_pack_musicvideo/pack.py`.
@@ -40,7 +40,7 @@ public struct MusicDurationPolicy: DurationPolicy {
 /// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.1.0"
+    public let version = "0.1.1"
 
     static let productionProfiles: [ProductionProfile] = [
         StandardProductionProfiles.generativeFilm,
@@ -257,6 +257,9 @@ public struct MusicvideoPack: Pack {
         registry.registerGateRequirement("project_init") { try MusicvideoGateChecks.requireProjectTrack(dataRoot: $0) }
         registerHardenedGate("analysis", registry: registry) {
             try MusicvideoGateChecks.requireRealAnalysis(dataRoot: $0)
+        }
+        registry.registerArtifactWriteRequirement("analysis") {
+            try MusicvideoGateChecks.requireInterpretableAnalysis(dataRoot: $0)
         }
         registerHardenedGate("brief", registry: registry) {
             try MusicvideoGateChecks.requireRealBrief(dataRoot: $0)

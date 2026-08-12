@@ -48,16 +48,27 @@ struct AnalysisPanelView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                 StatRow(tiles: stats(data))
+                if !data.hasCanonicalStructure {
+                    structureBanner(data)
+                } else if data.requiresStructureReview {
+                    structureReviewBanner(data)
+                }
+                if !data.nonSuccessStageDiagnostics.isEmpty {
+                    stageDiagnosticsBanner(data)
+                }
                 if data.hasBeatGrid {
                     labelledBlock("Beat grid", detail: provenance(data)) {
                         BeatTimeline(duration: data.durationS, beats: data.beats,
-                                     downbeats: data.downbeats, sections: data.sections)
+                                     downbeats: data.downbeats,
+                                     sections: data.hasCanonicalStructure ? data.sections : [])
                     }
                 } else {
                     degradedBanner
                 }
-                if !data.sections.isEmpty {
-                    labelledBlock("Sections", detail: nil) { SectionList(sections: data.sections) }
+                if data.hasCanonicalStructure, !data.sections.isEmpty {
+                    labelledBlock("Sections", detail: structureProvenance(data)) {
+                        SectionList(sections: data.sections)
+                    }
                 }
                 Text("Measured ground truth — read-only. Lyrics label the sections; they never move the measured boundaries.")
                     .font(.system(size: AppTheme.FontSize.micro))
@@ -78,8 +89,92 @@ struct AnalysisPanelView: View {
                      muted: !d.hasBeatGrid),
         ]
         if let key = d.key, !key.isEmpty { tiles.append(StatTile(label: "Key", value: key)) }
-        if !d.sections.isEmpty { tiles.append(StatTile(label: "Sections", value: "\(d.sections.count)")) }
+        if d.hasCanonicalStructure, !d.sections.isEmpty {
+            tiles.append(StatTile(label: "Sections", value: "\(d.sections.count)"))
+        }
         return tiles
+    }
+
+    private func structureReviewBanner(_ data: AnalysisSurfaceData) -> some View {
+        let detail = data.structureResolution?.detail
+            ?? "Review every measured section before approval."
+        return HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Status.warningColor)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text("Review the section structure")
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                Text(detail)
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(AppTheme.Spacing.md)
+        .background(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.faint))
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .strokeBorder(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.moderate),
+                              lineWidth: AppTheme.BorderWidth.hairline)
+        )
+    }
+
+    private func structureBanner(_ data: AnalysisSurfaceData) -> some View {
+        let detail = data.structureResolution?.detail
+            ?? "This analysis predates structural confidence tracking. Re-run analysis before approval."
+        return HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "xmark.octagon")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Status.errorColor)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text("Section structure unresolved")
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                Text(detail)
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(AppTheme.Spacing.md)
+        .background(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.faint))
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .strokeBorder(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.moderate),
+                              lineWidth: AppTheme.BorderWidth.hairline)
+        )
+    }
+
+    private func stageDiagnosticsBanner(_ data: AnalysisSurfaceData) -> some View {
+        let failures = data.nonSuccessStageDiagnostics
+        return HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Status.warningColor)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text("Analysis completed with reduced evidence")
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                ForEach(Array(failures.enumerated()), id: \.offset) { item in
+                    Text("\(item.element.stage.replacingOccurrences(of: "_", with: " ")): \(item.element.detail)")
+                        .font(.system(size: AppTheme.FontSize.xs))
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(AppTheme.Spacing.md)
+        .background(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.faint))
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .strokeBorder(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.moderate),
+                              lineWidth: AppTheme.BorderWidth.hairline)
+        )
     }
 
     private func provenance(_ d: AnalysisSurfaceData) -> String {
@@ -87,6 +182,12 @@ struct AnalysisPanelView: View {
         if let source = d.downbeatSource, !source.isEmpty { parts.append(source) }
         parts.append("\(d.beats.count) beats / \(d.downbeats.count) downbeats")
         return parts.joined(separator: " · ")
+    }
+
+    private func structureProvenance(_ data: AnalysisSurfaceData) -> String? {
+        guard let resolution = data.structureResolution else { return nil }
+        let method = resolution.method.replacingOccurrences(of: "_", with: " ")
+        return "\(method) · \(resolution.candidateBoundaryCount) candidates · \(resolution.discardedBoundaryCount) discarded"
     }
 
     @ViewBuilder

@@ -16,6 +16,8 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
     var beats: [Double]
     var downbeats: [Double]
     var sections: [Section]
+    var structureResolution: StructureResolution?
+    var stageDiagnostics: [StageDiagnostic]
 
     /// Perceived tempo = measured bpm × the A2-confirmed multiplier (the raw value is often half/double
     /// the subjective feel) — the value every downstream consumer uses, so it's what the panel shows.
@@ -24,6 +26,17 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
     /// A measured beat grid with real beats is the surface's reason to exist; without it the track is
     /// rubato/beatless and the panel shows the degraded state (key + duration only).
     var hasBeatGrid: Bool { !beats.isEmpty }
+
+    var hasCanonicalStructure: Bool {
+        guard let status = structureResolution?.status else { return false }
+        return status == "resolved" || status == "review_required"
+    }
+
+    var requiresStructureReview: Bool { structureResolution?.status == "review_required" }
+
+    var nonSuccessStageDiagnostics: [StageDiagnostic] {
+        stageDiagnostics.filter { $0.status != "succeeded" && $0.status != "not_applicable" }
+    }
 
     /// The song's display name (last path component of the recorded song path).
     var trackName: String { (songPath as NSString).lastPathComponent }
@@ -47,6 +60,28 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
         }
     }
 
+    struct StructureResolution: Decodable, Sendable, Equatable {
+        var status: String
+        var method: String
+        var candidateBoundaryCount: Int
+        var acceptedBoundaryCount: Int
+        var discardedBoundaryCount: Int
+        var detail: String
+
+        enum CodingKeys: String, CodingKey {
+            case status, method, detail
+            case candidateBoundaryCount = "candidate_boundary_count"
+            case acceptedBoundaryCount = "accepted_boundary_count"
+            case discardedBoundaryCount = "discarded_boundary_count"
+        }
+    }
+
+    struct StageDiagnostic: Decodable, Sendable, Equatable {
+        var stage: String
+        var status: String
+        var detail: String
+    }
+
     enum CodingKeys: String, CodingKey {
         case songPath = "song_path"
         case durationS = "duration_s"
@@ -57,6 +92,8 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
         case beats
         case downbeats
         case sections
+        case structureResolution = "structure_resolution"
+        case stageDiagnostics = "stage_diagnostics"
     }
 
     init(from decoder: Decoder) throws {
@@ -70,6 +107,8 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
         beats = try c.decodeIfPresent([Double].self, forKey: .beats) ?? []
         downbeats = try c.decodeIfPresent([Double].self, forKey: .downbeats) ?? []
         sections = try c.decodeIfPresent([Section].self, forKey: .sections) ?? []
+        structureResolution = try c.decodeIfPresent(StructureResolution.self, forKey: .structureResolution)
+        stageDiagnostics = try c.decodeIfPresent([StageDiagnostic].self, forKey: .stageDiagnostics) ?? []
     }
 }
 

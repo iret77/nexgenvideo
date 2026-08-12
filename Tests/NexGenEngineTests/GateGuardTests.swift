@@ -42,7 +42,27 @@ struct GateGuardTests {
                     "start": 0,
                     "end": duration,
                     "cluster": 0,
+                    "source": "measured_track_extent",
                 ],
+            ],
+            "structure_candidates": [
+                ["source": "librosa", "sections": [["index": 0, "start": 0, "end": duration, "cluster": 0]]],
+                ["source": "essentia", "sections": [["index": 0, "start": 0, "end": duration, "cluster": 0]]],
+            ],
+            "structure_resolution": [
+                "version": "bar-consensus/v1",
+                "status": "resolved",
+                "method": "homogeneous_consensus",
+                "detector_sources": ["essentia", "librosa"],
+                "minimum_section_bars": 8,
+                "candidate_boundary_count": 0,
+                "consensus_boundary_count": 0,
+                "alignment_marker_count": 0,
+                "resolved_alignment_marker_count": 0,
+                "accepted_boundary_count": 0,
+                "discarded_boundary_count": 0,
+                "boundary_evidence": [],
+                "detail": "Independent acoustic detectors found no internal structural boundary.",
             ],
         ]
         if !sectionLabels.isEmpty {
@@ -54,6 +74,76 @@ struct GateGuardTests {
             ]
         }
         try JSONSerialization.data(withJSONObject: obj).write(to: dir.appendingPathComponent("song.json"))
+    }
+
+    private func writeConsolidatedAnalysis(
+        _ root: URL,
+        detectorBoundaries: [[Double]],
+        alignmentReport: LyricsAlignment.Result? = nil
+    ) throws -> URL {
+        let duration = 64.0
+        let sources = ["librosa", "essentia"]
+        func sections(_ boundaries: [Double], source: String) -> [AudioSection] {
+            let times = ([0.0] + boundaries + [duration]).sorted()
+            return zip(times, times.dropFirst()).enumerated().map { item in
+                AudioSection(
+                    index: item.offset,
+                    start: item.element.0,
+                    end: item.element.1,
+                    cluster: item.offset,
+                    source: source
+                )
+            }
+        }
+        let raw = AudioAnalysis(
+            sampleRate: 44_100,
+            durationS: duration,
+            bpm: 120,
+            beats: stride(from: 0.0, through: duration, by: 0.5).map { $0 },
+            downbeats: stride(from: 0.0, through: duration, by: 2.0).map { $0 },
+            downbeatSource: "beat-transformer",
+            sections: sections(detectorBoundaries[0], source: sources[0]),
+            energyCurve: [],
+            tempoCurve: [],
+            sectionsEssentia: detectorBoundaries.count > 1
+                ? sections(detectorBoundaries[1], source: sources[1])
+                : []
+        )
+        let song = root.appendingPathComponent("audio/song.wav")
+        let songHash = SHA256.hash(data: try Data(contentsOf: song))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let canonical = try MusicvideoAnalysisRunner.toCanonicalDetailed(
+            raw,
+            project: "demo",
+            songPath: "audio/song.wav",
+            lyricsAlignment: alignmentReport?.lines ?? [],
+            alignmentReport: alignmentReport,
+            songSha256: songHash
+        )
+        var object = try #require(
+            try JSONSerialization.jsonObject(
+                with: MusicvideoAnalysisRunner.encodeArtifact(
+                    canonical.analysis,
+                    structureResolution: canonical.structureResolution
+                )
+            ) as? [String: Any]
+        )
+        object["tempo_multiplier"] = 1
+        object["interpretation"] = [
+            "section_labels": canonical.analysis.sections.map {
+                ["index": String($0.index), "label": "section\($0.index)", "confidence": "0.9"]
+            },
+            "anomalies": [],
+            "overall_character": "Measured structure under gate verification.",
+        ]
+        let url = root.appendingPathComponent("analysis/song.json")
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        return url
     }
 
     private func writeGeneratedBibleProof(
@@ -77,6 +167,29 @@ struct GateGuardTests {
             ),
             dataRoot: root
         )
+    }
+
+    @Test("analysis gate reproduces rejection of a boundary snapped to track end")
+    func analysisGateRejectsSnappedEndpoint() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let alignment = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nhello world\n[Outro]\nfinal words",
+            transcript: [
+                .init(text: "hello", start: 0.1, end: 0.3),
+                .init(text: "world", start: 0.3, end: 0.5),
+                .init(text: "final", start: 63.5, end: 63.7),
+                .init(text: "words", start: 63.7, end: 63.9),
+            ]
+        )
+        _ = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[63.6]],
+            alignmentReport: alignment
+        )
+
+        try MusicvideoGateChecks.requireInterpretableAnalysis(dataRoot: root)
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
     }
 
     private func shotlist(
@@ -224,13 +337,126 @@ struct GateGuardTests {
         try writeAnalysis(root, beats: [0.5, 1.0, 1.5], downbeats: [0.5, 2.5], duration: 12.0)
         #expect(throws: GateBlocked.self) { try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root) }
 
-        // Lyrics and forced alignment are optional; measured rhythm plus interpretation is sufficient.
+        // Labels cannot make unresolved structural timing approvable.
+        try writeAnalysis(root, beats: [0.5, 1.0, 1.5], downbeats: [0.5, 2.5], duration: 12.0, sectionLabels: labels)
+        let analysisURL = root.appendingPathComponent("analysis/song.json")
+        var unresolved = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: analysisURL)) as? [String: Any]
+        )
+        var resolution = try #require(unresolved["structure_resolution"] as? [String: Any])
+        resolution["status"] = "needs_review"
+        resolution["method"] = "unresolved"
+        unresolved["structure_resolution"] = resolution
+        try JSONSerialization.data(withJSONObject: unresolved).write(to: analysisURL)
+        #expect(throws: GateBlocked.self) { try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root) }
+
+        // Lyrics are optional when independent acoustic detectors resolve the structure.
         try writeAnalysis(root, beats: [0.5, 1.0, 1.5], downbeats: [0.5, 2.5], duration: 12.0, sectionLabels: labels)
         try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
 
         try Data("replacement".utf8).write(
             to: root.appendingPathComponent("audio/song.wav")
         )
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+    }
+
+    @Test("analysis gate accepts the consolidator's corroborated boundary contract")
+    func analysisGateAcceptsConsolidatedArtifact() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try writeConsolidatedAnalysis(root, detectorBoundaries: [[23.3], [25.1]])
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+    }
+
+    @Test("analysis gate accepts mixed per-boundary evidence after a partial lyric match")
+    func analysisGateAcceptsMixedBoundaryEvidence() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Intro]\nopen words\n[Verse]\nverse words\n[Outro]\nending words",
+            transcript: [
+                .init(text: "open", start: 0.1, end: 0.3),
+                .init(text: "words", start: 0.3, end: 0.5),
+                .init(text: "verse", start: 20.0, end: 20.2),
+                .init(text: "words", start: 20.2, end: 20.4),
+                .init(text: "ending", start: 52.0, end: 52.2),
+                .init(text: "words", start: 52.2, end: 52.4),
+            ]
+        )
+        let url = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[19.6, 40.4], [39.5]],
+            alignmentReport: report
+        )
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        let resolution = try #require(object["structure_resolution"] as? [String: Any])
+        #expect(resolution["status"] as? String == "resolved")
+        #expect(resolution["resolved_alignment_marker_count"] as? Int == 2)
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+    }
+
+    @Test("analysis gate accepts phrase-filtered evidence only through explicit review")
+    func analysisGateAcceptsReviewRequiredArtifact() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[8, 16, 24, 32, 40], [12, 20, 28, 36]]
+        )
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        let resolution = try #require(object["structure_resolution"] as? [String: Any])
+        #expect(resolution["status"] as? String == "review_required")
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+    }
+
+    @Test("analysis gate independently rejects tampered boundary evidence")
+    func analysisGateRejectsTamperedBoundaryEvidence() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try writeConsolidatedAnalysis(root, detectorBoundaries: [[23.3], [25.1]])
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        var resolution = try #require(object["structure_resolution"] as? [String: Any])
+        resolution["candidate_boundary_count"] = 3
+        object["structure_resolution"] = resolution
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+
+        _ = try writeConsolidatedAnalysis(root, detectorBoundaries: [[23.3], [25.1]])
+        object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        var sections = try #require(object["sections"] as? [[String: Any]])
+        sections[1]["start"] = 22.0
+        object["sections"] = sections
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+
+        _ = try writeConsolidatedAnalysis(root, detectorBoundaries: [[23.3], [25.1]])
+        object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        sections = try #require(object["sections"] as? [[String: Any]])
+        sections = [sections[0]]
+        sections[0]["end"] = 64.0
+        object["sections"] = sections
+        resolution = try #require(object["structure_resolution"] as? [String: Any])
+        resolution["accepted_boundary_count"] = 0
+        resolution["discarded_boundary_count"] = 2
+        resolution["boundary_evidence"] = []
+        object["structure_resolution"] = resolution
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
         #expect(throws: GateBlocked.self) {
             try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
         }

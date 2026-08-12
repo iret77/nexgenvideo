@@ -169,8 +169,54 @@ struct WorkflowToolsTests {
             "beats": [0.0, 0.5, 1.0],
             "downbeats": [0.0, 2.0, 4.0],
             "sections": [
-                ["index": 0, "start": 0.0, "end": 4.0, "cluster": 0],
-                ["index": 1, "start": 4.0, "end": 12.0, "cluster": 1],
+                [
+                    "index": 0, "start": 0.0, "end": 4.0, "cluster": 0,
+                    "source": "measured_track_extent", "confidence": 1.0,
+                ],
+                [
+                    "index": 1, "start": 4.0, "end": 12.0, "cluster": 1,
+                    "source": "measured_alignment_fusion", "confidence": 0.9,
+                ],
+            ],
+            "structure_candidates": [
+                ["source": "librosa", "sections": [
+                    ["index": 0, "start": 0.0, "end": 4.0, "cluster": 0],
+                    ["index": 1, "start": 4.0, "end": 12.0, "cluster": 1],
+                ]],
+                ["source": "essentia", "sections": [
+                    ["index": 0, "start": 0.0, "end": 4.0, "cluster": 0],
+                    ["index": 1, "start": 4.0, "end": 12.0, "cluster": 1],
+                ]],
+            ],
+            "structure_resolution": [
+                "version": "bar-consensus/v1",
+                "status": "resolved",
+                "method": "per_boundary_evidence",
+                "detector_sources": ["essentia", "librosa"],
+                "minimum_section_bars": 8,
+                "candidate_boundary_count": 2,
+                "consensus_boundary_count": 1,
+                "alignment_marker_count": 2,
+                "resolved_alignment_marker_count": 2,
+                "accepted_boundary_count": 1,
+                "discarded_boundary_count": 0,
+                "boundary_evidence": [[
+                    "time": 4.0,
+                    "kind": "lyrics_supported_acoustic",
+                    "detector_sources": ["essentia", "librosa"],
+                    "lyric_marker": "verse",
+                ]],
+                "detail": "Every lyric section marker selected a measured acoustic boundary.",
+            ],
+            "alignment": [
+                ["start": 0.0, "end": 1.0, "text": "opening line", "section_marker": "intro", "words": [
+                    ["text": "opening", "start": 0.0, "end": 0.4, "score": 1.0],
+                    ["text": "line", "start": 0.4, "end": 1.0, "score": 1.0],
+                ]],
+                ["start": 4.0, "end": 5.0, "text": "verse line", "section_marker": "verse", "words": [
+                    ["text": "verse", "start": 4.0, "end": 4.4, "score": 1.0],
+                    ["text": "line", "start": 4.4, "end": 5.0, "score": 1.0],
+                ]],
             ],
             "interpretation": [
                 "section_labels": [],
@@ -187,6 +233,42 @@ struct WorkflowToolsTests {
             options: [.prettyPrinted, .sortedKeys]
         ).write(to: analysis)
         return analysis
+    }
+
+    private func writeReviewRequiredAnalysis(dataRoot: URL) throws -> URL {
+        let url = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        object["sections"] = [[
+            "index": 0,
+            "start": 0.0,
+            "end": 12.0,
+            "cluster": 0,
+            "source": "measured_track_extent",
+        ]]
+        object["structure_candidates"] = [[
+            "source": "librosa",
+            "sections": [["index": 0, "start": 0.0, "end": 12.0, "cluster": 0]],
+        ]]
+        object["structure_resolution"] = [
+            "version": "bar-consensus/v1",
+            "status": "review_required",
+            "method": "phrase_filtered_acoustic",
+            "detector_sources": ["librosa"],
+            "minimum_section_bars": 8,
+            "candidate_boundary_count": 0,
+            "consensus_boundary_count": 0,
+            "alignment_marker_count": 0,
+            "resolved_alignment_marker_count": 0,
+            "accepted_boundary_count": 0,
+            "discarded_boundary_count": 0,
+            "boundary_evidence": [],
+            "detail": "Single-detector full-track structure requires review.",
+        ]
+        object["alignment"] = []
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        return url
     }
 
     private func validBriefArgs(dataRoot: URL) -> [String: Any] {
@@ -2809,6 +2891,7 @@ struct WorkflowToolsTests {
     func writeAnalysisInterpretation() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
         let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
 
         let result = try await h.runOK(
@@ -2850,10 +2933,16 @@ struct WorkflowToolsTests {
         #expect(sections[0]["start"] as? Double == 0)
         #expect(sections[0]["end"] as? Double == 4)
         #expect(sections[0]["label"] as? String == "intro")
+        #expect(sections[0]["confidence"] as? Double == 1.0)
         #expect(sections[1]["label"] as? String == "chorus1")
+        #expect(sections[1]["confidence"] as? Double == 0.9)
         let interpretation = try #require(
             persisted["interpretation"] as? [String: Any]
         )
+        let labels = try #require(
+            interpretation["section_labels"] as? [[String: Any]]
+        )
+        #expect(labels[0]["confidence"] as? String == "0.800")
         let anomalies = try #require(
             interpretation["anomalies"] as? [[String: Any]]
         )
@@ -2863,12 +2952,74 @@ struct WorkflowToolsTests {
         #expect(anomalies.contains {
             $0["kind"] as? String == "low_label_confidence"
         })
+        let encoded = try Data(contentsOf: analysisURL)
+        #expect(encoded.last == 0x0A)
+        #expect(String(decoding: encoded, as: UTF8.self).contains("audio/song.wav"))
+        #expect(!String(decoding: encoded, as: UTF8.self).contains(#"audio\/song.wav"#))
+    }
+
+    @Test("write_analysis_interpretation accepts a measured review-required structure")
+    func writeAnalysisInterpretationForReviewRequiredStructure() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        _ = try writeReviewRequiredAnalysis(dataRoot: dataRoot)
+
+        let result = await h.runRaw(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [[
+                    "index": 0,
+                    "label": "full track",
+                    "confidence": 0.6,
+                ]],
+                "anomalies": [],
+                "overall_character": "One measured span awaiting explicit review.",
+            ]
+        )
+
+        #expect(!result.isError)
+    }
+
+    @Test("write_analysis_interpretation cannot hide unresolved section timing")
+    func writeAnalysisInterpretationRejectsUnresolvedStructure() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: analysisURL)) as? [String: Any]
+        )
+        var resolution = try #require(object["structure_resolution"] as? [String: Any])
+        resolution["status"] = "needs_review"
+        resolution["method"] = "unresolved"
+        object["structure_resolution"] = resolution
+        try JSONSerialization.data(withJSONObject: object).write(to: analysisURL)
+        let before = try Data(contentsOf: analysisURL)
+
+        let result = await h.runRaw(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [],
+                "anomalies": [],
+                "overall_character": "Must not be written.",
+            ]
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("canonical section structure is unresolved"))
+        #expect(try Data(contentsOf: analysisURL) == before)
     }
 
     @Test("write_analysis_interpretation rejects incomplete coverage without changing analysis")
     func writeAnalysisInterpretationRejectsPartialCoverage() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
         let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
         let before = try Data(contentsOf: analysisURL)
 
@@ -2896,6 +3047,7 @@ struct WorkflowToolsTests {
     func writeAnalysisInterpretationRejectsReplacedTrack() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
         let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
         let before = try Data(contentsOf: analysisURL)
         try Data("replacement".utf8).write(
@@ -2927,6 +3079,33 @@ struct WorkflowToolsTests {
 
         #expect(result.isError)
         #expect(ToolHarness.textOf(result).contains("current project track"))
+        #expect(try Data(contentsOf: analysisURL) == before)
+    }
+
+    @Test("write_analysis_interpretation fails closed when the active pack is unavailable")
+    func writeAnalysisInterpretationRejectsUnavailablePack() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let analysisURL = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        let before = try Data(contentsOf: analysisURL)
+        try ProjectPluginSettings.setActivePlugin(
+            "unavailable-pack",
+            projectURL: FrameInventory.projectHome(of: dataRoot)
+        )
+
+        let result = await h.runRaw(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [],
+                "anomalies": [],
+                "overall_character": "Must not be written.",
+            ]
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("artifact-write contract"))
         #expect(try Data(contentsOf: analysisURL) == before)
     }
 

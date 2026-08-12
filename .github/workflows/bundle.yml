@@ -23,6 +23,7 @@ on:
       - 'Sources/NexGenVideo/App/Changelog.swift'
       - 'Sources/NexGenVideo/App/AppRelaunch.swift'
       - 'Sources/NexGenVideo/App/AppRelaunchSelfTest.swift'
+      - 'Sources/NexGenVideo/App/ExampleAudioAnalysisSelfTest.swift'
       - 'Sources/NexGenVideo/App/main.swift'
       - 'Sources/NexGenVideo/Project/HomeView.swift'
       - 'Sources/NexGenVideo/Project/UpdateOverlay.swift'
@@ -47,6 +48,9 @@ jobs:
 
       - name: Enforce AppTheme
         run: python3 scripts/lint_app_theme.py
+
+      - name: Verify private fixture bundle tooling
+        run: python3 -m unittest scripts/test_example_fixture_bundle.py
 
   bundle-app:
     name: Bundle .app
