@@ -824,8 +824,8 @@ enum MusicvideoGateChecks {
             return (time, marker)
         }
         guard reconstructedResolvedCount == resolvedMarkerCount,
-              recordedLyricEvidence.allSatisfy { reconstructedMarkers[$0.0] == $0.1 },
-              recordedLyricEvidence.count == reconstructedMarkers.keys.filter { $0 > 0.01 }.count else {
+              recordedLyricEvidence.allSatisfy({ reconstructedMarkers[$0.0] == $0.1 }),
+              recordedLyricEvidence.count == reconstructedMarkers.keys.filter({ $0 > 0.01 }).count else {
             throw GateBlocked(
                 "Can't approve \"analysis\": persisted lyric-selected boundaries no longer match reliable alignment evidence."
             )

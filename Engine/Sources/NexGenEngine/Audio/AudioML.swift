@@ -30,8 +30,8 @@ public struct TranscribedWord: Sendable, Equatable {
 }
 
 /// Generic on-device speech recognition: audio file → timed word tokens. `language`
-/// is hard-set by the caller (never auto-detected) so recognition can't misfire on
-/// sparse or sung audio. Throws on an unreadable file or an unavailable model.
+/// is either an explicit language code or `auto`; the caller chooses deliberately
+/// rather than inferring it from filenames, locale, or other ambient state.
 public protocol AudioTranscribing: Sendable {
     func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord]
 }

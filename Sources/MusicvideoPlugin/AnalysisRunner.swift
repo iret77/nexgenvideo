@@ -171,8 +171,8 @@ public enum MusicvideoAnalysisRunner {
         report(3)
         if let beatDetector {
             do {
-                let grid = try beatDetector.detectBeats(song, stems: stems)
-                if !grid.beats.isEmpty, !grid.downbeats.isEmpty {
+                if let grid = try beatDetector.detectBeats(song, stems: stems),
+                   !grid.beats.isEmpty, !grid.downbeats.isEmpty {
                     raw.beats = grid.beats.map { Energy.round3($0) }
                     raw.downbeats = grid.downbeats.map { Energy.round3($0) }
                     raw.downbeatSource = Analysis.DownbeatSource.beatTransformer.rawValue
@@ -180,7 +180,7 @@ public enum MusicvideoAnalysisRunner {
                     stages.append("neural_beats")
                     diagnostics.append(StageDiagnostic(stage: "neural_beat_grid", status: .succeeded, detail: "Replaced the DSP rhythm grid with the neural beat/downbeat grid."))
                 } else {
-                    diagnostics.append(StageDiagnostic(stage: "neural_beat_grid", status: .failed, detail: "The detector returned no complete beat/downbeat grid; retained the DSP grid."))
+                    diagnostics.append(StageDiagnostic(stage: "neural_beat_grid", status: .degraded, detail: "The detector returned no complete beat/downbeat grid; retained the DSP grid."))
                 }
             } catch {
                 diagnostics.append(StageDiagnostic(stage: "neural_beat_grid", status: .failed, detail: error.localizedDescription))
@@ -193,8 +193,8 @@ public enum MusicvideoAnalysisRunner {
         var chords: [Chord] = []
         if let chordRecognizer {
             do {
-                let recognized = try chordRecognizer.recognizeChords(song, stems: stems)
-                if !recognized.isEmpty {
+                if let recognized = try chordRecognizer.recognizeChords(song, stems: stems),
+                   !recognized.isEmpty {
                     chords = recognized.map {
                         Chord(start: Energy.round3($0.start), end: Energy.round3($0.end), label: $0.label)
                     }
