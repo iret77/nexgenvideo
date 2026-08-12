@@ -107,7 +107,7 @@ struct HardStepIntakeTests {
         #expect(HardStepManifest.load(packResourceDir: dir) == nil)
     }
 
-    @Test("finds a manifest inside the assembled pack resource bundle")
+    @Test("finds a manifest in the canonical assembled pack resources")
     func findsManifestInAssembledPack() throws {
         let bundle = try makeDataRoot().appendingPathComponent("musicvideo.ngvpack", isDirectory: true)
         let json = """
@@ -117,7 +117,7 @@ struct HardStepIntakeTests {
         ]}]}
         """
         try write(
-            "Contents/Resources/MusicvideoPlugin_MusicvideoPlugin.bundle/MusicvideoPack/hardsteps.json",
+            "Contents/Resources/MusicvideoPack/hardsteps.json",
             in: bundle,
             contents: json
         )
