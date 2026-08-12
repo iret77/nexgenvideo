@@ -24,6 +24,7 @@ concurrency:
 jobs:
   runtime-gate:
     name: macOS 27 Runtime Gate
+    # Linux rejects missing runtime configuration before any macOS runner is allocated.
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -125,6 +126,7 @@ jobs:
   analyze:
     name: Analyze Private Example
     needs: source-gate
+    # Apple Music Understanding must execute on the configured macOS 27 runtime.
     runs-on: ${{ vars.NGV_MACOS_27_RUNNER || 'ubuntu-24.04' }}
     # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
     timeout-minutes: 30
@@ -178,12 +180,7 @@ jobs:
             --manifest "$PACKAGE_DIR/fixtures.manifest.json" \
             --destination "$EXTRACT_DIR"
 
-      - name: Cache SwiftPM
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: spm-example-analysis-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-example-analysis-${{ runner.os }}-
+      - uses: ./.github/actions/cache-swiftpm-dependencies
 
       - name: Bundle real app and external pack
         run: |

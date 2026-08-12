@@ -600,6 +600,14 @@ enum MusicvideoGateChecks {
                     + "Re-run run_phase(\"analysis\")."
             )
         }
+        guard obj["downbeat_source"] as? String
+                == Analysis.DownbeatSource.musicUnderstanding.rawValue else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": Apple Music Understanding did not produce a "
+                    + "consistent canonical beat/bar/BPM grid. Its measured structure was retained "
+                    + "for diagnosis; re-run run_phase(\"analysis\")."
+            )
+        }
         let sections = obj["sections"] as? [[String: Any]] ?? []
         let systemDiagnostics = (obj["stage_diagnostics"] as? [[String: Any]] ?? [])
             .filter { $0["stage"] as? String == "music_understanding" }
@@ -622,11 +630,8 @@ enum MusicvideoGateChecks {
               boundaryRecords.count == sections.count,
               let hierarchy = resolution["hierarchy"] as? [String: Any],
               hierarchy["source"] as? String == Consolidator.systemSource,
-              obj["downbeat_source"] as? String == Analysis.DownbeatSource.musicUnderstanding.rawValue,
               systemStages.count == 1,
-              structureStages.count == 1,
-              systemDiagnostics.count == 1,
-              systemDiagnostics[0]["status"] as? String == "succeeded" else {
+              structureStages.count == 1 else {
             throw GateBlocked(
                 "Can't approve \"analysis\": the canonical section structure is unresolved or its "
                     + "system hierarchy record is invalid. Re-run run_phase(\"analysis\"); labels "
@@ -757,6 +762,13 @@ enum MusicvideoGateChecks {
               evidenceTimes == Set(sectionStarts) else {
             throw GateBlocked(
                 "Can't approve \"analysis\": canonical boundaries no longer match their system evidence."
+            )
+        }
+        guard systemDiagnostics.count == 1,
+              systemDiagnostics[0]["status"] as? String == "succeeded" else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": Music Understanding did not complete both the canonical "
+                    + "rhythm grid and verified structure hierarchy. Re-run run_phase(\"analysis\")."
             )
         }
 

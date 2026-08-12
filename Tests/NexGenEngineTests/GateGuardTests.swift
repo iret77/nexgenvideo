@@ -415,6 +415,32 @@ struct GateGuardTests {
         try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
     }
 
+    @Test("analysis gate reports inconsistent system rhythm without discarding its hierarchy")
+    func analysisGateReportsSystemRhythmFailurePrecisely() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try writeConsolidatedAnalysis(root, detectorBoundaries: [[23.3], [25.1]])
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        object["downbeat_source"] = Analysis.DownbeatSource.beatTransformer.rawValue
+        var diagnostics = try #require(object["stage_diagnostics"] as? [[String: Any]])
+        diagnostics[0]["status"] = "degraded"
+        diagnostics[0]["detail"] = "Retained fallback rhythm."
+        object["stage_diagnostics"] = diagnostics
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+
+        let resolution = try #require(object["structure_resolution"] as? [String: Any])
+        #expect(resolution["status"] as? String == "resolved")
+        #expect(resolution["hierarchy"] as? [String: Any] != nil)
+        do {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+            Issue.record("Expected inconsistent Music Understanding rhythm to block approval.")
+        } catch let blocked as GateBlocked {
+            #expect(blocked.message.contains("canonical beat/bar/BPM grid"))
+        }
+    }
+
     @Test("analysis gate accepts lyric labels attached to measured system boundaries")
     func analysisGateAcceptsSystemBoundaryLabels() throws {
         let root = try tempRoot()

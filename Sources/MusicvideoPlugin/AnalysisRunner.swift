@@ -167,41 +167,23 @@ public enum MusicvideoAnalysisRunner {
         if let musicUnderstandingAnalyzer {
             do {
                 let measured = try musicUnderstandingAnalyzer.analyze(song)
-                let beats = normalizedSystemTimes(measured.beats, durationS: raw.durationS)
-                let bars = normalizedSystemTimes(measured.bars, durationS: raw.durationS)
-                let bpm = measured.bpm.flatMap { value in
-                    value.isFinite && value > 0 ? Energy.round3(value) : nil
-                }
-                if SystemMusicUnderstandingContract.hasConsistentRhythm(
-                    beats: beats,
-                    bars: bars,
-                    bpm: bpm,
+                let assessment = SystemMusicUnderstandingContract.assess(
+                    measured,
                     durationS: raw.durationS
-                ), let bpm {
-                    musicUnderstanding = MusicUnderstandingMeasurement(
-                        beats: beats,
-                        bars: bars,
-                        bpm: bpm,
-                        sections: measured.sections,
-                        segments: measured.segments,
-                        phrases: measured.phrases
-                    )
-                    raw.beats = beats
-                    raw.downbeats = bars
+                )
+                musicUnderstanding = assessment.measurement
+                if let rhythm = assessment.canonicalRhythm {
+                    raw.beats = rhythm.beats
+                    raw.downbeats = rhythm.bars
                     raw.downbeatSource = Analysis.DownbeatSource.musicUnderstanding.rawValue
-                    raw.bpm = bpm
+                    raw.bpm = rhythm.bpm
                     systemRhythmApplied = true
                 }
-                let completeHierarchy = !measured.sections.isEmpty
-                    && !measured.segments.isEmpty
-                    && !measured.phrases.isEmpty
                 diagnostics.append(
                     StageDiagnostic(
                         stage: "music_understanding",
-                        status: systemRhythmApplied && completeHierarchy ? .succeeded : .degraded,
-                        detail: systemRhythmApplied && completeHierarchy
-                            ? "Measured rhythm and a complete section/segment/phrase hierarchy on device."
-                            : "Music Understanding returned incomplete rhythm or structural hierarchy data."
+                        status: .degraded,
+                        detail: "Validating measured rhythm and structural hierarchy independently."
                     )
                 )
             } catch {
@@ -352,10 +334,17 @@ public enum MusicvideoAnalysisRunner {
             let resolved = canonical.structureResolution.status == .resolved
             diagnostics[index] = StageDiagnostic(
                 stage: "music_understanding",
-                status: resolved ? .succeeded : .degraded,
-                detail: resolved
-                    ? "Measured rhythm and a verified section/segment/phrase hierarchy on device."
-                    : "Music Understanding did not produce a valid nested structural hierarchy."
+                status: resolved && systemRhythmApplied ? .succeeded : .degraded,
+                detail: switch (resolved, systemRhythmApplied) {
+                case (true, true):
+                    "Measured rhythm and a verified section/segment/phrase hierarchy on device."
+                case (true, false):
+                    "Verified the measured section/segment/phrase hierarchy; retained fallback rhythm because the system rhythm report was inconsistent."
+                case (false, true):
+                    "Measured canonical rhythm, but the section/segment/phrase hierarchy was invalid."
+                case (false, false):
+                    "System rhythm was inconsistent and the section/segment/phrase hierarchy was invalid."
+                }
             )
         }
 
@@ -373,8 +362,7 @@ public enum MusicvideoAnalysisRunner {
     }
 
     static func normalizedSystemTimes(_ values: [Double], durationS: Double) -> [Double] {
-        guard durationS > 0, durationS.isFinite else { return [] }
-        return SystemMusicUnderstandingContract.normalizedTimes(
+        SystemMusicUnderstandingContract.normalizedTimes(
             values,
             durationS: durationS
         )

@@ -31,6 +31,7 @@ on:
       - 'Sources/NexGenVideo/Resources/Info.plist'
       - 'scripts/**'
       - 'plugins/**'
+      - '.github/actions/cache-swiftpm-dependencies/**'
       - '.github/actions/setup-xcode-27/**'
       - '.github/workflows/bundle.yml'
   workflow_dispatch:
@@ -68,12 +69,7 @@ jobs:
 
       - uses: ./.github/actions/setup-xcode-27
 
-      - name: Cache SwiftPM
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+      - uses: ./.github/actions/cache-swiftpm-dependencies
 
       - name: Bundle (debug, ad-hoc signed)
         run: scripts/bundle.sh debug

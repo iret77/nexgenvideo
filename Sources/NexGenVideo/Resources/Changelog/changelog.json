@@ -16,7 +16,8 @@
           "items": [
             "Song rhythm and form now come from Apple Music Understanding's on-device beat, bar, section, segment, and phrase measurements.",
             "Native MFCC and Mel change points remain visible as diagnostics but can no longer become canonical song sections.",
-            "Incomplete or inconsistent system hierarchy data blocks approval instead of producing plausible but unreliable section labels.",
+            "Out-of-order and non-finite system rhythm samples are normalized deterministically before structural validation.",
+            "System rhythm and structure are validated independently; either one blocks approval when inconsistent without discarding the other's valid evidence.",
             "The Analysis surface now shows exact nested section, segment, and phrase ranges and opens from both its cockpit tab and the Pipeline phase row.",
             "Upgrading an existing Music Video project resets Audio Analysis and downstream approvals so the new measured hierarchy is established before work continues."
           ]

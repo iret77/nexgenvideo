@@ -125,8 +125,45 @@ struct AnalysisRunnerPlumbingTests {
 
     @Test("system rhythm timestamps are finite, ordered, unique, and in range")
     func normalizesSystemRhythmTimes() {
-        let values = [4.0, .nan, -1.0, 2.0004, 2.0003, 12.1, 0.0]
+        let values = [4.0, .nan, .infinity, -.infinity, -1.0, 2.0004, 2.0003, 12.1, 0.0]
         #expect(MusicvideoAnalysisRunner.normalizedSystemTimes(values, durationS: 12) == [0, 2, 4])
+        #expect(MusicvideoAnalysisRunner.normalizedSystemTimes([1.001, 1.002], durationS: 12) == [1.001, 1.002])
+        #expect(MusicvideoAnalysisRunner.normalizedSystemTimes(values, durationS: .nan).isEmpty)
+        #expect(MusicvideoAnalysisRunner.normalizedSystemTimes(values, durationS: .infinity).isEmpty)
+        #expect(MusicvideoAnalysisRunner.normalizedSystemTimes(values, durationS: -1).isEmpty)
+    }
+
+    @Test("system hierarchy survives an independently inconsistent rhythm report")
+    func systemHierarchyIsIndependentFromRhythm() throws {
+        let measured = MusicUnderstandingMeasurement(
+            beats: stride(from: 0.0, through: 12.0, by: 0.25).map { $0 },
+            bars: stride(from: 0.0, through: 12.0, by: 2.0).map { $0 },
+            bpm: 120,
+            sections: [.init(start: 0, end: 6), .init(start: 6, end: 12)],
+            segments: [.init(start: 0, end: 6), .init(start: 6, end: 12)],
+            phrases: [.init(start: 0, end: 3), .init(start: 3, end: 6),
+                      .init(start: 6, end: 9), .init(start: 9, end: 12)]
+        )
+        let assessment = SystemMusicUnderstandingContract.assess(measured, durationS: 12)
+        #expect(assessment.canonicalRhythm == nil)
+
+        let raw = AudioAnalysis(
+            sampleRate: 22050, durationS: 12, bpm: 100,
+            beats: stride(from: 0.0, through: 12.0, by: 0.6).map { $0 },
+            downbeats: stride(from: 0.0, through: 12.0, by: 2.4).map { $0 },
+            downbeatSource: "beat-transformer",
+            sections: [], energyCurve: [], tempoCurve: []
+        )
+        let result = try MusicvideoAnalysisRunner.toCanonicalDetailed(
+            raw,
+            project: "P",
+            songPath: "audio/song.mp3",
+            musicUnderstanding: assessment.measurement
+        )
+        #expect(result.structureResolution.status == .resolved)
+        #expect(result.analysis.sections.map(\.start) == [0, 6])
+        #expect(result.analysis.bpm == 100)
+        #expect(result.analysis.downbeatSource == .beatTransformer)
     }
 
     @Test("AudioAnalysis maps onto the canonical Analysis schema")

@@ -156,7 +156,6 @@ public enum Consolidator {
         guard let measurement = musicUnderstanding,
               let hierarchy = normalizedHierarchy(
                 measurement,
-                downbeats: downbeats,
                 durationS: durationS
               ) else {
             return unresolvedResult(
@@ -288,12 +287,11 @@ public enum Consolidator {
 
     private static func normalizedHierarchy(
         _ measurement: MusicUnderstandingMeasurement,
-        downbeats: [Double],
         durationS: Double
     ) -> StructureHierarchy? {
         guard durationS > 0,
-              !measurement.beats.isEmpty,
-              !downbeats.isEmpty,
+              durationS.isFinite,
+              !measurement.bars.isEmpty,
               let sections = validatedRanges(
                 measurement.sections,
                 durationS: durationS,
@@ -313,7 +311,7 @@ public enum Consolidator {
                 requireContiguous: false
               ),
               sections.dropFirst().allSatisfy({ section in
-                  downbeats.contains { abs($0 - section.start) <= downbeatSnapS }
+                  measurement.bars.contains { abs($0 - section.start) <= downbeatSnapS }
               }),
               nested(segments, inside: sections),
               nested(phrases, inside: segments),
