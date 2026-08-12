@@ -77,4 +77,21 @@ struct AppRelaunchTests {
         #expect(Array(prefixed.suffix(3)) == ["--args", "--self-test", "/tmp/state file"])
         #expect(prefixed.filter { $0 == "--args" }.count == 1)
     }
+
+    @Test("self-test reopener can bypass LaunchServices without changing production arguments")
+    func directExecutableRelaunchRemainsExplicit() {
+        let executablePath = "/Applications/NexGenVideo.app/Contents/MacOS/NexGenVideo"
+        let arguments = AppRelaunch.reopenerArguments(
+            parentPID: 1234,
+            executablePath: executablePath,
+            bundlePath: "/Applications/NexGenVideo.app",
+            openArguments: ["--self-test", "/tmp/state file"],
+            launchMode: .executable
+        )
+
+        #expect(arguments[1].contains("exec \"$expected\" \"$@\""))
+        #expect(!arguments[1].contains("exec /usr/bin/open"))
+        #expect(Array(arguments.suffix(2)) == ["--self-test", "/tmp/state file"])
+        #expect(!arguments.contains("--args"))
+    }
 }

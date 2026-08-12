@@ -32,18 +32,39 @@ if [ ! -d "$SWIFT_RUNTIME_ROOT" ]; then
 fi
 
 PLATFORM_FRAMEWORK_ROOT="${NGV_PLATFORM_FRAMEWORK_ROOT:-}"
+PLATFORM_PRIVATE_FRAMEWORK_ROOT="${NGV_PLATFORM_PRIVATE_FRAMEWORK_ROOT:-}"
 PLATFORM_LIBRARY_ROOT="${NGV_PLATFORM_LIBRARY_ROOT:-}"
-if [ -z "$PLATFORM_FRAMEWORK_ROOT" ]; then
+XCODE_SHARED_FRAMEWORK_ROOT="${NGV_XCODE_SHARED_FRAMEWORK_ROOT:-}"
+if [ -z "$PLATFORM_FRAMEWORK_ROOT" ] \
+  || [ -z "$PLATFORM_PRIVATE_FRAMEWORK_ROOT" ] \
+  || [ -z "$PLATFORM_LIBRARY_ROOT" ] \
+  || [ -z "$XCODE_SHARED_FRAMEWORK_ROOT" ]; then
   SDK_PLATFORM_ROOT="$("$XCRUN" --sdk macosx --show-sdk-platform-path)"
-  PLATFORM_FRAMEWORK_ROOT="$SDK_PLATFORM_ROOT/Developer/Library/Frameworks"
-  PLATFORM_LIBRARY_ROOT="$SDK_PLATFORM_ROOT/Developer/usr/lib"
+  XCODEBUILD_EXECUTABLE="$("$XCRUN" --find xcodebuild)"
+  XCODE_DEVELOPER_ROOT="$(cd "$(dirname "$XCODEBUILD_EXECUTABLE")/../.." && pwd -P)"
+  [ -n "$PLATFORM_FRAMEWORK_ROOT" ] \
+    || PLATFORM_FRAMEWORK_ROOT="$SDK_PLATFORM_ROOT/Developer/Library/Frameworks"
+  [ -n "$PLATFORM_PRIVATE_FRAMEWORK_ROOT" ] \
+    || PLATFORM_PRIVATE_FRAMEWORK_ROOT="$SDK_PLATFORM_ROOT/Developer/Library/PrivateFrameworks"
+  [ -n "$PLATFORM_LIBRARY_ROOT" ] \
+    || PLATFORM_LIBRARY_ROOT="$SDK_PLATFORM_ROOT/Developer/usr/lib"
+  [ -n "$XCODE_SHARED_FRAMEWORK_ROOT" ] \
+    || XCODE_SHARED_FRAMEWORK_ROOT="$(dirname "$XCODE_DEVELOPER_ROOT")/SharedFrameworks"
 fi
 if [ ! -d "$PLATFORM_FRAMEWORK_ROOT" ]; then
   echo "!! active macOS platform framework root does not exist: $PLATFORM_FRAMEWORK_ROOT" >&2
   exit 1
 fi
+if [ ! -d "$PLATFORM_PRIVATE_FRAMEWORK_ROOT" ]; then
+  echo "!! active macOS platform private framework root does not exist: $PLATFORM_PRIVATE_FRAMEWORK_ROOT" >&2
+  exit 1
+fi
 if [ ! -d "$PLATFORM_LIBRARY_ROOT" ]; then
   echo "!! active macOS platform library root does not exist: $PLATFORM_LIBRARY_ROOT" >&2
+  exit 1
+fi
+if [ ! -d "$XCODE_SHARED_FRAMEWORK_ROOT" ]; then
+  echo "!! active Xcode shared framework root does not exist: $XCODE_SHARED_FRAMEWORK_ROOT" >&2
   exit 1
 fi
 BIN_DIRECTORY="$("$SWIFT" build -c "$CONFIGURATION" --show-bin-path)"
@@ -80,4 +101,6 @@ fi
   "$SWIFTPM_ARTIFACT_ROOT" \
   "$SWIFT_RUNTIME_ROOT" \
   "$PLATFORM_FRAMEWORK_ROOT" \
-  "$PLATFORM_LIBRARY_ROOT"
+  "$PLATFORM_PRIVATE_FRAMEWORK_ROOT" \
+  "$PLATFORM_LIBRARY_ROOT" \
+  "$XCODE_SHARED_FRAMEWORK_ROOT"

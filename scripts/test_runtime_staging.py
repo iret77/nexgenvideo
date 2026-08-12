@@ -357,12 +357,16 @@ class RuntimeStagingTests(unittest.TestCase):
             artifacts = root / "artifacts"
             swift_runtime = root / "swift-runtime"
             platform_frameworks = root / "platform-frameworks"
+            platform_private_frameworks = root / "platform-private-frameworks"
             platform_libraries = root / "platform-libraries"
+            xcode_shared_frameworks = root / "xcode-shared-frameworks"
             vendor.mkdir()
             artifacts.mkdir()
             swift_runtime.mkdir()
             platform_frameworks.mkdir()
+            platform_private_frameworks.mkdir()
             platform_libraries.mkdir()
+            xcode_shared_frameworks.mkdir()
             for name, framework in (
                 ("NexGenVideoTests", "whisper"),
                 ("NexGenEngineTests", "Sparkle"),
@@ -383,10 +387,22 @@ class RuntimeStagingTests(unittest.TestCase):
                 dependencies.write(
                     "@rpath/Testing.framework/Versions/A/Testing "
                     "(compatibility version 1.0.0)\n"
+                    "@rpath/XCTAutomationSupport.framework/Versions/A/XCTAutomationSupport "
+                    "(compatibility version 1.0.0)\n"
                     "@rpath/libXCTestSwiftSupport.dylib "
                     "(compatibility version 1.0.0)\n"
                 )
             self.write_framework(platform_frameworks, "Testing")
+            automation_dependency = (
+                "@rpath/XCUIAutomation.framework/Versions/A/XCUIAutomation "
+                "(compatibility version 1.0.0)"
+            )
+            self.write_framework(
+                platform_private_frameworks,
+                "XCTAutomationSupport",
+                [automation_dependency],
+            )
+            self.write_framework(xcode_shared_frameworks, "XCUIAutomation")
             (platform_libraries / "libXCTestSwiftSupport.dylib").write_text("xctest")
             fake_swift = root / "swift"
             fake_swift.write_text(f"#!/bin/bash\nprintf '%s\\n' '{bin_directory}'\n")
@@ -398,7 +414,13 @@ class RuntimeStagingTests(unittest.TestCase):
             environment["NGV_SWIFTPM_ARTIFACT_ROOT"] = str(artifacts)
             environment["NGV_SWIFT_RUNTIME_ROOT"] = str(swift_runtime)
             environment["NGV_PLATFORM_FRAMEWORK_ROOT"] = str(platform_frameworks)
+            environment["NGV_PLATFORM_PRIVATE_FRAMEWORK_ROOT"] = str(
+                platform_private_frameworks
+            )
             environment["NGV_PLATFORM_LIBRARY_ROOT"] = str(platform_libraries)
+            environment["NGV_XCODE_SHARED_FRAMEWORK_ROOT"] = str(
+                xcode_shared_frameworks
+            )
 
             subprocess.run(
                 [ROOT / "scripts/stage_test_runtime.sh", "debug"],
@@ -410,6 +432,8 @@ class RuntimeStagingTests(unittest.TestCase):
             self.assertTrue((runtime / "whisper.framework").is_dir())
             self.assertTrue((runtime / "Sparkle.framework").is_dir())
             self.assertTrue((runtime / "Testing.framework").is_dir())
+            self.assertTrue((runtime / "XCTAutomationSupport.framework").is_dir())
+            self.assertTrue((runtime / "XCUIAutomation.framework").is_dir())
             self.assertTrue((runtime / "libXCTestSwiftSupport.dylib").is_file())
             self.assertGreater(
                 len(list((bin_directory / "NexGenVideo_NexGenVideo.bundle").glob("*.metallib"))),

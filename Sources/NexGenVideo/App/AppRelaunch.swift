@@ -32,6 +32,11 @@ enum AppRelaunchDocumentPolicy {
 
 @MainActor
 enum AppRelaunch {
+    enum LaunchMode: Equatable {
+        case launchServices
+        case executable
+    }
+
     enum RelaunchFailure: LocalizedError {
         case requestAlreadyPending
         case appBundleMissing
@@ -63,14 +68,24 @@ enum AppRelaunch {
         parentPID: Int32,
         executablePath: String,
         bundlePath: String,
-        openArguments: [String] = []
+        openArguments: [String] = [],
+        launchMode: LaunchMode = .launchServices
     ) -> [String] {
         let applicationArguments = openArguments.first == "--args"
             ? Array(openArguments.dropFirst())
             : openArguments
-        let launchArguments = applicationArguments.isEmpty
-            ? []
-            : ["--args"] + applicationArguments
+        let launchCommand: String
+        let launchArguments: [String]
+        switch launchMode {
+        case .launchServices:
+            launchCommand = "exec /usr/bin/open -n -a \"$bundle\" \"$@\""
+            launchArguments = applicationArguments.isEmpty
+                ? []
+                : ["--args"] + applicationArguments
+        case .executable:
+            launchCommand = "exec \"$expected\" \"$@\""
+            launchArguments = applicationArguments
+        }
         return [
             "-c",
             "parent=\"$1\"; expected=\"$2\"; bundle=\"$3\"; shift 3; "
@@ -87,7 +102,7 @@ enum AppRelaunch {
                 + "if is_parent; then /bin/kill -KILL \"$parent\"; attempts=0; "
                 + "while is_parent && [ \"$attempts\" -lt 20 ]; do "
                 + "attempts=$((attempts + 1)); /bin/sleep 0.1; done; fi; "
-                + "is_parent && exit 1; exec /usr/bin/open -n -a \"$bundle\" \"$@\"",
+                + "is_parent && exit 1; " + launchCommand,
             "nexgenvideo-relaunch",
             String(parentPID),
             executablePath,
@@ -150,8 +165,11 @@ enum AppRelaunch {
             presentFailure(RelaunchFailure.appBundleMissing)
             return
         }
+        let launchMode = AppRelaunchSelfTest.reopenLaunchMode
+        let launchCommandAvailable = launchMode == .executable
+            || FileManager.default.isExecutableFile(atPath: "/usr/bin/open")
         guard FileManager.default.isExecutableFile(atPath: "/bin/sh"),
-              FileManager.default.isExecutableFile(atPath: "/usr/bin/open") else {
+              launchCommandAvailable else {
             clearRequest()
             presentFailure(RelaunchFailure.reopenerUnavailable)
             return
@@ -164,7 +182,8 @@ enum AppRelaunch {
             executablePath: Bundle.main.executableURL?.path
                 ?? ProcessInfo.processInfo.arguments[0],
             bundlePath: bundlePath,
-            openArguments: pendingOpenArguments
+            openArguments: pendingOpenArguments,
+            launchMode: launchMode
         )
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
