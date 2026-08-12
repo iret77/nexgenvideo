@@ -328,7 +328,7 @@ enum ExampleAudioAnalysisSelfTest {
             throw Failure("macOS 26 analysis unexpectedly persisted a system hierarchy")
         }
         let downbeatSource = object["downbeat_source"] as? String ?? "missing"
-        guard downbeatSource == Analysis.DownbeatSource.beatTransformer.rawValue else {
+        guard downbeatSource == "beat-transformer" else {
             throw Failure("downbeat source is \(downbeatSource), expected beat-transformer")
         }
         guard sections.count == acceptedCount + 1 else {
