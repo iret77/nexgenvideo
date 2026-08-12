@@ -3004,7 +3004,10 @@ struct WorkflowToolsTests {
             args: [
                 "project_dir": dataRoot.path,
                 "tempo_multiplier": 1.0,
-                "section_labels": [],
+                "section_labels": [
+                    ["index": 0, "label": "intro", "confidence": 0.8],
+                    ["index": 1, "label": "verse", "confidence": 0.8],
+                ],
                 "anomalies": [],
                 "overall_character": "Must not be written.",
             ]
@@ -3098,7 +3101,10 @@ struct WorkflowToolsTests {
             args: [
                 "project_dir": dataRoot.path,
                 "tempo_multiplier": 1.0,
-                "section_labels": [],
+                "section_labels": [
+                    ["index": 0, "label": "intro", "confidence": 0.8],
+                    ["index": 1, "label": "verse", "confidence": 0.8],
+                ],
                 "anomalies": [],
                 "overall_character": "Must not be written.",
             ]

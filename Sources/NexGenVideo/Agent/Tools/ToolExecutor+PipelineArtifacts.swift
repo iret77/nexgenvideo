@@ -26,19 +26,23 @@ extension ToolExecutor {
         } catch let blocked as GateBlocked {
             throw ToolError(blocked.message)
         }
+        let artifactRequirement: EngineRegistry.GateRequirement?
         if resolvedPack != nil {
             guard let requirement = registry.artifactWriteRequirements["analysis"] else {
                 throw ToolError(
                     "The active format pack has no analysis artifact-write contract. Reopen the project."
                 )
             }
-            do {
-                try requirement(root)
-            } catch {
-                throw ToolError(error.localizedDescription)
-            }
+            artifactRequirement = requirement
+        } else {
+            artifactRequirement = nil
         }
         let measured = try currentMeasuredAnalysis(dataRoot: root)
+        do {
+            try artifactRequirement?(root)
+        } catch {
+            throw ToolError(error.localizedDescription)
+        }
         let analysisURL = measured.url
         var analysis = measured.object
         guard (analysis["beats"] as? [Any])?.isEmpty == false,

@@ -986,7 +986,32 @@ struct HardStepIntakeTests {
                 "start": 0.0,
                 "end": 12.0,
                 "cluster": 0,
+                "source": "measured_track_extent",
             ]],
+            "structure_candidates": [
+                ["source": "librosa", "sections": [[
+                    "index": 0, "start": 0.0, "end": 12.0, "cluster": 0,
+                ]]],
+                ["source": "essentia", "sections": [[
+                    "index": 0, "start": 0.0, "end": 12.0, "cluster": 0,
+                ]]],
+            ],
+            "structure_resolution": [
+                "version": "bar-consensus/v1",
+                "status": "resolved",
+                "method": "homogeneous_consensus",
+                "detector_sources": ["essentia", "librosa"],
+                "minimum_section_bars": 8,
+                "candidate_boundary_count": 0,
+                "consensus_boundary_count": 0,
+                "alignment_marker_count": 0,
+                "resolved_alignment_marker_count": 0,
+                "accepted_boundary_count": 0,
+                "discarded_boundary_count": 0,
+                "boundary_evidence": [],
+                "detail": "Independent detectors agree on one homogeneous section.",
+            ],
+            "alignment": [],
             "interpretation": [
                 "section_labels": [[
                     "index": "0",
