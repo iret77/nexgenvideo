@@ -84,5 +84,8 @@ The macOS job then:
 The provenance record links the result to the immutable fixture reference, tree and file digests,
 loaded pack version and bundle-tree digest, commit, workflow run, measured summary, actual optional
 audio-ML registration state, and gate outcome. It contains no runner-local source path.
+The app also writes one redacted success line containing only duration, tempo, grid counts,
+structure status, raw/accepted boundary counts, and canonical boundary times. It never prints fixture
+paths, source names, lyrics, labels, hashes, or media content.
 No media, lyrics, analysis, or provenance file is uploaded as a public Actions artifact. The macOS
 job removes its fixture, report, and registry-auth directories after publication or failure.

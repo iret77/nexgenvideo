@@ -113,6 +113,7 @@ enum ExampleAudioAnalysisSelfTest {
         let structureStatus: String
         let candidateBoundaryCount: Int
         let acceptedBoundaryCount: Int
+        let sectionBoundaryTimesS: [Double]
 
         enum CodingKeys: String, CodingKey {
             case artifact, sha256, bpm
@@ -123,6 +124,7 @@ enum ExampleAudioAnalysisSelfTest {
             case structureStatus = "structure_status"
             case candidateBoundaryCount = "candidate_boundary_count"
             case acceptedBoundaryCount = "accepted_boundary_count"
+            case sectionBoundaryTimesS = "section_boundary_times_s"
         }
     }
 
@@ -197,8 +199,17 @@ enum ExampleAudioAnalysisSelfTest {
                 environment: ProcessInfo.processInfo.environment
             ) else { return }
             let summary = try run(configuration)
+            let boundaries = summary.sectionBoundaryTimesS
+                .map { String(format: "%.3f", $0) }
+                .joined(separator: ",")
             let message = "SELFTEST_EXAMPLE_ANALYSIS_OK dataset=\(configuration.datasetID) "
-                + "bpm=\(summary.bpm) sections=\(summary.sectionCount)\n"
+                + "duration=\(String(format: "%.3f", summary.durationS)) "
+                + "bpm=\(String(format: "%.3f", summary.bpm)) "
+                + "beats=\(summary.beatCount) downbeats=\(summary.downbeatCount) "
+                + "structure_status=\(summary.structureStatus) "
+                + "candidate_boundaries=\(summary.candidateBoundaryCount) "
+                + "accepted_boundaries=\(summary.acceptedBoundaryCount) "
+                + "sections=\(summary.sectionCount) boundaries_s=\(boundaries)\n"
             FileHandle.standardOutput.write(Data(message.utf8))
             exit(0)
         } catch {
@@ -343,6 +354,12 @@ enum ExampleAudioAnalysisSelfTest {
         guard object["song_path"] as? String == "audio/\(audioFiles[0].url.lastPathComponent)" else {
             throw Failure("analysis does not preserve the original source filename project-locally")
         }
+        let sectionBoundaryTimes = sections.dropFirst().compactMap {
+            number($0["start"])
+        }
+        guard sectionBoundaryTimes.count == acceptedCount else {
+            throw Failure("canonical boundary summary is incomplete")
+        }
         let artifactText = String(decoding: artifactData, as: UTF8.self)
         guard ![configuration.fixtureRoot.path, projectHome.path].contains(where: {
             artifactText.contains($0)
@@ -360,7 +377,8 @@ enum ExampleAudioAnalysisSelfTest {
             sectionCount: sections.count,
             structureStatus: status,
             candidateBoundaryCount: candidateCount,
-            acceptedBoundaryCount: acceptedCount
+            acceptedBoundaryCount: acceptedCount,
+            sectionBoundaryTimesS: sectionBoundaryTimes
         )
         try writeReport(
             configuration: configuration,
