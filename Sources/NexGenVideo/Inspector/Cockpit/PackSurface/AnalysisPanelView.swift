@@ -88,7 +88,9 @@ struct AnalysisPanelView: View {
             .overlay {
                 if let progress = AnalysisRemeasurementPresentation.current(
                     execution: editor.pipelinePhaseExecution.snapshot,
-                    dataRoot: editor.workingRoot.flatMap(DataRootResolver.dataRoot),
+                    dataRoot: editor.workingRoot.flatMap {
+                        DataRootResolver.dataRoot(of: $0)
+                    },
                     fallbackTrackName: data.trackName
                 ) {
                     remeasurementOverlay(progress)
