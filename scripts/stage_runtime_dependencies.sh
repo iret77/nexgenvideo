@@ -94,6 +94,11 @@ resolve_framework() {
   local match_count=0
   local root candidate binary
   for root in "${roots[@]}"; do
+    binary="$root/$framework/$executable"
+    if [ -f "$binary" ] && is_macos_arm64 "$binary"; then
+      cp -R "$root/$framework" "$DESTINATION/$framework"
+      return
+    fi
     selected=""
     match_count=0
     while IFS= read -r candidate; do
@@ -127,6 +132,12 @@ resolve_dylib() {
   local root candidate
   filename="$(basename "$relative")"
   for root in "${roots[@]}"; do
+    candidate="$root/$relative"
+    if [ -f "$candidate" ] && is_macos_arm64 "$candidate"; then
+      mkdir -p "$(dirname "$DESTINATION/$relative")"
+      cp "$candidate" "$DESTINATION/$relative"
+      return
+    fi
     selected=""
     match_count=0
     while IFS= read -r candidate; do

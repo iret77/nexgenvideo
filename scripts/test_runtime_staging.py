@@ -259,6 +259,7 @@ class RuntimeStagingTests(unittest.TestCase):
             second.mkdir()
             self.write_framework(first, "Shared")
             self.write_framework(second, "Shared")
+            self.write_framework(first / "nested", "Shared")
             (first / "Shared.framework/Versions/A/Shared").write_text("first")
             (second / "Shared.framework/Versions/A/Shared").write_text("second")
             bin_directory = root / "bin"
@@ -355,9 +356,11 @@ class RuntimeStagingTests(unittest.TestCase):
             vendor = root / "vendor"
             artifacts = root / "artifacts"
             swift_runtime = root / "swift-runtime"
+            platform_frameworks = root / "platform-frameworks"
             vendor.mkdir()
             artifacts.mkdir()
             swift_runtime.mkdir()
+            platform_frameworks.mkdir()
             for name, framework in (
                 ("NexGenVideoTests", "whisper"),
                 ("NexGenEngineTests", "Sparkle"),
@@ -379,7 +382,7 @@ class RuntimeStagingTests(unittest.TestCase):
                     "@rpath/Testing.framework/Versions/A/Testing "
                     "(compatibility version 1.0.0)\n"
                 )
-            self.write_framework(swift_runtime, "Testing")
+            self.write_framework(platform_frameworks, "Testing")
             fake_swift = root / "swift"
             fake_swift.write_text(f"#!/bin/bash\nprintf '%s\\n' '{bin_directory}'\n")
             fake_swift.chmod(0o700)
@@ -389,6 +392,7 @@ class RuntimeStagingTests(unittest.TestCase):
             environment["NGV_VENDOR_ARTIFACT_ROOT"] = str(vendor)
             environment["NGV_SWIFTPM_ARTIFACT_ROOT"] = str(artifacts)
             environment["NGV_SWIFT_RUNTIME_ROOT"] = str(swift_runtime)
+            environment["NGV_PLATFORM_FRAMEWORK_ROOT"] = str(platform_frameworks)
 
             subprocess.run(
                 [ROOT / "scripts/stage_test_runtime.sh", "debug"],
