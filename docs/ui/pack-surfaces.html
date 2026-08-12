@@ -110,7 +110,7 @@
   /* section list */
   .seclist { margin-top: var(--s-md); border: var(--hair) solid var(--border); border-radius: var(--r-sm);
     overflow: hidden; }
-  .seclist .row { display: grid; grid-template-columns: 14px 1fr 88px 64px; gap: var(--s-sm);
+  .seclist .row { display: grid; grid-template-columns: 14px 1fr 88px 128px; gap: var(--s-sm);
     align-items: center; padding: var(--s-xs) var(--s-md); border-bottom: var(--hair) solid var(--border);
     font-size: var(--f-xs); }
   .seclist .row:last-child { border-bottom: 0; }
@@ -118,6 +118,10 @@
   .seclist .row .nm { color: var(--text); font-weight: 500; }
   .seclist .row .lab { color: var(--text-3); }
   .seclist .row .tc { color: var(--text-2); text-align: right; font-variant-numeric: tabular-nums; }
+  .seclist .row.segment { padding-left: var(--s-xl); background: #ffffff05; }
+  .seclist .row.phrase { padding-left: calc(var(--s-xl) + var(--s-lg)); font-size: var(--f-micro); }
+  .seclist .row.segment .nm, .seclist .row.phrase .nm { color: var(--text-3); font-weight: 400; }
+  .seclist .row.phrase .tc { color: var(--text-muted); }
   .prov { margin-top: var(--s-md); font-size: var(--f-micro); color: var(--text-muted); }
 
   /* empty / loading / error */
@@ -318,13 +322,28 @@
           </div>
         </div>
 
+        <div class="tl-head"><span class="t">Structure hierarchy</span><span class="src">Apple Music Understanding · exact measured ranges</span></div>
         <div class="seclist">
-          <div class="row"><span class="sw" style="background:#6fb2ff"></span><span class="nm">Intro</span><span class="lab">instrumental</span><span class="tc">0:00 – 0:27</span></div>
-          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 1</span><span class="lab">lyrics-labelled</span><span class="tc">0:27 – 1:11</span></div>
-          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">lyrics-labelled</span><span class="tc">1:11 – 1:47</span></div>
-          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 2</span><span class="lab">lyrics-labelled</span><span class="tc">1:47 – 2:31</span></div>
-          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">lyrics-labelled</span><span class="tc">2:31 – 3:11</span></div>
-          <div class="row"><span class="sw" style="background:#c08bff"></span><span class="nm">Outro</span><span class="lab">instrumental</span><span class="tc">3:11 – 3:42</span></div>
+          <div class="row"><span class="sw" style="background:#6fb2ff"></span><span class="nm">Intro</span><span class="lab">section</span><span class="tc">0:00.00 – 0:27.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">0:00.00 – 0:27.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">0:00.00 – 0:13.50</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 2</span><span class="lab">phrase</span><span class="tc">0:13.50 – 0:27.00</span></div>
+          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 1</span><span class="lab">section</span><span class="tc">0:27.00 – 1:11.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">0:27.00 – 1:11.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">0:27.00 – 0:49.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 2</span><span class="lab">phrase</span><span class="tc">0:49.00 – 1:11.00</span></div>
+          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">section</span><span class="tc">1:11.00 – 1:47.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">1:11.00 – 1:47.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">1:11.00 – 1:47.00</span></div>
+          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 2</span><span class="lab">section</span><span class="tc">1:47.00 – 2:31.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">1:47.00 – 2:31.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">1:47.00 – 2:31.00</span></div>
+          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">section</span><span class="tc">2:31.00 – 3:11.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">2:31.00 – 3:11.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">2:31.00 – 3:11.00</span></div>
+          <div class="row"><span class="sw" style="background:#c08bff"></span><span class="nm">Outro</span><span class="lab">section</span><span class="tc">3:11.00 – 3:42.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">3:11.00 – 3:42.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">3:11.00 – 3:42.00</span></div>
         </div>
         <div class="prov">Measured ground truth <span class="tag ro">READ-ONLY</span> — lyrics label the sections; they never move the measured boundaries. Source: <code>analysis/midnight_drive.json</code>.</div>
       </div>

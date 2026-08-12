@@ -31,14 +31,6 @@ public struct MusicDurationPolicy: DurationPolicy {
     }
 }
 
-/// Port of `pack.py::MusicvideoPack`.
-///
-/// The `analysis` phase runner (M8c) locates the song in the project's
-/// `audio/` dir, decodes it via the host-injected `AudioPCMDecoding`, runs the
-/// system music analysis plus native feature diagnostics, and persists
-/// `analysis/<song>.json`. It resolves the
-/// decoder from the registry at run time — nil decoder → an actionable error,
-/// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
     public let version = "0.2.0"

@@ -1,11 +1,6 @@
 import Foundation
 import NexGenEngine
 
-/// Host-side reader for the `beatAnalysis` cockpit surface. Decodes the fields the Analysis panel
-/// renders straight from the pack's `analysis/<song>.json` (schema `analysis/v3`) — the host owns this
-/// generic "measured audio analysis" shape, so it never imports the format pack's own `Analysis` type.
-/// The file is located with the public engine helper (`AudioProjectLayout`), the same one the pack uses,
-/// so both read the identical artifact under the one-song discipline.
 struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
     var songPath: String
     var durationS: Double
@@ -27,16 +22,42 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
     /// rubato/beatless and the panel shows the degraded state (key + duration only).
     var hasBeatGrid: Bool { !beats.isEmpty }
 
-    var hasCanonicalStructure: Bool {
+    var canonicalHierarchy: [HierarchySection]? {
         guard let resolution = structureResolution,
               resolution.status == "resolved",
               resolution.method == "music_understanding_hierarchy",
               let hierarchy = resolution.hierarchy,
-              hierarchy.source == "apple_music_understanding" else { return false }
-        return hierarchy.sections.count == sections.count
-            && !hierarchy.segments.isEmpty
-            && !hierarchy.phrases.isEmpty
+              hierarchy.source == "apple_music_understanding" else { return nil }
+        guard hierarchy.sections.count == sections.count,
+              !hierarchy.segments.isEmpty,
+              !hierarchy.phrases.isEmpty,
+              zip(sections, hierarchy.sections).allSatisfy({ pair in
+                  pair.0.start == pair.1.start && pair.0.end == pair.1.end
+              }) else { return nil }
+
+        let segmentOwners = hierarchy.segments.map { uniqueOwner(of: $0, in: hierarchy.sections) }
+        let phraseOwners = hierarchy.phrases.map { uniqueOwner(of: $0, in: hierarchy.segments) }
+        guard segmentOwners.allSatisfy({ $0 != nil }), phraseOwners.allSatisfy({ $0 != nil }) else {
+            return nil
+        }
+
+        let rows = sections.enumerated().map { sectionIndex, section in
+            let segments = hierarchy.segments.enumerated().compactMap { segmentIndex, range -> HierarchySegment? in
+                guard segmentOwners[segmentIndex] == sectionIndex else { return nil }
+                let phrases = hierarchy.phrases.enumerated().compactMap { phraseIndex, phrase -> HierarchyPhrase? in
+                    guard phraseOwners[phraseIndex] == segmentIndex else { return nil }
+                    return HierarchyPhrase(id: phraseIndex, start: phrase.start, end: phrase.end)
+                }
+                return HierarchySegment(id: segmentIndex, start: range.start, end: range.end, phrases: phrases)
+            }
+            return HierarchySection(id: sectionIndex, section: section, segments: segments)
+        }
+        guard rows.allSatisfy({ !$0.segments.isEmpty }),
+              rows.flatMap({ $0.segments }).allSatisfy({ !$0.phrases.isEmpty }) else { return nil }
+        return rows
     }
+
+    var hasCanonicalStructure: Bool { canonicalHierarchy != nil }
 
     var nonSuccessStageDiagnostics: [StageDiagnostic] {
         stageDiagnostics.filter { $0.status != "succeeded" && $0.status != "not_applicable" }
@@ -62,6 +83,25 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
             label = try c.decodeIfPresent(String.self, forKey: .label)
             source = try c.decodeIfPresent(String.self, forKey: .source)
         }
+    }
+
+    struct HierarchySection: Sendable, Equatable, Identifiable {
+        let id: Int
+        let section: Section
+        let segments: [HierarchySegment]
+    }
+
+    struct HierarchySegment: Sendable, Equatable, Identifiable {
+        let id: Int
+        let start: Double
+        let end: Double
+        let phrases: [HierarchyPhrase]
+    }
+
+    struct HierarchyPhrase: Sendable, Equatable, Identifiable {
+        let id: Int
+        let start: Double
+        let end: Double
     }
 
     struct StructureResolution: Decodable, Sendable, Equatable {
@@ -126,6 +166,18 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
         sections = try c.decodeIfPresent([Section].self, forKey: .sections) ?? []
         structureResolution = try c.decodeIfPresent(StructureResolution.self, forKey: .structureResolution)
         stageDiagnostics = try c.decodeIfPresent([StageDiagnostic].self, forKey: .stageDiagnostics) ?? []
+    }
+
+    private func uniqueOwner(
+        of child: StructureResolution.Range,
+        in parents: [StructureResolution.Range]
+    ) -> Int? {
+        let matches = parents.indices.filter { index in
+            let parent = parents[index]
+            return child.start.isFinite && child.end.isFinite && child.end > child.start
+                && child.start >= parent.start && child.end <= parent.end
+        }
+        return matches.count == 1 ? matches[0] : nil
     }
 }
 

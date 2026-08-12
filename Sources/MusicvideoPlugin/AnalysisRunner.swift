@@ -1,17 +1,6 @@
 import Foundation
 import NexGenEngine
 
-/// The real `analysis` phase runner (M8c). Locates the song in the project's
-/// `audio/` dir, decodes it via the host-injected `AudioPCMDecoding`, runs the
-/// native DSP pipeline plus the system music hierarchy, and persists the
-/// canonical `analysis/<song>.json`
-/// artifact — mirroring the retired Python `analysis/pipeline.py::run_phase`
-/// (persist path, filename, snake_case shape, `duration_s`/`bpm` rounding).
-///
-/// `dataRoot` is the project's `pipeline/` data root (what `EngineRegistry`
-/// phase runners receive and what `ShowFormatters.showAnalysis` reads from):
-/// audio lives at `<dataRoot>/audio/`, the artifact lands at
-/// `<dataRoot>/analysis/<stem>.json`.
 public enum MusicvideoAnalysisRunner {
     public static let progressStages = [
         "decode_audio",
@@ -95,15 +84,7 @@ public enum MusicvideoAnalysisRunner {
     /// Lyric file extensions the runner reads for forced alignment.
     public static let lyricsExtensions: Set<String> = ["txt", "md", "lrc"]
 
-    /// Run the analysis phase for the project at `dataRoot`. `decoder` turns the
-    /// song into PCM for the DSP baseline; the optional on-device ML seams
-    /// (resolved by the pack from the registry) upgrade it: `separator` isolates
-    /// vocals, `transcriber` reads them, `beatDetector` supplies a neural beat
-    /// grid. Music Understanding supplies canonical rhythm and song form.
-    /// Provided lyrics are force-aligned against the transcript
-    /// (`LyricsAlignment`) so the Consolidator can use section markers as labels
-    /// for nearby system boundaries. Optional ML failures
-    /// are persisted as stage diagnostics instead of being silently discarded.
+    /// Runs the analysis phase and persists optional-system failures as diagnostics.
     @discardableResult
     public static func run(
         dataRoot: URL,
@@ -429,15 +410,7 @@ public enum MusicvideoAnalysisRunner {
         return Stems(vocals: rel(stems.vocals), drums: rel(stems.drums), bass: rel(stems.bass), other: rel(stems.other))
     }
 
-    /// Map the DSP-producible `AudioAnalysis` onto the canonical `Analysis` v3
-    /// schema. Music Understanding supplies the canonical beat/bar grid and
-    /// section/segment/phrase hierarchy. The native MFCC/Mel change detectors
-    /// remain persisted as diagnostic `structure_candidate` series but never
-    /// resolve song-form timing. Reliably aligned lyric markers can label a
-    /// nearby measured system boundary but never create timing.
-    /// `stems` is populated when separation ran; `key` carries the DSP
-    /// pipeline's Krumhansl-Schmuckler result; `chords` carry the recognizer's chord
-    /// progression when a chord model is registered (empty otherwise).
+    /// Maps DSP diagnostics and measured system structure onto canonical schema v3.
     static func toCanonical(
         _ raw: AudioAnalysis, project: String, songPath: String, stems: Stems? = nil,
         lyricsAlignment: [AlignmentLine] = [], chords: [Chord] = [],

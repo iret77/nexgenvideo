@@ -14,18 +14,7 @@ public struct TranscriptToken: Sendable, Equatable {
     }
 }
 
-/// Native forced-lyric alignment — the whisperX "x" reproduced without Python. Port of
-/// `analysis/alignment.py` (`parse_lyrics` + `_map_lyrics_via_sequence_alignment`), upgrading the
-/// exact-block `difflib.SequenceMatcher` to a fuzzy Needleman–Wunsch alignment (the stack the owner
-/// locked) so an ASR mishearing can still anchor a word rather than only widening a span.
-///
-/// Given the user's LYRICS (clean truth, with `[Section]` markers and `(stage directions)`) and an ASR
-/// TRANSCRIPT of the sung vocals (noisy but TIMED), it maps each lyric line to a time span. Line timing
-/// is taken from the ASR-word span its tokens anchor to (identical to the original); a line the ASR
-/// never transcribed is DROPPED, never fabricated. Per lyric word it emits a timestamp — matched words
-/// inherit the ASR span, intra-line gaps interpolate between the surrounding anchors. `[Section]`
-/// markers ride onto the following line. The consolidator may use a reliably anchored marker to label
-/// a nearby system-measured boundary, but a lyric timestamp never becomes a structural boundary.
+/// Aligns lyric truth to timed ASR tokens without fabricating unmapped lines.
 public enum LyricsAlignment {
     /// A lyric word: display surface + normalized matching key.
     private struct Tok { let surface: String; let key: String }
@@ -141,8 +130,7 @@ public enum LyricsAlignment {
         return out
     }
 
-    /// Align. Returns one `AlignmentLine` per mapped lyric line. Empty input leaves the measured
-    /// system hierarchy unlabeled.
+    /// Returns one alignment per mapped lyric line.
     public static func align(lyrics: String, transcript: [TranscriptToken]) -> [AlignmentLine] {
         alignDetailed(lyrics: lyrics, transcript: transcript).lines
     }

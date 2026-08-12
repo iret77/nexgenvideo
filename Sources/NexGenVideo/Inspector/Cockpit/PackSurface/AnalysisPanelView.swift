@@ -63,9 +63,9 @@ struct AnalysisPanelView: View {
                 } else {
                     degradedBanner
                 }
-                if data.hasCanonicalStructure, !data.sections.isEmpty {
-                    labelledBlock("Sections", detail: structureProvenance(data)) {
-                        SectionList(sections: data.sections)
+                if let hierarchy = data.canonicalHierarchy, !hierarchy.isEmpty {
+                    labelledBlock("Structure hierarchy", detail: structureProvenance(data)) {
+                        StructureHierarchyList(sections: hierarchy)
                     }
                 }
                 Text("Measured ground truth — read-only. Lyrics label the sections; they never move the measured boundaries.")

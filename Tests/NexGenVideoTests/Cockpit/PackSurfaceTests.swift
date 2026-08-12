@@ -56,6 +56,12 @@ struct PackSurfaceTests {
         #expect(d.hasCanonicalStructure)
         #expect(d.structureResolution?.candidateBoundaryCount == 40)
         #expect(d.structureResolution?.hierarchy?.segments.count == 2)
+        let hierarchy = try #require(d.canonicalHierarchy)
+        #expect(hierarchy.count == 2)
+        #expect(hierarchy[0].section.label == "Intro")
+        #expect(hierarchy[0].segments.count == 1)
+        #expect(hierarchy[0].segments[0].phrases.map(\.end) == [13.5, 27.0])
+        #expect(hierarchy[1].segments[0].phrases[0].start == 27.0)
         #expect(d.stageDiagnostics.count == 1)
         #expect(d.nonSuccessStageDiagnostics.isEmpty)
         #expect(d.sections.count == 2)
@@ -112,6 +118,24 @@ struct PackSurfaceTests {
             from: Data(wrongSource.utf8)
         )
         #expect(!wrongSourceData.hasCanonicalStructure)
+
+        let unnestedPhrase = Self.analysisJSON.replacingOccurrences(
+            of: #"{"start":27,"end":71}"#,
+            with: #"{"start":26,"end":71}"#,
+            options: [],
+            range: Self.analysisJSON.range(of: #""phrases": [{"start":0,"end":13.5},{"start":13.5,"end":27},{"start":27,"end":71}]"#)
+        )
+        let unnestedData = try JSONDecoder().decode(
+            AnalysisSurfaceData.self,
+            from: Data(unnestedPhrase.utf8)
+        )
+        #expect(!unnestedData.hasCanonicalStructure)
+    }
+
+    @Test("measured hierarchy timecodes preserve centisecond evidence")
+    func measuredHierarchyTimecodes() {
+        #expect(PackSurfaceFormat.measuredTimecode(59.999) == "1:00.00")
+        #expect(PackSurfaceFormat.measuredTimecode(71.234) == "1:11.23")
     }
 
     @Test("ContractData decodes pack-contributed cockpit_surfaces; legacy files decode empty")
@@ -126,6 +150,20 @@ struct PackSurfaceTests {
         #expect(c.cockpitSurfaces.first?.id == "analysis")
         #expect(c.cockpitSurfaces.first?.kind == "beatAnalysis")
         #expect(c.cockpitSurfaces.first?.symbol == "waveform")
+        #expect(
+            PipelineSurfaceRouting.route(
+                for: "analysis",
+                contract: c,
+                availablePackSurfaces: c.cockpitSurfaces
+            )?.destination == .pack("analysis")
+        )
+        #expect(
+            PipelineSurfaceRouting.route(
+                for: "analysis",
+                contract: c,
+                availablePackSurfaces: []
+            )?.destination == .chat
+        )
 
         let legacy = try JSONDecoder().decode(ContractData.self, from: Data(#"{"phases":{}}"#.utf8))
         #expect(legacy.cockpitSurfaces.isEmpty)

@@ -1243,4 +1243,6 @@ final class EditorViewModel {
         pendingReplacements.remove(id)
     }
 
+    var availableCockpitPackSurfaces: [CockpitSurfaceData] = []
+
 }

@@ -14,7 +14,8 @@ runs:
           echo "::error::Xcode 27 or newer is required; found $xcode_version"
           exit 1
         fi
-        if ! xcrun --find metal >/dev/null 2>&1; then
+        if ! xcrun --find metal >/dev/null 2>&1 \
+          || ! xcrun --find metallib >/dev/null 2>&1; then
           xcodebuild -downloadComponent MetalToolchain
         fi
         xcrun --find metal

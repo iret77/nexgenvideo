@@ -1,12 +1,7 @@
 import Foundation
 import NexGenEngine
 
-/// Analysis schema v3. Port of
-/// `nexgen_pack_musicvideo/analysis_schema.py`.
-///
-/// v3 requires a verified Music Understanding rhythm and structural hierarchy.
-/// The primary `sections` list preserves its measured ranges exactly; native
-/// change points never become canonical sections.
+/// Schema v3 requires verified Music Understanding rhythm and structure.
 public let analysisSchemaVersion = "analysis/v3"
 
 /// Port of `analysis_schema.py::AnalysisSection`.

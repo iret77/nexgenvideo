@@ -26,26 +26,23 @@ enum CockpitTab: String, Hashable, CaseIterable {
 struct ProjectCockpitView: View {
     @Environment(EditorViewModel.self) private var editor
 
-    /// The active pack's cockpit surface, resolved only when it has data — the contextual tab shows just
-    /// then (never an empty tab). Nil for a generic project or before the surface's data exists.
-    @State private var packSurface: CockpitSurfaceData?
-
     var body: some View {
         @Bindable var editor = editor
+        let packSurfaces = editor.availableCockpitPackSurfaces
         var titles = CockpitTab.visibleTabs.map(\.rawValue)
-        if let surface = packSurface { titles.insert(surface.title, at: min(1, titles.count)) }
-        let packSelected = editor.cockpitPackSurfaceID != nil && packSurface != nil
-        let selectedTitle = packSelected ? (packSurface?.title ?? "") : editor.cockpitTab.rawValue
+        titles.insert(contentsOf: packSurfaces.map(\.title), at: min(1, titles.count))
+        let selectedSurface = packSurfaces.first { $0.id == editor.cockpitPackSurfaceID }
+        let selectedTitle = selectedSurface?.title ?? editor.cockpitTab.rawValue
 
         return VStack(spacing: AppTheme.Spacing.none) {
             HStack(spacing: AppTheme.Spacing.none) {
                 SegmentedTabBar(
                     titles: titles,
                     selected: selectedTitle,
-                    accentedTitles: packSurface.map { Set([$0.title]) } ?? [],
+                    accentedTitles: Set(packSurfaces.map(\.title)),
                     accentColor: AppTheme.Accent.pack
                 ) { title in
-                    if let surface = packSurface, title == surface.title {
+                    if let surface = packSurfaces.first(where: { $0.title == title }) {
                         editor.cockpitPackSurfaceID = surface.id
                     } else if let tab = CockpitTab(rawValue: title) {
                         editor.cockpitTab = tab
@@ -55,7 +52,7 @@ struct ProjectCockpitView: View {
                 settingsButton
             }
             Group {
-                if packSelected, let surface = packSurface {
+                if let surface = selectedSurface {
                     packSurfaceView(surface)
                 } else {
                     switch editor.cockpitTab {
@@ -71,7 +68,10 @@ struct ProjectCockpitView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()  // a panel may never paint over the cockpit tab bar
         }
-        .task(id: editor.projectURL) { await resolvePackSurface() }
+        .task(id: editor.projectURL) {
+            applyPackSurfaces([])
+            await resolvePackSurface()
+        }
         .onChange(of: editor.engineStateRevision) { _, _ in Task { await resolvePackSurface() } }
     }
 
@@ -88,30 +88,38 @@ struct ProjectCockpitView: View {
         }
     }
 
-    /// Show the pack tab only when a supported surface is declared AND its data exists — checked off the
-    /// main actor. If the selected surface goes away, fall back to the generic tabs.
     private func resolvePackSurface() async {
-        let declared = editor.uiContract?.cockpitSurfaces.first { $0.kind == "beatAnalysis" }
-        guard let declared, let dir = editor.workingRoot else {
-            applyPackSurface(nil)
+        let declared = editor.uiContract?.cockpitSurfaces ?? []
+        guard !declared.isEmpty, let dir = editor.workingRoot else {
+            applyPackSurfaces([])
             return
         }
-        let hasData = await Task.detached { () -> Bool in
-            guard let root = NativeCockpitReader.dataRoot(of: dir) else { return false }
-            return AnalysisSurfaceData.artifactURL(dataRoot: root) != nil
+        let available = await Task.detached { () -> [CockpitSurfaceData] in
+            guard let root = NativeCockpitReader.dataRoot(of: dir) else { return [] }
+            return declared.filter { surface in
+                switch surface.kind {
+                case "beatAnalysis": AnalysisSurfaceData.artifactURL(dataRoot: root) != nil
+                default: false
+                }
+            }
         }.value
-        applyPackSurface(hasData ? declared : nil)
+        guard editor.workingRoot == dir else { return }
+        applyPackSurfaces(available)
     }
 
-    private func applyPackSurface(_ surface: CockpitSurfaceData?) {
-        packSurface = surface
-        if surface == nil, editor.cockpitPackSurfaceID != nil { editor.cockpitPackSurfaceID = nil }
+    private func applyPackSurfaces(_ surfaces: [CockpitSurfaceData]) {
+        editor.availableCockpitPackSurfaces = surfaces
+        if let selected = editor.cockpitPackSurfaceID,
+           !surfaces.contains(where: { $0.id == selected }) {
+            editor.cockpitPackSurfaceID = nil
+        }
     }
 
     private var settingsButton: some View {
         let selected = editor.cockpitTab == .project
         return Button {
             editor.cockpitTab = .project
+            editor.cockpitPackSurfaceID = nil
         } label: {
             Image(systemName: "gearshape")
                 .font(.system(size: AppTheme.FontSize.sm, weight: selected ? .semibold : .medium))
@@ -245,6 +253,7 @@ struct ProjectSettingsView: View {
                     // Working the pipeline is Produce's job — land there, not in a sidebar tab.
                     Button("Open Pipeline") {
                         editor.cockpitTab = .pipeline
+                        editor.cockpitPackSurfaceID = nil
                         editor.setWorkspaceFocus(.produce)
                     }
                     .buttonStyle(.capsule(.prominent, size: .regular))
@@ -263,6 +272,7 @@ struct ProjectSettingsView: View {
                     // state lives in Pipeline.
                     Button("Open Pipeline") {
                         editor.cockpitTab = .pipeline
+                        editor.cockpitPackSurfaceID = nil
                         editor.setWorkspaceFocus(.produce)
                     }
                     .buttonStyle(.capsule(.prominent, size: .regular))
