@@ -20,6 +20,7 @@
             "Attached lyrics never condition Whisper's acoustic timing, and text from segments identified as non-speech cannot become structural evidence.",
             "Private exact-file acceptance runs now preserve complete analysis evidence in private storage even when an independent expectation fails.",
             "Canonical song sections now require independently reproducible bar-aligned acoustic or lyric evidence, while strong instrumental intro and outro boundaries remain available alongside fully resolved lyric markers.",
+            "Outro resolution now chooses the first strongest terminal consensus after the final lyric section instead of misclassifying a later instrumental tag as the outro start.",
             "Apple Music Understanding's section, segment, and phrase hierarchy is preserved as a stronger availability-gated strategy for macOS 27.",
             "Out-of-order and non-finite system rhythm samples are normalized deterministically before structural validation.",
             "Optional system rhythm and structure are validated independently before either is selected as canonical evidence.",

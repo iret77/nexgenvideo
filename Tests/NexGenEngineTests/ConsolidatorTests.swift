@@ -259,6 +259,35 @@ struct ConsolidatorTests {
         #expect(result.resolution.boundaryEvidence.last?.kind == .detectorConsensus)
     }
 
+    @Test("the earliest strongest terminal consensus wins over a later instrumental tag")
+    func terminalConsensusPrefersOutroStart() {
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nopen words\n[Chorus]\nwide open",
+            transcript: [
+                .init(text: "open", start: 16.1, end: 16.3),
+                .init(text: "words", start: 16.3, end: 16.5),
+                .init(text: "wide", start: 40.1, end: 40.3),
+                .init(text: "open", start: 40.3, end: 40.5),
+            ]
+        )
+        let candidates = [
+            Self.sections(boundaries: [16, 40, 58, 62], duration: 68, source: "librosa"),
+            Self.sections(boundaries: [16.4, 40.4, 58.4, 62.4], duration: 68, source: "essentia"),
+        ]
+        let result = Consolidator.consolidateDetailed(
+            candidates: candidates,
+            alignment: report.lines,
+            alignmentReport: report,
+            downbeats: stride(from: 0.0, through: 68.0, by: 2.0).map { $0 },
+            durationS: 68
+        )
+
+        #expect(result.resolution.status == .resolved)
+        #expect(result.sections.map(\.start) == [0, 16, 40, 58])
+        #expect(result.resolution.boundaryEvidence.last?.time == 58)
+        #expect(result.resolution.boundaryEvidence.last?.kind == .detectorConsensus)
+    }
+
     @Test("reliable vocal alignment recovers a missed structural change")
     func vocalAlignmentRecoversMissedBoundary() {
         let report = LyricsAlignment.alignDetailed(

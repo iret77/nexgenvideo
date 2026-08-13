@@ -431,7 +431,7 @@ public enum Consolidator {
         }
         if allMarkersResolved {
             let lastMarker = markerBoundaries.max() ?? 0
-            if let terminal = consensusGroups.reversed().first(where: {
+            if let terminal = consensusByStrength.first(where: {
                 $0.time - lastMarker >= minimumConsensusSpan
                     && durationS - $0.time >= minimumTerminalSpan
             }) {
