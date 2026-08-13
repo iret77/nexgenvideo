@@ -8,16 +8,17 @@
         {
           "heading": "Platform",
           "items": [
-            "NexGenVideo requires the latest released macOS, currently macOS 26. The macOS 27 Music Understanding adapter remains dormant until that OS ships."
+            "NexGenVideo requires the latest released macOS, currently macOS 26. The macOS 27 Music Understanding adapter remains dormant until that OS ships.",
+            "Music Video packs that use the new lyric-alignment and declarative cockpit capabilities now require engine contract 8, so an older host rejects them instead of silently degrading analysis."
           ]
         },
         {
           "heading": "Audio analysis",
           "items": [
             "The macOS 26 production pipeline now runs the same on-device decoder, stem separation, Whisper lyric alignment, neural beat grid, harmony recognition, and evidence-based structure resolver in the app and private acceptance workflow.",
-            "Lyric timing now aligns attached text only after context-free acoustic transcription and falls back from an unusable isolated vocal stem to the original mix, selecting the stronger measured alignment instead of accepting an empty transcript match.",
+            "Lyric timing now uses a dedicated known-text alignment capability and falls back from an unusable isolated vocal stem to the original mix, selecting the stronger measured alignment instead of accepting an empty transcript match.",
             "Whisper automatic language selection now continues into transcription instead of stopping after language detection.",
-            "Attached lyrics never condition Whisper's acoustic timing, and text from segments identified as non-speech cannot become structural evidence.",
+            "Attached lyrics constrain every Whisper decode window while attention-DTW supplies acoustic token timing, and text from windows identified as non-speech cannot become structural evidence.",
             "Private exact-file acceptance runs now preserve complete analysis evidence in private storage even when an independent expectation fails.",
             "Canonical song sections now require independently reproducible bar-aligned acoustic or lyric evidence, while strong instrumental intro and outro boundaries remain available alongside fully resolved lyric markers.",
             "Outro resolution now chooses the first strongest terminal consensus after the final lyric section instead of misclassifying a later instrumental tag as the outro start.",

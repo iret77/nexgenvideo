@@ -7,14 +7,15 @@ import argparse
 import gzip
 import hashlib
 import json
+import math
 import shutil
 import subprocess
 import tarfile
 from pathlib import Path, PurePosixPath
 
 
-SCHEMA = "nexgenvideo.example-fixtures/v1"
-EXPECTATIONS_SCHEMA = "nexgenvideo.example-fixture-expectations/v2"
+SCHEMA = "nexgenvideo.example-fixtures/v2"
+EXPECTATIONS_SCHEMA = "nexgenvideo.example-fixture-expectations/v3"
 ARCHIVE_ROOT = "examples"
 AUDIO_EXTENSIONS = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".wav"}
 LYRICS_EXTENSIONS = {".lrc", ".md", ".txt"}
@@ -51,6 +52,57 @@ def validate_relative_path(raw: str) -> PurePosixPath:
     return path
 
 
+def validate_audio_expectation(dataset_id: str, audio: object) -> None:
+    if not isinstance(audio, dict):
+        raise FixtureError(f"{dataset_id}: audio expectations are required")
+    required = [
+        "path",
+        "duration_s",
+        "duration_tolerance_s",
+        "bpm",
+        "bpm_tolerance",
+        "expect_boundary_reduction",
+        "section_boundaries_s",
+        "section_labels",
+        "section_boundary_tolerance_s",
+    ]
+    if any(key not in audio for key in required):
+        raise FixtureError(f"{dataset_id}: incomplete audio expectations")
+    if not isinstance(audio["path"], str):
+        raise FixtureError(f"{dataset_id}: path must be a string")
+    validate_relative_path(audio["path"])
+    def positive_number(value: object) -> bool:
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            and value > 0
+        )
+    for key in ["duration_s", "duration_tolerance_s", "bpm", "bpm_tolerance", "section_boundary_tolerance_s"]:
+        if not positive_number(audio[key]):
+            raise FixtureError(f"{dataset_id}: {key} must be positive")
+    if not isinstance(audio["expect_boundary_reduction"], bool):
+        raise FixtureError(f"{dataset_id}: expect_boundary_reduction must be boolean")
+    boundaries = audio["section_boundaries_s"]
+    if (
+        not isinstance(boundaries, list)
+        or not boundaries
+        or any(not positive_number(value) for value in boundaries)
+        or any(left >= right for left, right in zip(boundaries, boundaries[1:]))
+        or boundaries[-1] >= audio["duration_s"]
+    ):
+        raise FixtureError(f"{dataset_id}: section_boundaries_s must be a non-empty increasing list")
+    labels = audio["section_labels"]
+    if (
+        not isinstance(labels, list)
+        or len(labels) != len(boundaries) + 1
+        or any(label is not None and (not isinstance(label, str) or not label.strip()) for label in labels)
+    ):
+        raise FixtureError(
+            f"{dataset_id}: section_labels must contain one string or null per canonical section"
+        )
+
+
 def load_expectations(path: Path | None) -> dict[str, dict]:
     if path is None:
         return {}
@@ -63,36 +115,7 @@ def load_expectations(path: Path | None) -> dict[str, dict]:
     for dataset_id, values in datasets.items():
         if not isinstance(dataset_id, str) or not dataset_id or not isinstance(values, dict):
             raise FixtureError("each expectations dataset must be a named object")
-        audio = values.get("audio")
-        if not isinstance(audio, dict):
-            raise FixtureError(f"{dataset_id}: audio expectations are required")
-        required = [
-            "path",
-            "duration_s",
-            "duration_tolerance_s",
-            "bpm",
-            "bpm_tolerance",
-            "expect_boundary_reduction",
-            "section_boundaries_s",
-            "section_boundary_tolerance_s",
-        ]
-        if any(key not in audio for key in required):
-            raise FixtureError(f"{dataset_id}: incomplete audio expectations")
-        validate_relative_path(audio["path"])
-        for key in ["duration_s", "duration_tolerance_s", "bpm", "bpm_tolerance", "section_boundary_tolerance_s"]:
-            if not isinstance(audio[key], (int, float)) or audio[key] <= 0:
-                raise FixtureError(f"{dataset_id}: {key} must be positive")
-        if not isinstance(audio["expect_boundary_reduction"], bool):
-            raise FixtureError(f"{dataset_id}: expect_boundary_reduction must be boolean")
-        boundaries = audio["section_boundaries_s"]
-        if (
-            not isinstance(boundaries, list)
-            or not boundaries
-            or any(not isinstance(value, (int, float)) or value <= 0 for value in boundaries)
-            or any(left >= right for left, right in zip(boundaries, boundaries[1:]))
-            or boundaries[-1] >= audio["duration_s"]
-        ):
-            raise FixtureError(f"{dataset_id}: section_boundaries_s must be a non-empty increasing list")
+        validate_audio_expectation(dataset_id, values.get("audio"))
     return datasets
 
 
@@ -191,6 +214,17 @@ def load_manifest(path: Path) -> dict:
         raise FixtureError(f"fixture manifest schema must be {SCHEMA}")
     if not isinstance(document.get("datasets"), list) or not document["datasets"]:
         raise FixtureError("fixture manifest has no datasets")
+    dataset_ids = set()
+    for dataset in document["datasets"]:
+        dataset_id = dataset.get("id") if isinstance(dataset, dict) else None
+        if not isinstance(dataset_id, str) or not dataset_id or dataset_id in dataset_ids:
+            raise FixtureError("fixture manifest dataset ids must be unique non-empty strings")
+        dataset_ids.add(dataset_id)
+        expectations = dataset.get("expectations")
+        if expectations is not None:
+            if not isinstance(expectations, dict):
+                raise FixtureError(f"{dataset_id}: expectations must be an object")
+            validate_audio_expectation(dataset_id, expectations.get("audio"))
     return document
 
 

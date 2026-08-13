@@ -34,6 +34,7 @@ public enum Consolidator {
         case detectorConsensus = "detector_consensus"
         case lyricsSupportedAcoustic = "lyrics_supported_acoustic"
         case lyricsAlignedVocal = "lyrics_aligned_vocal"
+        case lyricsKnownTextAlignment = "lyrics_known_text_alignment"
         case singleDetector = "single_detector"
     }
 
@@ -389,7 +390,8 @@ public enum Consolidator {
                         times: [],
                         sources: ["whisper_alignment"]
                     )
-                    evidenceKind = .lyricsAlignedVocal
+                    evidenceKind = alignmentReport?.timingEvidence == .knownTextAlignment
+                        ? .lyricsKnownTextAlignment : .lyricsAlignedVocal
                 }
                 guard measuredBoundary.time > 0.01,
                       measuredBoundary.time < durationS - 0.01 else {
@@ -526,7 +528,10 @@ public enum Consolidator {
                     confidence = 0.9
                 case .lyricsAlignedVocal:
                     source = "measured_vocal_alignment"
-                    confidence = 0.85
+                    confidence = 0.8
+                case .lyricsKnownTextAlignment:
+                    source = "measured_known_text_alignment"
+                    confidence = 0.75
                 case .detectorConsensus:
                     source = "measured_consensus"
                     confidence = 0.8

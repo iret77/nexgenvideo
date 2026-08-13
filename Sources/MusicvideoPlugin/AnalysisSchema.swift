@@ -30,7 +30,7 @@ public struct AnalysisSection: Codable, Sendable, Equatable {
     }
 }
 
-/// One forced-alignment word, kept as a loose string map since Python models
+/// One lyric-alignment word, kept as a loose string map since Python models
 /// it as `dict` (no fixed schema on the word entries). Port of
 /// `analysis_schema.py::AlignmentLine.words` element shape.
 public struct AlignmentWord: Codable, Sendable, Equatable {

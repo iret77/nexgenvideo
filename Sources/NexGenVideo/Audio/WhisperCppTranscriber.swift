@@ -4,11 +4,16 @@ import NexGenEngine
 import whisper
 
 /// On-device speech recognition via vendored whisper.cpp (Metal-accelerated). Implements the engine's
-/// generic `AudioTranscribing` seam; the musicvideo pack resolves it to force-align lyrics against the
+/// generic `AudioTranscribing` seam; the musicvideo pack resolves it to align known lyrics against the
 /// sung vocals. whisper.cpp is fully synchronous, so this is a plain blocking call — it's invoked from
 /// the analysis phase runner, which already runs off the main actor.
-struct WhisperCppTranscriber: ContextualAudioTranscribing {
+struct WhisperCppTranscriber: ContextualAudioTranscribing, AudioLyricsAligning {
     var model: String = WhisperModelStore.defaultModel
+
+    private enum TimingStrategy: Equatable {
+        case decoder
+        case attentionDTW
+    }
 
     struct DecodingConfiguration: Equatable {
         let language: String
@@ -29,7 +34,12 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
     }
 
     func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord] {
-        try performTranscription(audio, language: language, context: nil)
+        try performTranscription(
+            audio,
+            language: language,
+            context: nil,
+            timing: .decoder
+        )
     }
 
     func transcribe(
@@ -37,13 +47,32 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
         language: String,
         context: String
     ) throws -> [TranscribedWord] {
-        try performTranscription(audio, language: language, context: context)
+        try performTranscription(
+            audio,
+            language: language,
+            context: context,
+            timing: .decoder
+        )
+    }
+
+    func alignLyrics(
+        _ audio: URL,
+        language: String,
+        lyrics: String
+    ) throws -> [TranscribedWord] {
+        try performTranscription(
+            audio,
+            language: language,
+            context: lyrics,
+            timing: .attentionDTW
+        )
     }
 
     private func performTranscription(
         _ audio: URL,
         language: String,
-        context: String?
+        context: String?,
+        timing: TimingStrategy
     ) throws -> [TranscribedWord] {
         let samples = try Self.loadPCM16kMono(audio)
         guard !samples.isEmpty else { return [] }
@@ -51,6 +80,11 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
 
         var cparams = whisper_context_default_params()
         cparams.use_gpu = true
+        if timing == .attentionDTW {
+            cparams.flash_attn = false
+            cparams.dtw_token_timestamps = true
+            cparams.dtw_aheads_preset = Self.alignmentHeadsPreset(for: model)
+        }
         guard let ctx = modelPath.path.withCString({ whisper_init_from_file_with_params($0, cparams) }) else {
             throw TranscribeError.modelInitFailed(modelPath.lastPathComponent)
         }
@@ -79,7 +113,7 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
         let initialPrompt = prompt.flatMap { $0.isEmpty ? nil : strdup($0) }
         defer { free(initialPrompt) }
         params.initial_prompt = initialPrompt.map { UnsafePointer($0) }
-        params.carry_initial_prompt = false
+        params.carry_initial_prompt = timing == .attentionDTW
 
         let rc = samples.withUnsafeBufferPointer { buf in
             whisper_full(ctx, params, buf.baseAddress, Int32(buf.count))
@@ -88,8 +122,19 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
 
         return Self.extractWords(
             ctx,
-            noSpeechThreshold: Double(params.no_speech_thold)
+            noSpeechThreshold: Double(params.no_speech_thold),
+            preferDTW: timing == .attentionDTW
         )
+    }
+
+    static func alignmentHeadsPreset(
+        for model: String
+    ) -> whisper_alignment_heads_preset {
+        switch model {
+        case "medium": return WHISPER_AHEADS_MEDIUM
+        case "small": return WHISPER_AHEADS_SMALL
+        default: return WHISPER_AHEADS_LARGE_V3_TURBO
+        }
     }
 
     static func decodingConfiguration(language: String) -> DecodingConfiguration {
@@ -104,19 +149,37 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
     /// token-level `t0`/`t1` (centiseconds → seconds); confidence is the mean token probability.
     private static func extractWords(
         _ ctx: OpaquePointer,
-        noSpeechThreshold: Double
+        noSpeechThreshold: Double,
+        preferDTW: Bool
     ) -> [TranscribedWord] {
         var words: [TranscribedWord] = []
         let eot = whisper_token_eot(ctx)
-        var cur: (text: String, start: Double, end: Double, pSum: Double, pCount: Int)?
+        var cur: (
+            text: String,
+            start: Double,
+            end: Double,
+            dtwStart: Double?,
+            dtwEnd: Double?,
+            pSum: Double,
+            pCount: Int
+        )?
 
         func flush() {
             defer { cur = nil }
             guard let c = cur else { return }
             let text = c.text.trimmingCharacters(in: .whitespaces)
             guard !text.isEmpty else { return }
+            guard let timing = Self.resolvedTiming(
+                decoderStart: c.start,
+                decoderEnd: c.end,
+                dtwStart: c.dtwStart,
+                dtwEnd: c.dtwEnd,
+                preferDTW: preferDTW
+            ) else { return }
             words.append(TranscribedWord(
-                text: text, start: c.start, end: max(c.end, c.start),
+                text: text,
+                start: timing.start,
+                end: max(timing.end, timing.start),
                 confidence: c.pCount > 0 ? c.pSum / Double(c.pCount) : nil))
         }
 
@@ -137,20 +200,61 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
                 let data = whisper_full_get_token_data(ctx, segment, token)
                 let t0 = Double(data.t0) / 100.0
                 let t1 = Double(data.t1) / 100.0
+                let dtw = data.t_dtw >= 0 ? Double(data.t_dtw) / 100.0 : nil
                 let p = Double(data.p)
                 if piece.hasPrefix(" ") || cur == nil {
                     flush()
-                    cur = (text: piece, start: t0, end: t1, pSum: p, pCount: 1)
+                    cur = (
+                        text: piece,
+                        start: t0,
+                        end: t1,
+                        dtwStart: dtw,
+                        dtwEnd: dtw,
+                        pSum: p,
+                        pCount: 1
+                    )
                 } else {
                     cur?.text += piece
                     cur?.end = t1
+                    if let dtw {
+                        if cur?.dtwStart == nil { cur?.dtwStart = dtw }
+                        cur?.dtwEnd = dtw
+                    }
                     cur?.pSum += p
                     cur?.pCount += 1
                 }
             }
         }
         flush()
-        return words
+        return preferDTW ? Self.finalizedDTWSpans(words) : words
+    }
+
+    static func resolvedTiming(
+        decoderStart: Double,
+        decoderEnd: Double,
+        dtwStart: Double?,
+        dtwEnd: Double?,
+        preferDTW: Bool
+    ) -> (start: Double, end: Double)? {
+        if preferDTW {
+            guard let dtwStart, let dtwEnd else { return nil }
+            return (dtwStart, max(dtwStart, max(dtwEnd, decoderEnd)))
+        }
+        return (decoderStart, decoderEnd)
+    }
+
+    static func finalizedDTWSpans(_ words: [TranscribedWord]) -> [TranscribedWord] {
+        guard !words.isEmpty else { return [] }
+        var result = words
+        if result.count > 1 {
+            for index in 0..<(result.count - 1) {
+                let nextStart = result[index + 1].start
+                if nextStart > result[index].start {
+                    result[index].end = nextStart
+                }
+            }
+        }
+        return result.filter { $0.end > $0.start }
     }
 
     static func isAcousticallySupportedSegment(

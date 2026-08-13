@@ -97,4 +97,26 @@ struct PreflightTests {
     func preflightUsesCanonicalAudioTypes() {
         #expect(Preflight.audioExtensions == AudioProjectLayout.audioExtensions)
     }
+
+    @Test("preflight rejects an audio symlink that escapes the project")
+    func audioSymlinkEscapeIsRejected() throws {
+        let dir = try makeProjectDir()
+        let outside = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ngv-preflight-outside-\(UUID().uuidString).mp3")
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try Data([0x01]).write(to: outside)
+        let audioDir = dir.appendingPathComponent("audio")
+        try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: audioDir.appendingPathComponent("escaped.mp3"),
+            withDestinationURL: outside
+        )
+
+        let result = Preflight.run(projectDir: dir)
+        #expect(!result.hasAudio)
+        #expect(!result.canStart)
+    }
 }

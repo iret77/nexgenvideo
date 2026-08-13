@@ -19,7 +19,7 @@ struct WhisperCppTranscriberTests {
         #expect(!configuration.detectLanguageOnly)
     }
 
-    @Test("prompted text in a no-speech segment is not acoustic evidence")
+    @Test("prompted text in a no-speech decoder window is not acoustic evidence")
     func rejectsNoSpeechSegment() {
         #expect(!WhisperCppTranscriber.isAcousticallySupportedSegment(
             noSpeechProbability: 0.6,
@@ -37,5 +37,42 @@ struct WhisperCppTranscriberTests {
             noSpeechProbability: 0.59,
             threshold: 0.6
         ))
+    }
+
+    @Test("known-text alignment never falls back to decoder timing")
+    func missingDTWFailsClosed() {
+        #expect(WhisperCppTranscriber.resolvedTiming(
+            decoderStart: 1,
+            decoderEnd: 2,
+            dtwStart: nil,
+            dtwEnd: nil,
+            preferDTW: true
+        ) == nil)
+        let measured = WhisperCppTranscriber.resolvedTiming(
+            decoderStart: 1,
+            decoderEnd: 2,
+            dtwStart: 3,
+            dtwEnd: 4,
+            preferDTW: true
+        )
+        #expect(measured?.start == 3)
+        #expect(measured?.end == 4)
+    }
+
+    @Test("DTW token moments become non-degenerate ordered word spans")
+    func dtwMomentsBecomeSpans() {
+        let words = WhisperCppTranscriber.finalizedDTWSpans([
+            .init(text: "first", start: 1, end: 1),
+            .init(text: "second", start: 2, end: 2.4),
+        ])
+        #expect(words.count == 2)
+        #expect(words[0].start == 1)
+        #expect(words[0].end == 2)
+        #expect(words[1].start == 2)
+        #expect(words[1].end == 2.4)
+
+        #expect(WhisperCppTranscriber.finalizedDTWSpans([
+            .init(text: "unsupported", start: 1, end: 1),
+        ]).isEmpty)
     }
 }

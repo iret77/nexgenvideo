@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MusicvideoPlugin
 
-@Suite("LyricsAlignment (native forced alignment)")
+@Suite("LyricsAlignment (native known-text alignment)")
 struct LyricsAlignmentTests {
     @Test("exact single line inherits ASR word timings")
     func exactSingleLine() {

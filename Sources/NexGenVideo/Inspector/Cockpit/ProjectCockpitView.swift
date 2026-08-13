@@ -40,6 +40,7 @@ struct ProjectCockpitView: View {
                     titles: titles,
                     selected: selectedTitle,
                     accentedTitles: Set(packSurfaces.map(\.title)),
+                    markedTitles: Set(packSurfaces.map(\.title)),
                     accentColor: AppTheme.Accent.pack
                 ) { title in
                     if let surface = packSurfaces.first(where: { $0.title == title }) {
@@ -75,16 +76,11 @@ struct ProjectCockpitView: View {
         .onChange(of: editor.engineStateRevision) { _, _ in Task { await resolvePackSurface() } }
     }
 
-    /// Render a pack surface by its declared `kind`. Unknown kinds (a newer pack on an older app) show a
-    /// clear placeholder rather than a blank panel.
-    @ViewBuilder
     private func packSurfaceView(_ surface: CockpitSurfaceData) -> some View {
-        switch surface.kind {
-        case "beatAnalysis":
-            AnalysisPanelView()
-        default:
-            CockpitStateView.empty(icon: "square.dashed", title: surface.title,
-                                   message: "This surface isn't supported by this version of the app.")
+        DeclarativePackSurfaceView(surface: surface) {
+            applyPackSurfaces(
+                editor.availableCockpitPackSurfaces.filter { $0.id != surface.id }
+            )
         }
     }
 
@@ -96,11 +92,12 @@ struct ProjectCockpitView: View {
         }
         let available = await Task.detached { () -> [CockpitSurfaceData] in
             guard let root = NativeCockpitReader.dataRoot(of: dir) else { return [] }
-            return declared.filter { surface in
-                switch surface.kind {
-                case "beatAnalysis": AnalysisSurfaceData.artifactURL(dataRoot: root) != nil
-                default: false
-                }
+            return Array(declared.prefix(1)).filter {
+                guard let url = PackSurfaceDataResolver.resolve(
+                    dataRoot: root,
+                    pattern: $0.dataFile
+                ), let bytes = try? Data(contentsOf: url) else { return false }
+                return (try? PackSurfaceDocument(data: bytes)) != nil
             }
         }.value
         guard editor.workingRoot == dir else { return }

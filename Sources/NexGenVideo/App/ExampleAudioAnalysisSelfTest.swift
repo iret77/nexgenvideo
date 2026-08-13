@@ -5,8 +5,8 @@ import NexGenEngine
 /// CI-only real app and external-pack analysis against a private content-addressed fixture.
 @MainActor
 enum ExampleAudioAnalysisSelfTest {
-    private static let manifestSchema = "nexgenvideo.example-fixtures/v1"
-    private static let reportSchema = "nexgenvideo.example-analysis-report/v4"
+    private static let manifestSchema = "nexgenvideo.example-fixtures/v2"
+    private static let reportSchema = "nexgenvideo.example-analysis-report/v5"
 
     private struct Configuration {
         let packURL: URL
@@ -93,6 +93,7 @@ enum ExampleAudioAnalysisSelfTest {
         let bpmTolerance: Double
         let expectBoundaryReduction: Bool
         let sectionBoundariesS: [Double]
+        let sectionLabels: [String?]
         let sectionBoundaryToleranceS: Double
 
         enum CodingKeys: String, CodingKey {
@@ -102,6 +103,7 @@ enum ExampleAudioAnalysisSelfTest {
             case bpmTolerance = "bpm_tolerance"
             case expectBoundaryReduction = "expect_boundary_reduction"
             case sectionBoundariesS = "section_boundaries_s"
+            case sectionLabels = "section_labels"
             case sectionBoundaryToleranceS = "section_boundary_tolerance_s"
         }
     }
@@ -410,6 +412,10 @@ enum ExampleAudioAnalysisSelfTest {
                 )
             }
         }
+        let sectionLabels = sections.map { $0["label"] as? String }
+        if sectionLabels != expectations.audio.sectionLabels {
+            acceptanceFailures.append("canonical section labels do not match the independent expectation")
+        }
         let artifactText = String(decoding: artifactData, as: UTF8.self)
         guard ![configuration.fixtureRoot.path, projectHome.path].contains(where: {
             artifactText.contains($0)
@@ -448,36 +454,8 @@ enum ExampleAudioAnalysisSelfTest {
             summary: summary,
             acceptanceFailures: acceptanceFailures
         )
-        if let failure = acceptanceFailures.first {
-            let actual = sectionBoundaryTimes.map { String(format: "%.3f", $0) }
-                .joined(separator: ",")
-            let evidence = (resolution["boundary_evidence"] as? [[String: Any]] ?? [])
-                .compactMap { item -> String? in
-                    guard let time = number(item["time"]),
-                          let kind = item["kind"] as? String else { return nil }
-                    let sources = (item["detector_sources"] as? [String] ?? [])
-                        .joined(separator: "+")
-                    return "\(String(format: "%.3f", time)):\(kind):\(sources)"
-                }
-                .joined(separator: ",")
-            let candidates = (object["structure_candidates"] as? [[String: Any]] ?? [])
-                .compactMap { candidate -> String? in
-                    guard let source = candidate["source"] as? String,
-                          let items = candidate["sections"] as? [[String: Any]] else { return nil }
-                    let starts = items.dropFirst().compactMap { number($0["start"]) }
-                        .map { String(format: "%.3f", $0) }
-                        .joined(separator: "+")
-                    return "\(source)=\(starts)"
-                }
-                .joined(separator: ",")
-            let alignmentDiagnostic = diagnosticDetail(
-                diagnostics,
-                stage: "lyrics_alignment"
-            )
-            throw Failure(
-                "\(failure); measured boundaries=[\(actual)]; evidence=[\(evidence)]; "
-                    + "candidates=[\(candidates)]; alignment=\(alignmentDiagnostic)"
-            )
+        if !acceptanceFailures.isEmpty {
+            throw Failure("private fixture acceptance failed; inspect the private analysis report")
         }
         return summary
     }

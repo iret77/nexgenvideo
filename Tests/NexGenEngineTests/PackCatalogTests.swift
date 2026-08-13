@@ -34,9 +34,37 @@ struct PackCatalogTests {
         #expect(registry.sanityChecks["coverage"] != nil)   // core still present
         #expect(registry.sanityChecks["tempo"] != nil)      // pack check added
         #expect(registry.uiContracts["analysis"] != nil)    // pack UI contract added
-        #expect(registry.cockpitSurfaces.contains { $0.id == "analysis" && $0.kind == "beatAnalysis" && $0.phase == "analysis" })
+        #expect(registry.declarativeCockpitSurface?.id == "analysis")
+        #expect(registry.declarativeCockpitSurface?.phase == "analysis")
+        #expect(registry.declarativeCockpitSurface?.dataFile == "analysis/{songStem}.json")
+        #expect(registry.declarativeCockpitSurface?.layout.count == 3)
+        #expect(registry.cockpitSurfaces.isEmpty)
         let dirs = PackCatalog.projectDirs(activePack: "musicvideo")
         #expect(dirs.contains("audio"))
         #expect(dirs.contains("analysis"))
+    }
+
+    @Test("registry structurally exposes at most one declarative cockpit surface")
+    func singleDeclarativeCockpitSurface() {
+        let registry = EngineRegistry()
+        let first = DeclarativeCockpitSurface(
+            id: "first",
+            title: "First",
+            symbol: "1.circle",
+            phase: "brief",
+            dataFile: "brief.json",
+            layout: [.keyValue(title: nil, items: [])]
+        )
+        let second = DeclarativeCockpitSurface(
+            id: "second",
+            title: "Second",
+            symbol: "2.circle",
+            phase: "analysis",
+            dataFile: "analysis/{songStem}.json",
+            layout: [.keyValue(title: nil, items: [])]
+        )
+        registry.registerDeclarativeCockpitSurface(first)
+        registry.registerDeclarativeCockpitSurface(second)
+        #expect(registry.declarativeCockpitSurface == second)
     }
 }

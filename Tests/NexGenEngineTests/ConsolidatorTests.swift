@@ -319,6 +319,41 @@ struct ConsolidatorTests {
         }.count == 2)
     }
 
+    @Test("known-text lyric timing remains distinguishable from generic recognition")
+    func forcedAlignmentEvidenceIsPersisted() {
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nopen words\n[Bridge]\nwide open",
+            transcript: [
+                .init(text: "open", start: 16.1, end: 16.3),
+                .init(text: "words", start: 16.3, end: 16.5),
+                .init(text: "wide", start: 40.1, end: 40.3),
+                .init(text: "open", start: 40.3, end: 40.5),
+            ],
+            timingEvidence: .knownTextAlignment
+        )
+        let result = Consolidator.consolidateDetailed(
+            candidates: [
+                Self.sections(boundaries: [58], duration: 64, source: "librosa"),
+                Self.sections(boundaries: [58.4], duration: 64, source: "essentia"),
+            ],
+            alignment: report.lines,
+            alignmentReport: report,
+            downbeats: stride(from: 0.0, through: 64.0, by: 2.0).map { $0 },
+            durationS: 64
+        )
+
+        #expect(result.sections.map(\.source) == [
+            "measured_track_extent",
+            "measured_known_text_alignment",
+            "measured_known_text_alignment",
+            "measured_consensus",
+        ])
+        #expect(result.sections.map(\.confidence) == [1, 0.75, 0.75, 0.8])
+        #expect(result.resolution.boundaryEvidence.filter {
+            $0.kind == .lyricsKnownTextAlignment
+        }.count == 2)
+    }
+
     @Test("late lyric marker uses nearby internal acoustic evidence")
     func lateLyricMarkerUsesInternalEvidence() {
         let report = LyricsAlignment.alignDetailed(

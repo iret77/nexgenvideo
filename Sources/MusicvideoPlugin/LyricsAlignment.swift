@@ -28,6 +28,11 @@ public enum LyricsAlignment {
     /// behavior, which only ever anchored on exact tokens.
     private static let matchThreshold = 0.7
 
+    enum TimingEvidence: Sendable, Equatable {
+        case recognizedSpeech
+        case knownTextAlignment
+    }
+
     struct Result: Sendable, Equatable {
         let lines: [AlignmentLine]
         let lyricLineCount: Int
@@ -38,6 +43,7 @@ public enum LyricsAlignment {
         let markerCount: Int
         let mappedMarkerCount: Int
         let reliableMarkerCount: Int
+        let timingEvidence: TimingEvidence
 
         var hasReliableStructureEvidence: Bool {
             markerCount > 0
@@ -136,7 +142,11 @@ public enum LyricsAlignment {
         alignDetailed(lyrics: lyrics, transcript: transcript).lines
     }
 
-    static func alignDetailed(lyrics: String, transcript: [TranscriptToken]) -> Result {
+    static func alignDetailed(
+        lyrics: String,
+        transcript: [TranscriptToken],
+        timingEvidence: TimingEvidence = .recognizedSpeech
+    ) -> Result {
         let lyricLines = parseLyrics(lyrics)
         let asr = transcript.filter { !normalize($0.text).isEmpty }
         let lyricTokenCount = lyricLines.reduce(0) { $0 + $1.tokens.count }
@@ -146,7 +156,8 @@ public enum LyricsAlignment {
                 lines: [], lyricLineCount: lyricLines.count, mappedLineCount: 0,
                 lyricTokenCount: lyricTokenCount, transcriptTokenCount: asr.count,
                 matchedTokenCount: 0,
-                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0
+                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0,
+                timingEvidence: timingEvidence
             )
         }
         let asrKeys = asr.map { normalize($0.text) }
@@ -160,7 +171,8 @@ public enum LyricsAlignment {
             return Result(
                 lines: [], lyricLineCount: lyricLines.count, mappedLineCount: 0,
                 lyricTokenCount: 0, transcriptTokenCount: asr.count, matchedTokenCount: 0,
-                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0
+                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0,
+                timingEvidence: timingEvidence
             )
         }
 
@@ -197,7 +209,8 @@ public enum LyricsAlignment {
             matchedTokenCount: matchOf.compactMap { $0 }.count,
             markerCount: markerCount,
             mappedMarkerCount: mappedMarkerCount,
-            reliableMarkerCount: reliableMarkerCount
+            reliableMarkerCount: reliableMarkerCount,
+            timingEvidence: timingEvidence
         )
     }
 

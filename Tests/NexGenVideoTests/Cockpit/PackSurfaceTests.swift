@@ -1,4 +1,6 @@
 import Foundation
+import MusicvideoPlugin
+import NexGenEngine
 import Testing
 @testable import NexGenVideo
 
@@ -252,12 +254,23 @@ struct PackSurfaceTests {
         let json = """
         {"surfaces":["choice","prose","review"],
          "phases":{"analysis":{"surface":"choice","task_class":"classification"}},
-         "cockpit_surfaces":[{"id":"analysis","title":"Analysis","symbol":"waveform","phase":"analysis","kind":"beatAnalysis"}]}
+         "cockpit_surfaces":[{
+           "id":"analysis","title":"Analysis","symbol":"waveform","phase":"analysis",
+           "data_file":"analysis/{songStem}.json",
+           "layout":[
+             {"type":"statRow","items":[
+               {"label":"Tempo","field":"bpm","format":"bpm","factor_field":"tempo_multiplier","visibility":"always"}
+             ]},
+             {"type":"beatTimeline","title":"Beat grid","duration_field":"duration_s","beats_field":"beats","downbeats_field":"downbeats","sections_field":"sections","sections_visibility":"whenCanonicalSections"},
+             {"type":"sectionList","title":"Song structure","sections_field":"sections","visibility":"whenCanonicalSections"}
+           ]
+         }]}
         """
         let c = try JSONDecoder().decode(ContractData.self, from: Data(json.utf8))
         #expect(c.cockpitSurfaces.count == 1)
         #expect(c.cockpitSurfaces.first?.id == "analysis")
-        #expect(c.cockpitSurfaces.first?.kind == "beatAnalysis")
+        #expect(c.cockpitSurfaces.first?.dataFile == "analysis/{songStem}.json")
+        #expect(c.cockpitSurfaces.first?.layout.count == 3)
         #expect(c.cockpitSurfaces.first?.symbol == "waveform")
         #expect(
             PipelineSurfaceRouting.route(
@@ -276,5 +289,89 @@ struct PackSurfaceTests {
 
         let legacy = try JSONDecoder().decode(ContractData.self, from: Data(#"{"phases":{}}"#.utf8))
         #expect(legacy.cockpitSurfaces.isEmpty)
+    }
+
+    @Test("native contract serializes the pack's declarative surface")
+    func nativeContractSurface() throws {
+        PackCatalog.register(MusicvideoPack())
+        let data = try NativeCockpitReader.contractJSON(activePack: "musicvideo")
+        let contract = try JSONDecoder().decode(ContractData.self, from: data)
+        let surface = try #require(contract.cockpitSurfaces.first)
+        #expect(surface.id == "analysis")
+        #expect(surface.dataFile == "analysis/{songStem}.json")
+        #expect(surface.layout.count == 3)
+    }
+
+    @Test("pack data resolver is project-local, JSON-only, and unambiguous")
+    func packDataResolver() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ngv-pack-surface-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let analysis = root.appendingPathComponent("analysis", isDirectory: true)
+        let audio = root.appendingPathComponent("audio", isDirectory: true)
+        try FileManager.default.createDirectory(at: analysis, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: audio, withIntermediateDirectories: true)
+        try Data().write(to: audio.appendingPathComponent("song.mp3"))
+        let artifact = analysis.appendingPathComponent("song.json")
+        try Data("{}".utf8).write(to: artifact)
+
+        #expect(
+            PackSurfaceDataResolver.resolve(
+                dataRoot: root,
+                pattern: "analysis/{songStem}.json"
+            )
+                == artifact
+        )
+        #expect(PackSurfaceDataResolver.resolve(dataRoot: root, pattern: "../secret.json") == nil)
+        #expect(PackSurfaceDataResolver.resolve(dataRoot: root, pattern: "analysis/*.yaml") == nil)
+        #expect(PackSurfaceDataResolver.resolve(dataRoot: root, pattern: "analysis/*.json") == nil)
+        #expect(PackSurfaceDataResolver.resolve(dataRoot: root, pattern: "analysis/{unknown}.json") == nil)
+    }
+
+    @Test("pack surface document resolves declared fields without a surface-specific switch")
+    func packSurfaceDocumentBindings() throws {
+        let document = try PackSurfaceDocument(data: Data(Self.analysisJSON.utf8))
+        #expect(document.string(at: "song_path") == "audio/midnight_drive.wav")
+        #expect(document.number(at: "duration_s") == 222)
+        #expect(document.numbers(at: "beats") == [0, 0.47, 0.94, 1.41])
+        #expect(document.count(at: "sections") == 2)
+    }
+
+    @Test("canonical section validation never replaces the pack-declared field")
+    func canonicalSectionBindingUsesDeclaredField() throws {
+        let analysis = try JSONDecoder().decode(
+            AnalysisSurfaceData.self,
+            from: Data(Self.analysisJSON.utf8)
+        )
+        let declared = """
+        {"declared_sections":[
+          {"index":0,"start":0,"end":27,"label":"Intro","source":"measured_system_hierarchy"},
+          {"index":1,"start":27,"end":71,"label":"Verse 1","source":"measured_system_hierarchy"}
+        ]}
+        """
+        let document = try PackSurfaceDocument(data: Data(declared.utf8))
+
+        let sections = PackSurfaceSectionBinding.sections(
+            document: document,
+            field: "declared_sections",
+            visibility: .whenCanonicalSections,
+            analysis: analysis
+        )
+        #expect(sections == analysis.sections)
+        #expect(PackSurfaceSectionBinding.sections(
+            document: document,
+            field: "sections",
+            visibility: .whenCanonicalSections,
+            analysis: analysis
+        ).isEmpty)
+
+        let hierarchy = PackSurfaceSectionBinding.hierarchy(
+            document: document,
+            field: "declared_sections",
+            visibility: .whenCanonicalSections,
+            analysis: analysis
+        )
+        #expect(hierarchy.map(\.section) == sections)
+        #expect(hierarchy.flatMap(\.segments).count == 2)
     }
 }

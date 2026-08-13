@@ -234,11 +234,11 @@ jobs:
           REPORT_DIGEST="$(oras push \
             --no-tty \
             --registry-config "$RUNNER_TEMP/oras-auth.json" \
-            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v4 \
+            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v5 \
             --format 'go-template={{.digest}}' \
             "$REPORT_REFERENCE" \
             analysis.json:application/vnd.nexgenvideo.analysis.v3+json \
-            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v4+json)"
+            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v5+json)"
           echo "reference=${REPORT_REFERENCE%:*}@$REPORT_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Verify report package isolation

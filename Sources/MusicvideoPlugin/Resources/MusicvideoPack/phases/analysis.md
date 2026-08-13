@@ -43,12 +43,12 @@ be selected as the stronger runtime strategy. It is not required by the macOS 26
 production path. `stage_diagnostics` records every unavailable, failed, or degraded
 stage instead of hiding it.
 
-Optional signals — stems, forced lyric alignment, musical key, and
+Optional signals — stems, known-text lyric alignment, musical key, and
 `chord_progression` — are produced **only when the corresponding on-device
 model/provider succeeds**. Read `stage_diagnostics` before interpreting an
 empty field: unavailable, failed, degraded, and not-applicable are distinct
 states. Never fabricate a missing signal. Section **timing** comes only from
-measured audio evidence. Lyrics text supplies labels only. A reliably aligned
+measured audio evidence. Lyrics supply symbolic identity, never timestamps. A reliable attention-DTW
 Whisper word anchor may establish its measured bar boundary when the structural
 detectors miss the transition; an unaligned lyric marker can never introduce or
 move timing.
@@ -211,7 +211,7 @@ Never hand-edit or rewrite the measured analysis artifact.
 
 - `sections[]`: the canonical, contiguous song sections. On macOS 26 each
   internal boundary is snapped to the measured bar grid and carries acoustic
-  detector consensus, reliable forced-alignment evidence, or explicitly
+  detector consensus, reliable known-text alignment evidence, or explicitly
   reviewable single-detector evidence. Label them; do not move them.
 - `downbeats[]`: the measured bar grid used by the selected runtime strategy.
   Native evidence boundaries are exact entries on this grid.
@@ -222,7 +222,7 @@ Never hand-edit or rewrite the measured analysis artifact.
   `review_required` provide complete contiguous sections plus exact per-boundary
   evidence. A nested section/segment/phrase `hierarchy` exists only when the
   availability-gated Apple Music Understanding strategy resolved on macOS 27.
-  Reliable forced alignment may provide a vocal time anchor; lyric text supplies
+  Reliable known-text alignment may provide a vocal time anchor; lyric text supplies
   the marker label and never invents timing.
 - `stage_diagnostics`: explicit outcome of every optional analysis stage.
 - `energy_curve`, `tempo_curve`: for assessing dynamics.

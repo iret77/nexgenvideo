@@ -135,11 +135,11 @@ steps, shorten it on measured boundaries, or record deliberate stillness as
 ### 5. Build the shot list according to `brief.project_mode`
 
 - **beat**: align the approved storyboard steps to measured downbeats.
-- **phrase**: DEFERRED — not selectable in the brief (it needs per-line
-  lyric timing / forced alignment, which the analysis doesn't produce
-  yet). You should never see `project_mode: phrase`; if you do, fall back
+- **phrase**: DEFERRED — not selectable in the brief. Analysis now produces
+  per-line lyric alignment, but the downstream phrase-mode artifact and gate
+  contract is not implemented. You should never see `project_mode: phrase`; if you do, fall back
   to `section`. The alignment-based construction below stays as the spec
-  for when forced alignment lands.
+  for when phrase mode lands.
   Map approved storyboard steps to the measured lyric alignment without
   inventing extra actions or splitting a step solely to hit an average
   shot length.

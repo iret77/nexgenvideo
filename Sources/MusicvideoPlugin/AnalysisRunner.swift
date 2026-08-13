@@ -91,7 +91,7 @@ public enum MusicvideoAnalysisRunner {
         }
     }
 
-    /// Lyric file extensions the runner reads for forced alignment.
+    /// Lyric file extensions the runner reads for known-text alignment.
     public static let lyricsExtensions: Set<String> = ["txt", "md", "lrc"]
 
     /// Runs the analysis phase and persists optional-system failures as diagnostics.
@@ -314,15 +314,21 @@ public enum MusicvideoAnalysisRunner {
                 let result = selected.result
                 alignmentReport = result
                 alignment = result.lines
+                let timing = result.timingEvidence == .knownTextAlignment
+                    ? "known-text acoustic" : "recognized acoustic"
+                let fallbackDetail = selection.errors.isEmpty
+                    ? ""
+                    : " Earlier attempts failed: \(selection.errors.joined(separator: "; "))."
                 if result.hasReliableStructureEvidence {
                     stages.append("alignment")
                     diagnostics.append(
                         StageDiagnostic(
                             stage: "lyrics_alignment",
                             status: .succeeded,
-                            detail: "Selected acoustic \(selected.source) transcription with "
+                            detail: "Selected \(timing) \(selected.source) alignment with "
                                 + "\(result.transcriptTokenCount) recognized words; reliably anchored "
                                 + "all \(result.markerCount) lyric section markers."
+                                + fallbackDetail
                         )
                     )
                 } else {
@@ -330,11 +336,12 @@ public enum MusicvideoAnalysisRunner {
                         StageDiagnostic(
                             stage: "lyrics_alignment",
                             status: .degraded,
-                            detail: "Best \(selected.source) transcription contained "
+                            detail: "Best \(timing) \(selected.source) alignment contained "
                                 + "\(result.transcriptTokenCount) recognized words, mapped "
                                 + "\(result.mappedLineCount)/\(result.lyricLineCount) lyric lines, "
                                 + "and reliably anchored \(result.reliableMarkerCount)/"
                                 + "\(result.markerCount) section markers."
+                                + fallbackDetail
                         )
                     )
                 }
@@ -408,30 +415,57 @@ public enum MusicvideoAnalysisRunner {
         preferredSourceName: String,
         song: URL
     ) -> AlignmentSelection {
+        let knownText = LyricsAlignment.transcriptionContext(lyrics)
         var attempts: [AlignmentAttempt] = []
         var errors: [String] = []
+        func record(
+            _ words: [TranscribedWord],
+            source: String,
+            timingEvidence: LyricsAlignment.TimingEvidence
+        ) -> LyricsAlignment.Result {
+            let tokens = words.map {
+                TranscriptToken(
+                    text: $0.text,
+                    start: $0.start,
+                    end: $0.end,
+                    score: $0.confidence
+                )
+            }
+            let result = LyricsAlignment.alignDetailed(
+                lyrics: lyrics,
+                transcript: tokens,
+                timingEvidence: timingEvidence
+            )
+            attempts.append(AlignmentAttempt(source: source, result: result))
+            return result
+        }
         func attempt(_ source: URL, name: String) {
+            if let aligner = transcriber as? any AudioLyricsAligning {
+                do {
+                    let words = try aligner.alignLyrics(
+                        source,
+                        language: "auto",
+                        lyrics: knownText
+                    )
+                    let result = record(
+                        words,
+                        source: name,
+                        timingEvidence: .knownTextAlignment
+                    )
+                    if result.hasReliableStructureEvidence { return }
+                } catch {
+                    errors.append("\(name) known-text alignment: \(error.localizedDescription)")
+                }
+            }
             do {
                 let words = try transcriber.transcribe(source, language: "auto")
-                let tokens = words.map {
-                    TranscriptToken(
-                        text: $0.text,
-                        start: $0.start,
-                        end: $0.end,
-                        score: $0.confidence
-                    )
-                }
-                attempts.append(
-                    AlignmentAttempt(
-                        source: name,
-                        result: LyricsAlignment.alignDetailed(
-                            lyrics: lyrics,
-                            transcript: tokens
-                        )
-                    )
+                _ = record(
+                    words,
+                    source: name,
+                    timingEvidence: .recognizedSpeech
                 )
             } catch {
-                errors.append("\(name): \(error.localizedDescription)")
+                errors.append("\(name) recognition: \(error.localizedDescription)")
             }
         }
         attempt(preferredSource, name: preferredSourceName)

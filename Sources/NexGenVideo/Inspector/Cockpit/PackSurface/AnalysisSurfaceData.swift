@@ -96,6 +96,14 @@ struct AnalysisSurfaceData: Decodable, Sendable, Equatable {
         var id: Int { index }
 
         enum CodingKeys: String, CodingKey { case index, start, end, label, source }
+        init(index: Int, start: Double, end: Double, label: String?, source: String?) {
+            self.index = index
+            self.start = start
+            self.end = end
+            self.label = label
+            self.source = source
+        }
+
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             index = try c.decodeIfPresent(Int.self, forKey: .index) ?? 0
@@ -232,8 +240,12 @@ extension AnalysisSurfaceData {
     /// Load + decode the analysis artifact under `dataRoot`, or nil when absent/unreadable.
     static func load(dataRoot: URL) -> AnalysisSurfaceData? {
         guard let url = artifactURL(dataRoot: dataRoot),
-              let data = try? Data(contentsOf: url)
-        else { return nil }
-        return try? JSONDecoder().decode(AnalysisSurfaceData.self, from: data)
+              let result = load(url: url) else { return nil }
+        return result
+    }
+
+    static func load(url: URL) -> AnalysisSurfaceData? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(Self.self, from: data)
     }
 }

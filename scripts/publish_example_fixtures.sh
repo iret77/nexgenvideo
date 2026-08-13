@@ -70,10 +70,10 @@ DIGEST="$({
   "$ORAS_BIN" push \
     --no-tty \
     --registry-config "$WORK/registry.json" \
-    --artifact-type application/vnd.nexgenvideo.example-fixtures.v1 \
+    --artifact-type application/vnd.nexgenvideo.example-fixtures.v2 \
     --format 'go-template={{.digest}}' \
     "$REFERENCE" \
-    examples.tar.gz:application/vnd.nexgenvideo.example-fixtures.v1.tar+gzip \
-    fixtures.manifest.json:application/vnd.nexgenvideo.example-fixtures.manifest.v1+json
+    examples.tar.gz:application/vnd.nexgenvideo.example-fixtures.v2.tar+gzip \
+    fixtures.manifest.json:application/vnd.nexgenvideo.example-fixtures.manifest.v2+json
 })"
 printf '%s@%s\n' "${REFERENCE%:*}" "$DIGEST"

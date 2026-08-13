@@ -80,6 +80,52 @@ struct StatRow: View {
     }
 }
 
+struct KeyValueRow: Identifiable, Equatable {
+    var id: String { label }
+    let label: String
+    let value: String
+}
+
+struct PackSurfaceKeyValueList: View {
+    let title: String?
+    let rows: [KeyValueRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            if let title {
+                Text(title)
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            VStack(spacing: AppTheme.Spacing.none) {
+                ForEach(rows) { row in
+                    HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+                        Text(row.label)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        Spacer(minLength: AppTheme.Spacing.sm)
+                        Text(row.value)
+                            .foregroundStyle(AppTheme.Text.primaryColor)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .padding(.horizontal, AppTheme.Spacing.md)
+                    .padding(.vertical, AppTheme.Spacing.xs)
+                    if row.id != rows.last?.id { AppDivider() }
+                }
+            }
+            .background(AppTheme.Background.surfaceColor)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                    .strokeBorder(
+                        AppTheme.Border.subtleColor,
+                        lineWidth: AppTheme.BorderWidth.hairline
+                    )
+            )
+        }
+    }
+}
+
 /// The beat grid: section bands across the top, beat ticks below, downbeats emphasized. Drawn on a
 /// Canvas so hundreds of beats render as marks, not hundreds of views.
 struct BeatTimeline: View {

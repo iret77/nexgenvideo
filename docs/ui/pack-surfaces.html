@@ -186,10 +186,20 @@
     <li>The pack's UI contract gains <code>cockpitSurfaces: [{ id, title, symbol, phase, dataFile,
       layout }]</code>. <code>layout</code> is an ordered list of <b>host primitives</b> bound to fields
       of <code>dataFile</code>. The host owns the rendering; the pack owns the data + mapping.</li>
+    <li><code>dataFile</code> is a project-local JSON path. The only template token is
+      <code>{songStem}</code>, resolved through the engine's canonical one-track discovery; unknown
+      tokens, wildcards, ambiguity, artifact symlinks, track symlink escapes, and paths escaping the
+      project fail closed.</li>
+    <li>Compatibility exception: a host may translate the released pre-contract-8
+      <code>beatAnalysis</code> kind into this declarative form so projects pinned to those packs keep
+      their existing surface. The adapter is closed to known legacy kinds; every contract-8-or-newer
+      pack owns and declares its complete <code>dataFile</code> + <code>layout</code> mapping.</li>
     <li><b>Host primitive vocabulary</b> (the only things a pack surface may compose):
       <code>statRow</code> (labelled value tiles), <code>beatTimeline</code> (beats + downbeats +
       section bands over a duration), <code>sectionList</code> (labelled time bands),
-      <code>keyValue</code> (flat facts). New primitives are host changes, never pack code.</li>
+      <code>keyValue</code> (flat facts). New primitives are host changes, never pack code.
+      <code>whenCanonicalSections</code> is the host's analysis-v3 validity predicate applied to the
+      pack-declared section field; it may suppress invalid data but never substitute another field.</li>
     <li>A pack surface is <b>read-only ground truth</b>. Measured values (BPM, beats, downbeats,
       sections) are never editable here — lyrics <i>label</i> sections, they never move the measured
       boundaries. Editing belongs to the agent flow, not this panel.</li>

@@ -327,8 +327,51 @@ public struct MusicvideoPack: Pack {
         }
         registry.registerGateRequirement("cover") { try MusicvideoGateChecks.requireRealCover(dataRoot: $0) }
         try? registry.registerUIContract(phase: "analysis", surface: "choice", taskClass: "classification")
-        registry.registerCockpitSurface(
-            CockpitSurface(id: "analysis", title: "Analysis", symbol: "waveform", phase: "analysis", kind: "beatAnalysis")
+        registry.registerDeclarativeCockpitSurface(
+            DeclarativeCockpitSurface(
+                id: "analysis",
+                title: "Analysis",
+                symbol: "waveform",
+                phase: "analysis",
+                dataFile: "analysis/{songStem}.json",
+                layout: [
+                    .statRow(items: [
+                        CockpitValueBinding(label: "Track", field: "song_path", format: .fileName),
+                        CockpitValueBinding(label: "Duration", field: "duration_s", format: .duration),
+                        CockpitValueBinding(
+                            label: "Tempo",
+                            field: "bpm",
+                            format: .bpm,
+                            factorField: "tempo_multiplier"
+                        ),
+                        CockpitValueBinding(
+                            label: "Key",
+                            field: "key",
+                            format: .text,
+                            visibility: .whenPresent
+                        ),
+                        CockpitValueBinding(
+                            label: "Sections",
+                            field: "sections",
+                            format: .count,
+                            visibility: .whenCanonicalSections
+                        ),
+                    ]),
+                    .beatTimeline(
+                        title: "Beat grid",
+                        durationField: "duration_s",
+                        beatsField: "beats",
+                        downbeatsField: "downbeats",
+                        sectionsField: "sections",
+                        sectionsVisibility: .whenCanonicalSections
+                    ),
+                    .sectionList(
+                        title: "Song structure",
+                        sectionsField: "sections",
+                        visibility: .whenCanonicalSections
+                    ),
+                ]
+            )
         )
     }
 }

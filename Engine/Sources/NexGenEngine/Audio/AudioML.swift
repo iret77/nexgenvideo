@@ -45,6 +45,15 @@ public protocol ContextualAudioTranscribing: AudioTranscribing {
     ) throws -> [TranscribedWord]
 }
 
+/// Known-text lyric alignment whose returned timing remains acoustically measured.
+public protocol AudioLyricsAligning: AudioTranscribing {
+    func alignLyrics(
+        _ audio: URL,
+        language: String,
+        lyrics: String
+    ) throws -> [TranscribedWord]
+}
+
 /// Separated source stems written to disk. Any field is nil if the separator does
 /// not produce that stem. Paths are absolute.
 public struct SeparatedStems: Sendable, Equatable {

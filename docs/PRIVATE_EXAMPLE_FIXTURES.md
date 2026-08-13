@@ -24,17 +24,18 @@ Independent expectations are supplied from a private JSON file when the bundle i
 
 ```json
 {
-  "schema": "nexgenvideo.example-fixture-expectations/v2",
+  "schema": "nexgenvideo.example-fixture-expectations/v3",
   "datasets": {
     "dataset_id": {
       "audio": {
         "path": "dataset_id/track.mp3",
-        "duration_s": 199.26,
+        "duration_s": 180.0,
         "duration_tolerance_s": 0.5,
-        "bpm": 150.0,
+        "bpm": 120.0,
         "bpm_tolerance": 2.0,
         "expect_boundary_reduction": true,
-        "section_boundaries_s": [33.83, 59.20, 85.31],
+        "section_boundaries_s": [24.0, 64.0, 104.0],
+        "section_labels": [null, "verse1", "chorus", "verse2"],
         "section_boundary_tolerance_s": 4.0
       }
     }
@@ -56,7 +57,7 @@ NGV_GHCR_TOKEN_FILE=/secure/token-file \
 NGV_FIXTURE_EXPECTATIONS_FILE=/private/fixture-expectations.json \
 scripts/publish_example_fixtures.sh \
   /owner-managed/examples \
-  ghcr.io/iret77/nexgenvideo-examples:fixtures-v2
+  ghcr.io/iret77/nexgenvideo-examples:fixtures-v3
 ```
 
 The command prints the immutable `ghcr.io/...@sha256:...` reference. Its digest is stored as the
@@ -85,16 +86,16 @@ symlinks, and transfers that artifact to the pinned GitHub-hosted macOS 26 runne
 4. configures the exact production audio runtime and runs the headless app self-test through the
    external pack's real analysis phase;
 5. applies the pack's independent pre-interpretation gate;
-6. checks duration, BPM, boundary reduction, and every ordered section boundary against private,
-   independently produced expectations; and
+6. checks duration, BPM, boundary reduction, and every ordered section boundary and label against
+   private, independently produced expectations; and
 7. pushes `analysis.json` plus `provenance.json` to the private report package.
 
 The provenance record links the result to the immutable fixture reference, tree and file digests,
 loaded pack version and bundle-tree digest, commit, workflow run, measured summary, actual optional
 audio-ML registration state, and gate outcome. It contains no runner-local source path.
-The app also writes one redacted success line containing only duration, tempo, grid counts,
-structure status, raw/accepted boundary counts, and canonical boundary times. It never prints fixture
-paths, source names, lyrics, labels, hashes, or media content.
+The app writes a redacted success summary and a redacted failure message. Full comparisons remain in
+the private report package. Workflow logs never print private expectations, fixture paths, source
+names, lyrics, labels, hashes, or media content.
 No media, lyrics, analysis, or provenance file is uploaded as a public Actions artifact. The macOS
 job removes its fixture, report, and registry-auth directories after publication or failure.
 

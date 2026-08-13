@@ -259,7 +259,7 @@ struct AnalysisRunnerPlumbingTests {
         #expect(throws: MusicvideoAnalysisRunner.RunError.self) { try runner(dataRoot) }
     }
 
-    // MARK: - Forced-alignment wiring (no DSP)
+    // MARK: - Known-text alignment wiring (no DSP)
 
     @Test("lyric alignment labels system sections without becoming timing truth")
     func alignmentLabelsMeasuredSections() throws {
@@ -376,7 +376,7 @@ struct AnalysisRunnerPlumbingTests {
         }
     }
 
-    @Test("lyrics never condition acoustic timing and a poor vocal stem falls back to the mix")
+    @Test("generic prompt conditioning cannot impersonate known-text alignment")
     func acousticAlignmentSourceFallback() throws {
         let lyrics = "[Verse]\nhello world\n[Chorus]\nwide open"
         let selection = MusicvideoAnalysisRunner.selectLyricsAlignment(
@@ -390,8 +390,82 @@ struct AnalysisRunnerPlumbingTests {
         let selected = try #require(selection.attempt)
         #expect(selected.source == "mix")
         #expect(selected.result.hasReliableStructureEvidence)
+        #expect(selected.result.timingEvidence == .recognizedSpeech)
         #expect(selected.result.transcriptTokenCount == 4)
         #expect(selection.errors.isEmpty)
+    }
+
+    struct KnownTextLyricsAligner: AudioLyricsAligning {
+        func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord] {
+            [TranscribedWord(text: "unrelated", start: 0, end: 0.5)]
+        }
+
+        func alignLyrics(
+            _ audio: URL,
+            language: String,
+            lyrics: String
+        ) throws -> [TranscribedWord] {
+            [
+                TranscribedWord(text: "hello", start: 1, end: 1.2),
+                TranscribedWord(text: "world", start: 1.2, end: 1.4),
+                TranscribedWord(text: "wide", start: 5, end: 5.2),
+                TranscribedWord(text: "open", start: 5.2, end: 5.4),
+            ]
+        }
+    }
+
+    @Test("dedicated known-text alignment is selected as acoustic timing evidence")
+    func knownTextAlignmentCapability() throws {
+        let selection = MusicvideoAnalysisRunner.selectLyricsAlignment(
+            lyrics: "[Verse]\nhello world\n[Chorus]\nwide open",
+            transcriber: KnownTextLyricsAligner(),
+            preferredSource: URL(fileURLWithPath: "/tmp/vocals.wav"),
+            preferredSourceName: "vocals",
+            song: URL(fileURLWithPath: "/tmp/mix.wav")
+        )
+
+        let selected = try #require(selection.attempt)
+        #expect(selected.source == "vocals")
+        #expect(selected.result.hasReliableStructureEvidence)
+        #expect(selected.result.timingEvidence == .knownTextAlignment)
+    }
+
+    struct FailingLyricsAligner: AudioLyricsAligning {
+        struct AlignmentFailure: Error {}
+
+        func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord] {
+            [
+                TranscribedWord(text: "hello", start: 1, end: 1.2),
+                TranscribedWord(text: "world", start: 1.2, end: 1.4),
+                TranscribedWord(text: "wide", start: 5, end: 5.2),
+                TranscribedWord(text: "open", start: 5.2, end: 5.4),
+            ]
+        }
+
+        func alignLyrics(
+            _ audio: URL,
+            language: String,
+            lyrics: String
+        ) throws -> [TranscribedWord] {
+            throw AlignmentFailure()
+        }
+    }
+
+    @Test("failed known-text alignment falls back to measured recognition")
+    func knownTextAlignmentFallback() throws {
+        let selection = MusicvideoAnalysisRunner.selectLyricsAlignment(
+            lyrics: "[Verse]\nhello world\n[Chorus]\nwide open",
+            transcriber: FailingLyricsAligner(),
+            preferredSource: URL(fileURLWithPath: "/tmp/vocals.wav"),
+            preferredSourceName: "vocals",
+            song: URL(fileURLWithPath: "/tmp/mix.wav")
+        )
+
+        let selected = try #require(selection.attempt)
+        #expect(selected.source == "vocals")
+        #expect(selected.result.hasReliableStructureEvidence)
+        #expect(selected.result.timingEvidence == .recognizedSpeech)
+        #expect(selection.errors.count == 1)
     }
 }
 
@@ -446,7 +520,7 @@ struct AnalysisRunnerE2ETests {
         func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord] { words }
     }
 
-    @Test("a registered transcriber + provided lyrics force-aligns into the artifact")
+    @Test("a registered transcriber + provided lyrics align into the artifact")
     func forcedAlignmentEndToEnd() throws {
         let dataRoot = try AnalysisRunnerPlumbingTests.makeProject(name: "Aligned")
         try AnalysisRunnerPlumbingTests.placeSong("song.wav", in: dataRoot)
