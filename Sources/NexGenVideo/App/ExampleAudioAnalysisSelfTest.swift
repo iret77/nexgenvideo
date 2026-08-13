@@ -451,7 +451,33 @@ enum ExampleAudioAnalysisSelfTest {
         if let failure = acceptanceFailures.first {
             let actual = sectionBoundaryTimes.map { String(format: "%.3f", $0) }
                 .joined(separator: ",")
-            throw Failure("\(failure); measured boundaries=[\(actual)]")
+            let evidence = (resolution["boundary_evidence"] as? [[String: Any]] ?? [])
+                .compactMap { item -> String? in
+                    guard let time = number(item["time"]),
+                          let kind = item["kind"] as? String else { return nil }
+                    let sources = (item["detector_sources"] as? [String] ?? [])
+                        .joined(separator: "+")
+                    return "\(String(format: "%.3f", time)):\(kind):\(sources)"
+                }
+                .joined(separator: ",")
+            let candidates = (object["structure_candidates"] as? [[String: Any]] ?? [])
+                .compactMap { candidate -> String? in
+                    guard let source = candidate["source"] as? String,
+                          let items = candidate["sections"] as? [[String: Any]] else { return nil }
+                    let starts = items.dropFirst().compactMap { number($0["start"]) }
+                        .map { String(format: "%.3f", $0) }
+                        .joined(separator: "+")
+                    return "\(source)=\(starts)"
+                }
+                .joined(separator: ",")
+            let alignmentDiagnostic = diagnosticDetail(
+                diagnostics,
+                stage: "lyrics_alignment"
+            )
+            throw Failure(
+                "\(failure); measured boundaries=[\(actual)]; evidence=[\(evidence)]; "
+                    + "candidates=[\(candidates)]; alignment=\(alignmentDiagnostic)"
+            )
         }
         return summary
     }

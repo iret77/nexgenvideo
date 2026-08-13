@@ -349,19 +349,9 @@ struct AnalysisRunnerPlumbingTests {
         }
     }
 
-    struct ContextualSourceTranscriber: ContextualAudioTranscribing {
-        let expectedContext: String
-
+    struct ContextHallucinatingSourceTranscriber: ContextualAudioTranscribing {
         func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord] {
-            []
-        }
-
-        func transcribe(
-            _ audio: URL,
-            language: String,
-            context: String
-        ) throws -> [TranscribedWord] {
-            guard context == expectedContext, audio.lastPathComponent == "mix.wav" else {
+            guard audio.lastPathComponent == "mix.wav" else {
                 return [TranscribedWord(text: "unrelated", start: 0, end: 0.5)]
             }
             return [
@@ -371,16 +361,27 @@ struct AnalysisRunnerPlumbingTests {
                 TranscribedWord(text: "open", start: 5.2, end: 5.4),
             ]
         }
+
+        func transcribe(
+            _ audio: URL,
+            language: String,
+            context: String
+        ) throws -> [TranscribedWord] {
+            return [
+                TranscribedWord(text: "hello", start: 0, end: 0.2),
+                TranscribedWord(text: "world", start: 0.2, end: 0.4),
+                TranscribedWord(text: "wide", start: 0.4, end: 0.6),
+                TranscribedWord(text: "open", start: 0.6, end: 0.8),
+            ]
+        }
     }
 
-    @Test("contextual lyric alignment falls back from a poor vocal stem to the mix")
-    func contextualAlignmentSourceFallback() throws {
+    @Test("lyrics never condition acoustic timing and a poor vocal stem falls back to the mix")
+    func acousticAlignmentSourceFallback() throws {
         let lyrics = "[Verse]\nhello world\n[Chorus]\nwide open"
         let selection = MusicvideoAnalysisRunner.selectLyricsAlignment(
             lyrics: lyrics,
-            transcriber: ContextualSourceTranscriber(
-                expectedContext: "hello world\nwide open"
-            ),
+            transcriber: ContextHallucinatingSourceTranscriber(),
             preferredSource: URL(fileURLWithPath: "/tmp/vocals.wav"),
             preferredSourceName: "vocals",
             song: URL(fileURLWithPath: "/tmp/mix.wav")

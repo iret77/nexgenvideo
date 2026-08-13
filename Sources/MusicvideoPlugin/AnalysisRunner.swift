@@ -320,7 +320,7 @@ public enum MusicvideoAnalysisRunner {
                         StageDiagnostic(
                             stage: "lyrics_alignment",
                             status: .succeeded,
-                            detail: "Selected contextual \(selected.source) transcription with "
+                            detail: "Selected acoustic \(selected.source) transcription with "
                                 + "\(result.transcriptTokenCount) recognized words; reliably anchored "
                                 + "all \(result.markerCount) lyric section markers."
                         )
@@ -408,21 +408,11 @@ public enum MusicvideoAnalysisRunner {
         preferredSourceName: String,
         song: URL
     ) -> AlignmentSelection {
-        let context = LyricsAlignment.transcriptionContext(lyrics)
         var attempts: [AlignmentAttempt] = []
         var errors: [String] = []
         func attempt(_ source: URL, name: String) {
             do {
-                let words: [TranscribedWord]
-                if let contextual = transcriber as? any ContextualAudioTranscribing {
-                    words = try contextual.transcribe(
-                        source,
-                        language: "auto",
-                        context: context
-                    )
-                } else {
-                    words = try transcriber.transcribe(source, language: "auto")
-                }
+                let words = try transcriber.transcribe(source, language: "auto")
                 let tokens = words.map {
                     TranscriptToken(
                         text: $0.text,
