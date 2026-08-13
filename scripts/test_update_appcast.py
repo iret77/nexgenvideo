@@ -20,7 +20,7 @@ class UpdateAppcastTests(unittest.TestCase):
             (root / "appcast.xml").write_text("<channel>\n    </channel>\n")
 
             result = subprocess.run(
-                [sys.executable, str(SCRIPT), "2.0.0", "80", "123", "signature", "v2.0.0"],
+                [sys.executable, str(SCRIPT), "1.1.1", "80", "123", "signature", "v1.1.1"],
                 cwd=root,
                 capture_output=True,
                 text=True,
@@ -44,7 +44,7 @@ class UpdateAppcastTests(unittest.TestCase):
             (root / "appcast.xml").write_text("<channel>\n    </channel>\n")
 
             result = subprocess.run(
-                [sys.executable, str(SCRIPT), "2.0.0", "80", "123", "signature", "v2.0.0"],
+                [sys.executable, str(SCRIPT), "1.1.1", "80", "123", "signature", "v1.1.1"],
                 cwd=root,
                 capture_output=True,
                 text=True,

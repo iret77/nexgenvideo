@@ -2,11 +2,11 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
-      "version": "2.0.0",
+      "version": "1.1.1",
       "date": "2026-08-13",
       "sections": [
         {
-          "heading": "Platform",
+          "heading": "Compatibility",
           "items": [
             "NexGenVideo requires the latest released macOS, currently macOS 26. The macOS 27 Music Understanding adapter remains dormant until that OS ships.",
             "Music Video packs that use the new lyric-alignment and declarative cockpit capabilities now require engine contract 8, so an older host rejects them instead of silently degrading analysis."
@@ -31,20 +31,6 @@
             "Re-running analysis keeps the last-known measurements visible under runner-reported progress until the replacement artifact is ready.",
             "Xcode 27 builds now compile Metal resources from source and stage consumer-derived binary frameworks through explicit, independently verified runtime boundaries.",
             "Upgrading an existing Music Video project resets Audio Analysis and downstream approvals so the new measured evidence record is established before work continues."
-          ]
-        }
-      ]
-    },
-    {
-      "version": "1.1.1",
-      "date": "2026-08-12",
-      "sections": [
-        {
-          "heading": "Audio analysis",
-          "items": [
-            "Song sections now come from deterministic bar-aligned evidence fusion instead of exposing every raw detector fragment as a canonical section.",
-            "Lyrics can label and select nearby measured acoustic boundaries but can no longer replace measured timing.",
-            "Missing structural evidence blocks approval, while phrase-filtered single-detector sections and degraded analysis stages remain visible for explicit review instead of stranding the project."
           ]
         }
       ]

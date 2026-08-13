@@ -12,6 +12,6 @@
     "musicvideo/legacy",
     "musicvideo/1.0.0"
   ],
-  "minAppVersion": "2.0.0",
+  "minAppVersion": "1.1.1",
   "badge": "MusicvideoPack/badge.png"
 }
