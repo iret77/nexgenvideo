@@ -301,13 +301,13 @@ struct ConsolidatorTests {
         )
         let result = Consolidator.consolidateDetailed(
             candidates: [
-                Self.sections(boundaries: [58], duration: 68, source: "librosa"),
-                Self.sections(boundaries: [58.4], duration: 68, source: "essentia"),
+                Self.sections(boundaries: [58], duration: 76, source: "librosa"),
+                Self.sections(boundaries: [58.4], duration: 76, source: "essentia"),
             ],
             alignment: report.lines,
             alignmentReport: report,
-            downbeats: stride(from: 0.0, through: 68.0, by: 2.0).map { $0 },
-            durationS: 68
+            downbeats: stride(from: 0.0, through: 76.0, by: 2.0).map { $0 },
+            durationS: 76
         )
 
         #expect(result.resolution.status == .resolved)
