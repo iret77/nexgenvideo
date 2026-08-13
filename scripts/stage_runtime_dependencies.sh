@@ -4,6 +4,16 @@ set -euo pipefail
 DESTINATION="${1:?runtime destination required}"
 shift
 
+excluded_paths=("$DESTINATION")
+while [ "$#" -gt 0 ] && [ "$1" = "--exclude" ]; do
+  if [ "$#" -lt 2 ]; then
+    echo "!! --exclude requires a path" >&2
+    exit 1
+  fi
+  excluded_paths+=("$2")
+  shift 2
+done
+
 consumers=()
 while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
   consumers+=("$1")
@@ -87,6 +97,30 @@ is_macos_arm64() {
     | grep -qE 'platform[[:space:]]+MACOS' || return 1
 }
 
+find_candidates() {
+  local root="$1"
+  local kind="$2"
+  local name="$3"
+  local excluded_path
+  local prune_arguments=()
+  for excluded_path in "${excluded_paths[@]}"; do
+    case "$excluded_path" in
+      "$root"|"$root"/*) prune_arguments+=( -path "$excluded_path" -prune -o ) ;;
+    esac
+  done
+  if [ "${#prune_arguments[@]}" -gt 0 ]; then
+    if [ "$kind" = "d" ]; then
+      find "$root" "${prune_arguments[@]}" -type d -name "$name" -print -prune
+    else
+      find "$root" "${prune_arguments[@]}" -type f -name "$name" -print
+    fi
+  elif [ "$kind" = "d" ]; then
+    find "$root" -type d -name "$name" -print -prune
+  else
+    find "$root" -type f -name "$name" -print
+  fi
+}
+
 resolve_framework() {
   local framework="$1"
   local executable="$2"
@@ -107,10 +141,7 @@ resolve_framework() {
       is_macos_arm64 "$binary" || continue
       selected="$candidate"
       match_count=$((match_count + 1))
-    done < <(
-      find "$root" -path "$DESTINATION" -prune -o \
-        -type d -name "$framework" -print -prune
-    )
+    done < <(find_candidates "$root" d "$framework")
     if [ "$match_count" -gt 1 ]; then
       echo "!! ambiguous macOS arm64 artifact for @rpath/$framework/$executable in $root ($match_count matches)" >&2
       exit 1
@@ -144,7 +175,7 @@ resolve_dylib() {
       is_macos_arm64 "$candidate" || continue
       selected="$candidate"
       match_count=$((match_count + 1))
-    done < <(find "$root" -path "$DESTINATION" -prune -o -type f -name "$filename" -print)
+    done < <(find_candidates "$root" f "$filename")
     if [ "$match_count" -gt 1 ]; then
       echo "!! ambiguous macOS arm64 artifact for @rpath/$relative in $root ($match_count matches)" >&2
       exit 1

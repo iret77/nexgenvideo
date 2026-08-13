@@ -371,6 +371,7 @@ class RuntimeStagingTests(unittest.TestCase):
             for name, framework in (
                 ("NexGenVideoTests", "whisper"),
                 ("NexGenEngineTests", "Sparkle"),
+                ("NexGenPluginTests", "ThirdParty"),
             ):
                 consumer = bin_directory / f"{name}.xctest/Contents/MacOS/{name}"
                 consumer.parent.mkdir(parents=True)
@@ -380,14 +381,14 @@ class RuntimeStagingTests(unittest.TestCase):
                     "(compatibility version 1.0.0)\n"
                 )
                 self.write_framework(artifacts, framework)
-            app_tests = (
-                bin_directory
-                / "NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests"
-            )
+                with consumer.with_suffix(".deps").open("a") as dependencies:
+                    dependencies.write(
+                        "@rpath/Testing.framework/Versions/A/Testing "
+                        "(compatibility version 1.0.0)\n"
+                    )
+            app_tests = bin_directory / "NexGenVideoTests.xctest/Contents/MacOS/NexGenVideoTests"
             with app_tests.with_suffix(".deps").open("a") as dependencies:
                 dependencies.write(
-                    "@rpath/Testing.framework/Versions/A/Testing "
-                    "(compatibility version 1.0.0)\n"
                     "@rpath/XCTAutomationSupport.framework/Versions/A/XCTAutomationSupport "
                     "(compatibility version 1.0.0)\n"
                     "@rpath/libXCTestSwiftSupport.dylib "
@@ -454,13 +455,18 @@ class RuntimeStagingTests(unittest.TestCase):
                 swift_arguments.read_text().splitlines(),
                 ["build", "-c", "debug", "--show-bin-path"],
             )
-            runtime = bin_directory / "PackageFrameworks"
-            self.assertTrue((runtime / "whisper.framework").is_dir())
-            self.assertTrue((runtime / "Sparkle.framework").is_dir())
-            self.assertTrue((runtime / "Testing.framework").is_dir())
-            self.assertTrue((runtime / "XCTAutomationSupport.framework").is_dir())
-            self.assertTrue((runtime / "XCUIAutomation.framework").is_dir())
-            self.assertTrue((runtime / "libXCTestSwiftSupport.dylib").is_file())
+            app_runtime = bin_directory / "NexGenVideoTests.xctest/Contents/Frameworks"
+            engine_runtime = bin_directory / "NexGenEngineTests.xctest/Contents/Frameworks"
+            plugin_runtime = bin_directory / "NexGenPluginTests.xctest/Contents/Frameworks"
+            self.assertTrue((app_runtime / "whisper.framework").is_dir())
+            self.assertTrue((app_runtime / "Testing.framework").is_dir())
+            self.assertTrue((app_runtime / "XCTAutomationSupport.framework").is_dir())
+            self.assertTrue((app_runtime / "XCUIAutomation.framework").is_dir())
+            self.assertTrue((app_runtime / "libXCTestSwiftSupport.dylib").is_file())
+            self.assertTrue((engine_runtime / "Sparkle.framework").is_dir())
+            self.assertTrue((engine_runtime / "Testing.framework").is_dir())
+            self.assertTrue((plugin_runtime / "ThirdParty.framework").is_dir())
+            self.assertTrue((plugin_runtime / "Testing.framework").is_dir())
             self.assertGreater(
                 len(list((bin_directory / "NexGenVideo_NexGenVideo.bundle").glob("*.metallib"))),
                 0,

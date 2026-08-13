@@ -90,6 +90,7 @@ if [ ! -d "$RESOURCE_BUNDLE" ]; then
 fi
 
 consumers=()
+framework_destinations=()
 for bundle in "$BIN_DIRECTORY"/*.xctest; do
   [ -d "$bundle" ] || continue
   name="$(basename "$bundle" .xctest)"
@@ -99,6 +100,7 @@ for bundle in "$BIN_DIRECTORY"/*.xctest; do
     exit 1
   fi
   consumers+=("$consumer")
+  framework_destinations+=("$bundle/Contents/Frameworks")
 done
 if [ "${#consumers[@]}" -eq 0 ]; then
   echo "!! no built test bundles found in $BIN_DIRECTORY" >&2
@@ -106,15 +108,39 @@ if [ "${#consumers[@]}" -eq 0 ]; then
 fi
 
 "$ROOT/scripts/compile_metal_resources.sh" "$ROOT/Metal" "$RESOURCE_BUNDLE"
-"$ROOT/scripts/stage_runtime_dependencies.sh" \
-  "$BIN_DIRECTORY/PackageFrameworks" \
-  "${consumers[@]}" \
-  -- \
-  "$BIN_DIRECTORY" \
-  "$VENDOR_ARTIFACT_ROOT" \
-  "$SWIFTPM_ARTIFACT_ROOT" \
-  "$SWIFT_RUNTIME_ROOT" \
-  "$PLATFORM_FRAMEWORK_ROOT" \
-  "$PLATFORM_PRIVATE_FRAMEWORK_ROOT" \
-  "$PLATFORM_LIBRARY_ROOT" \
-  "$XCODE_SHARED_FRAMEWORK_ROOT"
+staging_root="$(mktemp -d "${TMPDIR:-/tmp}/nexgenvideo-test-runtime.XXXXXX")"
+trap 'rm -rf "$staging_root"' EXIT
+temporary_destinations=()
+exclude_arguments=()
+for framework_destination in "${framework_destinations[@]}"; do
+  exclude_arguments+=( --exclude "$framework_destination" )
+done
+index=0
+while [ "$index" -lt "${#consumers[@]}" ]; do
+  consumer="${consumers[$index]}"
+  temporary_parent="$staging_root/$index"
+  temporary_destination="$temporary_parent/Frameworks"
+  mkdir -p "$temporary_parent"
+  "$ROOT/scripts/stage_runtime_dependencies.sh" \
+    "$temporary_destination" \
+    "${exclude_arguments[@]}" \
+    "$consumer" \
+    -- \
+    "$BIN_DIRECTORY" \
+    "$VENDOR_ARTIFACT_ROOT" \
+    "$SWIFTPM_ARTIFACT_ROOT" \
+    "$SWIFT_RUNTIME_ROOT" \
+    "$PLATFORM_FRAMEWORK_ROOT" \
+    "$PLATFORM_PRIVATE_FRAMEWORK_ROOT" \
+    "$PLATFORM_LIBRARY_ROOT" \
+    "$XCODE_SHARED_FRAMEWORK_ROOT"
+  temporary_destinations+=("$temporary_destination")
+  index=$((index + 1))
+done
+
+index=0
+while [ "$index" -lt "${#framework_destinations[@]}" ]; do
+  rm -rf "${framework_destinations[$index]}"
+  mv "${temporary_destinations[$index]}" "${framework_destinations[$index]}"
+  index=$((index + 1))
+done
