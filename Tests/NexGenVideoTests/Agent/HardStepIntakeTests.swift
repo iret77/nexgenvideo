@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import MusicvideoPlugin
+@testable import MusicvideoPlugin
 @testable import NexGenVideo
 import NexGenEngine
 
@@ -1041,6 +1041,14 @@ struct HardStepIntakeTests {
         ]
         try JSONSerialization.data(withJSONObject: analysis).write(
             to: analysisDir.appendingPathComponent("track.json")
+        )
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: "workflow-contract",
+                songSHA256: try FileDigest.sha256(of: trackURL),
+                lyricsAlignment: nil
+            ),
+            dataRoot: dataRoot
         )
         let analysisLineage = try #require(
             registry.phaseLineageProviders["analysis"]

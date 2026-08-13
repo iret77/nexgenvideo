@@ -94,6 +94,14 @@ struct GateGuardTests {
             ]
         }
         try JSONSerialization.data(withJSONObject: obj).write(to: dir.appendingPathComponent("song.json"))
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: "demo",
+                songSHA256: songHash,
+                lyricsAlignment: nil
+            ),
+            dataRoot: root
+        )
     }
 
     private func writeConsolidatedAnalysis(

@@ -3046,7 +3046,10 @@ struct WorkflowToolsTests {
             args: [
                 "project_dir": dataRoot.path,
                 "tempo_multiplier": 1.0,
-                "section_labels": [],
+                "section_labels": [
+                    ["index": 0, "label": "intro", "confidence": 1.0],
+                    ["index": 1, "label": "verse", "confidence": 1.0],
+                ],
                 "anomalies": [],
                 "overall_character": "Measured structure.",
             ]
