@@ -59,12 +59,15 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing, AudioLyricsAligning {
         _ audio: URL,
         language: String,
         lyrics: String
-    ) throws -> [TranscribedWord] {
-        try performTranscription(
-            audio,
-            language: language,
-            context: lyrics,
-            timing: .attentionDTW
+    ) throws -> KnownTextAlignmentMeasurement {
+        KnownTextAlignmentMeasurement(
+            words: try performTranscription(
+                audio,
+                language: language,
+                context: lyrics,
+                timing: .attentionDTW
+            ),
+            timingMethod: .attentionDTW
         )
     }
 

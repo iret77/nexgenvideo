@@ -83,6 +83,15 @@ ENGINE_BOUNDARY_VALUE_LAYOUTS = {
             "var confidence: Double?",
         ],
     },
+    "KnownTextAlignmentMeasurement": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public struct KnownTextAlignmentMeasurement: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "let words: [TranscribedWord]",
+            "let timingMethod: KnownTextAlignmentTimingMethod",
+        ],
+    },
     "SeparatedStems": {
         "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
         "start": "public struct SeparatedStems: Sendable, Equatable {",
@@ -346,6 +355,12 @@ ENGINE_BOUNDARY_VALUE_LAYOUTS = {
     },
 }
 ENGINE_BOUNDARY_ENUM_LAYOUTS = {
+    "KnownTextAlignmentTimingMethod": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public enum KnownTextAlignmentTimingMethod: String, Codable, Sendable, Equatable {",
+        "end": "/// A host-owned known-text measurement.",
+        "cases": ["attentionDTW = \"attention_dtw\""],
+    },
     "CockpitValueFormat": {
         "path": "Engine/Sources/NexGenEngine/Packs/EngineRegistry.swift",
         "start": "public enum CockpitValueFormat: String, Sendable, Equatable {",
@@ -543,7 +558,7 @@ ENGINE_BOUNDARY_PROTOCOL_LAYOUTS = {
         "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
         "start": "public protocol AudioLyricsAligning: AudioTranscribing {",
         "requirements": [
-            "alignLyrics( _ audio: URL, language: String, lyrics: String ) throws -> [TranscribedWord]",
+            "alignLyrics( _ audio: URL, language: String, lyrics: String ) throws -> KnownTextAlignmentMeasurement",
         ],
     },
     "AudioStemSeparating": {

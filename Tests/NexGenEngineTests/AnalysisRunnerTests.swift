@@ -195,11 +195,13 @@ struct AnalysisRunnerPlumbingTests {
             sections: [AnalysisSection(index: 0, start: 0.0, end: 12.0, cluster: 0, source: "consolidated")]
         )
         let resolution = Consolidator.StructureResolution(
-            version: "adaptive-structure/v4", status: .resolved,
+            version: "adaptive-structure/v5", status: .resolved,
             method: "music_understanding_hierarchy", detectorSources: ["apple_music_understanding"],
             minimumSectionBars: 0,
             candidateBoundaryCount: 0, consensusBoundaryCount: 0,
             alignmentMarkerCount: 0, resolvedAlignmentMarkerCount: 0,
+            alignmentTimingEvidence: nil,
+            alignmentTimingMethod: nil,
             acceptedBoundaryCount: 0, discardedBoundaryCount: 0,
             boundaryEvidence: [
                 .init(
@@ -404,13 +406,16 @@ struct AnalysisRunnerPlumbingTests {
             _ audio: URL,
             language: String,
             lyrics: String
-        ) throws -> [TranscribedWord] {
-            [
-                TranscribedWord(text: "hello", start: 1, end: 1.2),
-                TranscribedWord(text: "world", start: 1.2, end: 1.4),
-                TranscribedWord(text: "wide", start: 5, end: 5.2),
-                TranscribedWord(text: "open", start: 5.2, end: 5.4),
-            ]
+        ) throws -> KnownTextAlignmentMeasurement {
+            KnownTextAlignmentMeasurement(
+                words: [
+                    TranscribedWord(text: "hello", start: 1, end: 1.2),
+                    TranscribedWord(text: "world", start: 1.2, end: 1.4),
+                    TranscribedWord(text: "wide", start: 5, end: 5.2),
+                    TranscribedWord(text: "open", start: 5.2, end: 5.4),
+                ],
+                timingMethod: .attentionDTW
+            )
         }
     }
 
@@ -428,6 +433,47 @@ struct AnalysisRunnerPlumbingTests {
         #expect(selected.source == "vocals")
         #expect(selected.result.hasReliableStructureEvidence)
         #expect(selected.result.timingEvidence == .knownTextAlignment)
+        #expect(selected.result.timingMethod == .attentionDTW)
+    }
+
+    struct MarkerFreeLyricsAligner: AudioLyricsAligning {
+        struct UnexpectedRecognition: Error {}
+
+        func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord] {
+            throw UnexpectedRecognition()
+        }
+
+        func alignLyrics(
+            _ audio: URL,
+            language: String,
+            lyrics: String
+        ) throws -> KnownTextAlignmentMeasurement {
+            KnownTextAlignmentMeasurement(
+                words: [
+                    TranscribedWord(text: "hello", start: 1, end: 1.2),
+                    TranscribedWord(text: "world", start: 1.2, end: 1.4),
+                ],
+                timingMethod: .attentionDTW
+            )
+        }
+    }
+
+    @Test("complete marker-free known-text alignment does not trigger weaker fallback passes")
+    func markerFreeKnownTextAlignmentStopsSearch() throws {
+        let selection = MusicvideoAnalysisRunner.selectLyricsAlignment(
+            lyrics: "hello world",
+            transcriber: MarkerFreeLyricsAligner(),
+            preferredSource: URL(fileURLWithPath: "/tmp/vocals.wav"),
+            preferredSourceName: "vocals",
+            song: URL(fileURLWithPath: "/tmp/mix.wav")
+        )
+
+        let selected = try #require(selection.attempt)
+        #expect(selected.source == "vocals")
+        #expect(selected.result.markerCount == 0)
+        #expect(selected.result.hasSuccessfulAlignment)
+        #expect(selected.result.timingEvidence == .knownTextAlignment)
+        #expect(selection.errors.isEmpty)
     }
 
     struct FailingLyricsAligner: AudioLyricsAligning {
@@ -446,7 +492,7 @@ struct AnalysisRunnerPlumbingTests {
             _ audio: URL,
             language: String,
             lyrics: String
-        ) throws -> [TranscribedWord] {
+        ) throws -> KnownTextAlignmentMeasurement {
             throw AlignmentFailure()
         }
     }

@@ -88,11 +88,18 @@ symlinks, and transfers that artifact to the pinned GitHub-hosted macOS 26 runne
 5. applies the pack's independent pre-interpretation gate;
 6. checks duration, BPM, boundary reduction, and every ordered section boundary and label against
    private, independently produced expectations; and
-7. pushes `analysis.json` plus `provenance.json` to the private report package.
+7. always pushes `provenance.json`, plus `analysis.json` and the runner-owned measurement proof
+   whenever available, to the private report package.
 
-The provenance record links the result to the immutable fixture reference, tree and file digests,
+Successful provenance links the result to the immutable fixture reference, tree and file digests,
 loaded pack version and bundle-tree digest, commit, workflow run, measured summary, actual optional
-audio-ML registration state, and gate outcome. It contains no runner-local source path.
+audio-ML registration state, alignment timing evidence and method, boundary-evidence kinds, and gate outcome.
+The gate also verifies the runner-owned measurement proof that binds the exact track, lyrics,
+alignment source, attention-DTW method, anchor counts, and canonical alignment bytes before accepting
+known-text timing. The source used for that measurement remains part of the phase's exact-byte lineage.
+Failure provenance records the exact private error and
+every identity known at that stage; a partial canonical artifact is retained beside it when available.
+Neither record contains a runner-local source path on a successful acceptance path.
 The app writes a redacted success summary and a redacted failure message. Full comparisons remain in
 the private report package. Workflow logs never print private expectations, fixture paths, source
 names, lyrics, labels, hashes, or media content.

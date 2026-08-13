@@ -997,7 +997,7 @@ struct HardStepIntakeTests {
                 ]]],
             ],
             "structure_resolution": [
-                "version": "adaptive-structure/v4",
+                "version": "adaptive-structure/v5",
                 "status": "resolved",
                 "method": "music_understanding_hierarchy",
                 "detector_sources": ["apple_music_understanding"],

@@ -45,13 +45,33 @@ public protocol ContextualAudioTranscribing: AudioTranscribing {
     ) throws -> [TranscribedWord]
 }
 
+/// The timing algorithm used by a host-owned known-text alignment measurement.
+public enum KnownTextAlignmentTimingMethod: String, Codable, Sendable, Equatable {
+    case attentionDTW = "attention_dtw"
+}
+
+/// A host-owned known-text measurement. Keeping this separate from ordinary ASR
+/// prevents protocol conformance alone from promoting recognition timestamps.
+public struct KnownTextAlignmentMeasurement: Sendable, Equatable {
+    public let words: [TranscribedWord]
+    public let timingMethod: KnownTextAlignmentTimingMethod
+
+    public init(
+        words: [TranscribedWord],
+        timingMethod: KnownTextAlignmentTimingMethod
+    ) {
+        self.words = words
+        self.timingMethod = timingMethod
+    }
+}
+
 /// Known-text lyric alignment whose returned timing remains acoustically measured.
 public protocol AudioLyricsAligning: AudioTranscribing {
     func alignLyrics(
         _ audio: URL,
         language: String,
         lyrics: String
-    ) throws -> [TranscribedWord]
+    ) throws -> KnownTextAlignmentMeasurement
 }
 
 /// Separated source stems written to disk. Any field is nil if the separator does

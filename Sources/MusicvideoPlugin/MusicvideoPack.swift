@@ -297,6 +297,10 @@ public struct MusicvideoPack: Pack {
         }
         registry.registerArtifactWriteRequirement("analysis") {
             try MusicvideoGateChecks.requireInterpretableAnalysis(dataRoot: $0)
+            try MusicvideoPipelineLineage.requireCurrent(
+                phase: "analysis",
+                dataRoot: $0
+            )
         }
         registerHardenedGate("brief", registry: registry) {
             try MusicvideoGateChecks.requireRealBrief(dataRoot: $0)

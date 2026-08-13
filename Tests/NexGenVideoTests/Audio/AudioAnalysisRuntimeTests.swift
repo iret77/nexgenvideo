@@ -1,14 +1,18 @@
+import Foundation
 import Testing
 @testable import NexGenEngine
 @testable import NexGenVideo
 
 @Suite("Audio analysis runtime")
 struct AudioAnalysisRuntimeTests {
-    @Test("production runtime registers every capability for the current platform")
+    @Test("macOS 26 production runtime keeps the future system adapter dormant")
     func registersPlatformCapabilities() {
         let registry = EngineRegistry()
 
-        AudioAnalysisRuntime.configure(registry)
+        AudioAnalysisRuntime.configure(
+            registry,
+            distributionMinimumSystemVersion: "26.0"
+        )
 
         #expect(registry.audioDecoder != nil)
         #expect(registry.transcriber != nil)
@@ -17,10 +21,41 @@ struct AudioAnalysisRuntimeTests {
         #expect(registry.stemSeparator != nil)
         #expect(registry.beatDetector != nil)
         #expect(registry.chordRecognizer != nil)
-        if #available(macOS 27.0, *) {
-            #expect(registry.musicUnderstandingAnalyzer != nil)
-        } else {
-            #expect(registry.musicUnderstandingAnalyzer == nil)
-        }
+        #expect(registry.musicUnderstandingAnalyzer == nil)
+    }
+
+    @Test("system adapter requires both a released distribution floor and runtime")
+    func musicUnderstandingReleasePolicy() {
+        let macOS26 = OperatingSystemVersion(
+            majorVersion: 26,
+            minorVersion: 0,
+            patchVersion: 0
+        )
+        let macOS27 = OperatingSystemVersion(
+            majorVersion: 27,
+            minorVersion: 0,
+            patchVersion: 0
+        )
+
+        #expect(!AudioAnalysisRuntime.enablesMusicUnderstanding(
+            distributionMinimumSystemVersion: "26.0",
+            runtime: macOS27
+        ))
+        #expect(!AudioAnalysisRuntime.enablesMusicUnderstanding(
+            distributionMinimumSystemVersion: "27.0",
+            runtime: macOS26
+        ))
+        #expect(AudioAnalysisRuntime.enablesMusicUnderstanding(
+            distributionMinimumSystemVersion: "27.0",
+            runtime: macOS27
+        ))
+        #expect(!AudioAnalysisRuntime.enablesMusicUnderstanding(
+            distributionMinimumSystemVersion: nil,
+            runtime: macOS27
+        ))
+        #expect(!AudioAnalysisRuntime.enablesMusicUnderstanding(
+            distributionMinimumSystemVersion: "preview",
+            runtime: macOS27
+        ))
     }
 }

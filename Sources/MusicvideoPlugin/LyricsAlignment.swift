@@ -28,9 +28,9 @@ public enum LyricsAlignment {
     /// behavior, which only ever anchored on exact tokens.
     private static let matchThreshold = 0.7
 
-    enum TimingEvidence: Sendable, Equatable {
-        case recognizedSpeech
-        case knownTextAlignment
+    enum TimingEvidence: String, Codable, Sendable, Equatable {
+        case recognizedSpeech = "recognized_speech"
+        case knownTextAlignment = "known_text_alignment"
     }
 
     struct Result: Sendable, Equatable {
@@ -44,11 +44,23 @@ public enum LyricsAlignment {
         let mappedMarkerCount: Int
         let reliableMarkerCount: Int
         let timingEvidence: TimingEvidence
+        let timingMethod: KnownTextAlignmentTimingMethod?
 
         var hasReliableStructureEvidence: Bool {
             markerCount > 0
                 && mappedMarkerCount == markerCount
                 && reliableMarkerCount == markerCount
+        }
+
+        var hasSuccessfulAlignment: Bool {
+            guard lyricLineCount > 0,
+                  mappedLineCount == lyricLineCount,
+                  lyricTokenCount > 0 else { return false }
+            return Double(matchedTokenCount) / Double(lyricTokenCount) >= 0.7
+        }
+
+        var shouldStopAlignmentSearch: Bool {
+            hasReliableStructureEvidence || (markerCount == 0 && hasSuccessfulAlignment)
         }
     }
 
@@ -144,11 +156,60 @@ public enum LyricsAlignment {
 
     static func alignDetailed(
         lyrics: String,
+        transcript: [TranscriptToken]
+    ) -> Result {
+        alignDetailed(
+            lyrics: lyrics,
+            transcript: transcript,
+            timingEvidence: .recognizedSpeech,
+            timingMethod: nil
+        )
+    }
+
+    static func alignKnownTextDetailed(
+        lyrics: String,
+        measurement: KnownTextAlignmentMeasurement
+    ) -> Result {
+        alignDetailed(
+            lyrics: lyrics,
+            transcript: measurement.words.map {
+                TranscriptToken(
+                    text: $0.text,
+                    start: $0.start,
+                    end: $0.end,
+                    score: $0.confidence
+                )
+            },
+            timingEvidence: .knownTextAlignment,
+            timingMethod: measurement.timingMethod
+        )
+    }
+
+    private static func alignDetailed(
+        lyrics: String,
         transcript: [TranscriptToken],
-        timingEvidence: TimingEvidence = .recognizedSpeech
+        timingEvidence: TimingEvidence,
+        timingMethod: KnownTextAlignmentTimingMethod?
     ) -> Result {
         let lyricLines = parseLyrics(lyrics)
-        let asr = transcript.filter { !normalize($0.text).isEmpty }
+        let asr = transcript.enumerated()
+            .filter {
+                $0.element.start.isFinite
+                    && $0.element.end.isFinite
+                    && $0.element.start >= 0
+                    && $0.element.end >= $0.element.start
+                    && !normalize($0.element.text).isEmpty
+            }
+            .sorted {
+                if $0.element.start != $1.element.start {
+                    return $0.element.start < $1.element.start
+                }
+                if $0.element.end != $1.element.end {
+                    return $0.element.end < $1.element.end
+                }
+                return $0.offset < $1.offset
+            }
+            .map(\.element)
         let lyricTokenCount = lyricLines.reduce(0) { $0 + $1.tokens.count }
         let markerCount = lyricLines.filter { $0.marker != nil }.count
         guard !lyricLines.isEmpty, !asr.isEmpty else {
@@ -157,7 +218,8 @@ public enum LyricsAlignment {
                 lyricTokenCount: lyricTokenCount, transcriptTokenCount: asr.count,
                 matchedTokenCount: 0,
                 markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0,
-                timingEvidence: timingEvidence
+                timingEvidence: timingEvidence,
+                timingMethod: timingMethod
             )
         }
         let asrKeys = asr.map { normalize($0.text) }
@@ -172,7 +234,8 @@ public enum LyricsAlignment {
                 lines: [], lyricLineCount: lyricLines.count, mappedLineCount: 0,
                 lyricTokenCount: 0, transcriptTokenCount: asr.count, matchedTokenCount: 0,
                 markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0,
-                timingEvidence: timingEvidence
+                timingEvidence: timingEvidence,
+                timingMethod: timingMethod
             )
         }
 
@@ -210,7 +273,8 @@ public enum LyricsAlignment {
             markerCount: markerCount,
             mappedMarkerCount: mappedMarkerCount,
             reliableMarkerCount: reliableMarkerCount,
-            timingEvidence: timingEvidence
+            timingEvidence: timingEvidence,
+            timingMethod: timingMethod
         )
     }
 

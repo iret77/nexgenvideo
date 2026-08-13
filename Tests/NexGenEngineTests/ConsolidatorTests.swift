@@ -113,7 +113,7 @@ struct ConsolidatorTests {
         )
 
         #expect(result.resolution.status == .resolved)
-        #expect(result.resolution.version == "adaptive-structure/v4")
+        #expect(result.resolution.version == "adaptive-structure/v5")
         #expect(result.resolution.method == "music_understanding_hierarchy")
         #expect(result.resolution.detectorSources == ["apple_music_understanding"])
         #expect(result.resolution.candidateBoundaryCount == 12)
@@ -288,8 +288,8 @@ struct ConsolidatorTests {
         #expect(result.resolution.boundaryEvidence.last?.kind == .detectorConsensus)
     }
 
-    @Test("reliable vocal alignment recovers a missed structural change")
-    func vocalAlignmentRecoversMissedBoundary() {
+    @Test("speech recognition cannot create a structural boundary")
+    func speechRecognitionDoesNotCreateBoundary() {
         let report = LyricsAlignment.alignDetailed(
             lyrics: "[Verse]\nopen words\n[Bridge]\nwide open",
             transcript: [
@@ -311,25 +311,25 @@ struct ConsolidatorTests {
         )
 
         #expect(result.resolution.status == .resolved)
-        #expect(result.sections.map(\.start) == [0, 16, 40, 58])
-        #expect(result.sections[1].source == "measured_vocal_alignment")
-        #expect(result.sections[2].source == "measured_vocal_alignment")
-        #expect(result.resolution.boundaryEvidence.filter {
-            $0.kind == .lyricsAlignedVocal
-        }.count == 2)
+        #expect(result.sections.map(\.start) == [0, 58])
+        #expect(result.resolution.resolvedAlignmentMarkerCount == 0)
+        #expect(result.resolution.boundaryEvidence.map(\.kind) == [.detectorConsensus])
+        #expect(result.anomalies.filter { $0.kind == "unmeasured_lyric_marker" }.count == 2)
     }
 
     @Test("known-text lyric timing remains distinguishable from generic recognition")
     func forcedAlignmentEvidenceIsPersisted() {
-        let report = LyricsAlignment.alignDetailed(
+        let report = LyricsAlignment.alignKnownTextDetailed(
             lyrics: "[Verse]\nopen words\n[Bridge]\nwide open",
-            transcript: [
-                .init(text: "open", start: 16.1, end: 16.3),
-                .init(text: "words", start: 16.3, end: 16.5),
-                .init(text: "wide", start: 40.1, end: 40.3),
-                .init(text: "open", start: 40.3, end: 40.5),
-            ],
-            timingEvidence: .knownTextAlignment
+            measurement: KnownTextAlignmentMeasurement(
+                words: [
+                    .init(text: "open", start: 16.1, end: 16.3),
+                    .init(text: "words", start: 16.3, end: 16.5),
+                    .init(text: "wide", start: 40.1, end: 40.3),
+                    .init(text: "open", start: 40.3, end: 40.5),
+                ],
+                timingMethod: .attentionDTW
+            )
         )
         let result = Consolidator.consolidateDetailed(
             candidates: [

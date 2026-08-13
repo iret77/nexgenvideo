@@ -6,7 +6,7 @@ import NexGenEngine
 @MainActor
 enum ExampleAudioAnalysisSelfTest {
     private static let manifestSchema = "nexgenvideo.example-fixtures/v2"
-    private static let reportSchema = "nexgenvideo.example-analysis-report/v5"
+    private static let reportSchema = "nexgenvideo.example-analysis-report/v6"
 
     private struct Configuration {
         let packURL: URL
@@ -18,6 +18,13 @@ enum ExampleAudioAnalysisSelfTest {
         let commit: String
         let runID: String
         let runAttempt: String
+
+        static func reportDirectory(environment: [String: String]) -> URL? {
+            guard let value = environment["NGV_EXAMPLE_REPORT_DIR"], !value.isEmpty else {
+                return nil
+            }
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
 
         init?(environment: [String: String]) throws {
             guard let pack = environment["NGV_EXAMPLE_ANALYSIS_PACK"], !pack.isEmpty else {
@@ -122,6 +129,9 @@ enum ExampleAudioAnalysisSelfTest {
         let phraseCount: Int
         let candidateBoundaryCount: Int
         let acceptedBoundaryCount: Int
+        let alignmentTimingEvidence: String?
+        let alignmentTimingMethod: String?
+        let boundaryEvidenceKinds: [String]
         let sectionBoundaryTimesS: [Double]
 
         enum CodingKeys: String, CodingKey {
@@ -136,6 +146,9 @@ enum ExampleAudioAnalysisSelfTest {
             case phraseCount = "phrase_count"
             case candidateBoundaryCount = "candidate_boundary_count"
             case acceptedBoundaryCount = "accepted_boundary_count"
+            case alignmentTimingEvidence = "alignment_timing_evidence"
+            case alignmentTimingMethod = "alignment_timing_method"
+            case boundaryEvidenceKinds = "boundary_evidence_kinds"
             case sectionBoundaryTimesS = "section_boundary_times_s"
         }
     }
@@ -173,16 +186,16 @@ enum ExampleAudioAnalysisSelfTest {
     private struct Report: Encodable {
         let schema: String
         let fixtureReference: String
-        let fixtureTreeSHA256: String
+        let fixtureTreeSHA256: String?
         let dataset: String
-        let sourceFiles: [FixtureFile]
-        let expectations: FixtureExpectations
-        let packVersion: String
-        let packTreeSHA256: String
+        let sourceFiles: [FixtureFile]?
+        let expectations: FixtureExpectations?
+        let packVersion: String?
+        let packTreeSHA256: String?
         let commit: String
         let runID: String
         let runAttempt: String
-        let analysis: AnalysisSummary
+        let analysis: AnalysisSummary?
         let verification: Verification
         let acceptance: Acceptance
 
@@ -210,31 +223,36 @@ enum ExampleAudioAnalysisSelfTest {
     }
 
     static func runIfRequested() {
+        let environment = ProcessInfo.processInfo.environment
+        let reportDirectory = Configuration.reportDirectory(environment: environment)
+        var configuration: Configuration?
         do {
-            guard let configuration = try Configuration(
-                environment: ProcessInfo.processInfo.environment
+            guard let requested = try Configuration(
+                environment: environment
             ) else { return }
-            let summary = try run(configuration)
-            let boundaries = summary.sectionBoundaryTimesS
-                .map { String(format: "%.3f", $0) }
-                .joined(separator: ",")
-            let message = "SELFTEST_EXAMPLE_ANALYSIS_OK dataset=\(configuration.datasetID) "
-                + "duration=\(String(format: "%.3f", summary.durationS)) "
-                + "bpm=\(String(format: "%.3f", summary.bpm)) "
-                + "beats=\(summary.beatCount) downbeats=\(summary.downbeatCount) "
-                + "structure_status=\(summary.structureStatus) "
-                + "structure_method=\(summary.structureMethod) "
-                + "segments=\(summary.segmentCount) phrases=\(summary.phraseCount) "
-                + "candidate_boundaries=\(summary.candidateBoundaryCount) "
-                + "accepted_boundaries=\(summary.acceptedBoundaryCount) "
-                + "sections=\(summary.sectionCount) boundaries_s=\(boundaries)\n"
+            configuration = requested
+            _ = try run(requested)
+            let message = "SELFTEST_EXAMPLE_ANALYSIS_OK report=private\n"
             FileHandle.standardOutput.write(Data(message.utf8))
             exit(0)
         } catch {
-            let detail = (error as? Failure)?.message
-                ?? String(reflecting: type(of: error))
+            if let configuration {
+                try? writeFailureReportIfNeeded(
+                    configuration: configuration,
+                    error: error
+                )
+            } else if let reportDirectory {
+                try? writeInitializationFailureReport(
+                    reportDirectory: reportDirectory,
+                    environment: environment,
+                    error: error
+                )
+            }
+            let destination = reportDirectory == nil
+                ? "configuration_failed_before_report_destination"
+                : "inspect_private_report"
             FileHandle.standardError.write(
-                Data("SELFTEST_EXAMPLE_ANALYSIS_FAIL \(detail)\n".utf8)
+                Data("SELFTEST_EXAMPLE_ANALYSIS_FAIL \(destination)\n".utf8)
             )
             exit(1)
         }
@@ -284,7 +302,8 @@ enum ExampleAudioAnalysisSelfTest {
             throw Failure("the macOS 26 acceptance run unexpectedly activated the macOS 27 adapter")
         }
         guard let runner = registry.phases["analysis"],
-              let artifactGate = registry.artifactWriteRequirements["analysis"] else {
+              let artifactGate = registry.artifactWriteRequirements["analysis"],
+              let lineageProvider = registry.phaseLineageProviders["analysis"] else {
             throw Failure("loaded musicvideo pack has no complete analysis contract")
         }
 
@@ -304,14 +323,47 @@ enum ExampleAudioAnalysisSelfTest {
         for step in registry.deterministicSteps where step.phase == "analysis" {
             try step.run(dataRoot)
         }
-        try executeRunner(runner, dataRoot: dataRoot)
-        try artifactGate(dataRoot)
+        do {
+            try executeRunner(runner, dataRoot: dataRoot)
+            try PipelineLineageStore.record(
+                phase: "analysis",
+                snapshot: try lineageProvider(dataRoot),
+                dataRoot: dataRoot
+            )
+        } catch {
+            try? preserveAnalysisArtifact(
+                dataRoot: dataRoot,
+                reportDirectory: configuration.reportDirectory
+            )
+            throw error
+        }
+        let artifactGateFailure: String?
+        do {
+            try artifactGate(dataRoot)
+            artifactGateFailure = nil
+        } catch let blocked as GateBlocked {
+            artifactGateFailure = blocked.message
+        } catch {
+            artifactGateFailure = error.localizedDescription
+        }
+        try FileManager.default.createDirectory(
+            at: configuration.reportDirectory,
+            withIntermediateDirectories: true
+        )
+        try preserveMeasurementProof(
+            dataRoot: dataRoot,
+            reportDirectory: configuration.reportDirectory
+        )
 
         guard let artifactURL = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
               FileManager.default.fileExists(atPath: artifactURL.path) else {
             throw Failure("analysis runner did not write its canonical artifact")
         }
         let artifactData = try Data(contentsOf: artifactURL)
+        try artifactData.write(
+            to: configuration.reportDirectory.appendingPathComponent("analysis.json"),
+            options: .atomic
+        )
         guard let object = try JSONSerialization.jsonObject(with: artifactData) as? [String: Any],
               let duration = number(object["duration_s"]),
               let bpm = number(object["bpm"]),
@@ -326,34 +378,58 @@ enum ExampleAudioAnalysisSelfTest {
               let acceptedCount = integer(resolution["accepted_boundary_count"]) else {
             throw Failure("canonical analysis is missing its measured summary or resolution record")
         }
-        guard status == "resolved" else {
-            throw Failure("canonical structure status is \(status), expected resolved")
+        var acceptanceFailures = artifactGateFailure.map {
+            ["artifact write gate failed: \($0)"]
+        } ?? []
+        if status != "resolved" {
+            acceptanceFailures.append("canonical structure status is \(status), expected resolved")
         }
-        guard method == "per_boundary_evidence" else {
-            throw Failure("canonical structure method is \(method), expected per_boundary_evidence")
+        if method != "per_boundary_evidence" {
+            acceptanceFailures.append(
+                "canonical structure method is \(method), expected per_boundary_evidence"
+            )
         }
-        guard resolution["hierarchy"] == nil else {
-            throw Failure("macOS 26 analysis unexpectedly persisted a system hierarchy")
+        if resolution["hierarchy"] != nil {
+            acceptanceFailures.append("macOS 26 analysis unexpectedly persisted a system hierarchy")
         }
         let downbeatSource = object["downbeat_source"] as? String ?? "missing"
-        guard downbeatSource == "beat-transformer" else {
-            throw Failure("downbeat source is \(downbeatSource), expected beat-transformer")
+        if downbeatSource != "beat-transformer" {
+            acceptanceFailures.append(
+                "downbeat source is \(downbeatSource), expected beat-transformer"
+            )
         }
-        guard sections.count == acceptedCount + 1 else {
-            throw Failure("canonical section count does not match accepted boundary evidence")
+        if sections.count != acceptedCount + 1 {
+            acceptanceFailures.append(
+                "canonical section count does not match accepted boundary evidence"
+            )
         }
-        guard diagnostic(diagnostics, stage: "native_dsp", status: "succeeded"),
-              diagnostic(diagnostics, stage: "music_understanding", status: "unavailable"),
-              diagnostic(diagnostics, stage: "stem_separation", status: "succeeded"),
-              diagnostic(diagnostics, stage: "neural_beat_grid", status: "succeeded"),
-              diagnostic(diagnostics, stage: "chord_recognition", status: "succeeded") else {
-            throw Failure("analysis did not exercise the complete macOS 26 production stack")
+        if !diagnostic(diagnostics, stage: "native_dsp", status: "succeeded")
+            || !diagnostic(diagnostics, stage: "music_understanding", status: "unavailable")
+            || !diagnostic(diagnostics, stage: "stem_separation", status: "succeeded")
+            || !diagnostic(diagnostics, stage: "neural_beat_grid", status: "succeeded")
+            || !diagnostic(diagnostics, stage: "chord_recognition", status: "succeeded") {
+            acceptanceFailures.append(
+                "analysis did not exercise the complete macOS 26 production stack"
+            )
         }
         if !lyricsFiles.isEmpty {
-            guard diagnostic(diagnostics, stage: "lyrics_input", status: "succeeded"),
-                  diagnostic(diagnostics, stage: "lyrics_alignment", status: "succeeded") else {
+            if !diagnostic(diagnostics, stage: "lyrics_input", status: "succeeded")
+                || !diagnostic(diagnostics, stage: "lyrics_alignment", status: "succeeded") {
                 let detail = diagnosticDetail(diagnostics, stage: "lyrics_alignment")
-                throw Failure("the production lyric alignment did not resolve the fixture: \(detail)")
+                acceptanceFailures.append(
+                    "the production lyric alignment did not resolve the fixture: \(detail)"
+                )
+            }
+            if resolution["alignment_timing_evidence"] as? String
+                != "known_text_alignment" {
+                acceptanceFailures.append(
+                    "the production run did not retain measured known-text lyric timing"
+                )
+            }
+            if resolution["alignment_timing_method"] as? String != "attention_dtw" {
+                acceptanceFailures.append(
+                    "the production run did not retain attention-DTW timing provenance"
+                )
             }
         }
         func verifiedStatus(_ stage: String) -> String {
@@ -368,7 +444,6 @@ enum ExampleAudioAnalysisSelfTest {
             beatGrid: verifiedStatus("neural_beat_grid"),
             chordRecognition: verifiedStatus("chord_recognition")
         )
-        var acceptanceFailures: [String] = []
         if abs(duration - expectations.audio.durationS) > expectations.audio.durationToleranceS {
             acceptanceFailures.append(
                 "duration \(duration)s is outside the fixture expectation "
@@ -417,14 +492,16 @@ enum ExampleAudioAnalysisSelfTest {
             acceptanceFailures.append("canonical section labels do not match the independent expectation")
         }
         let artifactText = String(decoding: artifactData, as: UTF8.self)
-        guard ![configuration.fixtureRoot.path, projectHome.path].contains(where: {
+        if [configuration.fixtureRoot.path, projectHome.path].contains(where: {
             artifactText.contains($0)
-        }) else {
-            throw Failure("analysis artifact leaked a runner-local path")
+        }) {
+            acceptanceFailures.append("analysis artifact leaked a runner-local path")
         }
         let hierarchy = resolution["hierarchy"] as? [String: Any]
         let segmentCount = (hierarchy?["segments"] as? [[String: Any]])?.count ?? 0
         let phraseCount = (hierarchy?["phrases"] as? [[String: Any]])?.count ?? 0
+        let boundaryEvidenceKinds = (resolution["boundary_evidence"] as? [[String: Any]] ?? [])
+            .compactMap { $0["kind"] as? String }
 
         let summary = AnalysisSummary(
             artifact: "analysis.json",
@@ -440,6 +517,9 @@ enum ExampleAudioAnalysisSelfTest {
             phraseCount: phraseCount,
             candidateBoundaryCount: candidateCount,
             acceptedBoundaryCount: acceptedCount,
+            alignmentTimingEvidence: resolution["alignment_timing_evidence"] as? String,
+            alignmentTimingMethod: resolution["alignment_timing_method"] as? String,
+            boundaryEvidenceKinds: boundaryEvidenceKinds,
             sectionBoundaryTimesS: sectionBoundaryTimes
         )
         try writeReport(
@@ -450,6 +530,7 @@ enum ExampleAudioAnalysisSelfTest {
             packVersion: record.version,
             packTreeSHA256: packTreeSHA256,
             optionalAudioML: optionalAudioML,
+            artifactWriteGate: artifactGateFailure == nil ? "passed" : "failed",
             artifactData: artifactData,
             summary: summary,
             acceptanceFailures: acceptanceFailures
@@ -602,6 +683,137 @@ enum ExampleAudioAnalysisSelfTest {
         try completion.result().get()
     }
 
+    private static func preserveAnalysisArtifact(
+        dataRoot: URL,
+        reportDirectory: URL
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: reportDirectory,
+            withIntermediateDirectories: true
+        )
+        if let artifactURL = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
+           FileManager.default.fileExists(atPath: artifactURL.path) {
+            try Data(contentsOf: artifactURL).write(
+                to: reportDirectory.appendingPathComponent("analysis.json"),
+                options: .atomic
+            )
+        }
+        try preserveMeasurementProof(
+            dataRoot: dataRoot,
+            reportDirectory: reportDirectory
+        )
+    }
+
+    private static func preserveMeasurementProof(
+        dataRoot: URL,
+        reportDirectory: URL
+    ) throws {
+        guard let artifactURL = AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot)
+        else { return }
+        let proofURL = artifactURL.deletingPathExtension()
+            .appendingPathExtension("measurement-proof.json")
+        guard FileManager.default.fileExists(atPath: proofURL.path) else { return }
+        try Data(contentsOf: proofURL).write(
+            to: reportDirectory.appendingPathComponent("measurement-proof.json"),
+            options: .atomic
+        )
+    }
+
+    private static func writeFailureReportIfNeeded(
+        configuration: Configuration,
+        error: any Error
+    ) throws {
+        let destination = configuration.reportDirectory
+            .appendingPathComponent("provenance.json")
+        guard !FileManager.default.fileExists(atPath: destination.path) else { return }
+        try FileManager.default.createDirectory(
+            at: configuration.reportDirectory,
+            withIntermediateDirectories: true
+        )
+        let detail = (error as? Failure)?.message
+            ?? (error as? LocalizedError)?.errorDescription
+            ?? String(reflecting: error)
+        let report = Report(
+            schema: reportSchema,
+            fixtureReference: configuration.fixtureReference,
+            fixtureTreeSHA256: nil,
+            dataset: configuration.datasetID,
+            sourceFiles: nil,
+            expectations: nil,
+            packVersion: nil,
+            packTreeSHA256: nil,
+            commit: configuration.commit,
+            runID: configuration.runID,
+            runAttempt: configuration.runAttempt,
+            analysis: nil,
+            verification: Verification(
+                fixtureIntegrity: "not_completed",
+                artifactWriteGate: "not_completed",
+                immutableFixtureReference: "passed",
+                optionalAudioML: OptionalAudioML(
+                    transcription: "unknown",
+                    stemSeparation: "unknown",
+                    beatGrid: "unknown",
+                    chordRecognition: "unknown"
+                ),
+                systemStructure: "unknown"
+            ),
+            acceptance: Acceptance(status: "failed", failures: [detail])
+        )
+        try writeProvenance(report, to: destination)
+    }
+
+    private static func writeInitializationFailureReport(
+        reportDirectory: URL,
+        environment: [String: String],
+        error: any Error
+    ) throws {
+        let destination = reportDirectory.appendingPathComponent("provenance.json")
+        guard !FileManager.default.fileExists(atPath: destination.path) else { return }
+        try FileManager.default.createDirectory(
+            at: reportDirectory,
+            withIntermediateDirectories: true
+        )
+        let detail = (error as? LocalizedError)?.errorDescription
+            ?? String(reflecting: error)
+        let report = Report(
+            schema: reportSchema,
+            fixtureReference: environment["NGV_EXAMPLE_REGISTRY_REFERENCE"] ?? "unavailable",
+            fixtureTreeSHA256: nil,
+            dataset: environment["NGV_EXAMPLE_DATASET"] ?? "unavailable",
+            sourceFiles: nil,
+            expectations: nil,
+            packVersion: nil,
+            packTreeSHA256: nil,
+            commit: environment["NGV_GIT_COMMIT"] ?? "unavailable",
+            runID: environment["GITHUB_RUN_ID"] ?? "local",
+            runAttempt: environment["GITHUB_RUN_ATTEMPT"] ?? "1",
+            analysis: nil,
+            verification: Verification(
+                fixtureIntegrity: "not_completed",
+                artifactWriteGate: "not_completed",
+                immutableFixtureReference: "not_completed",
+                optionalAudioML: OptionalAudioML(
+                    transcription: "unknown",
+                    stemSeparation: "unknown",
+                    beatGrid: "unknown",
+                    chordRecognition: "unknown"
+                ),
+                systemStructure: "unknown"
+            ),
+            acceptance: Acceptance(status: "failed", failures: [detail])
+        )
+        try writeProvenance(report, to: destination)
+    }
+
+    private static func writeProvenance(_ report: Report, to destination: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        var data = try encoder.encode(report)
+        data.append(0x0A)
+        try data.write(to: destination, options: .atomic)
+    }
+
     private static func writeReport(
         configuration: Configuration,
         manifest: FixtureManifest,
@@ -610,6 +822,7 @@ enum ExampleAudioAnalysisSelfTest {
         packVersion: String,
         packTreeSHA256: String,
         optionalAudioML: OptionalAudioML,
+        artifactWriteGate: String,
         artifactData: Data,
         summary: AnalysisSummary,
         acceptanceFailures: [String]
@@ -637,7 +850,7 @@ enum ExampleAudioAnalysisSelfTest {
             analysis: summary,
             verification: Verification(
                 fixtureIntegrity: "passed",
-                artifactWriteGate: "passed",
+                artifactWriteGate: artifactWriteGate,
                 immutableFixtureReference: "passed",
                 optionalAudioML: optionalAudioML,
                 systemStructure: "unavailable_on_macos_26"
@@ -647,13 +860,9 @@ enum ExampleAudioAnalysisSelfTest {
                 failures: acceptanceFailures
             )
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        var data = try encoder.encode(report)
-        data.append(0x0A)
-        try data.write(
-            to: configuration.reportDirectory.appendingPathComponent("provenance.json"),
-            options: .atomic
+        try writeProvenance(
+            report,
+            to: configuration.reportDirectory.appendingPathComponent("provenance.json")
         )
     }
 }

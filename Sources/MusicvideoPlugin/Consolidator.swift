@@ -3,7 +3,7 @@ import NexGenEngine
 
 /// Resolves canonical song form from the strongest measured evidence available at runtime.
 public enum Consolidator {
-    static let resolutionVersion = "adaptive-structure/v4"
+    static let resolutionVersion = "adaptive-structure/v5"
     static let systemSource = "apple_music_understanding"
     public static let toleranceS = 2.0
     public static let downbeatSnapS = 0.5
@@ -33,7 +33,6 @@ public enum Consolidator {
         case systemHierarchy = "system_hierarchy"
         case detectorConsensus = "detector_consensus"
         case lyricsSupportedAcoustic = "lyrics_supported_acoustic"
-        case lyricsAlignedVocal = "lyrics_aligned_vocal"
         case lyricsKnownTextAlignment = "lyrics_known_text_alignment"
         case singleDetector = "single_detector"
     }
@@ -68,6 +67,8 @@ public enum Consolidator {
         let consensusBoundaryCount: Int
         let alignmentMarkerCount: Int
         let resolvedAlignmentMarkerCount: Int
+        let alignmentTimingEvidence: LyricsAlignment.TimingEvidence?
+        let alignmentTimingMethod: KnownTextAlignmentTimingMethod?
         let acceptedBoundaryCount: Int
         let discardedBoundaryCount: Int
         let boundaryEvidence: [BoundaryEvidence]
@@ -82,6 +83,8 @@ public enum Consolidator {
             case consensusBoundaryCount = "consensus_boundary_count"
             case alignmentMarkerCount = "alignment_marker_count"
             case resolvedAlignmentMarkerCount = "resolved_alignment_marker_count"
+            case alignmentTimingEvidence = "alignment_timing_evidence"
+            case alignmentTimingMethod = "alignment_timing_method"
             case acceptedBoundaryCount = "accepted_boundary_count"
             case discardedBoundaryCount = "discarded_boundary_count"
             case boundaryEvidence = "boundary_evidence"
@@ -249,6 +252,8 @@ public enum Consolidator {
             consensusBoundaryCount: 0,
             alignmentMarkerCount: alignmentReport?.markerCount ?? markerLines.count,
             resolvedAlignmentMarkerCount: resolvedMarkers,
+            alignmentTimingEvidence: alignmentReport?.timingEvidence,
+            alignmentTimingMethod: alignmentReport?.timingMethod,
             acceptedBoundaryCount: internalStarts.count,
             discardedBoundaryCount: native.count,
             boundaryEvidence: evidence,
@@ -384,14 +389,23 @@ public enum Consolidator {
                 if let match = matches.first {
                     measuredBoundary = match
                     evidenceKind = .lyricsSupportedAcoustic
-                } else {
+                } else if alignmentReport?.timingEvidence == .knownTextAlignment,
+                          alignmentReport?.timingMethod == .attentionDTW {
                     measuredBoundary = BoundaryGroup(
                         time: target,
                         times: [],
                         sources: ["whisper_alignment"]
                     )
-                    evidenceKind = alignmentReport?.timingEvidence == .knownTextAlignment
-                        ? .lyricsKnownTextAlignment : .lyricsAlignedVocal
+                    evidenceKind = .lyricsKnownTextAlignment
+                } else {
+                    anomalies.append(
+                        Anomaly(
+                            kind: "unmeasured_lyric_marker",
+                            time: target,
+                            detail: "Speech recognition found a lyric marker without nearby acoustic boundary evidence."
+                        )
+                    )
+                    continue
                 }
                 guard measuredBoundary.time > 0.01,
                       measuredBoundary.time < durationS - 0.01 else {
@@ -433,9 +447,15 @@ public enum Consolidator {
         }
         if allMarkersResolved {
             let lastMarker = markerBoundaries.max() ?? 0
-            if let terminal = consensusByStrength.first(where: {
-                $0.time - lastMarker >= minimumConsensusSpan
-                    && durationS - $0.time >= minimumTerminalSpan
+            let terminalTime = preferredTerminalBoundary(
+                consensusByStrength.map { (time: $0.time, sourceCount: $0.sources.count) },
+                after: lastMarker,
+                durationS: durationS,
+                minimumSpan: minimumConsensusSpan,
+                minimumTerminalSpan: minimumTerminalSpan
+            )
+            if let terminal = terminalTime.flatMap({ time in
+                consensusByStrength.first { $0.time == time }
             }) {
                 selected[terminal.time] = SelectedBoundary(
                     group: terminal,
@@ -500,7 +520,7 @@ public enum Consolidator {
         case .resolved where homogeneousConsensus:
             detail = "Independent acoustic detectors found no internal structural boundary."
         case .resolved:
-            detail = "Every canonical boundary has measured acoustic or reliable lyric-alignment evidence on the bar grid."
+            detail = "Every canonical boundary has measured acoustic or known-text alignment evidence on the bar grid."
         case .reviewRequired:
             detail = "The bar-aligned structure contains single-detector evidence; review every section before approval."
         case .needsReview where measuredBarDuration == nil:
@@ -526,9 +546,6 @@ public enum Consolidator {
                 case .lyricsSupportedAcoustic:
                     source = "measured_alignment_fusion"
                     confidence = 0.9
-                case .lyricsAlignedVocal:
-                    source = "measured_vocal_alignment"
-                    confidence = 0.8
                 case .lyricsKnownTextAlignment:
                     source = "measured_known_text_alignment"
                     confidence = 0.75
@@ -593,6 +610,8 @@ public enum Consolidator {
                 consensusBoundaryCount: consensusGroups.count,
                 alignmentMarkerCount: alignmentReport?.markerCount ?? markers.count,
                 resolvedAlignmentMarkerCount: resolvedMarkers,
+                alignmentTimingEvidence: alignmentReport?.timingEvidence,
+                alignmentTimingMethod: alignmentReport?.timingMethod,
                 acceptedBoundaryCount: accepted.count,
                 discardedBoundaryCount: max(0, deduplicated.count - acceptedCandidateCount),
                 boundaryEvidence: evidence,
@@ -600,6 +619,27 @@ public enum Consolidator {
                 detail: detail
             )
         )
+    }
+
+    static func preferredTerminalBoundary(
+        _ candidates: [(time: Double, sourceCount: Int)],
+        after lastMarker: Double,
+        durationS: Double,
+        minimumSpan: Double,
+        minimumTerminalSpan: Double
+    ) -> Double? {
+        candidates
+            .filter {
+                $0.time - lastMarker >= minimumSpan
+                    && durationS - $0.time >= minimumTerminalSpan
+            }
+            .sorted {
+                if $0.sourceCount != $1.sourceCount {
+                    return $0.sourceCount > $1.sourceCount
+                }
+                return $0.time < $1.time
+            }
+            .first?.time
     }
 
     private static func normalizedHierarchy(

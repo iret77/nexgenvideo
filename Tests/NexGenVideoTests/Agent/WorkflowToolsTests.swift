@@ -40,6 +40,17 @@ struct WorkflowToolsTests {
         try ProjectPluginSettings.setActivePlugin(pack, projectURL: home)
     }
 
+    private func recordAnalysisLineage(dataRoot: URL) throws {
+        PackCatalog.register(MusicvideoPack())
+        let registry = PackCatalog.registry(activePack: "musicvideo")
+        let provider = try #require(registry.phaseLineageProviders["analysis"])
+        try PipelineLineageStore.record(
+            phase: "analysis",
+            snapshot: try provider(dataRoot),
+            dataRoot: dataRoot
+        )
+    }
+
     private func minimalShotlist(
         project: String = "demo",
         keyframeStrategy: KeyframeStrategy = .start,
@@ -153,11 +164,24 @@ struct WorkflowToolsTests {
         let songHash = SHA256.hash(data: try Data(contentsOf: audio))
             .map { String(format: "%02x", $0) }
             .joined()
+        let lyrics = "[Intro]\nopening line\n[Verse]\nverse line"
+        let lyricsURL = dataRoot.appendingPathComponent("lyrics/lyrics.txt")
+        try FileManager.default.createDirectory(
+            at: lyricsURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(lyrics.utf8).write(to: lyricsURL)
         let analysis = dataRoot.appendingPathComponent("analysis/song.json")
         try FileManager.default.createDirectory(
             at: analysis.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        let alignmentSource = dataRoot.appendingPathComponent("analysis/stems/vocals.wav")
+        try FileManager.default.createDirectory(
+            at: alignmentSource.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("measured-vocals".utf8).write(to: alignmentSource)
         let object: [String: Any] = [
             "schema": "analysis/v3",
             "project": "demo",
@@ -189,7 +213,7 @@ struct WorkflowToolsTests {
                 ]],
             ],
             "structure_resolution": [
-                "version": "adaptive-structure/v4",
+                "version": "adaptive-structure/v5",
                 "status": "resolved",
                 "method": "music_understanding_hierarchy",
                 "detector_sources": ["apple_music_understanding"],
@@ -198,6 +222,7 @@ struct WorkflowToolsTests {
                 "consensus_boundary_count": 0,
                 "alignment_marker_count": 2,
                 "resolved_alignment_marker_count": 2,
+                "alignment_timing_evidence": "recognized_speech",
                 "accepted_boundary_count": 1,
                 "discarded_boundary_count": 2,
                 "boundary_evidence": [
@@ -228,6 +253,11 @@ struct WorkflowToolsTests {
                 "stage": "music_understanding",
                 "status": "succeeded",
                 "detail": "Measured system hierarchy.",
+            ], [
+                "stage": "lyrics_alignment",
+                "status": "succeeded",
+                "detail": "Measured recognized-speech alignment.",
+                "timing_evidence": "recognized_speech",
             ]],
             "alignment": [
                 ["start": 0.0, "end": 1.0, "text": "opening line", "section_marker": "intro", "words": [
@@ -253,6 +283,27 @@ struct WorkflowToolsTests {
             withJSONObject: object,
             options: [.prettyPrinted, .sortedKeys]
         ).write(to: analysis)
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: "demo",
+                songSHA256: songHash,
+                lyricsAlignment: AnalysisMeasurementProof.LyricsAlignmentProof(
+                    sourcePath: "analysis/stems/vocals.wav",
+                    sourceSHA256: try FileDigest.sha256(of: alignmentSource),
+                    lyricsSHA256: AnalysisMeasurementProofStore.lyricsFingerprint(lyrics),
+                    alignmentSHA256: try AnalysisMeasurementProofStore.alignmentFingerprint(
+                        object
+                    ),
+                    timingEvidence: .recognizedSpeech,
+                    timingMethod: nil,
+                    markerCount: 2,
+                    lyricTokenCount: 4,
+                    matchedTokenCount: 4
+                )
+            ),
+            dataRoot: dataRoot
+        )
+        try recordAnalysisLineage(dataRoot: dataRoot)
         return analysis
     }
 
@@ -273,7 +324,7 @@ struct WorkflowToolsTests {
             "sections": [["index": 0, "start": 0.0, "end": 12.0, "cluster": 0]],
         ]]
         object["structure_resolution"] = [
-            "version": "adaptive-structure/v4",
+            "version": "adaptive-structure/v5",
             "status": "needs_review",
             "method": "unresolved",
             "detector_sources": ["librosa"],
@@ -289,6 +340,7 @@ struct WorkflowToolsTests {
         ]
         object["alignment"] = []
         try JSONSerialization.data(withJSONObject: object).write(to: url)
+        try recordAnalysisLineage(dataRoot: dataRoot)
         return url
     }
 
@@ -2979,6 +3031,31 @@ struct WorkflowToolsTests {
         #expect(!String(decoding: encoded, as: UTF8.self).contains(#"audio\/song.wav"#))
     }
 
+    @Test("write_analysis_interpretation requires the exact measured alignment source")
+    func writeAnalysisInterpretationRejectsMissingAlignmentSource() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        try activatePack("musicvideo", dataRoot: dataRoot)
+        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        try FileManager.default.removeItem(
+            at: dataRoot.appendingPathComponent("analysis/stems/vocals.wav")
+        )
+
+        let result = await h.runRaw(
+            "write_analysis_interpretation",
+            args: [
+                "project_dir": dataRoot.path,
+                "tempo_multiplier": 1.0,
+                "section_labels": [],
+                "anomalies": [],
+                "overall_character": "Measured structure.",
+            ]
+        )
+
+        #expect(result.isError)
+        #expect(ToolHarness.textOf(result).contains("measured alignment source is missing"))
+    }
+
     @Test("write_analysis_interpretation rejects an unresolved structure")
     func writeAnalysisInterpretationRejectsUnresolvedFixture() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
@@ -3018,6 +3095,7 @@ struct WorkflowToolsTests {
         resolution["method"] = "unresolved"
         object["structure_resolution"] = resolution
         try JSONSerialization.data(withJSONObject: object).write(to: analysisURL)
+        try recordAnalysisLineage(dataRoot: dataRoot)
         let before = try Data(contentsOf: analysisURL)
 
         let result = await h.runRaw(

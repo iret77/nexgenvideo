@@ -62,6 +62,28 @@ public enum MusicvideoAnalysisRunner {
         let stage: String
         let status: Status
         let detail: String
+        let timingEvidence: LyricsAlignment.TimingEvidence?
+        let timingMethod: KnownTextAlignmentTimingMethod?
+
+        init(
+            stage: String,
+            status: Status,
+            detail: String,
+            timingEvidence: LyricsAlignment.TimingEvidence? = nil,
+            timingMethod: KnownTextAlignmentTimingMethod? = nil
+        ) {
+            self.stage = stage
+            self.status = status
+            self.detail = detail
+            self.timingEvidence = timingEvidence
+            self.timingMethod = timingMethod
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case stage, status, detail
+            case timingEvidence = "timing_evidence"
+            case timingMethod = "timing_method"
+        }
     }
 
     struct CanonicalOutcome: Sendable {
@@ -71,6 +93,7 @@ public enum MusicvideoAnalysisRunner {
 
     struct AlignmentAttempt {
         let source: String
+        let sourceURL: URL
         let result: LyricsAlignment.Result
     }
 
@@ -151,6 +174,9 @@ public enum MusicvideoAnalysisRunner {
         progress: (@Sendable (PhaseProgress) -> Void)?
     ) throws -> Outcome {
         let song = try locateSong(dataRoot: dataRoot)
+        let songSHA256 = try sha256(song)
+        let project = FrameInventory.projectName(of: dataRoot)
+            ?? FrameInventory.projectHome(of: dataRoot).lastPathComponent
         func report(_ stageIndex: Int) {
             progress?(
                 PhaseProgress(
@@ -301,6 +327,7 @@ public enum MusicvideoAnalysisRunner {
         report(5)
         var alignment: [AlignmentLine] = []
         var alignmentReport: LyricsAlignment.Result?
+        var alignmentSource: URL?
         if let lyrics, let transcriber {
             let preferredSource = stems?.vocals ?? song
             let selection = selectLyricsAlignment(
@@ -314,21 +341,27 @@ public enum MusicvideoAnalysisRunner {
                 let result = selected.result
                 alignmentReport = result
                 alignment = result.lines
-                let timing = result.timingEvidence == .knownTextAlignment
-                    ? "known-text acoustic" : "recognized acoustic"
+                alignmentSource = selected.sourceURL
+                let hasMeasuredTiming = result.timingEvidence == .knownTextAlignment
+                let timing = hasMeasuredTiming ? "known-text acoustic" : "speech-recognition"
+                let markerCapability = hasMeasuredTiming
+                    ? "established measured timing for"
+                    : "mapped symbolic labels for"
                 let fallbackDetail = selection.errors.isEmpty
                     ? ""
                     : " Earlier attempts failed: \(selection.errors.joined(separator: "; "))."
-                if result.hasReliableStructureEvidence {
+                if result.hasSuccessfulAlignment || result.hasReliableStructureEvidence {
                     stages.append("alignment")
                     diagnostics.append(
                         StageDiagnostic(
                             stage: "lyrics_alignment",
                             status: .succeeded,
                             detail: "Selected \(timing) \(selected.source) alignment with "
-                                + "\(result.transcriptTokenCount) recognized words; reliably anchored "
+                                + "\(result.transcriptTokenCount) recognized words; \(markerCapability) "
                                 + "all \(result.markerCount) lyric section markers."
-                                + fallbackDetail
+                                + fallbackDetail,
+                            timingEvidence: result.timingEvidence,
+                            timingMethod: result.timingMethod
                         )
                     )
                 } else {
@@ -339,9 +372,11 @@ public enum MusicvideoAnalysisRunner {
                             detail: "Best \(timing) \(selected.source) alignment contained "
                                 + "\(result.transcriptTokenCount) recognized words, mapped "
                                 + "\(result.mappedLineCount)/\(result.lyricLineCount) lyric lines, "
-                                + "and reliably anchored \(result.reliableMarkerCount)/"
+                                + "and reliably mapped \(result.reliableMarkerCount)/"
                                 + "\(result.markerCount) section markers."
-                                + fallbackDetail
+                                + fallbackDetail,
+                            timingEvidence: result.timingEvidence,
+                            timingMethod: result.timingMethod
                         )
                     )
                 }
@@ -364,13 +399,12 @@ public enum MusicvideoAnalysisRunner {
 
         report(6)
         let songPath = FrameInventory.relativePath(of: song, to: dataRoot)
-        let project = FrameInventory.projectName(of: dataRoot) ?? FrameInventory.projectHome(of: dataRoot).lastPathComponent
         let canonical = try toCanonicalDetailed(
             raw, project: project, songPath: songPath,
             stems: stems.map { relativeStems($0, dataRoot: dataRoot) },
             lyricsAlignment: alignment, alignmentReport: alignmentReport,
             chords: chords, pipelineStages: stages,
-            songSha256: sha256(song),
+            songSha256: songSHA256,
             musicUnderstanding: musicUnderstanding)
 
         if musicUnderstanding != nil,
@@ -403,7 +437,38 @@ public enum MusicvideoAnalysisRunner {
             structureResolution: canonical.structureResolution,
             stageDiagnostics: diagnostics
         )
+        guard let artifactObject = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { throw CocoaError(.coderInvalidValue) }
+        let alignmentProof: AnalysisMeasurementProof.LyricsAlignmentProof?
+        if let lyrics, let alignmentReport, let alignmentSource {
+            alignmentProof = AnalysisMeasurementProof.LyricsAlignmentProof(
+                sourcePath: FrameInventory.relativePath(of: alignmentSource, to: dataRoot),
+                sourceSHA256: try sha256(alignmentSource),
+                lyricsSHA256: AnalysisMeasurementProofStore.lyricsFingerprint(lyrics),
+                alignmentSHA256: try AnalysisMeasurementProofStore.alignmentFingerprint(
+                    artifactObject
+                ),
+                timingEvidence: alignmentReport.timingEvidence,
+                timingMethod: alignmentReport.timingMethod,
+                markerCount: alignmentReport.markerCount,
+                lyricTokenCount: alignmentReport.lines.flatMap(\.words).count,
+                matchedTokenCount: alignmentReport.lines
+                    .flatMap(\.words)
+                    .filter { $0.score != nil }
+                    .count
+            )
+        } else {
+            alignmentProof = nil
+        }
         try data.write(to: outURL, options: .atomic)
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: project,
+                songSHA256: songSHA256,
+                lyricsAlignment: alignmentProof
+            ),
+            dataRoot: dataRoot
+        )
 
         return Outcome(analysis: canonical.analysis, artifactURL: outURL, songFilename: song.lastPathComponent)
     }
@@ -418,12 +483,8 @@ public enum MusicvideoAnalysisRunner {
         let knownText = LyricsAlignment.transcriptionContext(lyrics)
         var attempts: [AlignmentAttempt] = []
         var errors: [String] = []
-        func record(
-            _ words: [TranscribedWord],
-            source: String,
-            timingEvidence: LyricsAlignment.TimingEvidence
-        ) -> LyricsAlignment.Result {
-            let tokens = words.map {
+        func tokens(_ words: [TranscribedWord]) -> [TranscriptToken] {
+            words.map {
                 TranscriptToken(
                     text: $0.text,
                     start: $0.start,
@@ -431,28 +492,37 @@ public enum MusicvideoAnalysisRunner {
                     score: $0.confidence
                 )
             }
+        }
+        func record(
+            _ words: [TranscribedWord],
+            sourceURL: URL,
+            source: String
+        ) -> LyricsAlignment.Result {
             let result = LyricsAlignment.alignDetailed(
                 lyrics: lyrics,
-                transcript: tokens,
-                timingEvidence: timingEvidence
+                transcript: tokens(words)
             )
-            attempts.append(AlignmentAttempt(source: source, result: result))
+            attempts.append(
+                AlignmentAttempt(source: source, sourceURL: sourceURL, result: result)
+            )
             return result
         }
         func attempt(_ source: URL, name: String) {
             if let aligner = transcriber as? any AudioLyricsAligning {
                 do {
-                    let words = try aligner.alignLyrics(
+                    let measurement = try aligner.alignLyrics(
                         source,
                         language: "auto",
                         lyrics: knownText
                     )
-                    let result = record(
-                        words,
-                        source: name,
-                        timingEvidence: .knownTextAlignment
+                    let result = LyricsAlignment.alignKnownTextDetailed(
+                        lyrics: lyrics,
+                        measurement: measurement
                     )
-                    if result.hasReliableStructureEvidence { return }
+                    attempts.append(
+                        AlignmentAttempt(source: name, sourceURL: source, result: result)
+                    )
+                    if result.shouldStopAlignmentSearch { return }
                 } catch {
                     errors.append("\(name) known-text alignment: \(error.localizedDescription)")
                 }
@@ -461,15 +531,15 @@ public enum MusicvideoAnalysisRunner {
                 let words = try transcriber.transcribe(source, language: "auto")
                 _ = record(
                     words,
-                    source: name,
-                    timingEvidence: .recognizedSpeech
+                    sourceURL: source,
+                    source: name
                 )
             } catch {
                 errors.append("\(name) recognition: \(error.localizedDescription)")
             }
         }
         attempt(preferredSource, name: preferredSourceName)
-        if attempts.last?.result.hasReliableStructureEvidence != true,
+        if attempts.last?.result.shouldStopAlignmentSearch != true,
            preferredSource.standardizedFileURL != song.standardizedFileURL {
             attempt(song, name: "mix")
         }
@@ -489,15 +559,19 @@ public enum MusicvideoAnalysisRunner {
             candidate.hasReliableStructureEvidence ? 1 : 0,
             candidate.reliableMarkerCount,
             candidate.mappedMarkerCount,
-            candidate.matchedTokenCount,
+            candidate.hasSuccessfulAlignment ? 1 : 0,
             candidate.mappedLineCount,
+            candidate.matchedTokenCount,
+            candidate.timingEvidence == .knownTextAlignment ? 1 : 0,
         ]
         let currentQuality = [
             current.hasReliableStructureEvidence ? 1 : 0,
             current.reliableMarkerCount,
             current.mappedMarkerCount,
-            current.matchedTokenCount,
+            current.hasSuccessfulAlignment ? 1 : 0,
             current.mappedLineCount,
+            current.matchedTokenCount,
+            current.timingEvidence == .knownTextAlignment ? 1 : 0,
         ]
         for (candidateValue, currentValue) in zip(candidateQuality, currentQuality) {
             if candidateValue != currentValue {

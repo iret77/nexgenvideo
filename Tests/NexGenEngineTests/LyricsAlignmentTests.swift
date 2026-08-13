@@ -42,6 +42,26 @@ struct LyricsAlignmentTests {
         #expect(lines.filter { $0.sectionMarker != nil }.count == 2)
     }
 
+    @Test("transcript timing is canonicalized before sequence alignment")
+    func unorderedTranscript() {
+        let result = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nhello world",
+            transcript: [
+                .init(text: "world", start: 1, end: 2),
+                .init(text: "nan", start: .nan, end: 1),
+                .init(text: "infinite", start: 2, end: .infinity),
+                .init(text: "negative", start: -1, end: 0),
+                .init(text: "inverted", start: 3, end: 2),
+                .init(text: "hello", start: 0, end: 1),
+            ]
+        )
+
+        #expect(result.hasReliableStructureEvidence)
+        #expect(result.transcriptTokenCount == 2)
+        #expect(result.lines.first?.start == 0)
+        #expect(result.lines.first?.end == 2)
+    }
+
     @Test("structure evidence requires every marker line to have enough transcript anchors")
     func markerReliability() {
         let complete = LyricsAlignment.alignDetailed(

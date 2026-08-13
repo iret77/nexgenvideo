@@ -80,8 +80,8 @@ enum MusicvideoGateChecks {
                   LyricsAlignment.normalizeMarker(actual)
                     == LyricsAlignment.normalizeMarker(evidence.marker) else {
                 throw GateBlocked(
-                    "Can't approve \"analysis\": section at \(evidence.time)s must retain lyric marker "
-                        + "\"\(evidence.marker)\" in its label. Re-run "
+                    "Can't approve \"analysis\": section at \(evidence.time)s must be labelled exactly "
+                        + "\"\(evidence.marker)\" (the measured lyric marker). Re-run "
                         + "write_analysis_interpretation with one label per measured section."
                 )
             }
@@ -378,6 +378,154 @@ enum MusicvideoGateChecks {
         if let number = value as? NSNumber { return number.doubleValue }
         if let string = value as? String { return Double(string) }
         return nil
+    }
+
+    private static func declaredAlignmentTimingEvidence(
+        _ resolution: [String: Any],
+        markerCount: Int
+    ) throws -> LyricsAlignment.TimingEvidence? {
+        guard let raw = resolution["alignment_timing_evidence"] as? String else {
+            if markerCount > 0 {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": lyric timing provenance is missing."
+                )
+            }
+            return nil
+        }
+        guard let evidence = LyricsAlignment.TimingEvidence(rawValue: raw) else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": lyric timing provenance is invalid."
+            )
+        }
+        return evidence
+    }
+
+    private static func declaredAlignmentTimingMethod(
+        _ resolution: [String: Any],
+        evidence: LyricsAlignment.TimingEvidence?
+    ) throws -> KnownTextAlignmentTimingMethod? {
+        let method = (resolution["alignment_timing_method"] as? String).flatMap(
+            KnownTextAlignmentTimingMethod.init(rawValue:)
+        )
+        switch evidence {
+        case .knownTextAlignment:
+            guard method == .attentionDTW else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": known-text timing has no verified measurement method."
+                )
+            }
+        case .recognizedSpeech, nil:
+            guard resolution["alignment_timing_method"] == nil else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": speech-recognition timing claims a privileged measurement method."
+                )
+            }
+        }
+        return method
+    }
+
+    private static func verifiedAlignmentTimingEvidence(
+        _ resolution: [String: Any],
+        object: [String: Any],
+        dataRoot: URL,
+        markerCount: Int
+    ) throws -> LyricsAlignment.TimingEvidence? {
+        let declared = try declaredAlignmentTimingEvidence(
+            resolution,
+            markerCount: markerCount
+        )
+        let declaredMethod = try declaredAlignmentTimingMethod(
+            resolution,
+            evidence: declared
+        )
+        let proof: AnalysisMeasurementProof
+        do {
+            proof = try AnalysisMeasurementProofStore.load(dataRoot: dataRoot)
+        } catch {
+            throw GateBlocked(
+                "Can't approve \"analysis\": its host-recorded measurement proof is missing or unreadable. "
+                    + "Re-run run_phase(\"analysis\")."
+            )
+        }
+        guard proof.schema == AnalysisMeasurementProof.currentSchema,
+              proof.project == object["project"] as? String,
+              proof.songSHA256 == object["song_sha256"] as? String else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": its measurement proof no longer matches the project track."
+            )
+        }
+        let lyrics: String?
+        do {
+            lyrics = try MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot)
+        } catch {
+            throw GateBlocked(
+                "Can't approve \"analysis\": the project lyrics are unreadable or ambiguous."
+            )
+        }
+        let expectedMarkerCount = lyrics.map {
+            LyricsAlignment.linesAndMarkers($0).filter { $0.marker != nil }.count
+        } ?? 0
+        guard let alignmentProof = proof.lyricsAlignment else {
+            guard declared == nil, declaredMethod == nil, markerCount == 0 else {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": lyric alignment is not backed by a runner measurement proof."
+                )
+            }
+            return nil
+        }
+        guard let lyrics else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": lyric alignment exists without project lyrics."
+            )
+        }
+        guard let source = existingProjectFile(
+            alignmentProof.sourcePath,
+            dataRoot: dataRoot
+        ) else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": its measured alignment source is missing. "
+                    + "Re-run run_phase(\"analysis\")."
+            )
+        }
+        let alignmentLines = object["alignment"] as? [[String: Any]] ?? []
+        let alignmentWords = alignmentLines.flatMap {
+            $0["words"] as? [[String: Any]] ?? []
+        }
+        let lyricTokenCount = alignmentWords.count
+        let matchedTokenCount = alignmentWords.filter { number($0["score"]) != nil }.count
+        let knownTextQualityIsValid = declared != .knownTextAlignment
+            || markerCount > 0
+            || (lyricTokenCount > 0
+                && Double(matchedTokenCount) / Double(lyricTokenCount) >= 0.7)
+        guard alignmentProof.lyricsSHA256
+                == AnalysisMeasurementProofStore.lyricsFingerprint(lyrics),
+              alignmentProof.markerCount == expectedMarkerCount,
+              markerCount == expectedMarkerCount,
+              alignmentProof.timingEvidence == declared,
+              alignmentProof.timingMethod == declaredMethod,
+              alignmentProof.lyricTokenCount == lyricTokenCount,
+              alignmentProof.matchedTokenCount == matchedTokenCount,
+              knownTextQualityIsValid,
+              (try? FileDigest.sha256(of: source)) == alignmentProof.sourceSHA256,
+              (try? AnalysisMeasurementProofStore.alignmentFingerprint(object))
+                == alignmentProof.alignmentSHA256 else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": lyric timing no longer matches the host-recorded measurement proof."
+            )
+        }
+        let diagnostics = (object["stage_diagnostics"] as? [[String: Any]] ?? [])
+            .filter { $0["stage"] as? String == "lyrics_alignment" }
+        guard diagnostics.count == 1,
+              ["succeeded", "degraded"].contains(
+                  diagnostics[0]["status"] as? String ?? ""
+              ),
+              diagnostics[0]["timing_evidence"] as? String == declared?.rawValue,
+              diagnostics[0]["timing_method"] as? String == declaredMethod?.rawValue else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": lyric timing diagnostics contradict the measurement proof."
+            )
+        }
+        return declared
     }
 
     private static func measuredSections(dataRoot: URL, phase: String) throws -> [MeasuredSection] {
@@ -764,7 +912,8 @@ enum MusicvideoGateChecks {
             try requireEvidenceStructure(
                 object: obj,
                 duration: duration,
-                downbeats: downbeatValues
+                downbeats: downbeatValues,
+                dataRoot: dataRoot
             )
             if requiresInterpretation {
                 try requireAnalysisInterpretation(
@@ -956,6 +1105,12 @@ enum MusicvideoGateChecks {
                 "Can't approve \"analysis\": lyric alignment evidence counts are missing."
             )
         }
+        _ = try verifiedAlignmentTimingEvidence(
+            resolution,
+            object: obj,
+            dataRoot: dataRoot,
+            markerCount: markerCount
+        )
         let markerLines = persistedAlignmentMarkers(obj)
         let reliableAlignment = markerCount > 0
             && markerLines.count == markerCount
@@ -1012,7 +1167,8 @@ enum MusicvideoGateChecks {
     private static func requireEvidenceStructure(
         object: [String: Any],
         duration: Double,
-        downbeats: [Double]
+        downbeats: [Double],
+        dataRoot: URL
     ) throws {
         guard let source = object["downbeat_source"] as? String,
               Analysis.DownbeatSource(rawValue: source) != nil else {
@@ -1108,6 +1264,23 @@ enum MusicvideoGateChecks {
             )
         }
 
+        guard let markerCount = integer(resolution["alignment_marker_count"]),
+              let resolvedMarkerCount = integer(resolution["resolved_alignment_marker_count"]),
+              markerCount >= 0,
+              resolvedMarkerCount >= 0,
+              resolvedMarkerCount <= markerCount else {
+            throw GateBlocked(
+                "Can't approve \"analysis\": lyric alignment evidence counts are missing."
+            )
+        }
+        let timingEvidence = try verifiedAlignmentTimingEvidence(
+            resolution,
+            object: object,
+            dataRoot: dataRoot,
+            markerCount: markerCount
+        )
+        let permitsDirectAlignmentBoundary = timingEvidence == .knownTextAlignment
+
         var evidenceKinds: [Double: String] = [:]
         var evidenceRecords: [Double: [String: Any]] = [:]
         var consumedCandidateKeys: Set<String> = []
@@ -1122,7 +1295,7 @@ enum MusicvideoGateChecks {
             guard [
                 "detector_consensus",
                 "lyrics_supported_acoustic",
-                "lyrics_aligned_vocal",
+                "lyrics_known_text_alignment",
                 "single_detector",
             ].contains(kind), evidenceKinds[time] == nil else {
                 throw GateBlocked(
@@ -1130,10 +1303,24 @@ enum MusicvideoGateChecks {
                 )
             }
             let sources = Set(record["detector_sources"] as? [String] ?? [])
-            if kind == "lyrics_aligned_vocal" {
-                guard sources == ["whisper_alignment"] else {
+            let lyricKinds = ["lyrics_supported_acoustic", "lyrics_known_text_alignment"]
+            if lyricKinds.contains(kind) {
+                guard let marker = record["lyric_marker"] as? String,
+                      !marker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw GateBlocked(
-                        "Can't approve \"analysis\": a vocal-alignment boundary has invalid provenance."
+                        "Can't approve \"analysis\": lyric-selected boundary evidence has no marker."
+                    )
+                }
+            } else if record["lyric_marker"] != nil {
+                throw GateBlocked(
+                    "Can't approve \"analysis\": non-lyric boundary evidence carries a lyric marker."
+                )
+            }
+            if kind == "lyrics_known_text_alignment" {
+                guard sources == ["whisper_alignment"],
+                      permitsDirectAlignmentBoundary else {
+                    throw GateBlocked(
+                        "Can't approve \"analysis\": a lyric-alignment boundary has invalid provenance."
                     )
                 }
             } else {
@@ -1186,8 +1373,8 @@ enum MusicvideoGateChecks {
                   (kind == "detector_consensus" && sectionSource == "measured_consensus")
                     || (kind == "lyrics_supported_acoustic"
                         && sectionSource == "measured_alignment_fusion")
-                    || (kind == "lyrics_aligned_vocal"
-                        && sectionSource == "measured_vocal_alignment")
+                    || (kind == "lyrics_known_text_alignment"
+                        && sectionSource == "measured_known_text_alignment")
                     || (kind == "single_detector"
                         && sectionSource == "measured_phrase_filtered") else {
                 throw GateBlocked(
@@ -1196,15 +1383,6 @@ enum MusicvideoGateChecks {
             }
         }
 
-        guard let markerCount = integer(resolution["alignment_marker_count"]),
-              let resolvedMarkerCount = integer(resolution["resolved_alignment_marker_count"]),
-              markerCount >= 0,
-              resolvedMarkerCount >= 0,
-              resolvedMarkerCount <= markerCount else {
-            throw GateBlocked(
-                "Can't approve \"analysis\": lyric alignment evidence counts are missing."
-            )
-        }
         let markerLines = persistedAlignmentMarkers(object)
         let alignmentIsReliable = markerCount > 0
             && markerLines.count == markerCount
@@ -1242,13 +1420,14 @@ enum MusicvideoGateChecks {
                         return $0.time < $1.time
                     }
                     .first
+                guard match != nil || permitsDirectAlignmentBoundary else { continue }
                 let boundaryTime = match?.time ?? roundedTarget
                 if boundaryTime > 0.01,
                    boundaryTime < duration - 0.01,
                    reconstructedMarkers[boundaryTime] == nil {
                     reconstructedMarkers[boundaryTime] = marker.marker
                     reconstructedKinds[boundaryTime] = match == nil
-                        ? "lyrics_aligned_vocal"
+                        ? "lyrics_known_text_alignment"
                         : "lyrics_supported_acoustic"
                     reconstructedResolvedCount += 1
                 }
@@ -1257,7 +1436,10 @@ enum MusicvideoGateChecks {
         let recordedLyricEvidence = evidenceRecords.compactMap {
             time, record -> (Double, String)? in
             guard let kind = record["kind"] as? String,
-                  ["lyrics_supported_acoustic", "lyrics_aligned_vocal"].contains(kind),
+                  [
+                    "lyrics_supported_acoustic",
+                    "lyrics_known_text_alignment",
+                  ].contains(kind),
                   let marker = record["lyric_marker"] as? String else { return nil }
             return (time, marker)
         }
@@ -1273,7 +1455,7 @@ enum MusicvideoGateChecks {
         }
         try requireLyricMarkerLabels(
             sections: sections,
-            markers: recordedLyricEvidence.map { ($0.0, $0.1) }
+            markers: reconstructedMarkers.map { ($0.key, $0.value) }
         )
 
         let allMarkersResolved = alignmentIsReliable
@@ -1298,14 +1480,17 @@ enum MusicvideoGateChecks {
             }
         if allMarkersResolved {
             let lastMarker = reconstructedMarkers.keys.max() ?? 0
-            let terminalGroups = rebuilt.groups.values
-                .filter { $0.sources.count >= 2 }
-                .sorted(by: { $0.time > $1.time })
-            if let terminal = terminalGroups.first(where: {
-                    $0.time - lastMarker >= minimumSpan
-                        && duration - $0.time >= minimumTerminalSpan
-                }) {
-                expectedKinds[terminal.time] = "detector_consensus"
+            let terminalTime = Consolidator.preferredTerminalBoundary(
+                rebuilt.groups.values
+                    .filter { $0.sources.count >= 2 }
+                    .map { (time: $0.time, sourceCount: $0.sources.count) },
+                after: lastMarker,
+                durationS: duration,
+                minimumSpan: minimumSpan,
+                minimumTerminalSpan: minimumTerminalSpan
+            )
+            if let terminalTime {
+                expectedKinds[terminalTime] = "detector_consensus"
             }
         } else {
             for group in consensusByStrength {

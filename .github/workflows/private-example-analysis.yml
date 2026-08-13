@@ -225,20 +225,37 @@ jobs:
           REPORT_REFERENCE: ghcr.io/iret77/nexgenvideo-analysis-reports:${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          if [ ! -s "$RUNNER_TEMP/analysis-report/analysis.json" ] \
-            || [ ! -s "$RUNNER_TEMP/analysis-report/provenance.json" ]; then
-            echo "No complete private analysis report was produced."
+          if [ ! -s "$RUNNER_TEMP/analysis-report/provenance.json" ]; then
+            echo "No private analysis provenance was produced."
             exit 0
           fi
           cd "$RUNNER_TEMP/analysis-report"
+          layers=(
+            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v6+json
+          )
+          if [ -s analysis.json ]; then
+            analysis_media="application/vnd.nexgenvideo.analysis-evidence.v1+json"
+            if jq -e '.analysis != null' provenance.json >/dev/null; then
+              analysis_media="application/vnd.nexgenvideo.analysis.v3+json"
+            fi
+            layers=(
+              "analysis.json:$analysis_media"
+              "${layers[@]}"
+            )
+          fi
+          if [ -s measurement-proof.json ]; then
+            layers=(
+              measurement-proof.json:application/vnd.nexgenvideo.analysis-measurement-proof.v1+json
+              "${layers[@]}"
+            )
+          fi
           REPORT_DIGEST="$(oras push \
             --no-tty \
             --registry-config "$RUNNER_TEMP/oras-auth.json" \
-            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v5 \
+            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v6 \
             --format 'go-template={{.digest}}' \
             "$REPORT_REFERENCE" \
-            analysis.json:application/vnd.nexgenvideo.analysis.v3+json \
-            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v5+json)"
+            "${layers[@]}")"
           echo "reference=${REPORT_REFERENCE%:*}@$REPORT_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Verify report package isolation

@@ -171,9 +171,18 @@ enum MusicvideoPipelineLineage {
     ) -> [URL] {
         switch phase {
         case "analysis":
-            return AudioProjectLayout.expectedAnalysisArtifactURL(
-                dataRoot: dataRoot
-            ).map { [$0] } ?? []
+            var files = [
+                AudioProjectLayout.expectedAnalysisArtifactURL(dataRoot: dataRoot),
+                AnalysisMeasurementProofStore.url(dataRoot: dataRoot),
+            ].compactMap { $0 }.filter {
+                FileManager.default.fileExists(atPath: $0.path)
+            }
+            if let proof = try? AnalysisMeasurementProofStore.load(dataRoot: dataRoot),
+               let sourcePath = proof.lyricsAlignment?.sourcePath,
+               let source = projectFile(sourcePath, dataRoot: dataRoot) {
+                files.append(source)
+            }
+            return files
         case "production_design":
             return productionDesignReferences(dataRoot: dataRoot)
         case "bible":
