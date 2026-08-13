@@ -10,6 +10,11 @@ import whisper
 struct WhisperCppTranscriber: ContextualAudioTranscribing {
     var model: String = WhisperModelStore.defaultModel
 
+    struct DecodingConfiguration: Equatable {
+        let language: String
+        let detectLanguageOnly: Bool
+    }
+
     enum TranscribeError: LocalizedError {
         case audioLoadFailed(String)
         case modelInitFailed(String)
@@ -57,8 +62,8 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
         params.print_timestamps = false
         params.print_special = false
         params.translate = false
-        let detectsLanguage = language.isEmpty || language == "auto"
-        params.detect_language = detectsLanguage
+        let decoding = Self.decodingConfiguration(language: language)
+        params.detect_language = decoding.detectLanguageOnly
         params.token_timestamps = true   // fills whisper_token_data.t0/t1 per token
         params.no_context = false
         params.suppress_blank = true
@@ -66,7 +71,7 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
         params.max_len = 1
         params.n_threads = Int32(max(1, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
 
-        let lang = strdup(detectsLanguage ? "auto" : language)
+        let lang = strdup(decoding.language)
         defer { free(lang) }
         params.language = lang.map { UnsafePointer($0) }
 
@@ -82,6 +87,13 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
         guard rc == 0 else { throw TranscribeError.inferenceFailed(Int(rc)) }
 
         return Self.extractWords(ctx)
+    }
+
+    static func decodingConfiguration(language: String) -> DecodingConfiguration {
+        DecodingConfiguration(
+            language: language.isEmpty || language == "auto" ? "auto" : language,
+            detectLanguageOnly: false
+        )
     }
 
     /// Reconstruct words from whisper's subword tokens: whisper prefixes a new word's first token with
