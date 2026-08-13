@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 /// A transcribed word with its measured time span — the shape a Whisper transcriber yields per token.
 /// The engine is transcriber-agnostic: the app layer (WhisperKit / whisper.cpp, run on Demucs-isolated
