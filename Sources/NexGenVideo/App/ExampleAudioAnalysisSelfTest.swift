@@ -6,7 +6,7 @@ import NexGenEngine
 @MainActor
 enum ExampleAudioAnalysisSelfTest {
     private static let manifestSchema = "nexgenvideo.example-fixtures/v1"
-    private static let reportSchema = "nexgenvideo.example-analysis-report/v3"
+    private static let reportSchema = "nexgenvideo.example-analysis-report/v4"
 
     private struct Configuration {
         let packURL: URL
@@ -182,9 +182,10 @@ enum ExampleAudioAnalysisSelfTest {
         let runAttempt: String
         let analysis: AnalysisSummary
         let verification: Verification
+        let acceptance: Acceptance
 
         enum CodingKeys: String, CodingKey {
-            case schema, dataset, expectations, commit, analysis, verification
+            case schema, dataset, expectations, commit, analysis, verification, acceptance
             case fixtureReference = "fixture_reference"
             case fixtureTreeSHA256 = "fixture_tree_sha256"
             case sourceFiles = "source_files"
@@ -193,6 +194,11 @@ enum ExampleAudioAnalysisSelfTest {
             case runID = "run_id"
             case runAttempt = "run_attempt"
         }
+    }
+
+    private struct Acceptance: Encodable {
+        let status: String
+        let failures: [String]
     }
 
     private struct Failure: LocalizedError {
@@ -360,44 +366,45 @@ enum ExampleAudioAnalysisSelfTest {
             beatGrid: verifiedStatus("neural_beat_grid"),
             chordRecognition: verifiedStatus("chord_recognition")
         )
-        guard abs(duration - expectations.audio.durationS) <= expectations.audio.durationToleranceS else {
-            throw Failure(
+        var acceptanceFailures: [String] = []
+        if abs(duration - expectations.audio.durationS) > expectations.audio.durationToleranceS {
+            acceptanceFailures.append(
                 "duration \(duration)s is outside the fixture expectation "
                     + "\(expectations.audio.durationS)±\(expectations.audio.durationToleranceS)s"
             )
         }
-        guard abs(bpm - expectations.audio.bpm) <= expectations.audio.bpmTolerance else {
-            throw Failure(
+        if abs(bpm - expectations.audio.bpm) > expectations.audio.bpmTolerance {
+            acceptanceFailures.append(
                 "tempo \(bpm) BPM is outside the fixture expectation "
                     + "\(expectations.audio.bpm)±\(expectations.audio.bpmTolerance) BPM"
             )
         }
         if expectations.audio.expectBoundaryReduction {
-            guard acceptedCount > 0, candidateCount > acceptedCount else {
-                throw Failure(
+            if acceptedCount <= 0 || candidateCount <= acceptedCount {
+                acceptanceFailures.append(
                     "fixture expected non-empty raw boundary reduction, but candidates="
                         + "\(candidateCount) accepted=\(acceptedCount)"
                 )
             }
         }
-        guard object["song_path"] as? String == "audio/\(audioFiles[0].url.lastPathComponent)" else {
-            throw Failure("analysis does not preserve the original source filename project-locally")
+        if object["song_path"] as? String != "audio/\(audioFiles[0].url.lastPathComponent)" {
+            acceptanceFailures.append("analysis does not preserve the original source filename project-locally")
         }
         let sectionBoundaryTimes = sections.dropFirst().compactMap {
             number($0["start"])
         }
-        guard sectionBoundaryTimes.count == acceptedCount else {
-            throw Failure("canonical boundary summary is incomplete")
+        if sectionBoundaryTimes.count != acceptedCount {
+            acceptanceFailures.append("canonical boundary summary is incomplete")
         }
-        guard sectionBoundaryTimes.count == expectations.audio.sectionBoundariesS.count else {
-            throw Failure(
+        if sectionBoundaryTimes.count != expectations.audio.sectionBoundariesS.count {
+            acceptanceFailures.append(
                 "canonical boundary count \(sectionBoundaryTimes.count) does not match the independent "
                     + "expectation \(expectations.audio.sectionBoundariesS.count)"
             )
         }
         for (actual, expected) in zip(sectionBoundaryTimes, expectations.audio.sectionBoundariesS) {
-            guard abs(actual - expected) <= expectations.audio.sectionBoundaryToleranceS else {
-                throw Failure(
+            if abs(actual - expected) > expectations.audio.sectionBoundaryToleranceS {
+                acceptanceFailures.append(
                     "section boundary \(actual)s is outside the independent expectation "
                         + "\(expected)±\(expectations.audio.sectionBoundaryToleranceS)s"
                 )
@@ -438,8 +445,14 @@ enum ExampleAudioAnalysisSelfTest {
             packTreeSHA256: packTreeSHA256,
             optionalAudioML: optionalAudioML,
             artifactData: artifactData,
-            summary: summary
+            summary: summary,
+            acceptanceFailures: acceptanceFailures
         )
+        if let failure = acceptanceFailures.first {
+            let actual = sectionBoundaryTimes.map { String(format: "%.3f", $0) }
+                .joined(separator: ",")
+            throw Failure("\(failure); measured boundaries=[\(actual)]")
+        }
         return summary
     }
 
@@ -594,7 +607,8 @@ enum ExampleAudioAnalysisSelfTest {
         packTreeSHA256: String,
         optionalAudioML: OptionalAudioML,
         artifactData: Data,
-        summary: AnalysisSummary
+        summary: AnalysisSummary,
+        acceptanceFailures: [String]
     ) throws {
         try FileManager.default.createDirectory(
             at: configuration.reportDirectory,
@@ -623,6 +637,10 @@ enum ExampleAudioAnalysisSelfTest {
                 immutableFixtureReference: "passed",
                 optionalAudioML: optionalAudioML,
                 systemStructure: "unavailable_on_macos_26"
+            ),
+            acceptance: Acceptance(
+                status: acceptanceFailures.isEmpty ? "passed" : "failed",
+                failures: acceptanceFailures
             )
         )
         let encoder = JSONEncoder()

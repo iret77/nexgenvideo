@@ -86,7 +86,10 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
         }
         guard rc == 0 else { throw TranscribeError.inferenceFailed(Int(rc)) }
 
-        return Self.extractWords(ctx)
+        return Self.extractWords(
+            ctx,
+            noSpeechThreshold: Double(params.no_speech_thold)
+        )
     }
 
     static func decodingConfiguration(language: String) -> DecodingConfiguration {
@@ -99,7 +102,10 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
     /// Reconstruct words from whisper's subword tokens: whisper prefixes a new word's first token with
     /// a space, so a space-prefixed token (or the very first) opens a new word. Times come from the
     /// token-level `t0`/`t1` (centiseconds → seconds); confidence is the mean token probability.
-    private static func extractWords(_ ctx: OpaquePointer) -> [TranscribedWord] {
+    private static func extractWords(
+        _ ctx: OpaquePointer,
+        noSpeechThreshold: Double
+    ) -> [TranscribedWord] {
         var words: [TranscribedWord] = []
         let eot = whisper_token_eot(ctx)
         var cur: (text: String, start: Double, end: Double, pSum: Double, pCount: Int)?
@@ -116,6 +122,13 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
 
         for segment in 0..<whisper_full_n_segments(ctx) {
             flush()  // a word never spans two segments — close the previous segment's last word
+            let noSpeechProbability = Double(
+                whisper_full_get_segment_no_speech_prob(ctx, segment)
+            )
+            guard Self.isAcousticallySupportedSegment(
+                noSpeechProbability: noSpeechProbability,
+                threshold: noSpeechThreshold
+            ) else { continue }
             for token in 0..<whisper_full_n_tokens(ctx, segment) {
                 if whisper_full_get_token_id(ctx, segment, token) >= eot { continue }  // special/timestamp token
                 guard let cstr = whisper_full_get_token_text(ctx, segment, token) else { continue }
@@ -138,6 +151,15 @@ struct WhisperCppTranscriber: ContextualAudioTranscribing {
         }
         flush()
         return words
+    }
+
+    static func isAcousticallySupportedSegment(
+        noSpeechProbability: Double,
+        threshold: Double
+    ) -> Bool {
+        noSpeechProbability.isFinite
+            && threshold.isFinite
+            && noSpeechProbability < threshold
     }
 
     /// Decode an audio file to mono Float32 at whisper's required 16 kHz (channel-averaged downmix +

@@ -219,23 +219,30 @@ jobs:
         run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
 
       - name: Publish private analysis report
+        if: ${{ always() }}
         id: report
         env:
           REPORT_REFERENCE: ghcr.io/iret77/nexgenvideo-analysis-reports:${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          if [ ! -s "$RUNNER_TEMP/analysis-report/analysis.json" ] \
+            || [ ! -s "$RUNNER_TEMP/analysis-report/provenance.json" ]; then
+            echo "No complete private analysis report was produced."
+            exit 0
+          fi
           cd "$RUNNER_TEMP/analysis-report"
           REPORT_DIGEST="$(oras push \
             --no-tty \
             --registry-config "$RUNNER_TEMP/oras-auth.json" \
-            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v3 \
+            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v4 \
             --format 'go-template={{.digest}}' \
             "$REPORT_REFERENCE" \
             analysis.json:application/vnd.nexgenvideo.analysis.v3+json \
-            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v3+json)"
+            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v4+json)"
           echo "reference=${REPORT_REFERENCE%:*}@$REPORT_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Verify report package isolation
+        if: ${{ always() && steps.report.outputs.reference != '' }}
         env:
           GH_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
         run: |
