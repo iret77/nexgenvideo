@@ -344,7 +344,8 @@ enum ExampleAudioAnalysisSelfTest {
         if !lyricsFiles.isEmpty {
             guard diagnostic(diagnostics, stage: "lyrics_input", status: "succeeded"),
                   diagnostic(diagnostics, stage: "lyrics_alignment", status: "succeeded") else {
-                throw Failure("the production lyric alignment did not resolve the fixture")
+                let detail = diagnosticDetail(diagnostics, stage: "lyrics_alignment")
+                throw Failure("the production lyric alignment did not resolve the fixture: \(detail)")
             }
         }
         func verifiedStatus(_ stage: String) -> String {
@@ -545,6 +546,18 @@ enum ExampleAudioAnalysisSelfTest {
         diagnostics.contains {
             $0["stage"] as? String == stage && $0["status"] as? String == status
         }
+    }
+
+    private static func diagnosticDetail(
+        _ diagnostics: [[String: Any]],
+        stage: String
+    ) -> String {
+        guard let diagnostic = diagnostics.first(where: { $0["stage"] as? String == stage }) else {
+            return "stage diagnostic missing"
+        }
+        let status = diagnostic["status"] as? String ?? "unknown"
+        let detail = diagnostic["detail"] as? String ?? "detail missing"
+        return "status=\(status); \(detail)"
     }
 
     private static func executeRunner(
