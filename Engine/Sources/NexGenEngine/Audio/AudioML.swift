@@ -36,6 +36,15 @@ public protocol AudioTranscribing: Sendable {
     func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord]
 }
 
+/// Optional recognizer capability that uses known text as context without replacing acoustic validation.
+public protocol ContextualAudioTranscribing: AudioTranscribing {
+    func transcribe(
+        _ audio: URL,
+        language: String,
+        context: String
+    ) throws -> [TranscribedWord]
+}
+
 /// Separated source stems written to disk. Any field is nil if the separator does
 /// not produce that stem. Paths are absolute.
 public struct SeparatedStems: Sendable, Equatable {

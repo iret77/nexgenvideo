@@ -151,6 +151,14 @@ struct LyricsAlignmentTests {
         #expect(parsed[0].marker == "verse1")  // intro marker was consumed by the skipped direction
     }
 
+    @Test("transcription context contains sung text but no structure markup")
+    func transcriptionContext() {
+        let context = LyricsAlignment.transcriptionContext(
+            "[Verse 1]\nHello world\n(Instrumental)\n[Chorus]\nWide open"
+        )
+        #expect(context == "Hello world\nWide open")
+    }
+
     @Test("markdown hard-break trailing spaces still parse")
     func hardBreaks() {
         let parsed = LyricsAlignment.linesAndMarkers("[Verse 1]  \nMorning light is falling  ")

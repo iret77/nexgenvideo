@@ -69,6 +69,16 @@ public enum MusicvideoAnalysisRunner {
         let structureResolution: Consolidator.StructureResolution
     }
 
+    struct AlignmentAttempt {
+        let source: String
+        let result: LyricsAlignment.Result
+    }
+
+    struct AlignmentSelection {
+        let attempt: AlignmentAttempt?
+        let errors: [String]
+    }
+
     /// Discover the single song file in `<dataRoot>/audio/`. `nil`/empty → a
     /// `.noSong` blocker; more than one → a `.multipleSongs` error naming them.
     static func locateSong(dataRoot: URL) throws -> URL {
@@ -292,23 +302,50 @@ public enum MusicvideoAnalysisRunner {
         var alignment: [AlignmentLine] = []
         var alignmentReport: LyricsAlignment.Result?
         if let lyrics, let transcriber {
-            let vocals = stems?.vocals ?? song
-            do {
-                let words = try transcriber.transcribe(vocals, language: "auto")
-                let tokens = words.map {
-                    TranscriptToken(text: $0.text, start: $0.start, end: $0.end, score: $0.confidence)
-                }
-                let result = LyricsAlignment.alignDetailed(lyrics: lyrics, transcript: tokens)
+            let preferredSource = stems?.vocals ?? song
+            let selection = selectLyricsAlignment(
+                lyrics: lyrics,
+                transcriber: transcriber,
+                preferredSource: preferredSource,
+                preferredSourceName: stems?.vocals == nil ? "mix" : "vocals",
+                song: song
+            )
+            if let selected = selection.attempt {
+                let result = selected.result
                 alignmentReport = result
                 alignment = result.lines
                 if result.hasReliableStructureEvidence {
                     stages.append("alignment")
-                    diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .succeeded, detail: "Reliably anchored all \(result.markerCount) lyric section markers."))
+                    diagnostics.append(
+                        StageDiagnostic(
+                            stage: "lyrics_alignment",
+                            status: .succeeded,
+                            detail: "Selected contextual \(selected.source) transcription with "
+                                + "\(result.transcriptTokenCount) recognized words; reliably anchored "
+                                + "all \(result.markerCount) lyric section markers."
+                        )
+                    )
                 } else {
-                    diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .degraded, detail: "Mapped \(result.mappedLineCount)/\(result.lyricLineCount) lyric lines and reliably anchored \(result.reliableMarkerCount)/\(result.markerCount) section markers."))
+                    diagnostics.append(
+                        StageDiagnostic(
+                            stage: "lyrics_alignment",
+                            status: .degraded,
+                            detail: "Best \(selected.source) transcription contained "
+                                + "\(result.transcriptTokenCount) recognized words, mapped "
+                                + "\(result.mappedLineCount)/\(result.lyricLineCount) lyric lines, "
+                                + "and reliably anchored \(result.reliableMarkerCount)/"
+                                + "\(result.markerCount) section markers."
+                        )
+                    )
                 }
-            } catch {
-                diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .failed, detail: error.localizedDescription))
+            } else {
+                diagnostics.append(
+                    StageDiagnostic(
+                        stage: "lyrics_alignment",
+                        status: .failed,
+                        detail: selection.errors.joined(separator: "; ")
+                    )
+                )
             }
         } else if let lyricsLoadError {
             diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .unavailable, detail: "Lyrics input failed: \(lyricsLoadError)"))
@@ -362,6 +399,88 @@ public enum MusicvideoAnalysisRunner {
         try data.write(to: outURL, options: .atomic)
 
         return Outcome(analysis: canonical.analysis, artifactURL: outURL, songFilename: song.lastPathComponent)
+    }
+
+    static func selectLyricsAlignment(
+        lyrics: String,
+        transcriber: any AudioTranscribing,
+        preferredSource: URL,
+        preferredSourceName: String,
+        song: URL
+    ) -> AlignmentSelection {
+        let context = LyricsAlignment.transcriptionContext(lyrics)
+        var attempts: [AlignmentAttempt] = []
+        var errors: [String] = []
+        func attempt(_ source: URL, name: String) {
+            do {
+                let words: [TranscribedWord]
+                if let contextual = transcriber as? any ContextualAudioTranscribing {
+                    words = try contextual.transcribe(
+                        source,
+                        language: "auto",
+                        context: context
+                    )
+                } else {
+                    words = try transcriber.transcribe(source, language: "auto")
+                }
+                let tokens = words.map {
+                    TranscriptToken(
+                        text: $0.text,
+                        start: $0.start,
+                        end: $0.end,
+                        score: $0.confidence
+                    )
+                }
+                attempts.append(
+                    AlignmentAttempt(
+                        source: name,
+                        result: LyricsAlignment.alignDetailed(
+                            lyrics: lyrics,
+                            transcript: tokens
+                        )
+                    )
+                )
+            } catch {
+                errors.append("\(name): \(error.localizedDescription)")
+            }
+        }
+        attempt(preferredSource, name: preferredSourceName)
+        if attempts.last?.result.hasReliableStructureEvidence != true,
+           preferredSource.standardizedFileURL != song.standardizedFileURL {
+            attempt(song, name: "mix")
+        }
+        let selected = attempts.reduce(nil as AlignmentAttempt?) { current, candidate in
+            guard let current else { return candidate }
+            return isBetterAlignment(candidate.result, than: current.result)
+                ? candidate : current
+        }
+        return AlignmentSelection(attempt: selected, errors: errors)
+    }
+
+    private static func isBetterAlignment(
+        _ candidate: LyricsAlignment.Result,
+        than current: LyricsAlignment.Result
+    ) -> Bool {
+        let candidateQuality = [
+            candidate.hasReliableStructureEvidence ? 1 : 0,
+            candidate.reliableMarkerCount,
+            candidate.mappedMarkerCount,
+            candidate.matchedTokenCount,
+            candidate.mappedLineCount,
+        ]
+        let currentQuality = [
+            current.hasReliableStructureEvidence ? 1 : 0,
+            current.reliableMarkerCount,
+            current.mappedMarkerCount,
+            current.matchedTokenCount,
+            current.mappedLineCount,
+        ]
+        for (candidateValue, currentValue) in zip(candidateQuality, currentQuality) {
+            if candidateValue != currentValue {
+                return candidateValue > currentValue
+            }
+        }
+        return false
     }
 
     static func normalizedSystemTimes(_ values: [Double], durationS: Double) -> [Double] {

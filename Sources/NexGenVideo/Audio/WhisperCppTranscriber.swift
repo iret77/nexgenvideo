@@ -7,7 +7,7 @@ import whisper
 /// generic `AudioTranscribing` seam; the musicvideo pack resolves it to force-align lyrics against the
 /// sung vocals. whisper.cpp is fully synchronous, so this is a plain blocking call — it's invoked from
 /// the analysis phase runner, which already runs off the main actor.
-struct WhisperCppTranscriber: AudioTranscribing {
+struct WhisperCppTranscriber: ContextualAudioTranscribing {
     var model: String = WhisperModelStore.defaultModel
 
     enum TranscribeError: LocalizedError {
@@ -24,6 +24,22 @@ struct WhisperCppTranscriber: AudioTranscribing {
     }
 
     func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord] {
+        try performTranscription(audio, language: language, context: nil)
+    }
+
+    func transcribe(
+        _ audio: URL,
+        language: String,
+        context: String
+    ) throws -> [TranscribedWord] {
+        try performTranscription(audio, language: language, context: context)
+    }
+
+    private func performTranscription(
+        _ audio: URL,
+        language: String,
+        context: String?
+    ) throws -> [TranscribedWord] {
         let samples = try Self.loadPCM16kMono(audio)
         guard !samples.isEmpty else { return [] }
         let modelPath = try WhisperModelStore.ensureModel(model)
@@ -44,13 +60,21 @@ struct WhisperCppTranscriber: AudioTranscribing {
         let detectsLanguage = language.isEmpty || language == "auto"
         params.detect_language = detectsLanguage
         params.token_timestamps = true   // fills whisper_token_data.t0/t1 per token
-        params.no_context = true
+        params.no_context = false
         params.suppress_blank = true
+        params.split_on_word = true
+        params.max_len = 1
         params.n_threads = Int32(max(1, min(8, ProcessInfo.processInfo.activeProcessorCount - 2)))
 
         let lang = strdup(detectsLanguage ? "auto" : language)
         defer { free(lang) }
         params.language = lang.map { UnsafePointer($0) }
+
+        let prompt = context?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let initialPrompt = prompt.flatMap { $0.isEmpty ? nil : strdup($0) }
+        defer { free(initialPrompt) }
+        params.initial_prompt = initialPrompt.map { UnsafePointer($0) }
+        params.carry_initial_prompt = false
 
         let rc = samples.withUnsafeBufferPointer { buf in
             whisper_full(ctx, params, buf.baseAddress, Int32(buf.count))

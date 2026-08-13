@@ -348,6 +348,50 @@ struct AnalysisRunnerPlumbingTests {
             try MusicvideoAnalysisRunner.loadLyrics(dataRoot: dataRoot)
         }
     }
+
+    struct ContextualSourceTranscriber: ContextualAudioTranscribing {
+        let expectedContext: String
+
+        func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord] {
+            []
+        }
+
+        func transcribe(
+            _ audio: URL,
+            language: String,
+            context: String
+        ) throws -> [TranscribedWord] {
+            guard context == expectedContext, audio.lastPathComponent == "mix.wav" else {
+                return [TranscribedWord(text: "unrelated", start: 0, end: 0.5)]
+            }
+            return [
+                TranscribedWord(text: "hello", start: 1, end: 1.2),
+                TranscribedWord(text: "world", start: 1.2, end: 1.4),
+                TranscribedWord(text: "wide", start: 5, end: 5.2),
+                TranscribedWord(text: "open", start: 5.2, end: 5.4),
+            ]
+        }
+    }
+
+    @Test("contextual lyric alignment falls back from a poor vocal stem to the mix")
+    func contextualAlignmentSourceFallback() throws {
+        let lyrics = "[Verse]\nhello world\n[Chorus]\nwide open"
+        let selection = MusicvideoAnalysisRunner.selectLyricsAlignment(
+            lyrics: lyrics,
+            transcriber: ContextualSourceTranscriber(
+                expectedContext: "hello world\nwide open"
+            ),
+            preferredSource: URL(fileURLWithPath: "/tmp/vocals.wav"),
+            preferredSourceName: "vocals",
+            song: URL(fileURLWithPath: "/tmp/mix.wav")
+        )
+
+        let selected = try #require(selection.attempt)
+        #expect(selected.source == "mix")
+        #expect(selected.result.hasReliableStructureEvidence)
+        #expect(selected.result.transcriptTokenCount == 4)
+        #expect(selection.errors.isEmpty)
+    }
 }
 
 /// End-to-end runner tests that DRIVE THE DSP PIPELINE — parked identically to

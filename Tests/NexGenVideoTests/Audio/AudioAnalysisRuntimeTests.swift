@@ -12,6 +12,7 @@ struct AudioAnalysisRuntimeTests {
 
         #expect(registry.audioDecoder != nil)
         #expect(registry.transcriber != nil)
+        #expect(registry.transcriber is any ContextualAudioTranscribing)
         #expect(registry.stemSeparator != nil)
         #expect(registry.beatDetector != nil)
         #expect(registry.chordRecognizer != nil)

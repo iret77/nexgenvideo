@@ -33,6 +33,7 @@ public enum LyricsAlignment {
         let lyricLineCount: Int
         let mappedLineCount: Int
         let lyricTokenCount: Int
+        let transcriptTokenCount: Int
         let matchedTokenCount: Int
         let markerCount: Int
         let mappedMarkerCount: Int
@@ -143,7 +144,8 @@ public enum LyricsAlignment {
         guard !lyricLines.isEmpty, !asr.isEmpty else {
             return Result(
                 lines: [], lyricLineCount: lyricLines.count, mappedLineCount: 0,
-                lyricTokenCount: lyricTokenCount, matchedTokenCount: 0,
+                lyricTokenCount: lyricTokenCount, transcriptTokenCount: asr.count,
+                matchedTokenCount: 0,
                 markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0
             )
         }
@@ -157,7 +159,7 @@ public enum LyricsAlignment {
         guard !toks.isEmpty else {
             return Result(
                 lines: [], lyricLineCount: lyricLines.count, mappedLineCount: 0,
-                lyricTokenCount: 0, matchedTokenCount: 0,
+                lyricTokenCount: 0, transcriptTokenCount: asr.count, matchedTokenCount: 0,
                 markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0
             )
         }
@@ -191,11 +193,16 @@ public enum LyricsAlignment {
             lyricLineCount: lyricLines.count,
             mappedLineCount: out.count,
             lyricTokenCount: lyricTokenCount,
+            transcriptTokenCount: asr.count,
             matchedTokenCount: matchOf.compactMap { $0 }.count,
             markerCount: markerCount,
             mappedMarkerCount: mappedMarkerCount,
             reliableMarkerCount: reliableMarkerCount
         )
+    }
+
+    static func transcriptionContext(_ lyrics: String) -> String {
+        parseLyrics(lyrics).map(\.text).joined(separator: "\n")
     }
 
     /// Fuzzy global alignment. Returns, per lyric token, the ASR index it anchors to (nil = gap).

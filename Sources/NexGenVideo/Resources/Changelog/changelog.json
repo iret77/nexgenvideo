@@ -15,6 +15,7 @@
           "heading": "Audio analysis",
           "items": [
             "The macOS 26 production pipeline now runs the same on-device decoder, stem separation, Whisper lyric alignment, neural beat grid, harmony recognition, and evidence-based structure resolver in the app and private acceptance workflow.",
+            "Lyric timing now conditions on the attached sung text and falls back from an unusable isolated vocal stem to the original mix, selecting the stronger measured alignment instead of accepting an empty transcript match.",
             "Canonical song sections now require independently reproducible bar-aligned acoustic or lyric evidence, while strong instrumental intro and outro boundaries remain available alongside fully resolved lyric markers.",
             "Apple Music Understanding's section, segment, and phrase hierarchy is preserved as a stronger availability-gated strategy for macOS 27.",
             "Out-of-order and non-finite system rhythm samples are normalized deterministically before structural validation.",
