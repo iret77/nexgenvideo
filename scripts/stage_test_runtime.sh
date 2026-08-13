@@ -2,6 +2,11 @@
 set -euo pipefail
 
 CONFIGURATION="${1:-debug}"
+SCRATCH_PATH="${2:-}"
+if [ "$#" -gt 2 ]; then
+  echo "!! usage: $0 [debug|release] [swiftpm-scratch-path]" >&2
+  exit 1
+fi
 case "$CONFIGURATION" in
   debug|release) ;;
   *) echo "!! test runtime configuration must be debug or release" >&2; exit 1 ;;
@@ -11,7 +16,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SWIFT="${NGV_SWIFT:-swift}"
 XCRUN="${NGV_XCRUN:-xcrun}"
 VENDOR_ARTIFACT_ROOT="${NGV_VENDOR_ARTIFACT_ROOT:-$ROOT/Vendor}"
-SWIFTPM_ARTIFACT_ROOT="${NGV_SWIFTPM_ARTIFACT_ROOT:-$ROOT/.build/artifacts}"
+DEFAULT_SWIFTPM_ARTIFACT_ROOT="$ROOT/.build/artifacts"
+if [ -n "$SCRATCH_PATH" ]; then
+  DEFAULT_SWIFTPM_ARTIFACT_ROOT="$SCRATCH_PATH/artifacts"
+fi
+SWIFTPM_ARTIFACT_ROOT="${NGV_SWIFTPM_ARTIFACT_ROOT:-$DEFAULT_SWIFTPM_ARTIFACT_ROOT}"
 if ! command -v "$SWIFT" >/dev/null 2>&1; then
   echo "!! swift is required to locate built test products" >&2
   exit 1
@@ -67,7 +76,12 @@ if [ ! -d "$XCODE_SHARED_FRAMEWORK_ROOT" ]; then
   echo "!! active Xcode shared framework root does not exist: $XCODE_SHARED_FRAMEWORK_ROOT" >&2
   exit 1
 fi
-BIN_DIRECTORY="$("$SWIFT" build -c "$CONFIGURATION" --show-bin-path)"
+# SwiftPM's bin path depends on configuration and scratch path, not compiler flags.
+if [ -n "$SCRATCH_PATH" ]; then
+  BIN_DIRECTORY="$("$SWIFT" build -c "$CONFIGURATION" --scratch-path "$SCRATCH_PATH" --show-bin-path)"
+else
+  BIN_DIRECTORY="$("$SWIFT" build -c "$CONFIGURATION" --show-bin-path)"
+fi
 RESOURCE_BUNDLE="$BIN_DIRECTORY/NexGenVideo_NexGenVideo.bundle"
 
 if [ ! -d "$RESOURCE_BUNDLE" ]; then

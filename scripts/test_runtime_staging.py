@@ -354,14 +354,15 @@ class RuntimeStagingTests(unittest.TestCase):
             bin_directory.mkdir()
             (bin_directory / "NexGenVideo_NexGenVideo.bundle").mkdir()
             vendor = root / "vendor"
-            artifacts = root / "artifacts"
+            scratch = root / "release-tests"
+            artifacts = scratch / "artifacts"
             swift_runtime = root / "swift-runtime"
             platform_frameworks = root / "platform-frameworks"
             platform_private_frameworks = root / "platform-private-frameworks"
             platform_libraries = root / "platform-libraries"
             xcode_shared_frameworks = root / "xcode-shared-frameworks"
             vendor.mkdir()
-            artifacts.mkdir()
+            artifacts.mkdir(parents=True)
             swift_runtime.mkdir()
             platform_frameworks.mkdir()
             platform_private_frameworks.mkdir()
@@ -405,13 +406,17 @@ class RuntimeStagingTests(unittest.TestCase):
             self.write_framework(xcode_shared_frameworks, "XCUIAutomation")
             (platform_libraries / "libXCTestSwiftSupport.dylib").write_text("xctest")
             fake_swift = root / "swift"
-            fake_swift.write_text(f"#!/bin/bash\nprintf '%s\\n' '{bin_directory}'\n")
+            swift_arguments = root / "swift-arguments"
+            fake_swift.write_text(
+                "#!/bin/bash\n"
+                f"printf '%s\\n' \"$@\" > '{swift_arguments}'\n"
+                f"printf '%s\\n' '{bin_directory}'\n"
+            )
             fake_swift.chmod(0o700)
             environment = os.environ.copy()
             environment["NGV_SWIFT"] = str(fake_swift)
             environment["NGV_XCRUN"] = str(self.write_fake_xcrun(root))
             environment["NGV_VENDOR_ARTIFACT_ROOT"] = str(vendor)
-            environment["NGV_SWIFTPM_ARTIFACT_ROOT"] = str(artifacts)
             environment["NGV_SWIFT_RUNTIME_ROOT"] = str(swift_runtime)
             environment["NGV_PLATFORM_FRAMEWORK_ROOT"] = str(platform_frameworks)
             environment["NGV_PLATFORM_PRIVATE_FRAMEWORK_ROOT"] = str(
@@ -423,11 +428,32 @@ class RuntimeStagingTests(unittest.TestCase):
             )
 
             subprocess.run(
-                [ROOT / "scripts/stage_test_runtime.sh", "debug"],
+                [ROOT / "scripts/stage_test_runtime.sh", "release", scratch],
                 check=True,
                 env=environment,
             )
 
+            self.assertEqual(
+                swift_arguments.read_text().splitlines(),
+                [
+                    "build",
+                    "-c",
+                    "release",
+                    "--scratch-path",
+                    str(scratch),
+                    "--show-bin-path",
+                ],
+            )
+            environment["NGV_SWIFTPM_ARTIFACT_ROOT"] = str(artifacts)
+            subprocess.run(
+                [ROOT / "scripts/stage_test_runtime.sh", "debug"],
+                check=True,
+                env=environment,
+            )
+            self.assertEqual(
+                swift_arguments.read_text().splitlines(),
+                ["build", "-c", "debug", "--show-bin-path"],
+            )
             runtime = bin_directory / "PackageFrameworks"
             self.assertTrue((runtime / "whisper.framework").is_dir())
             self.assertTrue((runtime / "Sparkle.framework").is_dir())

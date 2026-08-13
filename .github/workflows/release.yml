@@ -386,10 +386,11 @@ jobs:
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
       - name: Build the exact release test configuration
-        run: swift build -c release --build-tests
+        # Testable release objects stay isolated from the production bundle build.
+        run: swift build -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
 
       - name: Stage release test runtime inputs
-        run: scripts/stage_test_runtime.sh release
+        run: scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"
 
       - name: Test the exact release configuration
         run: |
@@ -397,7 +398,7 @@ jobs:
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
           attempts=3
           for i in $(seq 1 "$attempts"); do
-            swift test -c release --skip-build 2>&1 | tee "release-test-attempt-$i.log"
+            swift test -c release --scratch-path "$RUNNER_TEMP/release-tests" --skip-build -Xswiftc -enable-testing 2>&1 | tee "release-test-attempt-$i.log"
             code=${PIPESTATUS[0]}
             if [ "$code" -eq 0 ]; then
               exit 0
