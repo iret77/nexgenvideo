@@ -1,16 +1,58 @@
+import Foundation
 import SwiftUI
 
-// The `beatAnalysis` cockpit surface (musicvideo song analysis): read-only measured ground truth —
-// tempo, key, beat grid, sections — rendered from `analysis/<song>.json` via the host primitives.
-// No mutations: lyrics label the sections, they never move the measured boundaries.
+struct AnalysisRemeasurementPresentation: Equatable {
+    let trackName: String
+    let completedUnitCount: Int
+    let totalUnitCount: Int
 
-struct AnalysisPanelView: View {
+    static func current(
+        execution: PipelinePhaseExecutionSnapshot?,
+        dataRoot: URL?,
+        fallbackTrackName: String
+    ) -> Self? {
+        guard let execution,
+              execution.isRunning,
+              execution.phase == "analysis",
+              execution.stageID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+              let dataRoot,
+              execution.projectRootPath == canonicalPath(dataRoot) else { return nil }
+        let total = max(0, execution.totalUnitCount)
+        let completed = min(max(0, execution.completedUnitCount), total)
+        let source = execution.sourceFilename?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = fallbackTrackName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trackName: String
+        if let source, !source.isEmpty {
+            trackName = source
+        } else {
+            trackName = fallback.isEmpty ? "Assigned track" : fallback
+        }
+        return Self(
+            trackName: trackName,
+            completedUnitCount: completed,
+            totalUnitCount: total
+        )
+    }
+
+    private static func canonicalPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+}
+
+struct DeclarativePackSurfaceView: View {
     @Environment(EditorViewModel.self) private var editor
+    let surface: CockpitSurfaceData
+    let onUnavailable: () -> Void
+
+    private struct LoadedSurface: Sendable, Equatable {
+        let document: PackSurfaceDocument
+        let analysis: AnalysisSurfaceData?
+    }
 
     private enum LoadState: Equatable {
         case idle
         case loading
-        case loaded(AnalysisSurfaceData?)
+        case loaded(LoadedSurface)
         case failed(CockpitError)
     }
 
@@ -21,7 +63,9 @@ struct AnalysisPanelView: View {
         VStack(spacing: AppTheme.Spacing.none) { content }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .task(id: editor.projectURL) { await load() }
-            .onChange(of: editor.engineStateRevision) { _, _ in Task { await load() } }
+            .onChange(of: editor.engineStateRevision) { _, _ in
+                Task { await load(showProgress: false) }
+            }
     }
 
     @ViewBuilder
@@ -30,47 +74,40 @@ struct AnalysisPanelView: View {
         case .idle, .loading:
             centeredProgress()
         case .failed(let error):
-            CockpitStateView.error(error, title: "Couldn't load the analysis",
-                                   subject: "the song analysis",
+            CockpitStateView.error(error, title: "Couldn't load \(surface.title.lowercased())",
+                                   subject: "the pack surface",
                                    activePack: InstalledPack.named(editor.activePluginName),
                                    startProduction: { editor.startProduction() },
                                    isStarting: editor.productionStarted) { Task { await load() } }
-        case .loaded(nil):
-            CockpitStateView.empty(icon: "waveform", title: "No analysis yet",
-                                   message: "Run the analysis phase to measure this song.")
-        case .loaded(.some(let data)):
-            loadedBody(data)
+        case .loaded(let loaded):
+            loadedPanel(loaded)
         }
     }
 
+    private func loadedPanel(_ loaded: LoadedSurface) -> some View {
+        loadedBody(loaded)
+            .overlay {
+                if let analysis = loaded.analysis,
+                   let progress = AnalysisRemeasurementPresentation.current(
+                    execution: editor.pipelinePhaseExecution.snapshot,
+                    dataRoot: editor.workingRoot.flatMap {
+                        NativeCockpitReader.dataRoot(of: $0)
+                    },
+                    fallbackTrackName: analysis.trackName
+                ) {
+                    remeasurementOverlay(progress)
+                }
+            }
+    }
+
     @ViewBuilder
-    private func loadedBody(_ data: AnalysisSurfaceData) -> some View {
+    private func loadedBody(_ loaded: LoadedSurface) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                StatRow(tiles: stats(data))
-                if !data.hasCanonicalStructure {
-                    structureBanner(data)
-                } else if data.requiresStructureReview {
-                    structureReviewBanner(data)
+                ForEach(Array(surface.layout.enumerated()), id: \.offset) { item in
+                    primitiveView(item.element, loaded: loaded)
                 }
-                if !data.nonSuccessStageDiagnostics.isEmpty {
-                    stageDiagnosticsBanner(data)
-                }
-                if data.hasBeatGrid {
-                    labelledBlock("Beat grid", detail: provenance(data)) {
-                        BeatTimeline(duration: data.durationS, beats: data.beats,
-                                     downbeats: data.downbeats,
-                                     sections: data.hasCanonicalStructure ? data.sections : [])
-                    }
-                } else {
-                    degradedBanner
-                }
-                if data.hasCanonicalStructure, !data.sections.isEmpty {
-                    labelledBlock("Sections", detail: structureProvenance(data)) {
-                        SectionList(sections: data.sections)
-                    }
-                }
-                Text("Measured ground truth — read-only. Lyrics label the sections; they never move the measured boundaries.")
+                Text("Measured ground truth — read-only.")
                     .font(.system(size: AppTheme.FontSize.micro))
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
@@ -80,46 +117,112 @@ struct AnalysisPanelView: View {
         }
     }
 
-    private func stats(_ d: AnalysisSurfaceData) -> [StatTile] {
-        var tiles: [StatTile] = [
-            StatTile(label: "Track", value: d.trackName.isEmpty ? "—" : d.trackName),
-            StatTile(label: "Duration", value: PackSurfaceFormat.mmss(d.durationS)),
-            StatTile(label: "Tempo",
-                     value: d.hasBeatGrid ? "\(Int(d.perceivedBpm.rounded())) BPM" : "—",
-                     muted: !d.hasBeatGrid),
-        ]
-        if let key = d.key, !key.isEmpty { tiles.append(StatTile(label: "Key", value: key)) }
-        if d.hasCanonicalStructure, !d.sections.isEmpty {
-            tiles.append(StatTile(label: "Sections", value: "\(d.sections.count)"))
+    @ViewBuilder
+    private func primitiveView(
+        _ primitive: CockpitSurfacePrimitiveData,
+        loaded: LoadedSurface
+    ) -> some View {
+        switch primitive {
+        case .statRow(let items):
+            let tiles = items.compactMap { statTile($0, loaded: loaded) }
+            if !tiles.isEmpty { StatRow(tiles: tiles) }
+        case .beatTimeline(
+            let title,
+            let durationField,
+            let beatsField,
+            let downbeatsField,
+            let sectionsField,
+            let sectionsVisibility
+        ):
+            let duration = loaded.document.number(at: durationField) ?? 0
+            let beats = loaded.document.numbers(at: beatsField) ?? []
+            let downbeats = loaded.document.numbers(at: downbeatsField) ?? []
+            let sections = PackSurfaceSectionBinding.sections(
+                document: loaded.document,
+                field: sectionsField,
+                visibility: sectionsVisibility,
+                analysis: loaded.analysis
+            )
+            if beats.isEmpty {
+                analysisStatus(loaded.analysis)
+                degradedBanner
+            } else {
+                analysisStatus(loaded.analysis)
+                labelledBlock(title, detail: provenance(loaded.analysis, beats: beats, downbeats: downbeats)) {
+                    BeatTimeline(
+                        duration: duration,
+                        beats: beats,
+                        downbeats: downbeats,
+                        sections: sections
+                    )
+                }
+            }
+        case .sectionList(let title, let sectionsField, let visibility):
+            let hierarchy = PackSurfaceSectionBinding.hierarchy(
+                document: loaded.document,
+                field: sectionsField,
+                visibility: visibility,
+                analysis: loaded.analysis
+            )
+            if !hierarchy.isEmpty {
+                labelledBlock(
+                    loaded.analysis?.hasNestedHierarchy == true ? "Structure hierarchy" : title,
+                    detail: loaded.analysis.flatMap(structureProvenance)
+                ) {
+                    StructureHierarchyList(sections: hierarchy)
+                }
+            }
+        case .keyValue(let title, let items):
+            let rows = items.compactMap { binding -> KeyValueRow? in
+                guard let tile = statTile(binding, loaded: loaded), !tile.muted else { return nil }
+                return KeyValueRow(label: tile.label, value: tile.value)
+            }
+            if !rows.isEmpty { PackSurfaceKeyValueList(title: title, rows: rows) }
         }
-        return tiles
     }
 
-    private func structureReviewBanner(_ data: AnalysisSurfaceData) -> some View {
-        let detail = data.structureResolution?.detail
-            ?? "Review every measured section before approval."
-        return HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.xs))
-                .foregroundStyle(AppTheme.Status.warningColor)
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                Text("Review the section structure")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
-                    .foregroundStyle(AppTheme.Text.primaryColor)
-                Text(detail)
-                    .font(.system(size: AppTheme.FontSize.xs))
-                    .foregroundStyle(AppTheme.Text.secondaryColor)
+    private func statTile(
+        _ binding: CockpitValueBindingData,
+        loaded: LoadedSurface
+    ) -> StatTile? {
+        if binding.visibility == .whenCanonicalSections,
+           loaded.analysis?.hasCanonicalStructure != true { return nil }
+
+        let value: String?
+        switch binding.format {
+        case .text:
+            value = loaded.document.string(at: binding.field)
+        case .fileName:
+            value = loaded.document.string(at: binding.field).map { ($0 as NSString).lastPathComponent }
+        case .duration:
+            value = loaded.document.number(at: binding.field).map(PackSurfaceFormat.mmss)
+        case .bpm:
+            if loaded.analysis?.hasBeatGrid == false {
+                value = nil
+            } else {
+                value = loaded.document.number(at: binding.field).map { measured in
+                    let factor = binding.factorField.flatMap {
+                        loaded.document.number(at: $0)
+                    } ?? 1
+                    return "\(Int((measured * factor).rounded())) BPM"
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        case .count:
+            value = loaded.document.count(at: binding.field).map(String.init)
         }
-        .padding(AppTheme.Spacing.md)
-        .background(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.faint))
-        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
-                .strokeBorder(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.moderate),
-                              lineWidth: AppTheme.BorderWidth.hairline)
-        )
+        if binding.visibility == .whenPresent,
+           value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false { return nil }
+        let rendered = value.flatMap { $0.isEmpty ? nil : $0 }
+        return StatTile(label: binding.label, value: rendered ?? "—", muted: rendered == nil)
+    }
+
+    @ViewBuilder
+    private func analysisStatus(_ data: AnalysisSurfaceData?) -> some View {
+        if let data {
+            if !data.hasCanonicalStructure { structureBanner(data) }
+            if data.requiresStructureReview { structureReviewBanner(data) }
+            if !data.nonSuccessStageDiagnostics.isEmpty { stageDiagnosticsBanner(data) }
+        }
     }
 
     private func structureBanner(_ data: AnalysisSurfaceData) -> some View {
@@ -146,6 +249,36 @@ struct AnalysisPanelView: View {
             RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                 .strokeBorder(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.moderate),
                               lineWidth: AppTheme.BorderWidth.hairline)
+        )
+    }
+
+    private func structureReviewBanner(_ data: AnalysisSurfaceData) -> some View {
+        HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Status.warningColor)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text("Review section boundaries")
+                    .font(.system(
+                        size: AppTheme.FontSize.xs,
+                        weight: AppTheme.FontWeight.semibold
+                    ))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                Text(data.structureResolution?.detail ?? "Some boundaries have one acoustic detector source.")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(AppTheme.Spacing.md)
+        .background(AppTheme.Status.warningColor.opacity(AppTheme.Opacity.faint))
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                .strokeBorder(
+                    AppTheme.Status.warningColor.opacity(AppTheme.Opacity.moderate),
+                    lineWidth: AppTheme.BorderWidth.hairline
+                )
         )
     }
 
@@ -177,17 +310,29 @@ struct AnalysisPanelView: View {
         )
     }
 
-    private func provenance(_ d: AnalysisSurfaceData) -> String {
+    private func provenance(
+        _ data: AnalysisSurfaceData?,
+        beats: [Double],
+        downbeats: [Double]
+    ) -> String {
         var parts = ["measured"]
-        if let source = d.downbeatSource, !source.isEmpty { parts.append(source) }
-        parts.append("\(d.beats.count) beats / \(d.downbeats.count) downbeats")
+        if let source = data?.downbeatSource, !source.isEmpty { parts.append(source) }
+        parts.append("\(beats.count) beats / \(downbeats.count) downbeats")
         return parts.joined(separator: " · ")
     }
 
     private func structureProvenance(_ data: AnalysisSurfaceData) -> String? {
         guard let resolution = data.structureResolution else { return nil }
         let method = resolution.method.replacingOccurrences(of: "_", with: " ")
-        return "\(method) · \(resolution.candidateBoundaryCount) candidates · \(resolution.discardedBoundaryCount) discarded"
+        let segments = resolution.hierarchy?.segments.count ?? 0
+        let phrases = resolution.hierarchy?.phrases.count ?? 0
+        var parts = [method]
+        if segments > 0 || phrases > 0 {
+            parts.append("\(segments) segments")
+            parts.append("\(phrases) phrases")
+        }
+        parts.append("\(resolution.candidateBoundaryCount) measured candidates")
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -230,24 +375,93 @@ struct AnalysisPanelView: View {
         )
     }
 
+    private func remeasurementOverlay(
+        _ progress: AnalysisRemeasurementPresentation
+    ) -> some View {
+        VStack {
+            Spacer()
+            VStack(spacing: AppTheme.Spacing.smMd) {
+                Image(systemName: "music.note")
+                    .font(.system(size: AppTheme.FontSize.title1))
+                    .foregroundStyle(AppTheme.Accent.timecodeColor)
+                Text("Re-measuring \(progress.trackName)")
+                    .font(.system(
+                        size: AppTheme.FontSize.md,
+                        weight: AppTheme.FontWeight.semibold
+                    ))
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("A new analysis is running; the last-known grid stays until it completes.")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .multilineTextAlignment(.center)
+                if progress.totalUnitCount > 0 {
+                    ProgressView(
+                        value: Double(progress.completedUnitCount),
+                        total: Double(progress.totalUnitCount)
+                    )
+                    .progressViewStyle(.linear)
+                    .tint(AppTheme.Accent.timecodeColor)
+                    Text("\(progress.completedUnitCount) of \(progress.totalUnitCount)")
+                        .font(.system(size: AppTheme.FontSize.xxs).monospacedDigit())
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .padding(AppTheme.Spacing.lg)
+            .frame(maxWidth: AppTheme.ComponentSize.packSurfaceProgressMaxWidth)
+            .background(AppTheme.Background.raisedColor)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                    .strokeBorder(
+                        AppTheme.Border.subtleColor,
+                        lineWidth: AppTheme.BorderWidth.hairline
+                    )
+            )
+            Spacer()
+        }
+        .padding(AppTheme.Spacing.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.medium))
+        .allowsHitTesting(false)
+    }
+
     private func centeredProgress() -> some View {
         VStack { Spacer(); ProgressView().controlSize(.small); Spacer() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func load() async {
+    private func load(showProgress: Bool = true) async {
         guard let dir = editor.workingRoot else {
             state = .failed(.noProject)
             return
         }
         loadToken += 1
         let token = loadToken
-        state = .loading
-        let data = await Task.detached { () -> AnalysisSurfaceData? in
+        if showProgress { state = .loading }
+        let surface = surface
+        let loaded = await Task.detached { () -> LoadedSurface? in
             guard let root = NativeCockpitReader.dataRoot(of: dir) else { return nil }
-            return AnalysisSurfaceData.load(dataRoot: root)
+            guard let url = PackSurfaceDataResolver.resolve(
+                dataRoot: root,
+                pattern: surface.dataFile
+            ), let bytes = try? Data(contentsOf: url),
+               let document = try? PackSurfaceDocument(data: bytes) else { return nil }
+            return LoadedSurface(
+                document: document,
+                analysis: try? JSONDecoder().decode(AnalysisSurfaceData.self, from: bytes)
+            )
         }.value
         guard token == loadToken else { return }
-        state = .loaded(data)
+        guard let loaded else {
+            state = .idle
+            onUnavailable()
+            return
+        }
+        state = .loaded(loaded)
     }
 }

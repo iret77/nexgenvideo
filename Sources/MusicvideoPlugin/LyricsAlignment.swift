@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 /// A transcribed word with its measured time span — the shape a Whisper transcriber yields per token.
 /// The engine is transcriber-agnostic: the app layer (WhisperKit / whisper.cpp, run on Demucs-isolated
@@ -14,18 +15,7 @@ public struct TranscriptToken: Sendable, Equatable {
     }
 }
 
-/// Native forced-lyric alignment — the whisperX "x" reproduced without Python. Port of
-/// `analysis/alignment.py` (`parse_lyrics` + `_map_lyrics_via_sequence_alignment`), upgrading the
-/// exact-block `difflib.SequenceMatcher` to a fuzzy Needleman–Wunsch alignment (the stack the owner
-/// locked) so an ASR mishearing can still anchor a word rather than only widening a span.
-///
-/// Given the user's LYRICS (clean truth, with `[Section]` markers and `(stage directions)`) and an ASR
-/// TRANSCRIPT of the sung vocals (noisy but TIMED), it maps each lyric line to a time span. Line timing
-/// is taken from the ASR-word span its tokens anchor to (identical to the original); a line the ASR
-/// never transcribed is DROPPED, never fabricated. Per lyric word it emits a timestamp — matched words
-/// inherit the ASR span, intra-line gaps interpolate between the surrounding anchors. `[Section]`
-/// markers ride onto the following line. The consolidator may use a reliably anchored marker to label
-/// and select a nearby acoustic boundary, but a lyric timestamp never becomes a structural boundary.
+/// Aligns lyric truth to timed ASR tokens without fabricating unmapped lines.
 public enum LyricsAlignment {
     /// A lyric word: display surface + normalized matching key.
     private struct Tok { let surface: String; let key: String }
@@ -39,20 +29,39 @@ public enum LyricsAlignment {
     /// behavior, which only ever anchored on exact tokens.
     private static let matchThreshold = 0.7
 
+    enum TimingEvidence: String, Codable, Sendable, Equatable {
+        case recognizedSpeech = "recognized_speech"
+        case knownTextAlignment = "known_text_alignment"
+    }
+
     struct Result: Sendable, Equatable {
         let lines: [AlignmentLine]
         let lyricLineCount: Int
         let mappedLineCount: Int
         let lyricTokenCount: Int
+        let transcriptTokenCount: Int
         let matchedTokenCount: Int
         let markerCount: Int
         let mappedMarkerCount: Int
         let reliableMarkerCount: Int
+        let timingEvidence: TimingEvidence
+        let timingMethod: KnownTextAlignmentTimingMethod?
 
         var hasReliableStructureEvidence: Bool {
             markerCount > 0
                 && mappedMarkerCount == markerCount
                 && reliableMarkerCount == markerCount
+        }
+
+        var hasSuccessfulAlignment: Bool {
+            guard lyricLineCount > 0,
+                  mappedLineCount == lyricLineCount,
+                  lyricTokenCount > 0 else { return false }
+            return Double(matchedTokenCount) / Double(lyricTokenCount) >= 0.7
+        }
+
+        var shouldStopAlignmentSearch: Bool {
+            hasReliableStructureEvidence || (markerCount == 0 && hasSuccessfulAlignment)
         }
     }
 
@@ -141,22 +150,77 @@ public enum LyricsAlignment {
         return out
     }
 
-    /// Align. Returns one `AlignmentLine` per MAPPED lyric line. Empty if either side is empty (caller
-    /// falls back to acoustic-only section detection).
+    /// Returns one alignment per mapped lyric line.
     public static func align(lyrics: String, transcript: [TranscriptToken]) -> [AlignmentLine] {
         alignDetailed(lyrics: lyrics, transcript: transcript).lines
     }
 
-    static func alignDetailed(lyrics: String, transcript: [TranscriptToken]) -> Result {
+    static func alignDetailed(
+        lyrics: String,
+        transcript: [TranscriptToken]
+    ) -> Result {
+        alignDetailed(
+            lyrics: lyrics,
+            transcript: transcript,
+            timingEvidence: .recognizedSpeech,
+            timingMethod: nil
+        )
+    }
+
+    static func alignKnownTextDetailed(
+        lyrics: String,
+        measurement: KnownTextAlignmentMeasurement
+    ) -> Result {
+        alignDetailed(
+            lyrics: lyrics,
+            transcript: measurement.words.map {
+                TranscriptToken(
+                    text: $0.text,
+                    start: $0.start,
+                    end: $0.end,
+                    score: $0.confidence
+                )
+            },
+            timingEvidence: .knownTextAlignment,
+            timingMethod: measurement.timingMethod
+        )
+    }
+
+    private static func alignDetailed(
+        lyrics: String,
+        transcript: [TranscriptToken],
+        timingEvidence: TimingEvidence,
+        timingMethod: KnownTextAlignmentTimingMethod?
+    ) -> Result {
         let lyricLines = parseLyrics(lyrics)
-        let asr = transcript.filter { !normalize($0.text).isEmpty }
+        let asr = transcript.enumerated()
+            .filter {
+                $0.element.start.isFinite
+                    && $0.element.end.isFinite
+                    && $0.element.start >= 0
+                    && $0.element.end >= $0.element.start
+                    && !normalize($0.element.text).isEmpty
+            }
+            .sorted {
+                if $0.element.start != $1.element.start {
+                    return $0.element.start < $1.element.start
+                }
+                if $0.element.end != $1.element.end {
+                    return $0.element.end < $1.element.end
+                }
+                return $0.offset < $1.offset
+            }
+            .map(\.element)
         let lyricTokenCount = lyricLines.reduce(0) { $0 + $1.tokens.count }
         let markerCount = lyricLines.filter { $0.marker != nil }.count
         guard !lyricLines.isEmpty, !asr.isEmpty else {
             return Result(
                 lines: [], lyricLineCount: lyricLines.count, mappedLineCount: 0,
-                lyricTokenCount: lyricTokenCount, matchedTokenCount: 0,
-                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0
+                lyricTokenCount: lyricTokenCount, transcriptTokenCount: asr.count,
+                matchedTokenCount: 0,
+                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0,
+                timingEvidence: timingEvidence,
+                timingMethod: timingMethod
             )
         }
         let asrKeys = asr.map { normalize($0.text) }
@@ -169,8 +233,10 @@ public enum LyricsAlignment {
         guard !toks.isEmpty else {
             return Result(
                 lines: [], lyricLineCount: lyricLines.count, mappedLineCount: 0,
-                lyricTokenCount: 0, matchedTokenCount: 0,
-                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0
+                lyricTokenCount: 0, transcriptTokenCount: asr.count, matchedTokenCount: 0,
+                markerCount: markerCount, mappedMarkerCount: 0, reliableMarkerCount: 0,
+                timingEvidence: timingEvidence,
+                timingMethod: timingMethod
             )
         }
 
@@ -203,11 +269,18 @@ public enum LyricsAlignment {
             lyricLineCount: lyricLines.count,
             mappedLineCount: out.count,
             lyricTokenCount: lyricTokenCount,
+            transcriptTokenCount: asr.count,
             matchedTokenCount: matchOf.compactMap { $0 }.count,
             markerCount: markerCount,
             mappedMarkerCount: mappedMarkerCount,
-            reliableMarkerCount: reliableMarkerCount
+            reliableMarkerCount: reliableMarkerCount,
+            timingEvidence: timingEvidence,
+            timingMethod: timingMethod
         )
+    }
+
+    static func transcriptionContext(_ lyrics: String) -> String {
+        parseLyrics(lyrics).map(\.text).joined(separator: "\n")
     }
 
     /// Fuzzy global alignment. Returns, per lyric token, the ASR index it anchors to (nil = gap).

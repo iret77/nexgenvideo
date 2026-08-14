@@ -31,9 +31,16 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "progressPhaseRunners",
     "productionProfiles",
     "artifactWriteRequirements",
+    "musicUnderstandingAnalyzer",
+    "declarativeCockpitSurface",
 ]
-ENGINE_BOUNDARY_LAYOUT_CONTRACT = 6
+ENGINE_BOUNDARY_LAYOUT_CONTRACT = 8
 ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 2
+ENGINE_AUDIO_BOUNDARY_FILES = [
+    "Engine/Sources/NexGenEngine/Audio/PCM.swift",
+    "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+    "Engine/Sources/NexGenEngine/Audio/MusicUnderstanding.swift",
+]
 ENGINE_BOUNDARY_LAYOUTS = {
     "Shot": {
         "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
@@ -61,6 +68,95 @@ ENGINE_BOUNDARY_LAYOUTS = {
     },
 }
 ENGINE_BOUNDARY_VALUE_LAYOUTS = {
+    "PCMBuffer": {
+        "path": "Engine/Sources/NexGenEngine/Audio/PCM.swift",
+        "start": "public struct PCMBuffer: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": ["var samples: [Float]", "var sampleRate: Double"],
+    },
+    "TranscribedWord": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public struct TranscribedWord: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "var text: String", "var start: Double", "var end: Double",
+            "var confidence: Double?",
+        ],
+    },
+    "KnownTextAlignmentMeasurement": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public struct KnownTextAlignmentMeasurement: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "let words: [TranscribedWord]",
+            "let timingMethod: KnownTextAlignmentTimingMethod",
+        ],
+    },
+    "SeparatedStems": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public struct SeparatedStems: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "var vocals: URL?", "var drums: URL?", "var bass: URL?", "var other: URL?",
+        ],
+    },
+    "DetectedBeatGrid": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public struct DetectedBeatGrid: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": ["var beats: [Double]", "var downbeats: [Double]", "var bpm: Double?"],
+    },
+    "RecognizedChord": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public struct RecognizedChord: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": ["var start: Double", "var end: Double", "var label: String"],
+    },
+    "MeasuredMusicRange": {
+        "path": "Engine/Sources/NexGenEngine/Audio/MusicUnderstanding.swift",
+        "start": "public struct MeasuredMusicRange: Codable, Sendable, Equatable {",
+        "end": "    public init(",
+        "members": ["let start: Double", "let end: Double"],
+    },
+    "MusicUnderstandingMeasurement": {
+        "path": "Engine/Sources/NexGenEngine/Audio/MusicUnderstanding.swift",
+        "start": "public struct MusicUnderstandingMeasurement: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "let beats: [Double]", "let bars: [Double]", "let bpm: Double?",
+            "let sections: [MeasuredMusicRange]", "let segments: [MeasuredMusicRange]",
+            "let phrases: [MeasuredMusicRange]",
+        ],
+    },
+    "CockpitSurface": {
+        "path": "Engine/Sources/NexGenEngine/Packs/EngineRegistry.swift",
+        "start": "public struct CockpitSurface: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "let id: String", "let title: String", "let symbol: String",
+            "let phase: String", "let kind: String",
+        ],
+    },
+    "DeclarativeCockpitSurface": {
+        "path": "Engine/Sources/NexGenEngine/Packs/EngineRegistry.swift",
+        "start": "public struct DeclarativeCockpitSurface: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "let id: String", "let title: String", "let symbol: String",
+            "let phase: String", "let dataFile: String",
+            "let layout: [CockpitSurfacePrimitive]",
+        ],
+    },
+    "CockpitValueBinding": {
+        "path": "Engine/Sources/NexGenEngine/Packs/EngineRegistry.swift",
+        "start": "public struct CockpitValueBinding: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "let label: String", "let field: String",
+            "let format: CockpitValueFormat", "let factorField: String?",
+            "let visibility: CockpitBindingVisibility",
+        ],
+    },
     "CameraSetup": {
         "path": "Engine/Sources/NexGenEngine/Artifacts/Shotlist.swift",
         "start": "public struct CameraSetup: Codable, Sendable, Equatable {",
@@ -259,6 +355,38 @@ ENGINE_BOUNDARY_VALUE_LAYOUTS = {
     },
 }
 ENGINE_BOUNDARY_ENUM_LAYOUTS = {
+    "KnownTextAlignmentTimingMethod": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public enum KnownTextAlignmentTimingMethod: String, Codable, Sendable, Equatable {",
+        "end": "/// A host-owned known-text measurement.",
+        "cases": ["attentionDTW = \"attention_dtw\""],
+    },
+    "CockpitValueFormat": {
+        "path": "Engine/Sources/NexGenEngine/Packs/EngineRegistry.swift",
+        "start": "public enum CockpitValueFormat: String, Sendable, Equatable {",
+        "end": "public enum CockpitBindingVisibility:",
+        "cases": ["text", "fileName", "duration", "bpm", "count"],
+    },
+    "CockpitBindingVisibility": {
+        "path": "Engine/Sources/NexGenEngine/Packs/EngineRegistry.swift",
+        "start": "public enum CockpitBindingVisibility: String, Sendable, Equatable {",
+        "end": "public struct CockpitValueBinding:",
+        "cases": ["always", "whenPresent", "whenCanonicalSections"],
+    },
+    "CockpitSurfacePrimitive": {
+        "path": "Engine/Sources/NexGenEngine/Packs/EngineRegistry.swift",
+        "start": "public enum CockpitSurfacePrimitive: Sendable, Equatable {",
+        "end": "/// A pack gate phase",
+        "declarations": [
+            "statRow(items: [CockpitValueBinding])",
+            "beatTimeline( title: String, durationField: String, beatsField: String, "
+            "downbeatsField: String, sectionsField: String, "
+            "sectionsVisibility: CockpitBindingVisibility )",
+            "sectionList( title: String, sectionsField: String, "
+            "visibility: CockpitBindingVisibility )",
+            "keyValue(title: String?, items: [CockpitValueBinding])",
+        ],
+    },
     "Mode": {
         "path": "Engine/Sources/NexGenEngine/Artifacts/ProjectMeta.swift",
         "start": "public enum Mode: String, Codable, Sendable, CaseIterable {",
@@ -406,6 +534,62 @@ ENGINE_BOUNDARY_ENUM_LAYOUTS = {
         "cases": ["info", "warn", "error"],
     },
 }
+ENGINE_BOUNDARY_PROTOCOL_LAYOUTS = {
+    "AudioPCMDecoding": {
+        "path": "Engine/Sources/NexGenEngine/Audio/PCM.swift",
+        "start": "public protocol AudioPCMDecoding: Sendable {",
+        "requirements": ["decode(_ url: URL) throws -> PCMBuffer"],
+    },
+    "AudioTranscribing": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public protocol AudioTranscribing: Sendable {",
+        "requirements": [
+            "transcribe(_ audio: URL, language: String) throws -> [TranscribedWord]",
+        ],
+    },
+    "ContextualAudioTranscribing": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public protocol ContextualAudioTranscribing: AudioTranscribing {",
+        "requirements": [
+            "transcribe( _ audio: URL, language: String, context: String ) throws -> [TranscribedWord]",
+        ],
+    },
+    "AudioLyricsAligning": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public protocol AudioLyricsAligning: AudioTranscribing {",
+        "requirements": [
+            "alignLyrics( _ audio: URL, language: String, lyrics: String ) throws -> KnownTextAlignmentMeasurement",
+        ],
+    },
+    "AudioStemSeparating": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public protocol AudioStemSeparating: Sendable {",
+        "requirements": [
+            "separateStems(_ audio: URL, into dir: URL) throws -> SeparatedStems",
+        ],
+    },
+    "AudioBeatDetecting": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public protocol AudioBeatDetecting: Sendable {",
+        "requirements": [
+            "detectBeats(_ audio: URL, stems: SeparatedStems?) throws -> DetectedBeatGrid?",
+        ],
+    },
+    "AudioChordRecognizing": {
+        "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
+        "start": "public protocol AudioChordRecognizing: Sendable {",
+        "requirements": [
+            "recognizeChords(_ audio: URL, stems: SeparatedStems?) throws -> [RecognizedChord]?",
+        ],
+    },
+    "MusicUnderstandingAnalyzing": {
+        "path": "Engine/Sources/NexGenEngine/Audio/MusicUnderstanding.swift",
+        "start": "public protocol MusicUnderstandingAnalyzing: Sendable {",
+        "requirements": [
+            "analyze(_ audio: URL) throws -> MusicUnderstandingMeasurement",
+        ],
+    },
+}
 
 
 def fail(message: str) -> None:
@@ -431,6 +615,49 @@ def semantic_version(value: object, label: str) -> tuple[int, int, int]:
     if not isinstance(value, str) or re.fullmatch(r"\d+\.\d+\.\d+", value) is None:
         fail(f"{label} must be X.Y.Z")
     return tuple(int(part) for part in value.split("."))
+
+
+def enum_case_declarations(declaration: str) -> list[str]:
+    values = re.findall(
+        r"^[ \t]*case[ \t]+(.+?)(?=^[ \t]*case[ \t]+|^})",
+        declaration,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    return [" ".join(value.split()) for value in values]
+
+
+def braced_declaration(source: str, start_marker: str) -> str | None:
+    start = source.find(start_marker)
+    opening = source.find("{", start)
+    if start < 0 or opening < 0:
+        return None
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    return None
+
+
+def protocol_method_declarations(declaration: str) -> list[str]:
+    methods = []
+    current = []
+    parenthesis_depth = 0
+    for raw_line in declaration.splitlines():
+        line = raw_line.strip()
+        if not current:
+            if not line.startswith("func "):
+                continue
+            line = line.removeprefix("func ")
+        current.append(line)
+        parenthesis_depth += line.count("(") - line.count(")")
+        if parenthesis_depth == 0:
+            methods.append(" ".join(" ".join(current).split()))
+            current = []
+    return methods
 
 
 def validate_changelog(version: str) -> None:
@@ -621,15 +848,53 @@ def validate_engine_boundary_abi() -> None:
         if start < 0 or end < 0:
             fail(f"{type_name} enum-layout boundary is unreadable")
         declaration = source[start:end]
-        cases = re.findall(
-            r"^    case\s+(.+?)\s*$",
-            declaration,
-            flags=re.MULTILINE,
-        )
-        if cases != layout["cases"]:
+        if "declarations" in layout:
+            cases = enum_case_declarations(declaration)
+            expected = layout["declarations"]
+        else:
+            cases = re.findall(
+                r"^    case\s+(.+?)\s*$",
+                declaration,
+                flags=re.MULTILINE,
+            )
+            expected = layout["cases"]
+        if cases != expected:
             fail(
                 f"{type_name} cases changed without updating the engine boundary "
-                f"contract guard. Expected {layout['cases']}, got {cases}"
+                f"contract guard. Expected {expected}, got {cases}"
+            )
+
+    for protocol_name, layout in ENGINE_BOUNDARY_PROTOCOL_LAYOUTS.items():
+        path = ROOT / layout["path"]
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            fail(f"{layout['path']} is unreadable: {error}")
+        declaration = braced_declaration(source, layout["start"])
+        if declaration is None:
+            fail(f"{protocol_name} protocol boundary is unreadable")
+        requirements = protocol_method_declarations(declaration)
+        if requirements != layout["requirements"]:
+            fail(
+                f"{protocol_name} requirements changed without updating the engine "
+                f"boundary contract guard. Expected {layout['requirements']}, got {requirements}"
+            )
+
+    guarded_values = set(ENGINE_BOUNDARY_VALUE_LAYOUTS)
+    guarded_protocols = set(ENGINE_BOUNDARY_PROTOCOL_LAYOUTS)
+    for relative_path in ENGINE_AUDIO_BOUNDARY_FILES:
+        try:
+            source = (ROOT / relative_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            fail(f"{relative_path} is unreadable: {error}")
+        value_types = set(re.findall(r"^public struct ([A-Za-z_][A-Za-z0-9_]*)", source, re.MULTILINE))
+        protocols = set(re.findall(r"^public protocol ([A-Za-z_][A-Za-z0-9_]*)", source, re.MULTILINE))
+        missing_values = sorted(value_types - guarded_values)
+        missing_protocols = sorted(protocols - guarded_protocols)
+        if missing_values or missing_protocols:
+            fail(
+                f"{relative_path} adds unguarded audio boundary declarations: "
+                f"value types={missing_values}, protocols={missing_protocols}"
             )
 
 

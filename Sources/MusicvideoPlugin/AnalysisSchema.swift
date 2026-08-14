@@ -1,19 +1,8 @@
 import Foundation
 import NexGenEngine
 
-/// Analysis schema v2 (backward-compatible with v1). Port of
-/// `nexgen_pack_musicvideo/analysis_schema.py`.
-///
-/// v2 introduces the following fields, all optional (absent from v1
-/// analyses): `stemsPath`, `alignment` (word/line-level forced alignment
-/// against supplied lyrics), `structureSources` (multiple section
-/// candidates from different detectors), `energyCurve`, `tempoCurve`, `key`,
-/// `chordProgression`.
-///
-/// The primary `sections` list is merged by the consolidator (see
-/// `Consolidator.swift`). This schema is kept self-contained here — the DSP
-/// analysis pipeline that populates it lands separately (M8c).
-public let analysisSchemaVersion = "analysis/v2"
+/// Schema v3 requires verified measured rhythm and per-boundary structure evidence.
+public let analysisSchemaVersion = "analysis/v3"
 
 /// Port of `analysis_schema.py::AnalysisSection`.
 public struct AnalysisSection: Codable, Sendable, Equatable {
@@ -23,7 +12,7 @@ public struct AnalysisSection: Codable, Sendable, Equatable {
     public var cluster: Int
     /// Narrative, set by the analysis agent.
     public var label: String?
-    /// Canonical provenance such as track extent, detector consensus, lyric fusion, or phrase filtering.
+    /// Canonical provenance for the selected runtime structure strategy.
     public var source: String?
     public var confidence: Double?
 
@@ -41,7 +30,7 @@ public struct AnalysisSection: Codable, Sendable, Equatable {
     }
 }
 
-/// One forced-alignment word, kept as a loose string map since Python models
+/// One lyric-alignment word, kept as a loose string map since Python models
 /// it as `dict` (no fixed schema on the word entries). Port of
 /// `analysis_schema.py::AlignmentLine.words` element shape.
 public struct AlignmentWord: Codable, Sendable, Equatable {
@@ -219,6 +208,7 @@ public struct Analysis: Codable, Sendable, Equatable {
         case madmom
         case librosaHeuristic = "librosa-heuristic"
         case beatTransformer = "beat-transformer"
+        case musicUnderstanding = "music-understanding"
     }
 
     /// Subjectively perceived tempo = bpm x tempoMultiplier. Default

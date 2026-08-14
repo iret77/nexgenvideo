@@ -99,6 +99,13 @@ public enum PackKnowledge {
         return url
     }
 
+    /// Missing or invalid capability data fails closed as UNKNOWN_MODEL.
+    public static func modelCapabilitiesCatalogURL() -> URL? {
+        guard let url = packDir("model-capabilities.json"),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
     /// The frozen scoring policy (`pattern-fit-policy.v1.json`).
     public static func patternFitPolicyURL() -> URL? { contractResourceURL("pattern-fit-policy.v1.json") }
 

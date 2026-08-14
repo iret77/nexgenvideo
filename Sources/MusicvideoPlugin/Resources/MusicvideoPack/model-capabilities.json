@@ -1,0 +1,114 @@
+{
+  "schema": "musicvideo-model-capabilities/v1",
+  "models": [
+    {
+      "ids": ["gen3a_turbo"],
+      "maxDurationS": 10,
+      "minimumDurationS": null,
+      "supportedRatios": ["1280:720", "720:1280", "960:960", "1104:832", "832:1104"],
+      "maxCharactersInFrame": 2,
+      "supportsKeyframeStart": true,
+      "supportsKeyframeEnd": false,
+      "supportsImageToVideo": true,
+      "supportsReferenceMode": false,
+      "maxReferenceImages": 0,
+      "notes": "Fast preview model with limited scene complexity."
+    },
+    {
+      "ids": ["gen4.5"],
+      "maxDurationS": 10,
+      "minimumDurationS": null,
+      "supportedRatios": ["1280:720", "720:1280", "960:960", "1104:832", "832:1104"],
+      "maxCharactersInFrame": 3,
+      "supportsKeyframeStart": true,
+      "supportsKeyframeEnd": true,
+      "supportsImageToVideo": true,
+      "supportsReferenceMode": false,
+      "maxReferenceImages": 0,
+      "notes": "Strong character consistency for narrative and performance shots."
+    },
+    {
+      "ids": ["seedance2"],
+      "maxDurationS": 15,
+      "minimumDurationS": 4,
+      "supportedRatios": [
+        "992:432", "864:496", "752:560", "640:640", "560:752", "496:864",
+        "1470:630", "1280:720", "1112:834", "960:960", "834:1112", "720:1280",
+        "2206:946", "1920:1080", "1664:1248", "1440:1440", "1248:1664", "1080:1920"
+      ],
+      "maxCharactersInFrame": 3,
+      "supportsKeyframeStart": true,
+      "supportsKeyframeEnd": true,
+      "supportsImageToVideo": true,
+      "supportsReferenceMode": true,
+      "maxReferenceImages": 9,
+      "notes": "Legacy Runway Seedance 2 capability."
+    },
+    {
+      "ids": ["veo3"],
+      "maxDurationS": 8,
+      "minimumDurationS": null,
+      "supportedRatios": ["1280:720", "720:1280"],
+      "maxCharactersInFrame": 4,
+      "supportsKeyframeStart": false,
+      "supportsKeyframeEnd": false,
+      "supportsImageToVideo": false,
+      "supportsReferenceMode": false,
+      "maxReferenceImages": 0,
+      "notes": "Text-to-video only, with high motion detail."
+    },
+    {
+      "ids": ["veo3.1_fast"],
+      "maxDurationS": 8,
+      "minimumDurationS": null,
+      "supportedRatios": ["1280:720", "720:1280"],
+      "maxCharactersInFrame": 3,
+      "supportsKeyframeStart": false,
+      "supportsKeyframeEnd": false,
+      "supportsImageToVideo": false,
+      "supportsReferenceMode": false,
+      "maxReferenceImages": 0,
+      "notes": "Faster Veo 3 variant."
+    },
+    {
+      "ids": [
+        "fal:bytedance/seedance-2.0",
+        "fal:bytedance/seedance-2.0/pro",
+        "fal:bytedance/seedance-2.0/fast",
+        "bytedance/seedance-2.0/text-to-video",
+        "bytedance/seedance-2.0/image-to-video",
+        "bytedance/seedance-2.0/reference-to-video"
+      ],
+      "maxDurationS": 15,
+      "minimumDurationS": 4,
+      "supportedRatios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "maxCharactersInFrame": 4,
+      "supportsKeyframeStart": true,
+      "supportsKeyframeEnd": true,
+      "supportsImageToVideo": true,
+      "supportsReferenceMode": true,
+      "maxReferenceImages": 9,
+      "notes": "Seedance 2.0 on fal.ai, including text, image and reference modes."
+    },
+    {
+      "ids": [
+        "fal:bytedance/seedance-2.5/pro",
+        "bytedance/seedance-2.5/text-to-video",
+        "bytedance/seedance-2.5/image-to-video",
+        "bytedance/seedance-2.5/reference-to-video",
+        "seedance_2_5",
+        "higgsfield/seedance_2_5"
+      ],
+      "maxDurationS": 30,
+      "minimumDurationS": 4,
+      "supportedRatios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "maxCharactersInFrame": 4,
+      "supportsKeyframeStart": true,
+      "supportsKeyframeEnd": true,
+      "supportsImageToVideo": true,
+      "supportsReferenceMode": true,
+      "maxReferenceImages": 30,
+      "notes": "Seedance 2.5 at 480p or 720p, with 4–30 second or automatic duration and up to 50 references across image, video and audio inputs."
+    }
+  ]
+}

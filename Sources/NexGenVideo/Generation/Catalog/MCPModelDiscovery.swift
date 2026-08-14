@@ -209,7 +209,9 @@ enum MCPModelDiscovery {
         let roles = mediaRoles(model)
         let hasImageRef = hasImageMedia(model)
         return VideoCaps(
-            durations: durations(model),
+            durations: model.durations ?? [],
+            durationRange: durationRange(model.durationRange),
+            supportsAutomaticDuration: supportsAutomaticDuration(model),
             resolutions: options(model, param: "resolution"),
             aspectRatios: aspectRatios(model),
             supportsFirstFrame: roles.contains("start_image"),
@@ -253,9 +255,16 @@ enum MCPModelDiscovery {
         (model.aspectRatios ?? []).filter { $0.lowercased() != "auto" }
     }
 
-    private static func durations(_ model: ModelItem) -> [Int] {
-        if let list = model.durations, !list.isEmpty { return list }
-        return expandedRange(model.durationRange)
+    private static func durationRange(_ range: ModelItem.SpanRange?) -> VideoDurationCapabilities.Range? {
+        guard let min = range?.min, let max = range?.max, min <= max else { return nil }
+        return .init(min: min, max: max)
+    }
+
+    private static func supportsAutomaticDuration(_ model: ModelItem) -> Bool {
+        model.parameters?
+            .first { ($0.name ?? "").lowercased() == "duration" }?
+            .options?
+            .contains { $0.text.lowercased() == "auto" } == true
     }
 
     /// A `{min,max}` range → an inclusive list of second-choices, capped so an unbounded range never

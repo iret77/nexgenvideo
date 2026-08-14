@@ -36,6 +36,44 @@ public protocol AudioTranscribing: Sendable {
     func transcribe(_ audio: URL, language: String) throws -> [TranscribedWord]
 }
 
+/// Optional recognizer capability that uses known text as context without replacing acoustic validation.
+public protocol ContextualAudioTranscribing: AudioTranscribing {
+    func transcribe(
+        _ audio: URL,
+        language: String,
+        context: String
+    ) throws -> [TranscribedWord]
+}
+
+/// The timing algorithm used by a host-owned known-text alignment measurement.
+public enum KnownTextAlignmentTimingMethod: String, Codable, Sendable, Equatable {
+    case attentionDTW = "attention_dtw"
+}
+
+/// A host-owned known-text measurement. Keeping this separate from ordinary ASR
+/// prevents protocol conformance alone from promoting recognition timestamps.
+public struct KnownTextAlignmentMeasurement: Sendable, Equatable {
+    public let words: [TranscribedWord]
+    public let timingMethod: KnownTextAlignmentTimingMethod
+
+    public init(
+        words: [TranscribedWord],
+        timingMethod: KnownTextAlignmentTimingMethod
+    ) {
+        self.words = words
+        self.timingMethod = timingMethod
+    }
+}
+
+/// Known-text lyric alignment whose returned timing remains acoustically measured.
+public protocol AudioLyricsAligning: AudioTranscribing {
+    func alignLyrics(
+        _ audio: URL,
+        language: String,
+        lyrics: String
+    ) throws -> KnownTextAlignmentMeasurement
+}
+
 /// Separated source stems written to disk. Any field is nil if the separator does
 /// not produce that stem. Paths are absolute.
 public struct SeparatedStems: Sendable, Equatable {

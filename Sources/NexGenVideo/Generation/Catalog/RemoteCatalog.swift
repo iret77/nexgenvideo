@@ -20,11 +20,39 @@ enum RemoteCatalog {
     /// registries) stays — the app is never left without a catalog.
     @MainActor
     static func refresh() async {
-        if let entries = decode(cachedData()), !entries.isEmpty { ModelCatalog.shared.load(entries: entries) }
+        if let entries = decode(cachedData()), !entries.isEmpty {
+            ModelCatalog.shared.load(entries: overlay(entries, on: ModelCatalog.launchEntries))
+        }
         guard let data = await fetchData(), let entries = decode(data), !entries.isEmpty else { return }
         cache(data)
-        ModelCatalog.shared.load(entries: entries)
+        ModelCatalog.shared.load(entries: overlay(entries, on: ModelCatalog.launchEntries))
         Log.generation.notice("remote catalog applied: \(entries.count) models")
+    }
+
+    /// Preserve seed routing fields when a remote entry omits them.
+    static func overlay(_ remote: [CatalogEntry], on seed: [CatalogEntry]) -> [CatalogEntry] {
+        let seedById = Dictionary(seed.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let remoteIds = Set(remote.map(\.id))
+        let overlaid = remote.map { entry -> CatalogEntry in
+            guard let fallback = seedById[entry.id] else { return entry }
+            return CatalogEntry(
+                id: entry.id,
+                kind: entry.kind,
+                displayName: entry.displayName,
+                allowedEndpoints: entry.allowedEndpoints.isEmpty ? fallback.allowedEndpoints : entry.allowedEndpoints,
+                responseShape: entry.responseShape,
+                uiCapabilities: entry.uiCapabilities,
+                creditsPerSecond: entry.creditsPerSecond,
+                audioDiscountRate: entry.audioDiscountRate,
+                creditsPerImage: entry.creditsPerImage,
+                qualities: entry.qualities,
+                audioPricing: entry.audioPricing,
+                creditsPerSecondUpscale: entry.creditsPerSecondUpscale,
+                card: entry.card,
+                offers: entry.offers ?? fallback.offers
+            )
+        }
+        return seed.filter { !remoteIds.contains($0.id) } + overlaid
     }
 
     private static func fetchData() async -> Data? {

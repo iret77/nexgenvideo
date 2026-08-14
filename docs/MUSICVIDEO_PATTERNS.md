@@ -16,6 +16,8 @@
 > ungültige Profile bleiben als Defekt sichtbar, und `library_coverage` weist die Teilmenge aus.
 > Die Bibliothek hat keine feste Größe. Die unten beschriebenen Trigger-/`scorePatterns`-Abschnitte sind
 > historisch — sie beschreiben den entfernten Integer-Scorer, nicht mehr das Verhalten.
+> Diese harte Cutover-Regel gilt auch für Issue #187; ältere Issue-Formulierungen zu additiver
+> Rückwärtskompatibilität oder einem Adapter sind nicht normativ und dürfen nicht implementiert werden.
 
 ## 1. Zweck & Einordnung
 
@@ -99,9 +101,9 @@ Evidenz-Tiers, per Wert im `basis`-Label festgehalten:
 3. **`inferred`** — bewusster Stil-Zielwert, aus zitierter Craft abgeleitet, explizit
    als nicht-gemessen gelabelt.
 
-**Archetyp-Sonderfall:** Für die 14 Regisseur- + 4 Hybrid-Patterns existiert ein
-kanonisches Video zum Vermessen. Für die 5 reinen Genre-Archetypen (Punk, Vaporwave,
-Lyric-Typo, Tiny-Desk, K-Pop) gibt es das nicht → repräsentative Stichprobe (3–5
+**Archetyp-Sonderfall:** Für Regisseur- und Hybrid-Patterns mit einem kanonischen
+Referenzvideo wird dieses vermessen. Reine Genre-Archetypen (etwa Punk, Vaporwave,
+Lyric-Typo, Tiny-Desk oder K-Pop) brauchen stattdessen eine repräsentative Stichprobe (3–5
 Exemplare aggregieren) **oder** ehrlich `documented`/`inferred`.
 
 **Bar:** Ein Filmemacher liest das Pattern und erkennt es als korrekt; jede operative
@@ -131,7 +133,7 @@ Die gemessenen Werte entstehen in einem **einmaligen, offline Authoring-Schritt*
    Injektion, `PATTERN_DRIFT` registrieren. → **Issue #185**.
 2. **Messwerkzeug** — privates Repo/Sub-Tool (§5). Voraussetzung für Paket 4. → **Issue #186**.
 3. **Schema-Evolution** — Per-Value-Provenienz + `craft_signature` + Anti-Fassade (§3.1). → **Issue #187**.
-4. **Content-Re-Grounding** — 18 kanonische Patterns vermessen, Werte + Provenienz
+4. **Content-Re-Grounding** — kanonische Patterns vermessen, Werte + Provenienz
    füllen, schwach zitierte Patterns nachziehen, „Kahlil"-Fix (§4). Hängt an Paket 2+3. → **Issue #188**.
 
 ## 7. Offene Owner-Entscheidungen

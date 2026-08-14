@@ -25,13 +25,13 @@ jobs:
         run: python3 scripts/lint_app_theme.py
 
       - name: Verify private fixture bundle tooling
-        run: python3 -m unittest scripts/test_example_fixture_bundle.py
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
   build-test:
     name: Build & Test
     needs: source-gate
-    # NexGenVideo targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.
-    runs-on: macos-26
+    # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
+    runs-on: xcode-27
     # Real runs take ~5.5 min. This is a COST CEILING, not a budget: a hung job on a 10x-billed macOS
     # runner burns the timeout in quota minutes, so keep it just far enough above the real duration.
     timeout-minutes: 20
@@ -41,21 +41,21 @@ jobs:
       - name: Show toolchain
         run: swift --version
 
-      - name: Cache SwiftPM
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+      - uses: ./.github/actions/setup-xcode-27
+
+      - uses: ./.github/actions/cache-swiftpm-dependencies
 
       - name: Build
-        run: swift build
+        run: swift build --build-tests
+
+      - name: Stage test runtime inputs
+        run: scripts/stage_test_runtime.sh debug
 
       - name: Test
         shell: bash
         run: |
           set +e  # GitHub's default `-e` would abort on the first failing attempt; we handle codes below.
-          # macos-26 SIGSEGV/SIGTRAP crashes here were traced (via SWIFT_BACKTRACE) to CODE traps, not the
+          # macOS-runner SIGSEGV/SIGTRAP crashes here were traced (via SWIFT_BACKTRACE) to CODE traps, not the
           # environment: an integer-overflow trap in BICStructure (t - Int.min) and a slow lazy-global init
           # (PackKnowledge.packRoot) that starved the pool under concurrent first-touch — both fixed in the
           # sources. The "CoreData: Failed to create NSXPCConnection" line the retry keys on is benign noise
@@ -66,14 +66,14 @@ jobs:
           attempts=3
           for i in $(seq 1 "$attempts"); do
             echo "::group::swift test (attempt $i/$attempts)"
-            swift test 2>&1 | tee "test-attempt-$i.log"
+            swift test --skip-build 2>&1 | tee "test-attempt-$i.log"
             code=${PIPESTATUS[0]}
             echo "::endgroup::"
             if [ "$code" -eq 0 ]; then
               echo "swift test passed on attempt $i"
               exit 0
             fi
-            if grep -qE "✘ Test|recorded an issue|Time limit was exceeded" "test-attempt-$i.log"; then
+            if grep -qE "✘ Test|recorded an issue|Time limit was exceeded|Library not loaded|couldn.t be loaded|Failed to open test bundle" "test-attempt-$i.log"; then
               echo "::error::Real test failure on attempt $i — not retrying"
               exit "$code"
             fi

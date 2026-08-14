@@ -1,0 +1,22 @@
+name: Prepare Xcode 27
+description: Verify Xcode 27 and install its optional Metal toolchain when the runner image omits it.
+
+runs:
+  using: composite
+  steps:
+    - name: Verify Xcode and Metal toolchains
+      shell: bash
+      run: |
+        set -euo pipefail
+        xcode_version="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
+        xcode_major="${xcode_version%%.*}"
+        if [ "$xcode_major" -lt 27 ]; then
+          echo "::error::Xcode 27 or newer is required; found $xcode_version"
+          exit 1
+        fi
+        if ! xcrun --find metal >/dev/null 2>&1 \
+          || ! xcrun --find metallib >/dev/null 2>&1; then
+          xcodebuild -downloadComponent MetalToolchain
+        fi
+        xcrun --find metal
+        xcrun --find metallib

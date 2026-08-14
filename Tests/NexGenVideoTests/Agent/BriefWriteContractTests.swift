@@ -166,8 +166,8 @@ struct BriefWriteContractTests {
     func deferredProjectModeRejected() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        // `phrase` needs forced alignment the analysis can't produce; the pack docs tell the agent to
-        // fall back from it. Before it was constrained, this wrote a brief no phase could execute.
+        // `phrase` lacks an artifact and gate contract; the pack docs tell the agent to fall back from
+        // it. Before it was constrained, this wrote a brief no phase could execute.
         var args = validArgs(dataRoot: dataRoot)
         args["project_mode"] = "phrase"
 

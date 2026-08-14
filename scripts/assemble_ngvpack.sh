@@ -13,7 +13,7 @@ set -euo pipefail
 #   [sign_identity]  Developer ID Application identity; omitted → ad-hoc ("-")
 #
 # The pack carries: Contents/MacOS/<id> (the plugin dylib, renamed), the SwiftPM
-# resource bundle in Contents/Resources (PackKnowledge finds it there), and an
+# canonical resource tree in Contents/Resources/MusicvideoPack, and an
 # Info.plist with the NGV gate keys (NGVPackID / CFBundleShortVersionString /
 # NGVMinAppVersion / NGVEngineContract / NSPrincipalClass). The plugin dylib keeps its
 # @rpath/libNexGenEngine.dylib dependency — dyld dedups it onto the host's copy.
@@ -73,7 +73,26 @@ rm -rf "$PACK" "$ZIP"
 mkdir -p "$PACK/Contents/MacOS" "$PACK/Contents/Resources"
 
 cp "$DYLIB" "$PACK/Contents/MacOS/${ID}"
-cp -R "$RES_BUNDLE" "$PACK/Contents/Resources/"
+
+resource_roots=()
+for candidate in \
+    "$RES_BUNDLE" \
+    "$RES_BUNDLE/Contents/Resources" \
+    "$RES_BUNDLE/Resources"; do
+  if [ -f "$candidate/MusicvideoPack/hardsteps.json" ]; then
+    resource_roots+=("$candidate")
+  fi
+done
+if [ "${#resource_roots[@]}" -ne 1 ]; then
+  echo "!! expected exactly one MusicvideoPack resource root in $RES_BUNDLE; found ${#resource_roots[@]}" >&2
+  exit 1
+fi
+PACK_RESOURCE_ROOT="${resource_roots[0]}"
+cp -R "$PACK_RESOURCE_ROOT/MusicvideoPack" "$PACK/Contents/Resources/MusicvideoPack"
+if [ ! -f "$PACK/Contents/Resources/MusicvideoPack/hardsteps.json" ]; then
+  echo "!! failed to stage canonical MusicvideoPack resources" >&2
+  exit 1
+fi
 
 # The pack loads from OUTSIDE the app bundle, so its build-time rpath (@loader_path) can't reach the
 # host's shared libNexGenEngine.dylib. @executable_path is ALWAYS the HOST executable's dir for any
@@ -133,7 +152,7 @@ SHA="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
 # — a pack without a `badge` field just gets the gallery's gradient fallback.
 BADGE_ASSET=""
 if [ -n "$BADGE_SRC" ]; then
-  BADGE_FILE="$RES_BUNDLE/$BADGE_SRC"
+  BADGE_FILE="$PACK_RESOURCE_ROOT/$BADGE_SRC"
   if [ -f "$BADGE_FILE" ]; then
     BADGE_ASSET="${ID}.badge.png"
     cp "$BADGE_FILE" "$OUT/$BADGE_ASSET"

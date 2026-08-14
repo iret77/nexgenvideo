@@ -9,7 +9,7 @@ struct GenerationView: View {
     @State private var selectedVideoModelIndex = 0
     @State private var selectedImageModelIndex = 0
     @State private var selectedAudioModelIndex = 0
-    @State private var selectedDuration = 5
+    @State private var selectedDuration: VideoDuration = .seconds(5)
     @State private var selectedAspectRatio = "16:9"
     @State private var selectedResolution = "1080p"
     @State private var selectedQuality = "high"
@@ -209,6 +209,10 @@ struct GenerationView: View {
             && refVideos.isEmpty && refAudios.isEmpty {
             return false
         }
+        if selectedType == .video && videoModel.requiresReferenceImage {
+            if videoModel.supportsFirstFrame, firstFrame == nil { return false }
+            if !videoModel.supportsFirstFrame, refImages.isEmpty { return false }
+        }
         if selectedType == .audio {
             if audioModel.inputs.contains(.video) {
                 return audioVideoSource != nil
@@ -249,7 +253,7 @@ struct GenerationView: View {
 
     private var hasAnySettings: Bool {
         switch selectedType {
-        case .video: return !videoModel.durations.isEmpty || !videoModel.aspectRatios.isEmpty || videoModel.resolutions != nil || videoModel.audioDiscountRate != nil
+        case .video: return !videoModel.durationOptions.isEmpty || !videoModel.aspectRatios.isEmpty || videoModel.resolutions != nil || videoModel.audioDiscountRate != nil
         case .image: return !imageModel.aspectRatios.isEmpty || imageModel.resolutions != nil || imageModel.qualities != nil || imageModel.maxImages > 1
         case .audio: return audioModel.supportsInstrumental || audioModel.durations != nil
         }
@@ -353,7 +357,9 @@ struct GenerationView: View {
     }
 
     private var effectiveVideoSeconds: Int {
-        guard videoModel.requiresSourceVideo else { return selectedDuration }
+        guard videoModel.requiresSourceVideo else {
+            return selectedDuration.seconds ?? videoModel.durationCapabilities.maximumSeconds ?? 0
+        }
         if let trim = editor.pendingEditTrimmedSource,
            let sv = sourceVideo,
            trim.sourceURL == sv.url, trim.hasTrim {
@@ -388,7 +394,7 @@ struct GenerationView: View {
         }
         if currentResolutions != nil { parts.append(resolutionLabel(selectedResolution)) }
         if currentQualities != nil { parts.append(selectedQuality) }
-        if selectedType == .video { parts.append("\(selectedDuration)s") }
+        if selectedType == .video { parts.append(selectedDuration.displayLabel) }
         if !selectedAspectRatio.isEmpty, !currentAspectRatios.isEmpty {
             parts.append(selectedAspectRatio)
         }
@@ -1470,8 +1476,11 @@ struct GenerationView: View {
 
     private var settingsPopoverContent: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            if selectedType == .video {
-                settingsPicker("Duration", selection: $selectedDuration, options: videoModel.durations) { "\($0)s" }
+            if selectedType == .video, !videoModel.durationOptions.isEmpty {
+                settingsPicker(
+                    "Duration", selection: $selectedDuration,
+                    options: videoModel.durationOptions
+                ) { $0.displayLabel }
             }
             if selectedType == .audio, let durations = audioModel.durations {
                 settingsPicker("Duration", selection: $selectedAudioDuration, options: durations) { "\($0)s" }
@@ -1702,6 +1711,11 @@ struct GenerationView: View {
                 ? instrumental : nil,
             generateAudio: supportsAudioToggle ? generateAudio : nil
         )
+        if selectedType == .video {
+            genInput.videoDuration = videoModel.requiresSourceVideo
+                ? .seconds(effectiveVideoSeconds)
+                : selectedDuration
+        }
         if imageCount > 1 { genInput.numImages = imageCount }
         return genInput
     }
@@ -1734,7 +1748,7 @@ struct GenerationView: View {
                 placeholderDuration = sourceVideo?.duration ?? 5
             }
         } else {
-            placeholderDuration = Double(selectedDuration)
+            placeholderDuration = Double(effectiveVideoSeconds)
         }
         let folderId = editFolderId ?? (
             model.requiresSourceVideo
@@ -1860,7 +1874,7 @@ struct GenerationView: View {
         if let r = stored.resolution { selectedResolution = r }
         if let q = stored.quality { selectedQuality = q }
         if stored.duration > 0 {
-            selectedDuration = stored.duration
+            selectedDuration = stored.videoDuration ?? .seconds(stored.duration)
             selectedAudioDuration = stored.duration
         }
         if let n = stored.numImages { selectedNumImages = max(1, n) }
@@ -1932,8 +1946,8 @@ struct GenerationView: View {
         if let qualities = currentQualities, !qualities.contains(selectedQuality) {
             selectedQuality = qualities.last ?? "high"
         }
-        if selectedType == .video, !videoModel.durations.contains(selectedDuration) {
-            selectedDuration = videoModel.durations.first ?? 5
+        if selectedType == .video, !videoModel.durationCapabilities.accepts(selectedDuration) {
+            selectedDuration = videoModel.durationCapabilities.defaultValue
         }
         if selectedType == .video { generateAudio = true }
         if selectedType == .image {

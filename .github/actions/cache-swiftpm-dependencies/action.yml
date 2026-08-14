@@ -1,0 +1,22 @@
+name: Cache SwiftPM dependencies
+description: Cache resolved dependency sources and binary artifacts without reusing build products.
+
+runs:
+  using: composite
+  steps:
+    - name: Fingerprint Apple toolchain
+      id: toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        xcode_identity="$(xcodebuild -version)"
+        swift_identity="$(swift --version)"
+        identity="$(printf '%s\n%s\n' "$xcode_identity" "$swift_identity" | shasum -a 256 | awk '{ print $1 }')"
+        [ -n "$identity" ]
+        echo "identity=$identity" >> "$GITHUB_OUTPUT"
+
+    - name: Cache resolved dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/Library/Caches/org.swift.swiftpm
+        key: spm-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('Package.resolved', 'Package.swift', 'Engine/Package.swift') }}

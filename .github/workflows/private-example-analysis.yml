@@ -62,7 +62,7 @@ jobs:
             || { echo "::error::analysis report package is linked to a repository"; exit 1; }
 
       - name: Verify fixture bundle tooling
-        run: python3 -m unittest scripts/test_example_fixture_bundle.py
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Install pinned ORAS CLI
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
@@ -106,15 +106,72 @@ jobs:
           rm -rf "$RUNNER_TEMP/source-fixture-package" "$RUNNER_TEMP/source-fixture-data"
           rm -f "$RUNNER_TEMP/oras-auth.json"
 
-  analyze:
-    name: Analyze Private Example
+  build-runtime-harness:
+    name: Build Private Analysis Harness
     needs: source-gate
-    # The app and AVFoundation decoder target macOS 26; no local build is permitted.
-    runs-on: macos-26
-    # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
-    timeout-minutes: 30
+    # Compilation and bundling stay on the designated Xcode 27 build runner.
+    runs-on: xcode-27
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-xcode-27
+
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+
+      - name: Bundle real app and external pack
+        run: |
+          set -euo pipefail
+          scripts/bundle.sh debug
+          scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
+          tar -czf "$RUNNER_TEMP/runtime-harness.tar.gz" \
+            -C .build \
+            NexGenVideo.app \
+            plugins/musicvideo.ngvpack
+
+      - name: Transfer runtime harness
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-analysis-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runtime-harness.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  analyze:
+    name: Analyze Private Example
+    needs: build-runtime-harness
+    # The production floor is the newest released macOS; pin it so this acceptance run
+    # cannot silently switch to the dormant macOS 27 Music Understanding adapter.
+    runs-on: macos-26
+    # Bootstrap ceiling for the first measured real-file run; replace with p90 × 2 once run data exists.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require the macOS 26 production runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_version="$(sw_vers -productVersion)"
+          runtime_major="${runtime_version%%.*}"
+          if [ "$runtime_major" -ne 26 ]; then
+            echo "::error::Private audio analysis must exercise macOS 26; this runner boots macOS $runtime_version."
+            exit 1
+          fi
+
+      - name: Download runtime harness
+        uses: actions/download-artifact@v4
+        with:
+          name: private-analysis-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runtime-harness
+
+      - name: Restore runtime harness
+        run: |
+          set -euo pipefail
+          mkdir -p .build
+          tar -xzf "$RUNNER_TEMP/runtime-harness/runtime-harness.tar.gz" -C .build
+          [ -x .build/NexGenVideo.app/Contents/MacOS/NexGenVideo ]
+          [ -d .build/plugins/musicvideo.ngvpack ]
 
       - name: Install pinned ORAS CLI
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
@@ -150,19 +207,6 @@ jobs:
             --manifest "$PACKAGE_DIR/fixtures.manifest.json" \
             --destination "$EXTRACT_DIR"
 
-      - name: Cache SwiftPM
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: spm-example-analysis-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-example-analysis-${{ runner.os }}-
-
-      - name: Bundle real app and external pack
-        run: |
-          set -euo pipefail
-          scripts/bundle.sh debug
-          scripts/assemble_ngvpack.sh plugins/musicvideo.json debug .build/plugins
-
       - name: Run exact-file analysis through the real app and pack
         env:
           NGV_EXAMPLE_ANALYSIS_PACK: ${{ github.workspace }}/.build/plugins/musicvideo.ngvpack
@@ -175,23 +219,47 @@ jobs:
         run: .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
 
       - name: Publish private analysis report
+        if: ${{ always() }}
         id: report
         env:
           REPORT_REFERENCE: ghcr.io/iret77/nexgenvideo-analysis-reports:${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          if [ ! -s "$RUNNER_TEMP/analysis-report/provenance.json" ]; then
+            echo "No private analysis provenance was produced."
+            exit 0
+          fi
           cd "$RUNNER_TEMP/analysis-report"
+          layers=(
+            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v6+json
+          )
+          if [ -s analysis.json ]; then
+            analysis_media="application/vnd.nexgenvideo.analysis-evidence.v1+json"
+            if jq -e '.analysis != null' provenance.json >/dev/null; then
+              analysis_media="application/vnd.nexgenvideo.analysis.v3+json"
+            fi
+            layers=(
+              "analysis.json:$analysis_media"
+              "${layers[@]}"
+            )
+          fi
+          if [ -s measurement-proof.json ]; then
+            layers=(
+              measurement-proof.json:application/vnd.nexgenvideo.analysis-measurement-proof.v1+json
+              "${layers[@]}"
+            )
+          fi
           REPORT_DIGEST="$(oras push \
             --no-tty \
             --registry-config "$RUNNER_TEMP/oras-auth.json" \
-            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v1 \
+            --artifact-type application/vnd.nexgenvideo.example-analysis-report.v6 \
             --format 'go-template={{.digest}}' \
             "$REPORT_REFERENCE" \
-            analysis.json:application/vnd.nexgenvideo.analysis.v2+json \
-            provenance.json:application/vnd.nexgenvideo.example-analysis-provenance.v1+json)"
+            "${layers[@]}")"
           echo "reference=${REPORT_REFERENCE%:*}@$REPORT_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Verify report package isolation
+        if: ${{ always() && steps.report.outputs.reference != '' }}
         env:
           GH_TOKEN: ${{ secrets.NGV_GHCR_TOKEN }}
         run: |
@@ -207,4 +275,5 @@ jobs:
         if: ${{ always() }}
         run: |
           rm -rf "$RUNNER_TEMP/fixture-package" "$RUNNER_TEMP/fixture-data" "$RUNNER_TEMP/analysis-report"
+          rm -rf "$RUNNER_TEMP/runtime-harness" .build/NexGenVideo.app .build/plugins
           rm -f "$RUNNER_TEMP/oras-auth.json"

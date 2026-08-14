@@ -1,22 +1,12 @@
 import Foundation
 import NexGenEngine
 
-/// The real `analysis` phase runner (M8c). Locates the song in the project's
-/// `audio/` dir, decodes it via the host-injected `AudioPCMDecoding`, runs the
-/// native DSP pipeline, and persists the canonical `analysis/<song>.json`
-/// artifact — mirroring the retired Python `analysis/pipeline.py::run_phase`
-/// (persist path, filename, snake_case shape, `duration_s`/`bpm` rounding).
-///
-/// `dataRoot` is the project's `pipeline/` data root (what `EngineRegistry`
-/// phase runners receive and what `ShowFormatters.showAnalysis` reads from):
-/// audio lives at `<dataRoot>/audio/`, the artifact lands at
-/// `<dataRoot>/analysis/<stem>.json`.
 public enum MusicvideoAnalysisRunner {
     public static let progressStages = [
         "decode_audio",
         "measure_structure",
         "separate_stems",
-        "detect_beat_grid",
+        "resolve_beat_grid",
         "detect_harmony",
         "align_lyrics",
         "write_analysis",
@@ -72,11 +62,44 @@ public enum MusicvideoAnalysisRunner {
         let stage: String
         let status: Status
         let detail: String
+        let timingEvidence: LyricsAlignment.TimingEvidence?
+        let timingMethod: KnownTextAlignmentTimingMethod?
+
+        init(
+            stage: String,
+            status: Status,
+            detail: String,
+            timingEvidence: LyricsAlignment.TimingEvidence? = nil,
+            timingMethod: KnownTextAlignmentTimingMethod? = nil
+        ) {
+            self.stage = stage
+            self.status = status
+            self.detail = detail
+            self.timingEvidence = timingEvidence
+            self.timingMethod = timingMethod
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case stage, status, detail
+            case timingEvidence = "timing_evidence"
+            case timingMethod = "timing_method"
+        }
     }
 
     struct CanonicalOutcome: Sendable {
         let analysis: Analysis
         let structureResolution: Consolidator.StructureResolution
+    }
+
+    struct AlignmentAttempt {
+        let source: String
+        let sourceURL: URL
+        let result: LyricsAlignment.Result
+    }
+
+    struct AlignmentSelection {
+        let attempt: AlignmentAttempt?
+        let errors: [String]
     }
 
     /// Discover the single song file in `<dataRoot>/audio/`. `nil`/empty → a
@@ -91,17 +114,10 @@ public enum MusicvideoAnalysisRunner {
         }
     }
 
-    /// Lyric file extensions the runner reads for forced alignment.
+    /// Lyric file extensions the runner reads for known-text alignment.
     public static let lyricsExtensions: Set<String> = ["txt", "md", "lrc"]
 
-    /// Run the analysis phase for the project at `dataRoot`. `decoder` turns the
-    /// song into PCM for the DSP baseline; the optional on-device ML seams
-    /// (resolved by the pack from the registry) upgrade it: `separator` isolates
-    /// vocals, `transcriber` reads them, `beatDetector` supplies a neural beat
-    /// grid. Provided lyrics are force-aligned against the transcript
-    /// (`LyricsAlignment`) so the Consolidator can take the alignment section
-    /// markers as evidence for nearby acoustic boundaries. Optional ML failures
-    /// are persisted as stage diagnostics instead of being silently discarded.
+    /// Runs the analysis phase and persists optional-system failures as diagnostics.
     @discardableResult
     public static func run(
         dataRoot: URL,
@@ -112,7 +128,55 @@ public enum MusicvideoAnalysisRunner {
         chordRecognizer: (any AudioChordRecognizing)? = nil,
         progress: (@Sendable (PhaseProgress) -> Void)? = nil
     ) throws -> Outcome {
+        try runImpl(
+            dataRoot: dataRoot,
+            decoder: decoder,
+            transcriber: transcriber,
+            separator: separator,
+            beatDetector: beatDetector,
+            chordRecognizer: chordRecognizer,
+            musicUnderstandingAnalyzer: nil,
+            progress: progress
+        )
+    }
+
+    @discardableResult
+    static func runWithSystemAnalysis(
+        dataRoot: URL,
+        decoder: any AudioPCMDecoding,
+        transcriber: (any AudioTranscribing)? = nil,
+        separator: (any AudioStemSeparating)? = nil,
+        beatDetector: (any AudioBeatDetecting)? = nil,
+        chordRecognizer: (any AudioChordRecognizing)? = nil,
+        musicUnderstandingAnalyzer: any MusicUnderstandingAnalyzing,
+        progress: (@Sendable (PhaseProgress) -> Void)? = nil
+    ) throws -> Outcome {
+        try runImpl(
+            dataRoot: dataRoot,
+            decoder: decoder,
+            transcriber: transcriber,
+            separator: separator,
+            beatDetector: beatDetector,
+            chordRecognizer: chordRecognizer,
+            musicUnderstandingAnalyzer: musicUnderstandingAnalyzer,
+            progress: progress
+        )
+    }
+
+    private static func runImpl(
+        dataRoot: URL,
+        decoder: any AudioPCMDecoding,
+        transcriber: (any AudioTranscribing)?,
+        separator: (any AudioStemSeparating)?,
+        beatDetector: (any AudioBeatDetecting)?,
+        chordRecognizer: (any AudioChordRecognizing)?,
+        musicUnderstandingAnalyzer: (any MusicUnderstandingAnalyzing)?,
+        progress: (@Sendable (PhaseProgress) -> Void)?
+    ) throws -> Outcome {
         let song = try locateSong(dataRoot: dataRoot)
+        let songSHA256 = try sha256(song)
+        let project = FrameInventory.projectName(of: dataRoot)
+            ?? FrameInventory.projectHome(of: dataRoot).lastPathComponent
         func report(_ stageIndex: Int) {
             progress?(
                 PhaseProgress(
@@ -130,10 +194,52 @@ public enum MusicvideoAnalysisRunner {
         let pcm = try decoder.decode(song)
         report(1)
         var raw = AudioAnalysisPipeline.run(pcm)
-        var stages = ["load_audio", "rhythm", "structure", "features"]
+        var stages = ["load_audio", "rhythm", "features"]
         var diagnostics = [
-            StageDiagnostic(stage: "native_dsp", status: .succeeded, detail: "Measured rhythm, structure candidates, and features."),
+            StageDiagnostic(stage: "native_dsp", status: .succeeded, detail: "Measured fallback rhythm, local-change candidates, and features."),
         ]
+        var musicUnderstanding: MusicUnderstandingMeasurement?
+        var systemRhythmApplied = false
+        if let musicUnderstandingAnalyzer {
+            do {
+                let measured = try musicUnderstandingAnalyzer.analyze(song)
+                let assessment = SystemMusicUnderstandingContract.assess(
+                    measured,
+                    durationS: raw.durationS
+                )
+                musicUnderstanding = assessment.measurement
+                if let rhythm = assessment.canonicalRhythm {
+                    raw.beats = rhythm.beats
+                    raw.downbeats = rhythm.bars
+                    raw.downbeatSource = Analysis.DownbeatSource.musicUnderstanding.rawValue
+                    raw.bpm = rhythm.bpm
+                    systemRhythmApplied = true
+                }
+                diagnostics.append(
+                    StageDiagnostic(
+                        stage: "music_understanding",
+                        status: .degraded,
+                        detail: "Validating measured rhythm and structural hierarchy independently."
+                    )
+                )
+            } catch {
+                diagnostics.append(
+                    StageDiagnostic(
+                        stage: "music_understanding",
+                        status: .failed,
+                        detail: error.localizedDescription
+                    )
+                )
+            }
+        } else {
+            diagnostics.append(
+                StageDiagnostic(
+                    stage: "music_understanding",
+                    status: .unavailable,
+                    detail: "No system music-structure analyzer is registered."
+                )
+            )
+        }
         var lyrics: String?
         var lyricsLoadError: String?
         do {
@@ -169,7 +275,15 @@ public enum MusicvideoAnalysisRunner {
         }
 
         report(3)
-        if let beatDetector {
+        if systemRhythmApplied {
+            diagnostics.append(
+                StageDiagnostic(
+                    stage: "neural_beat_grid",
+                    status: .notApplicable,
+                    detail: "Music Understanding supplied the canonical beat and bar grid."
+                )
+            )
+        } else if let beatDetector {
             do {
                 if let grid = try beatDetector.detectBeats(song, stems: stems),
                    !grid.beats.isEmpty, !grid.downbeats.isEmpty {
@@ -213,24 +327,67 @@ public enum MusicvideoAnalysisRunner {
         report(5)
         var alignment: [AlignmentLine] = []
         var alignmentReport: LyricsAlignment.Result?
+        var alignmentSource: URL?
         if let lyrics, let transcriber {
-            let vocals = stems?.vocals ?? song
-            do {
-                let words = try transcriber.transcribe(vocals, language: "auto")
-                let tokens = words.map {
-                    TranscriptToken(text: $0.text, start: $0.start, end: $0.end, score: $0.confidence)
-                }
-                let result = LyricsAlignment.alignDetailed(lyrics: lyrics, transcript: tokens)
+            let preferredSource = stems?.vocals ?? song
+            let selection = selectLyricsAlignment(
+                lyrics: lyrics,
+                transcriber: transcriber,
+                preferredSource: preferredSource,
+                preferredSourceName: stems?.vocals == nil ? "mix" : "vocals",
+                song: song
+            )
+            if let selected = selection.attempt {
+                let result = selected.result
                 alignmentReport = result
                 alignment = result.lines
-                if result.hasReliableStructureEvidence {
+                alignmentSource = selected.sourceURL
+                let hasMeasuredTiming = result.timingEvidence == .knownTextAlignment
+                let timing = hasMeasuredTiming ? "known-text acoustic" : "speech-recognition"
+                let markerCapability = hasMeasuredTiming
+                    ? "established measured timing for"
+                    : "mapped symbolic labels for"
+                let fallbackDetail = selection.errors.isEmpty
+                    ? ""
+                    : " Earlier attempts failed: \(selection.errors.joined(separator: "; "))."
+                if result.hasSuccessfulAlignment || result.hasReliableStructureEvidence {
                     stages.append("alignment")
-                    diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .succeeded, detail: "Reliably anchored all \(result.markerCount) lyric section markers."))
+                    diagnostics.append(
+                        StageDiagnostic(
+                            stage: "lyrics_alignment",
+                            status: .succeeded,
+                            detail: "Selected \(timing) \(selected.source) alignment with "
+                                + "\(result.transcriptTokenCount) recognized words; \(markerCapability) "
+                                + "all \(result.markerCount) lyric section markers."
+                                + fallbackDetail,
+                            timingEvidence: result.timingEvidence,
+                            timingMethod: result.timingMethod
+                        )
+                    )
                 } else {
-                    diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .degraded, detail: "Mapped \(result.mappedLineCount)/\(result.lyricLineCount) lyric lines and reliably anchored \(result.reliableMarkerCount)/\(result.markerCount) section markers."))
+                    diagnostics.append(
+                        StageDiagnostic(
+                            stage: "lyrics_alignment",
+                            status: .degraded,
+                            detail: "Best \(timing) \(selected.source) alignment contained "
+                                + "\(result.transcriptTokenCount) recognized words, mapped "
+                                + "\(result.mappedLineCount)/\(result.lyricLineCount) lyric lines, "
+                                + "and reliably mapped \(result.reliableMarkerCount)/"
+                                + "\(result.markerCount) section markers."
+                                + fallbackDetail,
+                            timingEvidence: result.timingEvidence,
+                            timingMethod: result.timingMethod
+                        )
+                    )
                 }
-            } catch {
-                diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .failed, detail: error.localizedDescription))
+            } else {
+                diagnostics.append(
+                    StageDiagnostic(
+                        stage: "lyrics_alignment",
+                        status: .failed,
+                        detail: selection.errors.joined(separator: "; ")
+                    )
+                )
             }
         } else if let lyricsLoadError {
             diagnostics.append(StageDiagnostic(stage: "lyrics_alignment", status: .unavailable, detail: "Lyrics input failed: \(lyricsLoadError)"))
@@ -242,13 +399,35 @@ public enum MusicvideoAnalysisRunner {
 
         report(6)
         let songPath = FrameInventory.relativePath(of: song, to: dataRoot)
-        let project = FrameInventory.projectName(of: dataRoot) ?? FrameInventory.projectHome(of: dataRoot).lastPathComponent
         let canonical = try toCanonicalDetailed(
             raw, project: project, songPath: songPath,
             stems: stems.map { relativeStems($0, dataRoot: dataRoot) },
             lyricsAlignment: alignment, alignmentReport: alignmentReport,
             chords: chords, pipelineStages: stages,
-            songSha256: sha256(song))
+            songSha256: songSHA256,
+            musicUnderstanding: musicUnderstanding)
+
+        if musicUnderstanding != nil,
+           let index = diagnostics.firstIndex(where: { $0.stage == "music_understanding" }) {
+            let hierarchyResolved = canonical.structureResolution.method
+                == "music_understanding_hierarchy"
+            let detail: String
+            switch (hierarchyResolved, systemRhythmApplied) {
+            case (true, true):
+                detail = "Measured rhythm and a verified section/segment/phrase hierarchy on device."
+            case (true, false):
+                detail = "Verified the measured section/segment/phrase hierarchy; retained fallback rhythm because the system rhythm report was inconsistent."
+            case (false, true):
+                detail = "Measured canonical rhythm, but the section/segment/phrase hierarchy was invalid."
+            case (false, false):
+                detail = "System rhythm was inconsistent and the section/segment/phrase hierarchy was invalid."
+            }
+            diagnostics[index] = StageDiagnostic(
+                stage: "music_understanding",
+                status: hierarchyResolved && systemRhythmApplied ? .succeeded : .degraded,
+                detail: detail
+            )
+        }
 
         let outDir = dataRoot.appendingPathComponent("analysis")
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -258,9 +437,155 @@ public enum MusicvideoAnalysisRunner {
             structureResolution: canonical.structureResolution,
             stageDiagnostics: diagnostics
         )
+        guard let artifactObject = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { throw CocoaError(.coderInvalidValue) }
+        let alignmentProof: AnalysisMeasurementProof.LyricsAlignmentProof?
+        if let lyrics, let alignmentReport, let alignmentSource {
+            alignmentProof = AnalysisMeasurementProof.LyricsAlignmentProof(
+                sourcePath: FrameInventory.relativePath(of: alignmentSource, to: dataRoot),
+                sourceSHA256: try sha256(alignmentSource),
+                lyricsSHA256: AnalysisMeasurementProofStore.lyricsFingerprint(lyrics),
+                alignmentSHA256: try AnalysisMeasurementProofStore.alignmentFingerprint(
+                    artifactObject
+                ),
+                timingEvidence: alignmentReport.timingEvidence,
+                timingMethod: alignmentReport.timingMethod,
+                markerCount: alignmentReport.markerCount,
+                lyricTokenCount: alignmentReport.lines.flatMap(\.words).count,
+                matchedTokenCount: alignmentReport.lines
+                    .flatMap(\.words)
+                    .filter { $0.score != nil }
+                    .count
+            )
+        } else {
+            alignmentProof = nil
+        }
         try data.write(to: outURL, options: .atomic)
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: project,
+                songSHA256: songSHA256,
+                lyricsAlignment: alignmentProof
+            ),
+            dataRoot: dataRoot
+        )
 
         return Outcome(analysis: canonical.analysis, artifactURL: outURL, songFilename: song.lastPathComponent)
+    }
+
+    static func selectLyricsAlignment(
+        lyrics: String,
+        transcriber: any AudioTranscribing,
+        preferredSource: URL,
+        preferredSourceName: String,
+        song: URL
+    ) -> AlignmentSelection {
+        let knownText = LyricsAlignment.transcriptionContext(lyrics)
+        var attempts: [AlignmentAttempt] = []
+        var errors: [String] = []
+        func tokens(_ words: [TranscribedWord]) -> [TranscriptToken] {
+            words.map {
+                TranscriptToken(
+                    text: $0.text,
+                    start: $0.start,
+                    end: $0.end,
+                    score: $0.confidence
+                )
+            }
+        }
+        func record(
+            _ words: [TranscribedWord],
+            sourceURL: URL,
+            source: String
+        ) -> LyricsAlignment.Result {
+            let result = LyricsAlignment.alignDetailed(
+                lyrics: lyrics,
+                transcript: tokens(words)
+            )
+            attempts.append(
+                AlignmentAttempt(source: source, sourceURL: sourceURL, result: result)
+            )
+            return result
+        }
+        func attempt(_ source: URL, name: String) {
+            if let aligner = transcriber as? any AudioLyricsAligning {
+                do {
+                    let measurement = try aligner.alignLyrics(
+                        source,
+                        language: "auto",
+                        lyrics: knownText
+                    )
+                    let result = LyricsAlignment.alignKnownTextDetailed(
+                        lyrics: lyrics,
+                        measurement: measurement
+                    )
+                    attempts.append(
+                        AlignmentAttempt(source: name, sourceURL: source, result: result)
+                    )
+                    if result.shouldStopAlignmentSearch { return }
+                } catch {
+                    errors.append("\(name) known-text alignment: \(error.localizedDescription)")
+                }
+            }
+            do {
+                let words = try transcriber.transcribe(source, language: "auto")
+                _ = record(
+                    words,
+                    sourceURL: source,
+                    source: name
+                )
+            } catch {
+                errors.append("\(name) recognition: \(error.localizedDescription)")
+            }
+        }
+        attempt(preferredSource, name: preferredSourceName)
+        if attempts.last?.result.shouldStopAlignmentSearch != true,
+           preferredSource.standardizedFileURL != song.standardizedFileURL {
+            attempt(song, name: "mix")
+        }
+        let selected = attempts.reduce(nil as AlignmentAttempt?) { current, candidate in
+            guard let current else { return candidate }
+            return isBetterAlignment(candidate.result, than: current.result)
+                ? candidate : current
+        }
+        return AlignmentSelection(attempt: selected, errors: errors)
+    }
+
+    private static func isBetterAlignment(
+        _ candidate: LyricsAlignment.Result,
+        than current: LyricsAlignment.Result
+    ) -> Bool {
+        let candidateQuality = [
+            candidate.hasReliableStructureEvidence ? 1 : 0,
+            candidate.reliableMarkerCount,
+            candidate.mappedMarkerCount,
+            candidate.hasSuccessfulAlignment ? 1 : 0,
+            candidate.mappedLineCount,
+            candidate.matchedTokenCount,
+            candidate.timingEvidence == .knownTextAlignment ? 1 : 0,
+        ]
+        let currentQuality = [
+            current.hasReliableStructureEvidence ? 1 : 0,
+            current.reliableMarkerCount,
+            current.mappedMarkerCount,
+            current.hasSuccessfulAlignment ? 1 : 0,
+            current.mappedLineCount,
+            current.matchedTokenCount,
+            current.timingEvidence == .knownTextAlignment ? 1 : 0,
+        ]
+        for (candidateValue, currentValue) in zip(candidateQuality, currentQuality) {
+            if candidateValue != currentValue {
+                return candidateValue > currentValue
+            }
+        }
+        return false
+    }
+
+    static func normalizedSystemTimes(_ values: [Double], durationS: Double) -> [Double] {
+        SystemMusicUnderstandingContract.normalizedTimes(
+            values,
+            durationS: durationS
+        )
     }
 
     /// The project's provided lyrics (with `[Section]` markers / `(stage directions)`),
@@ -293,15 +618,7 @@ public enum MusicvideoAnalysisRunner {
         return Stems(vocals: rel(stems.vocals), drums: rel(stems.drums), bass: rel(stems.bass), other: rel(stems.other))
     }
 
-    /// Map the DSP-producible `AudioAnalysis` onto the canonical `Analysis` v2
-    /// schema. Both structure detectors (librosa Foote-novelty + BIC-on-MFCC
-    /// "essentia") feed the `Consolidator`, which snaps boundaries to the downbeat
-    /// grid and flags cross-detector convergence/divergence; each detector's raw
-    /// list is kept as a `structure_candidate`. Reliably aligned lyric markers
-    /// can select and label nearby acoustic candidates but never create timing.
-    /// `stems` is populated when separation ran; `key` carries the DSP
-    /// pipeline's Krumhansl-Schmuckler result; `chords` carry the recognizer's chord
-    /// progression when a chord model is registered (empty otherwise).
+    /// Maps DSP diagnostics and measured system structure onto canonical schema v3.
     static func toCanonical(
         _ raw: AudioAnalysis, project: String, songPath: String, stems: Stems? = nil,
         lyricsAlignment: [AlignmentLine] = [], chords: [Chord] = [],
@@ -326,7 +643,8 @@ public enum MusicvideoAnalysisRunner {
         lyricsAlignment: [AlignmentLine] = [], alignmentReport: LyricsAlignment.Result? = nil,
         chords: [Chord] = [],
         pipelineStages: [String] = ["load_audio", "rhythm", "structure", "features"],
-        songSha256: String? = nil
+        songSha256: String? = nil,
+        musicUnderstanding: MusicUnderstandingMeasurement? = nil
     ) throws -> CanonicalOutcome {
         func map(_ secs: [AudioSection], defaultSource: String) -> [AnalysisSection] {
             secs.map {
@@ -355,15 +673,17 @@ public enum MusicvideoAnalysisRunner {
             alignment: lyricsAlignment.isEmpty ? nil : lyricsAlignment,
             alignmentReport: alignmentReport,
             downbeats: raw.downbeats,
-            durationS: raw.durationS
+            durationS: raw.durationS,
+            musicUnderstanding: musicUnderstanding
         )
-        // Guarantee full coverage: downbeat snapping can pull the first boundary off 0 (e.g. to the
-        // first downbeat at 0.5s) and the last off the track end — clamp the endpoints so no audio
-        // falls outside a section.
-        var sections = consolidation.sections
-        if !sections.isEmpty {
-            sections[0].start = 0.0
-            sections[sections.count - 1].end = raw.durationS
+        var canonicalStages = pipelineStages.filter {
+            $0 != "music_understanding" && $0 != "structure"
+        }
+        if consolidation.resolution.status != .needsReview {
+            canonicalStages.append("structure")
+        }
+        if consolidation.resolution.method == "music_understanding_hierarchy" {
+            canonicalStages.append("music_understanding")
         }
         let downbeatSource = Analysis.DownbeatSource(rawValue: raw.downbeatSource) ?? .librosaHeuristic
         let interpretation = consolidation.anomalies.isEmpty
@@ -380,7 +700,7 @@ public enum MusicvideoAnalysisRunner {
             beats: raw.beats,
             downbeats: raw.downbeats,
             downbeatSource: downbeatSource,
-            sections: sections,
+            sections: consolidation.sections,
             stems: stems,
             alignment: lyricsAlignment,
             structureCandidates: [StructureCandidate(source: .librosa, sections: detected)]
@@ -390,7 +710,7 @@ public enum MusicvideoAnalysisRunner {
             key: raw.key,
             chordProgression: chords,
             interpretation: interpretation,
-            pipelineStages: pipelineStages,
+            pipelineStages: canonicalStages,
             songSha256: songSha256
         )
         return CanonicalOutcome(analysis: analysis, structureResolution: consolidation.resolution)

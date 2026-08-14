@@ -24,6 +24,7 @@ final class AppRelaunchClickProbeView: NSView {
 enum AppRelaunchSelfTest {
     private static let startArgument = "--ngv-relaunch-selftest-start"
     private static let completionArgument = "--ngv-relaunch-selftest-complete"
+    private static let directExecutableArgument = "--ngv-relaunch-direct-executable"
     private static let stateArgument = "--ngv-relaunch-state="
     private static let bundleArgument = "--ngv-relaunch-bundle="
     private static let packArgument = "--ngv-relaunch-pack="
@@ -49,15 +50,26 @@ enum AppRelaunchSelfTest {
         startConfiguration != nil || completionConfiguration != nil
     }
 
+    static var reopenLaunchMode: AppRelaunch.LaunchMode {
+        startConfiguration != nil
+            && ProcessInfo.processInfo.arguments.contains(directExecutableArgument)
+            ? .executable
+            : .launchServices
+    }
+
     static func reopenArguments(_ requested: [String]) -> [String] {
         guard requested.isEmpty, let config = startConfiguration else { return requested }
-        return [
+        var arguments = [
             completionArgument,
             stateArgument + config.stateURL.path,
             bundleArgument + config.expectedBundle,
             packArgument + config.packID,
             newVersionArgument + config.newVersion,
         ]
+        if reopenLaunchMode == .executable {
+            arguments.insert(directExecutableArgument, at: 1)
+        }
+        return arguments
     }
 
     static func recordBootIfRequested() {

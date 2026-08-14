@@ -69,7 +69,7 @@ enum BriefWriteContract {
     /// a plain typo, and nothing would reject it. Enforcing it here is the point of the tool: the
     /// solution space is constrained by the contract, not by doc discipline.
     private static let modesUnsupportedInBrief: Set<Mode> = [
-        .phrase,    // needs per-line forced alignment the analysis doesn't produce yet
+        .phrase,    // needs a downstream phrase-mode artifact and gate contract
         .generic,   // engine placeholder (#99), not a musicvideo cut mode
     ]
 
@@ -96,7 +96,7 @@ enum BriefWriteContract {
         Field(key: "length_mode", kind: .string, required: false,
               description: "Full song or an excerpt (default 'full_song')."),
         Field(key: "project_mode", kind: .enumField(options: briefProjectModes),
-              required: true, description: "Cut mode. 'phrase' is deliberately not offered — it needs per-line forced alignment the analysis does not produce yet."),
+              required: true, description: "Cut mode. 'phrase' is deliberately not offered because its artifact and gate contract are not implemented."),
         Field(key: "model_preference", kind: .enumField(options: ModelPreference.allCases.map(\.rawValue)),
               required: false, description: "Preferred video model, or 'per_shot'. Defer to the shotlist phase if unknown."),
         Field(key: "model_preference_other", kind: .string, required: false,

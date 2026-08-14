@@ -81,15 +81,18 @@ func resolutionForPhase(
 ) -> String? {
     guard modelId.hasPrefix("fal:") else { return nil }
     let isFast = modelId.contains("/fast")
+    let isSeedance25 = modelId.contains("seedance-2.5")
     if phase == .final {
+        if isSeedance25 && finalResolution != "480p" && finalResolution != "720p" {
+            return "720p"
+        }
         // Brief default 1080p, but Fast has no 1080p.
         if isFast && finalResolution == "1080p" {
             return "720p"  // Fast max
         }
         return finalResolution
     }
-    // Preview: smallest available = 720p (480p not offered).
-    return "720p"
+    return isSeedance25 ? "480p" : "720p"
 }
 
 /// Port of `render/costs.py::estimate` — the pre-flight estimate.

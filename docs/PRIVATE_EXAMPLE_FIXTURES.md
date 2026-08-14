@@ -24,16 +24,19 @@ Independent expectations are supplied from a private JSON file when the bundle i
 
 ```json
 {
-  "schema": "nexgenvideo.example-fixture-expectations/v1",
+  "schema": "nexgenvideo.example-fixture-expectations/v3",
   "datasets": {
     "dataset_id": {
       "audio": {
         "path": "dataset_id/track.mp3",
-        "duration_s": 199.26,
+        "duration_s": 180.0,
         "duration_tolerance_s": 0.5,
-        "bpm": 150.0,
+        "bpm": 120.0,
         "bpm_tolerance": 2.0,
-        "expect_boundary_reduction": true
+        "expect_boundary_reduction": true,
+        "section_boundaries_s": [24.0, 64.0, 104.0],
+        "section_labels": [null, "verse1", "chorus", "verse2"],
+        "section_boundary_tolerance_s": 4.0
       }
     }
   }
@@ -54,7 +57,7 @@ NGV_GHCR_TOKEN_FILE=/secure/token-file \
 NGV_FIXTURE_EXPECTATIONS_FILE=/private/fixture-expectations.json \
 scripts/publish_example_fixtures.sh \
   /owner-managed/examples \
-  ghcr.io/iret77/nexgenvideo-examples:fixtures-v1
+  ghcr.io/iret77/nexgenvideo-examples:fixtures-v3
 ```
 
 The command prints the immutable `ghcr.io/...@sha256:...` reference. Its digest is stored as the
@@ -67,25 +70,43 @@ any macOS runner receives private data.
 ## Analysis run
 
 `.github/workflows/private-example-analysis.yml` is manual-only. Before allocating a macOS runner it
-requires the centrally configured exact fixture digest, validates the dataset id, verifies that both
+uses a Linux source gate that requires the centrally configured exact fixture digest, validates the
+dataset id, verifies that both
 private packages are unlinked, confirms that its dedicated package secret exists, and rejects the
-current index or reachable repository history if any blob matches private fixture content. The Linux gate removes its
-temporary media and registry credentials before the macOS job can start.
+current index or reachable repository history if any blob matches private fixture content. It removes
+its temporary media and registry credentials before the macOS job can start.
 
-The macOS job then:
+The `xcode-27` build job first bundles the app and external pack without access to private fixture
+data, wraps both in a one-day runtime-harness artifact that preserves executable modes and framework
+symlinks, and transfers that artifact to the pinned GitHub-hosted macOS 26 runner. The runtime job then:
 
-1. pulls and verifies the private fixture by digest;
-2. bundles the real app and external `.ngvpack`;
-3. runs the headless app self-test with AVFoundation and the pack's real analysis phase;
-4. applies the pack's independent pre-interpretation gate;
-5. checks the private duration/BPM expectations and raw-to-canonical boundary reduction; and
-6. pushes `analysis.json` plus `provenance.json` to the private report package.
+1. verifies the booted macOS version before downloading any artifact or private data;
+2. restores the prebuilt app and external `.ngvpack` with their runtime layout intact;
+3. pulls and verifies the private fixture by digest;
+4. configures the exact production audio runtime and runs the headless app self-test through the
+   external pack's real analysis phase;
+5. applies the pack's independent pre-interpretation gate;
+6. checks duration, BPM, boundary reduction, and every ordered section boundary and label against
+   private, independently produced expectations; and
+7. always pushes `provenance.json`, plus `analysis.json` and the runner-owned measurement proof
+   whenever available, to the private report package.
 
-The provenance record links the result to the immutable fixture reference, tree and file digests,
+Successful provenance links the result to the immutable fixture reference, tree and file digests,
 loaded pack version and bundle-tree digest, commit, workflow run, measured summary, actual optional
-audio-ML registration state, and gate outcome. It contains no runner-local source path.
-The app also writes one redacted success line containing only duration, tempo, grid counts,
-structure status, raw/accepted boundary counts, and canonical boundary times. It never prints fixture
-paths, source names, lyrics, labels, hashes, or media content.
+audio-ML registration state, alignment timing evidence and method, boundary-evidence kinds, and gate outcome.
+The gate also verifies the runner-owned measurement proof that binds the exact track, lyrics,
+alignment source, attention-DTW method, anchor counts, and canonical alignment bytes before accepting
+known-text timing. The source used for that measurement remains part of the phase's exact-byte lineage.
+Failure provenance records the exact private error and
+every identity known at that stage; a partial canonical artifact is retained beside it when available.
+Neither record contains a runner-local source path on a successful acceptance path.
+The app writes a redacted success summary and a redacted failure message. Full comparisons remain in
+the private report package. Workflow logs never print private expectations, fixture paths, source
+names, lyrics, labels, hashes, or media content.
 No media, lyrics, analysis, or provenance file is uploaded as a public Actions artifact. The macOS
 job removes its fixture, report, and registry-auth directories after publication or failure.
+
+The acceptance run requires macOS 26 exactly and verifies `sw_vers` before downloading private data.
+This proves the shipping neural beat, stem, transcription, harmony, and evidence-resolution path.
+The dormant Music Understanding adapter is compiled with the macOS 27 SDK but is intentionally not
+activated by this production-floor test.

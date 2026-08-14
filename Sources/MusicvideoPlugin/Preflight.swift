@@ -1,21 +1,7 @@
 import Foundation
 import NexGenEngine
 
-/// Pre-analysis check: verifies, BEFORE the expensive (multi-minute) analysis
-/// run, that all input artifacts are present. Port of
-/// `nexgen_pack_musicvideo/analysis/preflight.py`.
-///
-/// Rules:
-/// - Audio file MISSING -> hard blocker, no analysis start.
-/// - Lyrics MISSING -> warning (no alignment possible; maybe forgotten).
-/// - Reference images MISSING -> warning (Bible/production-design without material).
-///
-/// The orchestrator calls `preflight`, shows the result, and on warnings asks
-/// whether something was forgotten or the analysis should deliberately start
-/// without these inputs.
-///
-/// Purpose: stops someone (including the user) from starting a 5-minute
-/// analysis and only noticing afterward that the lyrics file is missing.
+/// Native validator for the same input conditions the analysis phase checks before execution.
 public enum Preflight {
     static var audioExtensions: Set<String> { AudioProjectLayout.audioExtensions }
     static let imageExtensions = ProjectMediaExtensions.images
@@ -76,15 +62,8 @@ public enum Preflight {
         let fm = FileManager.default
 
         // 1. Audio (hard blocker).
-        let audioDir = projectDir.appendingPathComponent("audio")
-        var isDir: ObjCBool = false
-        if fm.fileExists(atPath: audioDir.path, isDirectory: &isDir), isDir.boolValue {
-            let entries = (try? fm.contentsOfDirectory(at: audioDir, includingPropertiesForKeys: nil)) ?? []
-            result.audioFiles = entries
-                .filter { audioExtensions.contains($0.pathExtension.lowercased()) }
-                .map(\.lastPathComponent)
-                .sorted()
-        }
+        result.audioFiles = AudioProjectLayout.songFiles(dataRoot: projectDir)
+            .map(\.lastPathComponent)
         if result.audioFiles.isEmpty {
             result.blockers.append(
                 "No audio file in audio/ (.wav/.mp3/.flac/.m4a/.aiff). "
@@ -100,14 +79,15 @@ public enum Preflight {
             result.lyricsPath = relativePath(of: lyricsFile, to: projectDir)
         } else {
             result.warnings.append(
-                "No lyrics (lyrics/lyrics.txt missing or empty). Without lyrics no forced alignment "
-                    + "is possible, section boundaries are detected acoustically only. If the song has "
-                    + "text: providing lyrics is worthwhile."
+                "No lyrics (lyrics/lyrics.txt missing or empty). Without lyrics no known-text alignment "
+                    + "is possible. Measured structure remains timing truth, but section labels may "
+                    + "be less certain. If the song has text, providing lyrics is worthwhile."
             )
         }
 
         // 3. Reference images (warning) — anywhere under import/.
         let importDir = projectDir.appendingPathComponent("import")
+        var isDir: ObjCBool = false
         if fm.fileExists(atPath: importDir.path, isDirectory: &isDir), isDir.boolValue {
             if let enumerator = fm.enumerator(at: importDir, includingPropertiesForKeys: [.isRegularFileKey]) {
                 for case let url as URL in enumerator {

@@ -1,10 +1,34 @@
 // swift-tools-version: 6.2
 
+import Foundation
 import PackageDescription
+
+let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let appResourceManifest = packageRoot
+    .appendingPathComponent("Sources/NexGenVideo/Resources/AppResources.txt")
+let appResourceEntries = try! String(contentsOf: appResourceManifest, encoding: .utf8)
+    .split(whereSeparator: { $0.isNewline })
+    .map(String.init)
+let appResourceDestinations = appResourceEntries.map {
+    URL(fileURLWithPath: $0).lastPathComponent
+}
+precondition(!appResourceEntries.isEmpty, "AppResources.txt must not be empty")
+precondition(
+    appResourceEntries.allSatisfy {
+        !$0.hasPrefix("/") && !$0.split(separator: "/").contains("..")
+    },
+    "AppResources.txt entries must be project-relative"
+)
+precondition(
+    Set(appResourceDestinations).count == appResourceDestinations.count,
+    "AppResources.txt entries must have unique destination names"
+)
 
 let package = Package(
     name: "NexGenVideo",
     defaultLocalization: "en",
+    // macOS 26 is the newest released product floor. Xcode 27 keeps the dormant
+    // Music Understanding adapter compiling behind its macOS 27 availability gate.
     platforms: [.macOS(.v26)],
     products: [
         .executable(name: "NexGenVideo", targets: ["NexGenVideo"]),
@@ -52,16 +76,16 @@ let package = Package(
                 "Resources/Info.plist",
                 "Resources/AppIcon.icns",
                 "Resources/AppIcon.png",
+                "Resources/AppResources.txt",
             ],
-            resources: [
-                .copy("Resources/Fonts"),
-                .copy("Resources/MCPB/nexgen.mcpb"),
-                .copy("Resources/Images"),
-                .copy("Resources/Changelog"),
-            ],
-            plugins: ["MetalCIKernelPlugin"]
+            resources: appResourceEntries.map { .copy("Resources/\($0)") },
+            linkerSettings: [
+                .unsafeFlags(
+                    ["-Xlinker", "-weak_framework", "-Xlinker", "MusicUnderstanding"],
+                    .when(platforms: [.macOS])
+                ),
+            ]
         ),
-        .plugin(name: "MetalCIKernelPlugin", capability: .buildTool()),
         // Vendored whisper.cpp (macOS/arm64 slice) — on-device speech recognition behind the app's
         // AudioTranscribing seam. See Vendor/README.md for provenance + update steps.
         .binaryTarget(name: "whisper", path: "Vendor/whisper.xcframework"),

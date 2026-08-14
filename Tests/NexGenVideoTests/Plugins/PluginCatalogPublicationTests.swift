@@ -34,8 +34,8 @@ struct PluginCatalogPublicationTests {
             "id": "musicvideo",
             "displayName": "Music Video",
             "version": "1.0.0",
-            "projectSchema": "musicvideo/1.0.0",
-            "migratesFrom": ["musicvideo/legacy"],
+            "projectSchema": "musicvideo/2.0.0",
+            "migratesFrom": ["musicvideo/legacy", "musicvideo/1.0.0"],
             "minAppVersion": "1.0.0",
             "zip": "musicvideo.ngvpack.zip",
             "sha256": sha256,
@@ -97,8 +97,11 @@ struct PluginCatalogPublicationTests {
         let secondPlugins = try #require(secondCatalog["plugins"] as? [[String: Any]])
         #expect((firstPlugins.first?["url"] as? String)?.contains("/preview-1/") == true)
         #expect((secondPlugins.first?["url"] as? String)?.contains("/preview-2/") == true)
-        #expect(firstPlugins.first?["projectSchema"] as? String == "musicvideo/1.0.0")
-        #expect(firstPlugins.first?["migratesFrom"] as? [String] == ["musicvideo/legacy"])
+        #expect(firstPlugins.first?["projectSchema"] as? String == "musicvideo/2.0.0")
+        #expect(firstPlugins.first?["migratesFrom"] as? [String] == [
+            "musicvideo/legacy",
+            "musicvideo/1.0.0",
+        ])
         #expect(try Data(contentsOf: stable) == stableData)
     }
 

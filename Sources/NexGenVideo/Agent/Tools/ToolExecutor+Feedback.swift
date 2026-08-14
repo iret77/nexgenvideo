@@ -38,10 +38,10 @@ extension ToolExecutor {
 
         let dedupeKey = "\(category)|\(summary)"
         guard !feedbackState.sentKeys.contains(dedupeKey) else {
-            return .ok("Already recorded this in local diagnostics this session — not adding a duplicate.")
+            return .ok("Already recorded this in this session's local-only diagnostics — not adding a duplicate.")
         }
         guard feedbackState.sentKeys.count < Self.maxFeedbackPerSession else {
-            return .ok("Feedback limit reached for this session. Summarize any remaining issues to the user instead of sending more.")
+            return .ok("Local-only diagnostics limit reached for this session. Summarize any remaining issues to the user instead of recording more.")
         }
 
         // Keep the first line compact so local diagnostic entries remain scannable.
@@ -63,6 +63,6 @@ extension ToolExecutor {
             "agent feedback category=\(category) severity=\(severity ?? "none")\n\(lines.joined(separator: "\n"))"
         )
         feedbackState.sentKeys.insert(dedupeKey)
-        return .ok("Noted this feedback locally. Thanks — this helps improve the agent.")
+        return .ok("Recorded this in this session's local-only diagnostics. No external report was sent.")
     }
 }

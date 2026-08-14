@@ -685,7 +685,13 @@ enum ToolDefinitions {
                     "shotId": ["type": "string", "description": "The exact shotId returned by compile_prompt, including the literal 'none' for free generation."],
                     "name": ["type": "string", "description": "Display name for the asset in the media library. Defaults to first 30 chars of prompt."],
                     "model": ["type": "string", "description": "Model ID (e.g. 'veo3.1-fast'). Use list_models to see options. Defaults to first available model."],
-                    "duration": ["type": "integer", "description": "Duration in seconds. Valid values depend on model."],
+                    "duration": [
+                        "anyOf": [
+                            ["type": "integer"] as [String: Any],
+                            ["type": "string", "enum": ["auto"]] as [String: Any],
+                        ],
+                        "description": "Duration in seconds, or 'auto' when list_models reports supportsAuto. Valid seconds and ranges depend on model.",
+                    ],
                     "aspectRatio": ["type": "string", "description": "Aspect ratio (e.g. '16:9', '9:16', '1:1')"],
                     "resolution": ["type": "string", "description": "Resolution (e.g. '720p', '1080p', '4k')"],
                     "startFrameMediaRef": ["type": "string", "description": "Media asset ID to use as the first frame (image-to-video)"],
@@ -1038,7 +1044,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .sendFeedback,
-            description: "Record an agent limitation or bug in the local diagnostics log so it can be reviewed later. Use when you can't do what the user asked because a capability or tool is missing or behaves wrong, the result is clearly off, or the user is plainly hitting a rough edge. This is recorded without a confirmation step — so PARAPHRASE in your own words: never include verbatim user messages, prompts, file paths, media, transcript text, or any project content. App/OS version and your recent tool names are attached automatically. Use sparingly: at most once per distinct issue.",
+            description: "Record an agent limitation or bug in this session's local diagnostics log for later diagnosis and development. This is local-only: it does not notify a team or send an external report. Use when you can't do what the user asked because a capability or tool is missing or behaves wrong, the result is clearly off, or the user is plainly hitting a rough edge. This is recorded without a confirmation step — so PARAPHRASE in your own words: never include verbatim user messages, prompts, file paths, media, transcript text, or any project content. App/OS version and your recent tool names are attached automatically. Use sparingly: at most once per distinct issue.",
             inputSchema: objectSchema(
                 properties: [
                     "category": ["type": "string", "enum": ["missing_capability", "wrong_result", "confusing_ux", "failure", "suggestion"], "description": "What kind of problem this is."],
@@ -1140,7 +1146,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .writeAnalysisInterpretation,
-            description: "Write the human/agent interpretation onto the existing measured analysis artifact. Use this after run_phase(\"analysis\") and instead of editing analysis JSON. The host requires structure_resolution.status to be resolved or review_required; review_required sections must be surfaced for explicit user review, while labels can never hide needs_review timing. It preserves measured timing, per-boundary evidence, all analysis diagnostics, and detector anomalies, requires exactly one label for every canonical section, restricts the perceived-tempo multiplier to 0.5/1/2, mirrors labels onto the sections, and writes atomically.",
+            description: "Write the human/agent interpretation onto the existing measured analysis artifact. Use this after run_phase(\"analysis\") and instead of editing analysis JSON. The host requires structure_resolution.status to be resolved or review_required with independently reproducible evidence for every boundary; labels can never hide needs_review timing. It preserves measured timing, boundary evidence, all analysis diagnostics, and detector anomalies, requires exactly one label for every canonical section, restricts the perceived-tempo multiplier to 0.5/1/2, mirrors labels onto the sections, and writes atomically.",
             inputSchema: PipelineArtifactWriteContract.analysisInterpretationSchema
         ),
         AgentTool(
@@ -1251,7 +1257,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .runPhase,
-            description: "Run a registered pipeline phase for the project. WRITES.\n\nDispatches to whatever phase runner the active pack registered under `phase` and runs it. For the musicvideo pack, `analysis` decodes the single song in the project's audio/ folder and runs the native audio analysis (beats, downbeats, tempo, structure), writing `analysis/<song>.json` — this takes a few seconds. The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; for those this returns `{phase, runner: null, note: ...}`. A deterministic-step or runner failure is a tool error and writes no synthetic success payload. On success returns `{phase, ok: true, result}` — for analysis, `result` returns the exact downbeats and canonical sections plus `structure_resolution`, non-success `stage_diagnostics`, bpm, duration_s, and the artifact path. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "Run a registered pipeline phase for the project. WRITES.\n\nDispatches to whatever phase runner the active pack registered under `phase` and runs it. For the musicvideo pack, `analysis` decodes the single song in the project's audio/ folder and runs the complete on-device rhythm, structure, stem, transcription, and harmony stack into `analysis/<song>.json`; a stronger Apple hierarchy is selected when its availability-gated adapter exists. The planning phases (brief/treatment/storyboard/…) are agent-driven and have no code runner; for those this returns `{phase, runner: null, note: ...}`. A deterministic-step or runner failure is a tool error and writes no synthetic success payload. On success returns `{phase, ok: true, result}` — for analysis, `result` returns the exact downbeats and canonical sections plus `structure_resolution`, non-success `stage_diagnostics`, bpm, duration_s, and the artifact path. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,

@@ -23,9 +23,10 @@ enum FalImageRefField: Sendable {
     case array           // `image_urls` (Gemini / nano-banana edit)
 }
 
-enum FalDurationMode: Sendable {
+enum FalDurationMode: Sendable, Equatable {
     case plainSeconds    // "5"   (Kling, Seedance, Hailuo)
     case secondsSuffix   // "8s"  (Veo)
+    case secondsOrAuto   // "4"..."30" or "auto" (Seedance 2.5)
 }
 
 enum FalAudioMode: Sendable {
@@ -52,6 +53,7 @@ struct FalModel: Sendable {
     var videoReferenceArrays: Bool = false   // reference-to-video: emit image_urls/video_urls/audio_urls
     var audioMode: FalAudioMode = .tts
     var upscaleKind: FalUpscaleKind? = nil
+    var videoFirstLastFrames: Bool = false
 }
 
 enum FalModelRegistry {
@@ -162,6 +164,21 @@ enum FalModelRegistry {
         video("bytedance/seedance-2.0/image-to-video", "Seedance 2.0 (image)",
               durations: [5, 10, 15], aspects: ["16:9", "9:16"], resolutions: ["480p", "720p"],
               sendsAspect: false, sendsResolution: true, generatesAudio: true, i2v: true),
+        videoRange("bytedance/seedance-2.5/text-to-video", "Seedance 2.5",
+                   range: .init(min: 4, max: 30), supportsAuto: true,
+                   aspects: seedance2Aspects, resolutions: ["480p", "720p"],
+                   sendsResolution: true, generatesAudio: true),
+        videoRange("bytedance/seedance-2.5/image-to-video", "Seedance 2.5 (image)",
+                   range: .init(min: 4, max: 30), supportsAuto: true,
+                   aspects: ["16:9", "9:16"], resolutions: ["480p", "720p"],
+                   sendsAspect: false, sendsResolution: true, generatesAudio: true,
+                   i2v: true, firstLastFrames: true),
+        videoRef("bytedance/seedance-2.5/reference-to-video", "Seedance 2.5 (reference)",
+                 durations: [], durationRange: .init(min: 4, max: 30), supportsAuto: true,
+                 aspects: seedance2Aspects, resolutions: ["480p", "720p"],
+                 maxImages: 30, maxVideos: 10, maxAudios: 10, maxTotal: 50,
+                 maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil,
+                 durationMode: .secondsOrAuto),
     ]
 
     private static func video(
@@ -196,28 +213,68 @@ enum FalModelRegistry {
         )
     }
 
-    // Reference-to-video: multi-modal reference arrays (image_urls/video_urls/
-    // audio_urls), aspect + resolution still sent. References are optional (the
-    // prompt can stand alone), so `requiresReferenceImage` stays false.
-    private static func videoRef(
+    private static func videoRange(
         _ id: String, _ name: String,
-        durations: [Int], aspects: [String], resolutions: [String]?,
-        maxImages: Int, maxVideos: Int, maxAudios: Int, maxTotal: Int
+        range: VideoDurationCapabilities.Range, supportsAuto: Bool,
+        aspects: [String], resolutions: [String]?,
+        sendsAspect: Bool = true, sendsResolution: Bool = false,
+        generatesAudio: Bool = false, i2v: Bool = false, firstLastFrames: Bool = false
     ) -> FalModel {
         FalModel(
             entry: CatalogEntry(
                 id: id, kind: .video, displayName: name,
                 allowedEndpoints: [id], responseShape: .video,
                 uiCapabilities: .video(VideoCaps(
-                    durations: durations, resolutions: resolutions, aspectRatios: aspects,
+                    durations: [], durationRange: range, supportsAutomaticDuration: supportsAuto,
+                    resolutions: resolutions, aspectRatios: aspects,
+                    supportsFirstFrame: firstLastFrames, supportsLastFrame: firstLastFrames,
+                    maxReferenceImages: i2v && !firstLastFrames ? 1 : 0, maxReferenceVideos: 0,
+                    maxReferenceAudios: 0, maxTotalReferences: i2v && !firstLastFrames ? 1 : 0,
+                    maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil,
+                    framesAndReferencesExclusive: false, referenceTagNoun: "reference",
+                    requiresSourceVideo: false, requiresReferenceImage: i2v
+                ))
+            ),
+            videoDuration: .secondsOrAuto,
+            videoSendsAspectRatio: sendsAspect,
+            videoSendsResolution: sendsResolution,
+            videoGeneratesAudio: generatesAudio,
+            videoImageRef: i2v && !firstLastFrames,
+            videoFirstLastFrames: firstLastFrames
+        )
+    }
+
+    // Reference-to-video: multi-modal reference arrays (image_urls/video_urls/
+    // audio_urls), aspect + resolution still sent. References are optional (the
+    // prompt can stand alone), so `requiresReferenceImage` stays false.
+    private static func videoRef(
+        _ id: String, _ name: String,
+        durations: [Int], durationRange: VideoDurationCapabilities.Range? = nil,
+        supportsAuto: Bool = false,
+        aspects: [String], resolutions: [String]?,
+        maxImages: Int, maxVideos: Int, maxAudios: Int, maxTotal: Int,
+        maxCombinedVideoRefSeconds: Double? = 15,
+        maxCombinedAudioRefSeconds: Double? = 15,
+        durationMode: FalDurationMode = .plainSeconds
+    ) -> FalModel {
+        FalModel(
+            entry: CatalogEntry(
+                id: id, kind: .video, displayName: name,
+                allowedEndpoints: [id], responseShape: .video,
+                uiCapabilities: .video(VideoCaps(
+                    durations: durations, durationRange: durationRange,
+                    supportsAutomaticDuration: supportsAuto,
+                    resolutions: resolutions, aspectRatios: aspects,
                     supportsFirstFrame: false, supportsLastFrame: false,
                     maxReferenceImages: maxImages, maxReferenceVideos: maxVideos,
                     maxReferenceAudios: maxAudios, maxTotalReferences: maxTotal,
-                    maxCombinedVideoRefSeconds: 15, maxCombinedAudioRefSeconds: 15,
+                    maxCombinedVideoRefSeconds: maxCombinedVideoRefSeconds,
+                    maxCombinedAudioRefSeconds: maxCombinedAudioRefSeconds,
                     framesAndReferencesExclusive: false, referenceTagNoun: "reference",
                     requiresSourceVideo: false, requiresReferenceImage: false
                 ))
             ),
+            videoDuration: durationMode,
             videoSendsResolution: true,
             videoGeneratesAudio: true,
             videoReferenceArrays: true

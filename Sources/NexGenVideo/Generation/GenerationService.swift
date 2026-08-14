@@ -821,9 +821,14 @@ final class GenerationService {
                         "\(model.entry.displayName) is image-to-video — add a reference image.",
                         authorization: authorization, editor: editor, onFailure: onFailure)
                 }
+                guard case .seconds(let duration) = p.duration else {
+                    return failBeforeSubmission(
+                        placeholders, "Runway does not support automatic video duration.",
+                        authorization: authorization, editor: editor, onFailure: onFailure)
+                }
                 taskId = try await client.createImageToVideo(
                     model: model.apiModel, promptImage: image, promptText: p.prompt,
-                    ratio: RunwayModelRegistry.videoRatio(for: p.aspectRatio), duration: p.duration)
+                    ratio: RunwayModelRegistry.videoRatio(for: p.aspectRatio), duration: duration)
             case .image(let p):
                 taskId = try await client.createTextToImage(
                     model: model.apiModel, promptText: p.prompt,

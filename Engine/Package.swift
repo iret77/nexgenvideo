@@ -9,6 +9,7 @@ import PackageDescription
 // `bundle.principalClass as? PackEntry.Type` cast ("entry point not found").
 let package = Package(
     name: "NexGenEngine",
+    // macOS 26 is the current shipped product floor.
     platforms: [.macOS(.v26)],
     products: [
         .library(name: "NexGenEngine", type: .dynamic, targets: ["NexGenEngine"]),

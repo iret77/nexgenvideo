@@ -27,12 +27,15 @@ struct GateGuardTests {
         let songHash = SHA256.hash(data: try Data(contentsOf: song))
             .map { String(format: "%02x", $0) }
             .joined()
+        let persistedBeats = beats.isEmpty
+            ? []
+            : Array(Set(beats + downbeats)).sorted()
         var obj: [String: Any] = [
             "schema": analysisSchemaVersion,
             "project": "demo",
             "song_path": "audio/song.wav",
             "song_sha256": songHash,
-            "beats": beats,
+            "beats": persistedBeats,
             "downbeats": downbeats,
             "bpm": 120,
             "duration_s": duration,
@@ -42,7 +45,7 @@ struct GateGuardTests {
                     "start": 0,
                     "end": duration,
                     "cluster": 0,
-                    "source": "measured_track_extent",
+                    "source": "measured_system_hierarchy",
                 ],
             ],
             "structure_candidates": [
@@ -50,20 +53,37 @@ struct GateGuardTests {
                 ["source": "essentia", "sections": [["index": 0, "start": 0, "end": duration, "cluster": 0]]],
             ],
             "structure_resolution": [
-                "version": "bar-consensus/v1",
+                "version": "adaptive-structure/v5",
                 "status": "resolved",
-                "method": "homogeneous_consensus",
-                "detector_sources": ["essentia", "librosa"],
-                "minimum_section_bars": 8,
+                "method": "music_understanding_hierarchy",
+                "detector_sources": ["apple_music_understanding"],
+                "minimum_section_bars": 0,
                 "candidate_boundary_count": 0,
                 "consensus_boundary_count": 0,
                 "alignment_marker_count": 0,
                 "resolved_alignment_marker_count": 0,
                 "accepted_boundary_count": 0,
                 "discarded_boundary_count": 0,
-                "boundary_evidence": [],
-                "detail": "Independent acoustic detectors found no internal structural boundary.",
+                "boundary_evidence": [[
+                    "time": 0,
+                    "kind": "system_hierarchy",
+                    "detector_sources": ["apple_music_understanding"],
+                ]],
+                "hierarchy": [
+                    "source": "apple_music_understanding",
+                    "sections": [["start": 0, "end": duration]],
+                    "segments": [["start": 0, "end": duration]],
+                    "phrases": [["start": 0, "end": duration]],
+                ],
+                "detail": "Measured system hierarchy.",
             ],
+            "downbeat_source": "music-understanding",
+            "pipeline_stages": ["structure", "music_understanding"],
+            "stage_diagnostics": [[
+                "stage": "music_understanding",
+                "status": "succeeded",
+                "detail": "Measured system hierarchy.",
+            ]],
         ]
         if !sectionLabels.isEmpty {
             obj["tempo_multiplier"] = 1
@@ -74,15 +94,27 @@ struct GateGuardTests {
             ]
         }
         try JSONSerialization.data(withJSONObject: obj).write(to: dir.appendingPathComponent("song.json"))
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: "demo",
+                songSHA256: songHash,
+                lyricsAlignment: nil
+            ),
+            dataRoot: root
+        )
     }
 
     private func writeConsolidatedAnalysis(
         _ root: URL,
         detectorBoundaries: [[Double]],
-        alignmentReport: LyricsAlignment.Result? = nil
+        alignmentReport: LyricsAlignment.Result? = nil,
+        includeSystemHierarchy: Bool = true,
+        downbeats: [Double]? = nil,
+        duration: Double = 64.0
     ) throws -> URL {
-        let duration = 64.0
         let sources = ["librosa", "essentia"]
+        let measuredDownbeats = downbeats
+            ?? stride(from: 0.0, through: duration, by: 2.0).map { $0 }
         func sections(_ boundaries: [Double], source: String) -> [AudioSection] {
             let times = ([0.0] + boundaries + [duration]).sorted()
             return zip(times, times.dropFirst()).enumerated().map { item in
@@ -100,8 +132,8 @@ struct GateGuardTests {
             durationS: duration,
             bpm: 120,
             beats: stride(from: 0.0, through: duration, by: 0.5).map { $0 },
-            downbeats: stride(from: 0.0, through: duration, by: 2.0).map { $0 },
-            downbeatSource: "beat-transformer",
+            downbeats: measuredDownbeats,
+            downbeatSource: includeSystemHierarchy ? "music-understanding" : "beat-transformer",
             sections: sections(detectorBoundaries[0], source: sources[0]),
             energyCurve: [],
             tempoCurve: [],
@@ -113,19 +145,68 @@ struct GateGuardTests {
         let songHash = SHA256.hash(data: try Data(contentsOf: song))
             .map { String(format: "%02x", $0) }
             .joined()
+        let systemRanges = [(0.0, 20.0), (20.0, 40.0), (40.0, duration)]
+        let system = includeSystemHierarchy
+            ? MusicUnderstandingMeasurement(
+                beats: stride(from: 0.0, through: duration, by: 0.5).map { $0 },
+                bars: stride(from: 0.0, through: duration, by: 2.0).map { $0 },
+                bpm: 120,
+                sections: systemRanges.map { MeasuredMusicRange(start: $0.0, end: $0.1) },
+                segments: systemRanges.map { MeasuredMusicRange(start: $0.0, end: $0.1) },
+                phrases: stride(from: 0.0, to: duration, by: 4.0).map {
+                    MeasuredMusicRange(start: $0, end: min($0 + 4, duration))
+                }
+            )
+            : nil
         let canonical = try MusicvideoAnalysisRunner.toCanonicalDetailed(
             raw,
             project: "demo",
             songPath: "audio/song.wav",
             lyricsAlignment: alignmentReport?.lines ?? [],
             alignmentReport: alignmentReport,
-            songSha256: songHash
+            pipelineStages: includeSystemHierarchy ? ["music_understanding"] : [],
+            songSha256: songHash,
+            musicUnderstanding: system
         )
+        var diagnostics = includeSystemHierarchy
+            ? [
+                MusicvideoAnalysisRunner.StageDiagnostic(
+                    stage: "music_understanding",
+                    status: .succeeded,
+                    detail: "Measured system hierarchy."
+                ),
+            ]
+            : [
+                MusicvideoAnalysisRunner.StageDiagnostic(
+                    stage: "native_dsp",
+                    status: .succeeded,
+                    detail: "Measured acoustic candidates."
+                ),
+                MusicvideoAnalysisRunner.StageDiagnostic(
+                    stage: "neural_beat_grid",
+                    status: .succeeded,
+                    detail: "Measured neural beat grid."
+                ),
+            ]
+        if let alignmentReport {
+            diagnostics.append(
+                MusicvideoAnalysisRunner.StageDiagnostic(
+                    stage: "lyrics_alignment",
+                    status: alignmentReport.hasSuccessfulAlignment
+                        || alignmentReport.hasReliableStructureEvidence
+                        ? .succeeded : .degraded,
+                    detail: "Measured lyric alignment.",
+                    timingEvidence: alignmentReport.timingEvidence,
+                    timingMethod: alignmentReport.timingMethod
+                )
+            )
+        }
         var object = try #require(
             try JSONSerialization.jsonObject(
                 with: MusicvideoAnalysisRunner.encodeArtifact(
                     canonical.analysis,
-                    structureResolution: canonical.structureResolution
+                    structureResolution: canonical.structureResolution,
+                    stageDiagnostics: diagnostics
                 )
             ) as? [String: Any]
         )
@@ -143,6 +224,50 @@ struct GateGuardTests {
             withIntermediateDirectories: true
         )
         try JSONSerialization.data(withJSONObject: object).write(to: url)
+        let lyrics: String?
+        if let alignmentReport {
+            lyrics = alignmentReport.lines.map { line in
+                let marker = line.sectionMarker.map { "[\($0)]\n" } ?? ""
+                return marker + line.text
+            }.joined(separator: "\n")
+            let lyricsURL = root.appendingPathComponent("lyrics/lyrics.txt")
+            try FileManager.default.createDirectory(
+                at: lyricsURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data(lyrics!.utf8).write(to: lyricsURL)
+        } else {
+            lyrics = nil
+        }
+        let alignmentProof: AnalysisMeasurementProof.LyricsAlignmentProof?
+        if let lyrics, let alignmentReport {
+            alignmentProof = AnalysisMeasurementProof.LyricsAlignmentProof(
+                sourcePath: "audio/song.wav",
+                sourceSHA256: try FileDigest.sha256(of: song),
+                lyricsSHA256: AnalysisMeasurementProofStore.lyricsFingerprint(lyrics),
+                alignmentSHA256: try AnalysisMeasurementProofStore.alignmentFingerprint(
+                    object
+                ),
+                timingEvidence: alignmentReport.timingEvidence,
+                timingMethod: alignmentReport.timingMethod,
+                markerCount: alignmentReport.markerCount,
+                lyricTokenCount: alignmentReport.lines.flatMap(\.words).count,
+                matchedTokenCount: alignmentReport.lines
+                    .flatMap(\.words)
+                    .filter { $0.score != nil }
+                    .count
+            )
+        } else {
+            alignmentProof = nil
+        }
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: "demo",
+                songSHA256: songHash,
+                lyricsAlignment: alignmentProof
+            ),
+            dataRoot: root
+        )
         return url
     }
 
@@ -169,8 +294,8 @@ struct GateGuardTests {
         )
     }
 
-    @Test("analysis gate reproduces rejection of a boundary snapped to track end")
-    func analysisGateRejectsSnappedEndpoint() throws {
+    @Test("a late lyric marker cannot create a system boundary at track end")
+    func lateLyricMarkerDoesNotCreateBoundary() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let alignment = LyricsAlignment.alignDetailed(
@@ -190,6 +315,57 @@ struct GateGuardTests {
 
         try MusicvideoGateChecks.requireInterpretableAnalysis(dataRoot: root)
         try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+    }
+
+    @Test("native lyric marker near track end resolves to internal acoustic evidence")
+    func lateNativeLyricMarkerUsesInternalEvidence() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let alignment = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nhello world\n[Outro]\nfinal words",
+            transcript: [
+                .init(text: "hello", start: 0.1, end: 0.3),
+                .init(text: "world", start: 0.3, end: 0.5),
+                .init(text: "final", start: 63.5, end: 63.7),
+                .init(text: "words", start: 63.7, end: 63.9),
+            ]
+        )
+        let url = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[62], [62.4]],
+            alignmentReport: alignment,
+            includeSystemHierarchy: false
+        )
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        let resolution = try #require(object["structure_resolution"] as? [String: Any])
+        let evidence = try #require(resolution["boundary_evidence"] as? [[String: Any]])
+        #expect(evidence.contains {
+            ($0["time"] as? NSNumber)?.doubleValue == 62
+                && $0["kind"] as? String == "lyrics_supported_acoustic"
+        })
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+    }
+
+    @Test("unresolved native structure reports its actual evidence failure")
+    func unresolvedNativeStructureReportsNativeFailure() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[16], [16.4]],
+            includeSystemHierarchy: false,
+            downbeats: [0]
+        )
+
+        do {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+            Issue.record("expected unresolved native structure to block approval")
+        } catch let blocked as GateBlocked {
+            #expect(blocked.message.contains("native structure remains unresolved"))
+            #expect(!blocked.message.contains("Apple Music Understanding"))
+        }
     }
 
     private func shotlist(
@@ -350,7 +526,7 @@ struct GateGuardTests {
         try JSONSerialization.data(withJSONObject: unresolved).write(to: analysisURL)
         #expect(throws: GateBlocked.self) { try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root) }
 
-        // Lyrics are optional when independent acoustic detectors resolve the structure.
+        // Lyrics are optional when the system hierarchy resolves the structure.
         try writeAnalysis(root, beats: [0.5, 1.0, 1.5], downbeats: [0.5, 2.5], duration: 12.0, sectionLabels: labels)
         try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
 
@@ -362,7 +538,7 @@ struct GateGuardTests {
         }
     }
 
-    @Test("analysis gate accepts the consolidator's corroborated boundary contract")
+    @Test("analysis gate accepts the verified system hierarchy contract")
     func analysisGateAcceptsConsolidatedArtifact() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -370,8 +546,37 @@ struct GateGuardTests {
         try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
     }
 
-    @Test("analysis gate accepts mixed per-boundary evidence after a partial lyric match")
-    func analysisGateAcceptsMixedBoundaryEvidence() throws {
+    @Test("analysis gate reports inconsistent system rhythm without discarding its hierarchy")
+    func analysisGateReportsSystemRhythmFailurePrecisely() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[23.3], [25.1]]
+        )
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        object["downbeat_source"] = Analysis.DownbeatSource.beatTransformer.rawValue
+        var diagnostics = try #require(object["stage_diagnostics"] as? [[String: Any]])
+        diagnostics[0]["status"] = "degraded"
+        diagnostics[0]["detail"] = "Retained fallback rhythm."
+        object["stage_diagnostics"] = diagnostics
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+
+        let resolution = try #require(object["structure_resolution"] as? [String: Any])
+        #expect(resolution["status"] as? String == "resolved")
+        #expect(resolution["hierarchy"] as? [String: Any] != nil)
+        do {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+            Issue.record("Expected inconsistent Music Understanding rhythm to block approval.")
+        } catch let blocked as GateBlocked {
+            #expect(blocked.message.contains("canonical beat/bar/BPM grid"))
+        }
+    }
+
+    @Test("analysis gate accepts lyric labels attached to measured system boundaries")
+    func analysisGateAcceptsSystemBoundaryLabels() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let report = LyricsAlignment.alignDetailed(
@@ -399,13 +604,247 @@ struct GateGuardTests {
         try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
     }
 
-    @Test("analysis gate accepts phrase-filtered evidence only through explicit review")
-    func analysisGateAcceptsReviewRequiredArtifact() throws {
+    @Test("analysis gate lets speech recognition label acoustic boundaries")
+    func analysisGateAcceptsRecognizedLabelsOnAcousticBoundaries() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nopen words\n[Bridge]\nwide open",
+            transcript: [
+                .init(text: "open", start: 16.1, end: 16.3),
+                .init(text: "words", start: 16.3, end: 16.5),
+                .init(text: "wide", start: 40.1, end: 40.3),
+                .init(text: "open", start: 40.3, end: 40.5),
+            ]
+        )
+        let url = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[16, 40, 58], [16.4, 40.4, 58.4]],
+            alignmentReport: report,
+            includeSystemHierarchy: false
+        )
+        let object = try #require(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: url)
+            ) as? [String: Any]
+        )
+        let resolution = try #require(
+            object["structure_resolution"] as? [String: Any]
+        )
+        let evidence = try #require(
+            resolution["boundary_evidence"] as? [[String: Any]]
+        )
+        #expect(evidence.filter {
+            $0["kind"] as? String == "lyrics_supported_acoustic"
+        }.count == 2)
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+
+        var tampered = object
+        var alignment = try #require(tampered["alignment"] as? [[String: Any]])
+        alignment[0]["start"] = 24.0
+        tampered["alignment"] = alignment
+        try JSONSerialization.data(withJSONObject: tampered).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+
+        tampered = object
+        var sections = try #require(tampered["sections"] as? [[String: Any]])
+        sections[1]["label"] = "chorus"
+        tampered["sections"] = sections
+        try JSONSerialization.data(withJSONObject: tampered).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+    }
+
+    @Test("native analysis gate preserves an opening lyric marker label")
+    func analysisGateRejectsTamperedOpeningLabel() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Intro]\nopen words\n[Verse]\nwide open",
+            transcript: [
+                .init(text: "open", start: 0.1, end: 0.3),
+                .init(text: "words", start: 0.3, end: 0.5),
+                .init(text: "wide", start: 16.1, end: 16.3),
+                .init(text: "open", start: 16.3, end: 16.5),
+            ]
+        )
+        let url = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[16, 58], [16.4, 58.4]],
+            alignmentReport: report,
+            includeSystemHierarchy: false
+        )
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        var sections = try #require(object["sections"] as? [[String: Any]])
+        sections[0]["label"] = "tampered"
+        object["sections"] = sections
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+    }
+
+    @Test("analysis gate reproduces known-text alignment provenance")
+    func analysisGateAcceptsKnownTextAlignmentBoundaries() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let report = LyricsAlignment.alignKnownTextDetailed(
+            lyrics: "[Verse]\nopen words\n[Bridge]\nwide open",
+            measurement: KnownTextAlignmentMeasurement(
+                words: [
+                    .init(text: "open", start: 16.1, end: 16.3),
+                    .init(text: "words", start: 16.3, end: 16.5),
+                    .init(text: "wide", start: 40.1, end: 40.3),
+                    .init(text: "open", start: 40.3, end: 40.5),
+                ],
+                timingMethod: .attentionDTW
+            )
+        )
+        let url = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[58], [58.4]],
+            alignmentReport: report,
+            includeSystemHierarchy: false
+        )
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        let resolution = try #require(object["structure_resolution"] as? [String: Any])
+        #expect(resolution["alignment_timing_evidence"] as? String == "known_text_alignment")
+        let evidence = try #require(resolution["boundary_evidence"] as? [[String: Any]])
+        #expect(evidence.filter {
+            $0["kind"] as? String == "lyrics_known_text_alignment"
+        }.count == 2)
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+
+        var tampered = object
+        var tamperedResolution = resolution
+        tamperedResolution["alignment_timing_evidence"] = "recognized_speech"
+        tampered["structure_resolution"] = tamperedResolution
+        try JSONSerialization.data(withJSONObject: tampered).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+    }
+
+    @Test("analysis gate rejects artifact-only escalation to known-text timing")
+    func analysisGateRejectsKnownTextTimingEscalation() throws {
+        try assertKnownTextTimingEscalationBlocked(includeSystemHierarchy: false)
+    }
+
+    @Test("system hierarchy gate rejects artifact-only escalation to known-text timing")
+    func systemHierarchyGateRejectsKnownTextTimingEscalation() throws {
+        try assertKnownTextTimingEscalationBlocked(includeSystemHierarchy: true)
+    }
+
+    private func assertKnownTextTimingEscalationBlocked(
+        includeSystemHierarchy: Bool
+    ) throws {
+        let knownTextRoot = try tempRoot()
+        let recognizedRoot = try tempRoot()
+        defer {
+            try? FileManager.default.removeItem(at: knownTextRoot)
+            try? FileManager.default.removeItem(at: recognizedRoot)
+        }
+        let lyrics = "[Verse]\nopen words\n[Bridge]\nwide open"
+        let transcript = [
+            TranscriptToken(text: "open", start: 16.1, end: 16.3),
+            TranscriptToken(text: "words", start: 16.3, end: 16.5),
+            TranscriptToken(text: "wide", start: 40.1, end: 40.3),
+            TranscriptToken(text: "open", start: 40.3, end: 40.5),
+        ]
+        let knownText = LyricsAlignment.alignKnownTextDetailed(
+            lyrics: lyrics,
+            measurement: KnownTextAlignmentMeasurement(
+                words: transcript.map {
+                    TranscribedWord(text: $0.text, start: $0.start, end: $0.end)
+                },
+                timingMethod: .attentionDTW
+            )
+        )
+        let recognized = LyricsAlignment.alignDetailed(
+            lyrics: lyrics,
+            transcript: transcript
+        )
+        _ = try writeConsolidatedAnalysis(
+            knownTextRoot,
+            detectorBoundaries: [[58], [58.4]],
+            alignmentReport: knownText,
+            includeSystemHierarchy: includeSystemHierarchy
+        )
+        _ = try writeConsolidatedAnalysis(
+            recognizedRoot,
+            detectorBoundaries: [[58], [58.4]],
+            alignmentReport: recognized,
+            includeSystemHierarchy: includeSystemHierarchy
+        )
+        let recognizedProof = try #require(
+            AnalysisMeasurementProofStore.url(dataRoot: recognizedRoot)
+        )
+        let knownTextProof = try #require(
+            AnalysisMeasurementProofStore.url(dataRoot: knownTextRoot)
+        )
+        try Data(contentsOf: recognizedProof).write(to: knownTextProof, options: .atomic)
+
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: knownTextRoot)
+        }
+    }
+
+    @Test("analysis gate reproduces the earliest strongest terminal consensus")
+    func analysisGateAcceptsPreferredOutroBoundary() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nopen words\n[Chorus]\nwide open",
+            transcript: [
+                .init(text: "open", start: 16.1, end: 16.3),
+                .init(text: "words", start: 16.3, end: 16.5),
+                .init(text: "wide", start: 40.1, end: 40.3),
+                .init(text: "open", start: 40.3, end: 40.5),
+            ]
+        )
+        let url = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[16, 40, 58, 62], [16.4, 40.4, 58.4, 62.4]],
+            alignmentReport: report,
+            includeSystemHierarchy: false,
+            duration: 68
+        )
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        let sections = try #require(object["sections"] as? [[String: Any]])
+        #expect(sections.compactMap { ($0["start"] as? NSNumber)?.doubleValue } == [0, 16, 40, 58])
+        try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+
+        var tampered = object
+        var resolution = try #require(tampered["structure_resolution"] as? [String: Any])
+        var evidence = try #require(resolution["boundary_evidence"] as? [[String: Any]])
+        evidence[evidence.count - 1]["time"] = 62.0
+        resolution["boundary_evidence"] = evidence
+        tampered["structure_resolution"] = resolution
+        try JSONSerialization.data(withJSONObject: tampered).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+    }
+
+    @Test("analysis gate accepts reviewable native evidence without a system hierarchy")
+    func analysisGateAcceptsNativeOnlyArtifact() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let url = try writeConsolidatedAnalysis(
             root,
-            detectorBoundaries: [[8, 16, 24, 32, 40], [12, 20, 28, 36]]
+            detectorBoundaries: [[8, 16, 24, 32, 40], [12, 20, 28, 36]],
+            includeSystemHierarchy: false
         )
         let object = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
@@ -431,7 +870,11 @@ struct GateGuardTests {
             try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
         }
 
-        _ = try writeConsolidatedAnalysis(root, detectorBoundaries: [[23.3], [25.1]])
+        _ = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[23.3], [25.1]],
+            includeSystemHierarchy: false
+        )
         object = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
         )
@@ -443,7 +886,11 @@ struct GateGuardTests {
             try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
         }
 
-        _ = try writeConsolidatedAnalysis(root, detectorBoundaries: [[23.3], [25.1]])
+        _ = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[23.3], [25.1]],
+            includeSystemHierarchy: false
+        )
         object = try #require(
             try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
         )
@@ -455,6 +902,81 @@ struct GateGuardTests {
         resolution["accepted_boundary_count"] = 0
         resolution["discarded_boundary_count"] = 2
         resolution["boundary_evidence"] = []
+        object["structure_resolution"] = resolution
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+
+        _ = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[23.3], [25.1]],
+            includeSystemHierarchy: false
+        )
+        object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        var candidates = try #require(object["structure_candidates"] as? [[String: Any]])
+        candidates[0]["source"] = "forged_detector"
+        object["structure_candidates"] = candidates
+        resolution = try #require(object["structure_resolution"] as? [String: Any])
+        resolution["detector_sources"] = ["forged_detector", "essentia"]
+        var evidence = try #require(resolution["boundary_evidence"] as? [[String: Any]])
+        evidence[0]["detector_sources"] = ["forged_detector", "essentia"]
+        resolution["boundary_evidence"] = evidence
+        object["structure_resolution"] = resolution
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+    }
+
+    @Test("analysis gate rejects contradictory system diagnostics")
+    func analysisGateRejectsContradictorySystemDiagnostics() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = try writeConsolidatedAnalysis(root, detectorBoundaries: [[23.3], [25.1]])
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        var diagnostics = try #require(object["stage_diagnostics"] as? [[String: Any]])
+        diagnostics.append([
+            "stage": "music_understanding",
+            "status": "failed",
+            "detail": "Contradictory duplicate.",
+        ])
+        object["stage_diagnostics"] = diagnostics
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        #expect(throws: GateBlocked.self) {
+            try MusicvideoGateChecks.requireRealAnalysis(dataRoot: root)
+        }
+    }
+
+    @Test("analysis gate independently reconstructs lyric labels from alignment")
+    func analysisGateRejectsTamperedLyricEvidence() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let report = LyricsAlignment.alignDetailed(
+            lyrics: "[Intro]\nopen words\n[Verse]\nverse words",
+            transcript: [
+                .init(text: "open", start: 0.1, end: 0.3),
+                .init(text: "words", start: 0.3, end: 0.5),
+                .init(text: "verse", start: 20.0, end: 20.2),
+                .init(text: "words", start: 20.2, end: 20.4),
+            ]
+        )
+        let url = try writeConsolidatedAnalysis(
+            root,
+            detectorBoundaries: [[19.6], [20.2]],
+            alignmentReport: report
+        )
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        )
+        var resolution = try #require(object["structure_resolution"] as? [String: Any])
+        var evidence = try #require(resolution["boundary_evidence"] as? [[String: Any]])
+        evidence[0]["lyric_marker"] = "tampered"
+        resolution["boundary_evidence"] = evidence
         object["structure_resolution"] = resolution
         try JSONSerialization.data(withJSONObject: object).write(to: url)
         #expect(throws: GateBlocked.self) {

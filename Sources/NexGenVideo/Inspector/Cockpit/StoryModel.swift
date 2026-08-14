@@ -201,28 +201,138 @@ struct ContractData: Decodable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         phases = try c.decodeIfPresent([String: ContractEntry].self, forKey: .phases) ?? [:]
-        cockpitSurfaces = try c.decodeIfPresent([CockpitSurfaceData].self, forKey: .cockpitSurfaces) ?? []
+        let declared = try c.decodeIfPresent(
+            [CockpitSurfaceData].self,
+            forKey: .cockpitSurfaces
+        ) ?? []
+        cockpitSurfaces = Array(declared.prefix(1))
     }
 }
 
-/// A pack-contributed cockpit surface declaration (mirrors `NexGenEngine.CockpitSurface`). The host
-/// renders it via the named `kind`; the tab shows only once the surface's data exists.
 struct CockpitSurfaceData: Decodable, Sendable, Equatable, Identifiable {
     var id: String
     var title: String
     var symbol: String
     var phase: String
-    var kind: String
+    var dataFile: String
+    var layout: [CockpitSurfacePrimitiveData]
 
-    enum CodingKeys: String, CodingKey { case id, title, symbol, phase, kind }
+    enum CodingKeys: String, CodingKey {
+        case id, title, symbol, phase, layout
+        case dataFile = "data_file"
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
-        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
         symbol = try c.decodeIfPresent(String.self, forKey: .symbol) ?? "square.dashed"
-        phase = try c.decodeIfPresent(String.self, forKey: .phase) ?? ""
-        kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? ""
+        phase = try c.decode(String.self, forKey: .phase)
+        dataFile = try c.decode(String.self, forKey: .dataFile)
+        layout = try c.decode([CockpitSurfacePrimitiveData].self, forKey: .layout)
+        guard !id.isEmpty, !title.isEmpty, !phase.isEmpty,
+              !dataFile.isEmpty, !layout.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .layout,
+                in: c,
+                debugDescription: "A cockpit surface requires identity, data, and layout."
+            )
+        }
+    }
+}
+
+enum CockpitValueFormatData: String, Decodable, Sendable, Equatable {
+    case text
+    case fileName
+    case duration
+    case bpm
+    case count
+}
+
+enum CockpitBindingVisibilityData: String, Decodable, Sendable, Equatable {
+    case always
+    case whenPresent
+    case whenCanonicalSections
+}
+
+struct CockpitValueBindingData: Decodable, Sendable, Equatable {
+    var label: String
+    var field: String
+    var format: CockpitValueFormatData
+    var factorField: String?
+    var visibility: CockpitBindingVisibilityData
+
+    enum CodingKeys: String, CodingKey {
+        case label, field, format, visibility
+        case factorField = "factor_field"
+    }
+}
+
+enum CockpitSurfacePrimitiveData: Decodable, Sendable, Equatable {
+    case statRow(items: [CockpitValueBindingData])
+    case beatTimeline(
+        title: String,
+        durationField: String,
+        beatsField: String,
+        downbeatsField: String,
+        sectionsField: String,
+        sectionsVisibility: CockpitBindingVisibilityData
+    )
+    case sectionList(
+        title: String,
+        sectionsField: String,
+        visibility: CockpitBindingVisibilityData
+    )
+    case keyValue(title: String?, items: [CockpitValueBindingData])
+
+    private enum PrimitiveType: String, Decodable {
+        case statRow
+        case beatTimeline
+        case sectionList
+        case keyValue
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type, title, items, visibility
+        case durationField = "duration_field"
+        case beatsField = "beats_field"
+        case downbeatsField = "downbeats_field"
+        case sectionsField = "sections_field"
+        case sectionsVisibility = "sections_visibility"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(PrimitiveType.self, forKey: .type) {
+        case .statRow:
+            self = .statRow(items: try c.decode([CockpitValueBindingData].self, forKey: .items))
+        case .beatTimeline:
+            self = .beatTimeline(
+                title: try c.decode(String.self, forKey: .title),
+                durationField: try c.decode(String.self, forKey: .durationField),
+                beatsField: try c.decode(String.self, forKey: .beatsField),
+                downbeatsField: try c.decode(String.self, forKey: .downbeatsField),
+                sectionsField: try c.decode(String.self, forKey: .sectionsField),
+                sectionsVisibility: try c.decode(
+                    CockpitBindingVisibilityData.self,
+                    forKey: .sectionsVisibility
+                )
+            )
+        case .sectionList:
+            self = .sectionList(
+                title: try c.decode(String.self, forKey: .title),
+                sectionsField: try c.decode(String.self, forKey: .sectionsField),
+                visibility: try c.decode(
+                    CockpitBindingVisibilityData.self,
+                    forKey: .visibility
+                )
+            )
+        case .keyValue:
+            self = .keyValue(
+                title: try c.decodeIfPresent(String.self, forKey: .title),
+                items: try c.decode([CockpitValueBindingData].self, forKey: .items)
+            )
+        }
     }
 }
 

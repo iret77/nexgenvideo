@@ -1,6 +1,6 @@
 # NexGenVideo
 
-AI-native macOS video editor. Swift 6.2, SwiftUI + AppKit, AVFoundation. macOS 26 only, arm64 only. Non-sandboxed Developer ID app.
+AI-native macOS video editor. Swift 6.2, SwiftUI + AppKit, AVFoundation. Latest released macOS only (currently macOS 26), arm64 only. Non-sandboxed Developer ID app.
 
 ## Concept — read first
 
@@ -13,8 +13,10 @@ section of `musicvideo/docs/v1-studio-plan.md`.
 
 ## Verification
 
-Never build, test, or launch the app locally. GitHub Actions on `macos-26` is the
-only verification surface; do not run `scripts/dev.sh` or start a local dev server.
+Never build, test, or launch the app locally. GitHub Actions is the only verification surface:
+builds, unit tests, and bundles run on `xcode-27`; runtime tests of latest-macOS-only APIs run on a
+configured Actions runner that boots the current product minimum. Do not run `scripts/dev.sh` or
+start a local dev server.
 
 ## Code style
 
@@ -59,13 +61,26 @@ release or a wasted CI cycle.
 
 ### Building and releasing
 
-- **Never build locally.** CI (macos-26) is the only verification surface.
+- **Never build locally.** GitHub Actions is the only verification surface. Use `xcode-27` for
+  builds, unit tests, and bundles; use a configured current-macOS runtime runner only for tests that
+  execute APIs unavailable on the `xcode-27` runner's older booted OS.
 - **Never merge to `main` or dispatch `release.yml` without the owner's explicit, in-the-moment
   "build now".** Stage the work, hold, ask. Concept approval is not build approval.
 - **One batch, one release.** Collect fixes and release once. Never propose an intermediate or
   partial release, and never split scope that was agreed as a single batch.
 - `gh` resolves to the upstream `palmier-io/palmier-pro` remote. **Always pass
   `--repo iret77/nexgenvideo`.**
+
+### Platform policy
+
+- **NexGenVideo is built primarily for its owner and supports only the newest macOS.** The current
+  distribution floor is macOS 26. Backward compatibility with older macOS releases is not a product
+  goal; users who need it may maintain a fork.
+- **Adopt useful new Apple platform APIs when their macOS release ships.** Beta-only implementations
+  may remain compiled behind availability gates, but they must not raise the distribution floor or
+  replace the production path before that macOS version is released.
+- Xcode 27 provides the SDK needed to preserve the future Music Understanding adapter. The shipped
+  app and production acceptance workflow remain pinned to macOS 26 until macOS 27 is released.
 
 ### The plugin pack — two ways to ship a crash CI cannot catch
 

@@ -9,7 +9,7 @@ import Testing
 struct AnalysisSchemaTests {
     @Test("schema version")
     func schemaVersion() {
-        #expect(analysisSchemaVersion == "analysis/v2")
+        #expect(analysisSchemaVersion == "analysis/v3")
     }
 
     @Test("perceivedBpm defaults to bpm when tempoMultiplier is 1.0")

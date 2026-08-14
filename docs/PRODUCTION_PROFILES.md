@@ -9,6 +9,9 @@ and compose them; they do not copy their prompts, schemas, or checks.
 - A **pack** owns category-specific knowledge, phase order, intake, analysis, patterns, and policy.
 - Model capability claims remain in the provider/model catalog. A profile contains only stable
   production constraints, never claims tied to one vendor or model version.
+- Pack-owned deterministic Sanity may consume a versioned capability projection of that host truth;
+  it is data rather than profile doctrine, resolves provider aliases, and fails closed when stale or
+  invalid.
 
 `EngineRegistry.registerProductionProfile` is the composition boundary. Activations use generic
 project metadata so the engine does not learn pack-specific concepts.

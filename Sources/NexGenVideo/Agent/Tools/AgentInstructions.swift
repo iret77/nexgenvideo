@@ -146,10 +146,10 @@ enum AgentInstructions {
             cheap iterations. Sprinkle in Krea 2 or Recraft when a shot calls for cinematic \
             mood or creative flair (moody lighting, stylized art direction, atmospheric \
             compositions).
-          • Video — default to Seedance 2.0 Fast at 720p for most clips, especially while \
-            iterating. Once the user likes a take, suggest rerunning the same prompt with \
-            Seedance 2.0 (regular, not Fast) for higher quality. If Seedance errors, retry \
-            on Kling v3. Use Grok Imagine only for very simple, fast-turnaround scenes. \
+          • Video — default to Seedance 2.5 at 720p for most clips. It supports 4–30 seconds \
+            or automatic duration, native audio, and up to 50 mixed references in reference \
+            mode. If Seedance errors, retry on Kling v3. Use Grok Imagine only for very \
+            simple, fast-turnaround scenes. \
             Rarely use Veo — only when the user asks or constraints require it.
         - PROMPT GATE (mandatory): never send your own phrasing to generate_video/image/audio. \
           For free generation and Frames, prepare a concrete English intent; Frames describe only \
@@ -258,9 +258,9 @@ enum AgentInstructions {
           run_phase returns runner: null for those phases. Pack compute phases DO run through it — \
           musicvideo's `analysis` decodes the song in audio/ and returns the MEASURED grid: bpm, the \
           downbeat times, canonical sections, structure_resolution, and stage_diagnostics. Use the \
-          section table verbatim when structure_resolution.status is resolved or review_required; \
-          review_required means surface its single-detector warning and direct the user to inspect every \
-          section before approval. Stop only on needs_review because labels cannot repair missing measured timing. Then persist only the interpretation with \
+          section table verbatim only when structure_resolution.status is resolved or review_required \
+          and every boundary carries measured evidence. Stop on needs_review because \
+          labels cannot repair missing measured timing. Then persist only the interpretation with \
           write_analysis_interpretation. Never edit the measured analysis JSON. Use run_phase for \
           compute phases; drive the planning phases yourself. \
           Before analysis, verify that the host-owned startup intake placed the song in audio/. If it \
@@ -269,8 +269,7 @@ enum AgentInstructions {
         - GATES ARE HARD (deterministic, engine-enforced). Some gates refuse approval until their real \
           artifact exists — approve_gate("analysis") and set_gate_state to an approved state are \
           REJECTED unless run_phase("analysis") produced beats + downbeats and independently \
-          verifiable per-boundary section evidence, with explicit user review for any \
-          review_required structure. Never describe a \
+          verifiable measured evidence for every section boundary. Never describe a \
           song's tempo/structure from "listening" or infer it — you cannot; run the analysis and use \
           its measured output. If a gate blocks you, the message says what's missing: satisfy it, don't \
           work around it. This is by design — it prevents advancing the pipeline on invented facts.
@@ -302,7 +301,7 @@ enum AgentInstructions {
         # Feedback
         - If you can't do what the user asked because a tool or capability is missing, broken, or \
           returns a clearly wrong result — or the user is plainly hitting a limitation — call \
-          send_feedback once to record it in local diagnostics, with a paraphrased summary (never \
+          send_feedback once to record it in local-only diagnostics, with a paraphrased summary (never \
           verbatim user content). Skip it for choices you simply made, routine clarifications, or an \
           issue already recorded this session. Never claim a team was notified or an external report \
           was sent; mention the local diagnostic entry only when it helps the user understand the state.

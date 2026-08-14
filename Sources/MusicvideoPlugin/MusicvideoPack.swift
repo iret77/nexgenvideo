@@ -31,24 +31,29 @@ public struct MusicDurationPolicy: DurationPolicy {
     }
 }
 
-/// Port of `pack.py::MusicvideoPack`.
-///
-/// The `analysis` phase runner (M8c) locates the song in the project's
-/// `audio/` dir, decodes it via the host-injected `AudioPCMDecoding`, runs the
-/// native DSP pipeline, and persists `analysis/<song>.json`. It resolves the
-/// decoder from the registry at run time — nil decoder → an actionable error,
-/// never a crash.
 public struct MusicvideoPack: Pack {
     public let name = "musicvideo"
-    public let version = "0.1.1"
+    public let version = "0.2.0"
 
     static let productionProfiles: [ProductionProfile] = [
         StandardProductionProfiles.generativeFilm,
         StandardProductionProfiles.narrativeStorytelling,
     ]
 
-    private static func adoptLegacyProjectSchema(_ projectURL: URL) throws {
-        _ = projectURL
+    private static func migrateToMeasuredStructure(_ projectURL: URL) throws {
+        guard let dataRoot = DataRootResolver.dataRoot(of: projectURL) else {
+            throw GateBlocked(
+                "Can't upgrade the Music Video project: its pipeline data root is invalid."
+            )
+        }
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        _ = try GatesOperations.rewindTo(
+            &gates,
+            target: "analysis",
+            order: MusicvideoPipelineLineage.phases
+        )
+        try store.save(gates, to: PipelineLayout.gatesFile)
     }
 
     /// Values mirror the retired `plugins/musicvideo/ngv-plugin.json`. The badge ships INSIDE the
@@ -156,8 +161,13 @@ public struct MusicvideoPack: Pack {
     public func register(_ registry: EngineRegistry) {
         registry.registerProjectSchemaMigration(
             from: "musicvideo/legacy",
-            to: "musicvideo/1.0.0",
-            migrate: Self.adoptLegacyProjectSchema
+            to: "musicvideo/2.0.0",
+            migrate: Self.migrateToMeasuredStructure
+        )
+        registry.registerProjectSchemaMigration(
+            from: "musicvideo/1.0.0",
+            to: "musicvideo/2.0.0",
+            migrate: Self.migrateToMeasuredStructure
         )
         // Wiring-liveness probe: proves this pack's code is actually installed into the registry the
         // runtime built for a session (not silently absent). See PackWiring.
@@ -208,26 +218,53 @@ public struct MusicvideoPack: Pack {
             guard let registry, let decoder = registry.audioDecoder else {
                 throw MusicvideoAnalysisRunner.RunError.noDecoder
             }
-            _ = try MusicvideoAnalysisRunner.run(
-                dataRoot: dataRoot, decoder: decoder,
-                transcriber: registry.transcriber,
-                separator: registry.stemSeparator,
-                beatDetector: registry.beatDetector,
-                chordRecognizer: registry.chordRecognizer)
+            if let analyzer = registry.musicUnderstandingAnalyzer {
+                _ = try MusicvideoAnalysisRunner.runWithSystemAnalysis(
+                    dataRoot: dataRoot,
+                    decoder: decoder,
+                    transcriber: registry.transcriber,
+                    separator: registry.stemSeparator,
+                    beatDetector: registry.beatDetector,
+                    chordRecognizer: registry.chordRecognizer,
+                    musicUnderstandingAnalyzer: analyzer
+                )
+            } else {
+                _ = try MusicvideoAnalysisRunner.run(
+                    dataRoot: dataRoot,
+                    decoder: decoder,
+                    transcriber: registry.transcriber,
+                    separator: registry.stemSeparator,
+                    beatDetector: registry.beatDetector,
+                    chordRecognizer: registry.chordRecognizer
+                )
+            }
         }
         registry.registerProgressPhaseRunner("analysis") { [weak registry] dataRoot, progress in
             guard let registry, let decoder = registry.audioDecoder else {
                 throw MusicvideoAnalysisRunner.RunError.noDecoder
             }
-            _ = try MusicvideoAnalysisRunner.run(
-                dataRoot: dataRoot,
-                decoder: decoder,
-                transcriber: registry.transcriber,
-                separator: registry.stemSeparator,
-                beatDetector: registry.beatDetector,
-                chordRecognizer: registry.chordRecognizer,
-                progress: progress
-            )
+            if let analyzer = registry.musicUnderstandingAnalyzer {
+                _ = try MusicvideoAnalysisRunner.runWithSystemAnalysis(
+                    dataRoot: dataRoot,
+                    decoder: decoder,
+                    transcriber: registry.transcriber,
+                    separator: registry.stemSeparator,
+                    beatDetector: registry.beatDetector,
+                    chordRecognizer: registry.chordRecognizer,
+                    musicUnderstandingAnalyzer: analyzer,
+                    progress: progress
+                )
+            } else {
+                _ = try MusicvideoAnalysisRunner.run(
+                    dataRoot: dataRoot,
+                    decoder: decoder,
+                    transcriber: registry.transcriber,
+                    separator: registry.stemSeparator,
+                    beatDetector: registry.beatDetector,
+                    chordRecognizer: registry.chordRecognizer,
+                    progress: progress
+                )
+            }
         }
         // #174: the one-song contract is load-bearing — analysis is meaningless without exactly one
         // song in audio/. Pin it to the engine so a missing/duplicate song blocks the phase upfront.
@@ -260,6 +297,10 @@ public struct MusicvideoPack: Pack {
         }
         registry.registerArtifactWriteRequirement("analysis") {
             try MusicvideoGateChecks.requireInterpretableAnalysis(dataRoot: $0)
+            try MusicvideoPipelineLineage.requireCurrent(
+                phase: "analysis",
+                dataRoot: $0
+            )
         }
         registerHardenedGate("brief", registry: registry) {
             try MusicvideoGateChecks.requireRealBrief(dataRoot: $0)
@@ -290,8 +331,51 @@ public struct MusicvideoPack: Pack {
         }
         registry.registerGateRequirement("cover") { try MusicvideoGateChecks.requireRealCover(dataRoot: $0) }
         try? registry.registerUIContract(phase: "analysis", surface: "choice", taskClass: "classification")
-        registry.registerCockpitSurface(
-            CockpitSurface(id: "analysis", title: "Analysis", symbol: "waveform", phase: "analysis", kind: "beatAnalysis")
+        registry.registerDeclarativeCockpitSurface(
+            DeclarativeCockpitSurface(
+                id: "analysis",
+                title: "Analysis",
+                symbol: "waveform",
+                phase: "analysis",
+                dataFile: "analysis/{songStem}.json",
+                layout: [
+                    .statRow(items: [
+                        CockpitValueBinding(label: "Track", field: "song_path", format: .fileName),
+                        CockpitValueBinding(label: "Duration", field: "duration_s", format: .duration),
+                        CockpitValueBinding(
+                            label: "Tempo",
+                            field: "bpm",
+                            format: .bpm,
+                            factorField: "tempo_multiplier"
+                        ),
+                        CockpitValueBinding(
+                            label: "Key",
+                            field: "key",
+                            format: .text,
+                            visibility: .whenPresent
+                        ),
+                        CockpitValueBinding(
+                            label: "Sections",
+                            field: "sections",
+                            format: .count,
+                            visibility: .whenCanonicalSections
+                        ),
+                    ]),
+                    .beatTimeline(
+                        title: "Beat grid",
+                        durationField: "duration_s",
+                        beatsField: "beats",
+                        downbeatsField: "downbeats",
+                        sectionsField: "sections",
+                        sectionsVisibility: .whenCanonicalSections
+                    ),
+                    .sectionList(
+                        title: "Song structure",
+                        sectionsField: "sections",
+                        visibility: .whenCanonicalSections
+                    ),
+                ]
+            )
         )
     }
 }

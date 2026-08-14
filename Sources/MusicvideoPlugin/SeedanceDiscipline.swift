@@ -20,6 +20,7 @@ enum SeedanceTokens {
 extension MusicvideoChecks {
     public static let seedanceDisciplineCheck: SanityCheck = { ctx in
         var out: [Finding] = []
+        let costs = CostsConfig.bundledDefault
         for shot in ctx.shotlist.shots {
             let p = shot.visualPrompt
             let pLow = p.lowercased()
@@ -50,18 +51,22 @@ extension MusicvideoChecks {
                         + "field', 'normal lens feel', 'wide-angle distortion'. Sanity blocks the render."))
             }
 
-            // 4/5. Seedance duration band: hard cap 15s (warn), provider min 4s (info, rounds up).
-            if shot.durationS > 15.0 {
+            // 4/5. Duration claims come from the versioned pack capability catalog.
+            let model = costs.runwayModel(for: shot, phase: .final)
+            if let maximum = ModelCapabilities.capability(model)?.maxDurationS,
+               shot.durationS > maximum {
                 out.append(Finding(level: .warn, code: "SHOT_OVER_SEEDANCE_CAP", shotId: shot.id,
-                    message: String(format: "duration_s=%.1fs > Seedance-2 hard cap 15s. The render dispatcher "
-                        + "truncates it or it must be split.", shot.durationS)))
+                    message: String(
+                        format: "duration_s=%.1fs > %@ max=%.1fs. Split the shot or select a model that supports it.",
+                        shot.durationS, model, maximum
+                    )))
             }
-            if shot.durationS < 4.0 {
-                let extra = 4.0 - shot.durationS
+            if let minimum = ModelCapabilities.minimumDuration(model), shot.durationS < minimum {
+                let extra = minimum - shot.durationS
                 out.append(Finding(level: .info, code: "SHOT_UNDER_SEEDANCE_MIN", shotId: shot.id,
-                    message: String(format: "duration_s=%.1fs < Seedance-2 provider min 4s. The render rounds "
-                        + "up to 4s (+%.1fs output and render cost). Harmless in a final-cut workflow — you "
-                        + "crop to the planned %.1fs.", shot.durationS, extra, shot.durationS)))
+                    message: String(format: "duration_s=%.1fs < %@ min=%.1fs. The render rounds up "
+                        + "(+%.1fs output and render cost); crop to the planned %.1fs.",
+                        shot.durationS, model, minimum, extra, shot.durationS)))
             }
         }
         return out

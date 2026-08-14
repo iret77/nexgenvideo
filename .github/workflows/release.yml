@@ -81,7 +81,7 @@ jobs:
         run: python3 scripts/lint_app_theme.py
 
       - name: Verify private fixture bundle tooling
-        run: python3 -m unittest scripts/test_example_fixture_bundle.py
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Inspect or resume release publication
         if: ${{ inputs.dry_run == false }}
@@ -273,13 +273,15 @@ jobs:
   release:
     needs: release-gate
     if: ${{ needs.release-gate.outputs.publication-resumed != 'true' }}
-    # macOS 26 is required to compile, sign, notarize, staple, and package the app.
-    runs-on: macos-26
+    # Xcode 27 is required to compile, sign, notarize, staple, and package the app.
+    runs-on: xcode-27
     timeout-minutes: 90
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-xcode-27
 
       - name: Resolve version + mode
         run: |
@@ -305,12 +307,7 @@ jobs:
           fi
           echo "Building $V (dry=${{ inputs.dry_run }})"
 
-      - name: Cache SwiftPM
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+      - uses: ./.github/actions/cache-swiftpm-dependencies
 
       - name: Import Developer ID cert into a temporary keychain
         env:
@@ -388,18 +385,25 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW" "$PLIST"
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
+      - name: Build the exact release test configuration
+        # Testable release objects stay isolated from the production bundle build.
+        run: swift build -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
+
+      - name: Stage release test runtime inputs
+        run: scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"
+
       - name: Test the exact release configuration
         run: |
           set +e
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
           attempts=3
           for i in $(seq 1 "$attempts"); do
-            swift test -c release 2>&1 | tee "release-test-attempt-$i.log"
+            swift test -c release --scratch-path "$RUNNER_TEMP/release-tests" --skip-build -Xswiftc -enable-testing 2>&1 | tee "release-test-attempt-$i.log"
             code=${PIPESTATUS[0]}
             if [ "$code" -eq 0 ]; then
               exit 0
             fi
-            if grep -qE "✘ Test|recorded an issue" "release-test-attempt-$i.log"; then
+            if grep -qE "✘ Test|recorded an issue|Time limit was exceeded|Library not loaded|couldn.t be loaded|Failed to open test bundle" "release-test-attempt-$i.log"; then
               echo "::error::Release tests failed on attempt $i"
               exit "$code"
             fi

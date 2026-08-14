@@ -103,6 +103,8 @@ struct GenerationInput: Codable, Sendable, Equatable {
     var sourceVideoAssetId: String?
     var startFrameAssetId: String?
     var endFrameAssetId: String?
+    /// Video-only duration selection. Nil decodes legacy manifests as `.seconds(duration)`.
+    var videoDuration: VideoDuration? = nil
 }
 
 enum MediaSource: Codable, Sendable, Equatable {

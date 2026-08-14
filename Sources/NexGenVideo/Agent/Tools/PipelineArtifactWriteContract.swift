@@ -2,7 +2,7 @@ import Foundation
 import NexGenEngine
 
 enum PipelineArtifactWriteContract {
-    static let measuredAnalysisSchemaVersion = "analysis/v2"
+    static let measuredAnalysisSchemaVersion = "analysis/v3"
 
     static var analysisInterpretationSchema: [String: Any] { object(
         [

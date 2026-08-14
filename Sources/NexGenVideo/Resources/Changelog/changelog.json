@@ -3,14 +3,34 @@
   "entries": [
     {
       "version": "1.1.1",
-      "date": "2026-08-12",
+      "date": "2026-08-13",
       "sections": [
+        {
+          "heading": "Compatibility",
+          "items": [
+            "NexGenVideo requires the latest released macOS, currently macOS 26. The macOS 27 Music Understanding adapter remains dormant until that OS ships.",
+            "Music Video packs that use the new lyric-alignment and declarative cockpit capabilities now require engine contract 8, so an older host rejects them instead of silently degrading analysis."
+          ]
+        },
         {
           "heading": "Audio analysis",
           "items": [
-            "Song sections now come from deterministic bar-aligned evidence fusion instead of exposing every raw detector fragment as a canonical section.",
-            "Lyrics can label and select nearby measured acoustic boundaries but can no longer replace measured timing.",
-            "Missing structural evidence blocks approval, while phrase-filtered single-detector sections and degraded analysis stages remain visible for explicit review instead of stranding the project."
+            "The macOS 26 production pipeline now runs the same on-device decoder, stem separation, Whisper lyric alignment, neural beat grid, harmony recognition, and evidence-based structure resolver in the app and private acceptance workflow.",
+            "Lyric timing now uses a dedicated known-text alignment capability and falls back from an unusable isolated vocal stem to the original mix, selecting the stronger measured alignment instead of accepting an empty transcript match.",
+            "Whisper automatic language selection now continues into transcription instead of stopping after language detection.",
+            "Attached lyrics constrain every Whisper decode window while attention-DTW supplies acoustic token timing, and text from windows identified as non-speech cannot become structural evidence.",
+            "A host-recorded measurement proof now binds lyric timing to the exact track, lyrics, alignment source, attention-DTW method, anchor counts, and canonical alignment bytes before an interpretation can be written or approved.",
+            "Lyrics without section markers now complete after a good known-text alignment instead of triggering redundant weaker transcription passes or a false acceptance failure.",
+            "Private exact-file acceptance runs now preserve every available analysis artifact plus exact private failure provenance across runner, structural-gate, and independent-expectation failures.",
+            "Canonical song sections now require independently reproducible bar-aligned detector or known-text alignment evidence; ordinary speech recognition can label acoustic boundaries but cannot create timing.",
+            "Outro resolution now chooses the first strongest terminal consensus after the final lyric section instead of misclassifying a later instrumental tag as the outro start.",
+            "Apple Music Understanding's section, segment, and phrase hierarchy is preserved as a stronger availability-gated strategy for macOS 27.",
+            "Out-of-order and non-finite system rhythm samples are normalized deterministically before structural validation.",
+            "Optional system rhythm and structure are validated independently before either is selected as canonical evidence.",
+            "The Analysis surface now shows exact nested section, segment, and phrase ranges and opens from both its cockpit tab and the Pipeline phase row.",
+            "Re-running analysis keeps the last-known measurements visible under runner-reported progress until the replacement artifact is ready.",
+            "Xcode 27 builds now compile Metal resources from source and stage consumer-derived binary frameworks through explicit, independently verified runtime boundaries.",
+            "Upgrading an existing Music Video project resets Audio Analysis and downstream approvals so the new measured evidence record is established before work continues."
           ]
         }
       ]

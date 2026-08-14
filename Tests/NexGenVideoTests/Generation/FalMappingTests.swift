@@ -60,6 +60,23 @@ struct FalImageInputTests {
 
 @Suite("FalInputBuilder — video")
 struct FalVideoInputTests {
+    @Test func legacyGenerationInputDecodesAsNumericDuration() throws {
+        let legacy = #"{"prompt":"p","model":"m","duration":5,"aspectRatio":"16:9"}"#
+        let input = try JSONDecoder().decode(GenerationInput.self, from: Data(legacy.utf8))
+        #expect(input.duration == 5)
+        #expect(input.videoDuration == nil)
+    }
+
+    @Test func automaticDurationRoundTripsInManifest() throws {
+        var input = GenerationInput(prompt: "p", model: "m", duration: 30, aspectRatio: "16:9")
+        input.videoDuration = .automatic
+        let decoded = try JSONDecoder().decode(
+            GenerationInput.self, from: JSONEncoder().encode(input)
+        )
+        #expect(decoded.duration == 30)
+        #expect(decoded.videoDuration == .automatic)
+    }
+
     @Test func klingPlainSecondsAndAspect() throws {
         let kling = try #require(FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video"))
         let p = VideoGenerationParams(prompt: "p", duration: 5, aspectRatio: "16:9", resolution: nil)
@@ -133,6 +150,30 @@ struct FalVideoInputTests {
         #expect(input["image_url"] == nil)   // arrays, not a single ref
         #expect(input["aspect_ratio"] as? String == "16:9")
         #expect(input["generate_audio"] as? Bool == true)
+    }
+
+    @Test func seedance25SerializesAutomaticDuration() throws {
+        let model = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.5/text-to-video"))
+        let params = VideoGenerationParams(
+            prompt: "p", duration: .automatic, aspectRatio: "16:9", resolution: "720p"
+        )
+        let input = FalInputBuilder.videoInput(params, model: model)
+        #expect(input["duration"] as? String == "auto")
+        #expect(input["resolution"] as? String == "720p")
+        #expect(input["generate_audio"] as? Bool == true)
+    }
+
+    @Test func seedance25ImageToVideoSendsOptionalEndFrame() throws {
+        let model = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.5/image-to-video"))
+        let params = VideoGenerationParams(
+            prompt: "p", duration: .seconds(12), aspectRatio: "16:9", resolution: "720p",
+            startFrameURL: "https://x/start.png", endFrameURL: "https://x/end.png"
+        )
+        let input = FalInputBuilder.videoInput(params, model: model)
+        #expect(input["image_url"] as? String == "https://x/start.png")
+        #expect(input["end_image_url"] as? String == "https://x/end.png")
+        #expect(input["duration"] as? String == "12")
+        #expect(input["aspect_ratio"] == nil)
     }
 }
 
@@ -232,5 +273,45 @@ struct FalRegistryTests {
         #expect(refCaps.maxReferenceVideos == 3)
         #expect(refCaps.maxReferenceAudios == 3)
         #expect(refCaps.maxTotalReferences == 12)
+    }
+
+    @Test func seedance25FamilyPresentWithRangeAutoAndReferenceBudget() throws {
+        let expected = [
+            "bytedance/seedance-2.5/text-to-video",
+            "bytedance/seedance-2.5/image-to-video",
+            "bytedance/seedance-2.5/reference-to-video",
+        ]
+        for id in expected {
+            let model = try #require(FalModelRegistry.model(for: id))
+            guard case .video(let caps) = model.entry.uiCapabilities else {
+                Issue.record("expected video caps for \(id)")
+                continue
+            }
+            #expect(caps.duration.discrete.isEmpty)
+            #expect(caps.duration.range == .init(min: 4, max: 30))
+            #expect(caps.duration.supportsAuto)
+            #expect(caps.resolutions == ["480p", "720p"])
+        }
+
+        let reference = try #require(FalModelRegistry.model(
+            for: "bytedance/seedance-2.5/reference-to-video"
+        ))
+        guard case .video(let caps) = reference.entry.uiCapabilities else {
+            Issue.record("expected reference video caps")
+            return
+        }
+        #expect(caps.maxReferenceImages == 30)
+        #expect(caps.maxReferenceVideos == 10)
+        #expect(caps.maxReferenceAudios == 10)
+        #expect(caps.maxTotalReferences == 50)
+
+        let image = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.5/image-to-video"))
+        guard case .video(let imageCaps) = image.entry.uiCapabilities else {
+            Issue.record("expected image-to-video caps")
+            return
+        }
+        #expect(imageCaps.supportsFirstFrame)
+        #expect(imageCaps.supportsLastFrame)
+        #expect(image.videoFirstLastFrames)
     }
 }

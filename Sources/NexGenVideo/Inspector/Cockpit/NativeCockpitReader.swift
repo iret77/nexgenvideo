@@ -60,12 +60,142 @@ enum NativeCockpitReader {
         for (phase, entry) in contract {
             phases[phase] = ["surface": entry.surface, "task_class": entry.taskClass]
         }
-        let cockpitSurfaces: [[String: Any]] = registry.cockpitSurfaces.map {
-            ["id": $0.id, "title": $0.title, "symbol": $0.symbol, "phase": $0.phase, "kind": $0.kind]
-        }
+        let surface = registry.declarativeCockpitSurface
+            ?? registry.cockpitSurfaces.first.flatMap(legacyCockpitSurface)
+        let cockpitSurfaces = surface.map { [cockpitSurfaceDictionary($0)] } ?? []
         return try serialize([
             "surfaces": UIContract.surfaces, "phases": phases, "cockpit_surfaces": cockpitSurfaces,
         ])
+    }
+
+    private static func legacyCockpitSurface(
+        _ surface: CockpitSurface
+    ) -> DeclarativeCockpitSurface? {
+        guard surface.kind == "beatAnalysis" else { return nil }
+        return analysisCockpitSurface(
+            id: surface.id,
+            title: surface.title,
+            symbol: surface.symbol,
+            phase: surface.phase
+        )
+    }
+
+    private static func analysisCockpitSurface(
+        id: String,
+        title: String,
+        symbol: String,
+        phase: String
+    ) -> DeclarativeCockpitSurface {
+        DeclarativeCockpitSurface(
+            id: id,
+            title: title,
+            symbol: symbol,
+            phase: phase,
+            dataFile: "analysis/{songStem}.json",
+            layout: [
+                .statRow(items: [
+                    CockpitValueBinding(label: "Track", field: "song_path", format: .fileName),
+                    CockpitValueBinding(label: "Duration", field: "duration_s", format: .duration),
+                    CockpitValueBinding(
+                        label: "Tempo",
+                        field: "bpm",
+                        format: .bpm,
+                        factorField: "tempo_multiplier"
+                    ),
+                    CockpitValueBinding(
+                        label: "Key",
+                        field: "key",
+                        format: .text,
+                        visibility: .whenPresent
+                    ),
+                    CockpitValueBinding(
+                        label: "Sections",
+                        field: "sections",
+                        format: .count,
+                        visibility: .whenCanonicalSections
+                    ),
+                ]),
+                .beatTimeline(
+                    title: "Beat grid",
+                    durationField: "duration_s",
+                    beatsField: "beats",
+                    downbeatsField: "downbeats",
+                    sectionsField: "sections",
+                    sectionsVisibility: .whenCanonicalSections
+                ),
+                .sectionList(
+                    title: "Song structure",
+                    sectionsField: "sections",
+                    visibility: .whenCanonicalSections
+                ),
+            ]
+        )
+    }
+
+    private static func cockpitSurfaceDictionary(
+        _ surface: DeclarativeCockpitSurface
+    ) -> [String: Any] {
+        [
+            "id": surface.id,
+            "title": surface.title,
+            "symbol": surface.symbol,
+            "phase": surface.phase,
+            "data_file": surface.dataFile,
+            "layout": surface.layout.map(cockpitPrimitiveDictionary),
+        ]
+    }
+
+    private static func cockpitPrimitiveDictionary(
+        _ primitive: CockpitSurfacePrimitive
+    ) -> [String: Any] {
+        switch primitive {
+        case .statRow(let items):
+            return ["type": "statRow", "items": items.map(cockpitBindingDictionary)]
+        case .beatTimeline(
+            let title,
+            let duration,
+            let beats,
+            let downbeats,
+            let sections,
+            let sectionsVisibility
+        ):
+            return [
+                "type": "beatTimeline",
+                "title": title,
+                "duration_field": duration,
+                "beats_field": beats,
+                "downbeats_field": downbeats,
+                "sections_field": sections,
+                "sections_visibility": sectionsVisibility.rawValue,
+            ]
+        case .sectionList(let title, let sections, let visibility):
+            return [
+                "type": "sectionList",
+                "title": title,
+                "sections_field": sections,
+                "visibility": visibility.rawValue,
+            ]
+        case .keyValue(let title, let items):
+            var value: [String: Any] = [
+                "type": "keyValue",
+                "items": items.map(cockpitBindingDictionary),
+            ]
+            if let title { value["title"] = title }
+            return value
+        }
+    }
+
+    private static func cockpitBindingDictionary(
+        _ binding: CockpitValueBinding
+    ) -> [String: Any] {
+        var value: [String: Any] = [
+            "label": binding.label,
+            "field": binding.field,
+            "format": binding.format.rawValue,
+            "visibility": binding.visibility.rawValue,
+        ]
+        if let factor = binding.factorField { value["factor_field"] = factor }
+        return value
     }
 
     /// `read.py` "router": `core.router.describe()` — `{tiers:{...}, task_classes:{name:{tier, effort}}}`.

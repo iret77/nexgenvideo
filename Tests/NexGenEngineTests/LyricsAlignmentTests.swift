@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import MusicvideoPlugin
 
-@Suite("LyricsAlignment (native forced alignment)")
+@Suite("LyricsAlignment (native known-text alignment)")
 struct LyricsAlignmentTests {
     @Test("exact single line inherits ASR word timings")
     func exactSingleLine() {
@@ -40,6 +40,26 @@ struct LyricsAlignmentTests {
         #expect(lines[1].sectionMarker == "chorus")
         // Only marker-following lines carry evidence for structure fusion.
         #expect(lines.filter { $0.sectionMarker != nil }.count == 2)
+    }
+
+    @Test("transcript timing is canonicalized before sequence alignment")
+    func unorderedTranscript() {
+        let result = LyricsAlignment.alignDetailed(
+            lyrics: "[Verse]\nhello world",
+            transcript: [
+                .init(text: "world", start: 1, end: 2),
+                .init(text: "nan", start: .nan, end: 1),
+                .init(text: "infinite", start: 2, end: .infinity),
+                .init(text: "negative", start: -1, end: 0),
+                .init(text: "inverted", start: 3, end: 2),
+                .init(text: "hello", start: 0, end: 1),
+            ]
+        )
+
+        #expect(result.hasReliableStructureEvidence)
+        #expect(result.transcriptTokenCount == 2)
+        #expect(result.lines.first?.start == 0)
+        #expect(result.lines.first?.end == 2)
     }
 
     @Test("structure evidence requires every marker line to have enough transcript anchors")
@@ -149,6 +169,14 @@ struct LyricsAlignmentTests {
         #expect(parsed.count == 1)
         #expect(parsed[0].text == "Morning light is falling")
         #expect(parsed[0].marker == "verse1")  // intro marker was consumed by the skipped direction
+    }
+
+    @Test("transcription context contains sung text but no structure markup")
+    func transcriptionContext() {
+        let context = LyricsAlignment.transcriptionContext(
+            "[Verse 1]\nHello world\n(Instrumental)\n[Chorus]\nWide open"
+        )
+        #expect(context == "Hello world\nWide open")
     }
 
     @Test("markdown hard-break trailing spaces still parse")

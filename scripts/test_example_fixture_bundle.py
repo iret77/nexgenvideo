@@ -33,6 +33,9 @@ class ExampleFixtureBundleTests(unittest.TestCase):
                                 "bpm": 120.0,
                                 "bpm_tolerance": 1.0,
                                 "expect_boundary_reduction": True,
+                                "section_boundaries_s": [2.0, 6.0],
+                                "section_labels": [None, "verse", "chorus"],
+                                "section_boundary_tolerance_s": 0.5,
                             }
                         }
                     },
@@ -61,6 +64,14 @@ class ExampleFixtureBundleTests(unittest.TestCase):
         self.assertTrue(
             manifest["datasets"][0]["expectations"]["audio"]["expect_boundary_reduction"]
         )
+        self.assertEqual(
+            manifest["datasets"][0]["expectations"]["audio"]["section_boundaries_s"],
+            [2.0, 6.0],
+        )
+        self.assertEqual(
+            manifest["datasets"][0]["expectations"]["audio"]["section_labels"],
+            [None, "verse", "chorus"],
+        )
         self.assertEqual((extracted / "song_one/lyrics.txt").read_text(), "words\n")
 
     def test_archive_is_deterministic(self):
@@ -83,6 +94,28 @@ class ExampleFixtureBundleTests(unittest.TestCase):
         self.expectations.write_text(json.dumps(expectations), encoding="utf-8")
         with self.assertRaisesRegex(fixtures.FixtureError, "incomplete audio expectations"):
             fixtures.collect_manifest(self.source, self.expectations)
+
+    def test_section_boundary_expectations_are_required(self):
+        expectations = json.loads(self.expectations.read_text(encoding="utf-8"))
+        del expectations["datasets"]["song_one"]["audio"]["section_boundaries_s"]
+        self.expectations.write_text(json.dumps(expectations), encoding="utf-8")
+        with self.assertRaisesRegex(fixtures.FixtureError, "incomplete audio expectations"):
+            fixtures.collect_manifest(self.source, self.expectations)
+
+    def test_section_labels_must_cover_every_section(self):
+        expectations = json.loads(self.expectations.read_text(encoding="utf-8"))
+        expectations["datasets"]["song_one"]["audio"]["section_labels"] = [None, "verse"]
+        self.expectations.write_text(json.dumps(expectations), encoding="utf-8")
+        with self.assertRaisesRegex(fixtures.FixtureError, "one string or null per canonical section"):
+            fixtures.collect_manifest(self.source, self.expectations)
+
+    def test_loaded_manifest_revalidates_private_expectations(self):
+        _, _, manifest_path = self.bundle()
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        del manifest["datasets"][0]["expectations"]["audio"]["section_labels"]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaisesRegex(fixtures.FixtureError, "incomplete audio expectations"):
+            fixtures.load_manifest(manifest_path)
 
     def test_symlink_is_rejected(self):
         (self.source / "song_one/link.mp3").symlink_to("track.mp3")

@@ -224,8 +224,8 @@ Incompatible / unsigned packs become a picker row with a calm reason (e.g.
   `.ngv` package is the rollback source and changes only on the next Save. The pending
   upgrade record remains until that Save, so a crash can reopen the migrated Recovery
   copy; closing without saving cancels the upgrade and restores the source-version pin.
-  `musicvideo/legacy → musicvideo/1.0.0` is intentionally data-identical: legacy describes
-  the same artifacts before binding metadata existed, so the host changes only `ngv.json`.
+  `musicvideo/legacy|1.0.0 → musicvideo/2.0.0` transactionally resets Analysis and
+  downstream approvals because the new measured-structure artifact contract must be rerun.
 
 ## The `Pack` protocol
 
@@ -256,11 +256,15 @@ public protocol Pack: Sendable {
 
 Production profiles and their planned cross-pack composition are specified in
 [`PRODUCTION_PROFILES.md`](PRODUCTION_PROFILES.md). Provider/model capability claims never belong in
-a profile because they expire independently of the pack and engine contracts.
+a profile because they expire independently of the pack and engine contracts. Executable provider
+parameters remain authoritative in the host model catalog. A pack may ship a separately versioned,
+fail-closed capability resource for its own deterministic sanity semantics; musicvideo uses
+`MusicvideoPack/model-capabilities.json`. Such a resource aliases provider-specific IDs to the same
+pipeline capability and never makes a model runnable by itself.
 
 ## Knowledge resources
 
-A pack's knowledge (pattern libraries, phase docs, badge) ships as `MusicvideoPlugin`
+A pack's knowledge (pattern libraries, phase docs, capability data, badge) ships as `MusicvideoPlugin`
 target resources under `Sources/MusicvideoPlugin/Resources/<Pack>Pack/`, assembled into
 the `.ngvpack`. `PackKnowledge` resolves them either from the SwiftPM-generated resource
 bundle (dev/test/CI) or from the installed `.ngvpack` this dylib was loaded out of —

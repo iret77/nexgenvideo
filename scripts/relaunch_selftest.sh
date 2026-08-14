@@ -142,16 +142,34 @@ test_pack_root_installed=1
 defaults write de.h5ventures.nexgenvideo NGVSelectedPackVersions -dict "$pack_id" "$old_version"
 defaults write de.h5ventures.nexgenvideo lastSeenVersion "0.0.0"
 
-/usr/bin/open -n -a "$app_path" \
-  --stdout "$stdout_log" \
-  --stderr "$stderr_log" \
-  --args \
-  --ngv-relaunch-selftest-start \
-  "--ngv-relaunch-state=$state_file" \
-  "--ngv-relaunch-bundle=$app_path" \
-  "--ngv-relaunch-pack=$pack_id" \
-  "--ngv-relaunch-old-version=$old_version" \
+selftest_arguments=(
+  --ngv-relaunch-selftest-start
+  "--ngv-relaunch-state=$state_file"
+  "--ngv-relaunch-bundle=$app_path"
+  "--ngv-relaunch-pack=$pack_id"
+  "--ngv-relaunch-old-version=$old_version"
   "--ngv-relaunch-new-version=$new_version"
+)
+
+host_version="$(sw_vers -productVersion)"
+host_major="${host_version%%.*}"
+minimum_version="$(plist_value "$app_path" LSMinimumSystemVersion)"
+minimum_major="${minimum_version%%.*}"
+case "$host_major:$minimum_major" in
+  *[!0-9:]*|:*|*:) echo "invalid host/app versions: $host_version / $minimum_version" >&2; exit 2 ;;
+esac
+if [ "$host_major" -ge "$minimum_major" ]; then
+  echo "Relaunch mode: LaunchServices (macOS $host_version, app minimum $minimum_version)"
+  /usr/bin/open -n -a "$app_path" \
+    --stdout "$stdout_log" \
+    --stderr "$stderr_log" \
+    --args \
+    "${selftest_arguments[@]}"
+else
+  echo "Relaunch mode: direct executable (macOS $host_version, app minimum $minimum_version)"
+  selftest_arguments+=(--ngv-relaunch-direct-executable)
+  "$binary" "${selftest_arguments[@]}" >"$stdout_log" 2>"$stderr_log" &
+fi
 
 attempts=0
 while [ "$attempts" -lt 900 ]; do

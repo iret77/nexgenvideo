@@ -73,11 +73,9 @@ explicitly every time; no implicit carry-over.
    - If `analysis.structure_resolution.status == "needs_review"`: error
      `UNRESOLVED_STRUCTURE`. This should have been blocked by the Analysis
      gate; rewind to Analysis instead of continuing.
-   - If `analysis.structure_resolution.status == "review_required"`: preserve
-     `REVIEWED_SINGLE_DETECTOR_STRUCTURE` as diagnostic context. The Analysis
-     gate already required explicit review; do not silently relabel it resolved.
-   - If `analysis.downbeat_source == "librosa-heuristic"` (or the
-     analysis flags a heuristic fallback): warn `HEURISTIC_DOWNBEATS`.
+   - If `analysis.downbeat_source != "music-understanding"`: error
+     `NON_SYSTEM_RHYTHM`. Approved analysis requires the Apple-measured beat and
+     bar grid; a fallback grid is diagnostic only.
    - Surface every `stage_diagnostics` entry whose status is `failed`,
      `degraded`, or `unavailable`; do not infer failure merely from an empty
      optional field.

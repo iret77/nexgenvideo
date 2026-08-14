@@ -20,6 +20,17 @@ enum PackSurfaceFormat {
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
     }
+
+    static func measuredTimecode(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00.00" }
+        let centiseconds = Int((seconds * 100).rounded())
+        return String(
+            format: "%d:%02d.%02d",
+            centiseconds / 6000,
+            (centiseconds % 6000) / 100,
+            centiseconds % 100
+        )
+    }
 }
 
 /// A labelled value tile. `id` is the label (labels are unique within a row).
@@ -33,7 +44,12 @@ struct StatTile: Identifiable, Equatable {
 /// A wrapping row of stat tiles (label + value).
 struct StatRow: View {
     let tiles: [StatTile]
-    private let columns = [GridItem(.adaptive(minimum: 116), spacing: AppTheme.Spacing.sm)]
+    private let columns = [
+        GridItem(
+            .adaptive(minimum: AppTheme.ComponentSize.packSurfaceStatTileMinWidth),
+            spacing: AppTheme.Spacing.sm
+        ),
+    ]
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: AppTheme.Spacing.sm) {
@@ -60,6 +76,52 @@ struct StatRow: View {
                         .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
                 )
             }
+        }
+    }
+}
+
+struct KeyValueRow: Identifiable, Equatable {
+    var id: String { label }
+    let label: String
+    let value: String
+}
+
+struct PackSurfaceKeyValueList: View {
+    let title: String?
+    let rows: [KeyValueRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            if let title {
+                Text(title)
+                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+            }
+            VStack(spacing: AppTheme.Spacing.none) {
+                ForEach(rows) { row in
+                    HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+                        Text(row.label)
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        Spacer(minLength: AppTheme.Spacing.sm)
+                        Text(row.value)
+                            .foregroundStyle(AppTheme.Text.primaryColor)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .padding(.horizontal, AppTheme.Spacing.md)
+                    .padding(.vertical, AppTheme.Spacing.xs)
+                    if row.id != rows.last?.id { AppDivider() }
+                }
+            }
+            .background(AppTheme.Background.surfaceColor)
+            .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                    .strokeBorder(
+                        AppTheme.Border.subtleColor,
+                        lineWidth: AppTheme.BorderWidth.hairline
+                    )
+            )
         }
     }
 }
@@ -123,33 +185,22 @@ struct BeatTimeline: View {
     }
 }
 
-/// A labelled list of sections with their time ranges.
-struct SectionList: View {
-    let sections: [AnalysisSurfaceData.Section]
+struct StructureHierarchyList: View {
+    let sections: [AnalysisSurfaceData.HierarchySection]
 
     var body: some View {
         VStack(spacing: AppTheme.Spacing.none) {
             ForEach(sections) { section in
-                HStack(spacing: AppTheme.Spacing.smMd) {
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                        .fill(PackSurfacePalette.section(section.index))
-                        .frame(width: AppTheme.IconSize.xxs, height: AppTheme.IconSize.xxs)
-                    Text(section.label ?? "Section \(section.index + 1)")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                    if let source = section.source {
-                        Text(source)
-                            .font(.system(size: AppTheme.FontSize.xs))
-                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                VStack(spacing: AppTheme.Spacing.none) {
+                    sectionRow(section)
+                    ForEach(section.segments.indices, id: \.self) { segmentOffset in
+                        let segment = section.segments[segmentOffset]
+                        segmentRow(segment, number: segmentOffset + 1)
+                        ForEach(segment.phrases.indices, id: \.self) { phraseOffset in
+                            phraseRow(segment.phrases[phraseOffset], number: phraseOffset + 1)
+                        }
                     }
-                    Spacer(minLength: AppTheme.Spacing.sm)
-                    Text("\(PackSurfaceFormat.mmss(section.start)) – \(PackSurfaceFormat.mmss(section.end))")
-                        .font(.system(size: AppTheme.FontSize.xs))
-                        .foregroundStyle(AppTheme.Text.secondaryColor)
-                        .monospacedDigit()
                 }
-                .padding(.horizontal, AppTheme.Spacing.md)
-                .padding(.vertical, AppTheme.Spacing.xs)
                 if section.id != sections.last?.id {
                     AppDivider()
                 }
@@ -161,5 +212,62 @@ struct SectionList: View {
             RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                 .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
         )
+    }
+
+    private func sectionRow(_ row: AnalysisSurfaceData.HierarchySection) -> some View {
+        HStack(spacing: AppTheme.Spacing.smMd) {
+            RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
+                .fill(PackSurfacePalette.section(row.section.index))
+                .frame(width: AppTheme.IconSize.xxs, height: AppTheme.IconSize.xxs)
+            Text(row.section.label ?? "Section \(row.section.index + 1)")
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+            if let source = row.section.source {
+                Text(source)
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+            }
+            Spacer(minLength: AppTheme.Spacing.sm)
+            range(row.section.start, row.section.end, color: AppTheme.Text.secondaryColor)
+        }
+        .padding(.horizontal, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.xs)
+    }
+
+    private func segmentRow(_ segment: AnalysisSurfaceData.HierarchySegment, number: Int) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "rectangle.split.3x1")
+                .frame(width: AppTheme.IconSize.xs)
+            Text("Segment \(number)")
+            Spacer(minLength: AppTheme.Spacing.sm)
+            range(segment.start, segment.end, color: AppTheme.Text.tertiaryColor)
+        }
+        .font(.system(size: AppTheme.FontSize.xs))
+        .foregroundStyle(AppTheme.Text.tertiaryColor)
+        .padding(.leading, AppTheme.Spacing.xl)
+        .padding(.trailing, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.xxs)
+        .background(AppTheme.Background.raisedColor.opacity(AppTheme.Opacity.faint))
+    }
+
+    private func phraseRow(_ phrase: AnalysisSurfaceData.HierarchyPhrase, number: Int) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "minus")
+                .frame(width: AppTheme.IconSize.xs)
+            Text("Phrase \(number)")
+            Spacer(minLength: AppTheme.Spacing.sm)
+            range(phrase.start, phrase.end, color: AppTheme.Text.mutedColor)
+        }
+        .font(.system(size: AppTheme.FontSize.micro))
+        .foregroundStyle(AppTheme.Text.mutedColor)
+        .padding(.leading, AppTheme.Spacing.xxl)
+        .padding(.trailing, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.xxs)
+    }
+
+    private func range(_ start: Double, _ end: Double, color: Color) -> some View {
+        Text("\(PackSurfaceFormat.measuredTimecode(start)) – \(PackSurfaceFormat.measuredTimecode(end))")
+            .foregroundStyle(color)
+            .monospacedDigit()
     }
 }

@@ -87,9 +87,7 @@ public final class EngineRegistry: @unchecked Sendable {
     // shifts every later offset and the already-shipped pack writes to the wrong field → SIGSEGV on
     // `register`. ADD NEW STORED PROPERTIES ONLY BELOW THIS LINE, never in the middle.
 
-    /// Cockpit surfaces a pack contributes — a persistent read-only home for measured/structured
-    /// artifacts the generic tabs can't hold (e.g. musicvideo's song analysis). The host renders each
-    /// via a fixed surface `kind` it owns; the pack only declares which kind + phase, keeping packs thin.
+    /// Legacy pack cockpit declarations retained at their shipped ivar offset.
     public private(set) var cockpitSurfaces: [CockpitSurface] = []
 
     /// Pack-supplied deterministic input/output fingerprints for durable phase lineage.
@@ -106,6 +104,12 @@ public final class EngineRegistry: @unchecked Sendable {
 
     /// Pack-owned artifact invariants checked before a host writer may interpret a phase result.
     public private(set) var artifactWriteRequirements: [String: GateRequirement] = [:]
+
+    /// Host implementation of the system music-understanding contract.
+    public private(set) var musicUnderstandingAnalyzer: (any MusicUnderstandingAnalyzing)?
+
+    /// The active pack's single declarative cockpit surface.
+    public private(set) var declarativeCockpitSurface: DeclarativeCockpitSurface?
 
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
@@ -278,6 +282,12 @@ public final class EngineRegistry: @unchecked Sendable {
         self.chordRecognizer = recognizer
     }
 
+    public func registerMusicUnderstandingAnalyzer(
+        _ analyzer: any MusicUnderstandingAnalyzing
+    ) {
+        musicUnderstandingAnalyzer = analyzer
+    }
+
     /// Register the pack's director-pattern query surface (see `PatternProviding`).
     public func registerPatternProvider(_ provider: any PatternProviding) {
         self.patternProvider = provider
@@ -309,6 +319,14 @@ public final class EngineRegistry: @unchecked Sendable {
         cockpitSurfaces.append(surface)
         return surface
     }
+
+    @discardableResult
+    public func registerDeclarativeCockpitSurface(
+        _ surface: DeclarativeCockpitSurface
+    ) -> DeclarativeCockpitSurface {
+        declarativeCockpitSurface = surface
+        return surface
+    }
 }
 
 public struct ProjectSchemaMigration: Sendable {
@@ -327,9 +345,7 @@ public struct ProjectSchemaMigration: Sendable {
     }
 }
 
-/// A pack-contributed cockpit surface. `kind` selects the host renderer (e.g. "beatAnalysis"); `phase`
-/// ties it to the pipeline phase that produces its data; `symbol` is its SF-symbol in the tab bar. The
-/// host shows it as a contextual tab only once the surface has data.
+/// Legacy ABI surface retained for installed packs and adapted by the host.
 public struct CockpitSurface: Sendable, Equatable {
     public let id: String
     public let title: String
@@ -344,6 +360,85 @@ public struct CockpitSurface: Sendable, Equatable {
         self.phase = phase
         self.kind = kind
     }
+}
+
+public struct DeclarativeCockpitSurface: Sendable, Equatable {
+    public let id: String
+    public let title: String
+    public let symbol: String
+    public let phase: String
+    public let dataFile: String
+    public let layout: [CockpitSurfacePrimitive]
+
+    public init(
+        id: String,
+        title: String,
+        symbol: String,
+        phase: String,
+        dataFile: String,
+        layout: [CockpitSurfacePrimitive]
+    ) {
+        self.id = id
+        self.title = title
+        self.symbol = symbol
+        self.phase = phase
+        self.dataFile = dataFile
+        self.layout = layout
+    }
+}
+
+public enum CockpitValueFormat: String, Sendable, Equatable {
+    case text
+    case fileName
+    case duration
+    case bpm
+    case count
+}
+
+public enum CockpitBindingVisibility: String, Sendable, Equatable {
+    case always
+    case whenPresent
+    case whenCanonicalSections
+}
+
+public struct CockpitValueBinding: Sendable, Equatable {
+    public let label: String
+    public let field: String
+    public let format: CockpitValueFormat
+    public let factorField: String?
+    public let visibility: CockpitBindingVisibility
+
+    public init(
+        label: String,
+        field: String,
+        format: CockpitValueFormat,
+        factorField: String? = nil,
+        visibility: CockpitBindingVisibility = .always
+    ) {
+        self.label = label
+        self.field = field
+        self.format = format
+        self.factorField = factorField
+        self.visibility = visibility
+    }
+}
+
+public enum CockpitSurfacePrimitive: Sendable, Equatable {
+    case statRow(items: [CockpitValueBinding])
+    case beatTimeline(
+        title: String,
+        durationField: String,
+        beatsField: String,
+        downbeatsField: String,
+        sectionsField: String,
+        sectionsVisibility: CockpitBindingVisibility
+    )
+    case sectionList(
+        title: String,
+        sectionsField: String,
+        visibility: CockpitBindingVisibility
+    )
+    case keyValue(title: String?, items: [CockpitValueBinding])
 }
 
 /// A pack gate phase and where it sits relative to the pipeline: right after

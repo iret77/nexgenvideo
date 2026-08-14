@@ -10,9 +10,13 @@
 ## 1. Was NexGenVideo ist
 
 NexGenVideo ist ein **KI-nativer macOS-Videoeditor**, technischer Fork von
-`palmier-io/palmier-pro` (Swift 6.2, SwiftUI + AppKit, AVFoundation, macOS 26, arm64,
+`palmier-io/palmier-pro` (Swift 6.2, SwiftUI + AppKit, AVFoundation, latest released macOS only — currently macOS 26, arm64,
 non-sandboxed Developer-ID-App), aber **in sich vollständig autonom**: nutzbar **ohne jede
 Verbindung, Referenz oder Abhängigkeit zum Upstream-Projekt oder dessen Diensten**.
+
+Das Projekt ist Open Source, wird aber primär für seinen Owner entwickelt. Es unterstützt bewusst
+nur das jeweils neueste macOS und übernimmt nützliche neue Apple-APIs unmittelbar; Kompatibilität
+mit älteren macOS-Versionen ist kein Produktziel und kann bei Bedarf in Forks gepflegt werden.
 
 Kernidee: **Du arbeitest in NexGen mit Claude bidirektional zusammen.** Claude bedient alle
 Tools, generiert und orchestriert die Projektarbeit; du schaust über die NexGen-UI zu und
@@ -213,9 +217,15 @@ sich direkt dran, kein Driver pro Provider.
   `explainer`/`fiction`: **Hedra** (Character-3, phonem-genauer Lip-Sync aus 1 Bild, 140+ Sprachen),
   **Runway Act-Two** (Performance-Capture Körper/Gesicht/Hände → beliebiger Charakter).
 - **Video (SOTA):** Veo 3.1 (4K + natives Audio + Lip-Sync), Kling 3.0 (**Multi-Shot-Storyboard** —
-  passt 1:1 auf unser Shotlist-Modell), Seedance 2.0 (Multi-Ref: 9 Bilder + 3 Clips + 3 Audios).
+  passt 1:1 auf unser Shotlist-Modell), Seedance 2.5 (480p/720p, natives Audio, 4–30 s oder
+  automatische Dauer, bis zu 50 gemischte Bild-/Video-/Audio-Referenzen).
   **Sora 2 NICHT** integrieren (OpenAI schaltet Sora ab, API-Ende ~09/2026).
 - **Musik:** Udio + **Suno**. **Transkription/Untertitel:** Whisper (→ „Edit-by-Transcript").
+
+Der eingecheckte Remote-Katalog `catalog/models.json` ist pro Modell-ID die Laufzeit-Autorität für
+kuratierte Fähigkeiten, Preise und Offers. Die Swift-Registries bleiben der vollständige Offline-Seed
+und die Autorität für den Provider-Dialekt; ein Remote-Eintrag überschreibt nur seine ID und darf
+`allowedEndpoints`/`offers` nicht versehentlich entfernen.
 
 ### 5.4 Effekt- & Postproduktions-Modelle (Core-Finishing-Stage)
 
@@ -304,7 +314,7 @@ Modell-Call" reicht — sie macht die Konsistenz über Shots und Re-Renders repr
 ## 11. Build-/CI-Realität (verbindlich)
 
 **Kein lokaler Build — niemals.** Verifikation ausschließlich über **GitHub Actions**
-(`ci.yml`, `macos-26`, `swift build` + `swift test`). Signiert + notarisiert über **unsere eigene
+(`ci.yml`, `xcode-27`, `swift build` + `swift test`). Signiert + notarisiert über **unsere eigene
 high5 Developer ID** (`release.yml`, App-Store-Connect-API-Key, EdDSA-Sparkle-Key). `dev-latest` =
 rollendes signiertes Prerelease als öffentlicher Direktlink **für die App (DMG)**; die Format-Packs
 laufen über den davon entkoppelten, append-only `plugins`-Kanal. PRs immer `--repo iret77/nexgenvideo`.

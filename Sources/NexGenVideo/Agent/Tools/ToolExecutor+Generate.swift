@@ -318,7 +318,18 @@ extension ToolExecutor {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
 
         var model = modelIn
-        var duration = args.int("duration") ?? model.durations.first ?? 0
+        var duration: VideoDuration
+        if let raw = args["duration"] as? String {
+            guard raw.lowercased() == "auto" else {
+                throw ToolError("duration must be an integer number of seconds or 'auto'")
+            }
+            duration = .automatic
+        } else if let seconds = args.int("duration") {
+            duration = .seconds(seconds)
+        } else {
+            duration = model.durationCapabilities.defaultValue
+        }
+        var billedDuration = duration.seconds ?? model.durationCapabilities.maximumSeconds ?? 0
         var aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
         var resolution = args.string("resolution") ?? model.resolutions?.first
         let (precompiled, raw) = try Self.agentPrompt(
@@ -330,16 +341,19 @@ extension ToolExecutor {
         // Cost-Guard (M7): the user's final word before this render spends money. Over the
         // auto-approve ceiling → wait for a tap; a swap re-derives options against the chosen model.
         let credits = CostEstimator.videoCost(
-            model: model, durationSeconds: duration, resolution: resolution, generateAudio: true)
+            model: model, durationSeconds: billedDuration, resolution: resolution, generateAudio: true)
         let finalModelId = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate video",
             alternatives: cheaperVideoAlternatives(
-                than: model.id, currentCredits: credits, duration: duration,
+                than: model.id, currentCredits: credits, duration: billedDuration,
                 resolution: resolution, requiresSource: false))
         if finalModelId != model.id, let swapped = VideoModelConfig.allModels.first(where: { $0.id == finalModelId }) {
             model = swapped
-            if !swapped.durations.contains(duration) { duration = swapped.durations.first ?? duration }
+            if !swapped.durationCapabilities.accepts(duration) {
+                duration = swapped.durationCapabilities.defaultValue
+                billedDuration = duration.seconds ?? swapped.durationCapabilities.maximumSeconds ?? 0
+            }
             if !swapped.aspectRatios.contains(aspectRatio) { aspectRatio = swapped.aspectRatios.first ?? aspectRatio }
             if let allowed = swapped.resolutions, let r = resolution, !allowed.contains(r) { resolution = allowed.first }
         }
@@ -378,19 +392,20 @@ extension ToolExecutor {
 
         let request = GenerationRequest(
             modality: .video, modelId: model.id, intent: prompt,
-            aspectRatio: aspectRatio, durationSeconds: Double(duration),
+            aspectRatio: aspectRatio, durationSeconds: Double(billedDuration),
             placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
             precompiled: precompiled, rawPrompt: raw,
             submission: .video(make: { compiled in
                 var genInput = GenerationInput(
-                    prompt: compiled, model: model.id, duration: duration,
+                    prompt: compiled, model: model.id, duration: billedDuration,
                     aspectRatio: aspectRatio, resolution: resolution)
+                genInput.videoDuration = duration
                 genInput.promptShotId = precompiled?.binding.shotId
                 genInput.promptProjectKey = precompiled?.binding.projectKey
                 genInput.promptShotFingerprint = precompiled?.binding.shotFingerprint
                 return VideoGenerationSubmission.make(
                     genInput: genInput, model: model, inputAssets: inputAssets,
-                    placeholderDuration: Double(max(1, duration)),
+                    placeholderDuration: Double(max(1, billedDuration)),
                     name: name, folderId: folderId, generateAudio: true)
             }))
         let refSummary = totalRefs > 0
@@ -402,7 +417,7 @@ extension ToolExecutor {
                 if let err = model.validate(duration: duration, aspectRatio: aspectRatio, resolution: resolution) { return err }
                 return inputAssets.validate(for: model)
             },
-            success: { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), duration: \(duration)s, aspect: \(aspectRatio)\(refSummary)" })
+            success: { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), duration: \(duration.displayLabel), aspect: \(aspectRatio)\(refSummary)" })
     }
 
     private func generateImage(
@@ -829,6 +844,14 @@ extension ToolExecutor {
             "supportsLastFrame": m.supportsLastFrame,
             "supportsReferences": m.supportsReferences,
         ]
+        var duration: [String: Any] = [
+            "discrete": m.durationCapabilities.discrete,
+            "supportsAuto": m.durationCapabilities.supportsAuto,
+        ]
+        if let range = m.durationCapabilities.range {
+            duration["range"] = ["min": range.min, "max": range.max]
+        }
+        info["duration"] = duration
         if includeType { info["type"] = "video" }
         if let r = m.resolutions { info["resolutions"] = r }
         if m.supportsReferences {

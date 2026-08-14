@@ -12,6 +12,8 @@ struct SegmentedTabBar: View {
     /// Titles rendered with an accent — declared by the caller, never inferred here. By default the AI
     /// accent gradient; `accentColor` overrides it with a solid color (e.g. a pack-scoped tab).
     var accentedTitles: Set<String> = []
+    /// Titles with an explicit scope marker. Marking is caller-owned and independent of accenting.
+    var markedTitles: Set<String> = []
     var accentColor: Color? = nil
     let onSelect: (String) -> Void
 
@@ -37,9 +39,20 @@ struct SegmentedTabBar: View {
                     onSelect(title)
                 } label: {
                     VStack(spacing: AppTheme.Spacing.xs) {
-                        Text(title)
-                            .font(.system(size: AppTheme.FontSize.xs, weight: isActive ? .medium : .regular))
-                            .foregroundStyle(foreground)
+                        HStack(spacing: AppTheme.Spacing.xxs) {
+                            if markedTitles.contains(title) {
+                                Circle()
+                                    .fill(accentColor ?? AppTheme.Text.tertiaryColor)
+                                    .frame(
+                                        width: AppTheme.ComponentSize.segmentedTabMarkerDiameter,
+                                        height: AppTheme.ComponentSize.segmentedTabMarkerDiameter
+                                    )
+                                    .accessibilityHidden(true)
+                            }
+                            Text(title)
+                                .font(.system(size: AppTheme.FontSize.xs, weight: isActive ? .medium : .regular))
+                                .foregroundStyle(foreground)
+                        }
                         Rectangle()
                             .fill(isActive ? foreground : AnyShapeStyle(AppTheme.Background.clearColor))
                             .frame(height: AppTheme.BorderWidth.medium)

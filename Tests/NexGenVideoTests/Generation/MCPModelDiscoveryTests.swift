@@ -109,7 +109,8 @@ struct MCPModelDiscoveryTests {
         guard case let .video(caps) = top.uiCapabilities else { Issue.record("expected video caps"); return }
         #expect(caps.resolutions == ["480p", "720p", "1080p", "4k"])
         #expect(caps.aspectRatios == ["21:9", "16:9", "9:16"])   // "auto" filtered out
-        #expect(caps.durations == Array(4...15))                 // duration_range expanded
+        #expect(caps.durations.isEmpty)
+        #expect(caps.duration.range == .init(min: 4, max: 15))
         #expect(caps.supportsFirstFrame)                         // start_image role present
         #expect(caps.supportsLastFrame)                          // end_image role present
         #expect(caps.maxReferenceImages == 1)                    // image media present
@@ -119,6 +120,27 @@ struct MCPModelDiscoveryTests {
         let solid = try! #require(entries.first { $0.id == "cinematic_studio_video" })
         guard case let .video(caps2) = solid.uiCapabilities else { Issue.record("expected video caps"); return }
         #expect(caps2.durations == [5, 10])
+    }
+
+    @Test func seedance25DiscoveryPreservesRangeAndAuto() {
+        let listing = #"""
+        {"items":[{"id":"seedance_2_5","name":"Seedance 2.5","output_type":"video",
+          "duration_range":{"min":4,"max":30},
+          "parameters":[{"name":"duration","options":["auto",4,30]}],
+          "aspect_ratios":["16:9","9:16"]}]}
+        """#
+        let (models, _) = MCPModelDiscovery.parseListing(listing)
+        let entries = MCPModelDiscovery.catalogEntries(
+            models: models, toolsByModality: [.video: "generate_video"], provider: .higgsfield)
+        let entry = try! #require(entries.first)
+        guard case let .video(caps) = entry.uiCapabilities else {
+            Issue.record("expected video caps")
+            return
+        }
+        #expect(caps.duration.discrete.isEmpty)
+        #expect(caps.duration.range == .init(min: 4, max: 30))
+        #expect(caps.duration.supportsAuto)
+        #expect(entry.offers?.first?.modelParam == "seedance_2_5")
     }
 
     @Test func audioModelInfersCategoryFromTags() {

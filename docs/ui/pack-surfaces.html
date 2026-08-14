@@ -110,7 +110,7 @@
   /* section list */
   .seclist { margin-top: var(--s-md); border: var(--hair) solid var(--border); border-radius: var(--r-sm);
     overflow: hidden; }
-  .seclist .row { display: grid; grid-template-columns: 14px 1fr 88px 64px; gap: var(--s-sm);
+  .seclist .row { display: grid; grid-template-columns: 14px 1fr 88px 128px; gap: var(--s-sm);
     align-items: center; padding: var(--s-xs) var(--s-md); border-bottom: var(--hair) solid var(--border);
     font-size: var(--f-xs); }
   .seclist .row:last-child { border-bottom: 0; }
@@ -118,6 +118,10 @@
   .seclist .row .nm { color: var(--text); font-weight: 500; }
   .seclist .row .lab { color: var(--text-3); }
   .seclist .row .tc { color: var(--text-2); text-align: right; font-variant-numeric: tabular-nums; }
+  .seclist .row.segment { padding-left: var(--s-xl); background: #ffffff05; }
+  .seclist .row.phrase { padding-left: calc(var(--s-xl) + var(--s-lg)); font-size: var(--f-micro); }
+  .seclist .row.segment .nm, .seclist .row.phrase .nm { color: var(--text-3); font-weight: 400; }
+  .seclist .row.phrase .tc { color: var(--text-muted); }
   .prov { margin-top: var(--s-md); font-size: var(--f-micro); color: var(--text-muted); }
 
   /* empty / loading / error */
@@ -167,10 +171,11 @@
       <code>prose</code>→Story, <code>review</code>→Review, <code>choice</code>→in-chat
       (<code>PipelinePanelView.surfaceIcon</code>). There is <b>no surface type for pack-specific
       structured data</b>.</li>
-    <li>The <code>analysis</code> phase measures BPM / beats / downbeats / key onto
-      <code>analysis/&lt;song&gt;.json</code> (<code>BeatThisDetector</code> + DSP) and the agent's beat
-      planning consumes it (<code>BeatAssembly</code>) — but nothing <i>renders</i> it. It is invisible
-      (on disk) or ephemeral (chat).</li>
+    <li>The <code>analysis</code> phase measures BPM, beats, bars, and canonical song sections through
+      the macOS 26 on-device production stack. On macOS 27, Apple Music Understanding can additionally
+      supply a complete section/segment/phrase hierarchy. It writes
+      <code>analysis/&lt;song&gt;.json</code>, which downstream beat planning consumes — but nothing
+      <i>renders</i> it. It is invisible (on disk) or ephemeral (chat).</li>
     <li>Per the platform split (generic Swift host + thin format-packs), a pack must <b>not</b> ship a
       native view. So a pack surface is <b>declarative</b>: the pack supplies data + a layout descriptor,
       the host renders it with a fixed vocabulary of cockpit primitives.</li>
@@ -181,19 +186,29 @@
     <li>The pack's UI contract gains <code>cockpitSurfaces: [{ id, title, symbol, phase, dataFile,
       layout }]</code>. <code>layout</code> is an ordered list of <b>host primitives</b> bound to fields
       of <code>dataFile</code>. The host owns the rendering; the pack owns the data + mapping.</li>
+    <li><code>dataFile</code> is a project-local JSON path. The only template token is
+      <code>{songStem}</code>, resolved through the engine's canonical one-track discovery; unknown
+      tokens, wildcards, ambiguity, artifact symlinks, track symlink escapes, and paths escaping the
+      project fail closed.</li>
+    <li>Compatibility exception: a host may translate the released pre-contract-8
+      <code>beatAnalysis</code> kind into this declarative form so projects pinned to those packs keep
+      their existing surface. The adapter is closed to known legacy kinds; every contract-8-or-newer
+      pack owns and declares its complete <code>dataFile</code> + <code>layout</code> mapping.</li>
     <li><b>Host primitive vocabulary</b> (the only things a pack surface may compose):
       <code>statRow</code> (labelled value tiles), <code>beatTimeline</code> (beats + downbeats +
       section bands over a duration), <code>sectionList</code> (labelled time bands),
-      <code>keyValue</code> (flat facts). New primitives are host changes, never pack code.</li>
+      <code>keyValue</code> (flat facts). New primitives are host changes, never pack code.
+      <code>whenCanonicalSections</code> is the host's analysis-v3 validity predicate applied to the
+      pack-declared section field; it may suppress invalid data but never substitute another field.</li>
     <li>A pack surface is <b>read-only ground truth</b>. Measured values (BPM, beats, downbeats,
       sections) are never editable here — lyrics <i>label</i> sections, they never move the measured
       boundaries. Editing belongs to the agent flow, not this panel.</li>
-    <li>Raw <code>structure_candidates</code> are evidence, not sections. The panel renders section
-      bands, the section count, and the section list when
-      <code>structure_resolution.status</code> is <code>resolved</code> or
-      <code>review_required</code>. The latter keeps its single-detector warning visible until the
-      ordinary approval card is confirmed. Lyric markers may select a nearby acoustic candidate on
-      the downbeat grid; they never create a timestamp.</li>
+    <li>Raw <code>structure_candidates</code> are evidence, not sections. The panel renders canonical
+      section bands only when <code>structure_resolution.status</code> is <code>resolved</code> or
+      <code>review_required</code> and every boundary has a reproducible measured evidence record.
+      A complete Apple hierarchy may enrich those sections on macOS 27. Lyric text supplies labels;
+      timing comes only from structural detectors or reliably aligned on-device word timestamps
+      snapped to the measured bar grid.</li>
     <li>Non-success <code>stage_diagnostics</code> are visible in one compact warning block. An empty
       optional result is never silently presented as successful analysis.</li>
   </ul>
@@ -222,9 +237,6 @@
       run. The tab does not exist; there is never an empty Analysis tab. (First-run progress lives in the
       chat.)</li>
     <li><b>Loaded</b> — data present: stats + beat timeline + section list + provenance.</li>
-    <li><b>Review required</b> — a deterministic eight-bar phrase filter produced a usable measured
-      structure from single-detector evidence: show every section plus a persistent warning directing
-      the user to review them before approval.</li>
     <li><b>Unresolved structure</b> — rhythm data present but structural evidence did not converge:
       show the beat grid without section bands, an explicit blocking error, and the diagnostic detail;
       hide the section count/list because a fallback span is not canonical truth.</li>
@@ -254,8 +266,8 @@
     <li>No control in the panel mutates BPM / beats / downbeats / sections (read-only ground truth).</li>
     <li>An unresolved or legacy analysis shows no canonical section count, bands, or list and names the
       blocking structural diagnostic.</li>
-    <li>A <code>review_required</code> analysis shows its exact phrase-filtered sections and a visible
-      single-detector warning; approval remains an explicit user action.</li>
+    <li>A resolved analysis shows the exact system-measured sections plus the nested segment and phrase
+      evidence; approval remains an explicit user action.</li>
     <li>Every state above renders without layout break at 1280px and 1040px cockpit widths.</li>
   </ul>
 </section>
@@ -321,13 +333,28 @@
           </div>
         </div>
 
+        <div class="tl-head"><span class="t">Structure hierarchy</span><span class="src">macOS 27 enhancement · exact measured ranges</span></div>
         <div class="seclist">
-          <div class="row"><span class="sw" style="background:#6fb2ff"></span><span class="nm">Intro</span><span class="lab">instrumental</span><span class="tc">0:00 – 0:27</span></div>
-          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 1</span><span class="lab">lyrics-labelled</span><span class="tc">0:27 – 1:11</span></div>
-          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">lyrics-labelled</span><span class="tc">1:11 – 1:47</span></div>
-          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 2</span><span class="lab">lyrics-labelled</span><span class="tc">1:47 – 2:31</span></div>
-          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">lyrics-labelled</span><span class="tc">2:31 – 3:11</span></div>
-          <div class="row"><span class="sw" style="background:#c08bff"></span><span class="nm">Outro</span><span class="lab">instrumental</span><span class="tc">3:11 – 3:42</span></div>
+          <div class="row"><span class="sw" style="background:#6fb2ff"></span><span class="nm">Intro</span><span class="lab">section</span><span class="tc">0:00.00 – 0:27.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">0:00.00 – 0:27.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">0:00.00 – 0:13.50</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 2</span><span class="lab">phrase</span><span class="tc">0:13.50 – 0:27.00</span></div>
+          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 1</span><span class="lab">section</span><span class="tc">0:27.00 – 1:11.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">0:27.00 – 1:11.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">0:27.00 – 0:49.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 2</span><span class="lab">phrase</span><span class="tc">0:49.00 – 1:11.00</span></div>
+          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">section</span><span class="tc">1:11.00 – 1:47.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">1:11.00 – 1:47.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">1:11.00 – 1:47.00</span></div>
+          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Verse 2</span><span class="lab">section</span><span class="tc">1:47.00 – 2:31.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">1:47.00 – 2:31.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">1:47.00 – 2:31.00</span></div>
+          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Chorus</span><span class="lab">section</span><span class="tc">2:31.00 – 3:11.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">2:31.00 – 3:11.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">2:31.00 – 3:11.00</span></div>
+          <div class="row"><span class="sw" style="background:#c08bff"></span><span class="nm">Outro</span><span class="lab">section</span><span class="tc">3:11.00 – 3:42.00</span></div>
+          <div class="row segment"><span>▤</span><span class="nm">Segment 1</span><span class="lab">segment</span><span class="tc">3:11.00 – 3:42.00</span></div>
+          <div class="row phrase"><span>–</span><span class="nm">Phrase 1</span><span class="lab">phrase</span><span class="tc">3:11.00 – 3:42.00</span></div>
         </div>
         <div class="prov">Measured ground truth <span class="tag ro">READ-ONLY</span> — lyrics label the sections; they never move the measured boundaries. Source: <code>analysis/midnight_drive.json</code>.</div>
       </div>
@@ -370,50 +397,6 @@
     </div>
   </div>
 
-  <!-- REVIEW REQUIRED -->
-  <div class="mock">
-    <div class="cap">Review required — phrase-filtered measured sections stay visible for explicit approval</div>
-    <div class="cockpit">
-      <div class="tabs">
-        <div class="tab">Pipeline</div><div class="tab pack sel"><span class="dot"></span>Analysis</div>
-        <div class="tab">Story</div><div class="tab">Bible</div><div class="tab">Shotlist</div><div class="tab">Review</div>
-      </div>
-      <div class="panel">
-        <div class="stats">
-          <div class="stat"><div class="k">Track</div><div class="v" style="font-size:15px">instrumental.wav</div></div>
-          <div class="stat"><div class="k">Duration</div><div class="v">3:12</div></div>
-          <div class="stat"><div class="k">Tempo</div><div class="v">120 <small>BPM</small></div></div>
-          <div class="stat"><div class="k">Sections</div><div class="v">3</div></div>
-        </div>
-        <div class="banner warn" style="margin-top:var(--s-md)">
-          <span>!</span>
-          <span><b>Review the section structure.</b> The phrase-filtered timeline contains
-          single-detector evidence. Review every section before approval.</span>
-        </div>
-        <div class="tl-head"><span class="t">Beat grid</span><span class="src">measured · phrase filtered · 96 downbeats</span></div>
-        <div class="timeline">
-          <div class="sections">
-            <div class="sec" style="width:34%; background:#6fb2ff">Section 1</div>
-            <div class="sec" style="width:33%; background:#58c774">Section 2</div>
-            <div class="sec" style="width:33%; background:#e0b23a">Section 3</div>
-          </div>
-          <div class="grid">
-            <span class="beat down d" style="left:5%"></span><span class="beat down d" style="left:20%"></span>
-            <span class="beat down d" style="left:35%"></span><span class="beat down d" style="left:50%"></span>
-            <span class="beat down d" style="left:65%"></span><span class="beat down d" style="left:80%"></span>
-            <span class="beat down d" style="left:95%"></span>
-            <div class="ruler"><span>0:00</span><span>0:48</span><span>1:36</span><span>2:24</span><span>3:12</span></div>
-          </div>
-        </div>
-        <div class="seclist">
-          <div class="row"><span class="sw" style="background:#6fb2ff"></span><span class="nm">Section 1</span><span class="lab">track extent</span><span class="tc">0:00 – 1:04</span></div>
-          <div class="row"><span class="sw" style="background:#58c774"></span><span class="nm">Section 2</span><span class="lab">single detector</span><span class="tc">1:04 – 2:08</span></div>
-          <div class="row"><span class="sw" style="background:#e0b23a"></span><span class="nm">Section 3</span><span class="lab">single detector</span><span class="tc">2:08 – 3:12</span></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- UNRESOLVED STRUCTURE -->
   <div class="mock">
     <div class="cap">Unresolved structure — rhythm stays visible, section truth stays hidden</div>
@@ -430,8 +413,8 @@
         </div>
         <div class="banner err" style="margin-top:var(--s-md)">
           <span>⨯</span>
-          <span><b>Section structure unresolved.</b> No acoustic structure candidate is available for
-          a canonical section timeline. Approval remains unavailable.</span>
+          <span><b>Section structure unresolved.</b> The measured bar grid and acoustic evidence could
+          not establish a reproducible section timeline, so approval remains unavailable.</span>
         </div>
         <div class="tl-head"><span class="t">Beat grid</span><span class="src">measured · 24 downbeats</span></div>
         <div class="timeline">

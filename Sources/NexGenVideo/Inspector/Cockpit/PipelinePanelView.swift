@@ -15,6 +15,43 @@ enum PipelineApprovalControl {
     }
 }
 
+enum PipelineSurfaceRouting {
+    enum Destination: Equatable {
+        case tab(CockpitTab)
+        case pack(String)
+        case chat
+    }
+
+    struct Route: Equatable {
+        let icon: String
+        let label: String
+        let taskClass: String
+        let destination: Destination
+    }
+
+    static func route(
+        for phase: String,
+        contract: ContractData?,
+        availablePackSurfaces: [CockpitSurfaceData]
+    ) -> Route? {
+        guard let entry = contract?.phases[phase] else { return nil }
+        if let surface = availablePackSurfaces.first(where: { $0.phase == phase }) {
+            return Route(
+                icon: surface.symbol,
+                label: surface.title,
+                taskClass: entry.taskClass,
+                destination: .pack(surface.id)
+            )
+        }
+        return switch entry.surface {
+        case "review": Route(icon: "eye", label: "Review", taskClass: entry.taskClass, destination: .tab(.review))
+        case "prose": Route(icon: "text.cursor", label: "Story", taskClass: entry.taskClass, destination: .tab(.story))
+        case "choice": Route(icon: "slider.horizontal.3", label: "In chat", taskClass: entry.taskClass, destination: .chat)
+        default: Route(icon: "questionmark", label: entry.surface, taskClass: entry.taskClass, destination: .chat)
+        }
+    }
+}
+
 // Pipeline cockpit panel: the project's phase gates as a vertical checklist, with the next open phase
 // highlighted and gate mutations routed through NativeGateWriter.
 
@@ -316,21 +353,8 @@ struct PipelinePanelView: View {
         } label: {
             Text("Approve")
                 .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
-                .foregroundStyle(
-                    enabled ? AppTheme.Accent.timecodeColor : AppTheme.Text.mutedColor
-                )
-                .padding(.horizontal, AppTheme.Spacing.sm)
-                .padding(.vertical, AppTheme.Spacing.xxs)
-                .background(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.xs)
-                        .fill(
-                            enabled
-                                ? AppTheme.Accent.timecodeColor.opacity(AppTheme.Opacity.faint)
-                                : AppTheme.Background.raisedColor
-                        )
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.inlineAction(.approval))
         .disabled(!enabled)
         .help(
             enabled
@@ -507,28 +531,38 @@ struct PipelinePanelView: View {
     /// way to read what a gate is about to approve, and a bare glyph made it unfindable in the field.
     /// A tooltip doesn't fix that — it appears on hover, so you must already suspect the control exists.
     private func surfaceIcon(for phase: String) -> some View {
-        if let entry = editor.uiContract?.phases[phase] {
-            let (icon, target, label): (String, CockpitTab?, String) = switch entry.surface {
-            case "review": ("eye", .review, "Review")
-            case "prose": ("text.cursor", .story, "Story")
-            case "choice": ("slider.horizontal.3", nil, "In chat")
-            default: ("questionmark", nil, entry.surface)
+        if let route = PipelineSurfaceRouting.route(
+            for: phase,
+            contract: editor.uiContract,
+            availablePackSurfaces: editor.availableCockpitPackSurfaces
+        ) {
+            let isPackRoute = switch route.destination {
+            case .pack: true
+            default: false
             }
+            let isEnabled = route.destination != .chat
             Button {
-                if let target { editor.cockpitTab = target }
+                switch route.destination {
+                case .tab(let target):
+                    editor.cockpitTab = target
+                    editor.cockpitPackSurfaceID = nil
+                case .pack(let id):
+                    editor.cockpitPackSurfaceID = id
+                case .chat:
+                    break
+                }
             } label: {
                 HStack(spacing: AppTheme.Spacing.xxs) {
-                    Image(systemName: icon)
-                    Text(label)
+                    Image(systemName: route.icon)
+                    Text(route.label)
                 }
                 .font(.system(size: AppTheme.FontSize.xxs))
-                .foregroundStyle(target == nil ? AppTheme.Text.mutedColor : AppTheme.Text.secondaryColor)
             }
-            .buttonStyle(.plain)
-            .disabled(target == nil)
-            .help(target == nil
-                  ? "Answered in the chat · compute: \(entry.taskClass)"
-                  : "Open \(label) to read this phase's work · compute: \(entry.taskClass)")
+            .buttonStyle(.inlineAction(isPackRoute ? .pack : .neutral))
+            .disabled(!isEnabled)
+            .help(isEnabled
+                  ? "Open \(route.label) to read this phase's work · compute: \(route.taskClass)"
+                  : "Answered in the chat · compute: \(route.taskClass)")
         }
     }
 

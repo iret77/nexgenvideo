@@ -3080,19 +3080,7 @@ extension ToolExecutor {
         // ngv.json is the write-through source the editor property mirrors anyway. It lives in the
         // project PACKAGE (parent of `pipeline`), not the data root — resolve the home first.
         let registry = PackCatalog.registry(activePack: activePluginFor(dataRoot: root))
-        registry.registerAudioDecoder(AVFoundationAudioDecoder())
-        // On-device speech recognition (whisper.cpp) for forced lyric alignment. The pack's analysis
-        // runner resolves it from the registry; the model downloads on demand on first use.
-        registry.registerTranscriber(WhisperCppTranscriber())
-        // On-device vocal isolation (HT-Demucs FT via ONNX Runtime) so transcription reads the clean
-        // voice, not the full mix. Model downloads on demand on first use.
-        registry.registerStemSeparator(DemucsStemSeparator())
-        // On-device neural beat/downbeat tracking (Beat This! via ONNX Runtime) — supersedes the DSP
-        // grid when it looks valid. Model downloads on demand on first use.
-        registry.registerBeatDetector(BeatThisDetector())
-        // On-device chord recognition (BTC via ONNX, CQT baked into the graph) → analysis.chord_progression.
-        // Model downloads on demand on first use; absent/offline degrades to no chords.
-        registry.registerChordRecognizer(ChordRecognizer())
+        AudioAnalysisRuntime.configure(registry)
 
         // #174: run the phase's engine-pinned deterministic steps FIRST — load-bearing operations the
         // agent can neither skip nor improvise (file intake into the right dir, the one-song contract,

@@ -325,8 +325,103 @@ struct CatalogEntry: Decodable, Sendable {
     }
 }
 
+enum VideoDuration: Codable, Sendable, Hashable {
+    case seconds(Int)
+    case automatic
+
+    var displayLabel: String {
+        switch self {
+        case .seconds(let value): "\(value)s"
+        case .automatic: "Auto"
+        }
+    }
+
+    var seconds: Int? {
+        guard case .seconds(let value) = self else { return nil }
+        return value
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let value = try? container.decode(Int.self) {
+            self = .seconds(value)
+        } else if try container.decode(String.self).lowercased() == "auto" {
+            self = .automatic
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Video duration must be an integer number of seconds or 'auto'."
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .seconds(let value): try container.encode(value)
+        case .automatic: try container.encode("auto")
+        }
+    }
+}
+
+struct VideoDurationCapabilities: Decodable, Sendable, Equatable {
+    struct Range: Decodable, Sendable, Equatable {
+        let min: Int
+        let max: Int
+    }
+
+    let discrete: [Int]
+    let range: Range?
+    let supportsAuto: Bool
+
+    init(discrete: [Int] = [], range: Range? = nil, supportsAuto: Bool = false) {
+        self.discrete = discrete
+        self.range = range
+        self.supportsAuto = supportsAuto
+    }
+
+    var options: [VideoDuration] {
+        var values = discrete
+        if let range, range.min <= range.max {
+            values.append(contentsOf: range.min...range.max)
+        }
+        var options = Array(Set(values)).sorted().map(VideoDuration.seconds)
+        if supportsAuto { options.insert(.automatic, at: 0) }
+        return options
+    }
+
+    var defaultValue: VideoDuration {
+        if supportsAuto { return .automatic }
+        if let first = discrete.first { return .seconds(first) }
+        if let range { return .seconds(range.min) }
+        return .seconds(0)
+    }
+
+    var maximumSeconds: Int? {
+        [discrete.max(), range?.max].compactMap { $0 }.max()
+    }
+
+    func accepts(_ duration: VideoDuration) -> Bool {
+        switch duration {
+        case .automatic:
+            return supportsAuto
+        case .seconds(let value):
+            if discrete.contains(value) { return true }
+            if let range { return (range.min...range.max).contains(value) }
+            return discrete.isEmpty && range == nil
+        }
+    }
+
+    var validationLabels: [String] {
+        var labels = discrete.map { "\($0)s" }
+        if let range { labels.append("\(range.min)–\(range.max)s") }
+        if supportsAuto { labels.append("auto") }
+        return labels
+    }
+}
+
 struct VideoCaps: Decodable, Sendable {
-    let durations: [Int]
+    let duration: VideoDurationCapabilities
     let resolutions: [String]?
     let aspectRatios: [String]
     let supportsFirstFrame: Bool
@@ -341,6 +436,66 @@ struct VideoCaps: Decodable, Sendable {
     let referenceTagNoun: String
     let requiresSourceVideo: Bool
     let requiresReferenceImage: Bool
+
+    var durations: [Int] { duration.discrete }
+
+    private enum CodingKeys: String, CodingKey {
+        case duration, durations, resolutions, aspectRatios, supportsFirstFrame, supportsLastFrame
+        case maxReferenceImages, maxReferenceVideos, maxReferenceAudios, maxTotalReferences
+        case maxCombinedVideoRefSeconds, maxCombinedAudioRefSeconds, framesAndReferencesExclusive
+        case referenceTagNoun, requiresSourceVideo, requiresReferenceImage
+    }
+
+    init(
+        durations: [Int] = [], durationRange: VideoDurationCapabilities.Range? = nil,
+        supportsAutomaticDuration: Bool = false,
+        resolutions: [String]?, aspectRatios: [String],
+        supportsFirstFrame: Bool, supportsLastFrame: Bool,
+        maxReferenceImages: Int, maxReferenceVideos: Int, maxReferenceAudios: Int,
+        maxTotalReferences: Int?, maxCombinedVideoRefSeconds: Double?,
+        maxCombinedAudioRefSeconds: Double?, framesAndReferencesExclusive: Bool,
+        referenceTagNoun: String, requiresSourceVideo: Bool, requiresReferenceImage: Bool
+    ) {
+        duration = VideoDurationCapabilities(
+            discrete: durations,
+            range: durationRange,
+            supportsAuto: supportsAutomaticDuration
+        )
+        self.resolutions = resolutions
+        self.aspectRatios = aspectRatios
+        self.supportsFirstFrame = supportsFirstFrame
+        self.supportsLastFrame = supportsLastFrame
+        self.maxReferenceImages = maxReferenceImages
+        self.maxReferenceVideos = maxReferenceVideos
+        self.maxReferenceAudios = maxReferenceAudios
+        self.maxTotalReferences = maxTotalReferences
+        self.maxCombinedVideoRefSeconds = maxCombinedVideoRefSeconds
+        self.maxCombinedAudioRefSeconds = maxCombinedAudioRefSeconds
+        self.framesAndReferencesExclusive = framesAndReferencesExclusive
+        self.referenceTagNoun = referenceTagNoun
+        self.requiresSourceVideo = requiresSourceVideo
+        self.requiresReferenceImage = requiresReferenceImage
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        duration = try container.decodeIfPresent(VideoDurationCapabilities.self, forKey: .duration)
+            ?? VideoDurationCapabilities(discrete: try container.decodeIfPresent([Int].self, forKey: .durations) ?? [])
+        resolutions = try container.decodeIfPresent([String].self, forKey: .resolutions)
+        aspectRatios = try container.decode([String].self, forKey: .aspectRatios)
+        supportsFirstFrame = try container.decode(Bool.self, forKey: .supportsFirstFrame)
+        supportsLastFrame = try container.decode(Bool.self, forKey: .supportsLastFrame)
+        maxReferenceImages = try container.decode(Int.self, forKey: .maxReferenceImages)
+        maxReferenceVideos = try container.decode(Int.self, forKey: .maxReferenceVideos)
+        maxReferenceAudios = try container.decode(Int.self, forKey: .maxReferenceAudios)
+        maxTotalReferences = try container.decodeIfPresent(Int.self, forKey: .maxTotalReferences)
+        maxCombinedVideoRefSeconds = try container.decodeIfPresent(Double.self, forKey: .maxCombinedVideoRefSeconds)
+        maxCombinedAudioRefSeconds = try container.decodeIfPresent(Double.self, forKey: .maxCombinedAudioRefSeconds)
+        framesAndReferencesExclusive = try container.decode(Bool.self, forKey: .framesAndReferencesExclusive)
+        referenceTagNoun = try container.decode(String.self, forKey: .referenceTagNoun)
+        requiresSourceVideo = try container.decode(Bool.self, forKey: .requiresSourceVideo)
+        requiresReferenceImage = try container.decode(Bool.self, forKey: .requiresReferenceImage)
+    }
 }
 
 struct ImageCaps: Decodable, Sendable {
