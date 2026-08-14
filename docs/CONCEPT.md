@@ -217,9 +217,15 @@ sich direkt dran, kein Driver pro Provider.
   `explainer`/`fiction`: **Hedra** (Character-3, phonem-genauer Lip-Sync aus 1 Bild, 140+ Sprachen),
   **Runway Act-Two** (Performance-Capture Körper/Gesicht/Hände → beliebiger Charakter).
 - **Video (SOTA):** Veo 3.1 (4K + natives Audio + Lip-Sync), Kling 3.0 (**Multi-Shot-Storyboard** —
-  passt 1:1 auf unser Shotlist-Modell), Seedance 2.0 (Multi-Ref: 9 Bilder + 3 Clips + 3 Audios).
+  passt 1:1 auf unser Shotlist-Modell), Seedance 2.5 (480p/720p, natives Audio, 4–30 s oder
+  automatische Dauer, bis zu 50 gemischte Bild-/Video-/Audio-Referenzen).
   **Sora 2 NICHT** integrieren (OpenAI schaltet Sora ab, API-Ende ~09/2026).
 - **Musik:** Udio + **Suno**. **Transkription/Untertitel:** Whisper (→ „Edit-by-Transcript").
+
+Der eingecheckte Remote-Katalog `catalog/models.json` ist pro Modell-ID die Laufzeit-Autorität für
+kuratierte Fähigkeiten, Preise und Offers. Die Swift-Registries bleiben der vollständige Offline-Seed
+und die Autorität für den Provider-Dialekt; ein Remote-Eintrag überschreibt nur seine ID und darf
+`allowedEndpoints`/`offers` nicht versehentlich entfernen.
 
 ### 5.4 Effekt- & Postproduktions-Modelle (Core-Finishing-Stage)
 

@@ -25,10 +25,16 @@ enum FalInputBuilder {
     static func videoInput(_ p: VideoGenerationParams, model: FalModel) -> [String: Any] {
         var input: [String: Any] = ["prompt": p.prompt]
         switch model.videoDuration {
-        case .plainSeconds:  input["duration"] = String(p.duration)
-        case .secondsSuffix: input["duration"] = "\(p.duration)s"
+        case .plainSeconds, .secondsOrAuto:
+            input["duration"] = durationString(p.duration)
+        case .secondsSuffix:
+            input["duration"] = durationString(p.duration, secondsSuffix: true)
         }
         if model.videoImageRef, let image = p.referenceImageURLs.first { input["image_url"] = image }
+        if model.videoFirstLastFrames {
+            if let image = p.startFrameURL ?? p.referenceImageURLs.first { input["image_url"] = image }
+            if let image = p.endFrameURL { input["end_image_url"] = image }
+        }
         if model.videoReferenceArrays {
             // Seedance 2.0 reference-to-video: @Image1/@Video1/@Audio1 refs (≤9/3/3).
             if !p.referenceImageURLs.isEmpty { input["image_urls"] = p.referenceImageURLs }
@@ -39,6 +45,15 @@ enum FalInputBuilder {
         if model.videoSendsResolution, let resolution = p.resolution { input["resolution"] = resolution }
         if model.videoGeneratesAudio { input["generate_audio"] = p.generateAudio }
         return input
+    }
+
+    private static func durationString(_ duration: VideoDuration, secondsSuffix: Bool = false) -> String {
+        switch duration {
+        case .automatic:
+            return "auto"
+        case .seconds(let value):
+            return secondsSuffix ? "\(value)s" : String(value)
+        }
     }
 
     static func audioInput(_ p: AudioGenerationParams, model: FalModel) -> [String: Any] {

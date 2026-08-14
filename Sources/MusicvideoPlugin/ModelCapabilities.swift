@@ -37,97 +37,70 @@ public struct ModelCapability: Sendable, Equatable {
 }
 
 public enum ModelCapabilities {
-    /// Faithful port of MODEL_CAPABILITIES — every model entry, exact values.
-    public static let all: [String: ModelCapability] = [
-        "gen3a_turbo": ModelCapability(
-            maxDurationS: 10.0,
-            supportedRatios: ["1280:720", "720:1280", "960:960", "1104:832", "832:1104"],
-            maxCharactersInFrame: 2,
-            supportsKeyframeStart: true,
-            supportsKeyframeEnd: false,
-            supportsImageToVideo: true,
-            notes: "Günstig, schnell. Gut für Previews. Limits bei komplexen Szenen."
-        ),
-        "gen4.5": ModelCapability(
-            maxDurationS: 10.0,
-            supportedRatios: ["1280:720", "720:1280", "960:960", "1104:832", "832:1104"],
-            maxCharactersInFrame: 3,
-            supportsKeyframeStart: true,
-            supportsKeyframeEnd: true,
-            supportsImageToVideo: true,
-            notes: "Beste Charakter-Konsistenz, bevorzugt bei Narrativ+Performance."
-        ),
-        "seedance2": ModelCapability(
-            maxDurationS: 15.0,
-            supportedRatios: [
-                // 512er-Stufe
-                "992:432", "864:496", "752:560", "640:640", "560:752", "496:864",
-                // 720er-Stufe
-                "1470:630", "1280:720", "1112:834", "960:960", "834:1112", "720:1280",
-                // 1080er-Stufe
-                "2206:946", "1920:1080", "1664:1248", "1440:1440", "1248:1664", "1080:1920",
-            ],
-            maxCharactersInFrame: 3,
-            supportsKeyframeStart: true,
-            supportsKeyframeEnd: true,
-            supportsImageToVideo: true,
-            notes: "Modi (Runway-API live 2026-05-31): References / Start-End frames / Text-to-Video. "
-                + "Duration 4-15 s (Provider rundet kuerzere Shots auf 4 s auf, "
-                + "Mehr-Sekunden werden berechnet). Output 480p/720p/1080p — supported_ratios "
-                + "decken alle drei Aufloesungs-Stufen ab. Bis zu 9 Reference Images "
-                + "(.jpg/.jpeg/.png/.webm, 300-6000 px, <30 MB). "
-                + "max_characters_in_frame=3 ist eine Stabilitäts-Heuristik fürs Bild — "
-                + "konsistente Darstellung aller Figuren im selben Frame degradiert ab 3+."
-        ),
-        "veo3": ModelCapability(
-            maxDurationS: 8.0,
-            supportedRatios: ["1280:720", "720:1280"],
-            maxCharactersInFrame: 4,
-            supportsKeyframeStart: false,
-            supportsKeyframeEnd: false,
-            supportsImageToVideo: false,
-            notes: "Text-to-video only, keine Keyframes. Hohes Motion-Detail, teuer."
-        ),
-        "veo3.1_fast": ModelCapability(
-            maxDurationS: 8.0,
-            supportedRatios: ["1280:720", "720:1280"],
-            maxCharactersInFrame: 3,
-            supportsKeyframeStart: false,
-            supportsKeyframeEnd: false,
-            supportsImageToVideo: false,
-            notes: "Schnellere, günstigere Veo3-Variante."
-        ),
-        "fal:bytedance/seedance-2.0": ModelCapability(
-            maxDurationS: 15.0,
-            supportedRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-            maxCharactersInFrame: 4,
-            supportsKeyframeStart: true,
-            supportsKeyframeEnd: true,
-            supportsImageToVideo: true,
-            supportsReferenceMode: true,
-            maxReferenceImages: 9,
-            notes: "Seedance 2.0 Pro auf fal.ai. Drei Modi (mutually exclusive): "
-                + "text-to-video, image-to-video (Keyframe first/last), "
-                + "reference-to-video (bis 9 Bilder + 3 Videos + 3 Audio "
-                + "per @image1-Mention). Resolutions 480p/720p/1080p, "
-                + "Duration 4-15 s. Audio-Lip-Sync moeglich."
-        ),
-        "fal:bytedance/seedance-2.0/fast": ModelCapability(
-            maxDurationS: 15.0,
-            supportedRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-            maxCharactersInFrame: 4,
-            supportsKeyframeStart: true,
-            supportsKeyframeEnd: true,
-            supportsImageToVideo: true,
-            supportsReferenceMode: true,
-            maxReferenceImages: 9,
-            notes: "Seedance 2.0 Fast — gleicher Feature-Set wie Pro, "
-                + "guenstigere/schnellere Inferenz, leicht reduzierte Qualitaet. "
-                + "Empfohlen fuer Previews."
-        ),
-    ]
+    private struct Catalog: Decodable {
+        let schema: String
+        let models: [Entry]
+    }
+
+    private struct Entry: Decodable {
+        let ids: [String]
+        let maxDurationS: Double
+        let minimumDurationS: Double?
+        let supportedRatios: [String]
+        let maxCharactersInFrame: Int
+        let supportsKeyframeStart: Bool
+        let supportsKeyframeEnd: Bool
+        let supportsImageToVideo: Bool
+        let supportsReferenceMode: Bool
+        let maxReferenceImages: Int
+        let notes: String
+    }
+
+    private static let decoded: Catalog? = {
+        guard let url = PackKnowledge.modelCapabilitiesCatalogURL(),
+              let data = try? Data(contentsOf: url),
+              let catalog = try? JSONDecoder().decode(Catalog.self, from: data),
+              catalog.schema == "musicvideo-model-capabilities/v1",
+              catalog.models.allSatisfy({ !$0.ids.isEmpty && $0.maxDurationS > 0 })
+        else { return nil }
+        return catalog
+    }()
+
+    public static let all: [String: ModelCapability] = {
+        guard let decoded else { return [:] }
+        var result: [String: ModelCapability] = [:]
+        for entry in decoded.models {
+            let capability = ModelCapability(
+                maxDurationS: entry.maxDurationS,
+                supportedRatios: entry.supportedRatios,
+                maxCharactersInFrame: entry.maxCharactersInFrame,
+                supportsKeyframeStart: entry.supportsKeyframeStart,
+                supportsKeyframeEnd: entry.supportsKeyframeEnd,
+                supportsImageToVideo: entry.supportsImageToVideo,
+                supportsReferenceMode: entry.supportsReferenceMode,
+                maxReferenceImages: entry.maxReferenceImages,
+                notes: entry.notes
+            )
+            for id in entry.ids { result[id] = capability }
+        }
+        return result
+    }()
+
+    private static let minimumDurations: [String: Double] = {
+        guard let decoded else { return [:] }
+        var result: [String: Double] = [:]
+        for entry in decoded.models {
+            guard let minimum = entry.minimumDurationS else { continue }
+            for id in entry.ids { result[id] = minimum }
+        }
+        return result
+    }()
+
+    public static var catalogIsValid: Bool { decoded != nil }
 
     public static func capability(_ model: String) -> ModelCapability? { all[model] }
+
+    public static func minimumDuration(_ model: String) -> Double? { minimumDurations[model] }
 }
 
 public enum AspectResolver {

@@ -1,0 +1,110 @@
+[
+  {
+    "id": "bytedance/seedance-2.5/text-to-video",
+    "kind": "video",
+    "displayName": "Seedance 2.5",
+    "allowedEndpoints": ["bytedance/seedance-2.5/text-to-video"],
+    "responseShape": "video",
+    "uiCapabilities": {
+      "duration": {
+        "discrete": [],
+        "range": { "min": 4, "max": 30 },
+        "supportsAuto": true
+      },
+      "resolutions": ["480p", "720p"],
+      "aspectRatios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "supportsFirstFrame": false,
+      "supportsLastFrame": false,
+      "maxReferenceImages": 0,
+      "maxReferenceVideos": 0,
+      "maxReferenceAudios": 0,
+      "maxTotalReferences": null,
+      "maxCombinedVideoRefSeconds": null,
+      "maxCombinedAudioRefSeconds": null,
+      "framesAndReferencesExclusive": false,
+      "referenceTagNoun": "reference",
+      "requiresSourceVideo": false,
+      "requiresReferenceImage": false
+    },
+    "creditsPerSecond": { "480p": 0.2205, "720p": 0.473 },
+    "offers": [
+      {
+        "provider": "fal",
+        "transport": "api",
+        "providerRef": "bytedance/seedance-2.5/text-to-video"
+      }
+    ]
+  },
+  {
+    "id": "bytedance/seedance-2.5/image-to-video",
+    "kind": "video",
+    "displayName": "Seedance 2.5 (image)",
+    "allowedEndpoints": ["bytedance/seedance-2.5/image-to-video"],
+    "responseShape": "video",
+    "uiCapabilities": {
+      "duration": {
+        "discrete": [],
+        "range": { "min": 4, "max": 30 },
+        "supportsAuto": true
+      },
+      "resolutions": ["480p", "720p"],
+      "aspectRatios": ["16:9", "9:16"],
+      "supportsFirstFrame": true,
+      "supportsLastFrame": true,
+      "maxReferenceImages": 0,
+      "maxReferenceVideos": 0,
+      "maxReferenceAudios": 0,
+      "maxTotalReferences": 0,
+      "maxCombinedVideoRefSeconds": null,
+      "maxCombinedAudioRefSeconds": null,
+      "framesAndReferencesExclusive": false,
+      "referenceTagNoun": "reference",
+      "requiresSourceVideo": false,
+      "requiresReferenceImage": true
+    },
+    "creditsPerSecond": { "480p": 0.2205, "720p": 0.473 },
+    "offers": [
+      {
+        "provider": "fal",
+        "transport": "api",
+        "providerRef": "bytedance/seedance-2.5/image-to-video"
+      }
+    ]
+  },
+  {
+    "id": "bytedance/seedance-2.5/reference-to-video",
+    "kind": "video",
+    "displayName": "Seedance 2.5 (reference)",
+    "allowedEndpoints": ["bytedance/seedance-2.5/reference-to-video"],
+    "responseShape": "video",
+    "uiCapabilities": {
+      "duration": {
+        "discrete": [],
+        "range": { "min": 4, "max": 30 },
+        "supportsAuto": true
+      },
+      "resolutions": ["480p", "720p"],
+      "aspectRatios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      "supportsFirstFrame": false,
+      "supportsLastFrame": false,
+      "maxReferenceImages": 30,
+      "maxReferenceVideos": 10,
+      "maxReferenceAudios": 10,
+      "maxTotalReferences": 50,
+      "maxCombinedVideoRefSeconds": null,
+      "maxCombinedAudioRefSeconds": null,
+      "framesAndReferencesExclusive": false,
+      "referenceTagNoun": "reference",
+      "requiresSourceVideo": false,
+      "requiresReferenceImage": false
+    },
+    "creditsPerSecond": { "480p": 0.2205, "720p": 0.473 },
+    "offers": [
+      {
+        "provider": "fal",
+        "transport": "api",
+        "providerRef": "bytedance/seedance-2.5/reference-to-video"
+      }
+    ]
+  }
+]

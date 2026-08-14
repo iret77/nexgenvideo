@@ -8,7 +8,7 @@ import Testing
 struct SeedanceDisciplineTests {
     static func shot(_ id: String, prompt: String, dur: Double = 5) throws -> Shot {
         try Shot(id: id, section: "verse", timeStart: 0, timeEnd: dur, durationS: dur, type: .performance,
-                 description: "d", visualPrompt: prompt, mood: "m")
+                 description: "d", visualPrompt: prompt, mood: "m", sceneVideoProvider: .fal)
     }
     static func shotlist(_ shots: [Shot]) throws -> Shotlist {
         try Shotlist(
@@ -46,9 +46,26 @@ struct SeedanceDisciplineTests {
         #expect(try Self.run("portrait on a 50mm lens with soft light").contains("PROMPT_TECHNICAL_LINGO"))
     }
 
-    @Test("duration band: over the 15s cap (warn) / under the 4s min (info)")
+    @Test("duration band follows Seedance 2.5 catalog data")
     func durationBand() throws {
-        #expect(try Self.run("a calm wide view in soft daylight", dur: 16).contains("SHOT_OVER_SEEDANCE_CAP"))
+        #expect(try Self.run("a calm wide view in soft daylight", dur: 30).contains("SHOT_OVER_SEEDANCE_CAP") == false)
+        #expect(try Self.run("a calm wide view in soft daylight", dur: 31).contains("SHOT_OVER_SEEDANCE_CAP"))
         #expect(try Self.run("a calm wide view in soft daylight", dur: 3).contains("SHOT_UNDER_SEEDANCE_MIN"))
+    }
+
+    @Test("capability catalog resolves fal endpoint families and Higgsfield id")
+    func providerAliases() throws {
+        #expect(ModelCapabilities.catalogIsValid)
+        for id in [
+            "bytedance/seedance-2.5/text-to-video",
+            "bytedance/seedance-2.5/image-to-video",
+            "bytedance/seedance-2.5/reference-to-video",
+            "seedance_2_5",
+            "higgsfield/seedance_2_5",
+        ] {
+            let capability = try #require(ModelCapabilities.capability(id))
+            #expect(capability.maxDurationS == 30)
+            #expect(capability.maxReferenceImages == 30)
+        }
     }
 }

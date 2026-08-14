@@ -16,7 +16,9 @@ struct VideoModelConfig: Identifiable, Sendable {
     var creditsPerSecond: [String: Double] { entry.creditsPerSecond ?? [:] }
     var audioDiscountRate: [String: Double]? { entry.audioDiscountRate }
 
-    var durations: [Int] { caps.durations }
+    var durationCapabilities: VideoDurationCapabilities { caps.duration }
+    var durationOptions: [VideoDuration] { caps.duration.options }
+    var durations: [Int] { caps.duration.discrete }
     var resolutions: [String]? { caps.resolutions }
     var aspectRatios: [String] { caps.aspectRatios }
     var supportsFirstFrame: Bool { caps.supportsFirstFrame }
@@ -47,11 +49,11 @@ struct VideoModelConfig: Identifiable, Sendable {
         return dict[""]
     }
 
-    func validate(duration: Int, aspectRatio: String, resolution: String?) -> String? {
-        if !durations.isEmpty, !durations.contains(duration) {
+    func validate(duration: VideoDuration, aspectRatio: String, resolution: String?) -> String? {
+        if !durationCapabilities.accepts(duration) {
             return unsupportedValue(
                 model: displayName, field: "duration",
-                value: "\(duration)s", allowed: durations.map { "\($0)s" }
+                value: duration.displayLabel, allowed: durationCapabilities.validationLabels
             )
         }
         if !aspectRatios.isEmpty, !aspectRatio.isEmpty, !aspectRatios.contains(aspectRatio) {
@@ -62,11 +64,15 @@ struct VideoModelConfig: Identifiable, Sendable {
         }
         return nil
     }
+
+    func validate(duration: Int, aspectRatio: String, resolution: String?) -> String? {
+        validate(duration: .seconds(duration), aspectRatio: aspectRatio, resolution: resolution)
+    }
 }
 
 struct VideoGenerationParams: Encodable, Sendable {
     let prompt: String
-    let duration: Int
+    let duration: VideoDuration
     let aspectRatio: String
     let resolution: String?
     let sourceVideoURL: String?
@@ -78,7 +84,7 @@ struct VideoGenerationParams: Encodable, Sendable {
     let generateAudio: Bool
 
     init(
-        prompt: String, duration: Int, aspectRatio: String, resolution: String?,
+        prompt: String, duration: VideoDuration, aspectRatio: String, resolution: String?,
         sourceVideoURL: String? = nil,
         startFrameURL: String? = nil, endFrameURL: String? = nil,
         referenceImageURLs: [String] = [],
@@ -94,6 +100,26 @@ struct VideoGenerationParams: Encodable, Sendable {
         self.referenceVideoURLs = referenceVideoURLs
         self.referenceAudioURLs = referenceAudioURLs
         self.generateAudio = generateAudio
+    }
+
+    init(
+        prompt: String, duration: Int, aspectRatio: String, resolution: String?,
+        sourceVideoURL: String? = nil,
+        startFrameURL: String? = nil, endFrameURL: String? = nil,
+        referenceImageURLs: [String] = [],
+        referenceVideoURLs: [String] = [],
+        referenceAudioURLs: [String] = [],
+        generateAudio: Bool = true
+    ) {
+        self.init(
+            prompt: prompt, duration: .seconds(duration), aspectRatio: aspectRatio,
+            resolution: resolution, sourceVideoURL: sourceVideoURL,
+            startFrameURL: startFrameURL, endFrameURL: endFrameURL,
+            referenceImageURLs: referenceImageURLs,
+            referenceVideoURLs: referenceVideoURLs,
+            referenceAudioURLs: referenceAudioURLs,
+            generateAudio: generateAudio
+        )
     }
 
     var hasAnyReferences: Bool {

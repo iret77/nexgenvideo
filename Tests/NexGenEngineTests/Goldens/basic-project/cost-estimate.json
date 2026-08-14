@@ -5,26 +5,26 @@
     "phase": "final",
     "shot_estimates": [
         {
-            "duration_s": 10.0,
-            "eur": 6.82,
-            "notes": "truncated to 10.0s; @1080p",
-            "runway_model": "fal:bytedance/seedance-2.0/pro",
+            "duration_s": 12.0,
+            "eur": 5.676,
+            "notes": "@720p",
+            "runway_model": "fal:bytedance/seedance-2.5/pro",
             "shot_id": "s001",
-            "truncated": true
+            "truncated": false
         },
         {
-            "duration_s": 5.0,
-            "eur": 3.41,
-            "notes": "padded to provider-min 5.0s (actual shot 3.0s); @1080p",
-            "runway_model": "fal:bytedance/seedance-2.0/pro",
+            "duration_s": 4.0,
+            "eur": 1.892,
+            "notes": "padded to provider-min 4.0s (actual shot 3.0s); @720p",
+            "runway_model": "fal:bytedance/seedance-2.5/pro",
             "shot_id": "s002",
             "truncated": false
         },
         {
             "duration_s": 7.0,
-            "eur": 4.774,
-            "notes": "@1080p",
-            "runway_model": "fal:bytedance/seedance-2.0/pro",
+            "eur": 3.311,
+            "notes": "@720p",
+            "runway_model": "fal:bytedance/seedance-2.5/pro",
             "shot_id": "s003",
             "truncated": false
         },
@@ -37,5 +37,5 @@
             "truncated": false
         }
     ],
-    "total_eur": 15.8
+    "total_eur": 11.68
 }

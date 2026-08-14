@@ -144,17 +144,17 @@ struct CostsTests {
 
         // Also assert the concrete numbers, so a golden regeneration that
         // silently changed the fixture would be caught.
-        #expect(est.totalEur == 15.8)
-        #expect(est.shotEstimates.map(\.eur) == [6.82, 3.41, 4.774, 0.8])
-        #expect(est.shotEstimates.map(\.durationS) == [10.0, 5.0, 7.0, 8.0])
+        #expect(est.totalEur == 11.68)
+        #expect(est.shotEstimates.map(\.eur) == [5.676, 1.892, 3.311, 0.8])
+        #expect(est.shotEstimates.map(\.durationS) == [12.0, 4.0, 7.0, 8.0])
         #expect(est.shotEstimates.map(\.runwayModel) == [
-            "fal:bytedance/seedance-2.0/pro", "fal:bytedance/seedance-2.0/pro",
-            "fal:bytedance/seedance-2.0/pro", "seedance2",
+            "fal:bytedance/seedance-2.5/pro", "fal:bytedance/seedance-2.5/pro",
+            "fal:bytedance/seedance-2.5/pro", "seedance2",
         ])
         #expect(est.shotEstimates.map(\.notes) == [
-            "truncated to 10.0s; @1080p",
-            "padded to provider-min 5.0s (actual shot 3.0s); @1080p",
-            "@1080p",
+            "@720p",
+            "padded to provider-min 4.0s (actual shot 3.0s); @720p",
+            "@720p",
             "",
         ])
     }
@@ -215,8 +215,8 @@ struct CostsTests {
     func bug24FalPath() throws {
         let cfg = CostsConfig.bundledDefault
         let falShot = try makeShot(id: "s001", provider: .fal, suggestion: .seedance20)
-        #expect(cfg.runwayModel(for: falShot, phase: .final) == "fal:bytedance/seedance-2.0/pro")
-        #expect(cfg.runwayModel(for: falShot, phase: .preview) == "fal:bytedance/seedance-2.0/fast")
+        #expect(cfg.runwayModel(for: falShot, phase: .final) == "fal:bytedance/seedance-2.5/pro")
+        #expect(cfg.runwayModel(for: falShot, phase: .preview) == "fal:bytedance/seedance-2.5/pro")
 
         // FAL + defaults pointing at a Runway model → safe fal fallback.
         let staleCfg = CostsConfig(
@@ -282,6 +282,13 @@ struct CostsTests {
             resolutionForPhase(modelId: "fal:bytedance/seedance-2.0/pro", phase: .preview) == "720p")
         #expect(
             resolutionForPhase(modelId: "fal:bytedance/seedance-2.0/fast", phase: .preview) == "720p")
+        #expect(
+            resolutionForPhase(
+                modelId: "fal:bytedance/seedance-2.5/pro", phase: .final,
+                finalResolution: "1080p"
+            ) == "720p")
+        #expect(
+            resolutionForPhase(modelId: "fal:bytedance/seedance-2.5/pro", phase: .preview) == "480p")
     }
 
     /// `stitchedSegments` — `max(1, ceil(total/limit))`.
@@ -297,7 +304,7 @@ struct CostsTests {
     /// full duration (no truncate/pad) and annotates `stitch=N` when segmented.
     @Test("estimate stitch branch — SECTION mode bills full duration with stitch note")
     func estimateStitchBranch() throws {
-        // Two long section shots, FAL → Pro 1080p @ 0.682/s, max 10s per call.
+        // Two section shots, FAL → Seedance 2.5 720p @ 0.473/s, max 30s per call.
         let song = try Song(
             title: "s", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 60.0
         )
@@ -319,17 +326,17 @@ struct CostsTests {
             shotlist: shotlist, costs: .bundledDefault, phase: .final, finalResolution: "1080p"
         )
 
-        // s001: 25s billed in full → 25 * 0.682 = 17.05; ceil(25/10)=3 segments.
+        // s001: 25s billed in full and fits one 30s generation.
         #expect(est.shotEstimates[0].durationS == 25.0)
-        #expect(est.shotEstimates[0].eur == pyRound(25.0 * 0.682, 3))
-        #expect(est.shotEstimates[0].eur == 17.05)
+        #expect(est.shotEstimates[0].eur == pyRound(25.0 * 0.473, 3))
+        #expect(est.shotEstimates[0].eur == 11.825)
         #expect(est.shotEstimates[0].truncated == false)
-        #expect(est.shotEstimates[0].notes == "stitch=3; @1080p")
-        // s002: 8s ≤ 10s → 1 segment → no stitch prefix, just @1080p.
+        #expect(est.shotEstimates[0].notes == "@720p")
+        // s002 also fits one generation.
         #expect(est.shotEstimates[1].durationS == 8.0)
-        #expect(est.shotEstimates[1].eur == pyRound(8.0 * 0.682, 3))
-        #expect(est.shotEstimates[1].notes == "@1080p")
-        #expect(est.totalEur == pyRound(17.05 + pyRound(8.0 * 0.682, 3), 2))
+        #expect(est.shotEstimates[1].eur == pyRound(8.0 * 0.473, 3))
+        #expect(est.shotEstimates[1].notes == "@720p")
+        #expect(est.totalEur == pyRound(11.825 + pyRound(8.0 * 0.473, 3), 2))
     }
 
     // MARK: - Cost guard

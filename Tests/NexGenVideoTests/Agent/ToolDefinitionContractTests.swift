@@ -120,6 +120,18 @@ struct ToolDefinitionContractTests {
         }
     }
 
+    @Test("video duration accepts seconds or automatic mode")
+    func videoDurationSchema() throws {
+        let tool = try #require(ToolDefinitions.all.first { $0.name == .generateVideo })
+        let properties = try #require(schemaProperties(tool.inputSchema["properties"]))
+        let duration = try #require(properties["duration"] as? [String: Any])
+        let variants = try #require(duration["anyOf"] as? [[String: Any]])
+        #expect(variants.contains { $0["type"] as? String == "integer" })
+        #expect(variants.contains {
+            $0["type"] as? String == "string" && ($0["enum"] as? [String]) == ["auto"]
+        })
+    }
+
     @Test("write_shotlist schema binds production plans to generated source modes")
     func shotlistProductionPlanSchema() throws {
         let tool = try #require(
@@ -384,16 +396,40 @@ struct ToolDefinitionContractTests {
     @MainActor
     func feedbackDoesNotClaimExternalEscalation() async {
         let instructions = AgentInstructions.serverInstructions.lowercased()
-        #expect(instructions.contains("send_feedback once to record it in local diagnostics"))
+        #expect(instructions.contains("send_feedback once to record it in local-only diagnostics"))
         #expect(instructions.contains("send_feedback once to flag it for the team") == false)
+
+        let description = (
+            ToolDefinitions.all.first { $0.name == .sendFeedback }?.description ?? ""
+        ).lowercased()
+        #expect(description.contains("local-only"))
+        #expect(description.contains("does not notify a team or send an external report"))
 
         let harness = ToolHarness()
         let args: [String: Any] = ["category": "failure", "summary": "A test limitation"]
-        _ = await harness.runRaw("send_feedback", args: args)
+        let recorded = await harness.runRaw("send_feedback", args: args)
         let duplicate = await harness.runRaw("send_feedback", args: args)
-        let text = ToolHarness.textOf(duplicate).lowercased()
-        #expect(text.contains("local diagnostics"))
-        #expect(text.contains("team") == false)
+        let recordedText = ToolHarness.textOf(recorded).lowercased()
+        let duplicateText = ToolHarness.textOf(duplicate).lowercased()
+        #expect(recordedText.contains("local-only diagnostics"))
+        #expect(recordedText.contains("no external report was sent"))
+        #expect(duplicateText.contains("local-only diagnostics"))
+        #expect(duplicateText.contains("team") == false)
+
+        for index in 1..<8 {
+            _ = await harness.runRaw("send_feedback", args: [
+                "category": "failure",
+                "summary": "Distinct test limitation \(index)",
+            ])
+        }
+        let limited = await harness.runRaw("send_feedback", args: [
+            "category": "failure",
+            "summary": "One beyond the local limit",
+        ])
+        let limitedText = ToolHarness.textOf(limited).lowercased()
+        #expect(limitedText.contains("local-only diagnostics limit reached"))
+        #expect(limitedText.contains("recording more"))
+        #expect(limitedText.contains("sending more") == false)
     }
 
     private func auditObjectSchemas(
@@ -456,15 +492,32 @@ struct ToolDefinitionContractTests {
             )
         }
 
-        if let alternatives = schema["anyOf"] as? [[String: Any]] {
-            for (index, alternative) in alternatives.enumerated() {
-                auditObjectSchemas(
-                    alternative,
-                    path: "\(path).anyOf[\(index)]",
-                    dynamicMaps: dynamicMaps,
-                    seenDynamicMaps: &seenDynamicMaps,
-                    failures: &failures
-                )
+        for keyword in ["anyOf", "oneOf", "allOf"] {
+            if let alternatives = schema[keyword] as? [[String: Any]] {
+                for (index, alternative) in alternatives.enumerated() {
+                    auditObjectSchemas(
+                        alternative,
+                        path: "\(path).\(keyword)[\(index)]",
+                        dynamicMaps: dynamicMaps,
+                        seenDynamicMaps: &seenDynamicMaps,
+                        failures: &failures
+                    )
+                }
+            }
+        }
+
+        for keyword in ["$defs", "definitions"] {
+            if let definitions = schemaProperties(schema[keyword]) {
+                for key in definitions.keys.sorted() {
+                    guard let definition = definitions[key] else { continue }
+                    auditObjectSchemas(
+                        definition,
+                        path: "\(path).\(keyword).\(key)",
+                        dynamicMaps: dynamicMaps,
+                        seenDynamicMaps: &seenDynamicMaps,
+                        failures: &failures
+                    )
+                }
             }
         }
     }

@@ -95,6 +95,9 @@ the current phase's capability set is rejected before it can spend money or muta
   non-imported final shot to its exact video hash, compiled provider prompt, generation model, and the
   exact current conditioning inputs required by the Shot List: source video, start/end frames, or the
   deterministic reference-image plan.
+- Model-dependent Sanity checks resolve the selected provider/model ID through the active pack's
+  versioned capability catalog. Missing, unreadable, schema-mismatched, or unknown capability data
+  fails closed; provider aliases for the same concrete model share one capability definition.
 - Imported and AI-enhanced shots never enter Frames. Every AI-enhanced shot declares one project-local
   `source_path` in the Shot List; `next_render_shot` resolves that source for the agent, and Render
   approval rejects any missing, changed, or substituted source.

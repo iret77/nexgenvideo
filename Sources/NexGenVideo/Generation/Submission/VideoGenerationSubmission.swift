@@ -70,7 +70,7 @@ struct VideoGenerationSubmission {
                 buildParams: { uploaded in
                     .video(VideoGenerationParams(
                         prompt: genInput.prompt,
-                        duration: genInput.duration,
+                        duration: genInput.videoDuration ?? .seconds(genInput.duration),
                         aspectRatio: genInput.aspectRatio,
                         resolution: genInput.resolution,
                         sourceVideoURL: uploaded.first,
@@ -129,7 +129,7 @@ struct VideoGenerationSubmission {
                     audioRefCount: audioRefCount
                 ).params(
                     prompt: genInput.prompt,
-                    duration: genInput.duration,
+                    duration: genInput.videoDuration ?? .seconds(genInput.duration),
                     aspectRatio: genInput.aspectRatio,
                     resolution: genInput.resolution,
                     generateAudio: generateAudio
@@ -212,6 +212,9 @@ struct VideoGenerationSubmission {
             if frames.count > 1, !model.supportsLastFrame {
                 return "\(model.displayName) does not accept a last frame"
             }
+            if model.requiresReferenceImage, frames.isEmpty, imageRefs.isEmpty {
+                return "\(model.displayName) requires a start frame"
+            }
             if model.framesAndReferencesExclusive, !frames.isEmpty, !allRefs.isEmpty {
                 return "\(model.displayName) uses frames OR references, not both. Clear one side."
             }
@@ -269,7 +272,7 @@ struct VideoGenerationSubmission {
 
         func params(
             prompt: String,
-            duration: Int,
+            duration: VideoDuration,
             aspectRatio: String,
             resolution: String?,
             generateAudio: Bool

@@ -90,11 +90,16 @@ extension CostsConfig {
                 minDurationS: 5.0,
                 eurPerSecondByResolution: ["720p": 0.2419]
             ),
+            "fal:bytedance/seedance-2.5/pro": ModelPricing(
+                eurPerSecond: 0.473, maxDurationS: 30.0, defaultRatio: "16:9",
+                minDurationS: 4.0,
+                eurPerSecondByResolution: ["480p": 0.2205, "720p": 0.473]
+            ),
         ],
         modelMap: ["SEEDANCE_2_0": "seedance2"],
         defaults: [
-            "preview": "fal:bytedance/seedance-2.0/fast",
-            "final": "fal:bytedance/seedance-2.0/pro",
+            "preview": "fal:bytedance/seedance-2.5/pro",
+            "final": "fal:bytedance/seedance-2.5/pro",
         ],
         overlapPreS: 1.5,
         overlapPostS: 1.5,
@@ -127,11 +132,19 @@ extension CostsConfig {
             min_duration_s: 5.0
             eur_per_second_by_resolution:
               720p: 0.2419
+          "fal:bytedance/seedance-2.5/pro":
+            eur_per_second: 0.473
+            max_duration_s: 30.0
+            default_ratio: "16:9"
+            min_duration_s: 4.0
+            eur_per_second_by_resolution:
+              480p: 0.2205
+              720p: 0.473
         model_map:
           SEEDANCE_2_0: seedance2
         defaults:
-          preview: "fal:bytedance/seedance-2.0/fast"
-          final: "fal:bytedance/seedance-2.0/pro"
+          preview: "fal:bytedance/seedance-2.5/pro"
+          final: "fal:bytedance/seedance-2.5/pro"
         overlap:
           pre_s: 1.5
           post_s: 1.5

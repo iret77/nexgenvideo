@@ -685,7 +685,13 @@ enum ToolDefinitions {
                     "shotId": ["type": "string", "description": "The exact shotId returned by compile_prompt, including the literal 'none' for free generation."],
                     "name": ["type": "string", "description": "Display name for the asset in the media library. Defaults to first 30 chars of prompt."],
                     "model": ["type": "string", "description": "Model ID (e.g. 'veo3.1-fast'). Use list_models to see options. Defaults to first available model."],
-                    "duration": ["type": "integer", "description": "Duration in seconds. Valid values depend on model."],
+                    "duration": [
+                        "anyOf": [
+                            ["type": "integer"] as [String: Any],
+                            ["type": "string", "enum": ["auto"]] as [String: Any],
+                        ],
+                        "description": "Duration in seconds, or 'auto' when list_models reports supportsAuto. Valid seconds and ranges depend on model.",
+                    ],
                     "aspectRatio": ["type": "string", "description": "Aspect ratio (e.g. '16:9', '9:16', '1:1')"],
                     "resolution": ["type": "string", "description": "Resolution (e.g. '720p', '1080p', '4k')"],
                     "startFrameMediaRef": ["type": "string", "description": "Media asset ID to use as the first frame (image-to-video)"],
@@ -1038,7 +1044,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .sendFeedback,
-            description: "Record an agent limitation or bug in the local diagnostics log so it can be reviewed later. Use when you can't do what the user asked because a capability or tool is missing or behaves wrong, the result is clearly off, or the user is plainly hitting a rough edge. This is recorded without a confirmation step — so PARAPHRASE in your own words: never include verbatim user messages, prompts, file paths, media, transcript text, or any project content. App/OS version and your recent tool names are attached automatically. Use sparingly: at most once per distinct issue.",
+            description: "Record an agent limitation or bug in this session's local diagnostics log for later diagnosis and development. This is local-only: it does not notify a team or send an external report. Use when you can't do what the user asked because a capability or tool is missing or behaves wrong, the result is clearly off, or the user is plainly hitting a rough edge. This is recorded without a confirmation step — so PARAPHRASE in your own words: never include verbatim user messages, prompts, file paths, media, transcript text, or any project content. App/OS version and your recent tool names are attached automatically. Use sparingly: at most once per distinct issue.",
             inputSchema: objectSchema(
                 properties: [
                     "category": ["type": "string", "enum": ["missing_capability", "wrong_result", "confusing_ux", "failure", "suggestion"], "description": "What kind of problem this is."],

@@ -146,10 +146,10 @@ enum AgentInstructions {
             cheap iterations. Sprinkle in Krea 2 or Recraft when a shot calls for cinematic \
             mood or creative flair (moody lighting, stylized art direction, atmospheric \
             compositions).
-          • Video — default to Seedance 2.0 Fast at 720p for most clips, especially while \
-            iterating. Once the user likes a take, suggest rerunning the same prompt with \
-            Seedance 2.0 (regular, not Fast) for higher quality. If Seedance errors, retry \
-            on Kling v3. Use Grok Imagine only for very simple, fast-turnaround scenes. \
+          • Video — default to Seedance 2.5 at 720p for most clips. It supports 4–30 seconds \
+            or automatic duration, native audio, and up to 50 mixed references in reference \
+            mode. If Seedance errors, retry on Kling v3. Use Grok Imagine only for very \
+            simple, fast-turnaround scenes. \
             Rarely use Veo — only when the user asks or constraints require it.
         - PROMPT GATE (mandatory): never send your own phrasing to generate_video/image/audio. \
           For free generation and Frames, prepare a concrete English intent; Frames describe only \
@@ -301,7 +301,7 @@ enum AgentInstructions {
         # Feedback
         - If you can't do what the user asked because a tool or capability is missing, broken, or \
           returns a clearly wrong result — or the user is plainly hitting a limitation — call \
-          send_feedback once to record it in local diagnostics, with a paraphrased summary (never \
+          send_feedback once to record it in local-only diagnostics, with a paraphrased summary (never \
           verbatim user content). Skip it for choices you simply made, routine clarifications, or an \
           issue already recorded this session. Never claim a team was notified or an external report \
           was sent; mention the local diagnostic entry only when it helps the user understand the state.
