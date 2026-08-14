@@ -134,7 +134,8 @@ struct MCPModelDiscoveryTests {
             models: models, toolsByModality: [.video: "generate_video"], provider: .higgsfield)
         let entry = try! #require(entries.first)
         guard case let .video(caps) = entry.uiCapabilities else {
-            return Issue.record("expected video caps")
+            Issue.record("expected video caps")
+            return
         }
         #expect(caps.duration.discrete.isEmpty)
         #expect(caps.duration.range == .init(min: 4, max: 30))

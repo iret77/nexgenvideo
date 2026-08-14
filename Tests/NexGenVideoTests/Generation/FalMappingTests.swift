@@ -297,7 +297,8 @@ struct FalRegistryTests {
             for: "bytedance/seedance-2.5/reference-to-video"
         ))
         guard case .video(let caps) = reference.entry.uiCapabilities else {
-            return Issue.record("expected reference video caps")
+            Issue.record("expected reference video caps")
+            return
         }
         #expect(caps.maxReferenceImages == 30)
         #expect(caps.maxReferenceVideos == 10)
@@ -306,7 +307,8 @@ struct FalRegistryTests {
 
         let image = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.5/image-to-video"))
         guard case .video(let imageCaps) = image.entry.uiCapabilities else {
-            return Issue.record("expected image-to-video caps")
+            Issue.record("expected image-to-video caps")
+            return
         }
         #expect(imageCaps.supportsFirstFrame)
         #expect(imageCaps.supportsLastFrame)
