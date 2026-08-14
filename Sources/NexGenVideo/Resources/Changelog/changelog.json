@@ -2,6 +2,44 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.2.0",
+      "date": "2026-08-14",
+      "sections": [
+        {
+          "heading": "Home and editor",
+          "items": [
+            "Home now restores undersized windows to the supported minimum, and the format chooser shows every available format card and description without scrolling.",
+            "The composer paperclip now offers both existing reference assets and new file imports without adding a separate row above the prompt.",
+            "Structured dialog choices appear as compact selections instead of messages that look user-typed; actual free-text responses remain user messages.",
+            "Models settings now shows only models that can run through an enabled provider and updates immediately when provider availability changes."
+          ]
+        },
+        {
+          "heading": "Agent and workflows",
+          "items": [
+            "Production approvals now remain pending in durable cards without blocking a tool call, timing out, retrying, or inventing a user decline.",
+            "Pattern Fit now ranks every valid authored profile immediately, reports library coverage and invalid profiles, and never waits for a fully authored library.",
+            "Agent tool schemas now reject unknown fields at both Anthropic and MCP boundaries while preserving explicitly typed dynamic maps.",
+            "Agent feedback is recorded honestly in local-only diagnostics; it no longer claims that a team was notified or an external report was sent."
+          ]
+        },
+        {
+          "heading": "Projects and documentation",
+          "items": [
+            "Media imports now require a saved project and either complete a project-local copy or fail without registering a fragile external-path asset.",
+            "Developer documentation now reflects external signed format packs, NexGenVideo-hosted search models, and GitHub Actions as the only build and verification path."
+          ]
+        },
+        {
+          "heading": "Generation",
+          "items": [
+            "Seedance 2.5 is integrated through fal.ai and recognized across Higgsfield discovery, with automatic or 4–30-second duration, 480p and 720p output, and up to 50 mixed references where supported.",
+            "Music Video duration checks now read versioned pack capability data instead of enforcing a hardcoded 15-second Seedance limit."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.1.1",
       "date": "2026-08-13",
       "sections": [
