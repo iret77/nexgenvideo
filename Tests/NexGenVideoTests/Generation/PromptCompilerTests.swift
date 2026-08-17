@@ -45,7 +45,7 @@ struct PromptCompilerTests {
 
     @Test func rememberedIntentCanBeRecompiledForAUserSelectedModel() async throws {
         let original = try await PromptCompiler.compile(
-            intent: "a grey mouse sheriff in a desert town",
+            intent: "a weathered grey mouse sheriff standing alone in a sun-baked desert town at golden hour",
             modelId: "fal-ai/flux-pro",
             modality: .image,
             editor: nil

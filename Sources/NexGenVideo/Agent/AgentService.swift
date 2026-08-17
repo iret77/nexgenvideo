@@ -289,6 +289,12 @@ final class AgentService {
             return
         }
         guard submittingDialogID == nil, pendingDialog?.id == dialog.id else { return }
+        if dialog.purpose == .workflowIntake,
+           let role = dialog.fileIntake?.attachAs,
+           let conflict = intakeRoleConflict(role, urls: result.fileURLs) {
+            dialogSubmissionError = "\(conflict.name) is already assigned as \(Self.intakeRoleLabel(conflict.role))."
+            return
+        }
         if dialog.purpose == .workflowIntake, let editor {
             do {
                 try editor.pipelineAgentHarness.validateWorkflowIntake(
@@ -304,16 +310,6 @@ final class AgentService {
         dialogSubmissionError = nil
         if dialog.purpose == .chatClarification {
             pendingDialog = nil
-        }
-        if dialog.purpose == .workflowIntake,
-           let role = dialog.fileIntake?.attachAs,
-           let conflict = intakeRoleConflict(role, urls: result.fileURLs) {
-            sendDialogFailure(
-                dialog,
-                result: result,
-                notice: "\(conflict.name) is already assigned as \(Self.intakeRoleLabel(conflict.role))."
-            )
-            return
         }
         // Host workflow inputs never become individual chat turns.
         switch dialog.fileIntake?.attachAs {

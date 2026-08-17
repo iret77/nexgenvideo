@@ -23,6 +23,105 @@ struct HardStepIntakeTests {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }
 
+    private func writeApprovedAnalysis(in dataRoot: URL) throws {
+        let trackURL = dataRoot.appendingPathComponent("audio/track.wav")
+        try FileManager.default.createDirectory(
+            at: trackURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("fixture-track".utf8).write(to: trackURL)
+        let trackHash = try FileDigest.sha256(of: trackURL)
+        let analysisURL = dataRoot.appendingPathComponent("analysis/track.json")
+        try FileManager.default.createDirectory(
+            at: analysisURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let analysis: [String: Any] = [
+            "schema": analysisSchemaVersion,
+            "project": "hard-step-intake",
+            "song_path": "audio/track.wav",
+            "song_sha256": trackHash,
+            "sample_rate": 44_100,
+            "duration_s": 12.0,
+            "bpm": 120.0,
+            "tempo_multiplier": 1.0,
+            "beats": [0.5, 1.0, 1.5, 2.0, 2.5],
+            "downbeats": [0.5, 2.5],
+            "sections": [[
+                "index": 0, "start": 0.0, "end": 12.0, "cluster": 0,
+                "source": "measured_system_hierarchy",
+            ]],
+            "structure_candidates": [
+                ["source": "librosa", "sections": [[
+                    "index": 0, "start": 0.0, "end": 12.0, "cluster": 0,
+                ]]],
+                ["source": "essentia", "sections": [[
+                    "index": 0, "start": 0.0, "end": 12.0, "cluster": 0,
+                ]]],
+            ],
+            "structure_resolution": [
+                "version": "adaptive-structure/v5",
+                "status": "resolved",
+                "method": "music_understanding_hierarchy",
+                "detector_sources": ["apple_music_understanding"],
+                "minimum_section_bars": 0,
+                "candidate_boundary_count": 0,
+                "consensus_boundary_count": 0,
+                "alignment_marker_count": 0,
+                "resolved_alignment_marker_count": 0,
+                "accepted_boundary_count": 0,
+                "discarded_boundary_count": 0,
+                "boundary_evidence": [[
+                    "time": 0.0,
+                    "kind": "system_hierarchy",
+                    "detector_sources": ["apple_music_understanding"],
+                ]],
+                "hierarchy": [
+                    "source": "apple_music_understanding",
+                    "sections": [["start": 0.0, "end": 12.0]],
+                    "segments": [["start": 0.0, "end": 12.0]],
+                    "phrases": [["start": 0.0, "end": 12.0]],
+                ],
+                "detail": "Measured system hierarchy.",
+            ],
+            "downbeat_source": "music-understanding",
+            "pipeline_stages": ["structure", "music_understanding"],
+            "stage_diagnostics": [[
+                "stage": "music_understanding",
+                "status": "succeeded",
+                "detail": "Measured system hierarchy.",
+            ]],
+            "alignment": [],
+            "interpretation": [
+                "section_labels": [[
+                    "index": "0", "label": "intro", "confidence": "1.0",
+                ]],
+                "anomalies": [],
+                "overall_character": "Measured opening.",
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: analysis).write(to: analysisURL)
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: "hard-step-intake",
+                songSHA256: trackHash,
+                lyricsAlignment: nil
+            ),
+            dataRoot: dataRoot
+        )
+        let registry = PackCatalog.registry(activePack: "musicvideo")
+        guard let lineage = registry.phaseLineageProviders["analysis"],
+              let requirement = registry.gateRequirements["analysis"] else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        try PipelineLineageStore.record(
+            phase: "analysis",
+            snapshot: try lineage(dataRoot),
+            dataRoot: dataRoot
+        )
+        try requirement(dataRoot)
+    }
+
     private func step(_ id: String, phase: String = "p", kind: HardStep.Kind,
                       required: Bool = false, repeatable: Bool = false) -> HardStep {
         HardStep(id: id, phase: phase, kind: kind, accept: [], multiple: false,
@@ -480,6 +579,7 @@ struct HardStepIntakeTests {
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
+        try writeApprovedAnalysis(in: packageDataRoot)
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&packageGates, phase: "project_init")
         GatesOperations.approve(&packageGates, phase: "analysis")
@@ -774,6 +874,7 @@ struct HardStepIntakeTests {
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
+        try writeApprovedAnalysis(in: packageDataRoot)
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&packageGates, phase: "project_init")
         GatesOperations.approve(&packageGates, phase: "analysis")
