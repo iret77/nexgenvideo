@@ -47,6 +47,36 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(implementation.contains("isUserPinnedAway = false"))
     }
 
+    @Test func backendSetupNoticeIsIndependentFromWorkflowIntake() throws {
+        let source = try agentPanelSource()
+        let bodyStart = try #require(source.range(of: "var body: some View"))
+        let bodyEnd = try #require(source.range(
+            of: "private func refreshDiscoveredPlugins",
+            range: bodyStart.upperBound..<source.endIndex
+        ))
+        let messageStart = try #require(source.range(of: "private func messageList"))
+        let messageEnd = try #require(source.range(
+            of: "private func scrollingMessages",
+            range: messageStart.upperBound..<source.endIndex
+        ))
+        let emptyStart = try #require(source.range(of: "private var emptyState"))
+        let emptyEnd = try #require(source.range(
+            of: "private var entryCommands",
+            range: emptyStart.upperBound..<source.endIndex
+        ))
+
+        let body = source[bodyStart.lowerBound..<bodyEnd.lowerBound]
+        let messageList = source[messageStart.lowerBound..<messageEnd.lowerBound]
+        let emptyState = source[emptyStart.lowerBound..<emptyEnd.lowerBound]
+
+        #expect(body.contains("service.refreshBackendStatus()"))
+        #expect(messageList.contains("if showsBackendSetupNotice"))
+        #expect(messageList.contains("backendSetupNotice"))
+        #expect(!emptyState.contains("backendSetupNotice"))
+        #expect(source.contains("SettingsWindowController.shared.show(tab: .agent)"))
+        #expect(source.contains("Open Agent Settings"))
+    }
+
     @Test func transcriptHeaderIsInFlowInsteadOfLayeredOverMessages() throws {
         let source = try agentPanelSource()
         let start = try #require(source.range(of: "var body: some View"))

@@ -10,14 +10,15 @@ final class AgentService {
     private var apiKeyObserver: NSObjectProtocol?
     private var backendObserver: NSObjectProtocol?
     private var claudeStatusObserver: NSObjectProtocol?
+    private var apiKeyGeneration = 0
 
     private(set) var backend = AgentBackendPreference.selected
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
+    private(set) var isCheckingAPIKey = true
     private(set) var isCheckingClaude = false
     private var claudeStatusGeneration = 0
 
     init() {
-        reloadAPIKey()
         apiKeyObserver = NotificationCenter.default.addObserver(
             forName: .anthropicAPIKeyChanged,
             object: nil,
@@ -38,10 +39,7 @@ final class AgentService {
                 self.backend = AgentBackendPreference.selected
                 self.claudeStatusGeneration &+= 1
                 self.isCheckingClaude = false
-                if self.backend == .claudeCode {
-                    self.isCheckingClaude = true
-                    Task { await self.refreshClaudeCodeStatus() }
-                }
+                self.refreshBackendStatus()
             }
         }
         claudeStatusObserver = NotificationCenter.default.addObserver(
@@ -62,18 +60,20 @@ final class AgentService {
                 }
             }
         }
-        if backend == .claudeCode {
-            isCheckingClaude = true
-            Task { await refreshClaudeCodeStatus() }
-        }
+        refreshBackendStatus()
     }
 
     private func reloadAPIKey() {
+        apiKeyGeneration &+= 1
+        let generation = apiKeyGeneration
+        isCheckingAPIKey = true
         Task { [weak self] in
             let key = await Task.detached(priority: .utility) {
                 AnthropicKeychain.load() ?? ""
             }.value
-            self?.apiKey = key
+            guard let self, self.apiKeyGeneration == generation else { return }
+            self.apiKey = key
+            self.isCheckingAPIKey = false
         }
     }
 
@@ -90,6 +90,20 @@ final class AgentService {
     }
 
     var hasApiKey: Bool { !apiKey.isEmpty }
+
+    var isCheckingBackend: Bool {
+        switch backend {
+        case .anthropicAPI: return isCheckingAPIKey && !hasApiKey
+        case .claudeCode: return isCheckingClaude && claudeStatus?.isAuthenticated != true
+        }
+    }
+
+    var backendStatusCheckLabel: String {
+        switch backend {
+        case .anthropicAPI: return "Checking Anthropic API key…"
+        case .claudeCode: return "Checking Claude Code…"
+        }
+    }
 
     var canStream: Bool {
         switch backend {
@@ -108,6 +122,27 @@ final class AgentService {
             return "Install Claude Code in"
         case .claudeCode:
             return "Sign in to Claude Code in"
+        }
+    }
+
+    var backendSetupMessage: String {
+        switch backend {
+        case .anthropicAPI:
+            return "Add an Anthropic API key to use the AI chat."
+        case .claudeCode where claudeStatus?.found != true:
+            return "Install Claude Code to use the AI chat."
+        case .claudeCode:
+            return "Sign in to Claude Code to use the AI chat."
+        }
+    }
+
+    func refreshBackendStatus() {
+        switch backend {
+        case .anthropicAPI:
+            reloadAPIKey()
+        case .claudeCode:
+            isCheckingClaude = true
+            Task { await refreshClaudeCodeStatus() }
         }
     }
 
