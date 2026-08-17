@@ -2,6 +2,35 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.3.0",
+      "date": "2026-08-17",
+      "sections": [
+        {
+          "heading": "Agent workflow",
+          "items": [
+            "Current agent activity now stays visible beside the composer during long operations, so completed analysis reports cannot hide whether NexGenVideo is still working, waiting, or finished.",
+            "Pending direction cards and imported creative references remain represented in the conversation as the workflow advances instead of leaving the transcript anchored on an older Audio Analysis message.",
+            "Long suggested answers use compact labels, while their complete values remain intact when submitted.",
+            "Claude readiness now appears as soon as chat opens instead of becoming visible only after the first interaction."
+          ]
+        },
+        {
+          "heading": "Generation providers",
+          "items": [
+            "Spend approval now lets you switch among enabled provider and model combinations that can actually run, without cancelling and restarting the generation.",
+            "The selected provider and model stay bound through prompt compilation, pricing, media hosting, and dispatch.",
+            "MCP generation now adapts image, video, audio, and upscale arguments to each provider's live tool schema, including nested Higgsfield parameters, while preserving typed workflow values and actionable provider errors."
+          ]
+        },
+        {
+          "heading": "Projects",
+          "items": [
+            "Saving a project no longer reports a false external-change conflict after NexGenVideo's own coordinated package updates."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.2.0",
       "date": "2026-08-14",
       "sections": [
