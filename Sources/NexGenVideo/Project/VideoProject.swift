@@ -90,6 +90,7 @@ final class VideoProject: NSDocument {
             doc.applyLoadedContents(contents)
             doc.updateChangeCount(.changeDone)
         }
+        try doc.recordKnownPackageState(at: url)
         return doc
     }
 
@@ -222,10 +223,6 @@ final class VideoProject: NSDocument {
             completionHandler(blocked)
             return
         }
-        if let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate {
-            fileModificationDate = date
-        }
-
         captureSaveSnapshot()
         if let captureError = snapshotCaptureError {
             clearSaveSnapshot()
@@ -251,6 +248,16 @@ final class VideoProject: NSDocument {
             }
             completionHandler(error)
         }
+    }
+
+    func recordKnownPackageState(at url: URL) throws {
+        let values = try url.resourceValues(
+            forKeys: [.contentModificationDateKey]
+        )
+        guard let date = values.contentModificationDate else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        fileModificationDate = date
     }
 
     nonisolated static func saveContextError(

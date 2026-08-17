@@ -331,6 +331,7 @@ final class AppState {
                     }
                     // A fresh UUID prevents a new project from inheriting a namesake's recovery data.
                     try ProjectIdentity.regenerate(at: url)
+                    try doc.recordKnownPackageState(at: url)
                 } catch {
                     NSDocumentController.shared.removeDocument(doc)
                     NSAlert(error: error).runModal()

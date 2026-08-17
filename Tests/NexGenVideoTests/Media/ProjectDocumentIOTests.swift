@@ -112,6 +112,63 @@ struct ProjectDocumentIOTests {
         )
     }
 
+    @Test func customLoadRecordsThePackageModificationDate() async throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-load-state-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        let key = try #require(ProjectIdentity.existingKey(for: package))
+        defer {
+            ProjectWorkingCopy.discard(key: key)
+            try? fm.removeItem(at: root)
+        }
+
+        let doc = try await VideoProject.load(from: package)
+        let packageDate = try #require(
+            package.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate
+        )
+
+        #expect(doc.fileModificationDate == packageDate)
+    }
+
+    @Test func hostPackageMutationRefreshesTheKnownModificationDate() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-known-state-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        let staleDate = Date(timeIntervalSince1970: 1)
+        doc.fileModificationDate = staleDate
+        try fm.setAttributes(
+            [.modificationDate: staleDate],
+            ofItemAtPath: package.path
+        )
+        try ProjectIdentity.regenerate(at: package)
+        let hostMutationDate = try #require(
+            package.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate
+        )
+
+        try doc.recordKnownPackageState(at: package)
+
+        #expect(hostMutationDate != staleDate)
+        #expect(doc.fileModificationDate == hostMutationDate)
+    }
+
     private func makePackage(at url: URL) throws {
         let media = url.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         try fm.createDirectory(at: media, withIntermediateDirectories: true)
