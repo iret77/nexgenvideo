@@ -50,6 +50,8 @@ struct GenerationRequest {
     let durationSeconds: Double?
     let placement: Placement
     let origin: Origin
+    /// Exact user-approved provider target. Nil lets NGV resolve its normal default.
+    let target: ResolvedGenerationTarget?
 
     /// A precompiled prompt + token from the agent's `compile_prompt` tool. When present the
     /// controller validates it through the gate instead of composing (the token proves it came from
@@ -73,6 +75,7 @@ struct GenerationRequest {
         durationSeconds: Double? = nil,
         placement: Placement,
         origin: Origin,
+        target: ResolvedGenerationTarget? = nil,
         precompiled: (
             text: String,
             token: String,
@@ -88,6 +91,7 @@ struct GenerationRequest {
         self.durationSeconds = durationSeconds
         self.placement = placement
         self.origin = origin
+        self.target = target
         self.precompiled = precompiled
         self.rawPrompt = rawPrompt
         self.submission = submission
@@ -189,7 +193,7 @@ enum GenerationController {
             return .failure(.compile(error.localizedDescription))
         }
 
-        let target = GenerationService.dispatchTarget(modelId: request.modelId)
+        let target = request.target ?? GenerationService.dispatchTarget(modelId: request.modelId)
         let authorization: GenerationAuthorization
         do {
             authorization = try await GenerationBudgetGuard.authorize(

@@ -118,7 +118,7 @@ enum FalModelRegistry {
                 allowedEndpoints: [id], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: imageAspects, qualities: nil,
-                    supportsImageReference: true, maxImages: 1
+                    supportsImageReference: true, requiresImageReference: true, maxImages: 1
                 ))
             ),
             imageSize: size, imageRef: ref

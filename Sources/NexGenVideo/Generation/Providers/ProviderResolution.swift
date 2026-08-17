@@ -126,4 +126,21 @@ enum ProviderResolver {
             .filter { activation.isActive($0.provider, $0.transport) }
             .min { effectiveCost($0) < effectiveCost($1) }
     }
+
+    /// Return one exact active binding per provider for the user-facing provider picker.
+    static func preferredActiveBindingPerProvider(
+        bindings: [ProviderBinding],
+        activation: ProviderActivation,
+        effectiveCost: (ProviderBinding) -> Double
+    ) -> [ProviderBinding] {
+        var best: [GenerationProvider: ProviderBinding] = [:]
+        for binding in bindings where activation.isActive(binding.provider, binding.transport) {
+            if let current = best[binding.provider],
+               effectiveCost(current) <= effectiveCost(binding) {
+                continue
+            }
+            best[binding.provider] = binding
+        }
+        return GenerationProvider.allCases.compactMap { best[$0] }
+    }
 }

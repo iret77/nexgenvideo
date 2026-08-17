@@ -47,6 +47,36 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(implementation.contains("isUserPinnedAway = false"))
     }
 
+    @Test func backendSetupNoticeIsIndependentFromWorkflowIntake() throws {
+        let source = try agentPanelSource()
+        let bodyStart = try #require(source.range(of: "var body: some View"))
+        let bodyEnd = try #require(source.range(
+            of: "private func refreshDiscoveredPlugins",
+            range: bodyStart.upperBound..<source.endIndex
+        ))
+        let messageStart = try #require(source.range(of: "private func messageList"))
+        let messageEnd = try #require(source.range(
+            of: "private func scrollingMessages",
+            range: messageStart.upperBound..<source.endIndex
+        ))
+        let emptyStart = try #require(source.range(of: "private var emptyState"))
+        let emptyEnd = try #require(source.range(
+            of: "private var entryCommands",
+            range: emptyStart.upperBound..<source.endIndex
+        ))
+
+        let body = source[bodyStart.lowerBound..<bodyEnd.lowerBound]
+        let messageList = source[messageStart.lowerBound..<messageEnd.lowerBound]
+        let emptyState = source[emptyStart.lowerBound..<emptyEnd.lowerBound]
+
+        #expect(body.contains("service.refreshBackendStatus()"))
+        #expect(messageList.contains("if showsBackendSetupNotice"))
+        #expect(messageList.contains("backendSetupNotice"))
+        #expect(!emptyState.contains("backendSetupNotice"))
+        #expect(source.contains("SettingsWindowController.shared.show(tab: .agent)"))
+        #expect(source.contains("Open Agent Settings"))
+    }
+
     @Test func transcriptHeaderIsInFlowInsteadOfLayeredOverMessages() throws {
         let source = try agentPanelSource()
         let start = try #require(source.range(of: "var body: some View"))
@@ -69,6 +99,63 @@ struct AgentTranscriptLayoutPolicyTests {
             of: #"floatingTabBar\s+messageList"#,
             options: .regularExpression
         ) != nil)
+    }
+
+    @Test func liveStatusIsAPersistentInFlowSiblingAboveTheComposer() throws {
+        let source = try agentPanelSource()
+        let start = try #require(source.range(of: "var body: some View"))
+        let end = try #require(source.range(
+            of: "private func refreshDiscoveredPlugins",
+            range: start.upperBound..<source.endIndex
+        ))
+        let implementation = source[start.lowerBound..<end.lowerBound]
+
+        let status = try #require(implementation.range(
+            of: "AgentLiveStatusView(status: liveStatus)"
+        ))
+        let footer = try #require(implementation.range(
+            of: "footer",
+            range: status.upperBound..<implementation.endIndex
+        ))
+        #expect(status.lowerBound < footer.lowerBound)
+        #expect(implementation.contains("if let dialog = service.pendingDialog"))
+
+        let statusSource = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift"
+        )
+        #expect(!statusSource.contains(".overlay"))
+        #expect(!statusSource.contains("ZStack"))
+    }
+
+    @Test func dialogChoiceChipsUseBoundedCompactTitles() throws {
+        let source = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift"
+        )
+        let start = try #require(source.range(of: "private struct FlowChips"))
+        let implementation = source[start.lowerBound..<source.endIndex]
+
+        #expect(implementation.contains("Text(option.shortLabel)"))
+        #expect(!implementation.contains("Text(option.label)"))
+        #expect(implementation.contains("agentChoiceChipMaxWidth"))
+        #expect(implementation.contains(".help(option.label)"))
+        #expect(!implementation.contains(".fixedSize()"))
+    }
+
+    @Test func spendApprovalKeepsValidProviderAndModelChoicesInTheCard() throws {
+        let card = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/SpendApprovalCard.swift"
+        )
+        let executor = try sourceFile(
+            "Sources/NexGenVideo/Agent/Tools/ToolExecutor+Generate.swift"
+        )
+
+        #expect(card.contains("approval.options.filter { $0.isCurrentlyAvailable }"))
+        #expect(card.contains("Picker(\"Provider\""))
+        #expect(card.contains("Picker(\"Model\""))
+        #expect(!card.contains("CHEAPER OPTIONS"))
+        #expect(executor.contains("availableImageAlternatives"))
+        #expect(executor.contains("target: approved.target"))
+        #expect(executor.contains("PromptCompiler.recompile"))
     }
 
     @Test func sidebarKeepsTranscriptContainerFreeOfSecondaryLayers() throws {

@@ -681,7 +681,7 @@ final class GenerationService {
     /// Run a generation over a provider's MCP transport — NGV as MCP client, behind the gate. It
     /// discovers the provider's tools (`tools/list`), matches one to the request's modality, calls it
     /// with the gate-compiled prompt, and imports the returned media URL(s) through the same finalize
-    /// path as the REST providers. Tool match + argument shape are discovery-driven/best-effort; a
+    /// path as the REST providers. Tool match + argument shape come from live discovery; a
     /// provider whose MCP exposes no matching tool fails with guidance, not a keyless REST attempt.
     private func runMCPJob(
         provider: GenerationProvider,
@@ -699,6 +699,7 @@ final class GenerationService {
                 placeholders, "No MCP endpoint configured for \(provider.displayName).",
                 authorization: authorization, editor: editor, onFailure: onFailure)
         }
+        var submitted = false
         do {
             let tools = try await client.discoverTools()
             // Prefer the exact generate tool the resolved offer named (from discovery); fall back to
@@ -712,14 +713,22 @@ final class GenerationService {
                     "\(provider.displayName)'s MCP exposes no tool for this request — check the provider's MCP or add its API key.",
                     authorization: authorization, editor: editor, onFailure: onFailure)
             }
+            let arguments = try MCPGenerationArguments.make(
+                for: params,
+                model: modelParam,
+                schema: tool.inputSchema
+            )
             let requestId = UUID().uuidString
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: requestId,
                 editor: editor
             )
+            submitted = true
             let texts = try await client.callTool(
-                name: tool.name, arguments: Self.mcpArguments(for: params, model: modelParam))
+                name: tool.name,
+                arguments: arguments
+            )
             await client.disconnect()
             let urls = texts.flatMap(Self.extractURLs)
             guard !urls.isEmpty else {
@@ -734,7 +743,18 @@ final class GenerationService {
             markCharged(authorization: authorization, editor: editor)
         } catch {
             await client.disconnect()
-            failJob(placeholders, "MCP call to \(provider.displayName) failed: \(error.localizedDescription)", onFailure)
+            let message = "MCP call to \(provider.displayName) failed: \(error.localizedDescription)"
+            if submitted {
+                failJob(placeholders, message, onFailure)
+            } else {
+                failBeforeSubmission(
+                    placeholders,
+                    message,
+                    authorization: authorization,
+                    editor: editor,
+                    onFailure: onFailure
+                )
+            }
         }
     }
 
@@ -755,21 +775,6 @@ final class GenerationService {
             return wanted.contains { hay.contains($0) }
         }) { return hit }
         return tools.count == 1 ? tools.first : nil
-    }
-
-    /// Arguments for the MCP tool call. The prompt is already gate-compiled upstream; pass it as the
-    /// common `prompt` field most generation MCPs accept, plus the discovered `model` id when the tool
-    /// selects its model that way (Higgsfield's generate_* take a free-form `model`).
-    private static func mcpArguments(for params: BackendGenerationParams, model: String?) -> [String: String] {
-        var args: [String: String]
-        switch params {
-        case .video(let p): args = ["prompt": p.prompt]
-        case .image(let p): args = ["prompt": p.prompt]
-        case .audio(let p): args = ["prompt": p.prompt]
-        case .upscale: args = [:]
-        }
-        if let model, !model.isEmpty { args["model"] = model }
-        return args
     }
 
     /// Pull http(s) URLs out of an MCP tool's text/JSON result content.

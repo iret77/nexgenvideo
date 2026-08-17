@@ -252,16 +252,27 @@ final class PipelineAgentHarness {
         intakeResolution = nil
     }
 
+    func workflowIntakePhase(dialogID: String) -> String? {
+        guard offered?.dialogID == dialogID else { return nil }
+        return offered?.step.phase
+    }
+
     func resolveWorkflowIntake(
         dialogID: String,
         didProvideMaterial: Bool,
         editor: EditorViewModel
     ) -> Reconciliation {
-        guard offered?.dialogID == dialogID else {
+        do {
+            try validateWorkflowIntake(
+                dialogID: dialogID,
+                editor: editor,
+                materialAlreadyApplied: didProvideMaterial
+            )
+        } catch {
             return Reconciliation(
                 isReady: false,
                 agentPrompt: nil,
-                failure: "The workflow intake changed before the answer could be applied. Try again."
+                failure: error.localizedDescription
             )
         }
         intakeResolution = IntakeResolution(
@@ -269,6 +280,79 @@ final class PipelineAgentHarness {
             didProvideMaterial: didProvideMaterial
         )
         return reconcile(editor: editor)
+    }
+
+    func validateWorkflowIntake(
+        dialogID: String,
+        editor: EditorViewModel,
+        materialAlreadyApplied: Bool = false
+    ) throws {
+        guard let offered, offered.dialogID == dialogID else {
+            throw ToolError(
+                "The workflow intake changed before the answer could be applied. Try again."
+            )
+        }
+        guard let dataRoot = editor.workingRoot.flatMap({
+            DataRootResolver.dataRoot(of: $0)
+        }) else {
+            throw ToolError("The project is unavailable. Reopen it and try again.")
+        }
+        if let running = editor.pipelinePhaseRunCoordinator.runningPhase(
+            projectRoot: dataRoot
+        ) {
+            throw ToolError(
+                "Wait for \(PhaseDisplay.label(running)) to finish before changing workflow inputs."
+            )
+        }
+        guard let packName = try resolvedPack(
+            dataRoot: dataRoot,
+            declaredPack: editor.declaredPluginName
+        ) else {
+            throw ToolError("The workflow contract is unavailable. Reopen the project and try again.")
+        }
+        let context = try loadContext(dataRoot: dataRoot, packName: packName)
+        guard let phase = context.phase, phase == offered.step.phase else {
+            let current = context.phase.map { PhaseDisplay.label($0) }
+                ?? "the completed workflow"
+            throw ToolError(
+                "This \(offered.step.title) card belongs to an earlier phase. Continue with \(current)."
+            )
+        }
+        guard context.manifest.steps(for: phase).contains(where: {
+            $0.id == offered.step.id
+        }) else {
+            throw ToolError(
+                "The workflow contract changed before the answer could be applied. Reopen the project."
+            )
+        }
+        let registry = PackCatalog.registry(activePack: packName)
+        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        let gates = try loadGates(dataRoot: dataRoot)
+        do {
+            try GateGuard.requirePriorApproved(gates, order: order, phase: phase)
+            if let index = order.firstIndex(of: phase), index > 0 {
+                let prior = order[index - 1]
+                try GateGuard.checkApprovable(
+                    phase: prior,
+                    dataRoot: dataRoot,
+                    requirement: registry.gateRequirements[prior]
+                )
+            }
+        } catch let blocked as GateBlocked {
+            throw ToolError(blocked.message)
+        }
+        if !offered.isRepeat, !materialAlreadyApplied {
+            let current = IntakePlanner.next(
+                context.manifest.steps(for: phase),
+                dataRoot: dataRoot,
+                ledger: IntakeLedger.load(dataRoot: dataRoot)
+            )
+            guard current?.id == offered.step.id else {
+                throw ToolError(
+                    "The workflow intake changed before the answer could be applied. Try again."
+                )
+            }
+        }
     }
 
     func reconcile(editor: EditorViewModel) -> Reconciliation {
@@ -483,7 +567,10 @@ final class PipelineAgentHarness {
         ).agentPrompt()
     }
 
-    func guardAgentDecision(editor: EditorViewModel) throws {
+    func guardAgentDecision(
+        _ dialog: AgentDialog,
+        editor: EditorViewModel
+    ) throws {
         guard let dataRoot = editor.workingRoot.flatMap({
             DataRootResolver.dataRoot(of: $0)
         }),
@@ -492,15 +579,54 @@ final class PipelineAgentHarness {
             declaredPack: editor.declaredPluginName
         ) else { return }
         let context = try loadContext(dataRoot: dataRoot, packName: packName)
-        guard let phase = context.phase,
-              let step = IntakePlanner.next(
-                  context.manifest.steps(for: phase),
-                  dataRoot: dataRoot,
-                  ledger: IntakeLedger.load(dataRoot: dataRoot)
-              ) else { return }
-        throw ToolError(
-            "Complete the host-owned \(step.title) card before presenting another decision."
-        )
+        guard let phase = context.phase else {
+            if dialog.workflowDecision != nil {
+                throw ToolError(
+                    "This workflow decision belongs to Audio Analysis, but every pipeline phase is approved."
+                )
+            }
+            return
+        }
+        if let step = IntakePlanner.next(
+            context.manifest.steps(for: phase),
+            dataRoot: dataRoot,
+            ledger: IntakeLedger.load(dataRoot: dataRoot)
+        ) {
+            throw ToolError(
+                "Complete the host-owned \(step.title) card before presenting another decision."
+            )
+        }
+        guard packName == "musicvideo" else { return }
+        switch phase {
+        case "project_init":
+            throw ToolError(
+                "Project Init has no agent-authored decisions. Complete it before presenting a dialog."
+            )
+        case "analysis":
+            guard dialog.workflowDecision != nil else {
+                throw ToolError(
+                    "Audio Analysis accepts only its bounded tempo, interpretation-review, or track-replacement dialog. Do not ask about story, identity, style, or later phases yet."
+                )
+            }
+            try guardPhaseWork(
+                phase: phase,
+                dataRoot: dataRoot,
+                declaredPack: editor.declaredPluginName
+            )
+            if let running = editor.pipelinePhaseRunCoordinator.runningPhase(
+                projectRoot: dataRoot
+            ) {
+                throw ToolError(
+                    "Wait for \(PhaseDisplay.label(running)) to finish before presenting the analysis decision."
+                )
+            }
+        default:
+            if dialog.workflowDecision != nil {
+                throw ToolError(
+                    "The declared analysis decision is not valid during \(PhaseDisplay.label(phase))."
+                )
+            }
+        }
     }
 
     func recordPhaseMutation(

@@ -219,6 +219,11 @@ struct GenerationView: View {
             }
             return trimmedPrompt.count >= audioModel.minPromptLength
         }
+        if selectedType == .image,
+           imageModel.requiresImageReference,
+           imageReferences.isEmpty {
+            return false
+        }
         return !isPromptEmpty
     }
 

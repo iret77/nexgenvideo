@@ -79,6 +79,37 @@ struct ToolDefinitionContractTests {
         let badEnum = await harness.runRaw("list_models", args: ["type": "document"])
         #expect(ToolHarness.textOf(badEnum).contains("expected one of video, image, audio, upscale"))
 
+        let badWorkflowDecision = await harness.runRaw("show_dialog", args: [
+            "title": "Choose",
+            "workflowDecision": "story_direction",
+            "textField": ["placeholder": "Direction"],
+        ])
+        #expect(
+            ToolHarness.textOf(badWorkflowDecision)
+                .contains("expected one of analysis_tempo, analysis_interpretation_review, analysis_track_replacement")
+        )
+
+        let longChoiceLabel = String(
+            repeating: "x",
+            count: AgentDialog.maxChoiceDisplayLength + 1
+        )
+        let oversizedChoice = await harness.runRaw("show_dialog", args: [
+            "title": "Choose",
+            "sections": [[
+                "id": "style",
+                "label": "Style",
+                "type": "choices",
+                "options": [
+                    ["id": "one", "label": "One", "shortLabel": longChoiceLabel],
+                    ["id": "two", "label": "Two"],
+                ],
+            ]],
+        ])
+        #expect(
+            ToolHarness.textOf(oversizedChoice)
+                .contains("show_dialog.sections[0].options[0].shortLabel: expected at most \(AgentDialog.maxChoiceDisplayLength) character(s)")
+        )
+
         let negativeCost = await harness.runRaw("record_render", args: [
             "phase": "preview",
             "shot_id": "s001",

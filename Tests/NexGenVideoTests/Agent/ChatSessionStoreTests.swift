@@ -55,6 +55,37 @@ struct ChatSessionStoreTests {
         #expect(back.messages.first?.userPresentation == presentation)
     }
 
+    @Test("workflow intake records round-trip without synthetic chat prose")
+    func workflowRecordRoundTrips() throws {
+        let record = AgentWorkflowRecord(
+            title: "Prepared character 1",
+            symbol: "person.crop.rectangle.stack",
+            phase: "brief",
+            detail: "Claude Mouse",
+            attachmentNames: ["claude-front.png", "claude-side.png"],
+            outcome: .attached
+        )
+        let presentation = AgentUserPresentation(
+            choiceRecord: nil,
+            typedText: nil,
+            workflowRecord: record
+        )
+        let session = ChatSession(
+            title: "t",
+            messages: [AgentMessage(
+                role: .user,
+                blocks: [],
+                userPresentation: presentation
+            )]
+        )
+
+        let data = try #require(ChatSessionStore.encodeSession(session))
+        let back = try decoder.decode(ChatSession.self, from: data)
+
+        #expect(back.messages.first?.blocks.isEmpty == true)
+        #expect(back.messages.first?.userPresentation?.workflowRecord == record)
+    }
+
     @Test("strict project load rejects a malformed chat instead of dropping it")
     func malformedChatIsRejected() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

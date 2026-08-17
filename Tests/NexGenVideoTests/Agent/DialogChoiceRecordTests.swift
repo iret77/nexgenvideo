@@ -54,6 +54,23 @@ struct DialogChoiceRecordTests {
         #expect(response.agentText.contains("Phrase — cuts on musical phrases"))
     }
 
+    @Test("choice chip titles have a hard display-length limit")
+    func choiceDisplayLengthIsBounded() {
+        let fullLabel = String(repeating: "Long option wording ", count: 6)
+        let derived = AgentDialog.Choice(id: "derived", label: fullLabel)
+        let explicit = AgentDialog.Choice(
+            id: "explicit",
+            label: "Full semantic explanation",
+            shortLabel: fullLabel
+        )
+
+        #expect(derived.label == fullLabel)
+        #expect(derived.shortLabel.count == AgentDialog.maxChoiceDisplayLength)
+        #expect(derived.shortLabel.hasSuffix("…"))
+        #expect(explicit.shortLabel.count == AgentDialog.maxChoiceDisplayLength)
+        #expect(explicit.shortLabel.hasSuffix("…"))
+    }
+
     @Test("Typed direction remains separate user prose")
     func typedDirectionIsSeparate() {
         let response = AgentService.dialogResponse(

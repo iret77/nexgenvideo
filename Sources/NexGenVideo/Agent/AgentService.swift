@@ -10,14 +10,15 @@ final class AgentService {
     private var apiKeyObserver: NSObjectProtocol?
     private var backendObserver: NSObjectProtocol?
     private var claudeStatusObserver: NSObjectProtocol?
+    private var apiKeyGeneration = 0
 
     private(set) var backend = AgentBackendPreference.selected
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
+    private(set) var isCheckingAPIKey = true
     private(set) var isCheckingClaude = false
     private var claudeStatusGeneration = 0
 
     init() {
-        reloadAPIKey()
         apiKeyObserver = NotificationCenter.default.addObserver(
             forName: .anthropicAPIKeyChanged,
             object: nil,
@@ -38,10 +39,7 @@ final class AgentService {
                 self.backend = AgentBackendPreference.selected
                 self.claudeStatusGeneration &+= 1
                 self.isCheckingClaude = false
-                if self.backend == .claudeCode {
-                    self.isCheckingClaude = true
-                    Task { await self.refreshClaudeCodeStatus() }
-                }
+                self.refreshBackendStatus()
             }
         }
         claudeStatusObserver = NotificationCenter.default.addObserver(
@@ -62,18 +60,20 @@ final class AgentService {
                 }
             }
         }
-        if backend == .claudeCode {
-            isCheckingClaude = true
-            Task { await refreshClaudeCodeStatus() }
-        }
+        refreshBackendStatus()
     }
 
     private func reloadAPIKey() {
+        apiKeyGeneration &+= 1
+        let generation = apiKeyGeneration
+        isCheckingAPIKey = true
         Task { [weak self] in
             let key = await Task.detached(priority: .utility) {
                 AnthropicKeychain.load() ?? ""
             }.value
-            self?.apiKey = key
+            guard let self, self.apiKeyGeneration == generation else { return }
+            self.apiKey = key
+            self.isCheckingAPIKey = false
         }
     }
 
@@ -90,6 +90,20 @@ final class AgentService {
     }
 
     var hasApiKey: Bool { !apiKey.isEmpty }
+
+    var isCheckingBackend: Bool {
+        switch backend {
+        case .anthropicAPI: return isCheckingAPIKey && !hasApiKey
+        case .claudeCode: return isCheckingClaude && claudeStatus?.isAuthenticated != true
+        }
+    }
+
+    var backendStatusCheckLabel: String {
+        switch backend {
+        case .anthropicAPI: return "Checking Anthropic API key…"
+        case .claudeCode: return "Checking Claude Code…"
+        }
+    }
 
     var canStream: Bool {
         switch backend {
@@ -108,6 +122,27 @@ final class AgentService {
             return "Install Claude Code in"
         case .claudeCode:
             return "Sign in to Claude Code in"
+        }
+    }
+
+    var backendSetupMessage: String {
+        switch backend {
+        case .anthropicAPI:
+            return "Add an Anthropic API key to use the AI chat."
+        case .claudeCode where claudeStatus?.found != true:
+            return "Install Claude Code to use the AI chat."
+        case .claudeCode:
+            return "Sign in to Claude Code to use the AI chat."
+        }
+    }
+
+    func refreshBackendStatus() {
+        switch backend {
+        case .anthropicAPI:
+            reloadAPIKey()
+        case .claudeCode:
+            isCheckingClaude = true
+            Task { await refreshClaudeCodeStatus() }
         }
     }
 
@@ -254,6 +289,17 @@ final class AgentService {
             return
         }
         guard submittingDialogID == nil, pendingDialog?.id == dialog.id else { return }
+        if dialog.purpose == .workflowIntake, let editor {
+            do {
+                try editor.pipelineAgentHarness.validateWorkflowIntake(
+                    dialogID: dialog.id,
+                    editor: editor
+                )
+            } catch {
+                dialogSubmissionError = error.localizedDescription
+                return
+            }
+        }
         submittingDialogID = dialog.id
         dialogSubmissionError = nil
         if dialog.purpose == .chatClarification {
@@ -311,6 +357,7 @@ final class AgentService {
         case .workflowIntake:
             completeWorkflowIntake(
                 dialog,
+                result: result,
                 didProvideMaterial: Self.didProvideWorkflowMaterial(result)
             )
         }
@@ -328,7 +375,7 @@ final class AgentService {
               dialog.fileIntake?.required != true,
               dialog.fileIntake?.completionLabel != nil else { return }
         dialogSubmissionError = nil
-        completeWorkflowIntake(dialog, didProvideMaterial: false)
+        completeWorkflowIntake(dialog, result: nil, didProvideMaterial: false)
     }
 
     /// Write a copied text-sidecar intake into its deterministic project location.
@@ -393,7 +440,11 @@ final class AgentService {
         }
         assignIntakeRole(kind, urls: result.fileURLs)
         editor.onPipelineChanged?()
-        sendDialogResponse(dialog, result: result)
+        sendDialogResponse(
+            dialog,
+            result: result,
+            presentedAttachmentNames: result.fileURLs.map { userFacingFilename(for: $0) }
+        )
     }
 
     /// Copy prepared character/location reference images into the bible-anchor convention
@@ -462,6 +513,7 @@ final class AgentService {
                 self.sendDialogResponse(
                     dialog,
                     result: result,
+                    presentedAttachmentNames: urls.map { self.userFacingFilename(for: $0) },
                     agentContext: "\(noun) \"\(name)\" attached: \(copied.count) reference image\(copied.count == 1 ? "" : "s") "
                         + "in import/\(category)/\(slug)/. This is a BROWNFIELD anchor — the bible-agent adopts it; "
                         + "keep this identity consistent across the pipeline and don't invent a different one."
@@ -607,6 +659,7 @@ final class AgentService {
                 self.sendDialogResponse(
                     dialog,
                     result: result,
+                    presentedAttachmentNames: urls.map { self.userFacingFilename(for: $0) },
                     agentContext: "\(copied.count) style reference\(copied.count == 1 ? "" : "s") attached in import/. "
                         + "The production-design agent (K2) curates these as the style source."
                 )
@@ -862,16 +915,18 @@ final class AgentService {
         userNotice: String? = nil,
         agentContext: String? = nil
     ) {
-        if dialog.purpose == .workflowIntake {
-            completeWorkflowIntake(
-                dialog,
-                didProvideMaterial: Self.didProvideWorkflowMaterial(result)
-            )
-            return
-        }
         var resolvedAttachmentNames = presentedAttachmentNames
         if resolvedAttachmentNames == nil, attached.isEmpty {
             resolvedAttachmentNames = result.fileURLs.map { userFacingFilename(for: $0) }
+        }
+        if dialog.purpose == .workflowIntake {
+            completeWorkflowIntake(
+                dialog,
+                result: result,
+                presentedAttachmentNames: resolvedAttachmentNames ?? [],
+                didProvideMaterial: Self.didProvideWorkflowMaterial(result)
+            )
+            return
         }
         let response = Self.dialogResponse(
             from: dialog,
@@ -916,6 +971,8 @@ final class AgentService {
 
     private func completeWorkflowIntake(
         _ dialog: AgentDialog,
+        result: AgentDialogResult?,
+        presentedAttachmentNames: [String] = [],
         didProvideMaterial: Bool
     ) {
         guard pendingDialog?.id == dialog.id else { return }
@@ -926,6 +983,9 @@ final class AgentService {
             dialogSubmissionError = "The project is unavailable. Reopen it and try again."
             return
         }
+        let phase = editor.pipelineAgentHarness.workflowIntakePhase(
+            dialogID: dialog.id
+        )
         let reconciliation = editor.pipelineAgentHarness.resolveWorkflowIntake(
             dialogID: dialog.id,
             didProvideMaterial: didProvideMaterial,
@@ -936,9 +996,65 @@ final class AgentService {
             dialogSubmissionError = failure
             return
         }
+        appendWorkflowRecord(
+            dialog: dialog,
+            result: result,
+            attachmentNames: presentedAttachmentNames,
+            phase: phase,
+            didProvideMaterial: didProvideMaterial
+        )
         Task { @MainActor [weak self] in
             await self?.editor?.refreshEngineState()
         }
+    }
+
+    private func appendWorkflowRecord(
+        dialog: AgentDialog,
+        result: AgentDialogResult?,
+        attachmentNames: [String],
+        phase: String?,
+        didProvideMaterial: Bool
+    ) {
+        let direction = result?.direction.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let detail: String?
+        if dialog.fileIntake?.namePrompt != nil, !direction.isEmpty {
+            detail = direction
+        } else if didProvideMaterial, attachmentNames.isEmpty {
+            detail = "Text provided"
+        } else {
+            detail = nil
+        }
+        let outcome: AgentWorkflowRecord.Outcome
+        if didProvideMaterial {
+            outcome = attachmentNames.isEmpty ? .provided : .attached
+        } else if dialog.fileIntake?.completionLabel?.lowercased() == "done" {
+            outcome = .completed
+        } else {
+            outcome = .skipped
+        }
+        let message = AgentMessage(
+            role: .user,
+            blocks: [],
+            userPresentation: AgentUserPresentation(
+                choiceRecord: nil,
+                typedText: nil,
+                workflowRecord: AgentWorkflowRecord(
+                    title: dialog.title,
+                    symbol: dialog.symbol,
+                    phase: phase,
+                    detail: detail,
+                    attachmentNames: attachmentNames,
+                    outcome: outcome
+                )
+            )
+        )
+        if claudeRuntimeEnabled, let runtime = _claudeRuntime {
+            runtime.appendTranscriptOnly(message)
+            messages = runtime.messages
+        } else {
+            messages.append(message)
+        }
+        checkpointCurrentSession()
     }
 
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
@@ -955,7 +1071,7 @@ final class AgentService {
         let dialog = pendingDialog
         if let dialog, dialog.purpose == .workflowIntake {
             guard dialog.fileIntake?.required != true, submittingDialogID == nil else { return }
-            completeWorkflowIntake(dialog, didProvideMaterial: false)
+            completeWorkflowIntake(dialog, result: nil, didProvideMaterial: false)
             return
         }
         pendingDialog = nil
@@ -996,6 +1112,18 @@ final class AgentService {
             spendContinuation = continuation
             pendingSpendApproval = approval
         }
+    }
+
+    func approveSpend(_ option: SpendOption) -> String? {
+        guard let approval = pendingSpendApproval,
+              approval.options.contains(option) else {
+            return "This provider and model are no longer part of the pending approval."
+        }
+        guard option.isCurrentlyAvailable else {
+            return "This provider or model is no longer available. Choose another valid option."
+        }
+        resolveSpend(.approved(option: option))
+        return nil
     }
 
     /// Resolve the pending approval (from the card's buttons, or teardown). Clears the card and

@@ -32,6 +32,16 @@ enum ProviderManifest {
         return out
     }
 
+    /// Return one currently runnable binding per provider for a model.
+    @MainActor
+    static func runnableBindingsByProvider(forModelId id: String) -> [ProviderBinding] {
+        ProviderResolver.preferredActiveBindingPerProvider(
+            bindings: bindings(forModelId: id),
+            activation: .current(),
+            effectiveCost: effectiveCost
+        )
+    }
+
     /// Bootstrap offers for a model the catalog hasn't declared — the provider from registry
     /// membership; the ElevenLabs family is direct-to-ElevenLabs + fal-hosted. The hosted catalog's
     /// declared `offers` override this (that's the path to provider-neutral, multi-provider models).

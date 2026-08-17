@@ -65,6 +65,10 @@ final class ClaudeCodeRuntime {
 
     var messages: [AgentMessage] { mapper.messages }
 
+    func appendTranscriptOnly(_ message: AgentMessage) {
+        mapper.appendTranscriptOnly(message)
+    }
+
     /// `context` (e.g. the user's current selection) is prepended to the payload sent to the model but
     /// never shown in the transcript — the user sees exactly what they typed.
     func send(

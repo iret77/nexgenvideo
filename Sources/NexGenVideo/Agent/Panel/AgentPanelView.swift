@@ -74,7 +74,7 @@ struct AgentPanelView: View {
             if let approval = service.pendingSpendApproval {
                 SpendApprovalCard(
                     approval: approval,
-                    onApprove: { modelId in service.resolveSpend(.approved(modelId: modelId)) },
+                    onApprove: { option in service.approveSpend(option) },
                     onDecline: { service.resolveSpend(.declined) }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
@@ -112,9 +112,13 @@ struct AgentPanelView: View {
                 .id(dialog.id)
                 .padding(.bottom, AppTheme.Spacing.xs)
             }
+            AgentLiveStatusView(status: liveStatus)
             footer
         }
-        .onAppear { refreshDiscoveredPlugins() }
+        .onAppear {
+            refreshDiscoveredPlugins()
+            service.refreshBackendStatus()
+        }
         // A pack activating AFTER the panel appeared (project open, Start production) must swap the
         // generic starters for the pack's own — otherwise the chips stay stale-generic.
         .onChange(of: editor.activePluginName) { _, _ in refreshDiscoveredPlugins() }
@@ -158,6 +162,117 @@ struct AgentPanelView: View {
             hasDialog: service.pendingDialog != nil,
             hasGateApproval: service.pendingGateApproval != nil,
             hasSpendApproval: service.pendingSpendApproval != nil
+        )
+    }
+
+    private var liveStatus: AgentLiveStatus {
+        if let snapshot = editor.pipelinePhaseExecution.snapshot,
+           snapshot.isRunning {
+            let presentation = PipelinePhaseProgressPresentation(
+                stageID: snapshot.stageID
+            )
+            let count = snapshot.totalUnitCount > 0
+                ? " · \(snapshot.completedUnitCount) of \(snapshot.totalUnitCount)"
+                : ""
+            return AgentLiveStatus(
+                state: .working,
+                title: presentation.title,
+                detail: "\(PhaseDisplay.label(snapshot.phase))\(count)"
+            )
+        }
+        if service.gateApprovalIsWriting {
+            return AgentLiveStatus(
+                state: .working,
+                title: "Saving approval",
+                detail: service.pendingGateApproval.map {
+                    PhaseDisplay.label($0.phase)
+                } ?? "Updating the pipeline gate"
+            )
+        }
+        if service.submittingDialogID != nil {
+            return AgentLiveStatus(
+                state: .working,
+                title: "Attaching files",
+                detail: service.pendingDialog?.title ?? "Saving your workflow input"
+            )
+        }
+        if let error = service.dialogSubmissionError {
+            return AgentLiveStatus(
+                state: .failed,
+                title: "Attachment failed",
+                detail: error
+            )
+        }
+        if let dialog = service.pendingDialog {
+            return AgentLiveStatus(
+                state: .waiting,
+                title: "Waiting for your input",
+                detail: dialog.title
+            )
+        }
+        if let gate = service.pendingGateApproval {
+            return AgentLiveStatus(
+                state: .waiting,
+                title: "Waiting for your approval",
+                detail: PhaseDisplay.label(gate.phase)
+            )
+        }
+        if service.pendingSpendApproval != nil {
+            return AgentLiveStatus(
+                state: .waiting,
+                title: "Waiting for spend approval",
+                detail: "Choose a model or decline the request"
+            )
+        }
+        if case .failed(let message)? = editor.pipelinePhaseExecution.snapshot?.status {
+            return AgentLiveStatus(
+                state: .failed,
+                title: "Pipeline phase failed",
+                detail: message
+            )
+        }
+        if let error = service.streamError {
+            return AgentLiveStatus(
+                state: .failed,
+                title: "Agent stopped",
+                detail: error.localizedDescription
+            )
+        }
+        if service.isStreaming {
+            let activity = transcriptEntries.compactMap { entry -> AgentActivity? in
+                guard case .activity(let activity) = entry,
+                      activity.isRunning else { return nil }
+                return activity
+            }.last
+            let title = activity?.steps.last.map {
+                ToolRunPresentation.label(for: $0.name)
+            }
+                ?? activity?.currentStatus
+                ?? "Agent is working"
+            return AgentLiveStatus(
+                state: .working,
+                title: title,
+                detail: activity?.currentStatus ?? "The current task is still running"
+            )
+        }
+        if service.isCheckingBackend {
+            return AgentLiveStatus(
+                state: .working,
+                title: service.backendStatusCheckLabel,
+                detail: "Checking whether the agent is available"
+            )
+        }
+        if !service.canStream {
+            return AgentLiveStatus(
+                state: .unavailable,
+                title: "Agent unavailable",
+                detail: service.backendSetupMessage
+            )
+        }
+        return AgentLiveStatus(
+            state: .ready,
+            title: "Ready",
+            detail: "No task is running"
         )
     }
 
@@ -355,6 +470,10 @@ struct AgentPanelView: View {
         return false
     }
 
+    private var showsBackendSetupNotice: Bool {
+        !service.canStream && !showsAuthenticationError
+    }
+
     private func messageList(entries: [AgentTranscriptEntry]) -> some View {
         Group {
             if entries.isEmpty && !service.isStreaming {
@@ -362,6 +481,9 @@ struct AgentPanelView: View {
                 // overflow centered — covering the sidebar tabs above and running out below.
                 ScrollView {
                     VStack(spacing: AppTheme.Spacing.smMd) {
+                        if showsBackendSetupNotice {
+                            backendSetupNotice
+                        }
                         emptyState
                         errorBanner
                     }
@@ -398,6 +520,10 @@ struct AgentPanelView: View {
                         return false
                     }) {
                         ThinkingDots().id("streaming-indicator")
+                    }
+                    if showsBackendSetupNotice {
+                        backendSetupNotice
+                            .padding(.top, AppTheme.Spacing.sm)
                     }
                     errorBanner
                         .padding(.top, AppTheme.Spacing.sm)
@@ -514,8 +640,6 @@ struct AgentPanelView: View {
                 }
             }
             .onAppear { refreshDiscoveredPlugins() }
-        } else if !showsAuthenticationError {
-            missingKeyState
         }
     }
 
@@ -531,29 +655,29 @@ struct AgentPanelView: View {
     }
 
     @ViewBuilder
-    private var missingKeyState: some View {
-        if service.backend == .claudeCode && service.isCheckingClaude {
+    private var backendSetupNotice: some View {
+        if service.isCheckingBackend {
             HStack(spacing: AppTheme.Spacing.sm) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Checking Claude Code…")
+                Text(service.backendStatusCheckLabel)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
         } else {
-            HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.xs) {
-                Text(service.setupPrompt)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                Text(service.backendSetupMessage)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Button(action: { SettingsWindowController.shared.show(tab: .agent) }) {
-                    Text("Agent settings")
-                        .underline()
-                        .foregroundStyle(AppTheme.Accent.primary)
+                    Text("Open Agent Settings")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .controlSize(.small)
             }
             .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -567,9 +691,6 @@ struct AgentPanelView: View {
     private var footer: some View {
         @Bindable var service = editor.agentService
         return VStack(spacing: AppTheme.Spacing.sm) {
-            if !service.canStream && !service.messages.isEmpty && !showsAuthenticationError {
-                missingKeyState
-            }
             if let fn = service.pendingFunction {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     FunctionPill(title: fn.title, systemImage: fn.systemImage) {

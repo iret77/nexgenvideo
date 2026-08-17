@@ -401,6 +401,22 @@ struct HardStepIntakeTests {
         #expect(editor.projectState?.nextPhaseName == "analysis")
         #expect(editor.agentService.pendingDialog == nil)
 
+        let storyDialog = AgentDialog(
+            id: "story-too-early",
+            title: "Choose the story",
+            symbol: "book",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        )
+        #expect(throws: ToolError.self) {
+            try editor.pipelineAgentHarness.guardAgentDecision(
+                storyDialog,
+                editor: editor
+            )
+        }
         let liveDataRoot = try #require(
             editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
         )
@@ -422,6 +438,26 @@ struct HardStepIntakeTests {
             .joined(separator: " ")
         #expect(prompt?.contains("# Phase K1 — Brief") == true)
         #expect(normalizedPrompt?.contains("If it is absent, this is greenfield") == true)
+
+        let staleStoryDialog = try #require(editor.agentService.pendingDialog)
+        var advancedGates = try liveStore.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&advancedGates, phase: "brief")
+        try liveStore.save(advancedGates, to: PipelineLayout.gatesFile)
+        await editor.refreshEngineState()
+        editor.agentService.submitDialog(
+            staleStoryDialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: "A story that must not be written from a stale card."
+            )
+        )
+
+        #expect(editor.agentService.pendingDialog?.id == staleStoryDialog.id)
+        #expect(editor.agentService.dialogSubmissionError?.contains("earlier phase") == true)
+        #expect(!FileManager.default.fileExists(
+            atPath: liveDataRoot.appendingPathComponent("import/script.md").path
+        ))
     }
 
     @Test("repeatable intake advances directly and Done finishes without attaching an empty item")
@@ -488,6 +524,14 @@ struct HardStepIntakeTests {
         )
         let second = try #require(awaitedSecond)
         #expect(second.title == "Prepared character 2")
+        let firstRecord = try #require(
+            editor.agentService.messages.last?.userPresentation?.workflowRecord
+        )
+        #expect(firstRecord.title == "Prepared character 1")
+        #expect(firstRecord.phase == "brief")
+        #expect(firstRecord.detail == "Character One")
+        #expect(firstRecord.attachmentNames == ["first.png"])
+        #expect(firstRecord.outcome == .attached)
         try write("fixtures/second.png", in: dataRoot)
         editor.agentService.submitDialog(
             second,
@@ -710,7 +754,7 @@ struct HardStepIntakeTests {
         #expect(third.fileIntake?.completionLabel == "Done")
     }
 
-    @Test("a workflow hard step completes locally without creating an agent turn")
+    @Test("a workflow hard step leaves a durable transcript record without starting the agent")
     @MainActor
     func workflowStepDoesNotBecomeChat() async throws {
         PackCatalog.register(MusicvideoPack())
@@ -755,12 +799,16 @@ struct HardStepIntakeTests {
 
         #expect(editor.agentService.pendingDialog?.title == "Prepared character 1")
         #expect(IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.script"))
-        #expect(editor.agentService.messages.count == messageCount)
+        #expect(editor.agentService.messages.count == messageCount + 1)
+        let recordMessage = try #require(editor.agentService.messages.last)
+        #expect(recordMessage.blocks.isEmpty)
+        #expect(recordMessage.userPresentation?.workflowRecord?.title == "Existing story")
+        #expect(recordMessage.userPresentation?.workflowRecord?.outcome == .skipped)
         #expect(editor.agentService.streamError == nil)
         #expect(!editor.agentService.isStreaming)
         await editor.refreshEngineState()
         #expect(editor.agentService.pendingDialog?.title == "Prepared character 1")
-        #expect(editor.agentService.messages.count == messageCount)
+        #expect(editor.agentService.messages.count == messageCount + 1)
         #expect(editor.agentService.streamError == nil)
     }
 

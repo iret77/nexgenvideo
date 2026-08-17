@@ -20,9 +20,16 @@ actor MCPProviderClient {
         }
     }
 
-    enum ClientError: Error, Sendable {
+    enum ClientError: LocalizedError, Sendable {
         case notConnected
         case toolFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .notConnected: "The provider MCP is not connected."
+            case .toolFailed(let message): message
+            }
+        }
     }
 
     /// A tool the provider's MCP server advertises via `tools/list` — discovered at runtime, never
@@ -60,13 +67,17 @@ actor MCPProviderClient {
     /// Call a provider tool with a pre-compiled argument set and return its textual contents
     /// (result URLs / payload the host then imports onto the timeline). Arguments are already
     /// gate-compiled by the caller.
-    func callTool(name: String, arguments: [String: String]) async throws -> [String] {
+    func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
         let client = try await connectedClient()
-        let result = try await client.callTool(name: name, arguments: arguments.mapValues { Value.string($0) })
+        let result = try await client.callTool(name: name, arguments: arguments)
         if result.isError == true {
             throw ClientError.toolFailed(Self.joinedText(result.content))
         }
         return Self.textContents(result.content)
+    }
+
+    func callTool(name: String, arguments: [String: String]) async throws -> [String] {
+        try await callTool(name: name, arguments: arguments.mapValues(Value.string))
     }
 
     /// Enumerate the provider's tools (`tools/list`). This is how NGV learns what a provider offers

@@ -23,7 +23,10 @@ struct AgentMessageView: View {
     @ViewBuilder
     private var userBody: some View {
         if let presentation = message.userPresentation {
-            VStack(spacing: AppTheme.Spacing.sm) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                if let record = presentation.workflowRecord {
+                    WorkflowRecordView(record: record)
+                }
                 if let record = presentation.choiceRecord {
                     HStack {
                         DialogChoiceRecordView(record: record)
@@ -113,6 +116,86 @@ struct AgentMessageView: View {
               let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return nil }
         return try? AgentBlocks.parse(args)
+    }
+}
+
+private struct WorkflowRecordView: View {
+    let record: AgentWorkflowRecord
+
+    private var outcomeLabel: String {
+        switch record.outcome {
+        case .attached: "Attached"
+        case .provided: "Provided"
+        case .skipped: "Skipped"
+        case .completed: "Done"
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+            Image(systemName: record.symbol)
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Accent.timecodeColor)
+                .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+                    Text(record.title)
+                        .font(.system(
+                            size: AppTheme.FontSize.sm,
+                            weight: AppTheme.FontWeight.semibold
+                        ))
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    Label(outcomeLabel, systemImage: "checkmark.circle.fill")
+                        .font(.system(
+                            size: AppTheme.FontSize.xs,
+                            weight: AppTheme.FontWeight.medium
+                        ))
+                        .foregroundStyle(AppTheme.Status.successColor)
+                }
+                if let phase = record.phase {
+                    Text(PhaseDisplay.label(phase))
+                        .font(.system(
+                            size: AppTheme.FontSize.xxs,
+                            weight: AppTheme.FontWeight.medium
+                        ))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                }
+                if let detail = record.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: AppTheme.FontSize.xs))
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                }
+                if !record.attachmentNames.isEmpty {
+                    Text(record.attachmentNames.joined(separator: ", "))
+                        .font(.system(size: AppTheme.FontSize.xs))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(AppTheme.Spacing.smMd)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .fill(AppTheme.Background.raisedColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .strokeBorder(
+                    AppTheme.Border.subtleColor,
+                    lineWidth: AppTheme.BorderWidth.hairline
+                )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(record.title), \(outcomeLabel), "
+                + ([record.phase.map { PhaseDisplay.label($0) }, record.detail]
+                    .compactMap { $0 } + record.attachmentNames)
+                    .joined(separator: ", ")
+        )
     }
 }
 

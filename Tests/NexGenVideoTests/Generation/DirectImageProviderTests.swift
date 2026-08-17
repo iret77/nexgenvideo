@@ -53,6 +53,41 @@ struct DirectImageProviderTests {
         #expect(fal?.offers?.contains { $0.provider == .fal } == true)
     }
 
+    @Test("image-edit models are not offered without their required reference")
+    func referenceRequirementIsExplicit() throws {
+        let editEntry = try #require(FalModelRegistry.entries.first {
+            $0.id == "fal-ai/gemini-25-flash-image/edit"
+        })
+        guard case .image(let editCaps) = editEntry.uiCapabilities else {
+            Issue.record("expected image capabilities")
+            return
+        }
+        let edit = ImageModelConfig(entry: editEntry, caps: editCaps)
+        #expect(edit.validate(
+            aspectRatio: "1:1",
+            resolution: nil,
+            quality: nil,
+            imageRefCount: 0,
+            numImages: 1
+        )?.contains("requires a reference image") == true)
+
+        let textEntry = try #require(GoogleModelRegistry.models.first {
+            $0.entry.id == "google/gemini-3-pro-image"
+        }?.entry)
+        guard case .image(let textCaps) = textEntry.uiCapabilities else {
+            Issue.record("expected image capabilities")
+            return
+        }
+        let textModel = ImageModelConfig(entry: textEntry, caps: textCaps)
+        #expect(textModel.validate(
+            aspectRatio: "1:1",
+            resolution: nil,
+            quality: nil,
+            imageRefCount: 0,
+            numImages: 1
+        ) == nil)
+    }
+
     @Test("a model offered by fal AND Google resolves to Google when only Google is activated")
     func resolvesToActivatedProvider() throws {
         let bindings = [

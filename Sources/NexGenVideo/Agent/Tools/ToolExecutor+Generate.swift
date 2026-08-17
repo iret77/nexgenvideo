@@ -1,6 +1,12 @@
 import Foundation
 import NexGenEngine
 
+private struct SpendModelCandidate {
+    let modelId: String
+    let modelName: String
+    let credits: Int?
+}
+
 extension ToolExecutor {
     func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) async throws -> ToolResult {
         let prompt = try args.requireString("prompt")
@@ -177,72 +183,154 @@ extension ToolExecutor {
 
     // MARK: - Cost-Guard (M7) — the user's final word on paid agent renders
 
-    /// Gate a paid render on the user's approval. Returns the model id to actually run — the same one
-    /// when kept or under the auto-approve ceiling, a cheaper one when the user swaps. Throws when the
-    /// user declines, so the agent stops and asks rather than spending anyway. This is the one place an
-    /// agent render waits for a human tap; it is never agent-self-asserted.
     @MainActor
     private func confirmSpend(
         _ editor: EditorViewModel, currentModelId: String, currentModelName: String,
-        credits: Int?, actionLabel: String, alternatives: [SpendAlternative]
-    ) async throws -> String {
-        guard CostGuard.needsApproval(credits: credits) else { return currentModelId }
+        credits: Int?, actionLabel: String, alternatives: [SpendModelCandidate]
+    ) async throws -> SpendOption {
+        let candidates = [SpendModelCandidate(
+            modelId: currentModelId,
+            modelName: currentModelName,
+            credits: credits
+        )] + alternatives
+        let options = candidates.filter {
+            ModelRegistry.exists(id: $0.modelId)
+                && ModelPreferences.shared.isEnabled($0.modelId)
+        }.flatMap { candidate in
+            ProviderManifest.runnableBindingsByProvider(forModelId: candidate.modelId).map { binding in
+                SpendOption(
+                    modelId: candidate.modelId,
+                    modelName: candidate.modelName,
+                    target: ResolvedGenerationTarget(
+                        modelId: candidate.modelId,
+                        provider: binding.provider,
+                        endpoint: binding.providerRef,
+                        binding: binding
+                    ),
+                    credits: candidate.credits,
+                    requiresCatalogAvailability: true
+                )
+            }
+        }
+        let defaultTarget = GenerationService.dispatchTarget(modelId: currentModelId)
+        guard let recommended = options.first(where: {
+            $0.modelId == currentModelId && $0.target == defaultTarget
+        }) else {
+            throw ToolError(
+                "The selected model is no longer available through an active provider. Choose a runnable model from list_models."
+            )
+        }
+        guard CostGuard.needsApproval(credits: credits) else { return recommended }
+        let orderedOptions = [recommended] + options.filter { $0.id != recommended.id }
         let approval = SpendApproval(
             id: UUID().uuidString,
-            modelId: currentModelId, modelName: currentModelName,
-            providerLabel: GenerationProvider.servicing(modelId: currentModelId).displayName,
-            credits: credits, alternatives: alternatives, actionLabel: actionLabel)
+            recommendedOptionId: recommended.id,
+            options: orderedOptions,
+            actionLabel: actionLabel
+        )
         switch await editor.agentService.requestSpendApproval(approval) {
-        case .approved(let modelId):
-            // The turn may have been cancelled (tab switch/new chat) while the card was up — never
-            // spend on a cancelled turn even if an approval slipped through.
+        case .approved(let option):
             try Task.checkCancellation()
-            return modelId
+            return option
         case .declined:
-            throw ToolError("Render declined — the user did not approve the spend. Ask what they'd prefer: a cheaper model, different settings, or skip this render.")
+            throw ToolError("Render declined — the user did not approve the spend.")
         }
     }
 
-    /// Cheaper runnable video models than the current pick, cost-ascending (≤ 3). `requiresSource`
-    /// keeps text-to-video and video-edit swaps within their own kind so a swap stays valid.
     @MainActor
     private func cheaperVideoAlternatives(
-        than modelId: String, currentCredits: Int?, duration: Int, resolution: String?, requiresSource: Bool
-    ) -> [SpendAlternative] {
+        than modelId: String,
+        currentCredits: Int?,
+        duration: Int,
+        resolution: String?,
+        requiresSource: Bool,
+        isCompatible: (VideoModelConfig) -> Bool
+    ) -> [SpendModelCandidate] {
         guard let current = currentCredits else { return [] }
         return VideoModelConfig.allModels
-            .filter { $0.id != modelId && $0.requiresSourceVideo == requiresSource && GenerationProvider.canRun(modelId: $0.id) }
-            .compactMap { m -> SpendAlternative? in
+            .filter {
+                $0.id != modelId
+                    && $0.requiresSourceVideo == requiresSource
+                    && ModelPreferences.shared.isEnabled($0.id)
+                    && GenerationProvider.canRun(modelId: $0.id)
+                    && isCompatible($0)
+            }
+            .compactMap { m -> SpendModelCandidate? in
                 guard let c = CostEstimator.videoCost(
                     model: m, durationSeconds: duration,
                     resolution: resolution ?? m.resolutions?.first, generateAudio: true),
                     c < current else { return nil }
-                return SpendAlternative(
-                    modelId: m.id, name: m.displayName,
-                    providerLabel: GenerationProvider.servicing(modelId: m.id).displayName, credits: c)
+                return SpendModelCandidate(
+                    modelId: m.id,
+                    modelName: m.displayName,
+                    credits: c
+                )
             }
             .sorted { ($0.credits ?? 0) < ($1.credits ?? 0) }
             .prefix(3).map { $0 }
     }
 
     @MainActor
-    private func cheaperImageAlternatives(
-        than modelId: String, currentCredits: Int?, resolution: String?, quality: String?
-    ) -> [SpendAlternative] {
-        guard let current = currentCredits else { return [] }
+    private func availableImageAlternatives(
+        than modelId: String,
+        aspectRatio: String,
+        resolution: String?,
+        quality: String?,
+        referenceCount: Int
+    ) -> [SpendModelCandidate] {
         return ImageModelConfig.allModels
-            .filter { $0.id != modelId && !MarbleModelRegistry.isMarbleModel($0.id) && GenerationProvider.canRun(modelId: $0.id) }
-            .compactMap { m -> SpendAlternative? in
-                guard let c = CostEstimator.imageCost(
-                    model: m, resolution: resolution ?? m.resolutions?.first,
-                    quality: quality ?? m.qualities?.last, numImages: 1),
-                    c < current else { return nil }
-                return SpendAlternative(
-                    modelId: m.id, name: m.displayName,
-                    providerLabel: GenerationProvider.servicing(modelId: m.id).displayName, credits: c)
+            .filter {
+                $0.id != modelId
+                    && !MarbleModelRegistry.isMarbleModel($0.id)
+                    && ModelPreferences.shared.isEnabled($0.id)
+                    && GenerationProvider.canRun(modelId: $0.id)
             }
-            .sorted { ($0.credits ?? 0) < ($1.credits ?? 0) }
-            .prefix(3).map { $0 }
+            .compactMap { m -> SpendModelCandidate? in
+                let adaptedAspect = m.aspectRatios.contains(aspectRatio)
+                    ? aspectRatio
+                    : (m.aspectRatios.first ?? aspectRatio)
+                let adaptedResolution = m.resolutions.map { allowed in
+                    resolution.flatMap { allowed.contains($0) ? $0 : nil } ?? allowed.first
+                } ?? resolution
+                let adaptedQuality = m.qualities.map { allowed in
+                    quality.flatMap { allowed.contains($0) ? $0 : nil } ?? allowed.last
+                } ?? quality
+                guard m.validate(
+                    aspectRatio: adaptedAspect,
+                    resolution: adaptedResolution,
+                    quality: adaptedQuality,
+                    imageRefCount: referenceCount,
+                    numImages: 1
+                ) == nil else { return nil }
+                return SpendModelCandidate(
+                    modelId: m.id,
+                    modelName: m.displayName,
+                    credits: CostEstimator.imageCost(
+                        model: m,
+                        resolution: adaptedResolution,
+                        quality: adaptedQuality,
+                        numImages: 1
+                    )
+                )
+            }
+            .sorted { $0.modelName.localizedCaseInsensitiveCompare($1.modelName) == .orderedAscending }
+    }
+
+    @MainActor
+    private func promptForApprovedModel(
+        _ precompiled: (text: String, token: String, binding: PromptBinding)?,
+        originalModelId: String,
+        approvedModelId: String,
+        editor: EditorViewModel
+    ) async throws -> (text: String, token: String, binding: PromptBinding)? {
+        guard approvedModelId != originalModelId, let precompiled else { return precompiled }
+        let compiled = try await PromptCompiler.recompile(
+            token: precompiled.token,
+            text: precompiled.text,
+            for: approvedModelId,
+            editor: editor
+        )
+        return (compiled.text, compiled.token, compiled.binding)
     }
 
     private func generateVideoEdit(
@@ -261,27 +349,45 @@ extension ToolExecutor {
             editor: editor
         )
 
-        // Cost-Guard (M7): approval before spend. Edit is source-driven, so a swap stays within the
-        // other source-requiring video models (a text-to-video model can't service an edit).
-        let editSeconds = Int((trimmed?.durationSeconds ?? sourceAsset.duration).rounded())
-        let editCredits = CostEstimator.videoCost(
-            model: model, durationSeconds: editSeconds, resolution: nil, generateAudio: true)
-        let editFinalId = try await confirmSpend(
-            editor, currentModelId: model.id, currentModelName: model.displayName,
-            credits: editCredits, actionLabel: "Generate edit",
-            alternatives: cheaperVideoAlternatives(
-                than: model.id, currentCredits: editCredits, duration: editSeconds,
-                resolution: nil, requiresSource: true))
-        if editFinalId != model.id, let swapped = VideoModelConfig.allModels.first(where: { $0.id == editFinalId }) {
-            model = swapped
-        }
-
         var imageRefs: [MediaAsset] = []
         for id in args.stringArray("referenceImageMediaRefs") {
             imageRefs.append(try asset(id, editor: editor, label: "Reference image"))
         }
 
         let inputAssets = VideoGenerationSubmission.InputAssets(sourceVideo: sourceAsset, imageRefs: imageRefs)
+        if let error = model.validate(duration: 0, aspectRatio: "", resolution: nil)
+            ?? inputAssets.validate(for: model) {
+            throw ToolError(error)
+        }
+        let editSeconds = Int((trimmed?.durationSeconds ?? sourceAsset.duration).rounded())
+        let editCredits = CostEstimator.videoCost(
+            model: model, durationSeconds: editSeconds, resolution: nil, generateAudio: true)
+        let originalModelId = model.id
+        let approved = try await confirmSpend(
+            editor, currentModelId: model.id, currentModelName: model.displayName,
+            credits: editCredits, actionLabel: "Generate edit",
+            alternatives: cheaperVideoAlternatives(
+                than: model.id,
+                currentCredits: editCredits,
+                duration: editSeconds,
+                resolution: nil,
+                requiresSource: true,
+                isCompatible: { candidate in
+                    candidate.validate(duration: 0, aspectRatio: "", resolution: nil) == nil
+                        && inputAssets.validate(for: candidate) == nil
+                }
+            )
+        )
+        if approved.modelId != model.id,
+           let swapped = VideoModelConfig.allModels.first(where: { $0.id == approved.modelId }) {
+            model = swapped
+        }
+        let approvedPrompt = try await promptForApprovedModel(
+            precompiled,
+            originalModelId: originalModelId,
+            approvedModelId: model.id,
+            editor: editor
+        )
         let name = args.string("name")
         let folderId = sourceAsset.folderId
         let placeholderDuration = trimmed?.durationSeconds ?? (sourceAsset.duration > 0 ? sourceAsset.duration : 5)
@@ -289,14 +395,15 @@ extension ToolExecutor {
         let request = GenerationRequest(
             modality: .video, modelId: model.id, intent: prompt,
             placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
-            precompiled: precompiled, rawPrompt: raw,
+            target: approved.target,
+            precompiled: approvedPrompt, rawPrompt: raw,
             submission: .video(make: { compiled in
                 var genInput = GenerationInput(
                     prompt: compiled, model: model.id, duration: Int(sourceAsset.duration.rounded()),
                     aspectRatio: "", resolution: nil)
-                genInput.promptShotId = precompiled?.binding.shotId
-                genInput.promptProjectKey = precompiled?.binding.projectKey
-                genInput.promptShotFingerprint = precompiled?.binding.shotFingerprint
+                genInput.promptShotId = approvedPrompt?.binding.shotId
+                genInput.promptProjectKey = approvedPrompt?.binding.projectKey
+                genInput.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
                 return VideoGenerationSubmission.make(
                     genInput: genInput, model: model, inputAssets: inputAssets,
                     placeholderDuration: placeholderDuration, trimmedSourceOverride: trimmed,
@@ -338,26 +445,6 @@ extension ToolExecutor {
             editor: editor
         )
 
-        // Cost-Guard (M7): the user's final word before this render spends money. Over the
-        // auto-approve ceiling → wait for a tap; a swap re-derives options against the chosen model.
-        let credits = CostEstimator.videoCost(
-            model: model, durationSeconds: billedDuration, resolution: resolution, generateAudio: true)
-        let finalModelId = try await confirmSpend(
-            editor, currentModelId: model.id, currentModelName: model.displayName,
-            credits: credits, actionLabel: "Generate video",
-            alternatives: cheaperVideoAlternatives(
-                than: model.id, currentCredits: credits, duration: billedDuration,
-                resolution: resolution, requiresSource: false))
-        if finalModelId != model.id, let swapped = VideoModelConfig.allModels.first(where: { $0.id == finalModelId }) {
-            model = swapped
-            if !swapped.durationCapabilities.accepts(duration) {
-                duration = swapped.durationCapabilities.defaultValue
-                billedDuration = duration.seconds ?? swapped.durationCapabilities.maximumSeconds ?? 0
-            }
-            if !swapped.aspectRatios.contains(aspectRatio) { aspectRatio = swapped.aspectRatios.first ?? aspectRatio }
-            if let allowed = swapped.resolutions, let r = resolution, !allowed.contains(r) { resolution = allowed.first }
-        }
-
         var frameSlots: [MediaAsset] = []
         if let startRef = args.string("startFrameMediaRef") {
             frameSlots.append(try asset(startRef, editor: editor, label: "Start frame"))
@@ -384,6 +471,66 @@ extension ToolExecutor {
         let videoRefCount = videoRefs.count
         let audioRefCount = audioRefs.count
         let totalRefs = inputAssets.totalRefCount
+        if let error = model.validate(
+            duration: duration,
+            aspectRatio: aspectRatio,
+            resolution: resolution
+        ) ?? inputAssets.validate(for: model) {
+            throw ToolError(error)
+        }
+
+        let credits = CostEstimator.videoCost(
+            model: model, durationSeconds: billedDuration, resolution: resolution, generateAudio: true)
+        let originalModelId = model.id
+        let approved = try await confirmSpend(
+            editor, currentModelId: model.id, currentModelName: model.displayName,
+            credits: credits, actionLabel: "Generate video",
+            alternatives: cheaperVideoAlternatives(
+                than: model.id,
+                currentCredits: credits,
+                duration: billedDuration,
+                resolution: resolution,
+                requiresSource: false,
+                isCompatible: { candidate in
+                    let candidateDuration = candidate.durationCapabilities.accepts(duration)
+                        ? duration
+                        : candidate.durationCapabilities.defaultValue
+                    let candidateAspect = candidate.aspectRatios.contains(aspectRatio)
+                        ? aspectRatio
+                        : (candidate.aspectRatios.first ?? aspectRatio)
+                    let candidateResolution = candidate.resolutions.map { allowed in
+                        resolution.flatMap { allowed.contains($0) ? $0 : nil } ?? allowed.first
+                    } ?? resolution
+                    return candidate.validate(
+                        duration: candidateDuration,
+                        aspectRatio: candidateAspect,
+                        resolution: candidateResolution
+                    ) == nil && inputAssets.validate(for: candidate) == nil
+                }
+            )
+        )
+        if approved.modelId != model.id,
+           let swapped = VideoModelConfig.allModels.first(where: { $0.id == approved.modelId }) {
+            model = swapped
+            if !swapped.durationCapabilities.accepts(duration) {
+                duration = swapped.durationCapabilities.defaultValue
+                billedDuration = duration.seconds ?? swapped.durationCapabilities.maximumSeconds ?? 0
+            }
+            if !swapped.aspectRatios.contains(aspectRatio) {
+                aspectRatio = swapped.aspectRatios.first ?? aspectRatio
+            }
+            if let allowed = swapped.resolutions,
+               let selected = resolution,
+               !allowed.contains(selected) {
+                resolution = allowed.first
+            }
+        }
+        let approvedPrompt = try await promptForApprovedModel(
+            precompiled,
+            originalModelId: originalModelId,
+            approvedModelId: model.id,
+            editor: editor
+        )
 
         let folderId = try resolveFolderId(
             args, editor: editor, fallbackReferences: inputAssets.textToVideoReferences
@@ -394,15 +541,16 @@ extension ToolExecutor {
             modality: .video, modelId: model.id, intent: prompt,
             aspectRatio: aspectRatio, durationSeconds: Double(billedDuration),
             placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
-            precompiled: precompiled, rawPrompt: raw,
+            target: approved.target,
+            precompiled: approvedPrompt, rawPrompt: raw,
             submission: .video(make: { compiled in
                 var genInput = GenerationInput(
                     prompt: compiled, model: model.id, duration: billedDuration,
                     aspectRatio: aspectRatio, resolution: resolution)
                 genInput.videoDuration = duration
-                genInput.promptShotId = precompiled?.binding.shotId
-                genInput.promptProjectKey = precompiled?.binding.projectKey
-                genInput.promptShotFingerprint = precompiled?.binding.shotFingerprint
+                genInput.promptShotId = approvedPrompt?.binding.shotId
+                genInput.promptProjectKey = approvedPrompt?.binding.projectKey
+                genInput.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
                 return VideoGenerationSubmission.make(
                     genInput: genInput, model: model, inputAssets: inputAssets,
                     placeholderDuration: Double(max(1, billedDuration)),
@@ -438,24 +586,6 @@ extension ToolExecutor {
             prompt: prompt,
             editor: editor
         )
-
-        // Cost-Guard (M7): approval before spend. Marble is excluded as a swap target — it is a
-        // reference-driven world generator, not a drop-in cheaper image model.
-        let credits = CostEstimator.imageCost(
-            model: model, resolution: resolution, quality: quality, numImages: 1)
-        let finalModelId = try await confirmSpend(
-            editor, currentModelId: model.id, currentModelName: model.displayName,
-            credits: credits, actionLabel: "Generate image",
-            alternatives: cheaperImageAlternatives(
-                than: model.id, currentCredits: credits, resolution: resolution, quality: quality))
-        if finalModelId != model.id, let swapped = ImageModelConfig.allModels.first(where: { $0.id == finalModelId }) {
-            model = swapped
-            modelId = swapped.id
-            if !swapped.aspectRatios.contains(aspectRatio) { aspectRatio = swapped.aspectRatios.first ?? aspectRatio }
-            if let allowed = swapped.resolutions, let r = resolution, !allowed.contains(r) { resolution = allowed.first }
-            if let allowed = swapped.qualities, let q = quality, !allowed.contains(q) { quality = allowed.last }
-        }
-
         let refIds = args.stringArray("referenceMediaRefs")
         let refs: [MediaAsset] = try refIds.map { id in
             let a = try asset(id, editor: editor, label: "Reference image")
@@ -464,6 +594,59 @@ extension ToolExecutor {
             }
             return a
         }
+        if let error = model.validate(
+            aspectRatio: aspectRatio,
+            resolution: resolution,
+            quality: quality,
+            imageRefCount: refs.count,
+            numImages: 1
+        ) {
+            throw ToolError(error)
+        }
+        let isMarble = MarbleModelRegistry.isMarbleModel(model.id)
+        if isMarble, refs.isEmpty {
+            throw ToolError(
+                "\(model.displayName) requires a reference image via 'referenceMediaRefs'."
+            )
+        }
+        let credits = CostEstimator.imageCost(
+            model: model, resolution: resolution, quality: quality, numImages: 1)
+        let originalModelId = model.id
+        let approved = try await confirmSpend(
+            editor, currentModelId: model.id, currentModelName: model.displayName,
+            credits: credits, actionLabel: "Generate image",
+            alternatives: isMarble ? [] : availableImageAlternatives(
+                than: model.id,
+                aspectRatio: aspectRatio,
+                resolution: resolution,
+                quality: quality,
+                referenceCount: refs.count
+            )
+        )
+        if approved.modelId != model.id,
+           let swapped = ImageModelConfig.allModels.first(where: { $0.id == approved.modelId }) {
+            model = swapped
+            modelId = swapped.id
+            if !swapped.aspectRatios.contains(aspectRatio) {
+                aspectRatio = swapped.aspectRatios.first ?? aspectRatio
+            }
+            if let allowed = swapped.resolutions,
+               let selected = resolution,
+               !allowed.contains(selected) {
+                resolution = allowed.first
+            }
+            if let allowed = swapped.qualities,
+               let selected = quality,
+               !allowed.contains(selected) {
+                quality = allowed.last
+            }
+        }
+        let approvedPrompt = try await promptForApprovedModel(
+            precompiled,
+            originalModelId: originalModelId,
+            approvedModelId: model.id,
+            editor: editor
+        )
         let folderId = try resolveFolderId(args, editor: editor, fallbackReferences: refs)
         let name = args.string("name")
 
@@ -471,9 +654,9 @@ extension ToolExecutor {
             var input = GenerationInput(
                 prompt: compiled, model: modelId, duration: 0,
                 aspectRatio: aspectRatio, resolution: resolution, quality: quality)
-            input.promptShotId = precompiled?.binding.shotId
-            input.promptProjectKey = precompiled?.binding.projectKey
-            input.promptShotFingerprint = precompiled?.binding.shotFingerprint
+            input.promptShotId = approvedPrompt?.binding.shotId
+            input.promptProjectKey = approvedPrompt?.binding.projectKey
+            input.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
             return input
         }
         let preflight: GenerationController.Preflight = {
@@ -489,7 +672,8 @@ extension ToolExecutor {
             let request = GenerationRequest(
                 modality: .image, modelId: modelId, intent: prompt, aspectRatio: aspectRatio,
                 placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
-                precompiled: precompiled, rawPrompt: raw,
+                target: approved.target,
+                precompiled: approvedPrompt, rawPrompt: raw,
                 submission: .image(make: { compiled in
                     ImageGenerationSubmission.makeMarble(
                         genInput: genInput(compiled), model: model, reference: reference,
@@ -503,7 +687,8 @@ extension ToolExecutor {
         let request = GenerationRequest(
             modality: .image, modelId: modelId, intent: prompt, aspectRatio: aspectRatio,
             placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
-            precompiled: precompiled, rawPrompt: raw,
+            target: approved.target,
+            precompiled: approvedPrompt, rawPrompt: raw,
             submission: .image(make: { compiled in
                 ImageGenerationSubmission.make(
                     genInput: genInput(compiled), model: model, references: refs,
@@ -520,8 +705,8 @@ extension ToolExecutor {
               editor.agentService.pendingGateApproval == nil else {
             throw ToolError("The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user.")
         }
-        try editor.pipelineAgentHarness.guardAgentDecision(editor: editor)
         let dialog = try AgentDialog.parse(args)
+        try editor.pipelineAgentHarness.guardAgentDecision(dialog, editor: editor)
         editor.agentService.pendingDialog = dialog
         editor.agentPanelVisible = true
         // Canvas projection (A3, #124): reveal the Review gallery at the shot so its candidates are
@@ -550,7 +735,10 @@ extension ToolExecutor {
         // used to be optional, so forgetting it degraded the compile silently: no camera projection from
         // the spec, no drift lint, no error. The contract now forces the decision instead of asking the
         // agent to remember it; an unknown id is refused rather than quietly treated as free intent.
-        let projection = try shotProjection(shotId, editor: editor)
+        let projection = try PromptCompiler.currentShotProjection(
+            editor: editor,
+            shotId: shotId
+        )
         // Composition runs the engine path (ledger directives + provider builder + PromptLinter) instead of
         // the old local ledger text-append, then the gate mints the token over the result.
         let compiled = try await PromptCompiler.compile(
@@ -568,35 +756,6 @@ extension ToolExecutor {
         ]
         guard let json = Self.jsonString(body) else { return .error("Failed to encode compiled prompt") }
         return .ok(json)
-    }
-
-    /// Build a per-shot projection for `compile_prompt`'s required `shotId` — loads the shot from the
-    /// open project's shotlist and derives the deterministic camera/framing projection plus the
-    /// compliance read-surface (#197). `"none"` is the explicit free-intent choice → nil.
-    ///
-    /// An id that names no shot THROWS (#231). It would otherwise be indistinguishable from free intent,
-    /// which is the silent degradation this contract exists to prevent: a typo'd id would drop the
-    /// camera projection and the drift lint without a word. A project that has no shotlist yet is a
-    /// normal state, not a violation — only a real miss against a real shotlist is an error.
-    private func shotProjection(_ shotId: String, editor: EditorViewModel) throws -> PromptComposer.ShotProjection? {
-        guard shotId != "none" else { return nil }
-        guard let root = editor.workingRoot.flatMap({
-            DataRootResolver.dataRoot(of: $0)
-        }), let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil else {
-            throw ToolError(
-                "Shot-bound compilation requires an open project with a current shotlist."
-            )
-        }
-        guard let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
-            throw ToolError(
-                "No shot '\(shotId)' in the shotlist. Pass a real shot id from next_render_shot, or "
-                + "\"none\" if this prompt belongs to no shot — but note that \"none\" compiles without "
-                + "the shot's camera projection and without the drift check.")
-        }
-        // #213: the global cut-handle override — the user forcing overlap material on every shot.
-        let forceHandles = (try? YAMLArtifactStore(dataRoot: root).load(Brief.self, at: PipelineLayout.briefFile))?
-            .cutHandlesMode == .withOverlap
-        return PromptComposer.ShotProjection(shot, forceHandles: forceHandles)
     }
 
     func generateAudio(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
@@ -658,13 +817,6 @@ extension ToolExecutor {
             editor: editor
         )
 
-        // Cost-Guard (M7): the user's final word before this paid audio render. No swap — audio models
-        // vary by category/voice/inputs, so an alternative isn't a drop-in; approval only.
-        let audioCredits = CostEstimator.audioCost(model: model, prompt: prompt, durationSeconds: durationSeconds)
-        _ = try await confirmSpend(
-            editor, currentModelId: model.id, currentModelName: model.displayName,
-            credits: audioCredits, actionLabel: "Generate \(model.category.label)", alternatives: [])
-
         // Build the submission from the CONTROLLER-compiled prompt so the audio params + genInput
         // carry the same text the gate validated.
         func makeSubmission(_ compiled: String) -> AudioGenerationSubmission {
@@ -689,6 +841,15 @@ extension ToolExecutor {
         let preflight: GenerationController.Preflight = {
             model.validate(params: makeSubmission(prompt).params)
         }
+        if let error = preflight() { throw ToolError(error) }
+        let audioCredits = CostEstimator.audioCost(
+            model: model,
+            prompt: prompt,
+            durationSeconds: durationSeconds
+        )
+        let approved = try await confirmSpend(
+            editor, currentModelId: model.id, currentModelName: model.displayName,
+            credits: audioCredits, actionLabel: "Generate \(model.category.label)", alternatives: [])
 
         let placement: GenerationRequest.Placement
         let successCopy: (String) -> String
@@ -705,6 +866,7 @@ extension ToolExecutor {
             modality: .audio, modelId: model.id, intent: prompt,
             durationSeconds: durationSeconds.map(Double.init),
             placement: placement, origin: .agentTool,
+            target: approved.target,
             precompiled: precompiled, rawPrompt: raw,
             submission: .audio(make: { makeSubmission($0) }))
         return try await routeThroughController(
@@ -737,13 +899,14 @@ extension ToolExecutor {
 
         // Cost-Guard (M7): approval before this paid upscale. Upscalers are type-specific, so no swap.
         let upSeconds = Int((trimmed?.durationSeconds ?? (asset.duration > 0 ? asset.duration : 1)).rounded())
-        _ = try await confirmSpend(
+        let approved = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: CostEstimator.upscaleCost(model: model, durationSeconds: upSeconds),
             actionLabel: "Upscale", alternatives: [])
 
         guard let placeholderId = await EditSubmitter.submitUpscale(
-            asset: asset, model: model, editor: editor, trimmedSource: trimmed, origin: .agentTool
+            asset: asset, model: model, editor: editor, trimmedSource: trimmed,
+            origin: .agentTool, target: approved.target
         ) else {
             throw ToolError("Failed to start upscale")
         }
@@ -872,6 +1035,7 @@ extension ToolExecutor {
             "id": m.id, "displayName": m.displayName,
             "aspectRatios": m.aspectRatios,
             "supportsImageReference": m.supportsImageReference,
+            "requiresImageReference": m.requiresImageReference,
         ]
         if includeType { info["type"] = "image" }
         if let r = m.resolutions { info["resolutions"] = r }

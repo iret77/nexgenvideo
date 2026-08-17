@@ -107,7 +107,7 @@ struct PipelinePhaseProgressView: View {
     }
 }
 
-private struct PipelinePhaseProgressPresentation {
+struct PipelinePhaseProgressPresentation {
     let title: String
     let detail: String
 

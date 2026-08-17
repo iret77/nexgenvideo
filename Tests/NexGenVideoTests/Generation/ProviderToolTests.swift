@@ -22,24 +22,29 @@ struct ProviderToolTests {
         }
     }
 
-    @Test func argumentsCoerceToStrings() {
-        let out = ToolExecutor.stringArguments([
+    @Test func argumentsPreserveMCPTypes() {
+        let out = ToolExecutor.mcpArguments([
             "image_url": "https://x/y.png",
             "count": 3,
             "ratio": 1.5,
             "hd": true,
-            "opts": ["a": 1],
+            "params": ["model": "x", "count": 1],
         ])
-        #expect(out["image_url"] == "https://x/y.png")
-        #expect(out["count"] == "3")
-        #expect(out["ratio"] == "1.5")
-        #expect(out["hd"] == "true")
-        #expect(out["opts"]?.contains("\"a\"") == true)  // nested object JSON-encoded, not dropped
+        #expect(out["image_url"] == .string("https://x/y.png"))
+        #expect(out["count"] == .int(3))
+        #expect(out["ratio"] == .double(1.5))
+        #expect(out["hd"] == .bool(true))
+        guard case .object(let params)? = out["params"] else {
+            Issue.record("Expected nested params object")
+            return
+        }
+        #expect(params["model"] == .string("x"))
+        #expect(params["count"] == .int(1))
     }
 
     @Test func nonObjectArgumentsAreEmpty() {
-        #expect(ToolExecutor.stringArguments(nil).isEmpty)
-        #expect(ToolExecutor.stringArguments("nope").isEmpty)
+        #expect(ToolExecutor.mcpArguments(nil).isEmpty)
+        #expect(ToolExecutor.mcpArguments("nope").isEmpty)
     }
 
     // Prompt-engine gate: a tool whose schema exposes a creative prompt is generation (refused here);

@@ -47,6 +47,7 @@ struct ImageModelConfig: Identifiable, Sendable {
     var aspectRatios: [String] { caps.aspectRatios }
     var qualities: [String]? { caps.qualities }
     var supportsImageReference: Bool { caps.supportsImageReference }
+    var requiresImageReference: Bool { caps.requiresImageReference }
     var maxImages: Int { max(1, min(4, caps.maxImages)) }
 
     func validate(aspectRatio: String, resolution: String?, quality: String?, imageRefCount: Int, numImages: Int) -> String? {
@@ -61,6 +62,9 @@ struct ImageModelConfig: Identifiable, Sendable {
         }
         if imageRefCount > 0, !supportsImageReference {
             return "\(displayName) does not accept reference images."
+        }
+        if imageRefCount == 0, requiresImageReference {
+            return "\(displayName) requires a reference image."
         }
         if numImages < 1 || numImages > maxImages {
             return "\(displayName) supports 1…\(maxImages) image\(maxImages == 1 ? "" : "s") per request (got \(numImages))."

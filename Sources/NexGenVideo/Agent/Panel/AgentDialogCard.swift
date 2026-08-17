@@ -474,8 +474,6 @@ private struct FlowChips: View {
     let onTap: (String) -> Void
 
     var body: some View {
-        // Wrap at each chip's NATURAL width — a fixed-column grid + lineLimit(1) truncated longer
-        // labels ("Local file on this Mac", "I'll drag it in / point to it").
         WrapLayout(spacing: AppTheme.Spacing.xs) {
             ForEach(options) { option in
                 let isOn = selected.contains(option.id)
@@ -487,11 +485,12 @@ private struct FlowChips: View {
                             Image(systemName: symbol)
                                 .font(.system(size: AppTheme.FontSize.xxs))
                         }
-                        Text(option.label)
+                        Text(option.shortLabel)
                             .font(.system(size: AppTheme.FontSize.xs,
                                           weight: isOn ? .semibold : .regular))
                             .lineLimit(1)
-                            .fixedSize()
+                            .truncationMode(.tail)
+                            .frame(maxWidth: AppTheme.ComponentSize.agentChoiceChipMaxWidth)
                     }
                     .padding(.horizontal, AppTheme.Spacing.sm)
                     .padding(.vertical, AppTheme.Spacing.xxs)
@@ -509,6 +508,8 @@ private struct FlowChips: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .help(option.label)
+                .accessibilityLabel(option.shortLabel)
             }
         }
     }
