@@ -23,7 +23,7 @@ struct HardStepIntakeTests {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func writeApprovedAnalysis(in dataRoot: URL) throws {
+    private func writeApprovedAnalysis(in dataRoot: URL, project: String) throws {
         let trackURL = dataRoot.appendingPathComponent("audio/track.wav")
         try FileManager.default.createDirectory(
             at: trackURL.deletingLastPathComponent(),
@@ -38,7 +38,7 @@ struct HardStepIntakeTests {
         )
         let analysis: [String: Any] = [
             "schema": analysisSchemaVersion,
-            "project": "hard-step-intake",
+            "project": project,
             "song_path": "audio/track.wav",
             "song_sha256": trackHash,
             "sample_rate": 44_100,
@@ -103,7 +103,7 @@ struct HardStepIntakeTests {
         try JSONSerialization.data(withJSONObject: analysis).write(to: analysisURL)
         try AnalysisMeasurementProofStore.save(
             AnalysisMeasurementProof(
-                project: "hard-step-intake",
+                project: project,
                 songSHA256: trackHash,
                 lyricsAlignment: nil
             ),
@@ -579,7 +579,7 @@ struct HardStepIntakeTests {
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
-        try writeApprovedAnalysis(in: packageDataRoot)
+        try writeApprovedAnalysis(in: packageDataRoot, project: "repeatable-intake-done")
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&packageGates, phase: "project_init")
         GatesOperations.approve(&packageGates, phase: "analysis")
@@ -874,7 +874,7 @@ struct HardStepIntakeTests {
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
-        try writeApprovedAnalysis(in: packageDataRoot)
+        try writeApprovedAnalysis(in: packageDataRoot, project: "workflow-intake")
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&packageGates, phase: "project_init")
         GatesOperations.approve(&packageGates, phase: "analysis")
