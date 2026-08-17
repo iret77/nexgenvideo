@@ -503,7 +503,42 @@ struct ImageCaps: Decodable, Sendable {
     let aspectRatios: [String]
     let qualities: [String]?
     let supportsImageReference: Bool
+    let requiresImageReference: Bool
     let maxImages: Int
+
+    init(
+        resolutions: [String]?,
+        aspectRatios: [String],
+        qualities: [String]?,
+        supportsImageReference: Bool,
+        requiresImageReference: Bool = false,
+        maxImages: Int
+    ) {
+        self.resolutions = resolutions
+        self.aspectRatios = aspectRatios
+        self.qualities = qualities
+        self.supportsImageReference = supportsImageReference
+        self.requiresImageReference = requiresImageReference
+        self.maxImages = maxImages
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case resolutions, aspectRatios, qualities, supportsImageReference
+        case requiresImageReference, maxImages
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        resolutions = try container.decodeIfPresent([String].self, forKey: .resolutions)
+        aspectRatios = try container.decode([String].self, forKey: .aspectRatios)
+        qualities = try container.decodeIfPresent([String].self, forKey: .qualities)
+        supportsImageReference = try container.decode(Bool.self, forKey: .supportsImageReference)
+        requiresImageReference = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requiresImageReference
+        ) ?? false
+        maxImages = try container.decode(Int.self, forKey: .maxImages)
+    }
 }
 
 struct AudioCaps: Decodable, Sendable {

@@ -78,4 +78,24 @@ struct ProviderResolverTests {
         let picked = ProviderResolver.resolve(bindings: [mcp, api], activation: activation, effectiveCost: { $0.billing == .subscription ? 0 : 9 })
         #expect(picked == api)
     }
+
+    @Test func providerPickerGetsOneBestActiveBindingPerProvider() {
+        let falAPI = binding(.fal, .api, "fal/model", .perCall)
+        let runwayAPI = binding(.runway, .api, "runway/model", .perCall)
+        let runwayMCP = binding(.runway, .mcp, "generate_image", .subscription)
+        let inactiveGoogle = binding(.google, .api, "google/model", .perCall)
+        let activation = ProviderActivation(active: [
+            .init(provider: .fal, transport: .api),
+            .init(provider: .runway, transport: .api),
+            .init(provider: .runway, transport: .mcp),
+        ])
+
+        let options = ProviderResolver.preferredActiveBindingPerProvider(
+            bindings: [falAPI, runwayAPI, runwayMCP, inactiveGoogle],
+            activation: activation,
+            effectiveCost: { $0.billing == .subscription ? 0 : 2 }
+        )
+
+        #expect(options == [falAPI, runwayMCP])
+    }
 }

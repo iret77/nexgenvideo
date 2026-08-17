@@ -1,31 +1,64 @@
 import SwiftUI
 
-/// The user's final word on a paid agent render (Cost-Guard, M7). Docked in the composer exactly
-/// where the generative dialog lives — never a modal — so the user approves the spend in context.
-/// The agent's render tool-call is suspended until Approve or Decline; a cheaper model can be picked
-/// first. Approve carries the chosen model id (the same one, or a swap).
 struct SpendApprovalCard: View {
     let approval: SpendApproval
-    let onApprove: (String) -> Void
+    let onApprove: (SpendOption) -> String?
     let onDecline: () -> Void
 
-    @State private var selectedModelId: String = ""
+    @State private var selectedOptionId: String
+    @State private var approvalError: String?
+    @State private var providerKeyRevision = 0
 
-    private var chosenCredits: Int? {
-        if selectedModelId == approval.modelId { return approval.credits }
-        return approval.alternatives.first { $0.modelId == selectedModelId }?.credits
+    init(
+        approval: SpendApproval,
+        onApprove: @escaping (SpendOption) -> String?,
+        onDecline: @escaping () -> Void
+    ) {
+        self.approval = approval
+        self.onApprove = onApprove
+        self.onDecline = onDecline
+        _selectedOptionId = State(initialValue: approval.recommendedOptionId)
     }
 
-    private var chosenName: String {
-        if selectedModelId == approval.modelId { return approval.modelName }
-        return approval.alternatives.first { $0.modelId == selectedModelId }?.name ?? approval.modelName
+    private var availableOptions: [SpendOption] {
+        _ = providerKeyRevision
+        return approval.options.filter { $0.isCurrentlyAvailable }
+    }
+
+    private var selectedOption: SpendOption? {
+        availableOptions.first { $0.id == selectedOptionId }
+    }
+
+    private var availableProviders: [GenerationProvider] {
+        var seen: Set<GenerationProvider> = []
+        return availableOptions.compactMap { option in
+            seen.insert(option.target.provider).inserted ? option.target.provider : nil
+        }
+    }
+
+    private var selectedProvider: GenerationProvider? {
+        selectedOption?.target.provider ?? availableProviders.first
+    }
+
+    private var modelOptions: [SpendOption] {
+        guard let selectedProvider else { return [] }
+        return availableOptions.filter { $0.target.provider == selectedProvider }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             header
             summary
-            if !approval.alternatives.isEmpty { alternatives }
+            if availableOptions.count > 1 { selectionControls }
+            if let approvalError {
+                Text(approvalError)
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Status.errorColor)
+            } else if availableOptions.isEmpty {
+                Text("No valid provider and model combination is currently available.")
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Status.errorColor)
+            }
             footerRow
         }
         .padding(AppTheme.Spacing.md)
@@ -35,11 +68,17 @@ struct SpendApprovalCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
-                              lineWidth: AppTheme.BorderWidth.thin)
+                .strokeBorder(
+                    AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
+                    lineWidth: AppTheme.BorderWidth.thin
+                )
         )
         .padding(.horizontal, AppTheme.Spacing.mdLg)
-        .onAppear { if selectedModelId.isEmpty { selectedModelId = approval.modelId } }
+        .onAppear { normalizeSelection() }
+        .onChange(of: availableOptions.map(\.id)) { _, _ in normalizeSelection() }
+        .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
+            providerKeyRevision += 1
+        }
         .id(approval.id)
     }
 
@@ -65,67 +104,72 @@ struct SpendApprovalCard: View {
 
     private var summary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-            Text("\(approval.actionLabel) with \(chosenName)")
+            Text("\(approval.actionLabel) with \(selectedOption.map { displayName($0) } ?? "Unavailable model")")
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(providerLine)
-                .font(.system(size: AppTheme.FontSize.xxs))
-                .foregroundStyle(AppTheme.Text.mutedColor)
-        }
-    }
-
-    private var providerLine: String {
-        let provider = (selectedModelId == approval.modelId)
-            ? approval.providerLabel
-            : (approval.alternatives.first { $0.modelId == selectedModelId }?.providerLabel ?? approval.providerLabel)
-        return "via \(provider) · \(CostEstimator.format(chosenCredits))"
-    }
-
-    private var alternatives: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            Text("CHEAPER OPTIONS")
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
-                .tracking(AppTheme.Tracking.wide)
-                .foregroundStyle(AppTheme.Text.mutedColor)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: AppTheme.Spacing.xs)],
-                      alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                modelChip(id: approval.modelId, name: approval.modelName, credits: approval.credits)
-                ForEach(approval.alternatives) { alt in
-                    modelChip(id: alt.modelId, name: alt.name, credits: alt.credits)
-                }
-            }
-        }
-    }
-
-    private func modelChip(id: String, name: String, credits: Int?) -> some View {
-        let isOn = selectedModelId == id
-        return Button { selectedModelId = id } label: {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.micro) {
-                Text(name)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: isOn ? .semibold : .regular))
-                    .lineLimit(1)
-                Text(CostEstimator.format(credits))
+                .help(selectedOption?.modelName ?? "")
+            if let selectedOption {
+                Text("via \(selectedOption.providerLabel) · \(CostEstimator.format(selectedOption.credits))")
                     .font(.system(size: AppTheme.FontSize.xxs))
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
-            .padding(.horizontal, AppTheme.Spacing.sm)
-            .padding(.vertical, AppTheme.Spacing.xxs)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .foregroundStyle(isOn ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm).fill(isOn
-                    ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
-                    : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.sm).strokeBorder(
-                    isOn ? AppTheme.Accent.primary : AppTheme.Border.subtleColor,
-                    lineWidth: AppTheme.BorderWidth.hairline)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
         }
-        .buttonStyle(.plain)
+    }
+
+    private var selectionControls: some View {
+        HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text("PROVIDER")
+                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                    .tracking(AppTheme.Tracking.wide)
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                Picker("Provider", selection: providerSelection) {
+                    ForEach(availableProviders) { provider in
+                        Text(provider.displayName).tag(provider.rawValue)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .disabled(availableProviders.count < 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                Text("MODEL")
+                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                    .tracking(AppTheme.Tracking.wide)
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                Picker("Model", selection: $selectedOptionId) {
+                    ForEach(modelOptions) { option in
+                        Text(displayName(option))
+                            .tag(option.id)
+                            .help(option.modelName)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .disabled(modelOptions.count < 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var providerSelection: Binding<String> {
+        Binding(
+            get: { selectedProvider?.rawValue ?? "" },
+            set: { rawValue in
+                guard let provider = GenerationProvider(rawValue: rawValue) else { return }
+                let currentModelId = selectedOption?.modelId
+                let matching = availableOptions.filter { $0.target.provider == provider }
+                selectedOptionId = matching.first { $0.modelId == currentModelId }?.id
+                    ?? matching.first?.id
+                    ?? ""
+                approvalError = nil
+            }
+        )
     }
 
     private var footerRow: some View {
@@ -134,11 +178,23 @@ struct SpendApprovalCard: View {
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .controlSize(.small)
             Spacer()
-            Button("\(approval.actionLabel) · \(CostEstimator.format(chosenCredits))") {
-                onApprove(selectedModelId)
+            Button("\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
+                guard let selectedOption else { return }
+                approvalError = onApprove(selectedOption)
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
             .controlSize(.small)
+            .disabled(selectedOption == nil)
         }
+    }
+
+    private func normalizeSelection() {
+        guard !availableOptions.contains(where: { $0.id == selectedOptionId }) else { return }
+        selectedOptionId = availableOptions.first?.id ?? ""
+        approvalError = nil
+    }
+
+    private func displayName(_ option: SpendOption) -> String {
+        AgentDialog.limitedChoiceDisplayLabel(option.modelName)
     }
 }

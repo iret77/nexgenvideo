@@ -74,7 +74,7 @@ struct AgentPanelView: View {
             if let approval = service.pendingSpendApproval {
                 SpendApprovalCard(
                     approval: approval,
-                    onApprove: { modelId in service.resolveSpend(.approved(modelId: modelId)) },
+                    onApprove: { option in service.approveSpend(option) },
                     onDecline: { service.resolveSpend(.declined) }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
@@ -112,6 +112,7 @@ struct AgentPanelView: View {
                 .id(dialog.id)
                 .padding(.bottom, AppTheme.Spacing.xs)
             }
+            AgentLiveStatusView(status: liveStatus)
             footer
         }
         .onAppear {
@@ -161,6 +162,117 @@ struct AgentPanelView: View {
             hasDialog: service.pendingDialog != nil,
             hasGateApproval: service.pendingGateApproval != nil,
             hasSpendApproval: service.pendingSpendApproval != nil
+        )
+    }
+
+    private var liveStatus: AgentLiveStatus {
+        if let snapshot = editor.pipelinePhaseExecution.snapshot,
+           snapshot.isRunning {
+            let presentation = PipelinePhaseProgressPresentation(
+                stageID: snapshot.stageID
+            )
+            let count = snapshot.totalUnitCount > 0
+                ? " · \(snapshot.completedUnitCount) of \(snapshot.totalUnitCount)"
+                : ""
+            return AgentLiveStatus(
+                state: .working,
+                title: presentation.title,
+                detail: "\(PhaseDisplay.label(snapshot.phase))\(count)"
+            )
+        }
+        if service.gateApprovalIsWriting {
+            return AgentLiveStatus(
+                state: .working,
+                title: "Saving approval",
+                detail: service.pendingGateApproval.map {
+                    PhaseDisplay.label($0.phase)
+                } ?? "Updating the pipeline gate"
+            )
+        }
+        if service.submittingDialogID != nil {
+            return AgentLiveStatus(
+                state: .working,
+                title: "Attaching files",
+                detail: service.pendingDialog?.title ?? "Saving your workflow input"
+            )
+        }
+        if let error = service.dialogSubmissionError {
+            return AgentLiveStatus(
+                state: .failed,
+                title: "Attachment failed",
+                detail: error
+            )
+        }
+        if let dialog = service.pendingDialog {
+            return AgentLiveStatus(
+                state: .waiting,
+                title: "Waiting for your input",
+                detail: dialog.title
+            )
+        }
+        if let gate = service.pendingGateApproval {
+            return AgentLiveStatus(
+                state: .waiting,
+                title: "Waiting for your approval",
+                detail: PhaseDisplay.label(gate.phase)
+            )
+        }
+        if service.pendingSpendApproval != nil {
+            return AgentLiveStatus(
+                state: .waiting,
+                title: "Waiting for spend approval",
+                detail: "Choose a model or decline the request"
+            )
+        }
+        if case .failed(let message)? = editor.pipelinePhaseExecution.snapshot?.status {
+            return AgentLiveStatus(
+                state: .failed,
+                title: "Pipeline phase failed",
+                detail: message
+            )
+        }
+        if let error = service.streamError {
+            return AgentLiveStatus(
+                state: .failed,
+                title: "Agent stopped",
+                detail: error.localizedDescription
+            )
+        }
+        if service.isStreaming {
+            let activity = transcriptEntries.compactMap { entry -> AgentActivity? in
+                guard case .activity(let activity) = entry,
+                      activity.isRunning else { return nil }
+                return activity
+            }.last
+            let title = activity?.steps.last.map {
+                ToolRunPresentation.label(for: $0.name)
+            }
+                ?? activity?.currentStatus
+                ?? "Agent is working"
+            return AgentLiveStatus(
+                state: .working,
+                title: title,
+                detail: activity?.currentStatus ?? "The current task is still running"
+            )
+        }
+        if service.isCheckingBackend {
+            return AgentLiveStatus(
+                state: .working,
+                title: service.backendStatusCheckLabel,
+                detail: "Checking whether the agent is available"
+            )
+        }
+        if !service.canStream {
+            return AgentLiveStatus(
+                state: .unavailable,
+                title: "Agent unavailable",
+                detail: service.backendSetupMessage
+            )
+        }
+        return AgentLiveStatus(
+            state: .ready,
+            title: "Ready",
+            detail: "No task is running"
         )
     }
 

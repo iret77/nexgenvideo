@@ -221,4 +221,29 @@ struct ClaudeCodeEventMapperTests {
         #expect(mapper.lastTurnCostUSD == 0.05)
         #expect(mapper.turnError == nil)
     }
+
+    @Test("transcript-only workflow records survive later Claude events")
+    func transcriptOnlyWorkflowRecordSurvives() {
+        var mapper = ClaudeCodeEventMapper()
+        let record = AgentWorkflowRecord(
+            title: "Prepared character 1",
+            symbol: "person",
+            detail: "Claude Mouse",
+            attachmentNames: ["character-sheet.png"],
+            outcome: .attached
+        )
+        mapper.appendTranscriptOnly(AgentMessage(
+            role: .user,
+            blocks: [],
+            userPresentation: AgentUserPresentation(
+                choiceRecord: nil,
+                typedText: nil,
+                workflowRecord: record
+            )
+        ))
+        mapper.ingest(line: #"{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"Continuing."}]}}"#)
+
+        #expect(mapper.messages.count == 2)
+        #expect(mapper.messages.first?.userPresentation?.workflowRecord == record)
+    }
 }

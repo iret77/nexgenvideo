@@ -104,6 +104,38 @@ struct AgentTranscriptProjectionTests {
         }
         #expect(activity.id == kickoff.id)
     }
+
+    @Test("workflow intake records remain visible without becoming activity")
+    func workflowRecordIsDurableContent() {
+        let record = AgentWorkflowRecord(
+            title: "Prepared character 1",
+            symbol: "person",
+            detail: "Claude Mouse",
+            attachmentNames: ["character-sheet.png"],
+            outcome: .attached
+        )
+        let message = AgentMessage(
+            role: .user,
+            blocks: [],
+            userPresentation: AgentUserPresentation(
+                choiceRecord: nil,
+                typedText: nil,
+                workflowRecord: record
+            )
+        )
+
+        let entries = AgentTranscriptProjection.entries(
+            messages: [message],
+            isStreaming: false
+        )
+
+        #expect(entries.count == 1)
+        guard case .message(let projected) = entries[0] else {
+            Issue.record("workflow record must remain a transcript message")
+            return
+        }
+        #expect(projected.userPresentation?.workflowRecord == record)
+    }
 }
 
 private extension AgentTranscriptEntry {

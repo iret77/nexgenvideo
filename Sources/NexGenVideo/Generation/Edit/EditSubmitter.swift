@@ -17,6 +17,7 @@ enum EditSubmitter {
         editor: EditorViewModel,
         trimmedSource: TrimmedSource? = nil,
         origin: GenerationRequest.Origin = .panel,
+        target: ResolvedGenerationTarget? = nil,
         onComplete: (@MainActor (MediaAsset) -> Void)? = nil,
         onFailure: (@MainActor () -> Void)? = nil
     ) async -> String? {
@@ -49,6 +50,7 @@ enum EditSubmitter {
             modality: .upscale, modelId: model.id, intent: "",
             durationSeconds: Double(effectiveDuration),
             placement: .mediaLibrary(folderId: asset.folderId), origin: origin,
+            target: target,
             submission: .upscale(run: { service, projectURL, editor, authorization, onComplete, onFailure in
                 service.generate(
                     genInput: genInput,

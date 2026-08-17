@@ -11,6 +11,33 @@ import Foundation
 @Suite("CostGuard — the user's final word on paid agent renders (M7)", .serialized)
 struct CostGuardTests {
 
+    private func option(
+        modelId: String,
+        name: String,
+        provider: GenerationProvider,
+        credits: Int?
+    ) -> SpendOption {
+        let binding = ProviderBinding(
+            provider: provider,
+            transport: .api,
+            kind: .generation,
+            providerRef: modelId,
+            billing: .perCall
+        )
+        return SpendOption(
+            modelId: modelId,
+            modelName: name,
+            target: ResolvedGenerationTarget(
+                modelId: modelId,
+                provider: provider,
+                endpoint: modelId,
+                binding: binding
+            ),
+            credits: credits,
+            requiresCatalogAvailability: false
+        )
+    }
+
     private func withThreshold(_ n: Int, _ body: () -> Void) {
         let key = CostGuard.autoApproveKey
         let old = UserDefaults.standard.object(forKey: key)
@@ -45,24 +72,25 @@ struct CostGuardTests {
         }
     }
 
-    /// The gate suspends the render until the UI resolves it — and a swap carries the chosen model id
-    /// back, so the agent cannot self-approve or self-pick.
     @MainActor
     @Test func approvalSuspendsUntilResolvedAndCarriesTheSwap() async {
         let editor = EditorViewModel()
         let service = editor.agentService
+        let recommended = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
+        let selected = option(modelId: "m2", name: "Model Two", provider: .runway, credits: 40)
         let approval = SpendApproval(
-            id: "spend-1", modelId: "m1", modelName: "Model One", providerLabel: "fal.ai",
-            credits: 120,
-            alternatives: [SpendAlternative(modelId: "m2", name: "Model Two", providerLabel: "Runway", credits: 40)],
-            actionLabel: "Generate video")
+            id: "spend-1",
+            recommendedOptionId: recommended.id,
+            options: [recommended, selected],
+            actionLabel: "Generate video"
+        )
 
         async let decision = service.requestSpendApproval(approval)
         for _ in 0..<20 where service.pendingSpendApproval == nil { await Task.yield() }
         #expect(service.pendingSpendApproval?.id == "spend-1")
 
-        service.resolveSpend(.approved(modelId: "m2"))
-        #expect(await decision == .approved(modelId: "m2"))
+        #expect(service.approveSpend(selected) == nil)
+        #expect(await decision == .approved(option: selected))
         #expect(service.pendingSpendApproval == nil)
     }
 
@@ -70,9 +98,13 @@ struct CostGuardTests {
     @Test func declineResolvesToDeclinedAndClears() async {
         let editor = EditorViewModel()
         let service = editor.agentService
+        let selected = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
         let approval = SpendApproval(
-            id: "spend-2", modelId: "m1", modelName: "Model One", providerLabel: "fal.ai",
-            credits: 120, alternatives: [], actionLabel: "Generate image")
+            id: "spend-2",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
 
         async let decision = service.requestSpendApproval(approval)
         for _ in 0..<20 where service.pendingSpendApproval == nil { await Task.yield() }

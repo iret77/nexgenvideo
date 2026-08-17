@@ -47,15 +47,54 @@ struct AgentChoiceRecord: Codable, Equatable, Sendable {
     }
 }
 
+struct AgentWorkflowRecord: Codable, Equatable, Sendable {
+    enum Outcome: String, Codable, Equatable, Sendable {
+        case attached
+        case provided
+        case skipped
+        case completed
+    }
+
+    let title: String
+    let symbol: String
+    let phase: String?
+    let detail: String?
+    let attachmentNames: [String]
+    let outcome: Outcome
+
+    init(
+        title: String,
+        symbol: String,
+        phase: String? = nil,
+        detail: String?,
+        attachmentNames: [String],
+        outcome: Outcome
+    ) {
+        self.title = title
+        self.symbol = symbol
+        self.phase = phase
+        self.detail = detail
+        self.attachmentNames = attachmentNames
+        self.outcome = outcome
+    }
+}
+
 struct AgentUserPresentation: Codable, Equatable, Sendable {
     let choiceRecord: AgentChoiceRecord?
     let typedText: String?
     let notice: String?
+    let workflowRecord: AgentWorkflowRecord?
 
-    init(choiceRecord: AgentChoiceRecord?, typedText: String?, notice: String? = nil) {
+    init(
+        choiceRecord: AgentChoiceRecord?,
+        typedText: String?,
+        notice: String? = nil,
+        workflowRecord: AgentWorkflowRecord? = nil
+    ) {
         self.choiceRecord = choiceRecord
         self.typedText = typedText
         self.notice = notice
+        self.workflowRecord = workflowRecord
     }
 }
 
@@ -90,6 +129,12 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         case workflowIntake
     }
 
+    enum WorkflowDecision: String, Equatable, Sendable {
+        case analysisTempo = "analysis_tempo"
+        case analysisInterpretationReview = "analysis_interpretation_review"
+        case analysisTrackReplacement = "analysis_track_replacement"
+    }
+
     struct Choice: Identifiable, Equatable, Sendable {
         let id: String
         let label: String
@@ -117,7 +162,10 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
 
         private static func compactLabel(_ explicit: String?, fallback: String) -> String {
             let value = explicit?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return value.isEmpty ? AgentDialog.compactTranscriptLabel(fallback) : value
+            let compact = value.isEmpty
+                ? AgentDialog.compactTranscriptLabel(fallback)
+                : value
+            return AgentDialog.limitedChoiceDisplayLabel(compact)
         }
     }
 
@@ -246,11 +294,14 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
     let projection: Projection
     /// What submitting does — defaults to chat clarification (the agent's `show_dialog` path).
     let purpose: Purpose
+    /// Bounded reason for an agent-authored decision while a locked workflow phase is active.
+    let workflowDecision: WorkflowDecision?
 
     init(id: String, title: String, symbol: String, intro: String?, costHint: String?,
          confirmLabel: String, textField: DialogTextField?, sections: [Section],
          fileIntake: FileIntake? = nil,
-         projection: Projection = Projection(), purpose: Purpose = .chatClarification) {
+         projection: Projection = Projection(), purpose: Purpose = .chatClarification,
+         workflowDecision: WorkflowDecision? = nil) {
         self.id = id
         self.title = title
         self.symbol = symbol
@@ -262,6 +313,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         self.fileIntake = fileIntake
         self.projection = projection
         self.purpose = purpose
+        self.workflowDecision = workflowDecision
     }
 
     /// Derives a compact label when the dialog omits `shortLabel`.
@@ -280,6 +332,13 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             return subject.prefix(1).uppercased() + String(subject.dropFirst())
         }
         return head.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func limitedChoiceDisplayLabel(_ label: String) -> String {
+        let normalized = label.split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        guard normalized.count > maxChoiceDisplayLength else { return normalized }
+        return String(normalized.prefix(maxChoiceDisplayLength - 1)) + "…"
     }
 
     func permitsSubmission(
@@ -377,7 +436,9 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
             textField: textField,
             sections: sections,
             fileIntake: fileIntake,
-            projection: projection
+            projection: projection,
+            workflowDecision: (args["workflowDecision"] as? String)
+                .flatMap(WorkflowDecision.init(rawValue:))
         )
     }
 
@@ -385,6 +446,7 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
     /// render as an overloaded or malformed wall of controls (schema-enforced, not prompt discipline).
     static let maxSections = 3
     static let maxOptionsPerSection = 8
+    static let maxChoiceDisplayLength = 48
 
     /// The one free-text field, if declared. New `textField: {placeholder, multiline}` object, or the
     /// legacy single-line `textPlaceholder` string.

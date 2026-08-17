@@ -101,6 +101,63 @@ struct AgentTranscriptLayoutPolicyTests {
         ) != nil)
     }
 
+    @Test func liveStatusIsAPersistentInFlowSiblingAboveTheComposer() throws {
+        let source = try agentPanelSource()
+        let start = try #require(source.range(of: "var body: some View"))
+        let end = try #require(source.range(
+            of: "private func refreshDiscoveredPlugins",
+            range: start.upperBound..<source.endIndex
+        ))
+        let implementation = source[start.lowerBound..<end.lowerBound]
+
+        let status = try #require(implementation.range(
+            of: "AgentLiveStatusView(status: liveStatus)"
+        ))
+        let footer = try #require(implementation.range(
+            of: "footer",
+            range: status.upperBound..<implementation.endIndex
+        ))
+        #expect(status.lowerBound < footer.lowerBound)
+        #expect(implementation.contains("if let dialog = service.pendingDialog"))
+
+        let statusSource = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift"
+        )
+        #expect(!statusSource.contains(".overlay"))
+        #expect(!statusSource.contains("ZStack"))
+    }
+
+    @Test func dialogChoiceChipsUseBoundedCompactTitles() throws {
+        let source = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift"
+        )
+        let start = try #require(source.range(of: "private struct FlowChips"))
+        let implementation = source[start.lowerBound..<source.endIndex]
+
+        #expect(implementation.contains("Text(option.shortLabel)"))
+        #expect(!implementation.contains("Text(option.label)"))
+        #expect(implementation.contains("agentChoiceChipMaxWidth"))
+        #expect(implementation.contains(".help(option.label)"))
+        #expect(!implementation.contains(".fixedSize()"))
+    }
+
+    @Test func spendApprovalKeepsValidProviderAndModelChoicesInTheCard() throws {
+        let card = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/SpendApprovalCard.swift"
+        )
+        let executor = try sourceFile(
+            "Sources/NexGenVideo/Agent/Tools/ToolExecutor+Generate.swift"
+        )
+
+        #expect(card.contains("approval.options.filter { $0.isCurrentlyAvailable }"))
+        #expect(card.contains("Picker(\"Provider\""))
+        #expect(card.contains("Picker(\"Model\""))
+        #expect(!card.contains("CHEAPER OPTIONS"))
+        #expect(executor.contains("availableImageAlternatives"))
+        #expect(executor.contains("target: approved.target"))
+        #expect(executor.contains("PromptCompiler.recompile"))
+    }
+
     @Test func sidebarKeepsTranscriptContainerFreeOfSecondaryLayers() throws {
         let source = try sourceFile("Sources/NexGenVideo/Editor/LeftSidebarView.swift")
         let start = try #require(source.range(of: "var body: some View"))

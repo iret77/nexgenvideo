@@ -49,6 +49,10 @@ struct ClaudeCodeEventMapper {
         ))
     }
 
+    mutating func appendTranscriptOnly(_ message: AgentMessage) {
+        messages.append(message)
+    }
+
     /// Append a runtime-level note (e.g. "Claude Code CLI not found") as an assistant message.
     mutating func appendNote(_ text: String) {
         messages.append(AgentMessage(role: .assistant, blocks: [.text(text)]))

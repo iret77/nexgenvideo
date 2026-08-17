@@ -43,6 +43,32 @@ struct PromptCompilerTests {
         #expect(!PromptCompiler.validate(token: compiled.token, text: compiled.text + "!", modelId: "fal-ai/veo3"))
     }
 
+    @Test func rememberedIntentCanBeRecompiledForAUserSelectedModel() async throws {
+        let original = try await PromptCompiler.compile(
+            intent: "a weathered grey mouse sheriff standing alone in a sun-baked desert town at golden hour",
+            modelId: "fal-ai/flux-pro",
+            modality: .image,
+            editor: nil
+        )
+        let adapted = try await PromptCompiler.recompile(
+            token: original.token,
+            text: original.text,
+            for: "google/gemini-3-pro-image",
+            editor: nil
+        )
+
+        #expect(PromptCompiler.validate(
+            token: adapted.token,
+            text: adapted.text,
+            modelId: "google/gemini-3-pro-image"
+        ))
+        #expect(!PromptCompiler.validate(
+            token: original.token,
+            text: original.text,
+            modelId: "google/gemini-3-pro-image"
+        ))
+    }
+
     @Test func tokenIsBoundToProjectShotAndPlanFingerprint() {
         let first = PromptBinding(
             projectKey: "/project-a/pipeline",

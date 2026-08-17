@@ -76,7 +76,8 @@ for timing; do not describe the song's structure from "listening".
   measured sections are labeled). Run the DSP for real, THEN interpret, THEN approve — approving
   right after the DSP run is refused. After writing the interpretation, give a
   summary (BPM, section labels, anomalies) and request approval via
-  show_dialog ("approve / change a label / re-analyze"). On approval:
+  show_dialog with `workflowDecision="analysis_interpretation_review"`
+  ("approve / change a label / re-analyze"). On approval:
   `approve_gate(project_dir, "analysis", notes=...)` — which surfaces the
   approval to the user and writes only after they tap Approve; you're
   requesting it, not granting it. On a decline, stay on this phase.
@@ -154,7 +155,8 @@ You are spawned fresh on every `/continue`. Before doing any work:
 
 - Does `analysis/<song>.json` already contain a top-level key
   `interpretation` with `section_labels`, `anomalies`,
-  `overall_character`? → show_dialog: "An interpretation already
+  `overall_character`? → show_dialog with
+  `workflowDecision="analysis_interpretation_review"`: "An interpretation already
   exists. Approve it (set the gate), change it (which field), or
   regenerate?" On `approve` → set the gate, done. On `change` → re-ask
   / rewrite only the affected field by calling
@@ -174,7 +176,8 @@ Workflow:
 
 1. Read `bpm` from `analysis.json` and inspect the song (energy_curve and
    tempo_curve help).
-2. Ask the user a show_dialog with the three plausible options:
+2. Ask the user a show_dialog with `workflowDecision="analysis_tempo"`
+   and the three plausible options:
    - **`×1` (confirmed)** — measured ≈ felt, multiplier 1.0.
    - **`×0.5` (halved)** — the track feels half as fast.
    - **`×2` (doubled)** — the track feels twice as fast.
@@ -248,7 +251,8 @@ Never hand-edit or rewrite the measured analysis artifact.
 - Preflight: no audio → hard stop and report the incomplete host handoff.
   Never open an upload dialog or approve the gate.
 - `run_phase` returns `{"error": "phase_failed"}` → the song couldn't be
-  decoded. Surface the detail, then use one recovery path: `show_dialog`
+  decoded. Surface the detail, then use one recovery path: `show_dialog` with
+  `workflowDecision="analysis_track_replacement"`
   with a required audio `fileIntake` and no `attachAs`; after the user
   chooses the replacement, call `attach_song(media, replace=true)` with
   the returned media reference and re-run analysis. Do not proceed on a

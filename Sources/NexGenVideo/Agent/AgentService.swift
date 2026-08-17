@@ -289,20 +289,27 @@ final class AgentService {
             return
         }
         guard submittingDialogID == nil, pendingDialog?.id == dialog.id else { return }
+        if dialog.purpose == .workflowIntake,
+           let role = dialog.fileIntake?.attachAs,
+           let conflict = intakeRoleConflict(role, urls: result.fileURLs) {
+            dialogSubmissionError = "\(conflict.name) is already assigned as \(Self.intakeRoleLabel(conflict.role))."
+            return
+        }
+        if dialog.purpose == .workflowIntake, let editor {
+            do {
+                try editor.pipelineAgentHarness.validateWorkflowIntake(
+                    dialogID: dialog.id,
+                    editor: editor
+                )
+            } catch {
+                dialogSubmissionError = error.localizedDescription
+                return
+            }
+        }
         submittingDialogID = dialog.id
         dialogSubmissionError = nil
         if dialog.purpose == .chatClarification {
             pendingDialog = nil
-        }
-        if dialog.purpose == .workflowIntake,
-           let role = dialog.fileIntake?.attachAs,
-           let conflict = intakeRoleConflict(role, urls: result.fileURLs) {
-            sendDialogFailure(
-                dialog,
-                result: result,
-                notice: "\(conflict.name) is already assigned as \(Self.intakeRoleLabel(conflict.role))."
-            )
-            return
         }
         // Host workflow inputs never become individual chat turns.
         switch dialog.fileIntake?.attachAs {
@@ -346,6 +353,7 @@ final class AgentService {
         case .workflowIntake:
             completeWorkflowIntake(
                 dialog,
+                result: result,
                 didProvideMaterial: Self.didProvideWorkflowMaterial(result)
             )
         }
@@ -363,7 +371,7 @@ final class AgentService {
               dialog.fileIntake?.required != true,
               dialog.fileIntake?.completionLabel != nil else { return }
         dialogSubmissionError = nil
-        completeWorkflowIntake(dialog, didProvideMaterial: false)
+        completeWorkflowIntake(dialog, result: nil, didProvideMaterial: false)
     }
 
     /// Write a copied text-sidecar intake into its deterministic project location.
@@ -428,7 +436,11 @@ final class AgentService {
         }
         assignIntakeRole(kind, urls: result.fileURLs)
         editor.onPipelineChanged?()
-        sendDialogResponse(dialog, result: result)
+        sendDialogResponse(
+            dialog,
+            result: result,
+            presentedAttachmentNames: result.fileURLs.map { userFacingFilename(for: $0) }
+        )
     }
 
     /// Copy prepared character/location reference images into the bible-anchor convention
@@ -497,6 +509,7 @@ final class AgentService {
                 self.sendDialogResponse(
                     dialog,
                     result: result,
+                    presentedAttachmentNames: urls.map { self.userFacingFilename(for: $0) },
                     agentContext: "\(noun) \"\(name)\" attached: \(copied.count) reference image\(copied.count == 1 ? "" : "s") "
                         + "in import/\(category)/\(slug)/. This is a BROWNFIELD anchor — the bible-agent adopts it; "
                         + "keep this identity consistent across the pipeline and don't invent a different one."
@@ -642,6 +655,7 @@ final class AgentService {
                 self.sendDialogResponse(
                     dialog,
                     result: result,
+                    presentedAttachmentNames: urls.map { self.userFacingFilename(for: $0) },
                     agentContext: "\(copied.count) style reference\(copied.count == 1 ? "" : "s") attached in import/. "
                         + "The production-design agent (K2) curates these as the style source."
                 )
@@ -897,16 +911,18 @@ final class AgentService {
         userNotice: String? = nil,
         agentContext: String? = nil
     ) {
-        if dialog.purpose == .workflowIntake {
-            completeWorkflowIntake(
-                dialog,
-                didProvideMaterial: Self.didProvideWorkflowMaterial(result)
-            )
-            return
-        }
         var resolvedAttachmentNames = presentedAttachmentNames
         if resolvedAttachmentNames == nil, attached.isEmpty {
             resolvedAttachmentNames = result.fileURLs.map { userFacingFilename(for: $0) }
+        }
+        if dialog.purpose == .workflowIntake {
+            completeWorkflowIntake(
+                dialog,
+                result: result,
+                presentedAttachmentNames: resolvedAttachmentNames ?? [],
+                didProvideMaterial: Self.didProvideWorkflowMaterial(result)
+            )
+            return
         }
         let response = Self.dialogResponse(
             from: dialog,
@@ -951,6 +967,8 @@ final class AgentService {
 
     private func completeWorkflowIntake(
         _ dialog: AgentDialog,
+        result: AgentDialogResult?,
+        presentedAttachmentNames: [String] = [],
         didProvideMaterial: Bool
     ) {
         guard pendingDialog?.id == dialog.id else { return }
@@ -961,6 +979,9 @@ final class AgentService {
             dialogSubmissionError = "The project is unavailable. Reopen it and try again."
             return
         }
+        let phase = editor.pipelineAgentHarness.workflowIntakePhase(
+            dialogID: dialog.id
+        )
         let reconciliation = editor.pipelineAgentHarness.resolveWorkflowIntake(
             dialogID: dialog.id,
             didProvideMaterial: didProvideMaterial,
@@ -971,9 +992,65 @@ final class AgentService {
             dialogSubmissionError = failure
             return
         }
+        appendWorkflowRecord(
+            dialog: dialog,
+            result: result,
+            attachmentNames: presentedAttachmentNames,
+            phase: phase,
+            didProvideMaterial: didProvideMaterial
+        )
         Task { @MainActor [weak self] in
             await self?.editor?.refreshEngineState()
         }
+    }
+
+    private func appendWorkflowRecord(
+        dialog: AgentDialog,
+        result: AgentDialogResult?,
+        attachmentNames: [String],
+        phase: String?,
+        didProvideMaterial: Bool
+    ) {
+        let direction = result?.direction.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let detail: String?
+        if dialog.fileIntake?.namePrompt != nil, !direction.isEmpty {
+            detail = direction
+        } else if didProvideMaterial, attachmentNames.isEmpty {
+            detail = "Text provided"
+        } else {
+            detail = nil
+        }
+        let outcome: AgentWorkflowRecord.Outcome
+        if didProvideMaterial {
+            outcome = attachmentNames.isEmpty ? .provided : .attached
+        } else if dialog.fileIntake?.completionLabel?.lowercased() == "done" {
+            outcome = .completed
+        } else {
+            outcome = .skipped
+        }
+        let message = AgentMessage(
+            role: .user,
+            blocks: [],
+            userPresentation: AgentUserPresentation(
+                choiceRecord: nil,
+                typedText: nil,
+                workflowRecord: AgentWorkflowRecord(
+                    title: dialog.title,
+                    symbol: dialog.symbol,
+                    phase: phase,
+                    detail: detail,
+                    attachmentNames: attachmentNames,
+                    outcome: outcome
+                )
+            )
+        )
+        if claudeRuntimeEnabled, let runtime = _claudeRuntime {
+            runtime.appendTranscriptOnly(message)
+            messages = runtime.messages
+        } else {
+            messages.append(message)
+        }
+        checkpointCurrentSession()
     }
 
     /// The compact intent line for a generation dialog — picked chip labels then the free-text
@@ -990,7 +1067,7 @@ final class AgentService {
         let dialog = pendingDialog
         if let dialog, dialog.purpose == .workflowIntake {
             guard dialog.fileIntake?.required != true, submittingDialogID == nil else { return }
-            completeWorkflowIntake(dialog, didProvideMaterial: false)
+            completeWorkflowIntake(dialog, result: nil, didProvideMaterial: false)
             return
         }
         pendingDialog = nil
@@ -1031,6 +1108,18 @@ final class AgentService {
             spendContinuation = continuation
             pendingSpendApproval = approval
         }
+    }
+
+    func approveSpend(_ option: SpendOption) -> String? {
+        guard let approval = pendingSpendApproval,
+              approval.options.contains(option) else {
+            return "This provider and model are no longer part of the pending approval."
+        }
+        guard option.isCurrentlyAvailable else {
+            return "This provider or model is no longer available. Choose another valid option."
+        }
+        resolveSpend(.approved(option: option))
+        return nil
     }
 
     /// Resolve the pending approval (from the card's buttons, or teardown). Clears the card and

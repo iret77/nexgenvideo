@@ -1,8 +1,8 @@
 import Foundation
 
 /// The user's final word on paid AGENT renders (locked provider architecture, M7). NGV/the agent
-/// recommend a model and NGV resolves the cheapest activated provider — but before the agent spends
-/// money on the user's behalf, the user confirms. This is user-clicks-to-confirm, never
+/// recommends a model and NGV derives a default provider — but before the agent spends money on the
+/// user's behalf, the user can change either and confirms. This is user-clicks-to-confirm, never
 /// agent-self-asserted: the gate suspends the tool call on a continuation the UI resolves.
 ///
 /// Only `.agentTool` renders pass through here. Panel / dialog / rerun renders are the user's own
@@ -23,31 +23,51 @@ enum CostGuard {
     }
 }
 
-/// A cheaper model the user can swap to before approving — same modality, actually runnable now.
-struct SpendAlternative: Identifiable, Equatable, Sendable {
+/// One exact model/provider combination the user can approve and dispatch unchanged.
+struct SpendOption: Identifiable, Equatable, Sendable {
     let modelId: String
-    let name: String
-    let providerLabel: String
+    let modelName: String
+    let target: ResolvedGenerationTarget
     let credits: Int?
-    var id: String { modelId }
+    /// Provider workflow tools use the same card but are not catalog models.
+    let requiresCatalogAvailability: Bool
+
+    var id: String {
+        [
+            modelId,
+            target.provider.rawValue,
+            target.transport.rawValue,
+            target.endpoint,
+            target.binding?.modelParam ?? "",
+        ].joined(separator: "|")
+    }
+
+    var providerLabel: String { target.provider.displayName }
+
+    @MainActor
+    var isCurrentlyAvailable: Bool {
+        guard requiresCatalogAvailability else { return true }
+        guard ModelRegistry.exists(id: modelId),
+              ModelPreferences.shared.isEnabled(modelId),
+              let binding = target.binding else { return false }
+        return ProviderManifest.runnableBindingsByProvider(forModelId: modelId)
+            .contains(binding)
+    }
 }
 
 /// The pending spend confirmation surfaced in the composer dock (never a modal — LOCKED placement).
 struct SpendApproval: Identifiable, Equatable, Sendable {
     let id: String
-    let modelId: String
-    let modelName: String
-    let providerLabel: String
-    let credits: Int?
-    /// Cheaper runnable models of the same modality, cost-ascending. Empty when none are cheaper.
-    let alternatives: [SpendAlternative]
+    let recommendedOptionId: String
+    /// Valid model/provider combinations for this exact operation. The recommended option is first.
+    let options: [SpendOption]
     /// Verb for the action, e.g. "Generate video", used on the approve button.
     let actionLabel: String
+
 }
 
-/// The user's decision. `.approved` carries the chosen model id — the same one when kept, a cheaper
-/// one when swapped. `.declined` means the render must not run.
+/// The user's decision. `.approved` carries the exact model/provider target selected in the card.
 enum SpendDecision: Equatable, Sendable {
-    case approved(modelId: String)
+    case approved(option: SpendOption)
     case declined
 }

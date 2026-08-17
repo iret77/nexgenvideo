@@ -19,7 +19,7 @@ extension ToolExecutor {
             throw ToolError("No provider MCP is configured. Add one in Settings \u{2192} Providers (MCP server URL) to use provider workflow tools.")
         }
 
-        let arguments = Self.stringArguments(args["arguments"])
+        let arguments = Self.mcpArguments(args["arguments"])
         var offered: Set<String> = []
 
         for provider in providers {
@@ -58,10 +58,19 @@ extension ToolExecutor {
 
             // Paid, provider-side action → the user's final word (Cost-Guard), same as any render.
             // Cost is unknown for an arbitrary provider tool, so this always asks.
+            let option = SpendOption(
+                modelId: match.name,
+                modelName: match.name,
+                target: authorization.target,
+                credits: nil,
+                requiresCatalogAvailability: false
+            )
             let approval = SpendApproval(
-                id: UUID().uuidString, modelId: match.name, modelName: match.name,
-                providerLabel: provider.displayName, credits: nil, alternatives: [],
-                actionLabel: "Run \(match.name)")
+                id: UUID().uuidString,
+                recommendedOptionId: option.id,
+                options: [option],
+                actionLabel: "Run \(match.name)"
+            )
             if case .declined = await editor.agentService.requestSpendApproval(approval) {
                 try? editor.recordSpendEvent(
                     authorization: authorization,
@@ -109,8 +118,6 @@ extension ToolExecutor {
         return markers.contains { n.contains($0) }
     }
 
-    /// Coerce a JSON `arguments` object into the `[String: String]` the MCP client sends. Non-string
-    /// scalars are stringified; nested objects/arrays are JSON-encoded so nothing is silently dropped.
     /// Names that denote a creative prompt to a content model — the prompt-engine gate's concern.
     nonisolated static let promptFieldNames: Set<String> = ["prompt", "multi_prompt", "negative_prompt", "lyrics"]
 
@@ -148,24 +155,23 @@ extension ToolExecutor {
         return false
     }
 
-    nonisolated static func stringArguments(_ raw: Any?) -> [String: String] {
+    nonisolated static func mcpArguments(_ raw: Any?) -> [String: Value] {
         guard let dict = raw as? [String: Any] else { return [:] }
-        var out: [String: String] = [:]
-        for (key, value) in dict {
-            switch value {
-            case let s as String: out[key] = s
-            case let b as Bool: out[key] = b ? "true" : "false"
-            case let i as Int: out[key] = String(i)
-            case let d as Double: out[key] = String(d)
-            default:
-                if let data = try? JSONSerialization.data(withJSONObject: value),
-                   let s = String(data: data, encoding: .utf8) {
-                    out[key] = s
-                } else {
-                    out[key] = "\(value)"
-                }
-            }
-        }
+        var out: [String: Value] = [:]
+        for (key, value) in dict { out[key] = mcpValue(value) }
         return out
+    }
+
+    private nonisolated static func mcpValue(_ raw: Any) -> Value {
+        switch raw {
+        case is NSNull: .null
+        case let value as Bool: .bool(value)
+        case let value as Int: .int(value)
+        case let value as Double: .double(value)
+        case let value as String: .string(value)
+        case let values as [Any]: .array(values.map(mcpValue))
+        case let values as [String: Any]: .object(values.mapValues(mcpValue))
+        default: .string(String(describing: raw))
+        }
     }
 }

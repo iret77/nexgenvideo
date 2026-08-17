@@ -23,6 +23,105 @@ struct HardStepIntakeTests {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }
 
+    private func writeApprovedAnalysis(in dataRoot: URL, project: String) throws {
+        let trackURL = dataRoot.appendingPathComponent("audio/track.wav")
+        try FileManager.default.createDirectory(
+            at: trackURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("fixture-track".utf8).write(to: trackURL)
+        let trackHash = try FileDigest.sha256(of: trackURL)
+        let analysisURL = dataRoot.appendingPathComponent("analysis/track.json")
+        try FileManager.default.createDirectory(
+            at: analysisURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let analysis: [String: Any] = [
+            "schema": analysisSchemaVersion,
+            "project": project,
+            "song_path": "audio/track.wav",
+            "song_sha256": trackHash,
+            "sample_rate": 44_100,
+            "duration_s": 12.0,
+            "bpm": 120.0,
+            "tempo_multiplier": 1.0,
+            "beats": [0.5, 1.0, 1.5, 2.0, 2.5],
+            "downbeats": [0.5, 2.5],
+            "sections": [[
+                "index": 0, "start": 0.0, "end": 12.0, "cluster": 0,
+                "source": "measured_system_hierarchy",
+            ]],
+            "structure_candidates": [
+                ["source": "librosa", "sections": [[
+                    "index": 0, "start": 0.0, "end": 12.0, "cluster": 0,
+                ]]],
+                ["source": "essentia", "sections": [[
+                    "index": 0, "start": 0.0, "end": 12.0, "cluster": 0,
+                ]]],
+            ],
+            "structure_resolution": [
+                "version": "adaptive-structure/v5",
+                "status": "resolved",
+                "method": "music_understanding_hierarchy",
+                "detector_sources": ["apple_music_understanding"],
+                "minimum_section_bars": 0,
+                "candidate_boundary_count": 0,
+                "consensus_boundary_count": 0,
+                "alignment_marker_count": 0,
+                "resolved_alignment_marker_count": 0,
+                "accepted_boundary_count": 0,
+                "discarded_boundary_count": 0,
+                "boundary_evidence": [[
+                    "time": 0.0,
+                    "kind": "system_hierarchy",
+                    "detector_sources": ["apple_music_understanding"],
+                ]],
+                "hierarchy": [
+                    "source": "apple_music_understanding",
+                    "sections": [["start": 0.0, "end": 12.0]],
+                    "segments": [["start": 0.0, "end": 12.0]],
+                    "phrases": [["start": 0.0, "end": 12.0]],
+                ],
+                "detail": "Measured system hierarchy.",
+            ],
+            "downbeat_source": "music-understanding",
+            "pipeline_stages": ["structure", "music_understanding"],
+            "stage_diagnostics": [[
+                "stage": "music_understanding",
+                "status": "succeeded",
+                "detail": "Measured system hierarchy.",
+            ]],
+            "alignment": [],
+            "interpretation": [
+                "section_labels": [[
+                    "index": "0", "label": "intro", "confidence": "1.0",
+                ]],
+                "anomalies": [],
+                "overall_character": "Measured opening.",
+            ],
+        ]
+        try JSONSerialization.data(withJSONObject: analysis).write(to: analysisURL)
+        try AnalysisMeasurementProofStore.save(
+            AnalysisMeasurementProof(
+                project: project,
+                songSHA256: trackHash,
+                lyricsAlignment: nil
+            ),
+            dataRoot: dataRoot
+        )
+        let registry = PackCatalog.registry(activePack: "musicvideo")
+        guard let lineage = registry.phaseLineageProviders["analysis"],
+              let requirement = registry.gateRequirements["analysis"] else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        try PipelineLineageStore.record(
+            phase: "analysis",
+            snapshot: try lineage(dataRoot),
+            dataRoot: dataRoot
+        )
+        try requirement(dataRoot)
+    }
+
     private func step(_ id: String, phase: String = "p", kind: HardStep.Kind,
                       required: Bool = false, repeatable: Bool = false) -> HardStep {
         HardStep(id: id, phase: phase, kind: kind, accept: [], multiple: false,
@@ -401,6 +500,22 @@ struct HardStepIntakeTests {
         #expect(editor.projectState?.nextPhaseName == "analysis")
         #expect(editor.agentService.pendingDialog == nil)
 
+        let storyDialog = AgentDialog(
+            id: "story-too-early",
+            title: "Choose the story",
+            symbol: "book",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        )
+        #expect(throws: ToolError.self) {
+            try editor.pipelineAgentHarness.guardAgentDecision(
+                storyDialog,
+                editor: editor
+            )
+        }
         let liveDataRoot = try #require(
             editor.workingRoot.flatMap { DataRootResolver.dataRoot(of: $0) }
         )
@@ -422,6 +537,26 @@ struct HardStepIntakeTests {
             .joined(separator: " ")
         #expect(prompt?.contains("# Phase K1 — Brief") == true)
         #expect(normalizedPrompt?.contains("If it is absent, this is greenfield") == true)
+
+        let staleStoryDialog = try #require(editor.agentService.pendingDialog)
+        var advancedGates = try liveStore.load(Gates.self, at: PipelineLayout.gatesFile)
+        GatesOperations.approve(&advancedGates, phase: "brief")
+        try liveStore.save(advancedGates, to: PipelineLayout.gatesFile)
+        await editor.refreshEngineState()
+        editor.agentService.submitDialog(
+            staleStoryDialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: "A story that must not be written from a stale card."
+            )
+        )
+
+        #expect(editor.agentService.pendingDialog?.id == staleStoryDialog.id)
+        #expect(editor.agentService.dialogSubmissionError?.contains("earlier phase") == true)
+        #expect(!FileManager.default.fileExists(
+            atPath: liveDataRoot.appendingPathComponent("import/script.md").path
+        ))
     }
 
     @Test("repeatable intake advances directly and Done finishes without attaching an empty item")
@@ -444,6 +579,7 @@ struct HardStepIntakeTests {
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
+        try writeApprovedAnalysis(in: packageDataRoot, project: "repeatable-intake-done")
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&packageGates, phase: "project_init")
         GatesOperations.approve(&packageGates, phase: "analysis")
@@ -488,6 +624,14 @@ struct HardStepIntakeTests {
         )
         let second = try #require(awaitedSecond)
         #expect(second.title == "Prepared character 2")
+        let firstRecord = try #require(
+            editor.agentService.messages.last?.userPresentation?.workflowRecord
+        )
+        #expect(firstRecord.title == "Prepared character 1")
+        #expect(firstRecord.phase == "brief")
+        #expect(firstRecord.detail == "Character One")
+        #expect(firstRecord.attachmentNames == ["first.png"])
+        #expect(firstRecord.outcome == .attached)
         try write("fixtures/second.png", in: dataRoot)
         editor.agentService.submitDialog(
             second,
@@ -710,7 +854,7 @@ struct HardStepIntakeTests {
         #expect(third.fileIntake?.completionLabel == "Done")
     }
 
-    @Test("a workflow hard step completes locally without creating an agent turn")
+    @Test("a workflow hard step leaves a durable transcript record without starting the agent")
     @MainActor
     func workflowStepDoesNotBecomeChat() async throws {
         PackCatalog.register(MusicvideoPack())
@@ -730,6 +874,7 @@ struct HardStepIntakeTests {
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
         let packageStore = YAMLArtifactStore(dataRoot: packageDataRoot)
+        try writeApprovedAnalysis(in: packageDataRoot, project: "workflow-intake")
         var packageGates = try packageStore.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&packageGates, phase: "project_init")
         GatesOperations.approve(&packageGates, phase: "analysis")
@@ -755,12 +900,16 @@ struct HardStepIntakeTests {
 
         #expect(editor.agentService.pendingDialog?.title == "Prepared character 1")
         #expect(IntakeLedger.load(dataRoot: dataRoot).isDeclined("brief.script"))
-        #expect(editor.agentService.messages.count == messageCount)
+        #expect(editor.agentService.messages.count == messageCount + 1)
+        let recordMessage = try #require(editor.agentService.messages.last)
+        #expect(recordMessage.blocks.isEmpty)
+        #expect(recordMessage.userPresentation?.workflowRecord?.title == "Existing story")
+        #expect(recordMessage.userPresentation?.workflowRecord?.outcome == .skipped)
         #expect(editor.agentService.streamError == nil)
         #expect(!editor.agentService.isStreaming)
         await editor.refreshEngineState()
         #expect(editor.agentService.pendingDialog?.title == "Prepared character 1")
-        #expect(editor.agentService.messages.count == messageCount)
+        #expect(editor.agentService.messages.count == messageCount + 1)
         #expect(editor.agentService.streamError == nil)
     }
 

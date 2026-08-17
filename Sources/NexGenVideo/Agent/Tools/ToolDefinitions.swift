@@ -191,7 +191,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showDialog,
-            description: "Present a native structured dialog in the chat composer for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
+            description: "Present a native structured dialog in the chat composer for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
             inputSchema: objectSchema(
                 properties: [
                     "title": ["type": "string", "description": "Short imperative title, e.g. 'Shape the B-roll'."],
@@ -199,6 +199,15 @@ enum ToolDefinitions {
                     "intro": ["type": "string", "description": "One short sentence of context (optional)."],
                     "costHint": ["type": "string", "description": "Approximate cost of the confirmed step, e.g. '\u{2248} \u{20AC}0.80'."],
                     "confirmLabel": ["type": "string", "description": "Confirm button label (default 'Continue')."],
+                    "workflowDecision": [
+                        "type": "string",
+                        "enum": [
+                            "analysis_tempo",
+                            "analysis_interpretation_review",
+                            "analysis_track_replacement",
+                        ],
+                        "description": "Required only during Audio Analysis. Declares the exact phase-owned decision so the host can reject story or later-phase questions.",
+                    ],
                     "textField": [
                         "type": "object",
                         "additionalProperties": false,
@@ -240,8 +249,12 @@ enum ToolDefinitions {
                                         "additionalProperties": false,
                                         "properties": [
                                             "id": ["type": "string"],
-                                            "label": ["type": "string", "description": "Text shown on the option chip."],
-                                            "shortLabel": ["type": "string", "description": "Compact selected value without explanatory copy, e.g. 'Phrase'. Supply this when label also explains the option."],
+                                            "label": ["type": "string", "description": "Full option meaning. The chip shows shortLabel, or a host-derived compact label when it is omitted."],
+                                            "shortLabel": [
+                                                "type": "string",
+                                                "maxLength": AgentDialog.maxChoiceDisplayLength,
+                                                "description": "Concise chip title without explanatory copy, e.g. 'Phrase'. Maximum \(AgentDialog.maxChoiceDisplayLength) characters.",
+                                            ],
                                             "symbol": ["type": "string", "description": "SF Symbol per option"],
                                             "rangeRef": ["type": "string", "description": "Id of a projection.timelineRanges entry this option represents. The option is then picked by clicking its highlighted range on the timeline; keep the label short (it becomes the range's chip)."],
                                         ],
@@ -919,7 +932,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .listModels,
-            description: "Lists the AI models you can actually run right now, with their capabilities (durations, aspect ratios, resolutions, first/last frame support, reference support, voices/category for audio, upscaler speed). Always call before generate_video, generate_image, generate_audio, or upscale_media so the model you pick supports the constraints you need. The list is already filtered to USABLE models — an activated provider services each one and the user hasn't disabled it — so every returned model is runnable; pick from these only. Returns { models, loaded } and, when models is empty, a 'note': that means no provider is activated yet (or all are disabled) — recommend the user activate one in Settings → Providers rather than guessing a model. NGV, not you, chooses which provider runs the model.",
+            description: "Lists the AI models you can actually run right now, with their capabilities (durations, aspect ratios, resolutions, first/last frame support, reference support, voices/category for audio, upscaler speed). Always call before generate_video, generate_image, generate_audio, or upscale_media so the model you pick supports the constraints you need. The list is already filtered to USABLE models — an activated provider services each one and the user hasn't disabled it — so every returned model is runnable; pick from these only. Returns { models, loaded } and, when models is empty, a 'note': that means no provider is activated yet (or all are disabled) — recommend the user activate one in Settings → Providers rather than guessing a model. NGV proposes the cheapest active provider; the user can change provider and model in spend approval.",
             inputSchema: objectSchema(
                 properties: [
                     "type": ["type": "string", "enum": ["video", "image", "audio", "upscale"], "description": "Filter by type. Omit to list all models."],

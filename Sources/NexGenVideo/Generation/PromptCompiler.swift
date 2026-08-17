@@ -31,6 +31,18 @@ struct CompiledPrompt: Sendable {
 }
 
 enum PromptCompiler {
+    private struct CompileRecipe: Sendable {
+        let intent: String
+        let modelId: String
+        let modality: PromptComposer.Modality
+        let aspectRatio: String
+        let durationSeconds: Double?
+        let setting: String
+        let lighting: String
+        let style: String
+        let binding: PromptBinding
+    }
+
     /// Settings → Providers "Raw prompts (pro)". Off by default — the gate is the default path.
     static let rawPromptsDefaultsKey = "allowRawPrompts"
 
@@ -41,6 +53,9 @@ enum PromptCompiler {
     /// Process-stable salt: a compileToken can only come from compile_prompt in this app run —
     /// the agent cannot fabricate one to sneak an uncompiled prompt past the gate.
     private static let salt = UUID().uuidString
+    @MainActor private static var recipesByToken: [String: CompileRecipe] = [:]
+    @MainActor private static var recipeOrder: [String] = []
+    private static let maxRememberedRecipes = 128
 
     /// Per-model prompt length caps. Runway's promptText is hard-capped at 1000 chars (verified
     /// against their SDK); other providers get a generous but finite bound.
@@ -88,7 +103,7 @@ enum PromptCompiler {
             shot: shot,
             preserveComposition: preservesComposition(modelId: modelId)
         )
-        return CompiledPrompt(
+        let compiled = CompiledPrompt(
             text: composed.text,
             token: token(
                 for: composed.text,
@@ -97,6 +112,67 @@ enum PromptCompiler {
             ),
             notes: composed.notes,
             binding: binding)
+        remember(
+            compiled,
+            recipe: CompileRecipe(
+                intent: intent,
+                modelId: modelId,
+                modality: modality,
+                aspectRatio: aspectRatio,
+                durationSeconds: durationSeconds,
+                setting: setting,
+                lighting: lighting,
+                style: style,
+                binding: binding
+            )
+        )
+        return compiled
+    }
+
+    /// Recompile remembered gated intent for a user-selected model without accepting arbitrary text.
+    @MainActor
+    static func recompile(
+        token: String,
+        text: String,
+        for modelId: String,
+        editor: EditorViewModel?
+    ) async throws -> CompiledPrompt {
+        guard let recipe = recipesByToken[token],
+              validate(
+                token: token,
+                text: text,
+                modelId: recipe.modelId,
+                binding: recipe.binding
+              ) else {
+            throw ToolError("The compiled prompt can no longer be adapted to another model.")
+        }
+        let current = try currentBinding(editor: editor, shotId: recipe.binding.shotId)
+        guard current == recipe.binding else {
+            throw ToolError("The project changed while the generation approval was open. Compile the current shot again.")
+        }
+        return try await compile(
+            intent: recipe.intent,
+            modelId: modelId,
+            modality: recipe.modality,
+            aspectRatio: recipe.aspectRatio,
+            durationSeconds: recipe.durationSeconds,
+            editor: editor,
+            setting: recipe.setting,
+            lighting: recipe.lighting,
+            style: recipe.style,
+            shotId: recipe.binding.shotId,
+            shot: try currentShotProjection(editor: editor, shotId: recipe.binding.shotId)
+        )
+    }
+
+    @MainActor
+    private static func remember(_ compiled: CompiledPrompt, recipe: CompileRecipe) {
+        recipesByToken[compiled.token] = recipe
+        recipeOrder.removeAll { $0 == compiled.token }
+        recipeOrder.append(compiled.token)
+        while recipeOrder.count > maxRememberedRecipes {
+            recipesByToken.removeValue(forKey: recipeOrder.removeFirst())
+        }
     }
 
     /// #223 — a video model that consumes a SOURCE VIDEO is a composition-preserving pass (restyle):
@@ -182,6 +258,32 @@ enum PromptCompiler {
             shotId: shotId,
             shotFingerprint: try shotFingerprint(shot)
         )
+    }
+
+    @MainActor
+    static func currentShotProjection(
+        editor: EditorViewModel?,
+        shotId: String
+    ) throws -> PromptComposer.ShotProjection? {
+        guard shotId != "none" else { return nil }
+        guard let root = editor?.workingRoot.flatMap({
+            DataRootResolver.dataRoot(of: $0)
+        }), let shotlist = (try? loadShotlist(dataRoot: root)) ?? nil else {
+            throw ToolError(
+                "Shot-bound compilation requires an open project with a current shotlist."
+            )
+        }
+        guard let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
+            throw ToolError(
+                "No shot '\(shotId)' in the shotlist. Pass a real shot id from next_render_shot, or "
+                    + "\"none\" if this prompt belongs to no shot."
+            )
+        }
+        let forceHandles = (try? YAMLArtifactStore(dataRoot: root).load(
+            Brief.self,
+            at: PipelineLayout.briefFile
+        ))?.cutHandlesMode == .withOverlap
+        return PromptComposer.ShotProjection(shot, forceHandles: forceHandles)
     }
 
     static func shotFingerprint(_ shot: Shot) throws -> String {
