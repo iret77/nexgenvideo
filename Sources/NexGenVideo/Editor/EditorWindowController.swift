@@ -234,7 +234,10 @@ extension EditorWindowController: EditorActions {
     @objc func skipFramesBackward(_ sender: Any?) { editorViewModel.skipBackward() }
 
     @objc func importMedia(_ sender: Any?) {
-        // Handled by MediaTab directly
+        MediaImportFlow.present(
+            editor: editorViewModel,
+            destinationFolderId: editorViewModel.mediaPanelCurrentFolderId
+        )
     }
 
     @objc func showExport(_ sender: Any?) {

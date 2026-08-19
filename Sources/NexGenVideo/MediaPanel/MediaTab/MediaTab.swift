@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct MediaTab: View {
     @Environment(EditorViewModel.self) var editor
@@ -745,26 +744,7 @@ struct MediaTab: View {
     // MARK: - Import
 
     private func importMedia() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = true
-        panel.message = "Select media files or folders to copy into the project. Originals stay in place."
-        var types: [UTType] = [.movie, .image, .audio, .json, .plainText]
-        // Story scripts and outlines are source material the pipeline reads. `.plainText` doesn't
-        // cover Markdown/Fountain, so name those explicitly or the picker greys them out.
-        for ext in ["md", "markdown", "rtf", "fountain"] {
-            if let type = UTType(filenameExtension: ext) { types.append(type) }
-        }
-        if let lottie = UTType(filenameExtension: "lottie") { types.append(lottie) }
-        panel.allowedContentTypes = types
-        panel.begin { response in
-            guard response == .OK else { return }
-            let urls = panel.urls
-            let folderId = currentFolderId
-            Task { @MainActor in
-                await Self.handlePanelFinderDrop(urls: urls, into: folderId, editor: editor)
-            }
-        }
+        MediaImportFlow.present(editor: editor, destinationFolderId: currentFolderId)
     }
 }
 

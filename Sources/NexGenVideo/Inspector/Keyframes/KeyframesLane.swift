@@ -248,6 +248,10 @@ struct KeyframesLaneRow: View {
         Button("Delete Keyframe", role: .destructive) {
             editor.removeKeyframe(clipId: clip.id, property: property, at: frame)
         }
+        Divider() // app-theme: native-menu-divider
+        Button("Clear Animation", role: .destructive) {
+            editor.clearAnimation(clipId: clip.id, property: property)
+        }
     }
 }
 

@@ -148,6 +148,7 @@ final class ProjectRegistry {
         }
         apply(&entries)
         save()
+        NotificationCenter.default.post(name: .projectRegistryChanged, object: self)
     }
 
     private func finishLoading(_ loaded: [ProjectEntry]) {
@@ -157,6 +158,7 @@ final class ProjectRegistry {
         guard !pendingMutations.isEmpty else {
             // Heal a registry that already carried same-file duplicates on disk.
             if cleaned.count != loaded.count { save() }
+            NotificationCenter.default.post(name: .projectRegistryChanged, object: self)
             return
         }
 
@@ -166,6 +168,7 @@ final class ProjectRegistry {
             mutation(&entries)
         }
         save()
+        NotificationCenter.default.post(name: .projectRegistryChanged, object: self)
     }
 
     fileprivate nonisolated static func loadEntries(from fileURL: URL) -> [ProjectEntry] {

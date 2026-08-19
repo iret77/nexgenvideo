@@ -19,6 +19,18 @@ enum ProjectPackMigration {
         case schemaMigration
     }
 
+    struct UpgradeOffer: Equatable {
+        let source: ProjectPackBinding
+        let target: ProjectPackBinding
+        let kind: UpgradeKind
+    }
+
+    enum RestartResolution: Equatable {
+        case pending(Request)
+        case legacy(ProjectPackBinding)
+        case versionConflict(ProjectPackBinding)
+    }
+
     enum MigrationError: LocalizedError {
         case invalidSource
         case undeclaredMigration(from: String, to: String)
@@ -67,6 +79,26 @@ enum ProjectPackMigration {
     static func hasPending(projectURL: URL) -> Bool {
         request(for: projectURL) != nil
             || legacyTarget(for: projectURL) != nil
+    }
+
+    static func restartResolution(
+        required: ProjectPackBinding,
+        projectURL: URL
+    ) -> RestartResolution {
+        let persisted = ProjectPluginSettings.bindingResolution(
+            projectURL: projectURL
+        )
+        if let request = request(for: projectURL),
+           request.target == required,
+           persisted == .bound(request.source) {
+            return .pending(request)
+        }
+        if let target = legacyTarget(for: projectURL),
+           target == required,
+           persisted == .legacy(target.id) {
+            return .legacy(target)
+        }
+        return .versionConflict(required)
     }
 
     static func schedule(
@@ -135,6 +167,49 @@ enum ProjectPackMigration {
         source.projectSchema == target.projectSchema
             ? .bindingOnly
             : .schemaMigration
+    }
+
+    nonisolated static func compatibleUpgradeKind(
+        source: ProjectPackBinding,
+        target: ProjectPackBinding,
+        targetMigratesFrom: [String],
+        hasRuntimeMigration: Bool
+    ) -> UpgradeKind? {
+        guard source.id == target.id,
+              let sourceVersion = SemanticVersion(source.version),
+              let targetVersion = SemanticVersion(target.version),
+              targetVersion > sourceVersion else { return nil }
+        let kind = upgradeKind(source: source, target: target)
+        if kind == .bindingOnly { return kind }
+        guard targetMigratesFrom.contains(source.projectSchema),
+              hasRuntimeMigration else { return nil }
+        return kind
+    }
+
+    static func liveUpgradeOffer(
+        source: ProjectPackBinding
+    ) -> UpgradeOffer? {
+        guard let target = PluginLoader.liveBinding(id: source.id),
+              let installed = PluginLoader.usableInstalledInfo(for: target) else {
+            return nil
+        }
+        let hasRuntimeMigration: Bool
+        if source.projectSchema == target.projectSchema {
+            hasRuntimeMigration = false
+        } else {
+            hasRuntimeMigration = PackCatalog.registry(activePack: target.id)
+                .projectSchemaMigrations.contains {
+                    $0.from == source.projectSchema
+                        && $0.to == target.projectSchema
+                }
+        }
+        guard let kind = compatibleUpgradeKind(
+            source: source,
+            target: target,
+            targetMigratesFrom: installed.info.migratesFrom,
+            hasRuntimeMigration: hasRuntimeMigration
+        ) else { return nil }
+        return UpgradeOffer(source: source, target: target, kind: kind)
     }
 
     static func applyPending(

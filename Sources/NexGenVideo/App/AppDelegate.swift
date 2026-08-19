@@ -14,7 +14,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = Updater.shared
         AppRelaunchSelfTest.checkpoint("updater-ready")
 
-        if AppRelaunchSelfTest.isRequested {
+        let isRelaunchSelfTest = AppRelaunchSelfTest.isRequested
+        let relaunchIntent = AppRelaunchIntentStore.consumeForLaunch(
+            isSelfTest: isRelaunchSelfTest
+        )
+        if isRelaunchSelfTest {
             AppRelaunchSelfTest.checkpoint("home-controller-requested")
             let home = HomeWindowController.shared
             AppRelaunchSelfTest.checkpoint("home-controller-ready")
@@ -25,6 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await AppRelaunchSelfTest.runIfRequested()
             }
             AppRelaunchSelfTest.checkpoint("selftest-scheduled")
+        } else if let intent = relaunchIntent {
+            HomeWindowController.shared.showWindow(nil)
+            Task { @MainActor in
+                await Task.yield()
+                AppState.shared.resume(intent)
+            }
         } else {
             // Splash first (Photoshop pattern), then reveal Home — unless a project already opened
             // (e.g. a document launch), in which case the editor owns the screen.

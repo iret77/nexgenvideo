@@ -1,6 +1,99 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+struct ExternalMcpServerEditorState: Equatable {
+    enum Mode: Equatable {
+        case adding
+        case editing(originalName: String, canPreserveConfiguration: Bool)
+    }
+
+    var mode: Mode?
+    var name = ""
+    var connection = ""
+
+    var isPresented: Bool { mode != nil }
+
+    var importsMultipleServers: Bool {
+        guard case .success(let parsed) = ExternalMcpServers.parseUserInput(connection) else { return false }
+        return parsed.entries.count > 1
+    }
+
+    var importCount: Int {
+        guard case .success(let parsed) = ExternalMcpServers.parseUserInput(connection) else { return 0 }
+        return parsed.entries.count
+    }
+
+    var nameHint: String? {
+        guard let hint = ExternalMcpServers.nameHint(fromUserInput: connection),
+              ExternalMcpServers.isValidName(hint),
+              hint.caseInsensitiveCompare("nexgen") != .orderedSame
+        else { return nil }
+        return hint
+    }
+
+    mutating func beginAdding() {
+        mode = .adding
+        name = ""
+        connection = ""
+    }
+
+    mutating func beginEditing(_ entry: ExternalMcpServers.SettingsEntry) {
+        mode = .editing(
+            originalName: entry.name,
+            canPreserveConfiguration: entry.canPreserveConfiguration
+        )
+        name = entry.name
+        connection = ""
+    }
+
+    mutating func useNameHint() {
+        guard let nameHint else { return }
+        name = nameHint
+    }
+
+    mutating func cancel() {
+        mode = nil
+        name = ""
+        connection = ""
+    }
+
+    func validationMessage(existingNames: Set<String>) -> String? {
+        guard isPresented else { return nil }
+        switch operation(existingNames: existingNames) {
+        case .success:
+            return nil
+        case .failure(let error):
+            return error.localizedDescription
+        }
+    }
+
+    func operation(
+        existingNames: Set<String>
+    ) -> Result<ExternalMcpServers.SaveOperation, ExternalMcpServers.ValidationError> {
+        switch mode {
+        case .adding:
+            return ExternalMcpServers.makeOperation(
+                input: connection,
+                manualName: name,
+                existingNames: existingNames,
+                editingOriginalName: nil,
+                canPreserveOriginal: false
+            )
+        case .editing(let originalName, let canPreserveConfiguration):
+            return ExternalMcpServers.makeOperation(
+                input: connection,
+                manualName: name,
+                existingNames: existingNames,
+                editingOriginalName: originalName,
+                canPreserveOriginal: canPreserveConfiguration
+            )
+        case .none:
+            return .failure(.missingConnection)
+        }
+    }
+}
+
 struct AgentPane: View {
     @Bindable private var appState = AppState.shared
     @State private var backend = AgentBackendPreference.selected
@@ -9,22 +102,41 @@ struct AgentPane: View {
     @State private var hasKey = false
     @State private var maskedKey = ""
     @State private var draft = ""
+    @State private var externalMcpServers: [ExternalMcpServers.SettingsEntry] = []
+    @State private var externalMcpEditor = ExternalMcpServerEditorState()
+    @State private var pendingExternalMcpRemoval: String?
+    @State private var pendingExternalMcpTrust: PendingExternalMcpTrust?
+    @State private var externalMcpError: String?
     @FocusState private var isFocused: Bool
+    @FocusState private var externalMcpField: ExternalMcpField?
 
     @AppStorage(CostGuard.autoApproveKey) private var autoApproveCredits = 0
 
     private let consoleURL = URL(string: "https://platform.claude.com/settings/keys")!
     private let installationURL = URL(string: "https://code.claude.com/docs/en/setup")!
 
+    private enum ExternalMcpField: Hashable {
+        case name
+        case connection
+    }
+
+    private struct PendingExternalMcpTrust: Identifiable {
+        let id = UUID()
+        let operation: ExternalMcpServers.SaveOperation
+        let request: ExternalMcpServers.TrustRequest
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             runtimeSection
             renderApprovalSection
             mcpSection
+            externalMcpSection
         }
         .onAppear {
             backend = AgentBackendPreference.selected
             refreshKey()
+            refreshExternalMcpServers()
         }
         .task {
             if backend == .claudeCode {
@@ -34,6 +146,36 @@ struct AgentPane: View {
         .onReceive(NotificationCenter.default.publisher(for: .claudeCodeStatusChanged)) { notification in
             guard let status = notification.object as? ClaudeCodeLocator.Status else { return }
             claudeStatus = status
+        }
+        .confirmationDialog(
+            "Remove external MCP server?",
+            isPresented: Binding(
+                get: { pendingExternalMcpRemoval != nil },
+                set: { if !$0 { pendingExternalMcpRemoval = nil } }
+            ),
+            presenting: pendingExternalMcpRemoval
+        ) { name in
+            Button("Remove “\(name)”", role: .destructive) {
+                removeExternalMcpServer(name)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { name in
+            Text("“\(name)” will no longer be available to new Claude Code sessions.")
+        }
+        .alert(
+            "Trust Local MCP Software?",
+            isPresented: Binding(
+                get: { pendingExternalMcpTrust != nil },
+                set: { if !$0 { pendingExternalMcpTrust = nil } }
+            ),
+            presenting: pendingExternalMcpTrust
+        ) { pending in
+            Button("Trust and Save") {
+                applyExternalMcpOperation(pending.operation, trustingStdio: true)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text(pending.request.message)
         }
     }
 
@@ -287,6 +429,282 @@ struct AgentPane: View {
         if appState.mcpService?.isRunning == true { return .success }
         if appState.mcpService?.lastError != nil { return .error }
         return .neutral
+    }
+
+    private var externalMcpSection: some View {
+        SettingsSection(
+            "External MCP Servers",
+            subtitle: "Stored securely for new Claude Code sessions. Changes apply when the next session starts."
+        ) {
+            SettingsCard {
+                if let externalMcpError {
+                    SettingsNotice(
+                        text: externalMcpError,
+                        systemImage: "exclamationmark.triangle",
+                        tone: .error
+                    )
+                    SettingsDivider()
+                }
+                if externalMcpServers.isEmpty && !externalMcpEditor.isPresented {
+                    SettingsRow(
+                        title: "No external MCP servers",
+                        subtitle: "Add a server URL, command, or MCP configuration."
+                    ) {
+                        Button("Add Server") { beginAddingExternalMcpServer() }
+                            .buttonStyle(.capsule(.prominent, size: .regular))
+                            .controlSize(.small)
+                    }
+                } else {
+                    ForEach(Array(externalMcpServers.enumerated()), id: \.element.id) { index, server in
+                        if index > 0 {
+                            SettingsDivider()
+                        }
+                        externalMcpServerRow(server)
+                    }
+                    if !externalMcpServers.isEmpty {
+                        SettingsDivider()
+                    }
+                    if externalMcpEditor.isPresented {
+                        externalMcpEditorView
+                    } else {
+                        HStack {
+                            Button("Add Server") { beginAddingExternalMcpServer() }
+                                .buttonStyle(.capsule(.secondary, size: .regular))
+                                .controlSize(.small)
+                            Spacer(minLength: AppTheme.Spacing.lg)
+                        }
+                        .padding(.horizontal, AppTheme.Spacing.mdLg)
+                        .padding(.vertical, AppTheme.Spacing.smMd)
+                    }
+                }
+            }
+        }
+    }
+
+    private func externalMcpServerRow(_ entry: ExternalMcpServers.SettingsEntry) -> some View {
+        SettingsRow(
+            title: entry.name,
+            subtitle: entry.preview
+        ) {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                switch entry.status {
+                case .ready:
+                    EmptyView()
+                case .trustRequired:
+                    SettingsStatusBadge(text: "Trust required", tone: .warning)
+                case .needsRepair:
+                    SettingsStatusBadge(text: "Needs repair", tone: .warning)
+                }
+                Button(externalMcpEditLabel(entry)) { beginEditingExternalMcpServer(entry) }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+                    .disabled(externalMcpEditor.isPresented)
+                Button {
+                    pendingExternalMcpRemoval = entry.name
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: AppTheme.FontSize.sm))
+                        .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
+                }
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .controlSize(.small)
+                .disabled(externalMcpEditor.isPresented)
+                .help("Remove \(entry.name)")
+            }
+        }
+    }
+
+    private func externalMcpEditLabel(_ entry: ExternalMcpServers.SettingsEntry) -> String {
+        switch entry.status {
+        case .ready: return "Edit"
+        case .trustRequired: return "Review"
+        case .needsRepair: return "Repair"
+        }
+    }
+
+    private var externalMcpEditorView: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            Text(externalMcpEditorTitle)
+                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+
+            if externalMcpEditor.importsMultipleServers {
+                SettingsNotice(
+                    text: "Imports \(externalMcpEditor.importCount) named servers from this configuration.",
+                    systemImage: "square.stack.3d.up",
+                    tone: .neutral
+                )
+            } else {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    Text("Name")
+                        .font(.system(size: AppTheme.FontSize.sm))
+                        .foregroundStyle(AppTheme.Text.secondaryColor)
+                    TextField("server-name", text: $externalMcpEditor.name)
+                        .textFieldStyle(.plain)
+                        .focused($externalMcpField, equals: .name)
+                        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                        .foregroundStyle(AppTheme.Text.primaryColor)
+                        .onSubmit(saveExternalMcpServer)
+                        .padding(.horizontal, AppTheme.Spacing.md)
+                        .padding(.vertical, AppTheme.Spacing.smMd)
+                        .background(externalMcpFieldBackground)
+                        .overlay(externalMcpFieldBorder(isFocused: externalMcpField == .name))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                Text("Connection")
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                TextField(
+                    externalMcpConnectionPlaceholder,
+                    text: $externalMcpEditor.connection,
+                    axis: .vertical
+                )
+                .lineLimit(2...6)
+                .textFieldStyle(.plain)
+                .focused($externalMcpField, equals: .connection)
+                .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .padding(.horizontal, AppTheme.Spacing.md)
+                .padding(.vertical, AppTheme.Spacing.smMd)
+                .background(externalMcpFieldBackground)
+                .overlay(externalMcpFieldBorder(isFocused: externalMcpField == .connection))
+            }
+
+            if let hint = externalMcpEditor.nameHint,
+               hint != externalMcpEditor.name.trimmingCharacters(in: .whitespacesAndNewlines) {
+                Button("Use suggested name “\(hint)”") {
+                    externalMcpEditor.useNameHint()
+                    externalMcpField = .name
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Accent.primary)
+            }
+
+            if let validationMessage = externalMcpValidationMessage,
+               !externalMcpEditor.name.isEmpty || !externalMcpEditor.connection.isEmpty {
+                HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+                    Image(systemName: "exclamationmark.triangle")
+                    Text(validationMessage)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: AppTheme.FontSize.sm))
+                .foregroundStyle(AppTheme.Status.errorColor)
+            }
+
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Spacer(minLength: AppTheme.Spacing.lg)
+                Button("Cancel") { cancelExternalMcpEditor() }
+                    .buttonStyle(.capsule(.secondary, size: .regular))
+                    .controlSize(.small)
+                Button(externalMcpEditor.importsMultipleServers ? "Import" : "Save") {
+                    saveExternalMcpServer()
+                }
+                .buttonStyle(.capsule(.prominent, size: .regular))
+                .controlSize(.small)
+                .disabled(
+                    externalMcpValidationMessage != nil
+                        || externalMcpOperation == nil
+                )
+            }
+        }
+        .padding(.horizontal, AppTheme.Spacing.mdLg)
+        .padding(.vertical, AppTheme.Spacing.md)
+    }
+
+    private var externalMcpEditorTitle: String {
+        switch externalMcpEditor.mode {
+        case .some(.editing): return "Edit Server"
+        case .some(.adding), .none: return "Add Server"
+        }
+    }
+
+    private var externalMcpConnectionPlaceholder: String {
+        guard case .some(.editing(_, let canPreserveConfiguration)) = externalMcpEditor.mode else {
+            return "HTTPS URL, command, MCP entry, or mcpServers JSON"
+        }
+        return canPreserveConfiguration
+            ? "Stored securely — paste a replacement to change it"
+            : "Paste a valid replacement configuration"
+    }
+
+    private var externalMcpOperation: ExternalMcpServers.SaveOperation? {
+        guard case .success(let operation) = externalMcpEditor.operation(
+            existingNames: Set(externalMcpServers.map(\.name))
+        ) else { return nil }
+        return operation
+    }
+
+    private var externalMcpValidationMessage: String? {
+        externalMcpEditor.validationMessage(existingNames: Set(externalMcpServers.map(\.name)))
+    }
+
+    private var externalMcpFieldBackground: some View {
+        RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+            .fill(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.muted))
+    }
+
+    private func externalMcpFieldBorder(isFocused: Bool) -> some View {
+        RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+            .strokeBorder(
+                isFocused ? AppTheme.Border.primaryColor : AppTheme.Border.subtleColor,
+                lineWidth: AppTheme.BorderWidth.thin
+            )
+    }
+
+    private func refreshExternalMcpServers() {
+        externalMcpServers = ExternalMcpServers.settingsEntries()
+    }
+
+    private func beginAddingExternalMcpServer() {
+        externalMcpError = nil
+        externalMcpEditor.beginAdding()
+        externalMcpField = .name
+    }
+
+    private func beginEditingExternalMcpServer(_ entry: ExternalMcpServers.SettingsEntry) {
+        externalMcpError = nil
+        externalMcpEditor.beginEditing(entry)
+        externalMcpField = .name
+    }
+
+    private func cancelExternalMcpEditor() {
+        externalMcpEditor.cancel()
+        externalMcpField = nil
+    }
+
+    private func saveExternalMcpServer() {
+        guard let operation = externalMcpOperation else { return }
+        if let request = ExternalMcpServers.trustRequest(for: operation) {
+            pendingExternalMcpTrust = PendingExternalMcpTrust(operation: operation, request: request)
+        } else {
+            applyExternalMcpOperation(operation, trustingStdio: false)
+        }
+    }
+
+    private func applyExternalMcpOperation(
+        _ operation: ExternalMcpServers.SaveOperation,
+        trustingStdio: Bool
+    ) {
+        do {
+            try ExternalMcpServers.apply(operation, trustingStdio: trustingStdio)
+            pendingExternalMcpTrust = nil
+            externalMcpError = nil
+            cancelExternalMcpEditor()
+            refreshExternalMcpServers()
+        } catch {
+            pendingExternalMcpTrust = nil
+            externalMcpError = error.localizedDescription
+        }
+    }
+
+    private func removeExternalMcpServer(_ name: String) {
+        ExternalMcpServers.remove(name: name)
+        pendingExternalMcpRemoval = nil
+        externalMcpError = nil
+        refreshExternalMcpServers()
     }
 
     private var keyPlaceholder: String {

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import NexGenVideo
@@ -93,5 +94,84 @@ struct AppRelaunchTests {
         #expect(!arguments[1].contains("exec /usr/bin/open"))
         #expect(Array(arguments.suffix(2)) == ["--self-test", "/tmp/state file"])
         #expect(!arguments.contains("--args"))
+    }
+
+    @Test("a project-open continuation survives one relaunch and is consumed once")
+    func projectContinuationRoundTripsOnce() throws {
+        let suite = "app-relaunch-project-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let intent = AppRelaunchIntent.openProject(
+            URL(fileURLWithPath: "/tmp/Claude Mouse.ngv")
+        )
+
+        AppRelaunchIntentStore.save(intent, defaults: defaults)
+
+        #expect(AppRelaunchIntentStore.take(defaults: defaults) == intent)
+        #expect(AppRelaunchIntentStore.take(defaults: defaults) == nil)
+    }
+
+    @Test("a new-project continuation preserves the selected format")
+    func newProjectContinuationRoundTrips() throws {
+        let suite = "app-relaunch-new-project-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let intent = AppRelaunchIntent.createProject(format: "musicvideo")
+
+        AppRelaunchIntentStore.save(intent, defaults: defaults)
+
+        #expect(AppRelaunchIntentStore.take(defaults: defaults) == intent)
+    }
+
+    @Test("an invalid continuation is discarded instead of looping")
+    func invalidContinuationIsConsumed() throws {
+        let suite = "app-relaunch-invalid-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(
+            ["kind": "unknown", "value": "/tmp/project.ngv"],
+            forKey: "NGVAppRelaunchIntent"
+        )
+
+        #expect(AppRelaunchIntentStore.take(defaults: defaults) == nil)
+        #expect(AppRelaunchIntentStore.take(defaults: defaults) == nil)
+    }
+
+    @Test("a self-test launch consumes and discards a pending continuation")
+    func selfTestDiscardsContinuationOnce() throws {
+        let suite = "app-relaunch-self-test-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let intent = AppRelaunchIntent.createProject(format: "musicvideo")
+        AppRelaunchIntentStore.save(intent, defaults: defaults)
+
+        #expect(AppRelaunchIntentStore.consumeForLaunch(
+            isSelfTest: true,
+            defaults: defaults
+        ) == nil)
+        #expect(AppRelaunchIntentStore.consumeForLaunch(
+            isSelfTest: false,
+            defaults: defaults
+        ) == nil)
+    }
+
+    @Test("a normal launch returns a pending continuation exactly once")
+    func normalLaunchConsumesContinuationOnce() throws {
+        let suite = "app-relaunch-normal-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let intent = AppRelaunchIntent.openProject(
+            URL(fileURLWithPath: "/tmp/Resume Once.ngv")
+        )
+        AppRelaunchIntentStore.save(intent, defaults: defaults)
+
+        #expect(AppRelaunchIntentStore.consumeForLaunch(
+            isSelfTest: false,
+            defaults: defaults
+        ) == intent)
+        #expect(AppRelaunchIntentStore.consumeForLaunch(
+            isSelfTest: false,
+            defaults: defaults
+        ) == nil)
     }
 }

@@ -201,6 +201,12 @@ enum ProjectPluginSettings {
         }
         let data = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
         try data.write(to: url, options: .atomic)
+        Task { @MainActor in
+            NotificationCenter.default.post(
+                name: .projectPackBindingChanged,
+                object: projectURL
+            )
+        }
     }
 }
 

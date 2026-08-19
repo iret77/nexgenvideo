@@ -220,6 +220,7 @@ final class AppState {
             )
             AppRelaunch.now {
                 ProjectPackMigration.commit(request)
+                AppRelaunchIntentStore.save(.openProject(projectURL))
             }
         } catch {
             NSAlert(error: error).runModal()
@@ -273,6 +274,15 @@ final class AppState {
 
     // MARK: - Project lifecycle
 
+    func resume(_ intent: AppRelaunchIntent) {
+        switch intent.kind {
+        case .openProject:
+            openProject(at: URL(fileURLWithPath: intent.value))
+        case .createProject:
+            createNewProject(format: intent.value)
+        }
+    }
+
     /// `format` is the chosen pack id (nil = generic), picked at the Welcome step. The editor reads the
     /// active format when its `projectURL` is set (in `makeWindowControllers`), so the package must be
     /// saved and `ngv.json` written BEFORE the windows are made — otherwise the project would open
@@ -292,7 +302,10 @@ final class AppState {
                 presentNewProjectPanel(binding: binding)
             case .restartRequired(let binding):
                 progress.close()
-                offerRestart(binding: binding)
+                offerNewProjectRestart(
+                    binding: binding,
+                    format: format
+                )
             case .unavailable(let reason):
                 progress.close()
                 notify(
@@ -470,23 +483,10 @@ final class AppState {
             return false
 
         case .needsRestart(let binding):
-            if let request = ProjectPackMigration.request(for: projectURL) {
-                return resolvePendingUpgradeRestart(
-                    request,
-                    projectURL: projectURL
-                )
-            }
-            if let target = ProjectPackMigration.legacyTarget(
-                for: projectURL
-            ) {
-                resolveLegacyUpgradeRestart(
-                    target,
-                    projectURL: projectURL
-                )
-                return false
-            }
-            offerRestart(binding: binding)
-            return false
+            return resolvePackRestart(
+                required: binding,
+                projectURL: projectURL
+            )
 
         case .legacyMigration(let target):
             guard confirm(
@@ -559,28 +559,137 @@ final class AppState {
         }
     }
 
+    private func resolveProjectVersionConflict(
+        required: ProjectPackBinding,
+        projectURL: URL
+    ) -> Bool {
+        guard case .bound(let source) = ProjectPluginSettings.bindingResolution(
+            projectURL: projectURL
+        ), source == required else {
+            offerProjectRestart(
+                required: required,
+                active: PluginLoader.liveBinding(id: required.id),
+                projectURL: projectURL
+            )
+            return false
+        }
+        let active = PluginLoader.liveBinding(id: source.id)
+        if ProjectIdentity.existingKey(for: projectURL) != nil,
+           let offer = ProjectPackMigration.liveUpgradeOffer(source: source) {
+            let projectName = Self.projectName(projectURL)
+            let packName = Self.packDisplayName(offer.target)
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "Update “\(projectName)” to \(packName) \(offer.target.version)?"
+            alert.accessoryView = Self.bodyText(
+                "“\(projectName)” uses \(packName) \(source.version). "
+                    + "NexGenVideo can update a protected copy and open it with "
+                    + "\(offer.target.version). The saved project remains unchanged until you save."
+            )
+            alert.addButton(withTitle: "Update and Open")
+            alert.addButton(withTitle: "Open with \(source.version)")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                do {
+                    ProjectPackMigration.commit(
+                        try ProjectPackMigration.prepareSchedule(
+                            projectURL: projectURL,
+                            source: source,
+                            target: offer.target
+                        )
+                    )
+                    return true
+                } catch {
+                    NSAlert(error: error).runModal()
+                    return false
+                }
+            case .alertSecondButtonReturn:
+                restartAndContinue(
+                    with: source,
+                    intent: .openProject(projectURL)
+                )
+                return false
+            default:
+                return false
+            }
+        }
+        offerProjectRestart(
+            required: required,
+            active: active,
+            projectURL: projectURL
+        )
+        return false
+    }
+
+    private func resolvePackRestart(
+        required: ProjectPackBinding,
+        projectURL: URL
+    ) -> Bool {
+        switch ProjectPackMigration.restartResolution(
+            required: required,
+            projectURL: projectURL
+        ) {
+        case .pending(let request):
+            return resolvePendingUpgradeRestart(
+                request,
+                projectURL: projectURL
+            )
+        case .legacy(let target):
+            resolveLegacyUpgradeRestart(
+                target,
+                projectURL: projectURL
+            )
+            return false
+        case .versionConflict(let binding):
+            return resolveProjectVersionConflict(
+                required: binding,
+                projectURL: projectURL
+            )
+        }
+    }
+
+    struct PendingUpgradeRestartCopy: Equatable {
+        let title: String
+        let informative: String
+    }
+
+    static func pendingUpgradeRestartCopy(
+        _ request: ProjectPackMigration.Request,
+        projectURL: URL
+    ) -> PendingUpgradeRestartCopy {
+        let projectName = projectName(projectURL)
+        let packName = packDisplayName(request.target)
+        return PendingUpgradeRestartCopy(
+            title: "Finish upgrading “\(projectName)”",
+            informative: "“\(projectName)” is upgrading \(packName) "
+                + "\(request.source.version) to \(request.target.version). Restart to load "
+                + "\(request.target.version), or cancel to return to \(request.source.version). "
+                + "The saved project remains unchanged until you save."
+        )
+    }
+
     private func resolvePendingUpgradeRestart(
         _ request: ProjectPackMigration.Request,
         projectURL: URL
     ) -> Bool {
+        let copy = Self.pendingUpgradeRestartCopy(
+            request,
+            projectURL: projectURL
+        )
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = "Finish upgrading this project"
-        alert.accessoryView = Self.bodyText(
-            "Restart to load \(request.target.id) \(request.target.version), "
-                + "or cancel the pending project upgrade."
-        )
-        alert.addButton(withTitle: "Restart")
+        alert.messageText = copy.title
+        alert.accessoryView = Self.bodyText(copy.informative)
+        alert.addButton(withTitle: "Restart and Open")
         alert.addButton(withTitle: "Cancel Upgrade")
         alert.addButton(withTitle: "Keep Closed")
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            AppRelaunch.now {
-                PluginLoader.requestVersionForNextLaunch(
-                    id: request.target.id,
-                    version: request.target.version
-                )
-            }
+            restartAndContinue(
+                with: request.target,
+                intent: .openProject(projectURL)
+            )
             return false
         case .alertSecondButtonReturn:
             return cancelPendingUpgrade(
@@ -633,12 +742,10 @@ final class AppState {
         alert.addButton(withTitle: "Keep Closed")
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            AppRelaunch.now {
-                PluginLoader.requestVersionForNextLaunch(
-                    id: target.id,
-                    version: target.version
-                )
-            }
+            restartAndContinue(
+                with: target,
+                intent: .openProject(projectURL)
+            )
         case .alertSecondButtonReturn:
             ProjectPackMigration.cancel(projectURL: projectURL)
         default:
@@ -672,7 +779,11 @@ final class AppState {
         case .satisfied:
             return true
         case .needsRestart(_):
-            offerRestart(binding: source)
+            offerProjectRestart(
+                required: source,
+                active: PluginLoader.liveBinding(id: source.id),
+                projectURL: projectURL
+            )
         default:
             notify(
                 message: "The project upgrade was cancelled",
@@ -785,8 +896,10 @@ final class AppState {
             )
             return false
         case .needsRestart(let binding):
-            offerRestart(binding: binding)
-            return false
+            return resolvePackRestart(
+                required: binding,
+                projectURL: projectURL
+            )
         case .legacyMigration:
             return await ensurePackAvailable(for: projectURL)
         case .missing, .missingVersion, .incompatible:
@@ -809,17 +922,89 @@ final class AppState {
         }
     }
 
-    private func offerRestart(binding: ProjectPackBinding) {
+    private func offerNewProjectRestart(
+        binding: ProjectPackBinding,
+        format: String
+    ) {
+        let packName = Self.packDisplayName(binding)
+        let informative: String
+        if let active = PluginLoader.liveBinding(id: binding.id),
+           active != binding {
+            informative = "\(packName) \(active.version) is currently active. Restart NexGenVideo "
+                + "to switch to \(binding.version). Project setup will continue automatically."
+        } else {
+            informative = "\(packName) \(binding.version) is installed. Restart NexGenVideo to "
+                + "activate it. Project setup will continue automatically."
+        }
         guard confirm(
-            message: "Restart NexGenVideo to load “\(binding.id)”",
-            informative: "The pack is installed. A pack's code only goes live in a fresh process.",
-            action: "Restart") else { return }
+            message: "Restart to create a \(packName) project",
+            informative: informative,
+            action: "Restart and Continue"
+        ) else { return }
+        restartAndContinue(
+            with: binding,
+            intent: .createProject(format: format)
+        )
+    }
+
+    private func offerProjectRestart(
+        required: ProjectPackBinding,
+        active: ProjectPackBinding?,
+        projectURL: URL
+    ) {
+        let projectName = Self.projectName(projectURL)
+        let packName = Self.packDisplayName(required)
+        let informative: String
+        let action: String
+        if let active, active != required {
+            informative = "“\(projectName)” uses \(packName) \(required.version), but "
+                + "\(active.version) is currently active. A compatible project upgrade isn't "
+                + "available. Restart NexGenVideo to switch versions. "
+                + "The project will open automatically afterward."
+            action = "Open with \(required.version)"
+        } else {
+            informative = "“\(projectName)” uses \(packName) \(required.version). Restart "
+                + "NexGenVideo to activate it. The project will open automatically afterward."
+            action = "Restart and Open"
+        }
+        guard confirm(
+            message: "Restart to open “\(projectName)”",
+            informative: informative,
+            action: action
+        ) else { return }
+        restartAndContinue(
+            with: required,
+            intent: .openProject(projectURL)
+        )
+    }
+
+    private func restartAndContinue(
+        with binding: ProjectPackBinding,
+        intent: AppRelaunchIntent
+    ) {
         AppRelaunch.now {
             PluginLoader.requestVersionForNextLaunch(
                 id: binding.id,
                 version: binding.version
             )
+            AppRelaunchIntentStore.save(intent)
         }
+    }
+
+    private static func packDisplayName(
+        _ binding: ProjectPackBinding
+    ) -> String {
+        guard let displayName = PluginLoader.installedInfo(
+            id: binding.id,
+            version: binding.version
+        )?.info.displayName.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ), !displayName.isEmpty else { return binding.id }
+        return displayName
+    }
+
+    private static func projectName(_ url: URL) -> String {
+        url.deletingPathExtension().lastPathComponent
     }
 
     private func confirm(message: String, informative: String, action: String) -> Bool {
@@ -849,12 +1034,29 @@ final class AppState {
         let label = NSTextField(labelWithAttributedString: attributed)
         label.lineBreakMode = .byWordWrapping
         label.usesSingleLineMode = false
+        label.maximumNumberOfLines = 0
         label.preferredMaxLayoutWidth = width
-        let height = attributed.boundingRect(
+        label.cell?.wraps = true
+        label.cell?.usesSingleLineMode = false
+        label.cell?.isScrollable = false
+        let measuredHeight = attributed.boundingRect(
             with: NSSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         ).height
-        label.frame = NSRect(x: 0, y: 0, width: width, height: ceil(height))
+        let cellHeight = label.cell?.cellSize(
+            forBounds: NSRect(
+                x: AppTheme.Spacing.none,
+                y: AppTheme.Spacing.none,
+                width: width,
+                height: .greatestFiniteMagnitude
+            )
+        ).height ?? measuredHeight
+        label.frame = NSRect(
+            x: AppTheme.Spacing.none,
+            y: AppTheme.Spacing.none,
+            width: width,
+            height: ceil(max(measuredHeight, cellHeight))
+        )
         return label
     }
 
