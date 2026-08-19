@@ -124,7 +124,7 @@ struct PluginsPane: View {
 
     private func versionRow(_ installedVersion: InstalledPluginVersion) -> some View {
         let presentation = removalPresentation(for: installedVersion)
-        SettingsRow(
+        return SettingsRow(
             title: "Version \(installedVersion.version)",
             subtitle: presentation.subtitle
         ) {
