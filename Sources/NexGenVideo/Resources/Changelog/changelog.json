@@ -2,6 +2,32 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.4.0",
+      "date": "2026-08-19",
+      "sections": [
+        {
+          "heading": "Format packs",
+          "items": [
+            "Opening a project with an older pinned format pack now lets you upgrade a Recovery copy to a compatible installed version or continue with the exact pinned version.",
+            "Installed pack versions are listed separately, and versions unused by open or registered projects can be removed safely."
+          ]
+        },
+        {
+          "heading": "Agent integrations",
+          "items": [
+            "Agent settings now imports and manages external MCP servers, keeps complete configurations in the macOS Keychain, requires explicit trust for local commands, and rejects insecure remote connections."
+          ]
+        },
+        {
+          "heading": "Editor",
+          "items": [
+            "Media import and project commands that were previously unreachable are now available from their native editor and menu locations.",
+            "Animation can be cleared from a keyframe context menu with full undo and redo support."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.3.0",
       "date": "2026-08-17",
       "sections": [
