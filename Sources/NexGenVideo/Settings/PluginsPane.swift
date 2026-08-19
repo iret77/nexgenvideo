@@ -153,7 +153,7 @@ struct PluginsPane: View {
     }
 
     private func removalPresentation(
-        _ installedVersion: InstalledPluginVersion
+        for installedVersion: InstalledPluginVersion
     ) -> PluginRemovalPresentation {
         PluginRemovalPresentation.resolve(
             installedVersion: installedVersion,
