@@ -68,19 +68,37 @@ enum PluginLoader {
     private static var residentVersions: [String: String] = [:]
     private static let selectedVersionsKey = "NGVSelectedPackVersions"
     private static let runtimeRejectionsKey = "NGVRejectedPackVersions"
+    private static var residentRecords: [String: InstalledPluginRecord] = [:]
 
     /// Whether this id's code is already mapped into the process (loaded, even if it failed to
     /// register). An update to a resident id needs a relaunch to take effect.
     static func isResident(_ id: String) -> Bool { residentVersions[id] != nil }
 
+    static func residentVersion(id: String) -> String? { residentVersions[id] }
+
+    static func residentRecordsForInventory() -> [InstalledPluginRecord] {
+        Array(residentRecords.values)
+    }
+
     static func liveBinding(id: String) -> ProjectPackBinding? {
         guard let version = loadedVersions[id],
-              let installed = installedInfo(id: id, version: version) else { return nil }
+              let record = residentRecords[id] else { return nil }
         return ProjectPackBinding(
             id: id,
             version: version,
-            projectSchema: installed.info.projectSchema
+            projectSchema: record.projectSchema
         )
+    }
+
+    static func recordRemoval(id: String, version: String) {
+        clearRuntimeRejection(id: id, version: version)
+        clearRequestedVersion(id: id, version: version)
+        let refreshed = loadInstalled()
+        if !refreshed.contains(where: { $0.id == id }),
+           let resident = residentRecords[id] {
+            installed = refreshed + [resident]
+            installed.sort { $0.displayName < $1.displayName }
+        }
     }
 
     static func installedInfo(
@@ -157,10 +175,11 @@ enum PluginLoader {
         UserDefaults.standard.set(selected, forKey: selectedVersionsKey)
     }
 
-    static func clearRequestedVersion(id: String) {
+    static func clearRequestedVersion(id: String, version: String? = nil) {
         var selected = UserDefaults.standard.dictionary(
             forKey: selectedVersionsKey
         ) as? [String: String] ?? [:]
+        if let version, selected[id] != version { return }
         selected.removeValue(forKey: id)
         UserDefaults.standard.set(selected, forKey: selectedVersionsKey)
     }
@@ -375,25 +394,34 @@ enum PluginLoader {
                 info,
                 reason: "entry point \(info.principalClass) not found"
             )
-            return record(info, bundleURL: bundleURL,
-                          state: .incompatible(.malformedMetadata("entry point \(info.principalClass) not found")))
+            let rejected = record(
+                info,
+                bundleURL: bundleURL,
+                state: .incompatible(.malformedMetadata("entry point \(info.principalClass) not found"))
+            )
+            residentRecords[info.id] = rejected
+            return rejected
         }
 
         let pack = entryClass.init().makePack().pack
         guard pack.name == info.id else {
             let detail = "runtime id \(pack.name) doesn't match \(info.id)"
             rejectRuntime(info, reason: detail)
-            return record(
+            let rejected = record(
                 info,
                 bundleURL: bundleURL,
                 state: .incompatible(.malformedMetadata(detail))
             )
+            residentRecords[info.id] = rejected
+            return rejected
         }
         PackCatalog.register(pack)
         loadedVersions[info.id] = info.version
         clearRuntimeRejection(id: info.id, version: info.version)
         Log.plugins.notice("loaded pack \(pack.name) v\(info.version) from \(bundleURL.lastPathComponent)")
-        return record(info, bundleURL: bundleURL, state: .loaded)
+        let loaded = record(info, bundleURL: bundleURL, state: .loaded)
+        residentRecords[info.id] = loaded
+        return loaded
     }
 
     /// Record a freshly-installed-but-not-loadable-this-session update: the new

@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Dispatch
+import Foundation
 
 struct AppRelaunchRequestState {
     enum Completion: Equatable {
@@ -27,6 +28,60 @@ struct AppRelaunchRequestState {
 enum AppRelaunchDocumentPolicy {
     static func requiresReview(editStates: [Bool]) -> Bool {
         editStates.contains(true)
+    }
+}
+
+struct AppRelaunchIntent: Equatable, Sendable {
+    enum Kind: String, Sendable {
+        case openProject
+        case createProject
+    }
+
+    let kind: Kind
+    let value: String
+
+    static func openProject(_ url: URL) -> Self {
+        Self(kind: .openProject, value: url.standardizedFileURL.path)
+    }
+
+    static func createProject(format: String) -> Self {
+        Self(kind: .createProject, value: format)
+    }
+}
+
+enum AppRelaunchIntentStore {
+    private static let key = "NGVAppRelaunchIntent"
+    private static let kindKey = "kind"
+    private static let valueKey = "value"
+
+    static func save(
+        _ intent: AppRelaunchIntent,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set([
+            kindKey: intent.kind.rawValue,
+            valueKey: intent.value,
+        ], forKey: key)
+    }
+
+    static func take(
+        defaults: UserDefaults = .standard
+    ) -> AppRelaunchIntent? {
+        let stored = defaults.dictionary(forKey: key)
+        defaults.removeObject(forKey: key)
+        guard let rawKind = stored?[kindKey] as? String,
+              let kind = AppRelaunchIntent.Kind(rawValue: rawKind),
+              let value = stored?[valueKey] as? String,
+              !value.isEmpty else { return nil }
+        return AppRelaunchIntent(kind: kind, value: value)
+    }
+
+    static func consumeForLaunch(
+        isSelfTest: Bool,
+        defaults: UserDefaults = .standard
+    ) -> AppRelaunchIntent? {
+        let intent = take(defaults: defaults)
+        return isSelfTest ? nil : intent
     }
 }
 

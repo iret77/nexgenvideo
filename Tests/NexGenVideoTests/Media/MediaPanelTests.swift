@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import NexGenVideo
 
 @MainActor
@@ -1125,11 +1126,21 @@ struct MoveMediaSelectionTests {
     }
 }
 
-// MARK: - handlePanelFinderDrop
+// MARK: - MediaImportFlow
 
-@Suite("MediaTab — handlePanelFinderDrop")
+@Suite("MediaImportFlow")
 @MainActor
-struct HandlePanelFinderDropTests {
+struct MediaImportFlowTests {
+
+    @Test func pickerAllowsMediaFoldersAndPipelineSourceMaterial() {
+        let identifiers = Set(MediaImportFlow.allowedContentTypes.map(\.identifier))
+        let requiredTypes: [UTType] = [.movie, .image, .audio, .json, .plainText]
+
+        #expect(requiredTypes.allSatisfy { identifiers.contains($0.identifier) })
+        for ext in ["md", "markdown", "rtf", "fountain", "lottie"] {
+            #expect(UTType(filenameExtension: ext).map { identifiers.contains($0.identifier) } == true)
+        }
+    }
 
     @Test func addsAssetAtRootWhenDestinationIsNil() async throws {
         let (e, cleanup) = try savedEditor()
@@ -1139,7 +1150,7 @@ struct HandlePanelFinderDropTests {
         }
         let url = try writeImportFixture(in: cleanup, name: "clip.mp4")
 
-        await MediaTab.handlePanelFinderDrop(urls: [url], into: nil, editor: e)
+        await MediaImportFlow.importItems([url], into: nil, editor: e)
 
         #expect(e.mediaAssets.count == 1)
         #expect(e.mediaAssets.first?.folderId == nil)
@@ -1154,7 +1165,7 @@ struct HandlePanelFinderDropTests {
         let dest = e.createFolder(name: "Dest")
         let url = try writeImportFixture(in: cleanup, name: "clip.mp4")
 
-        await MediaTab.handlePanelFinderDrop(urls: [url], into: dest, editor: e)
+        await MediaImportFlow.importItems([url], into: dest, editor: e)
 
         #expect(e.mediaAssets.count == 1)
         #expect(e.mediaAssets.first?.folderId == dest)
@@ -1168,7 +1179,7 @@ struct HandlePanelFinderDropTests {
         }
         let url = try writeImportFixture(in: cleanup, name: "archive.zip")
 
-        await MediaTab.handlePanelFinderDrop(urls: [url], into: nil, editor: e)
+        await MediaImportFlow.importItems([url], into: nil, editor: e)
 
         #expect(e.mediaAssets.isEmpty)
     }
@@ -1188,7 +1199,7 @@ struct HandlePanelFinderDropTests {
             )
         }
 
-        await MediaTab.handlePanelFinderDrop(urls: urls, into: dest, editor: e)
+        await MediaImportFlow.importItems(urls, into: dest, editor: e)
 
         #expect(e.mediaAssets.count == 3)
         #expect(e.mediaAssets.allSatisfy { $0.folderId == dest })

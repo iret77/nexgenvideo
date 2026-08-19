@@ -76,6 +76,19 @@ struct PluginRow: Identifiable {
     }
 }
 
+struct InstalledPluginVersion: Identifiable, Equatable, Sendable {
+    let packID: String
+    let version: String
+    let displayName: String
+    let projectSchema: String
+    let bundleURL: URL
+    let isLegacy: Bool
+    let isPresentOnDisk: Bool
+    let isResident: Bool
+
+    var id: String { "\(packID)@\(version)" }
+}
+
 /// Backs `PluginPickerView`: reloads installed packs, fetches the catalog, and
 /// merges them into rows. A catalog fetch failure is a calm offline state —
 /// installed packs still show and stay usable.
@@ -91,10 +104,12 @@ final class PluginManager {
     enum CatalogState: Equatable { case idle, loading, loaded, offline }
 
     private let appVersion = AppVersion.marketing
+    private(set) var installedVersions: [InstalledPluginVersion] = []
 
     /// Reload installed packs and (re)fetch the catalog.
     func refresh() async {
         installed = PluginLoader.loadInstalled()
+        installedVersions = Self.scanInstalledVersions()
         PluginUpdateCenter.shared.refreshInstalledAttention()
         if catalogState != .loaded { catalogState = .loading }
         switch await PluginCatalogService.fetch() {
@@ -108,7 +123,46 @@ final class PluginManager {
 
     func reloadInstalled() {
         installed = PluginLoader.loadInstalled()
+        installedVersions = Self.scanInstalledVersions()
         PluginUpdateCenter.shared.refreshInstalledAttention()
+    }
+
+    func versions(for id: String) -> [InstalledPluginVersion] {
+        installedVersions
+            .filter { $0.packID == id }
+            .sorted {
+                (SemanticVersion($0.version) ?? SemanticVersion("0.0.0")!)
+                    > (SemanticVersion($1.version) ?? SemanticVersion("0.0.0")!)
+            }
+    }
+
+    @discardableResult
+    func uninstall(_ installedVersion: InstalledPluginVersion) -> Bool {
+        guard installedVersion.isPresentOnDisk else { return true }
+        lastError = nil
+        do {
+            try PluginInstaller.uninstall(
+                id: installedVersion.packID,
+                version: installedVersion.version,
+                bundleURL: installedVersion.bundleURL
+            )
+            PluginLoader.recordRemoval(
+                id: installedVersion.packID,
+                version: installedVersion.version
+            )
+            installed = PluginLoader.installed
+            installedVersions = Self.scanInstalledVersions()
+            PluginUpdateCenter.shared.refreshInstalledAttention()
+            NotificationCenter.default.post(
+                name: .pluginInstallationChanged,
+                object: installedVersion.packID
+            )
+            return true
+        } catch {
+            lastError = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+            return false
+        }
     }
 
     func isBusy(_ id: String) -> Bool { busyIDs.contains(id) }
@@ -125,6 +179,7 @@ final class PluginManager {
         do {
             _ = try await PluginInstaller.install(entry, appVersion: appVersion)
             installed = PluginLoader.installed
+            installedVersions = Self.scanInstalledVersions()
             PluginUpdateCenter.shared.refreshInstalledAttention()
             NotificationCenter.default.post(name: .pluginInstallationChanged, object: entry.id)
             return true
@@ -254,5 +309,51 @@ final class PluginManager {
               let new = SemanticVersion(candidate.version),
               let cur = SemanticVersion(installed), new > cur else { return nil }
         return candidate
+    }
+
+    private static func scanInstalledVersions() -> [InstalledPluginVersion] {
+        let root = PluginPaths.installDirectory.standardizedFileURL
+        var byID: [String: InstalledPluginVersion] = [:]
+        for bundleURL in PluginPaths.installedBundles() {
+            guard let info = PluginBundleInfo(bundleURL: bundleURL),
+                  PluginPaths.isValidID(info.id),
+                  PluginPaths.isValidVersion(info.version) else { continue }
+            let legacy = bundleURL.deletingLastPathComponent().standardizedFileURL == root
+            let item = InstalledPluginVersion(
+                packID: info.id,
+                version: info.version,
+                displayName: info.displayName.isEmpty ? info.id : info.displayName,
+                projectSchema: info.projectSchema,
+                bundleURL: bundleURL,
+                isLegacy: legacy,
+                isPresentOnDisk: true,
+                isResident: PluginLoader.residentVersion(id: info.id) == info.version
+            )
+            if byID[item.id] == nil || !legacy {
+                byID[item.id] = item
+            }
+        }
+        for record in PluginLoader.residentRecordsForInventory() {
+            guard byID["\(record.id)@\(record.version)"] == nil else { continue }
+            let item = InstalledPluginVersion(
+                packID: record.id,
+                version: record.version,
+                displayName: record.displayName,
+                projectSchema: record.projectSchema,
+                bundleURL: record.bundleURL,
+                isLegacy: false,
+                isPresentOnDisk: false,
+                isResident: true
+            )
+            byID[item.id] = item
+        }
+        return byID.values.sorted {
+            if $0.displayName != $1.displayName {
+                return $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                    == .orderedAscending
+            }
+            return (SemanticVersion($0.version) ?? SemanticVersion("0.0.0")!)
+                > (SemanticVersion($1.version) ?? SemanticVersion("0.0.0")!)
+        }
     }
 }

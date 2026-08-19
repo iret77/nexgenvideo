@@ -85,6 +85,11 @@ struct ProjectPackBindingTests {
             projectURL: project
         )
         _ = try ProjectIdentity.regenerate(at: project)
+        let savedSettings = try Data(
+            contentsOf: project.appendingPathComponent(
+                ProjectPluginSettings.filename
+            )
+        )
 
         let prepared = try ProjectPackMigration.prepareSchedule(
             projectURL: project,
@@ -102,11 +107,37 @@ struct ProjectPackBindingTests {
         ProjectPackMigration.commit(prepared)
         #expect(ProjectPackMigration.request(for: project)?.source == source)
         #expect(
+            ProjectPackMigration.restartResolution(
+                required: target,
+                projectURL: project
+            ) == .pending(
+                ProjectPackMigration.Request(
+                    source: source,
+                    target: target
+                )
+            )
+        )
+        let restartCopy = AppState.pendingUpgradeRestartCopy(
+            ProjectPackMigration.Request(
+                source: source,
+                target: target
+            ),
+            projectURL: project
+        )
+        #expect(restartCopy.informative.contains("0.0.5 to 0.0.6"))
+        #expect(restartCopy.informative.contains("return to 0.0.5"))
+        #expect(restartCopy.informative.contains("saved project remains unchanged"))
+        #expect(
             ProjectPackMigration.effectiveBinding(
                 persisted: source,
                 projectURL: project
             ) == target
         )
+        #expect(try Data(
+            contentsOf: project.appendingPathComponent(
+                ProjectPluginSettings.filename
+            )
+        ) == savedSettings)
         ProjectPackMigration.cancel(projectURL: project)
         #expect(
             ProjectPackMigration.effectiveBinding(
@@ -114,6 +145,11 @@ struct ProjectPackBindingTests {
                 projectURL: project
             ) == source
         )
+        #expect(try Data(
+            contentsOf: project.appendingPathComponent(
+                ProjectPluginSettings.filename
+            )
+        ) == savedSettings)
     }
 
     @Test func sameSchemaUpgradeChangesOnlyThePinnedVersion() throws {
@@ -136,6 +172,104 @@ struct ProjectPackBindingTests {
         )
     }
 
+    @Test func staleUpgradeRequestCannotRedirectRestartToItsTarget() throws {
+        let project = try directory()
+        defer {
+            ProjectPackMigration.cancel(projectURL: project)
+            try? FileManager.default.removeItem(at: project)
+        }
+        let persisted = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.2.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+        let staleSource = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.1.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+        let staleTarget = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.3.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            persisted,
+            projectURL: project
+        )
+        _ = try ProjectIdentity.regenerate(at: project)
+        let savedSettings = try Data(
+            contentsOf: project.appendingPathComponent(
+                ProjectPluginSettings.filename
+            )
+        )
+        ProjectPackMigration.commit(
+            try ProjectPackMigration.prepareSchedule(
+                projectURL: project,
+                source: staleSource,
+                target: staleTarget
+            )
+        )
+
+        #expect(
+            ProjectPackMigration.effectiveBinding(
+                persisted: persisted,
+                projectURL: project
+            ) == persisted
+        )
+        #expect(
+            ProjectPackMigration.restartResolution(
+                required: persisted,
+                projectURL: project
+            ) == .versionConflict(persisted)
+        )
+        #expect(try Data(
+            contentsOf: project.appendingPathComponent(
+                ProjectPluginSettings.filename
+            )
+        ) == savedSettings)
+    }
+
+    @Test func legacyRestartRequiresThePersistedIDAndRequiredTarget() throws {
+        let project = try directory()
+        defer {
+            ProjectPackMigration.cancel(projectURL: project)
+            try? FileManager.default.removeItem(at: project)
+        }
+        try ProjectPluginSettings.setActivePlugin(
+            "musicvideo",
+            projectURL: project
+        )
+        _ = try ProjectIdentity.regenerate(at: project)
+        let target = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.3.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+        let other = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.2.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+        try ProjectPackMigration.scheduleLegacy(
+            projectURL: project,
+            target: target
+        )
+
+        #expect(
+            ProjectPackMigration.restartResolution(
+                required: target,
+                projectURL: project
+            ) == .legacy(target)
+        )
+        #expect(
+            ProjectPackMigration.restartResolution(
+                required: other,
+                projectURL: project
+            ) == .versionConflict(other)
+        )
+    }
+
     @Test func changedSchemaRequiresPackOwnedMigration() throws {
         let source = try #require(ProjectPackBinding(
             id: "musicvideo",
@@ -154,5 +288,97 @@ struct ProjectPackBindingTests {
                 target: target
             ) == .schemaMigration
         )
+    }
+
+    @Test func newerSameSchemaIsACompatibleVersionOnlyUpgrade() throws {
+        let source = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.2.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+        let target = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.3.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+
+        #expect(ProjectPackMigration.compatibleUpgradeKind(
+            source: source,
+            target: target,
+            targetMigratesFrom: [],
+            hasRuntimeMigration: false
+        ) == .bindingOnly)
+    }
+
+    @Test func schemaUpgradeRequiresDeclarationAndLiveMigration() throws {
+        let source = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.2.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+        let target = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.3.0",
+            projectSchema: "musicvideo/2.0.0"
+        ))
+
+        #expect(ProjectPackMigration.compatibleUpgradeKind(
+            source: source,
+            target: target,
+            targetMigratesFrom: [source.projectSchema],
+            hasRuntimeMigration: false
+        ) == nil)
+        #expect(ProjectPackMigration.compatibleUpgradeKind(
+            source: source,
+            target: target,
+            targetMigratesFrom: [],
+            hasRuntimeMigration: true
+        ) == nil)
+        #expect(ProjectPackMigration.compatibleUpgradeKind(
+            source: source,
+            target: target,
+            targetMigratesFrom: [source.projectSchema],
+            hasRuntimeMigration: true
+        ) == .schemaMigration)
+    }
+
+    @Test func downgradeIsNeverPresentedAsAnUpgrade() throws {
+        let source = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.3.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+        let target = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.2.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+
+        #expect(ProjectPackMigration.compatibleUpgradeKind(
+            source: source,
+            target: target,
+            targetMigratesFrom: [],
+            hasRuntimeMigration: false
+        ) == nil)
+    }
+
+    @Test func aDifferentPackIsNeverPresentedAsAnUpgrade() throws {
+        let source = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: "1.2.0",
+            projectSchema: "musicvideo/1.0.0"
+        ))
+        let target = try #require(ProjectPackBinding(
+            id: "documentary",
+            version: "1.3.0",
+            projectSchema: "documentary/1.0.0"
+        ))
+
+        #expect(ProjectPackMigration.compatibleUpgradeKind(
+            source: source,
+            target: target,
+            targetMigratesFrom: [],
+            hasRuntimeMigration: false
+        ) == nil)
     }
 }

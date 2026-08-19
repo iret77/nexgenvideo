@@ -1,7 +1,10 @@
+import AppKit
 import SwiftUI
 
 struct PluginsPane: View {
     let manager: PluginManager
+    @State private var pendingRemoval: InstalledPluginVersion?
+    @State private var usageModel = PluginUsageSnapshotModel()
 
     var body: some View {
         SettingsSection(
@@ -25,6 +28,42 @@ struct PluginsPane: View {
                 packsCard
             }
         }
+        .alert(
+            removalTitle,
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            ),
+            presenting: pendingRemoval
+        ) { installedVersion in
+            Button(
+                installedVersion.isResident ? "Remove and Restart" : "Remove",
+                role: .destructive
+            ) {
+                remove(installedVersion)
+            }
+            .disabled(!removalPresentation(for: installedVersion).canRemove)
+            Button("Cancel", role: .cancel) {}
+        } message: { installedVersion in
+            Text(removalPresentation(for: installedVersion).removalMessage)
+        }
+        .task { refreshUsageSnapshot() }
+        .onChange(of: manager.installedVersions) { _, _ in
+            refreshUsageSnapshot()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pluginInstallationChanged)) { _ in
+            refreshUsageSnapshot()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .projectRegistryChanged)) { _ in
+            refreshUsageSnapshot()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .projectDocumentSetChanged)) { _ in
+            refreshUsageSnapshot()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .projectPackBindingChanged)) { _ in
+            refreshUsageSnapshot()
+        }
+        .onDisappear { usageModel.cancel() }
     }
 
     private var installedRows: [PluginRow] {
@@ -57,9 +96,6 @@ struct PluginsPane: View {
                                 .font(.system(size: AppTheme.FontSize.md))
                                 .foregroundStyle(AppTheme.Text.primaryColor)
                             HStack(spacing: AppTheme.Spacing.sm) {
-                                if let version = installedVersion(rowData.id) {
-                                    Text("Version \(version)")
-                                }
                                 if let tagline = rowData.tagline {
                                     Text(tagline)
                                 }
@@ -72,13 +108,79 @@ struct PluginsPane: View {
                     }
                     .padding(.horizontal, AppTheme.Spacing.mdLg)
                     .padding(.vertical, AppTheme.Spacing.md)
+                    ForEach(manager.versions(for: rowData.id)) { installedVersion in
+                        SettingsDivider()
+                        versionRow(installedVersion)
+                    }
                 }
             }
         }
     }
 
-    private func installedVersion(_ id: String) -> String? {
-        manager.installed.first { $0.id == id }?.version
+    private var removalTitle: String {
+        guard let pendingRemoval else { return "Remove format pack?" }
+        return "Remove \(pendingRemoval.displayName) \(pendingRemoval.version)?"
+    }
+
+    private func versionRow(_ installedVersion: InstalledPluginVersion) -> some View {
+        let presentation = removalPresentation(for: installedVersion)
+        SettingsRow(
+            title: "Version \(installedVersion.version)",
+            subtitle: presentation.subtitle
+        ) {
+            versionAction(installedVersion, presentation: presentation)
+        }
+    }
+
+    @ViewBuilder
+    private func versionAction(
+        _ installedVersion: InstalledPluginVersion,
+        presentation: PluginRemovalPresentation
+    ) -> some View {
+        if !installedVersion.isPresentOnDisk {
+            Button("Restart now") { AppRelaunch.now() }
+                .buttonStyle(.capsule(.prominent, size: .regular))
+                .controlSize(.small)
+        } else {
+            Button("Remove", role: .destructive) {
+                pendingRemoval = installedVersion
+            }
+            .buttonStyle(.capsule(.secondary, size: .regular))
+            .controlSize(.small)
+            .disabled(!presentation.canRemove)
+            .help(presentation.help)
+        }
+    }
+
+    private func removalPresentation(
+        _ installedVersion: InstalledPluginVersion
+    ) -> PluginRemovalPresentation {
+        PluginRemovalPresentation.resolve(
+            installedVersion: installedVersion,
+            usage: usageModel.snapshot?.state(for: installedVersion)
+        )
+    }
+
+    private func refreshUsageSnapshot() {
+        pendingRemoval = nil
+        let openProjectRoots = NSDocumentController.shared.documents
+            .compactMap { $0 as? VideoProject }
+            .map { project in
+                [project.editorViewModel.workingRoot, project.fileURL].compactMap { $0 }
+            }
+        usageModel.refresh(
+            installedVersions: manager.installedVersions,
+            registryEntries: ProjectRegistry.shared.entries,
+            openProjectRoots: openProjectRoots
+        )
+    }
+
+    private func remove(_ installedVersion: InstalledPluginVersion) {
+        guard removalPresentation(for: installedVersion).canRemove,
+              manager.uninstall(installedVersion) else { return }
+        if installedVersion.isResident {
+            AppRelaunch.now()
+        }
     }
 
     @ViewBuilder private func actions(_ rowData: PluginRow) -> some View {

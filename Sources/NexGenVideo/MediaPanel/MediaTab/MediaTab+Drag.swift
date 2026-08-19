@@ -99,13 +99,8 @@ extension MediaTab {
     @MainActor
     func handlePanelFinderDrop(urls: [URL]) {
         Task { @MainActor in
-            await Self.handlePanelFinderDrop(urls: urls, into: currentFolderId, editor: editor)
+            await MediaImportFlow.importItems(urls, into: currentFolderId, editor: editor)
         }
-    }
-
-    @MainActor
-    static func handlePanelFinderDrop(urls: [URL], into destFolderId: String?, editor: EditorViewModel) async {
-        await editor.importFinderItems(urls, into: destFolderId)
     }
 
     func handleProviderDrop(_ providers: [NSItemProvider], into destFolderId: String?) {
@@ -115,7 +110,7 @@ extension MediaTab {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     guard let url else { return }
                     Task { @MainActor in
-                        await Self.handlePanelFinderDrop(urls: [url], into: destFolderId, editor: editor)
+                        await MediaImportFlow.importItems([url], into: destFolderId, editor: editor)
                     }
                 }
                 continue
@@ -147,7 +142,7 @@ extension MediaTab {
     @MainActor
     static func handleClipboardPaste(pasteboard pb: NSPasteboard, into destFolderId: String?, editor: EditorViewModel) async {
         if let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL], !urls.isEmpty {
-            await handlePanelFinderDrop(urls: urls, into: destFolderId, editor: editor)
+            await MediaImportFlow.importItems(urls, into: destFolderId, editor: editor)
             return
         }
         for (type, ext): (NSPasteboard.PasteboardType, String) in [(.png, "png"), (.tiff, "tiff")] {

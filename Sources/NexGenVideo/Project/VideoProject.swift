@@ -571,6 +571,7 @@ final class VideoProject: NSDocument {
         editorViewModel.releaseWorkingCopy()
         super.close()
         DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .projectDocumentSetChanged, object: self)
             if AppState.shared.activeProject === self {
                 // The review already resolved save/don't-save — navigate Home WITHOUT re-saving (a save
                 // here fails on the released working copy and its alert would block app termination).
@@ -698,6 +699,9 @@ final class VideoProject: NSDocument {
             category: "project",
             data: editorViewModel.telemetrySnapshot()
         )
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .projectDocumentSetChanged, object: self)
+        }
     }
 
     private func reloadEditableContents(from home: URL) {

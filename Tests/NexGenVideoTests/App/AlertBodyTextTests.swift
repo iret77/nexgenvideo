@@ -32,11 +32,27 @@ struct AlertBodyTextTests {
         #expect(field.usesSingleLineMode == false)
     }
 
-    @Test("the label is sized, so the alert can't clip the body to nothing")
-    func labelHasSize() throws {
-        let long = String(repeating: "wrapping across several lines. ", count: 4)
+    @Test("the label reserves the full wrapped text height")
+    func labelFitsWrappedText() throws {
+        let long = String(repeating: "wrapping across several lines. ", count: 8)
         let field = try #require(AppState.bodyText(long) as? NSTextField)
-        #expect(field.frame.height > 0)
-        #expect(field.frame.width > 0)
+        let oracle = NSTextFieldCell(textCell: "")
+        oracle.attributedStringValue = field.attributedStringValue
+        oracle.wraps = true
+        oracle.usesSingleLineMode = false
+        oracle.isScrollable = false
+        let requiredHeight = oracle.cellSize(
+            forBounds: NSRect(
+                x: AppTheme.Spacing.none,
+                y: AppTheme.Spacing.none,
+                width: field.frame.width,
+                height: .greatestFiniteMagnitude
+            )
+        ).height
+
+        #expect(field.maximumNumberOfLines == 0)
+        #expect(field.cell?.wraps == true)
+        #expect(requiredHeight > 0)
+        #expect(field.frame.height >= ceil(requiredHeight))
     }
 }

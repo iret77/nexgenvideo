@@ -19,6 +19,8 @@ enum PluginInstaller {
         case download(String)
         case checksumMismatch(expected: String, actual: String)
         case unpack(String)
+        case uninstallMissing(id: String, version: String)
+        case uninstallMismatch(id: String, version: String)
         case idMismatch(expected: String, found: String)
         case versionMismatch(expected: String, found: String)
         case schemaMismatch(expected: String, found: String)
@@ -32,6 +34,10 @@ enum PluginInstaller {
             case .checksumMismatch:
                 return "The download didn't match its checksum and was discarded."
             case .unpack(let detail): return "Couldn't unpack the pack — \(detail)."
+            case .uninstallMissing(let id, let version):
+                return "The installed \(id) \(version) pack could not be found."
+            case .uninstallMismatch(let id, let version):
+                return "The selected pack does not match \(id) \(version) and was not removed."
             case .idMismatch(let expected, let found):
                 return "The pack identifies as \"\(found)\" but the catalog listed \"\(expected)\"."
             case .versionMismatch(let expected, let found):
@@ -176,14 +182,47 @@ enum PluginInstaller {
         url.scheme?.lowercased() == "https"
     }
 
-    /// Remove an installed pack from disk. The already-loaded code stays live
-    /// until the next launch (dylibs can't be safely unloaded mid-session), but
-    /// it won't reload — the picker reflects that immediately.
-    static func uninstall(id: String) throws {
-        for url in [PluginPaths.installURL(id: id), PluginPaths.versionDirectory(id: id)] {
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
-            }
+    /// Remove one immutable installed version. Already-loaded code stays live until
+    /// relaunch, but every other side-by-side version remains available.
+    static func uninstall(
+        id: String,
+        version: String,
+        bundleURL: URL,
+        installDirectory: URL = PluginPaths.installDirectory
+    ) throws {
+        guard PluginPaths.isValidID(id), PluginPaths.isValidVersion(version) else {
+            throw InstallError.unpack("the pack id or version is invalid")
+        }
+        let versionDirectory = installDirectory.appendingPathComponent(id, isDirectory: true)
+        let versioned = versionDirectory
+            .appendingPathComponent(version)
+            .appendingPathExtension(PluginPaths.bundleExtension)
+        let legacy = installDirectory
+            .appendingPathComponent(id)
+            .appendingPathExtension(PluginPaths.bundleExtension)
+        let selected = bundleURL.standardizedFileURL
+        let allowed = [versioned, legacy].map(\.standardizedFileURL)
+        guard allowed.contains(selected),
+              let selectedInfo = PluginBundleInfo(bundleURL: selected),
+              selectedInfo.id == id,
+              selectedInfo.version == version else {
+            throw InstallError.uninstallMismatch(id: id, version: version)
+        }
+        let targets = allowed.filter { candidate in
+            guard let info = PluginBundleInfo(bundleURL: candidate) else { return false }
+            return info.id == id && info.version == version
+        }
+        guard !targets.isEmpty else {
+            throw InstallError.uninstallMissing(id: id, version: version)
+        }
+        for target in targets {
+            try FileManager.default.removeItem(at: target)
+        }
+        if let remaining = try? FileManager.default.contentsOfDirectory(
+            at: versionDirectory,
+            includingPropertiesForKeys: nil
+        ), remaining.isEmpty {
+            try FileManager.default.removeItem(at: versionDirectory)
         }
     }
 

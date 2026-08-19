@@ -21,7 +21,7 @@ enum ProjectPackGate {
         case missingVersion(id: String, version: String)
         /// Installed but the load gate refused it (contract, version, signature, damage).
         case incompatible(id: String, reason: String)
-        /// A newer build is on disk but its code only goes live in a fresh process.
+        /// The exact version is installed, but another version's code is resident in this process.
         case needsRestart(ProjectPackBinding)
         /// An id-only project needs explicit adoption of the live pack's schema.
         case legacyMigration(target: ProjectPackBinding)

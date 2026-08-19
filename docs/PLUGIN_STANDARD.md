@@ -178,6 +178,12 @@ Incompatible / unsigned packs become a picker row with a calm reason (e.g.
   Installed versions are immutable and coexist; a validated update never overwrites or
   removes the version pinned by an existing project. Legacy flat
   `Plugins/<id>.ngvpack` installs remain readable as their declared version.
+- **Removal is exact-version and explicit** — Settings lists every installed version and removes
+  only the selected `<id>/<version>.ngvpack`; it never collapses side-by-side installs into an
+  id-wide delete. The open project's exact version is protected. Other known projects pinned to
+  that version are named before confirmation, and a resident version requires a restart because
+  its mapped code remains live until process exit. A removed version can be installed again from
+  the append-only catalog when a pinned project needs it.
 - **Update needs a restart.** A dylib already loaded this session can't be safely
   unloaded — its bundle path + principal class keep resolving to the resident (old)
   code. So updating an already-loaded pack installs the new bundle to disk but does
@@ -200,9 +206,15 @@ Incompatible / unsigned packs become a picker row with a calm reason (e.g.
   `AppState` reads all three binding fields and checks that exact version/schema is
   installed and live (`ProjectPackGate`).
   If it isn't, the project **does not open**: an alert offers to install it (missing),
-  update it (installed but gate-blocked), or relaunch (staged update). Declining leaves
-  the project closed. Opening it degraded would come up on the generic phase set with the
-  pack's analysis and gates off — and a save would normalize the project to that shape.
+  update it (installed but gate-blocked), or resolve a resident-version conflict. When a
+  newer live version can safely upgrade the project, the primary action is **Update and
+  Open** through the transactional Recovery-copy path; **Open with <pinned version>**
+  remains an explicit alternative and relaunches into that exact version. The dialog names
+  the project, pack display name, pinned version, and active version. A relaunch resumes the
+  original open/create action automatically. There is no silent latest-wins behavior.
+  Declining leaves the project closed. Opening it degraded would come up on the generic
+  phase set with the pack's analysis and gates off — and a save would normalize the project
+  to that shape.
   A project arriving from another machine, or a fresh install, is the normal case here.
   A legacy id-only project opens with the currently live legacy version and pins that
   exact binding in its Recovery copy. If no legacy-schema version is available, opening

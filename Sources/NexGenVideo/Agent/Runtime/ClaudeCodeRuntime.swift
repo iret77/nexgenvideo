@@ -233,12 +233,8 @@ final class ClaudeCodeRuntime {
         return result
     }
 
-    private static func externalMcpServers() -> [String: String] {
-        #if DEBUG
-        return ExternalMcpServers.all()
-        #else
-        return [:]
-        #endif
+    static func externalMcpServers() -> [String: String] {
+        ExternalMcpServers.runtimeEntries()
     }
 
     private static let providerEnvNames: [(GenerationProvider, String)] = [
