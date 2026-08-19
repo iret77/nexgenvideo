@@ -482,7 +482,7 @@ struct ExternalMcpServersTests {
 
             #expect(settings == [ExternalMcpServers.SettingsEntry(
                 name: reservedName,
-                preview: "https://shadow.example",
+                preview: "https://shadow.example/••••",
                 status: .needsRepair,
                 canPreserveConfiguration: true
             )])
