@@ -76,6 +76,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("--scratch-path", ASSEMBLE_PACK.read_text())
         self.assertNotIn("$RUNNER_TEMP", by_name[pack_name])
 
+    def test_all_notary_submissions_use_the_retrying_helper(self):
+        workflow = WORKFLOW.read_text()
+        bundle = BUNDLE.read_text()
+
+        self.assertNotIn("notarytool submit", workflow)
+        self.assertNotIn("notarytool submit", bundle)
+        self.assertEqual(workflow.count('scripts/notarize.sh "$PACK_ZIP"'), 1)
+        self.assertEqual(bundle.count('"$ROOT/scripts/notarize.sh"'), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
