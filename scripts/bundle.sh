@@ -90,9 +90,7 @@ package_release() {
   /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
 
   echo "==> Submitting to Apple notary (this can take several minutes)"
-  xcrun notarytool submit "$ZIP" \
-    --key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
-    --wait
+  "$ROOT/scripts/notarize.sh" "$ZIP"
 
   echo "==> Stapling ticket to .app"
   xcrun stapler staple "$APP"
@@ -108,9 +106,7 @@ package_release() {
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
 
   echo "==> Submitting DMG to notary"
-  xcrun notarytool submit "$DMG" \
-    --key "$NOTARY_KEY_FILE" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
-    --wait
+  "$ROOT/scripts/notarize.sh" "$DMG"
 
   echo "==> Stapling DMG"
   xcrun stapler staple "$DMG"

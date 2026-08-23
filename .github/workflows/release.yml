@@ -442,11 +442,7 @@ jobs:
               || { echo "::error::missing catalog entry for $PACK_ZIP"; exit 1; }
 
             echo "notarizing $PACK_ZIP"
-            xcrun notarytool submit "$PACK_ZIP" \
-              --key "$NOTARY_KEY_FILE" \
-              --key-id "$NOTARY_KEY_ID" \
-              --issuer "$NOTARY_ISSUER" \
-              --wait
+            scripts/notarize.sh "$PACK_ZIP"
 
             # Apple can notarize a ZIP but cannot staple the ZIP itself. Staple the nested bundle,
             # then rebuild the exact archive that users download and refresh its catalog checksum.
