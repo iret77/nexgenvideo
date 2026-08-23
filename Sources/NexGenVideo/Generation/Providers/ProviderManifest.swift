@@ -9,27 +9,26 @@ import Foundation
 /// the hardcoded `if elevenlabs.hasKey` in the old prefix ladder.
 enum ProviderManifest {
     /// All bindings for a model, built from the catalog's DECLARED provider offers (data, not
-    /// id-prefix inference): each offer becomes a binding, and an `.api` offer whose provider also
-    /// has a configured MCP additionally gets an `.mcp` (subscription) binding. The resolver then
-    /// picks the cheapest activated one. When the catalog hasn't declared offers for a model
+    /// id-prefix inference): each offer becomes exactly the transport binding it declares. An API
+    /// endpoint is never assumed to be an MCP tool merely because the same provider is connected;
+    /// MCP bindings arrive from live tool discovery with the provider's real tool and model contract.
+    /// When the catalog hasn't declared offers for a model
     /// (legacy registry entry, or catalog not yet loaded) `defaultOffers` bootstraps them.
     @MainActor
     static func bindings(forModelId id: String) -> [ProviderBinding] {
         let offers = ModelCatalog.shared.offersById[id] ?? defaultOffers(forModelId: id)
-        var out: [ProviderBinding] = []
-        for offer in offers {
+        return bindings(from: offers, modelId: id)
+    }
+
+    static func bindings(from offers: [ProviderOffer], modelId id: String) -> [ProviderBinding] {
+        offers.map { offer in
             let ref = offer.providerRef ?? id
-            out.append(ProviderBinding(
+            return ProviderBinding(
                 provider: offer.provider, transport: offer.transport, kind: .generation,
                 providerRef: ref, billing: offer.transport == .mcp ? .subscription : .perCall,
-                costPerCall: offer.costPerCall, modelParam: offer.modelParam))
-            if offer.transport == .api, ProviderMCP.hasConfig(offer.provider) {
-                out.append(ProviderBinding(
-                    provider: offer.provider, transport: .mcp, kind: .generation,
-                    providerRef: ref, billing: .subscription))
-            }
+                costPerCall: offer.costPerCall, modelParam: offer.modelParam,
+                mcpMediaRoles: offer.mcpMediaRoles)
         }
-        return out
     }
 
     /// Return one currently runnable binding per provider for a model.

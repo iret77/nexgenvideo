@@ -22,6 +22,8 @@ enum ReferenceHosting: Equatable {
     case inline
     /// Runway hosts its own, on the user's Runway key.
     case runway
+    /// The provider MCP uploads and owns its reference media.
+    case mcp
     /// fal storage — for fal-hosted models.
     case fal
 
@@ -30,7 +32,7 @@ enum ReferenceHosting: Equatable {
     /// would break the self-contained `.ngv` the moment the project moves machines — while also
     /// claiming a hosted URL that never existed. Hosted refs are a cache with a TTL either way; the
     /// durable record of what was referenced is `imageURLAssetIds`.
-    var persistsHostedURLs: Bool { self != .inline }
+    var persistsHostedURLs: Bool { self == .runway || self == .fal }
 }
 
 @MainActor
@@ -92,7 +94,7 @@ final class GenerationService {
         // hosted (a direct provider handed a fal URL reads it as a file path, finds nothing, and
         // silently renders without the reference).
         let target = authorization.target
-        let hosting = Self.referenceHosting(for: target.provider)
+        let hosting = Self.referenceHosting(for: target)
 
         Task { @MainActor in
             var tempToCleanup: [URL] = []
@@ -135,7 +137,7 @@ final class GenerationService {
                         return asset
                     }
                     switch hosting {
-                    case .inline:
+                    case .inline, .mcp:
                         // Hosting these on fal first would demand a fal key for a call that never
                         // touches fal — exactly the dependency the direct providers exist to remove.
                         // Local paths, purely so the direct client can read the bytes off disk.
@@ -439,6 +441,7 @@ final class GenerationService {
         if binding?.transport == .mcp {
             await runMCPJob(
                 provider: provider, toolName: endpoint, modelParam: binding?.modelParam,
+                mediaRoles: binding?.mcpMediaRoles,
                 params: params, placeholders: placeholders, editor: editor,
                 authorization: authorization,
                 onComplete: onComplete, onFailure: onFailure)
@@ -687,6 +690,7 @@ final class GenerationService {
         provider: GenerationProvider,
         toolName: String?,
         modelParam: String?,
+        mediaRoles: [String]?,
         params: BackendGenerationParams,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
@@ -700,6 +704,7 @@ final class GenerationService {
                 authorization: authorization, editor: editor, onFailure: onFailure)
         }
         var submitted = false
+        var selectedToolName = toolName
         do {
             let tools = try await client.discoverTools()
             // Prefer the exact generate tool the resolved offer named (from discovery); fall back to
@@ -713,29 +718,44 @@ final class GenerationService {
                     "\(provider.displayName)'s MCP exposes no tool for this request — check the provider's MCP or add its API key.",
                     authorization: authorization, editor: editor, onFailure: onFailure)
             }
-            let arguments = try MCPGenerationArguments.make(
+            selectedToolName = tool.name
+            let requestId = UUID().uuidString
+            _ = try MCPGenerationArguments.make(
                 for: params,
                 model: modelParam,
-                schema: tool.inputSchema
+                schema: tool.inputSchema,
+                mediaRoles: mediaRoles,
+                requestID: requestId
             )
-            let requestId = UUID().uuidString
+            try MCPGenerationExecutor.preflightLifecycle(tools: tools, provider: provider)
+            let preparedParams = try await MCPMediaUpload.prepare(
+                params,
+                tools: tools,
+                client: client
+            )
+            let arguments = try MCPGenerationArguments.make(
+                for: preparedParams,
+                model: modelParam,
+                schema: tool.inputSchema,
+                mediaRoles: mediaRoles,
+                requestID: requestId
+            )
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: requestId,
                 editor: editor
             )
             submitted = true
-            let texts = try await client.callTool(
-                name: tool.name,
-                arguments: arguments
+            let result = try await MCPGenerationExecutor.run(
+                generationTool: tool,
+                arguments: arguments,
+                tools: tools,
+                provider: provider,
+                client: client
             )
             await client.disconnect()
-            let urls = texts.flatMap(Self.extractURLs)
-            guard !urls.isEmpty else {
-                return failJob(placeholders, "\(provider.displayName)'s MCP returned no media URL.", onFailure)
-            }
             let job = BackendGenerationJob(
-                _id: requestId, status: .succeeded, resultUrls: urls,
+                _id: result.jobID ?? requestId, status: .succeeded, resultUrls: result.outputURLs,
                 errorMessage: nil, costCredits: nil, completedAt: nil)
             await finalizeSuccess(
                 job: job, placeholders: placeholders, editor: editor,
@@ -743,7 +763,21 @@ final class GenerationService {
             markCharged(authorization: authorization, editor: editor)
         } catch {
             await client.disconnect()
-            let message = "MCP call to \(provider.displayName) failed: \(error.localizedDescription)"
+            if let failure = error as? MCPGenerationExecutor.JobFailure {
+                Log.generation.error(
+                    "MCP provider job abandoned id=\(failure.jobID) error=\(failure.message)"
+                )
+            }
+            let tool = selectedToolName ?? "<undiscovered>"
+            let model = modelParam ?? "<implicit>"
+            let message: String
+            if error is MCPGenerationArguments.MappingError {
+                message = "NexGenVideo cannot map \(provider.displayName) MCP tool '\(tool)' for model '\(model)': \(error.localizedDescription) The generation request was not sent."
+            } else if error is MCPMediaUpload.UploadError, !submitted {
+                message = "\(provider.displayName) reference upload failed before generation: \(error.localizedDescription)"
+            } else {
+                message = "\(provider.displayName) MCP tool '\(tool)' for model '\(model)' failed: \(error.localizedDescription)"
+            }
             if submitted {
                 failJob(placeholders, message, onFailure)
             } else {
@@ -775,13 +809,6 @@ final class GenerationService {
             return wanted.contains { hay.contains($0) }
         }) { return hit }
         return tools.count == 1 ? tools.first : nil
-    }
-
-    /// Pull http(s) URLs out of an MCP tool's text/JSON result content.
-    private static func extractURLs(_ text: String) -> [String] {
-        guard let re = try? NSRegularExpression(pattern: "https?://[^\\s\"'\\\\)]+") else { return [] }
-        let ns = text as NSString
-        return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { ns.substring(with: $0.range) }
     }
 
     private func runRunwayJob(
@@ -879,7 +906,12 @@ final class GenerationService {
     /// would have its references hosted on fal and then handed to a provider that can't read them.)
     @MainActor
     static func referenceHosting(modelId: String) -> ReferenceHosting {
-        referenceHosting(for: dispatchTarget(modelId: modelId).provider)
+        referenceHosting(for: dispatchTarget(modelId: modelId))
+    }
+
+    static func referenceHosting(for target: ResolvedGenerationTarget) -> ReferenceHosting {
+        if target.transport == .mcp { return .mcp }
+        return referenceHosting(for: target.provider)
     }
 
     static func referenceHosting(for provider: GenerationProvider) -> ReferenceHosting {

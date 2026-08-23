@@ -104,6 +104,7 @@ struct MCPModelDiscoveryTests {
         #expect(offer.transport == .mcp)
         #expect(offer.providerRef == "generate_video")   // the tool NGV drives as client
         #expect(offer.modelParam == "cinematic_studio_3_0")  // the model arg NGV sends
+        #expect(offer.mcpMediaRoles == ["end_image", "image", "start_image"])
 
         // Capabilities are lifted from the model's declared params/medias/ranges.
         guard case let .video(caps) = top.uiCapabilities else { Issue.record("expected video caps"); return }
@@ -168,6 +169,70 @@ struct MCPModelDiscoveryTests {
         let entries = MCPModelDiscovery.catalogEntries(
             models: models, toolsByModality: [.audio: "generate_audio"], provider: .higgsfield)
         #expect(entries.isEmpty)
+    }
+
+    @Test func incompatibleLiveGenerateSchemaDropsCatalogModels() {
+        let (models, _) = MCPModelDiscovery.parseListing(videoListing)
+        let schema: Value = .object([
+            "properties": .object([
+                "params": .object([
+                    "properties": .object([
+                        "model": .object(["type": .string("string")]),
+                        "prompt": .object(["type": .string("string")]),
+                        "workspace_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([
+                        .string("model"), .string("prompt"), .string("workspace_id"),
+                    ]),
+                ]),
+            ]),
+            "required": .array([.string("params")]),
+        ])
+
+        let entries = MCPModelDiscovery.catalogEntries(
+            models: models,
+            toolsByModality: [.video: "generate_video"],
+            toolSchemasByModality: [.video: schema],
+            provider: .higgsfield
+        )
+
+        #expect(entries.isEmpty)
+    }
+
+    @Test func referenceCapabilitiesRequireProviderMediaUploadTools() {
+        let listing = #"{"items":[{"id":"anchor","name":"Anchor","output_type":"image","medias":[{"name":"medias","type":"image","roles":["image_references"]}]}]}"#
+        let (models, _) = MCPModelDiscovery.parseListing(listing)
+        let entries = MCPModelDiscovery.catalogEntries(
+            models: models,
+            toolsByModality: [.image: "generate_image"],
+            allowsLocalMedia: false,
+            provider: .higgsfield
+        )
+        let entry = try! #require(entries.first)
+        guard case .image(let caps) = entry.uiCapabilities else {
+            Issue.record("expected image caps")
+            return
+        }
+
+        #expect(!caps.supportsImageReference)
+        #expect(entry.offers?.first?.mcpMediaRoles == [])
+    }
+
+    @Test func toolOnlyFallbackRejectsUnsupportedRequiredSchema() {
+        let schema: Value = .object([
+            "properties": .object([
+                "prompt": .object(["type": .string("string")]),
+                "tenant_id": .object(["type": .string("string")]),
+            ]),
+            "required": .array([.string("prompt"), .string("tenant_id")]),
+        ])
+        let tools = [MCPProviderClient.DiscoveredTool(
+            name: "generate_image",
+            description: "Generate an image.",
+            inputSchema: schema
+        )]
+
+        #expect(MCPModelDiscovery.catalogEntriesFromTools(tools, provider: .openart).isEmpty)
     }
 
     @Test func toolOnlyFallbackWhenNoCatalog() {

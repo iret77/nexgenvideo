@@ -33,6 +33,22 @@ struct ProviderManifestTests {
         #expect(bindings.allSatisfy { $0.kind == .generation })
     }
 
+    @Test func apiOfferNeverInventsAnMCPBinding() {
+        let bindings = ProviderManifest.bindings(
+            from: [ProviderOffer(
+                provider: .higgsfield,
+                transport: .api,
+                providerRef: "v1/images/generate"
+            )],
+            modelId: "lighting-anchor"
+        )
+
+        #expect(bindings.count == 1)
+        #expect(bindings.first?.transport == .api)
+        #expect(bindings.first?.providerRef == "v1/images/generate")
+        #expect(bindings.first?.modelParam == nil)
+    }
+
     @Test func directProviderIsCheaperThanFalMiddleman() {
         let direct = ProviderBinding(provider: .elevenlabs, transport: .api, kind: .generation, providerRef: "x", billing: .perCall)
         let hosted = ProviderBinding(provider: .fal, transport: .api, kind: .generation, providerRef: "x", billing: .perCall)

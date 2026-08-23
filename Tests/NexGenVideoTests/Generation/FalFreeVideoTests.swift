@@ -55,17 +55,32 @@ struct FalFreeVideoTests {
         }
     }
 
-    @Test("hosting follows the provider itself, so one resolution can serve both steps")
-    func hostingIsAPureFunctionOfTheProvider() {
-        // `generate()` resolves ONCE and hands the result to `runJob`. That is only possible because
-        // hosting depends on nothing but the provider — otherwise the activation would have to be read
-        // again after the upload, and a key added mid-upload could re-route the dispatch to a provider
-        // that can't read what was just hosted.
+    @Test("direct API hosting follows the resolved provider")
+    func apiHostingFollowsProvider() {
         #expect(GenerationService.referenceHosting(for: .runway) == .runway)
         #expect(GenerationService.referenceHosting(for: .google) == .inline)
         #expect(GenerationService.referenceHosting(for: .marble) == .inline)
         #expect(GenerationService.referenceHosting(for: .fal) == .fal)
         #expect(GenerationService.referenceHosting(for: .elevenlabs) == .fal)
+    }
+
+    @Test("MCP references stay with the resolved MCP provider")
+    func mcpHostsItsOwnReferences() {
+        let binding = ProviderBinding(
+            provider: .higgsfield,
+            transport: .mcp,
+            kind: .generation,
+            providerRef: "generate_image",
+            billing: .subscription
+        )
+        let target = ResolvedGenerationTarget(
+            modelId: "anchor",
+            provider: .higgsfield,
+            endpoint: "generate_image",
+            binding: binding
+        )
+
+        #expect(GenerationService.referenceHosting(for: target) == .mcp)
     }
 
     // MARK: - What may be written into the project
@@ -76,6 +91,7 @@ struct FalFreeVideoTests {
         // self-contained `.ngv` the moment the project moves machines — and claim a hosted URL that
         // never existed.
         #expect(ReferenceHosting.inline.persistsHostedURLs == false)
+        #expect(ReferenceHosting.mcp.persistsHostedURLs == false)
         #expect(ReferenceHosting.runway.persistsHostedURLs)
         #expect(ReferenceHosting.fal.persistsHostedURLs)
     }

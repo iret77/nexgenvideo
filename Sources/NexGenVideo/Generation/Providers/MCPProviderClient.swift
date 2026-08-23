@@ -70,10 +70,12 @@ actor MCPProviderClient {
     func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
         let client = try await connectedClient()
         let result = try await client.callTool(name: name, arguments: arguments)
+        let payloads = Self.payloadContents(result)
         if result.isError == true {
-            throw ClientError.toolFailed(Self.joinedText(result.content))
+            let message = payloads.joined(separator: " ")
+            throw ClientError.toolFailed(message.isEmpty ? "provider tool reported an error" : message)
         }
-        return Self.textContents(result.content)
+        return payloads
     }
 
     func callTool(name: String, arguments: [String: String]) async throws -> [String] {
@@ -100,8 +102,37 @@ actor MCPProviderClient {
         }
     }
 
-    private static func joinedText(_ content: [Tool.Content]) -> String {
-        let text = textContents(content).joined(separator: " ")
-        return text.isEmpty ? "provider tool reported an error" : text
+    private static func payloadContents(_ result: CallTool.Result) -> [String] {
+        var payloads = textContents(result.content)
+        for part in result.content {
+            switch part {
+            case .resource(let resource, _, _):
+                if let data = try? JSONEncoder().encode(resource),
+                   let json = String(data: data, encoding: .utf8) {
+                    payloads.append(json)
+                }
+            case .resourceLink(let uri, _, _, _, let mimeType, _):
+                let isMedia = mimeType?.lowercased().hasPrefix("image/") == true
+                    || mimeType?.lowercased().hasPrefix("video/") == true
+                    || mimeType?.lowercased().hasPrefix("audio/") == true
+                if isMedia {
+                    var object = ["resource_url": uri]
+                    if let mimeType { object["mime_type"] = mimeType }
+                    if let data = try? JSONSerialization.data(withJSONObject: object),
+                       let json = String(data: data, encoding: .utf8) {
+                        payloads.append(json)
+                    }
+                }
+            case .text, .image, .audio:
+                break
+            }
+        }
+        if let structured = result.structuredContent,
+           let data = try? JSONEncoder().encode(structured),
+           let json = String(data: data, encoding: .utf8) {
+            payloads.append(json)
+        }
+        return payloads
     }
+
 }

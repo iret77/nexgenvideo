@@ -73,17 +73,32 @@ enum CatalogDiscovery {
                 await client.disconnect()
                 return []
             }
+            guard (try? MCPGenerationExecutor.preflightLifecycle(
+                tools: tools,
+                provider: provider
+            )) != nil else {
+                await client.disconnect()
+                return []
+            }
             var entries: [CatalogEntry] = []
+            var usedModelCatalog = false
             // A provider whose generate tools take a free-form `model` id (Higgsfield) advertises its
             // full catalog through a separate tool; enumerate it. Otherwise (or if that yields nothing)
             // map the discovered generate tools directly.
             if let hint = provider.mcpModelCatalog, tools.contains(where: { $0.name == hint.tool }) {
+                usedModelCatalog = true
                 let models = await enumerate(client: client, hint: hint,
                                              modalities: Array(toolsByModality.keys))
+                let schemas = Dictionary(uniqueKeysWithValues: toolsByModality.compactMap { modality, name in
+                    tools.first(where: { $0.name == name }).map { (modality, $0.inputSchema) }
+                })
                 entries = MCPModelDiscovery.catalogEntries(
-                    models: models, toolsByModality: toolsByModality, provider: provider)
+                    models: models, toolsByModality: toolsByModality,
+                    toolSchemasByModality: schemas,
+                    allowsLocalMedia: MCPMediaUpload.supportsUploadContract(tools),
+                    provider: provider)
             }
-            if entries.isEmpty {
+            if entries.isEmpty, !usedModelCatalog {
                 entries = MCPModelDiscovery.catalogEntriesFromTools(tools, provider: provider)
             }
             await client.disconnect()
@@ -112,7 +127,10 @@ enum CatalogDiscovery {
                 let texts: [String]
                 do { texts = try await client.callTool(name: hint.tool, arguments: args) }
                 catch { break }
-                let (items, next) = MCPModelDiscovery.parseListing(texts.first ?? "")
+                let parsed = texts.map(MCPModelDiscovery.parseListing)
+                let page = parsed.first(where: { !$0.items.isEmpty || $0.next != nil })
+                    ?? (items: [], next: nil)
+                let (items, next) = page
                 all.append(contentsOf: items)
                 cursor = next
                 pages += 1

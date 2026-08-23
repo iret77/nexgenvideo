@@ -1,4 +1,5 @@
 import Foundation
+import MCP
 
 /// Turns a provider's runtime MCP discovery into model-catalog entries — the pure, testable core of
 /// provider MCP discovery (#163). No I/O: the coordinator (`CatalogDiscovery`) drives the tool
@@ -70,8 +71,11 @@ enum MCPModelDiscovery {
             let options: [Scalar]?
         }
         struct Media: Decodable, Sendable, Equatable {
+            let name: String?
             let type: String?
             let roles: [String]?
+            let min: Int?
+            let max: Int?
         }
         /// A param option value that may arrive as string / number / bool — normalized to its text.
         struct Scalar: Decodable, Sendable, Equatable {
@@ -129,6 +133,8 @@ enum MCPModelDiscovery {
     static func catalogEntries(
         models: [ModelItem],
         toolsByModality: [Modality: String],
+        toolSchemasByModality: [Modality: Value] = [:],
+        allowsLocalMedia: Bool = true,
         provider: GenerationProvider
     ) -> [CatalogEntry] {
         var out: [CatalogEntry] = []
@@ -136,10 +142,22 @@ enum MCPModelDiscovery {
         for model in models {
             guard !model.id.isEmpty, !seen.contains(model.id) else { continue }
             guard let modality = modalityOf(model), let tool = toolsByModality[modality] else { continue }
+            if let schema = toolSchemasByModality[modality],
+               !generationSchemaSupports(
+                   model: model, modality: modality, schema: schema, modelParam: model.id,
+                   includeMedia: allowsLocalMedia
+               ) {
+                continue
+            }
             seen.insert(model.id)
             let offer = ProviderOffer(provider: provider, transport: .mcp,
-                                      providerRef: tool, modelParam: model.id)
-            out.append(entry(for: model, modality: modality, offer: offer))
+                                      providerRef: tool, modelParam: model.id,
+                                      mcpMediaRoles: allowsLocalMedia
+                                        ? Array(mediaRoles(model)).sorted() : [])
+            out.append(entry(
+                for: model, modality: modality, offer: offer,
+                allowsLocalMedia: allowsLocalMedia
+            ))
         }
         return out
     }
@@ -152,13 +170,22 @@ enum MCPModelDiscovery {
         provider: GenerationProvider
     ) -> [CatalogEntry] {
         var out: [CatalogEntry] = []
-        for (modality, tool) in generateToolsByModality(tools).sorted(by: { $0.value < $1.value }) {
+        for (modality, tool) in generateToolsByModality(tools).sorted(by: { $0.value < $1.value })
+        where modality != .upscale {
+            guard let discoveredTool = tools.first(where: { $0.name == tool }) else { continue }
             let item = ModelItem(id: tool, name: "\(provider.displayName) \(modality.rawValue.capitalized)",
-                                 description: tools.first { $0.name == tool }?.description,
+                                 description: discoveredTool.description,
                                  outputType: modality.rawValue, aspectRatios: nil, durations: nil,
                                  durationRange: nil, parameters: nil, medias: nil, tags: nil)
+            guard generationSchemaSupports(
+                model: item,
+                modality: modality,
+                schema: discoveredTool.inputSchema,
+                modelParam: nil,
+                includeMedia: false
+            ) else { continue }
             let offer = ProviderOffer(provider: provider, transport: .mcp, providerRef: tool, modelParam: nil)
-            out.append(entry(for: item, modality: modality, offer: offer))
+            out.append(entry(for: item, modality: modality, offer: offer, allowsLocalMedia: false))
         }
         return out
     }
@@ -175,7 +202,12 @@ enum MCPModelDiscovery {
         }
     }
 
-    private static func entry(for model: ModelItem, modality: Modality, offer: ProviderOffer) -> CatalogEntry {
+    private static func entry(
+        for model: ModelItem,
+        modality: Modality,
+        offer: ProviderOffer,
+        allowsLocalMedia: Bool
+    ) -> CatalogEntry {
         let displayName = model.name?.isEmpty == false ? model.name! : model.id
         let card = ModelCard(strengths: nil, weaknesses: nil, bestFor: model.description,
                              rank: nil, tags: model.tags)
@@ -184,12 +216,14 @@ enum MCPModelDiscovery {
             return CatalogEntry(
                 id: model.id, kind: .video, displayName: displayName,
                 allowedEndpoints: [model.id], responseShape: .video,
-                uiCapabilities: .video(videoCaps(model)), card: card, offers: [offer])
+                uiCapabilities: .video(videoCaps(model, allowsLocalMedia: allowsLocalMedia)),
+                card: card, offers: [offer])
         case .image:
             return CatalogEntry(
                 id: model.id, kind: .image, displayName: displayName,
                 allowedEndpoints: [model.id], responseShape: .images,
-                uiCapabilities: .image(imageCaps(model)), card: card, offers: [offer])
+                uiCapabilities: .image(imageCaps(model, allowsLocalMedia: allowsLocalMedia)),
+                card: card, offers: [offer])
         case .audio:
             return CatalogEntry(
                 id: model.id, kind: .audio, displayName: displayName,
@@ -205,9 +239,9 @@ enum MCPModelDiscovery {
         }
     }
 
-    private static func videoCaps(_ model: ModelItem) -> VideoCaps {
-        let roles = mediaRoles(model)
-        let hasImageRef = hasImageMedia(model)
+    private static func videoCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> VideoCaps {
+        let roles = allowsLocalMedia ? mediaRoles(model) : []
+        let hasImageRef = allowsLocalMedia && hasImageMedia(model)
         return VideoCaps(
             durations: model.durations ?? [],
             durationRange: durationRange(model.durationRange),
@@ -224,13 +258,13 @@ enum MCPModelDiscovery {
             requiresSourceVideo: false, requiresReferenceImage: false)
     }
 
-    private static func imageCaps(_ model: ModelItem) -> ImageCaps {
+    private static func imageCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> ImageCaps {
         ImageCaps(
             resolutions: options(model, param: "resolution"),
             aspectRatios: aspectRatios(model),
             qualities: options(model, param: "quality") ?? options(model, param: "mode"),
-            supportsImageReference: hasImageMedia(model),
-            maxImages: 4)
+            supportsImageReference: allowsLocalMedia && hasImageMedia(model),
+            maxImages: maxOutputImages(model))
     }
 
     private static func audioCaps(_ model: ModelItem) -> AudioCaps {
@@ -283,10 +317,73 @@ enum MCPModelDiscovery {
     }
 
     private static func mediaRoles(_ model: ModelItem) -> Set<String> {
-        Set((model.medias ?? []).flatMap { $0.roles ?? [] })
+        Set((model.medias ?? []).flatMap { $0.roles ?? [] }.map { $0.lowercased() })
     }
 
     private static func hasImageMedia(_ model: ModelItem) -> Bool {
         (model.medias ?? []).contains { ($0.type ?? "").lowercased() == "image" }
+    }
+
+    private static func maxOutputImages(_ model: ModelItem) -> Int {
+        let names = Set(["batch_size", "num_images", "number_of_images"])
+        let declared = model.parameters?
+            .filter { names.contains(($0.name ?? "").lowercased()) }
+            .flatMap { $0.options ?? [] }
+            .compactMap { Int($0.text) }
+            .max()
+        return max(1, min(4, declared ?? 1))
+    }
+
+    private static func generationSchemaSupports(
+        model: ModelItem,
+        modality: Modality,
+        schema: Value,
+        modelParam: String?,
+        includeMedia: Bool
+    ) -> Bool {
+        let roles = includeMedia ? Array(mediaRoles(model)).sorted() : []
+        let params: BackendGenerationParams
+        switch modality {
+        case .image:
+            params = .image(ImageGenerationParams(
+                prompt: "schema preflight", aspectRatio: aspectRatios(model).first ?? "1:1",
+                resolution: options(model, param: "resolution")?.first,
+                quality: options(model, param: "quality")?.first,
+                imageURLs: includeMedia && hasImageMedia(model)
+                    ? ["https://example.invalid/reference.jpg"] : [],
+                numImages: 1
+            ))
+        case .video:
+            let declared = includeMedia ? mediaRoles(model) : []
+            params = .video(VideoGenerationParams(
+                prompt: "schema preflight",
+                duration: .seconds(model.durations?.first ?? model.durationRange?.min ?? 5),
+                aspectRatio: aspectRatios(model).first ?? "16:9",
+                resolution: options(model, param: "resolution")?.first,
+                startFrameURL: declared.contains("start_image")
+                    ? "https://example.invalid/start.jpg" : nil,
+                endFrameURL: declared.contains("end_image")
+                    ? "https://example.invalid/end.jpg" : nil,
+                referenceImageURLs: declared.contains("image") || declared.contains("image_references")
+                    ? ["https://example.invalid/reference.jpg"] : [],
+                referenceVideoURLs: declared.contains("video") || declared.contains("video_references")
+                    ? ["https://example.invalid/reference.mp4"] : [],
+                referenceAudioURLs: declared.contains("audio") || declared.contains("audio_references")
+                    ? ["https://example.invalid/reference.wav"] : []
+            ))
+        case .audio:
+            params = .audio(AudioGenerationParams(
+                prompt: "schema preflight", voice: nil, lyrics: nil,
+                styleInstructions: nil, instrumental: false,
+                durationSeconds: model.durations?.first
+            ))
+        case .upscale:
+            params = .upscale(UpscaleGenerationParams(
+                sourceURL: "https://example.invalid/source.png", durationSeconds: 1
+            ))
+        }
+        return (try? MCPGenerationArguments.make(
+            for: params, model: modelParam, schema: schema, mediaRoles: roles
+        )) != nil
     }
 }
