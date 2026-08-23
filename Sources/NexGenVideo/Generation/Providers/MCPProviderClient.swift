@@ -69,7 +69,7 @@ actor MCPProviderClient {
     /// gate-compiled by the caller.
     func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
         let client = try await connectedClient()
-        let context: RequestContext<CallTool.Result> = try client.callTool(
+        let context: RequestContext<CallTool.Result> = try await client.callTool(
             name: name,
             arguments: arguments
         )
