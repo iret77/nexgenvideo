@@ -11,9 +11,16 @@ struct FalClientTests {
             let data: Data
         }
 
+        struct CapturedRequest: Sendable {
+            let url: URL?
+            let method: String?
+            let authorization: String?
+            let body: Data?
+        }
+
         private static let lock = NSLock()
         nonisolated(unsafe) private static var fixtures: [URL: Fixture] = [:]
-        nonisolated(unsafe) private static var captured: [URLRequest] = []
+        nonisolated(unsafe) private static var captured: [CapturedRequest] = []
 
         static func install(_ fixtures: [URL: Fixture]) {
             lock.withLock {
@@ -22,7 +29,7 @@ struct FalClientTests {
             }
         }
 
-        static func requests() -> [URLRequest] {
+        static func requests() -> [CapturedRequest] {
             lock.withLock { captured }
         }
 
@@ -30,9 +37,15 @@ struct FalClientTests {
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
         override func startLoading() {
+            let capturedRequest = CapturedRequest(
+                url: request.url,
+                method: request.httpMethod,
+                authorization: request.value(forHTTPHeaderField: "Authorization"),
+                body: Self.body(of: request)
+            )
             guard let url = request.url,
                   let fixture = Self.lock.withLock({ () -> Fixture? in
-                      Self.captured.append(request)
+                      Self.captured.append(capturedRequest)
                       return Self.fixtures[url]
                   }) else {
                 client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
@@ -50,6 +63,21 @@ struct FalClientTests {
         }
 
         override func stopLoading() {}
+
+        private static func body(of request: URLRequest) -> Data? {
+            if let body = request.httpBody { return body }
+            guard let stream = request.httpBodyStream else { return nil }
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 4_096)
+            while true {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count < 0 { return nil }
+                if count == 0 { return data }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+        }
     }
 
     private func session() -> URLSession {
@@ -86,9 +114,9 @@ struct FalClientTests {
 
         #expect(String(decoding: output, as: UTF8.self) == "{\"images\":[]}")
         #expect(requests.map(\.url) == [submit, status, result])
-        #expect(requests.map(\.httpMethod) == ["POST", "GET", "GET"])
-        #expect(requests.first?.httpBody == input)
-        #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Key test-key" })
+        #expect(requests.map(\.method) == ["POST", "GET", "GET"])
+        #expect(requests.first?.body == input)
+        #expect(requests.allSatisfy { $0.authorization == "Key test-key" })
     }
 
     @Test("every registered fal modality derives a valid application lifecycle route")
