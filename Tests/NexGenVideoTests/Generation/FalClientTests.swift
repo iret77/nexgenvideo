@@ -58,7 +58,7 @@ struct FalClientTests {
         return URLSession(configuration: configuration)
     }
 
-    private func fixture(_ status: Int = 200, _ json: String) -> FixtureURLProtocol.Fixture {
+    private func fixture(_ json: String, status: Int = 200) -> FixtureURLProtocol.Fixture {
         FixtureURLProtocol.Fixture(status: status, data: Data(json.utf8))
     }
 
@@ -147,7 +147,7 @@ struct FalClientTests {
         )!
         FixtureURLProtocol.install([
             submit: fixture("{\"request_id\":\"job-405\"}"),
-            status: fixture(405, "{\"detail\":\"Method Not Allowed\"}"),
+            status: fixture("{\"detail\":\"Method Not Allowed\"}", status: 405),
         ])
         let client = FalClient(apiKey: "test-key", session: session())
         let requestID = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
