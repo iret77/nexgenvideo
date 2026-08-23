@@ -430,7 +430,11 @@ final class GenerationService {
         onFailure: (@MainActor () -> Void)?
     ) async {
         let runId = String(UUID().uuidString.prefix(8))
-        Log.generation.notice("run \(runId) start model=\(genInput.model) placeholders=\(placeholders.count)")
+        Log.generation.notice(
+            "run \(runId) start model=\(genInput.model) provider=\(target.provider.rawValue) "
+                + "transport=\(target.transport.rawValue) endpoint=\(target.endpoint) "
+                + "placeholders=\(placeholders.count)"
+        )
         defer { Log.generation.notice("run \(runId) settled") }
 
         // `.mcp` runs over MCP, not a keyless REST call, so `canRun` matches what executes.
