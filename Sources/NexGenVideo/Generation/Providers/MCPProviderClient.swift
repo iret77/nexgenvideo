@@ -69,7 +69,11 @@ actor MCPProviderClient {
     /// gate-compiled by the caller.
     func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
         let client = try await connectedClient()
-        let result = try await client.callTool(name: name, arguments: arguments)
+        let context: RequestContext<CallTool.Result> = try client.callTool(
+            name: name,
+            arguments: arguments
+        )
+        let result = try await context.value
         let payloads = Self.payloadContents(result)
         if result.isError == true {
             let message = payloads.joined(separator: " ")
