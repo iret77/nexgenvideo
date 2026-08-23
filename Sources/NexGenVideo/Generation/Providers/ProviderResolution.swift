@@ -54,14 +54,16 @@ struct ProviderBinding: Sendable, Hashable {
     /// to send. `providerRef` then names the generate TOOL, and this names the MODEL within it. nil for
     /// API bindings and single-model MCP tools.
     var modelParam: String? = nil
+    /// Media roles declared by this exact MCP model (`image`, `start_image`, …). The request mapper
+    /// uses these instead of guessing one provider-wide role vocabulary.
+    var mcpMediaRoles: [String]? = nil
 }
 
 /// One provider's declared way to serve a model — the DATA that replaces id-prefix inference.
 /// A model's `CatalogEntry` carries a list of these (registries declare their own; the hosted
 /// catalog can declare several so one logical model is served by multiple providers). The manifest
-/// turns each into a `ProviderBinding`; a provider that also has a configured MCP additionally gets
-/// an `.mcp` binding. `providerRef` is the provider's own endpoint/model id; `costPerCall` (when
-/// known) drives the resolver's cheapest pick.
+/// turns each into one exact `ProviderBinding`. `providerRef` is the provider's own endpoint/model
+/// id; `costPerCall` (when known) drives the resolver's cheapest pick.
 struct ProviderOffer: Codable, Sendable, Hashable {
     let provider: GenerationProvider
     var transport: ProviderTransport = .api
@@ -70,16 +72,23 @@ struct ProviderOffer: Codable, Sendable, Hashable {
     /// The provider's own model id for an MCP generate tool that selects the model through a free-form
     /// `model` argument (Higgsfield). `providerRef` names the generate tool; this names the model.
     var modelParam: String? = nil
+    /// Per-model roles returned by MCP catalog discovery. Nil for direct API offers and tool-only
+    /// MCP providers whose generate schema carries no separate model catalog.
+    var mcpMediaRoles: [String]? = nil
 
-    private enum CodingKeys: String, CodingKey { case provider, transport, providerRef, costPerCall, modelParam }
+    private enum CodingKeys: String, CodingKey {
+        case provider, transport, providerRef, costPerCall, modelParam, mcpMediaRoles
+    }
 
     init(provider: GenerationProvider, transport: ProviderTransport = .api,
-         providerRef: String? = nil, costPerCall: Double? = nil, modelParam: String? = nil) {
+         providerRef: String? = nil, costPerCall: Double? = nil, modelParam: String? = nil,
+         mcpMediaRoles: [String]? = nil) {
         self.provider = provider
         self.transport = transport
         self.providerRef = providerRef
         self.costPerCall = costPerCall
         self.modelParam = modelParam
+        self.mcpMediaRoles = mcpMediaRoles
     }
 
     init(from decoder: Decoder) throws {
@@ -89,6 +98,7 @@ struct ProviderOffer: Codable, Sendable, Hashable {
         providerRef = try c.decodeIfPresent(String.self, forKey: .providerRef)
         costPerCall = try c.decodeIfPresent(Double.self, forKey: .costPerCall)
         modelParam = try c.decodeIfPresent(String.self, forKey: .modelParam)
+        mcpMediaRoles = try c.decodeIfPresent([String].self, forKey: .mcpMediaRoles)
     }
 }
 

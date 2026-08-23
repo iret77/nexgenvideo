@@ -2,6 +2,19 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.4.1",
+      "date": "2026-08-23",
+      "sections": [
+        {
+          "heading": "Generation providers",
+          "items": [
+            "Reference-driven MCP generation now maps prompts and media to each provider's live tool schema while preserving every assigned input and its role.",
+            "Local references now upload through the selected provider, asynchronous jobs complete without duplicate generation submissions, and only verified generated media is imported."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.4.0",
       "date": "2026-08-19",
       "sections": [
