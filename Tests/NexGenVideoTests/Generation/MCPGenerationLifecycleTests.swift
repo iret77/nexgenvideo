@@ -86,6 +86,15 @@ struct MCPGenerationLifecycleTests {
         ])
     }
 
+    @Test func completedOrResultToolMayReturnOneRootMediaURL() {
+        #expect(MCPGenerationLifecycle.status(from: [
+            #"{"status":"completed","url":"https://output.invalid/final.png"}"#,
+        ]) == .succeeded(["https://output.invalid/final.png"]))
+        #expect(MCPGenerationLifecycle.resultURLs(from: [
+            #"{"url":"https://output.invalid/final.png"}"#,
+        ]) == ["https://output.invalid/final.png"])
+    }
+
     @Test func failedStatusPreservesProviderMessage() {
         let status = MCPGenerationLifecycle.status(from: [
             #"{"state":"failed","error_message":"Model rejected the selected duration."}"#,

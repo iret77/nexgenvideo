@@ -200,7 +200,7 @@ struct MCPMediaUploadTests {
         #expect(video.referenceAudioURLs == ["uploaded-guide.ogg"])
         let recorded = await recorder.recorded()
         #expect(recorded.count == 4)
-        #expect(recorded.map(\.1) == ["video", "image", "image", "audio"])
+        #expect(recorded.map { $0.1 } == ["video", "image", "image", "audio"])
     }
 
     @Test func prepareRejectsMissingFileBeforeAnyUpload() async {

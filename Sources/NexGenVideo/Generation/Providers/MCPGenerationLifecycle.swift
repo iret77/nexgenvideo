@@ -26,13 +26,13 @@ enum MCPGenerationLifecycle {
 
     static func status(from payloads: [String]) -> Status {
         let objects = jsonObjects(payloads)
-        let urls = outputURLs(in: objects)
         guard let raw = firstString(keys: ["status", "state", "phase"], in: objects) else {
+            let urls = outputURLs(in: objects)
             return urls.isEmpty ? .unknown(nil) : .succeeded(urls)
         }
         let value = normalize(raw)
         if ["succeeded", "success", "completed", "complete", "ready", "done"].contains(value) {
-            return .succeeded(urls)
+            return .succeeded(outputURLs(in: objects, allowRootURL: true))
         }
         if ["failed", "failure", "error", "cancelled", "canceled", "rejected"].contains(value) {
             let message = firstString(
@@ -45,6 +45,10 @@ enum MCPGenerationLifecycle {
             return .pending
         }
         return .unknown(raw)
+    }
+
+    static func resultURLs(from payloads: [String]) -> [String] {
+        outputURLs(in: jsonObjects(payloads), allowRootURL: true)
     }
 
     static func statusTool(
@@ -164,9 +168,10 @@ enum MCPGenerationLifecycle {
         case collection
     }
 
-    private static func outputURLs(in objects: [Any]) -> [String] {
+    private static func outputURLs(in objects: [Any], allowRootURL: Bool = false) -> [String] {
         var urls: [String] = []
-        for object in objects { collectOutputURLs(object, context: .root, into: &urls) }
+        let context: OutputContext = allowRootURL ? .record : .root
+        for object in objects { collectOutputURLs(object, context: context, into: &urls) }
         var seen = Set<String>()
         return urls.filter { seen.insert($0).inserted }
     }

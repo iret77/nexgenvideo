@@ -161,7 +161,7 @@ enum MCPGenerationExecutor {
         if case .failed(let message) = MCPGenerationLifecycle.status(from: payloads) {
             throw GenerationBackendError.transport(message)
         }
-        let urls = MCPGenerationLifecycle.submission(from: payloads).outputURLs
+        let urls = MCPGenerationLifecycle.resultURLs(from: payloads)
         guard !urls.isEmpty else {
             throw GenerationBackendError.transport(
                 "\(provider.displayName)'s MCP completed job '\(jobID)' without output media."
