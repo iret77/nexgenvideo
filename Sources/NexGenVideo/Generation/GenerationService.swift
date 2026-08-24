@@ -263,6 +263,10 @@ final class GenerationService {
         asset.generationStatus = .downloading
         do {
             let (downloadURL, _) = try await URLSession.shared.download(from: remoteURL)
+            guard editor.mediaAssets.contains(where: { $0.id == asset.id }) else {
+                try? FileManager.default.removeItem(at: downloadURL)
+                return false
+            }
             let realExt = remoteURL.pathExtension.lowercased()
             if !realExt.isEmpty, realExt != asset.url.pathExtension.lowercased(),
                ClipType(fileExtension: realExt) != nil {
@@ -674,6 +678,21 @@ final class GenerationService {
                     editor: editor
                 )
             }
+        } catch let error as FalClient.SubmissionAcknowledgedError {
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: error.ledgerRequestID,
+                editor: editor
+            )
+            failJob(placeholders, error.localizedDescription, onFailure)
+        } catch is CancellationError {
+            if requestId == nil {
+                failBeforeSubmission(
+                    placeholders, "Generation cancelled.",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            } else {
+                failJob(placeholders, "Generation cancelled.", onFailure)
+            }
         } catch {
             if requestId == nil {
                 failBeforeSubmission(
@@ -1017,6 +1036,7 @@ final class GenerationService {
     ) async {
         var finalized: [MediaAsset] = []
         for (i, placeholder) in placeholders.enumerated() {
+            guard editor.mediaAssets.contains(where: { $0.id == placeholder.id }) else { continue }
             guard i < images.count else {
                 placeholder.generationStatus = .failed("No image for placeholder")
                 continue
@@ -1214,6 +1234,7 @@ final class GenerationService {
 
         var finalized: [MediaAsset] = []
         for (i, placeholder) in placeholders.enumerated() {
+            guard editor.mediaAssets.contains(where: { $0.id == placeholder.id }) else { continue }
             guard i < urlStrings.count, let remote = URL(string: urlStrings[i]) else {
                 placeholder.generationStatus = .failed("No URL for placeholder")
                 continue
