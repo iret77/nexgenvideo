@@ -9,7 +9,8 @@
           "heading": "Generation providers",
           "items": [
             "Reference-driven MCP generation now maps prompts and media to each provider's live tool schema while preserving every assigned input and its role.",
-            "Local references now upload through the selected provider, asynchronous jobs complete without duplicate generation submissions, and only verified generated media is imported."
+            "Local references now upload through the selected provider, asynchronous jobs complete without duplicate generation submissions, and only verified generated media is imported.",
+            "fal.ai queue jobs now poll and fetch results from the owning application route, restoring image, video, audio, and upscale endpoints that use operation-specific submit paths."
           ]
         }
       ]

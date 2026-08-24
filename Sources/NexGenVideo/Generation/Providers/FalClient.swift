@@ -8,9 +8,11 @@ import Foundation
 /// non-`Sendable` JSON dictionaries live only inside the actor.
 actor FalClient {
     let apiKey: String
+    private let session: URLSession
 
-    init(apiKey: String) {
+    init(apiKey: String, session: URLSession = .shared) {
         self.apiKey = apiKey
+        self.session = session
     }
 
     private static let queueBase = "https://queue.fal.run"
@@ -20,12 +22,11 @@ actor FalClient {
     /// Submit a job to the queue; `inputBody` is the serialized input object with its fields at
     /// the top level (the HTTP queue API's shape — not the SDK's `{"input": …}`). Returns the request id.
     func submit(endpoint: String, inputBody: Data) async throws -> String {
-        guard let url = URL(string: "\(Self.queueBase)/\(endpoint)") else {
-            throw GenerationBackendError.transport("Invalid fal endpoint: \(endpoint)")
-        }
-        let (data, status) = try await send(makeRequest(url: url, method: "POST", body: inputBody))
-        let json = Self.parse(data)
-        try Self.throwIfError(status: status, json: json)
+        let route = try Self.route(endpoint: endpoint)
+        let request = makeRequest(url: route.submitURL, method: "POST", body: inputBody)
+        let response = try await send(request)
+        let json = Self.parse(response.data)
+        try Self.throwIfError(response, request: request, operation: "submit", json: json)
         guard let requestId = json?["request_id"] as? String else {
             throw GenerationBackendError.transport("fal submit: missing request_id")
         }
@@ -35,32 +36,92 @@ actor FalClient {
     /// Poll the queue until the job completes, then fetch and return the raw
     /// output JSON as `Data` for the caller to parse.
     func result(endpoint: String, requestId: String) async throws -> Data {
-        guard
-            let statusURL = URL(string: "\(Self.queueBase)/\(endpoint)/requests/\(requestId)/status"),
-            let resultURL = URL(string: "\(Self.queueBase)/\(endpoint)/requests/\(requestId)")
-        else {
-            throw GenerationBackendError.transport("Invalid fal endpoint: \(endpoint)")
-        }
+        let route = try Self.route(endpoint: endpoint)
+        let statusURL = try route.lifecycleURL(requestId: requestId, suffix: "status")
+        let resultURL = try route.lifecycleURL(requestId: requestId)
 
         let deadline = Date().addingTimeInterval(Self.maxWait)
         while true {
-            let (data, status) = try await send(makeRequest(url: statusURL, method: "GET", body: nil))
-            let json = Self.parse(data)
-            try Self.throwIfError(status: status, json: json)
+            let statusRequest = makeRequest(url: statusURL, method: "GET", body: nil)
+            let response = try await send(statusRequest)
+            let json = Self.parse(response.data)
+            try Self.throwIfError(
+                response, request: statusRequest, operation: "status", json: json
+            )
             switch (json?["status"] as? String) ?? "" {
             case "COMPLETED":
-                let (out, outStatus) = try await send(makeRequest(url: resultURL, method: "GET", body: nil))
-                try Self.throwIfError(status: outStatus, json: Self.parse(out))
-                return out
-            case "FAILED", "ERROR":
-                throw GenerationBackendError.transport(Self.errorMessage(in: json) ?? "fal generation failed")
-            default:
+                let resultRequest = makeRequest(url: resultURL, method: "GET", body: nil)
+                let resultResponse = try await send(resultRequest)
+                try Self.throwIfError(
+                    resultResponse, request: resultRequest, operation: "result",
+                    json: Self.parse(resultResponse.data)
+                )
+                return resultResponse.data
+            case "IN_QUEUE", "IN_PROGRESS":
                 if Date() >= deadline {
                     throw GenerationBackendError.transport("fal generation timed out")
                 }
                 try await Task.sleep(nanoseconds: Self.pollInterval)
+            case "FAILED", "ERROR", "CANCELLED":
+                let detail = Self.errorMessage(in: json) ?? "provider reported failure"
+                throw GenerationBackendError.transport(
+                    "fal.ai generation failed for \(route.application): \(detail)"
+                )
+            case let status where !status.isEmpty:
+                throw GenerationBackendError.transport(
+                    "fal.ai status returned unsupported state '\(status)' for \(route.application)"
+                )
+            default:
+                throw GenerationBackendError.transport(
+                    "fal.ai status returned no state for \(route.application)"
+                )
             }
         }
+    }
+
+    struct Route: Sendable, Equatable {
+        let endpoint: String
+        let application: String
+
+        var submitURL: URL { URL(string: "\(FalClient.queueBase)/\(endpoint)")! }
+
+        func lifecycleURL(requestId: String, suffix: String? = nil) throws -> URL {
+            guard FalClient.isPathSegment(requestId) else {
+                throw GenerationBackendError.transport("Invalid fal request id")
+            }
+            var value = "\(FalClient.queueBase)/\(application)/requests/\(requestId)"
+            if let suffix { value += "/\(suffix)" }
+            return URL(string: value)!
+        }
+    }
+
+    /// fal endpoint ids are `owner/app[/submit-path]`. The submit path selects an operation such as
+    /// `edit` or `image-to-video`, but queue lifecycle calls belong to the owning app and must drop it.
+    /// `workflows` and `comfy` are fal namespaces, so their owning app spans three segments.
+    static func route(endpoint: String) throws -> Route {
+        guard endpoint == endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+              !endpoint.hasPrefix("/"), !endpoint.hasSuffix("/"),
+              !endpoint.contains("//"), !endpoint.contains("?") && !endpoint.contains("#")
+        else {
+            throw GenerationBackendError.transport("Invalid fal endpoint: \(endpoint)")
+        }
+        let parts = endpoint.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        let rootCount = ["workflows", "comfy"].contains(parts.first ?? "") ? 3 : 2
+        guard parts.count >= rootCount,
+              parts.allSatisfy(Self.isPathSegment)
+        else {
+            throw GenerationBackendError.transport("Invalid fal endpoint: \(endpoint)")
+        }
+        return Route(endpoint: endpoint, application: parts.prefix(rootCount).joined(separator: "/"))
+    }
+
+    private static func isPathSegment(_ value: String) -> Bool {
+        !value.isEmpty
+            && value != "."
+            && value != ".."
+            && value.unicodeScalars.allSatisfy {
+                CharacterSet.alphanumerics.contains($0) || "-._~".unicodeScalars.contains($0)
+            }
     }
 
     private func makeRequest(url: URL, method: String, body: Data?) -> URLRequest {
@@ -72,13 +133,22 @@ actor FalClient {
         return req
     }
 
-    private func send(_ request: URLRequest) async throws -> (Data, Int) {
+    private struct Response {
+        let data: Data
+        let status: Int
+        let url: URL?
+    }
+
+    private func send(_ request: URLRequest) async throws -> Response {
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            return (data, status)
+            let (data, response) = try await session.data(for: request)
+            let http = response as? HTTPURLResponse
+            return Response(data: data, status: http?.statusCode ?? 0, url: http?.url)
         } catch {
-            throw GenerationBackendError.transport(error.localizedDescription)
+            throw GenerationBackendError.transport(
+                "fal.ai \(request.httpMethod ?? "request") \(Self.safeLocation(request.url)) failed: "
+                    + error.localizedDescription
+            )
         }
     }
 
@@ -86,10 +156,26 @@ actor FalClient {
         (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
-    private static func throwIfError(status: Int, json: [String: Any]?) throws {
-        guard status >= 400 else { return }
-        let message = errorMessage(in: json) ?? "fal request failed (HTTP \(status))"
-        throw GenerationBackendError.api(status: status, code: "\(status)", message: message)
+    private static func throwIfError(
+        _ response: Response,
+        request: URLRequest,
+        operation: String,
+        json: [String: Any]?
+    ) throws {
+        guard response.status >= 400 else { return }
+        let message = errorMessage(in: json) ?? "fal request failed"
+        let method = request.httpMethod ?? "request"
+        let location = safeLocation(response.url ?? request.url)
+        throw GenerationBackendError.api(
+            status: response.status,
+            code: "\(response.status)",
+            message: "fal.ai \(operation) \(method) \(location) returned HTTP \(response.status): \(message)"
+        )
+    }
+
+    private static func safeLocation(_ url: URL?) -> String {
+        guard let url else { return "<invalid URL>" }
+        return (url.host ?? "") + url.path
     }
 
     /// Pull a human-readable message out of common fal error shapes.
