@@ -140,7 +140,7 @@ struct LibraryPickerTests {
 
     @Test("workflow submission rejects an incompatible assigned library role")
     @MainActor
-    func assignedRoleCannotBypassThePickerFilter() {
+    func assignedRoleCannotBypassThePickerFilter() throws {
         let editor = EditorViewModel()
         let lyrics = MediaAsset(
             id: "lyrics",
@@ -169,7 +169,7 @@ struct LibraryPickerTests {
             ),
             purpose: .workflowIntake
         )
-        editor.agentService.pendingDialog = dialog
+        try editor.agentService.presentDialog(dialog)
 
         editor.agentService.submitDialog(
             dialog,
@@ -193,21 +193,21 @@ struct LibraryPickerTests {
 struct ComposerBlockedTests {
 
     @Test("a pending dialog blocks the composer, so the Reference control and Send hide")
-    func pendingDialogBlocksComposer() {
+    func pendingDialogBlocksComposer() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         #expect(service.isComposerBlocked == false)
 
-        service.pendingDialog = AgentDialog(
+        try service.presentDialog(AgentDialog(
             id: "t", title: "Track", symbol: "waveform", intro: nil, costHint: nil,
-            confirmLabel: "Attach", textField: nil, sections: [])
+            confirmLabel: "Attach", textField: nil, sections: []))
         #expect(service.isComposerBlocked)
         let messageCount = service.messages.count
         service.send(text: "Bypass the card", mentions: [], hidden: true)
         #expect(service.messages.count == messageCount)
         #expect(service.streamError == nil)
 
-        service.pendingDialog = nil
+        service.abandonDialog()
         #expect(service.isComposerBlocked == false)
     }
 }

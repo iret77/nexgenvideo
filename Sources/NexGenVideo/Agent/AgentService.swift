@@ -230,7 +230,7 @@ final class AgentService {
     }
 
     /// The one dialog currently owning the composer input surface.
-    var pendingDialog: AgentDialog? {
+    private(set) var pendingDialog: AgentDialog? {
         didSet {
             guard oldValue?.id != pendingDialog?.id else { return }
             dialogChoiceSelections = [:]
@@ -238,6 +238,45 @@ final class AgentService {
             submittingDialogID = nil
         }
     }
+
+    func presentDialog(_ dialog: AgentDialog) throws {
+        guard pendingDialog == nil,
+              pendingSpendApproval == nil,
+              spendContinuation == nil,
+              pendingGateApproval == nil,
+              nativeGateMutationID == nil else {
+            throw ToolError(
+                "The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user."
+            )
+        }
+        pendingDialog = dialog
+        editor?.agentPanelVisible = true
+    }
+
+    func abandonDialog() {
+        pendingDialog = nil
+    }
+
+    private func abandonSessionDialog() {
+        guard pendingDialog?.purpose != .workflowIntake else { return }
+        abandonDialog()
+    }
+
+    @ObservationIgnored
+    private var nativeGateMutationID: UUID?
+
+    func beginNativeGateMutation() -> UUID? {
+        guard nativeGateMutationID == nil, !isComposerBlocked else { return nil }
+        let id = UUID()
+        nativeGateMutationID = id
+        return id
+    }
+
+    func endNativeGateMutation(_ id: UUID) {
+        guard nativeGateMutationID == id else { return }
+        nativeGateMutationID = nil
+    }
+
     private(set) var dialogSubmissionError: String?
     private(set) var submittingDialogID: String?
 
@@ -1099,10 +1138,21 @@ final class AgentService {
 
     /// Suspend the agent's render tool-call until the user taps Approve/Decline. This is what makes it
     /// user-clicks-to-confirm and not agent-self-asserted: the continuation resolves ONLY from
-    /// `resolveSpend`, which the card's buttons call. A prior pending approval (should not happen —
-    /// one tool call at a time) is declined so no continuation leaks.
+    /// `resolveSpend`, which the card's buttons call. A competing host decision is rejected without
+    /// replacing either card or continuation.
     func requestSpendApproval(_ approval: SpendApproval) async -> SpendDecision {
-        if spendContinuation != nil { resolveSpend(.declined) }
+        guard pendingDialog == nil else {
+            return .blocked(reason: "A host-owned dialog is already waiting for the user.")
+        }
+        guard nativeGateMutationID == nil else {
+            return .blocked(reason: "A native pipeline gate change is already being applied.")
+        }
+        guard pendingGateApproval == nil else {
+            return .blocked(reason: "A gate approval is already waiting for the user.")
+        }
+        guard spendContinuation == nil, pendingSpendApproval == nil else {
+            return .blocked(reason: "A spend approval is already waiting for the user.")
+        }
         editor?.agentPanelVisible = true
         return await withCheckedContinuation { continuation in
             spendContinuation = continuation
@@ -1148,13 +1198,21 @@ final class AgentService {
     }
 
     /// Keeps retries idempotent while one approval card is open.
-    func requestGateApproval(_ approval: GateApproval) -> GateApprovalRequest {
+    func requestGateApproval(_ approval: GateApproval) throws -> GateApprovalRequest {
         let scoped = approval.scoped(to: isStreaming ? currentSessionId : nil)
         if let pending = pendingGateApproval {
             return GateApprovalRequest(
                 approval: pending,
                 isNew: false,
                 matchesRequestedApproval: pending.matchesRequest(scoped)
+            )
+        }
+        guard pendingDialog == nil,
+              pendingSpendApproval == nil,
+              spendContinuation == nil,
+              nativeGateMutationID == nil else {
+            throw ToolError(
+                "The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user."
             )
         }
         editor?.agentPanelVisible = true
@@ -1425,7 +1483,9 @@ final class AgentService {
     func loadSessions(from projectURL: URL?) {
         // Opening a project tears down any runtime from the previous one: its `claude` process has the
         // OLD working directory, so reusing it would run the new project's turns against the wrong folder.
+        abandonDialog()
         abandonGateApproval()
+        resolveSpend(.blocked(reason: "The project changed before spend approval."))
         currentTask?.cancel()
         currentTask = nil
         _claudeRuntime?.stop()
@@ -1453,6 +1513,7 @@ final class AgentService {
 
     func newChat() {
         currentTask?.cancel()
+        abandonSessionDialog()
         resolveSpend(.declined)
         // The runtime process IS a single conversation kept alive for the whole session — a fresh chat
         // must therefore START a fresh process, or it would silently continue the previous conversation.
@@ -1482,6 +1543,7 @@ final class AgentService {
     func selectSession(_ id: UUID) {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
         currentTask?.cancel()
+        abandonSessionDialog()
         resolveSpend(.declined)
         syncMessagesIntoCurrentSession()
         if !sessions[idx].isOpen {
@@ -1506,6 +1568,7 @@ final class AgentService {
             // Closing the active tab mid-stream: stop the stream and keep its partial reply with
             // THIS session — otherwise the still-running task appends into the next tab's messages.
             currentTask?.cancel()
+            abandonSessionDialog()
             resolveSpend(.declined)
             isStreaming = false
             syncMessagesIntoCurrentSession()
@@ -1527,6 +1590,7 @@ final class AgentService {
         sessions.removeAll { $0.id == id }
         if deletingActive {
             currentTask?.cancel()
+            abandonSessionDialog()
             resolveSpend(.declined)     // the deleted chat's suspended card/continuation must not carry over
             currentSessionId = sessions.first(where: { $0.isOpen })?.id
             messages = currentSessionId

@@ -70,4 +70,5 @@ struct SpendApproval: Identifiable, Equatable, Sendable {
 enum SpendDecision: Equatable, Sendable {
     case approved(option: SpendOption)
     case declined
+    case blocked(reason: String)
 }

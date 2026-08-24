@@ -234,6 +234,8 @@ extension ToolExecutor {
             return option
         case .declined:
             throw ToolError("Render declined — the user did not approve the spend.")
+        case .blocked(let reason):
+            throw ToolError(reason)
         }
     }
 
@@ -700,15 +702,9 @@ extension ToolExecutor {
     }
 
     func showDialog(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
-        guard editor.agentService.pendingDialog == nil,
-              editor.agentService.pendingSpendApproval == nil,
-              editor.agentService.pendingGateApproval == nil else {
-            throw ToolError("The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user.")
-        }
         let dialog = try AgentDialog.parse(args)
         try editor.pipelineAgentHarness.guardAgentDecision(dialog, editor: editor)
-        editor.agentService.pendingDialog = dialog
-        editor.agentPanelVisible = true
+        try editor.agentService.presentDialog(dialog)
         // Canvas projection (A3, #124): reveal the Review gallery at the shot so its candidates are
         // where the user decides. Timeline-range projection needs no reveal — the timeline is always
         // on. v1: picking a frame candidate in Review while the dialog is pending is the follow-up.

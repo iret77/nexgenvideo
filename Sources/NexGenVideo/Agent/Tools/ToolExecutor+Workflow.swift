@@ -793,7 +793,7 @@ extension ToolExecutor {
             declaredPack: declaredPack,
             editor: editor
         )
-        let request = editor.agentService.requestGateApproval(GateApproval(
+        let request = try editor.agentService.requestGateApproval(GateApproval(
             phase: phase,
             notes: notes,
             dataRoot: root,
@@ -840,7 +840,7 @@ extension ToolExecutor {
                 declaredPack: declaredPack,
                 editor: editor
             )
-            let request = editor.agentService.requestGateApproval(GateApproval(
+            let request = try editor.agentService.requestGateApproval(GateApproval(
                 phase: phase,
                 notes: notes,
                 dataRoot: root,

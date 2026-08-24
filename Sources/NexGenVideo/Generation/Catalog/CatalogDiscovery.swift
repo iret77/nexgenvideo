@@ -1,4 +1,12 @@
 import Foundation
+import MCP
+
+protocol MCPCatalogClient: MCPToolCalling {
+    func discoverTools() async throws -> [MCPProviderClient.DiscoveredTool]
+    func disconnect() async
+}
+
+extension MCPProviderClient: MCPCatalogClient {}
 
 /// Runtime model discovery — the layer that makes activation, not a hardcoded list, decide what the
 /// catalog offers. Two sources, one write:
@@ -66,6 +74,13 @@ enum CatalogDiscovery {
 
     private static func discover(_ provider: GenerationProvider) async -> [CatalogEntry] {
         guard let client = await ProviderMCP.client(for: provider) else { return [] }
+        return await discover(provider, client: client)
+    }
+
+    static func discover(
+        _ provider: GenerationProvider,
+        client: any MCPCatalogClient
+    ) async -> [CatalogEntry] {
         do {
             let tools = try await client.discoverTools()
             let toolsByModality = MCPModelDiscovery.generateToolsByModality(tools)
@@ -73,11 +88,13 @@ enum CatalogDiscovery {
                 await client.disconnect()
                 return []
             }
-            guard (try? MCPGenerationExecutor.preflightLifecycle(
-                tools: tools,
-                provider: provider
-            )) != nil else {
+            do {
+                try MCPGenerationExecutor.validateLifecycleIfAdvertised(tools: tools)
+            } catch {
                 await client.disconnect()
+                Log.generation.notice(
+                    "MCP discovery rejected \(provider.rawValue)'s lifecycle contract: \(error.localizedDescription)"
+                )
                 return []
             }
             var entries: [CatalogEntry] = []
@@ -114,7 +131,8 @@ enum CatalogDiscovery {
     /// excluded — it has no catalog `type` and stays a REST/workflow op). Stops at the page/model caps
     /// or the first failing page.
     private static func enumerate(
-        client: MCPProviderClient, hint: MCPModelCatalog, modalities: [MCPModelDiscovery.Modality]
+        client: any MCPCatalogClient, hint: MCPModelCatalog,
+        modalities: [MCPModelDiscovery.Modality]
     ) async -> [MCPModelDiscovery.ModelItem] {
         var all: [MCPModelDiscovery.ModelItem] = []
         for modality in modalities where modality != .upscale {
@@ -125,7 +143,12 @@ enum CatalogDiscovery {
                 if let typeArg = hint.typeArg { args[typeArg] = modality.rawValue }
                 if let cursorArg = hint.cursorArg, let cursor { args[cursorArg] = cursor }
                 let texts: [String]
-                do { texts = try await client.callTool(name: hint.tool, arguments: args) }
+                do {
+                    texts = try await client.callTool(
+                        name: hint.tool,
+                        arguments: args.mapValues(Value.string)
+                    )
+                }
                 catch { break }
                 let parsed = texts.map(MCPModelDiscovery.parseListing)
                 let page = parsed.first(where: { !$0.items.isEmpty || $0.next != nil })

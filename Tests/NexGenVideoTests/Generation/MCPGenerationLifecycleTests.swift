@@ -116,9 +116,11 @@ struct MCPGenerationLifecycleTests {
             tool("generate_image", "Generate an image and report status."),
             tool("job_status", "Check generation job status."),
             tool("job_display", "Display generation job output."),
+            tool("job_cancel", "Cancel a generation job."),
         ]
 
         #expect(MCPGenerationLifecycle.statusTool(in: tools)?.name == "job_status")
         #expect(MCPGenerationLifecycle.resultTool(in: tools)?.name == "job_display")
+        #expect(MCPGenerationLifecycle.cancelTool(in: tools)?.name == "job_cancel")
     }
 }

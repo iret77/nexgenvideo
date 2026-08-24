@@ -71,7 +71,10 @@ extension ToolExecutor {
                 options: [option],
                 actionLabel: "Run \(match.name)"
             )
-            if case .declined = await editor.agentService.requestSpendApproval(approval) {
+            switch await editor.agentService.requestSpendApproval(approval) {
+            case .approved:
+                break
+            case .declined:
                 try? editor.recordSpendEvent(
                     authorization: authorization,
                     kind: .released,
@@ -79,6 +82,14 @@ extension ToolExecutor {
                 )
                 await client.disconnect()
                 throw ToolError("Tool call declined — the user did not approve running '\(match.name)'.")
+            case .blocked(let reason):
+                try? editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .released,
+                    note: reason
+                )
+                await client.disconnect()
+                throw ToolError(reason)
             }
 
             do {

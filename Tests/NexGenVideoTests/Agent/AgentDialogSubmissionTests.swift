@@ -4,7 +4,7 @@ import Testing
 @Suite("Agent dialog submission")
 @MainActor
 struct AgentDialogSubmissionTests {
-    @Test func generationIntentDoesNotRequireAComposerDialog() {
+    @Test func generationIntentDoesNotRequireAComposerDialog() throws {
         let service = AgentService()
         let dialog = AgentDialog(
             id: "generation",
@@ -55,7 +55,7 @@ struct AgentDialogSubmissionTests {
             ),
             purpose: .workflowIntake
         )
-        service.pendingDialog = workflowDialog
+        try service.presentDialog(workflowDialog)
         service.submitDialog(
             workflowDialog,
             result: AgentDialogResult(selectedLabels: [:], toggles: [:], direction: "")
@@ -68,5 +68,57 @@ struct AgentDialogSubmissionTests {
         #expect(service.pendingDialog?.id == workflowDialog.id)
         #expect(service.submittingDialogID == nil)
         #expect(service.dialogSubmissionError == "Choose at least one reference image.")
+    }
+
+    @Test func loadingAnotherProjectAbandonsThePreviousDialog() throws {
+        let service = AgentService()
+        try service.presentDialog(AgentDialog(
+            id: "old-project-dialog",
+            title: "Track",
+            symbol: "waveform",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Attach",
+            textField: nil,
+            sections: []
+        ))
+
+        service.loadSessions(from: nil)
+
+        #expect(service.pendingDialog == nil)
+        #expect(!service.isComposerBlocked)
+    }
+
+    @Test func newChatAbandonsOnlySessionOwnedDialogs() throws {
+        let service = AgentService()
+        try service.presentDialog(AgentDialog(
+            id: "clarification",
+            title: "Choose",
+            symbol: "questionmark",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        ))
+
+        service.newChat()
+        #expect(service.pendingDialog == nil)
+
+        let workflow = AgentDialog(
+            id: "workflow",
+            title: "Track",
+            symbol: "waveform",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Attach",
+            textField: nil,
+            sections: [],
+            purpose: .workflowIntake
+        )
+        try service.presentDialog(workflow)
+
+        service.newChat()
+        #expect(service.pendingDialog?.id == workflow.id)
     }
 }

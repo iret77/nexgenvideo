@@ -30,18 +30,39 @@ enum MCPGenerationExecutor {
         pollIntervalNanoseconds: UInt64 = 3_000_000_000,
         timeoutSeconds: TimeInterval = 30 * 60
     ) async throws -> Result {
-        try preflightLifecycle(tools: tools, provider: provider)
+        let hasLifecycle = try validateLifecycleIfAdvertised(tools: tools)
         let payloads = try await client.callTool(
             name: generationTool.name,
             arguments: arguments
         )
         let submission = MCPGenerationLifecycle.submission(from: payloads)
-        guard let jobID = submission.jobID else {
-            if !submission.outputURLs.isEmpty {
-                return Result(jobID: nil, outputURLs: submission.outputURLs)
+        if !submission.outputURLs.isEmpty {
+            switch MCPGenerationLifecycle.status(from: payloads) {
+            case .succeeded:
+                return Result(jobID: submission.jobID, outputURLs: submission.outputURLs)
+            case .failed(let message):
+                if let jobID = submission.jobID {
+                    throw JobFailure(jobID: jobID, message: message)
+                }
+                throw GenerationBackendError.transport(message)
+            case .pending, .unknown:
+                break
             }
+        }
+        guard let jobID = submission.jobID else {
             throw GenerationBackendError.transport(
                 "\(provider.displayName)'s MCP returned neither a job identifier nor output media."
+            )
+        }
+        guard hasLifecycle else {
+            let cancellation = await cancelAcceptedJob(
+                jobID: jobID,
+                tools: tools,
+                client: client
+            )
+            throw JobFailure(
+                jobID: jobID,
+                message: "\(provider.displayName)'s MCP accepted the job but exposes no usable job-status tool. \(cancellation)"
             )
         }
         do {
@@ -60,15 +81,11 @@ enum MCPGenerationExecutor {
         }
     }
 
-    static func preflightLifecycle(
-        tools: [MCPProviderClient.DiscoveredTool],
-        provider: GenerationProvider
-    ) throws {
-        guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else {
-            throw GenerationBackendError.transport(
-                "\(provider.displayName)'s MCP exposes no usable job-status tool. The generation request was not sent."
-            )
-        }
+    @discardableResult
+    static func validateLifecycleIfAdvertised(
+        tools: [MCPProviderClient.DiscoveredTool]
+    ) throws -> Bool {
+        guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else { return false }
         _ = try MCPGenerationArguments.makeJob(
             jobID: "preflight-job",
             schema: statusTool.inputSchema,
@@ -79,6 +96,27 @@ enum MCPGenerationExecutor {
                 jobID: "preflight-job",
                 schema: resultTool.inputSchema
             )
+        }
+        return true
+    }
+
+    private static func cancelAcceptedJob(
+        jobID: String,
+        tools: [MCPProviderClient.DiscoveredTool],
+        client: any MCPToolCalling
+    ) async -> String {
+        guard let cancelTool = MCPGenerationLifecycle.cancelTool(in: tools) else {
+            return "No compatible cancellation tool is available; the provider may still charge for the accepted job."
+        }
+        do {
+            let arguments = try MCPGenerationArguments.makeJob(
+                jobID: jobID,
+                schema: cancelTool.inputSchema
+            )
+            _ = try await client.callTool(name: cancelTool.name, arguments: arguments)
+            return "NexGenVideo sent a cancellation request for the accepted job."
+        } catch {
+            return "Cancellation failed (\(error.localizedDescription)); the provider may still charge for the accepted job."
         }
     }
 

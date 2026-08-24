@@ -400,13 +400,15 @@ final class PipelineAgentHarness {
         if let previous = offered {
             guard let resolution = intakeResolution,
                   resolution.dialogID == previous.dialogID else {
-                present(
+                if let failure = present(
                     previous.step,
                     isRepeat: previous.isRepeat,
                     itemNumber: previous.itemNumber,
                     dataRoot: dataRoot,
                     editor: editor
-                )
+                ) {
+                    return Reconciliation(isReady: false, agentPrompt: nil, failure: failure)
+                }
                 return .blocked
             }
             if resolution.didProvideMaterial {
@@ -440,13 +442,15 @@ final class PipelineAgentHarness {
         }
 
         if let repeatStep {
-            present(
+            if let failure = present(
                 repeatStep.step,
                 isRepeat: true,
                 itemNumber: repeatStep.itemNumber,
                 dataRoot: dataRoot,
                 editor: editor
-            )
+            ) {
+                return Reconciliation(isReady: false, agentPrompt: nil, failure: failure)
+            }
             return .blocked
         }
         guard let phase = context.phase,
@@ -471,7 +475,14 @@ final class PipelineAgentHarness {
                 failure: nil
             )
         }
-        present(step, isRepeat: false, dataRoot: dataRoot, editor: editor)
+        if let failure = present(
+            step,
+            isRepeat: false,
+            dataRoot: dataRoot,
+            editor: editor
+        ) {
+            return Reconciliation(isReady: false, agentPrompt: nil, failure: failure)
+        }
         return .blocked
     }
 
@@ -777,7 +788,7 @@ final class PipelineAgentHarness {
         itemNumber: Int? = nil,
         dataRoot: URL,
         editor: EditorViewModel
-    ) {
+    ) -> String? {
         let fingerprint = IntakeSatisfaction.fingerprint(step.kind, dataRoot: dataRoot)
         let resolvedItemNumber = step.repeatable ? (itemNumber ?? fingerprint + 1) : nil
         let dialog = AgentDialog(
@@ -791,8 +802,13 @@ final class PipelineAgentHarness {
             itemNumber: resolvedItemNumber,
             dialogID: dialog.id
         )
-        editor.agentService.pendingDialog = dialog
-        editor.agentPanelVisible = true
+        do {
+            try editor.agentService.presentDialog(dialog)
+            return nil
+        } catch {
+            offered = nil
+            return error.localizedDescription
+        }
     }
 }
 

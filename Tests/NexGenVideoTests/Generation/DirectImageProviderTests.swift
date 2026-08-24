@@ -6,9 +6,8 @@ import Testing
 /// pure parts: availability filtering and the shared-id merge that makes one model reachable through
 /// several providers.
 ///
-/// OpenAI-direct was dropped by owner decision: almost no private user holds an OpenAI platform key,
-/// and the same models (gpt_image_2, gemini image 3.x) turn out to be resold by Runway — a key people
-/// actually have, over the existing `.api` transport. No client ⇒ no provider ⇒ no key field.
+/// OpenAI-direct is intentionally absent. GPT Image is discovered through an activated provider MCP
+/// such as Higgsfield; no direct client means no dead OpenAI key field.
 @Suite("direct image providers (#212)")
 @MainActor
 struct DirectImageProviderTests {
@@ -191,6 +190,19 @@ struct Gemini3ImageTests {
             #expect(model.apiModelCandidates.first == id.replacingOccurrences(of: "google/", with: ""))
             #expect(model.apiModelCandidates.last?.hasSuffix("-preview") == true)
         }
+    }
+
+    @Test("Gemini image models use their recognizable Nano Banana product names")
+    func geminiNamesExposeNanoBananaBrand() throws {
+        let pro = try #require(GoogleModelRegistry.models.first {
+            $0.entry.id == "google/gemini-3-pro-image"
+        })
+        let flash = try #require(GoogleModelRegistry.models.first {
+            $0.entry.id == "google/gemini-3.1-flash-image"
+        })
+
+        #expect(pro.entry.displayName == "Nano Banana Pro (Gemini 3 Pro Image)")
+        #expect(flash.entry.displayName == "Nano Banana 2 (Gemini 3.1 Flash Image)")
     }
 
     @Test("Gemini advertises the aspects NGV speaks — including 16:9")

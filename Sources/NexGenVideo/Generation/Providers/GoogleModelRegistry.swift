@@ -54,7 +54,8 @@ enum GoogleModelRegistry {
         // a consumer, rather than adding a row on spec.)
         GoogleImageModel(
             entry: CatalogEntry(
-                id: "google/gemini-3-pro-image", kind: .image, displayName: "Gemini 3 Pro Image",
+                id: "google/gemini-3-pro-image", kind: .image,
+                displayName: "Nano Banana Pro (Gemini 3 Pro Image)",
                 allowedEndpoints: ["google/gemini-3-pro-image"], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
@@ -62,7 +63,8 @@ enum GoogleModelRegistry {
             apiModelCandidates: ["gemini-3-pro-image", "gemini-3-pro-image-preview"]),
         GoogleImageModel(
             entry: CatalogEntry(
-                id: "google/gemini-3.1-flash-image", kind: .image, displayName: "Gemini 3.1 Flash Image",
+                id: "google/gemini-3.1-flash-image", kind: .image,
+                displayName: "Nano Banana 2 (Gemini 3.1 Flash Image)",
                 allowedEndpoints: ["google/gemini-3.1-flash-image"], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: geminiAspects, qualities: nil,

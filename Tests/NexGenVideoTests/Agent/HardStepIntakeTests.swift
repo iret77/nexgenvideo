@@ -596,7 +596,7 @@ struct HardStepIntakeTests {
             manifest.steps(for: "brief").first { $0.kind == .script }
         )
         _ = try IntakeLedger.recordDecline(script, dataRoot: dataRoot)
-        editor.agentService.pendingDialog = nil
+        editor.agentService.abandonDialog()
         editor.pipelineAgentHarness.reset()
         _ = editor.pipelineAgentHarness.reconcile(editor: editor)
 
@@ -733,7 +733,7 @@ struct HardStepIntakeTests {
             let step = try #require(manifest.steps(for: "brief").first { $0.kind == kind })
             _ = try IntakeLedger.recordDecline(step, dataRoot: dataRoot)
         }
-        editor.agentService.pendingDialog = nil
+        editor.agentService.abandonDialog()
         editor.pipelineAgentHarness.reset()
         _ = editor.pipelineAgentHarness.reconcile(editor: editor)
 

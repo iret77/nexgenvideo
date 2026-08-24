@@ -112,4 +112,102 @@ struct CostGuardTests {
         #expect(await decision == .declined)
         #expect(service.pendingSpendApproval == nil)
     }
+
+    @MainActor
+    @Test func gateApprovalBlocksSpendWithoutAddingOrReplacingACard() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        _ = try service.requestGateApproval(GateApproval(phase: "brief"))
+        let selected = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
+        let approval = SpendApproval(
+            id: "blocked-by-gate",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+
+        let decision = await service.requestSpendApproval(approval)
+
+        #expect(decision == .blocked(reason: "A gate approval is already waiting for the user."))
+        #expect(service.pendingSpendApproval == nil)
+        #expect(service.pendingGateApproval?.phase == "brief")
+    }
+
+    @MainActor
+    @Test func dialogBlocksSpendWithoutAddingOrReplacingACard() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let dialog = AgentDialog(
+            id: "existing-dialog",
+            title: "Choose",
+            symbol: "questionmark",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        )
+        try service.presentDialog(dialog)
+        let selected = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
+        let approval = SpendApproval(
+            id: "blocked-by-dialog",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+
+        let decision = await service.requestSpendApproval(approval)
+
+        #expect(decision == .blocked(reason: "A host-owned dialog is already waiting for the user."))
+        #expect(service.pendingSpendApproval == nil)
+        #expect(service.pendingDialog?.id == dialog.id)
+    }
+
+    @MainActor
+    @Test func secondSpendAndGateCannotReplacePendingSpend() async {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let selected = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
+        let first = SpendApproval(
+            id: "first-spend",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        let second = SpendApproval(
+            id: "second-spend",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+
+        async let firstDecision = service.requestSpendApproval(first)
+        for _ in 0..<20 where service.pendingSpendApproval == nil { await Task.yield() }
+        let secondDecision = await service.requestSpendApproval(second)
+
+        #expect(secondDecision == .blocked(reason: "A spend approval is already waiting for the user."))
+        #expect(service.pendingSpendApproval?.id == first.id)
+        #expect(throws: ToolError.self) {
+            try service.requestGateApproval(GateApproval(phase: "brief"))
+        }
+        #expect(service.pendingSpendApproval?.id == first.id)
+        let dialog = AgentDialog(
+            id: "blocked-dialog",
+            title: "Choose",
+            symbol: "questionmark",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        )
+        #expect(throws: ToolError.self) {
+            try service.presentDialog(dialog)
+        }
+        #expect(service.pendingDialog == nil)
+        #expect(service.pendingSpendApproval?.id == first.id)
+
+        service.resolveSpend(.declined)
+        #expect(await firstDecision == .declined)
+    }
 }

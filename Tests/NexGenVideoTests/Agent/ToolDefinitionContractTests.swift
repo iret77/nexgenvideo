@@ -335,7 +335,7 @@ struct ToolDefinitionContractTests {
 
     @Test("agent dialogs cannot claim or replace host workflow intake")
     @MainActor
-    func hostWorkflowIntakeIsExclusive() async {
+    func hostWorkflowIntakeIsExclusive() async throws {
         let harness = ToolHarness()
         let claimed = await harness.runRaw("show_dialog", args: [
             "title": "Bring in your track",
@@ -366,7 +366,7 @@ struct ToolDefinitionContractTests {
             ),
             purpose: .workflowIntake
         )
-        harness.editor.agentService.pendingDialog = hostDialog
+        try harness.editor.agentService.presentDialog(hostDialog)
         let replacement = await harness.runRaw("show_dialog", args: [
             "title": "Choose cut mode",
             "sections": [[

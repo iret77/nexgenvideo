@@ -6,12 +6,14 @@ enum PipelineApprovalControl {
         approvalReady: Bool,
         controlsAvailable: Bool,
         gateWriting: Bool,
-        pipelineIsRunning: Bool
+        pipelineIsRunning: Bool,
+        hostDecisionPending: Bool
     ) -> Bool {
         approvalReady
             && controlsAvailable
             && !gateWriting
             && !pipelineIsRunning
+            && !hostDecisionPending
     }
 }
 
@@ -271,6 +273,7 @@ struct PipelinePanelView: View {
     ) -> some View {
         let isRunning = runningPhase == phase.phase
         let pipelineIsRunning = runningPhase != nil
+        let hostDecisionPending = editor.agentService.isComposerBlocked
         let readiness = isNext && approvalPhase == phase.phase
             ? approvalReadiness
             : .blocked("This phase is not current.")
@@ -278,7 +281,8 @@ struct PipelinePanelView: View {
             approvalReady: readiness.isReady,
             controlsAvailable: mutationReadiness.isReady,
             gateWriting: gateWriting,
-            pipelineIsRunning: pipelineIsRunning
+            pipelineIsRunning: pipelineIsRunning,
+            hostDecisionPending: hostDecisionPending
         )
         VStack(spacing: AppTheme.Spacing.none) {
             HStack(spacing: AppTheme.Spacing.smMd) {
@@ -322,7 +326,7 @@ struct PipelinePanelView: View {
                     phase,
                     isNext: isNext,
                     canApprove: approvalEnabled,
-                    controlsAvailable: mutationReadiness.isReady,
+                    controlsAvailable: mutationReadiness.isReady && !hostDecisionPending,
                     pipelineIsRunning: pipelineIsRunning
                 )
             }
@@ -452,7 +456,15 @@ struct PipelinePanelView: View {
         _ write: @escaping @MainActor (URL) async throws -> Void
     ) {
         guard !gateWriting else { return }
+        guard let mutationID = editor.agentService.beginNativeGateMutation() else {
+            gateError = GateErrorState(
+                message: "Resolve the open decision first.",
+                diagnostic: "A host-owned decision already controls the Agent composer."
+            )
+            return
+        }
         guard let dir = editor.workingRoot else {
+            editor.agentService.endNativeGateMutation(mutationID)
             gateError = GateErrorState(
                 message: "No project is open.",
                 diagnostic: "No open project to update."
@@ -461,6 +473,10 @@ struct PipelinePanelView: View {
         }
         gateWriting = true
         Task { @MainActor in
+            defer {
+                editor.agentService.endNativeGateMutation(mutationID)
+                gateWriting = false
+            }
             do {
                 try await write(dir)
                 gateError = nil
@@ -477,7 +493,6 @@ struct PipelinePanelView: View {
             if editor.workingRoot == dir {
                 await load(showProgress: false)
             }
-            gateWriting = false
         }
     }
 

@@ -119,6 +119,8 @@ struct AgentTranscriptLayoutPolicyTests {
         ))
         #expect(status.lowerBound < footer.lowerBound)
         #expect(implementation.contains("if let dialog = service.pendingDialog"))
+        #expect(implementation.contains("} else if let gate = service.pendingGateApproval"))
+        #expect(implementation.contains("} else if let dialog = service.pendingDialog"))
 
         let statusSource = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift"

@@ -78,9 +78,8 @@ struct AgentPanelView: View {
                     onDecline: { service.resolveSpend(.declined) }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
-            }
-            if let gate = service.pendingGateApproval,
-               !pendingGateIsBlockedByPhaseRun {
+            } else if let gate = service.pendingGateApproval,
+                      !pendingGateIsBlockedByPhaseRun {
                 GateApprovalCard(
                     approval: gate,
                     error: service.gateApprovalError,
@@ -94,8 +93,7 @@ struct AgentPanelView: View {
                     }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
-            }
-            if let dialog = service.pendingDialog {
+            } else if let dialog = service.pendingDialog {
                 @Bindable var service = service
                 AgentDialogCard(
                     dialog: dialog,
