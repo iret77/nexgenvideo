@@ -80,5 +80,13 @@
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/iret77/nexgenvideo/releases/download/v1.4.0/NexGenVideo.dmg" length="39581653" type="application/octet-stream" sparkle:edSignature="66c92Rq0BfJO8mUYitc7gXfaAvbOaKHmPrytqpeCBR0lRrH5rZap5AWbgBM04X2KUUdzNAMbo88+GH3rGQuFDw=="/>
         </item>
+        <item>
+            <title>Version 1.4.1</title>
+            <pubDate>Tue, 25 Aug 2026 13:44:51 -0000</pubDate>
+            <sparkle:version>83</sparkle:version>
+            <sparkle:shortVersionString>1.4.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/iret77/nexgenvideo/releases/download/v1.4.1/NexGenVideo.dmg" length="39735400" type="application/octet-stream" sparkle:edSignature="hhJb0eJE4srJ8Lde0rPBkg7pFJXGdbpOhJdQ9HmDE9JB33cC9lyVjKIXSDatb3gAgmN3YdC+SJBSCaYnKgB/Cw=="/>
+        </item>
     </channel>
 </rss>
