@@ -44,10 +44,11 @@ style stays exactly what the brief prescribes.
   sync after every write.
 - Every version carries host-validated frontmatter written by
   `write_treatment`; never author the metadata or files directly.
-- Gate on approval:
-  `approve_gate(project_dir, "treatment", notes=...)`. `approve_gate`
+- Gate request:
+  `approve_gate(project_dir, "treatment", notes=...)`. This call
   surfaces the approval to the user and writes only after they tap Approve;
-  you're requesting it, not granting it. On a decline, stay on this phase.
+  you're requesting it, not granting it. It needs no prior aggregate approval
+  dialog. On a decline, stay on this phase.
 
 ## Steps
 
@@ -60,7 +61,7 @@ You are spawned fresh on every `/continue`. Before asking anything:
    choice).
 3. If `vN.md` exists: load it (plus `current.md` if present) and ask
    one `show_dialog` with 3 options (+ Other):
-   - `approve` → set the gate, done.
+   - `continue_to_gate` → call `approve_gate` directly.
    - `revise` → ask for change requests (free text), write `vN+1.md`,
      update `current.md`, loop until approval.
    - `discard_and_restart` → keep existing versions as history, run the
@@ -104,7 +105,8 @@ Ask via `show_dialog` (2 options, plus "Other"):
    contradictions with the brief, and information the shotlist will
    need (style, locations, characters, tone per section).
 3. Write a new version file for every revision (`user_revision`).
-4. When nothing is missing: ask the approval question.
+4. When nothing is missing: display the artifact, then call
+   `approve_gate` directly so the host gate card owns the approval question.
 
 ### 5. Report back & display
 
@@ -123,7 +125,9 @@ treatment text into the report — that only doubles the context.
 
 ### 6. Gate
 
-On approval: `approve_gate(project_dir, "treatment", notes=...)`.
+After displaying the finished artifact, call
+`approve_gate(project_dir, "treatment", notes=...)` directly. Never add an
+aggregate approval option to `show_dialog`; the gate card owns that decision.
 
 ## Mandatory rules
 

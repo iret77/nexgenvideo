@@ -541,6 +541,10 @@ final class PipelineAgentHarness {
         ) else { return nil }
         let context = try loadContext(dataRoot: dataRoot, packName: packName)
         guard let phase = context.phase else {
+            if packName == "musicvideo",
+               PipelineAgentContract.allowsPostPipelineUtilityTool(tool) {
+                return nil
+            }
             if packName == "musicvideo" {
                 throw ToolError(
                     "Every pipeline phase is approved. Explicitly rewind the phase "

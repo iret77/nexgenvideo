@@ -97,9 +97,12 @@ public struct MusicvideoPack: Pack {
             )]
         }
         return [PackStarter(
-            id: "review",
-            title: "Every phase approved — what's left?",
-            prompt: "Every phase is approved. Show me where the project stands and what's left to do."
+            id: "cover",
+            title: "Create optional cover artwork",
+            prompt: Self.utilityPrompt(
+                resourceName: "cover",
+                handoff: "Every pipeline phase, including Render, is approved. Run the optional post-pipeline Cover utility without changing pipeline state."
+            )
         )]
     }
 
@@ -115,6 +118,13 @@ public struct MusicvideoPack: Pack {
             return handoff
         }
         return "\(handoff)\n\nFollow these packaged instructions for the current phase:\n\n\(packInstructions)"
+    }
+
+    private static func utilityPrompt(resourceName: String, handoff: String) -> String {
+        let instructions = (try? PackKnowledge.phaseDoc(name: resourceName))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !instructions.isEmpty else { return handoff }
+        return "\(handoff)\n\nFollow these packaged instructions for the optional utility:\n\n\(instructions)"
     }
 
     /// Pipeline phase name → the wording this pack uses for it in the UI.
@@ -329,7 +339,6 @@ public struct MusicvideoPack: Pack {
         registerHardenedGate("render", registry: registry) {
             try MusicvideoGateChecks.requireRealRender(dataRoot: $0)
         }
-        registry.registerGateRequirement("cover") { try MusicvideoGateChecks.requireRealCover(dataRoot: $0) }
         try? registry.registerUIContract(phase: "analysis", surface: "choice", taskClass: "classification")
         registry.registerDeclarativeCockpitSurface(
             DeclarativeCockpitSurface(

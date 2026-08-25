@@ -780,7 +780,11 @@ extension ToolExecutor {
 
     // MARK: - Gates (WRITES)
 
-    func approveGateTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+    func approveGateTool(
+        _ editor: EditorViewModel,
+        _ args: [String: Any],
+        origin: ToolCallOrigin
+    ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let notes = args.string("notes")
@@ -793,17 +797,24 @@ extension ToolExecutor {
             declaredPack: declaredPack,
             editor: editor
         )
-        let request = try editor.agentService.requestGateApproval(GateApproval(
-            phase: phase,
-            notes: notes,
-            dataRoot: root,
-            action: .approve,
-            declaredPack: declaredPack
-        ))
+        let request = try editor.agentService.requestGateApproval(
+            GateApproval(
+                phase: phase,
+                notes: notes,
+                dataRoot: root,
+                action: .approve,
+                declaredPack: declaredPack
+            ),
+            origin: origin
+        )
         return try gateApprovalPendingResult(request, requestedPhase: phase)
     }
 
-    func setGateStateTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+    func setGateStateTool(
+        _ editor: EditorViewModel,
+        _ args: [String: Any],
+        origin: ToolCallOrigin
+    ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let stateRaw = try args.requireString("state")
@@ -840,13 +851,16 @@ extension ToolExecutor {
                 declaredPack: declaredPack,
                 editor: editor
             )
-            let request = try editor.agentService.requestGateApproval(GateApproval(
-                phase: phase,
-                notes: notes,
-                dataRoot: root,
-                action: .setState(state),
-                declaredPack: declaredPack
-            ))
+            let request = try editor.agentService.requestGateApproval(
+                GateApproval(
+                    phase: phase,
+                    notes: notes,
+                    dataRoot: root,
+                    action: .setState(state),
+                    declaredPack: declaredPack
+                ),
+                origin: origin
+            )
             return try gateApprovalPendingResult(request, requestedPhase: phase)
         }
         let order = PhaseOrder.merged(
@@ -898,7 +912,7 @@ extension ToolExecutor {
         } else {
             message = "Another approval is already pending for \(pending.phaseLabel). End this turn and wait for it."
         }
-        return try jsonResult([
+        let data = try NativeCockpitReader.serialize([
             "status": "approval_pending",
             "request_id": pending.id,
             "phase": pending.phase,
@@ -906,6 +920,7 @@ extension ToolExecutor {
             "new_request": request.isNew,
             "message": message,
         ])
+        return .suspended(String(decoding: data, as: UTF8.self))
     }
 
     /// Revalidates and commits a durable approval after the user acts.

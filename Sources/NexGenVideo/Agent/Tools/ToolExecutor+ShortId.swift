@@ -48,7 +48,11 @@ extension ToolExecutor {
             guard case .text(let s) = block else { return block }
             return .text(s.replacing(Self.uuidRegex) { map[String($0.output)] ?? String($0.output) })
         }
-        return ToolResult(content: content, isError: result.isError)
+        return ToolResult(
+            content: content,
+            isError: result.isError,
+            turnDisposition: result.turnDisposition
+        )
     }
 
     /// Maps each id to its shortest prefix (≥ idPrefixFloor) that no other id shares. O(n log n)

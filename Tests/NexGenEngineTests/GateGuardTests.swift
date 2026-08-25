@@ -1016,9 +1016,10 @@ struct GateGuardTests {
         let registry = PackCatalog.registry(activePack: "musicvideo")
         // The per-phase acceptance harness: every content phase has a deterministic requirement.
         for phase in ["project_init", "analysis", "brief", "production_design", "treatment",
-                      "storyboard", "bible", "shotlist", "sanity", "frames", "render", "cover"] {
+                      "storyboard", "bible", "shotlist", "sanity", "frames", "render"] {
             #expect(registry.gateRequirements[phase] != nil, "\(phase) must have a gate requirement")
         }
+        #expect(registry.gateRequirements["cover"] == nil)
         for phase in MusicvideoPipelineLineage.phases {
             #expect(
                 registry.phaseLineageProviders[phase] != nil,

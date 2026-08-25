@@ -71,6 +71,83 @@ struct PipelineAgentContractTests {
         )
     }
 
+    @Test("aggregate phase approval is owned only by the gate card")
+    func aggregateApprovalHasOneOwner() throws {
+        for name in [
+            "analysis", "brief", "production-design", "treatment",
+            "storyboard", "bible", "shotlist", "sanity", "frame", "render",
+        ] {
+            let document = try PackKnowledge.phaseDoc(name: name)
+            #expect(document.contains("approve_gate"), "\(name) must request its gate")
+            #expect(document.contains("directly"), "\(name) must route directly to the gate card")
+            #expect(!document.contains("`approve` → set the gate"))
+            #expect(!document.contains("On `approve`: set the gate"))
+            #expect(!document.contains("- `approve_gate`"))
+        }
+    }
+
+    @Test("approved Sanity rewinds before re-audit")
+    func sanityResumeRewindsBeforeRunner() throws {
+        let document = try PackKnowledge.phaseDoc(name: "sanity")
+        let resume = try #require(document.range(
+            of: "On `re-audit` → first call"
+        ))
+        let rewind = try #require(document.range(
+            of: "rewind(project_dir, target_phase=\"sanity\")",
+            range: resume.lowerBound..<document.endIndex
+        ))
+        let runner = try #require(document.range(
+            of: "call `run_sanity`",
+            range: rewind.upperBound..<document.endIndex
+        ))
+        #expect(rewind.lowerBound < runner.lowerBound)
+    }
+
+    @Test("Cover is a reachable post-pipeline utility, never a hidden phase")
+    func coverIsPostPipelineUtility() throws {
+        let document = try PackKnowledge.phaseDoc(name: "cover")
+        #expect(document.contains("# Post-pipeline utility — Cover Images"))
+        #expect(document.contains("It has no gate"))
+        #expect(!document.contains("approve_gate"))
+        #expect(!document.contains("`Bash`"))
+        #expect(PipelineAgentContract.postPipelineUtilityCapabilities == Set([
+            .compilePrompt,
+            .generateImage,
+            .importMedia,
+        ]))
+        #expect(!PipelineAgentContract.allowsPostPipelineUtilityTool(.generateVideo))
+        #expect(!PipelineAgentContract.allowsPostPipelineUtilityTool(.recordRender))
+        #expect(!PipelineAgentContract.allowsPostPipelineUtilityTool(.writeBible))
+    }
+
+    @Test("completed pipelines allow only the post-pipeline utility capability set")
+    func completedPipelineCapabilitiesAreEnforced() throws {
+        PackCatalog.register(MusicvideoPack())
+        let (dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in PipelineAgentContract.musicvideoPhases {
+            gates.set(phase, Gate(approved: true, state: .approved))
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let harness = PipelineAgentHarness()
+
+        #expect(try harness.guardCurrentPhaseWork(
+            tool: .generateImage,
+            dataRoot: dataRoot
+        ) == nil)
+        do {
+            _ = try harness.guardCurrentPhaseWork(
+                tool: .generateVideo,
+                dataRoot: dataRoot
+            )
+            Issue.record("generate_video unexpectedly passed the post-pipeline utility boundary")
+        } catch let error as ToolError {
+            #expect(error.message.contains("Every pipeline phase is approved"))
+        }
+    }
+
     @Test("current-phase tools are restricted to the phase that owns them")
     func currentPhaseCapabilitiesAreEnforced() throws {
         PackCatalog.register(MusicvideoPack())

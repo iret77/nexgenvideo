@@ -181,6 +181,51 @@ struct GateApprovalTests {
         #expect(service.streamError?.errorDescription == nil)
     }
 
+    @Test("caller origin, never global streaming state, owns gate resumption")
+    func explicitCallerOriginOwnsResumption() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        service.isStreaming = true
+        let unrelatedChat = try #require(service.currentSessionId)
+        let externalSession = UUID()
+
+        _ = try service.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: .externalMCP(sessionID: externalSession)
+        )
+        #expect(service.pendingGateApproval?.sessionId == nil)
+        _ = await service.resolveGate(.declined)
+        #expect(service.messages.isEmpty)
+
+        _ = try service.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: .embeddedRuntime(
+                chatSessionID: unrelatedChat,
+                mcpSessionID: UUID()
+            )
+        )
+        #expect(service.pendingGateApproval?.sessionId == unrelatedChat)
+    }
+
+    @Test("an unknown embedded chat header is treated as external MCP")
+    func unknownEmbeddedChatCannotClaimResumption() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+
+        let result = await h.executor.execute(
+            name: "approve_gate",
+            args: ["project_dir": dataRoot.path, "phase": "project_init"],
+            origin: .embeddedRuntime(
+                chatSessionID: UUID(),
+                mcpSessionID: UUID()
+            )
+        )
+
+        #expect(result.turnDisposition == .suspendTurn)
+        #expect(h.editor.agentService.pendingGateApproval?.sessionId == nil)
+    }
+
     @Test("approve_gate returns approval_pending without waiting or writing")
     func toolReturnsPending() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
@@ -195,6 +240,7 @@ struct GateApprovalTests {
         ) as? [String: Any]
 
         #expect(result.isError == false)
+        #expect(result.turnDisposition == .suspendTurn)
         #expect(payload?["status"] as? String == "approval_pending")
         #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
 
@@ -283,7 +329,7 @@ struct GateApprovalTests {
         _ = try service.requestGateApproval(GateApproval(
             phase: "project_init",
             dataRoot: dataRoot
-        ))
+        ), origin: .inAppChat(sessionID: try #require(service.currentSessionId)))
         service.isStreaming = false
 
         let intake = AgentDialog(
@@ -314,6 +360,112 @@ struct GateApprovalTests {
 
         service.abandonDialog()
         #expect(service.resumePendingGateFollowUp())
+    }
+
+    @Test("a gate decision suspends the tool batch before later calls execute")
+    func gateSuspendsRemainingToolBatch() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        let sessionID = try #require(service.currentSessionId)
+        let assistant = AgentMessage(
+            role: .assistant,
+            blocks: [
+                .toolUse(
+                    id: "gate",
+                    name: "approve_gate",
+                    inputJSON: "{\"project_dir\":\"\(dataRoot.path)\",\"phase\":\"project_init\"}"
+                ),
+                .toolUse(id: "later", name: "get_timeline", inputJSON: "{}"),
+            ]
+        )
+        service.messages = [assistant]
+
+        let suspended = await service.runPendingToolUses(
+            assistantID: assistant.id,
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(suspended)
+        let results = try #require(service.messages.last?.blocks)
+        #expect(results.count == 2)
+        guard case .toolResult(_, _, let gateError) = results[0],
+              case .toolResult(_, let laterContent, let laterError) = results[1]
+        else {
+            Issue.record("Expected one gate result and one skipped result")
+            return
+        }
+        #expect(!gateError)
+        #expect(laterError)
+        #expect(laterContent.contains { block in
+            if case .text(let text) = block {
+                return text.contains("Not executed")
+            }
+            return false
+        })
+    }
+
+    @Test("fast external resolution keeps the old logical MCP turn fenced")
+    func fastExternalResolutionKeepsTurnFenced() async throws {
+        let h = ToolHarness()
+        let origin = ToolCallOrigin.externalMCP(sessionID: UUID())
+
+        _ = try h.editor.agentService.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: origin
+        )
+        _ = await h.editor.agentService.resolveGate(.declined)
+
+        let stale = await h.executor.execute(
+            name: "get_timeline",
+            args: [:],
+            origin: origin
+        )
+        #expect(stale.isError)
+        #expect(ToolHarness.textOf(stale).contains("logical agent turn is suspended"))
+
+        let reinitialized = await h.executor.execute(
+            name: "get_timeline",
+            args: [:],
+            origin: .externalMCP(sessionID: UUID())
+        )
+        #expect(!reinitialized.isError)
+    }
+
+    @Test("an embedded follow-up cannot revive its superseded MCP turn")
+    func embeddedFollowUpKeepsOldMCPSessionFenced() async throws {
+        let h = ToolHarness()
+        h.editor.agentService.newChat()
+        let chatID = try #require(h.editor.agentService.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: chatID,
+            mcpSessionID: UUID()
+        )
+
+        _ = try h.editor.agentService.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: origin
+        )
+        _ = await h.editor.agentService.resolveGate(.declined)
+        #expect(h.editor.agentService.resumePendingGateFollowUp())
+
+        let stale = await h.executor.execute(
+            name: "get_timeline",
+            args: [:],
+            origin: origin
+        )
+        #expect(stale.isError)
+
+        let replacement = await h.executor.execute(
+            name: "get_timeline",
+            args: [:],
+            origin: .embeddedRuntime(
+                chatSessionID: chatID,
+                mcpSessionID: UUID()
+            )
+        )
+        #expect(!replacement.isError)
     }
 
     // MARK: - Tool outcome (approve writes, decline does not)

@@ -38,10 +38,10 @@ chain) is yours; the pixels come from the host.
 - Generated sheet PNGs under `bible/<id>/<view>.png`, copied user
   anchors under `bible/refs/<id>/<name>.png`, optional Scene3D
   panorama anchors under `bible/<id>/scene3d/`.
-- Gate: after user approval call `approve_gate(project_dir, "bible")`.
-  `approve_gate` surfaces the approval to the user and writes only after
+- Gate request: call `approve_gate(project_dir, "bible")` directly. It
+  surfaces the approval to the user and writes only after
   they tap Approve; you're requesting it, not granting it. On a decline,
-  stay on this phase.
+  stay on this phase. Do not precede it with an aggregate approval dialog.
 
 ## Steps
 
@@ -54,10 +54,10 @@ sheets (`generate_image` calls cost real money):
   - **Yes, valid** → summarize compactly (number of
     characters/ensembles/locations/props, existing sheets per entity,
     missing view slots compared against the storyboard demand) and
-    `show_dialog`: "A bible already exists. Approve it, generate
+    `show_dialog`: "A bible already exists. Continue to its gate review, generate
     missing sheets, regenerate a single entity, or rebuild from
     scratch?"
-    - `approve` → set the gate, done.
+    - `continue_to_gate` → call `approve_gate` directly.
     - `generate_missing` → only the sheets that are missing per the
       storyboard demand. Do NOT overwrite existing sheet files.
     - `single_entity` → user picks entity + view, regenerate only that.
@@ -390,7 +390,9 @@ render phase — no bible approval without a 100% match.
 
 Call `write_bible`. Display it for the user via
 `show_artifact(project_dir, "bible")` (output the `markdown` field in
-full). After user approval: `approve_gate(project_dir, "bible")`.
+full). Then call `approve_gate(project_dir, "bible")` directly. Never add a
+second aggregate approval action to `show_dialog`; per-sheet review remains
+granular, while the gate card owns the phase decision.
 
 ## Mandatory rules
 

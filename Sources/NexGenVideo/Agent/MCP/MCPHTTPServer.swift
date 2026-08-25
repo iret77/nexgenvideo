@@ -3,6 +3,8 @@ import MCP
 import Network
 
 actor MCPHTTPServer {
+    static let agentSessionHeader = "X-NexGen-Agent-Session"
+
     private struct SDKSession {
         let id: UUID
         let server: Server
@@ -473,7 +475,13 @@ actor MCPHTTPServer {
                 let session = try await acquireSession(
                     isInitialize: isInitialize
                 )
-                response = await session.transport.handleRequest(request)
+                let origin = Self.toolCallOrigin(
+                    request: request,
+                    mcpSessionID: session.id
+                )
+                response = await MCPToolCallContext.$origin.withValue(origin) {
+                    await session.transport.handleRequest(request)
+                }
                 await releaseSession(session.id)
             } catch {
                 Log.mcp.error(
@@ -673,6 +681,20 @@ actor MCPHTTPServer {
         named name: String
     ) -> String? {
         headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
+    }
+
+    nonisolated static func toolCallOrigin(
+        request: HTTPRequest,
+        mcpSessionID: UUID
+    ) -> ToolCallOrigin {
+        if let raw = header(request.headers, named: agentSessionHeader),
+           let chatSessionID = UUID(uuidString: raw) {
+            return .embeddedRuntime(
+                chatSessionID: chatSessionID,
+                mcpSessionID: mcpSessionID
+            )
+        }
+        return .externalMCP(sessionID: mcpSessionID)
     }
 
     private nonisolated static func responseHead(

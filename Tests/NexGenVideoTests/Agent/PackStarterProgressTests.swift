@@ -52,12 +52,16 @@ struct PackStarterProgressTests {
         #expect(pack.starters(for: unknown).first?.title.contains("Colour Grade") == true)
     }
 
-    @Test("a fully approved project is not told to start over")
-    func completeProjectOffersReview() throws {
+    @Test("a fully approved project offers the optional post-pipeline cover utility")
+    func completeProjectOffersCoverUtility() throws {
         let progress = PackProgress(nextPhase: nil, approvedPhases: 11, totalPhases: 11)
         let starter = try #require(pack.starters(for: progress).first)
-        #expect(starter.id == "review")
+        #expect(starter.id == "cover")
         #expect(starter.id != "start")
+        #expect(starter.prompt.contains("# Post-pipeline utility — Cover Images"))
+        #expect(starter.prompt.contains("It has no gate"))
+        #expect(starter.prompt.contains("instructions for the optional utility"))
+        #expect(!starter.prompt.contains("instructions for the current phase"))
     }
 
     @Test("progress reports whether anything is approved")

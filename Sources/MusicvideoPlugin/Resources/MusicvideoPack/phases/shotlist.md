@@ -38,10 +38,10 @@ story-first order, the storyboard phase runs **before** the shotlist.
   current (there is no `current.yaml` mirror).
 - **Revision loop:** on a user revision request, the next shotlist run
   writes a new version file (`vN+1`). No overwriting.
-- **Gate:** on approval, `approve_gate(project_dir, "shotlist")`.
-  `approve_gate` surfaces the approval to the user and writes only after
+- **Gate request:** call `approve_gate(project_dir, "shotlist")` directly. It
+  surfaces the approval to the user and writes only after
   they tap Approve; you're requesting it, not granting it. On a decline,
-  stay on this phase.
+  stay on this phase. Do not precede it with an aggregate approval dialog.
 - **Display in the user chat** runs via the engine MCP tool
   `show_artifact(project_dir, "shotlist")` — output the `markdown` field
   in full before asking for approval. Do not hand-print a finished
@@ -58,7 +58,7 @@ anything:
 2. No version found → normal flow (continue with step 2).
 3. If `vN.yaml` exists: load it. Then `show_dialog` with 3 options
    (+ Other):
-   - `approve` → set the gate, done.
+   - `continue_to_gate` → call `approve_gate` directly.
    - `revise` → elicit the concrete changes and call `write_shotlist`
      for the next vN, then loop.
    - `discard_and_redo` → keep existing versions as history, run a
@@ -255,8 +255,9 @@ next phase.
 ### 10. Approval, gate, report
 
 Display the shotlist via `show_artifact(project_dir, "shotlist")`,
-obtain approval, set the gate (`approve_gate(project_dir, "shotlist")`),
-and note the key decisions (version, mode, number of shots, section
+then call `approve_gate(project_dir, "shotlist")` directly. Do not request
+the aggregate phase approval in `show_dialog`; the gate card owns it. Afterward,
+note the key decisions (version, mode, number of shots, section
 distribution, sanity status) for the orchestrator flow.
 
 ## Mandatory rules
@@ -614,7 +615,7 @@ not reflexively write pose+vector into figure-less shots.
   extend the bible first (or resolve the shot differently). Never write
   the prompt with undefined figures (Rule 6).
 - **Existing shotlist version found at resume** → never silently
-  regenerate; run the resume protocol (`approve` / `revise` /
+  regenerate; run the resume protocol (`continue_to_gate` / `revise` /
   `discard_and_redo`, Step 1).
 - **`write_shotlist` rejects the candidate** → fix the exact schema or
   structural violation and call it again; the previous version remains

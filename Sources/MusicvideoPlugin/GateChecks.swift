@@ -2567,21 +2567,4 @@ enum MusicvideoGateChecks {
         }
     }
 
-    /// `cover` (optional): if approved, at least one format's cover was really produced — its clean image
-    /// exists on disk.
-    static func requireRealCover(dataRoot: URL) throws {
-        let produced = CoverFormatKey.allCases.contains { fmt in
-            guard let manifest = try? Cover.load(projectDir: dataRoot, format: fmt.rawValue),
-                  let clean = manifest.clean else { return false }
-            let p = clean.path.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !p.isEmpty else { return false }
-            return FileManager.default.fileExists(atPath: p)
-                || FileManager.default.fileExists(atPath: dataRoot.appendingPathComponent(p).path)
-                || FileManager.default.fileExists(atPath: FrameInventory.projectHome(of: dataRoot).appendingPathComponent(p).path)
-        }
-        guard produced else {
-            throw GateBlocked("Can't approve \"cover\": no cover has a real clean image on disk — produce a "
-                + "cover first, or leave the gate unset to skip it.")
-        }
-    }
 }

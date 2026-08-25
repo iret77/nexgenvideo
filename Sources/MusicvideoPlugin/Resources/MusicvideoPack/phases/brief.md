@@ -63,10 +63,9 @@ must already have a story file.
   user-facing table here.
 - **Gate:** after writing, summarize briefly, then tell the user where to
   read the whole thing — "The full brief is in the **Story** tab; you can
-  read and edit it there." — and only then ask for explicit approval via
-  show_dialog ("Approve the brief, change individual answers, or go through
-  the questions again?"). Never ask for approval of a brief the user has not
-  been told how to read. On approval: `approve_gate(project_dir, "brief")` —
+  read and edit it there." Then call `approve_gate(project_dir, "brief")`
+  directly; do not put a second approval action in `show_dialog`. Never request
+  approval for a brief the user has not been told how to read. `approve_gate` —
   which surfaces the approval to the user and writes only after they tap
   Approve; you're requesting it, not granting it. On a decline, stay on this phase.
 
@@ -83,8 +82,9 @@ Before asking any show_dialog:
    - **No** → normal flow, ask all batches.
    - **Yes, schema-valid** → load it, summarize the values compactly
      for the user, and ask exactly one show_dialog: "brief.yaml
-     already exists. Approve it, change individual answers, or start
-     completely fresh?" On `approve`: set the gate and return. On
+     already exists. Continue to its gate review, change individual answers,
+     or start completely fresh?" On `continue_to_gate`: call `approve_gate`
+     directly and return. On
      `change`: re-ask only the requested fields. On `fresh`: run a fresh
      flow and persist it through `write_brief`; the host archives the
      previous file before replacement.

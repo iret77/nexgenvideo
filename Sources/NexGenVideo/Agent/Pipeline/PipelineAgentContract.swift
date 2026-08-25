@@ -106,6 +106,12 @@ enum PipelineAgentContract {
         .removeLedgerAttribute,
     ]
 
+    static let postPipelineUtilityCapabilities: Set<ToolName> = [
+        .compilePrompt,
+        .generateImage,
+        .importMedia,
+    ]
+
     static let requiredPhaseToolMentions: [String: Set<ToolName>] = [
         "production_design": [
             .compilePrompt,
@@ -241,6 +247,25 @@ enum PipelineAgentContract {
                 "\(tool.rawValue) does not inherit the current pipeline phase"
             )
         }
+        if !postPipelineUtilityCapabilities.isSubset(of: currentPhaseTools) {
+            failures.append(
+                "post-pipeline utilities grant tools outside the guarded supporting-tool set"
+            )
+        }
+        if let cover = phaseDocument("cover") {
+            for required in ["compile_prompt", "generate_image", "list_models"]
+            where !cover.contains(required) {
+                failures.append("cover utility instructions don't name required tool \(required)")
+            }
+            for forbidden in ["approve_gate", "`Bash`", "record_render("]
+            where cover.contains(forbidden) {
+                failures.append(
+                    "cover utility instructions contain forbidden pipeline operation \(forbidden)"
+                )
+            }
+        } else {
+            failures.append("cover has no packaged post-pipeline utility document")
+        }
 
         let intakePhases = Set(manifest.allSteps.map(\.phase))
         let allowedIntakePhases: Set<String> = ["project_init", "brief"]
@@ -275,6 +300,10 @@ enum PipelineAgentContract {
         phase: String
     ) -> Bool {
         executableTools[phase]?.contains(tool) == true
+    }
+
+    static func allowsPostPipelineUtilityTool(_ tool: ToolName) -> Bool {
+        postPipelineUtilityCapabilities.contains(tool)
     }
 
     static func phaseDocumentName(_ phase: String) -> String {

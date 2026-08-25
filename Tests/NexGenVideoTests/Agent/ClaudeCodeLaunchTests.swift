@@ -15,6 +15,22 @@ struct ClaudeCodeLaunchTests {
             #"{"mcpServers":{"nexgen":{"type":"http","url":"http://127.0.0.1:19789/mcp"}}}"#)
     }
 
+    @Test func embeddedSessionIdentityIsCarriedInTheMCPHeader() {
+        let sessionID = UUID(uuidString: "7D713075-EF8D-4428-BD9B-33888359267C")!
+        let json = ClaudeCodeLaunch.mcpConfigJSON(
+            port: 19789,
+            appSessionId: sessionID
+        )
+        let object = try? JSONSerialization.jsonObject(
+            with: Data(json.utf8)
+        ) as? [String: Any]
+        let servers = object?["mcpServers"] as? [String: Any]
+        let nexgen = servers?["nexgen"] as? [String: Any]
+        let headers = nexgen?["headers"] as? [String: String]
+
+        #expect(headers?[MCPHTTPServer.agentSessionHeader] == sessionID.uuidString)
+    }
+
     @Test("#201: claude -p gets the FULL manual as --append-system-prompt (parity with the API agent)")
     func fullManualAppended() {
         // The runtime passes AgentInstructions.serverInstructions; verify that IS the full manual and

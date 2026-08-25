@@ -41,10 +41,11 @@ data root):
 - `storyboard/v1.yaml` … `vN.yaml` — schema version `storyboard/v1`,
   paths relative to the project data root, versions never overwritten.
 - `storyboard/current.yaml` — kept in sync with the newest version.
-- Gate after user approval:
-  `approve_gate(project_dir, "storyboard")`. `approve_gate` surfaces the
+- Gate request:
+  `approve_gate(project_dir, "storyboard")`. This call surfaces the
   approval to the user and writes only after they tap Approve; you're
-  requesting it, not granting it. On a decline, stay on this phase.
+  requesting it, not granting it. It needs no prior aggregate approval
+  dialog. On a decline, stay on this phase.
 
 ## Steps
 
@@ -56,7 +57,7 @@ You are spawned fresh on every `/continue`. Before generating anything:
 2. No version → normal flow.
 3. If `vN.yaml` exists: load it and ask one `show_dialog` with 3
    options (+ Other):
-   - `approve` → set the gate, done.
+   - `continue_to_gate` → call `approve_gate` directly.
    - `revise` → ask for concrete change requests, write a new version
      (`vN+1.yaml`, update `current.yaml`), loop.
    - `discard_and_restart` → keep existing versions as history, run a
@@ -246,7 +247,9 @@ Split, or reduce the character-view demand?"
 
 ### 11. Gate
 
-After user approval: `approve_gate(project_dir, "storyboard")`.
+After displaying the finished artifact, call
+`approve_gate(project_dir, "storyboard")` directly. Never put an aggregate
+approval action in `show_dialog`; the gate card is that decision.
 
 ## Mandatory rules
 

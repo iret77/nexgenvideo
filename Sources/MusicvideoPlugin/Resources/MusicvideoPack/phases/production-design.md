@@ -44,10 +44,11 @@ bible agent and is curated / generated there.
 - `production_design/production_design.yaml` — manifest (schema
   `production_design/v1`), including the optional color script. It is
   written only through `write_production_design`.
-- Gate after user approval:
-  `approve_gate(project_dir, "production_design")`. `approve_gate` surfaces
+- Gate request:
+  `approve_gate(project_dir, "production_design")`. This call surfaces
   the approval to the user and writes only after they tap Approve; you're
-  requesting it, not granting it. On a decline, stay on this phase.
+  requesting it, not granting it. It needs no prior aggregate approval
+  dialog. On a decline, stay on this phase.
 
 ## Steps
 
@@ -58,8 +59,9 @@ You are re-spawned fresh on every `/continue`. Before doing anything:
 - Does `production_design/production_design.yaml` exist?
   - **Yes, valid** → summarize it compactly (style refs, notes,
     color-script status) and ask exactly one `show_dialog`:
-    "Production design is already in place. Approve, change individual
-    fields, or start over?" On `approve` → set the gate, done. On
+    "Production design is already in place. Continue to its gate review,
+    change individual fields, or start over?" On `continue_to_gate` → call
+    `approve_gate` directly. On
     `change` → re-ask only the affected fields. On `start over` → run a
     fresh flow through `write_production_design`; the host archives the
     previous file before replacement.
@@ -205,7 +207,9 @@ otherwise as a short inline overview.
 
 ### 9. Gate
 
-After user approval: `approve_gate(project_dir, "production_design")`.
+After displaying the finished artifact, call
+`approve_gate(project_dir, "production_design")` directly. Never ask for the
+aggregate phase approval in `show_dialog`; the gate card is that decision.
 
 ## Mandatory rules
 
