@@ -18,7 +18,6 @@ enum PhaseDisplay {
         case "bible": String(localized: "phase.bible", defaultValue: "Bible", comment: "Pipeline phase")
         case "shotlist": String(localized: "phase.shotlist", defaultValue: "Shot List", comment: "Pipeline phase")
         case "sanity": String(localized: "phase.sanity", defaultValue: "Sanity Check", comment: "Pipeline phase")
-        case "cover": String(localized: "phase.cover", defaultValue: "Cover", comment: "Pipeline phase")
         case "frames": String(localized: "phase.frames", defaultValue: "Frames", comment: "Pipeline phase")
         case "render": String(localized: "phase.render", defaultValue: "Render", comment: "Pipeline phase")
         default: id.replacingOccurrences(of: "_", with: " ").capitalized
