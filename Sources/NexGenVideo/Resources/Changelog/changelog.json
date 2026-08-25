@@ -10,7 +10,14 @@
           "items": [
             "Reference-driven MCP generation now maps prompts and media to each provider's live tool schema while preserving every assigned input and its role.",
             "Local references now upload through the selected provider, asynchronous jobs complete without duplicate generation submissions, and only verified generated media is imported.",
-            "fal.ai queue jobs now poll and fetch results from the owning application route, retry transient lifecycle failures, and cancel abandoned jobs, restoring image, video, audio, and upscale endpoints that use operation-specific submit paths."
+            "fal.ai queue jobs now poll and fetch results from the owning application route, retry transient lifecycle failures, and cancel abandoned jobs, restoring image, video, audio, and upscale endpoints that use operation-specific submit paths.",
+            "Higgsfield's live image catalog is available without a separate job-status tool, including Nano Banana and GPT Image models exposed by the connected account, while MCP generation supports both direct results and asynchronous jobs."
+          ]
+        },
+        {
+          "heading": "Agent workflow",
+          "items": [
+            "The composer now presents exactly one dialog, spend decision, or phase approval at a time and refuses competing requests until the open decision is resolved."
           ]
         }
       ]

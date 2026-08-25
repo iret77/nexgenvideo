@@ -35,13 +35,13 @@ route the result through the gate.
   - With `error`-level findings: refuse the gate. Output the list, route
     back with `rewind(target_phase="<owning phase>")`, repair through
     that phase's canonical writer, and re-approve the dependent chain.
-  - With only `warning`-level findings + user OK:
+  - With only `warning`-level findings: request the user's single decision via
     `approve_gate(project_dir, "sanity", notes="warns accepted: ...")`.
   - Clean: `approve_gate(project_dir, "sanity")` directly after a short
     summary.
-  - `approve_gate` surfaces the approval to the user and writes only after
-    they tap Approve; you're requesting it, not granting it. On a decline,
-    stay on this phase.
+  The `approve_gate` tool surfaces the approval to the user and writes only
+  after they tap Approve; you're requesting it, not granting it. On a decline,
+  stay on this phase.
 
 ## Steps
 
@@ -53,8 +53,11 @@ the gate state via `get_project_state(project_dir)`:
 - If the `sanity` gate is already approved → summarize the last run
   compactly and ask exactly one `show_dialog`: "Sanity is already
   approved. Re-audit (the shotlist has changed since), or continue to
-  the frame phase?" On `re-audit` → run `run_sanity` again; the persisted
-  mutation intentionally reopens Sanity and every downstream gate.
+  the frame phase?" On `re-audit` → first call
+  `rewind(project_dir, target_phase="sanity")`, confirm the rewind succeeded,
+  and only then call `run_sanity`. On `continue` → do not run Sanity again;
+  proceed to Frames. A phase-bound runner must never be called while its gate
+  is still approved.
 - Otherwise → normal flow.
 
 Errors always block — also on resume. For warnings the user must confirm
@@ -104,9 +107,10 @@ Present the findings as a table (level / code / shot_id / message).
 
 - **errors** block. They must be fixed (shotlist / bible / brief), then
   `run_sanity` runs again.
-- **warnings** are non-blocking, but the user must accept each one
-  **explicitly** (`show_dialog` per warning or bundled). On
-  acceptance: record it in the gate approval note.
+- **warnings** are non-blocking. Include every warning in the
+  `approve_gate(..., notes="warns accepted: ...")` request so the single gate
+  card is the explicit acceptance; do not add a second aggregate warning
+  approval dialog.
 - **info** is informational only.
 
 ### 4. Gate
@@ -114,7 +118,7 @@ Present the findings as a table (level / code / shot_id / message).
 - With `error`-level findings: refuse the gate. Output the list, call
   `rewind(target_phase="<owning phase>")`, repair through its canonical
   writer, and re-approve the dependent chain.
-- With only `warning`-level findings + user OK:
+- With only `warning`-level findings: call
   `approve_gate(project_dir, "sanity", notes="warns accepted: ...")`.
 - Clean: `approve_gate(project_dir, "sanity")` directly after a short
   summary.
@@ -138,8 +142,8 @@ instead of attempting a render.
 ## Mandatory rules
 
 - Errors always block the gate — also on resume.
-- Warnings are never accepted implicitly; the user confirms each one
-  explicitly, every time.
+- Warnings are never accepted implicitly; list every warning in the single
+  gate card so the user confirms them explicitly every time.
 - Accepted warnings go into the gate approval note.
 - Out of scope for this phase:
   - No rendering (no `generate_image` / `generate_video`).

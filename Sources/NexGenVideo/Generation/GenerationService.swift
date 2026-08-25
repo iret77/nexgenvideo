@@ -750,7 +750,7 @@ final class GenerationService {
                 mediaRoles: mediaRoles,
                 requestID: requestId
             )
-            try MCPGenerationExecutor.preflightLifecycle(tools: tools, provider: provider)
+            try MCPGenerationExecutor.validateLifecycleIfAdvertised(tools: tools)
             let preparedParams = try await MCPMediaUpload.prepare(
                 params,
                 tools: tools,

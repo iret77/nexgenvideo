@@ -2,6 +2,11 @@ import Foundation
 import MCP
 
 struct ToolResult: Sendable {
+    enum TurnDisposition: Equatable, Sendable {
+        case continueTurn
+        case suspendTurn
+    }
+
     enum Block: Sendable {
         case text(String)
         case image(base64: String, mediaType: String)
@@ -9,13 +14,40 @@ struct ToolResult: Sendable {
 
     let content: [Block]
     let isError: Bool
+    let turnDisposition: TurnDisposition
+
+    init(
+        content: [Block],
+        isError: Bool,
+        turnDisposition: TurnDisposition = .continueTurn
+    ) {
+        self.content = content
+        self.isError = isError
+        self.turnDisposition = turnDisposition
+    }
 
     static func ok(_ text: String) -> ToolResult {
-        ToolResult(content: [.text(text)], isError: false)
+        ToolResult(
+            content: [.text(text)],
+            isError: false,
+            turnDisposition: .continueTurn
+        )
+    }
+
+    static func suspended(_ text: String) -> ToolResult {
+        ToolResult(
+            content: [.text(text)],
+            isError: false,
+            turnDisposition: .suspendTurn
+        )
     }
 
     static func error(_ message: String) -> ToolResult {
-        ToolResult(content: [.text(message)], isError: true)
+        ToolResult(
+            content: [.text(message)],
+            isError: true,
+            turnDisposition: .continueTurn
+        )
     }
 }
 

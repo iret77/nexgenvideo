@@ -73,6 +73,20 @@ enum MCPGenerationLifecycle {
         )
     }
 
+    static func cancelTool(
+        in tools: [MCPProviderClient.DiscoveredTool]
+    ) -> MCPProviderClient.DiscoveredTool? {
+        selectTool(
+            in: tools,
+            exact: [
+                "jobcancel", "canceljob", "generationcancel", "cancelgeneration",
+                "taskcancel", "canceltask",
+            ],
+            required: ["cancel"],
+            context: ["job", "generation", "task"]
+        )
+    }
+
     private static func selectTool(
         in tools: [MCPProviderClient.DiscoveredTool],
         exact: Set<String>,

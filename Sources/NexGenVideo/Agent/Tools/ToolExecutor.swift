@@ -43,11 +43,16 @@ final class ToolExecutor {
         )
     }
 
-    func execute(name: String, args: [String: Any]) async -> ToolResult {
+    func execute(
+        name: String,
+        args: [String: Any],
+        origin: ToolCallOrigin = .direct
+    ) async -> ToolResult {
         guard let tool = ToolName(rawValue: name) else {
             return .error("Unknown tool: \(name)")
         }
         guard let editor else { return .error("Editor not available") }
+        let origin = normalizedToolCallOrigin(origin, editor: editor)
         let before = editor.timeline
         var result: ToolResult
         var guardedPhase: String?
@@ -59,6 +64,13 @@ final class ToolExecutor {
             data: ["tool": tool.rawValue, "projectId": editor.projectId ?? "unknown"]
         )
         do {
+            if let reason = editor.agentService.toolCallBlockReason(
+                tool: tool,
+                args: args,
+                origin: origin
+            ) {
+                throw ToolError(reason)
+            }
             guard let schema = ToolDefinitions.all.first(where: { $0.name == tool })?.inputSchema else {
                 throw ToolError("Tool schema unavailable: \(tool.rawValue)")
             }
@@ -96,7 +108,7 @@ final class ToolExecutor {
                 }
                 try ProjectWorkingCopy.markDirty(key: key)
             }
-            result = try await run(tool, editor, resolved)
+            result = try await run(tool, editor, resolved, origin: origin)
             if tool != .runPhase,
                !result.isError,
                let phase = guardedPhase,
@@ -154,7 +166,23 @@ final class ToolExecutor {
         return shorteningIds(in: result, editor: editor)
     }
 
-    private func run(_ tool: ToolName, _ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+    private func normalizedToolCallOrigin(
+        _ origin: ToolCallOrigin,
+        editor: EditorViewModel
+    ) -> ToolCallOrigin {
+        guard case .embeddedRuntime(let chatSessionID, let mcpSessionID) = origin,
+              !editor.agentService.sessions.contains(where: { $0.id == chatSessionID }) else {
+            return origin
+        }
+        return .externalMCP(sessionID: mcpSessionID)
+    }
+
+    private func run(
+        _ tool: ToolName,
+        _ editor: EditorViewModel,
+        _ args: [String: Any],
+        origin: ToolCallOrigin
+    ) async throws -> ToolResult {
         switch tool {
         case .getTimeline:   return try getTimeline(editor, args)
         case .getMedia:      return try getMedia(editor)
@@ -180,7 +208,7 @@ final class ToolExecutor {
         case .addTexts:      return try addTexts(editor, args)
         case .addCaptions:   return try await addCaptions(editor, args)
         case .exportProject: return try await exportProject(editor, args)
-        case .showDialog: return try showDialog(editor, args)
+        case .showDialog: return try showDialog(editor, args, origin: origin)
         case .showBlocks: return try showBlocks(args)
         case .compilePrompt: return try await compilePrompt(editor, args)
         case .generateVideo: return try await generate(editor, args, type: .video)
@@ -213,7 +241,7 @@ final class ToolExecutor {
         case .writeShotlist:        return try writeShotlistTool(editor, args)
         case .getPattern:           return try getPatternTool(editor, args)
         case .initProject:          return try initProjectTool(editor, args)
-        case .approveGate:          return try await approveGateTool(editor, args)
+        case .approveGate:          return try await approveGateTool(editor, args, origin: origin)
         case .rewind:               return try rewindTool(editor, args)
         case .estimateCost:         return try estimateCostTool(editor, args)
         case .showArtifact:         return try showArtifactTool(editor, args)
@@ -236,7 +264,7 @@ final class ToolExecutor {
         case .removeLedgerAttribute: return try removeLedgerAttributeTool(editor, args)
         case .resolveModel:         return try resolveModelTool(editor, args)
         case .getUIContract:        return try getUIContractTool(editor)
-        case .setGateState:         return try await setGateStateTool(editor, args)
+        case .setGateState:         return try await setGateStateTool(editor, args, origin: origin)
         case .runProviderTool:      return try await runProviderTool(editor, args)
         }
     }

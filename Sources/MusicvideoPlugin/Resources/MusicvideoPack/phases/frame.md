@@ -54,8 +54,8 @@ image (`generate_image` calls cost money):
   entries and `audit.current_image` values against the latest shot list:
   audited current / audit missing or stale / frame role missing.
   `show_dialog` with options:
-  - `approve_gate` (only if every required role and current audit is
-    present) → request the aggregate Frames gate.
+  - `continue_to_gate` (only if every required role and current audit is
+    present) → call `approve_gate` directly.
   - `continue_pending` → continue with pending / missing shots in the
     chosen review mode. Do NOT re-render current audited frames.
   - `redo_selected` → user picks shot(s); re-render only those.
@@ -391,7 +391,9 @@ revise — and any prose feedback stating a durable preference — decide:
 When `get_frames_manifest` proves that every required role exists, has an
 exact image-provider prompt/model, and has a complete audit with
 `current_image=true`:
-`approve_gate(project_dir, "frames")`.
+call `approve_gate(project_dir, "frames")` directly. Never add an aggregate
+Frames approval action to `show_dialog`; per-frame review remains granular,
+while the gate card owns the phase decision.
 
 ### Partial rerender
 

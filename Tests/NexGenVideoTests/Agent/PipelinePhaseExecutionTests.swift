@@ -46,31 +46,43 @@ struct PipelinePhaseExecutionTests {
             approvalReady: true,
             controlsAvailable: true,
             gateWriting: false,
-            pipelineIsRunning: false
+            pipelineIsRunning: false,
+            hostDecisionPending: false
         ))
         #expect(!PipelineApprovalControl.isEnabled(
             approvalReady: false,
             controlsAvailable: true,
             gateWriting: false,
-            pipelineIsRunning: false
+            pipelineIsRunning: false,
+            hostDecisionPending: false
         ))
         #expect(!PipelineApprovalControl.isEnabled(
             approvalReady: true,
             controlsAvailable: true,
             gateWriting: true,
-            pipelineIsRunning: false
+            pipelineIsRunning: false,
+            hostDecisionPending: false
         ))
         #expect(!PipelineApprovalControl.isEnabled(
             approvalReady: true,
             controlsAvailable: true,
             gateWriting: false,
-            pipelineIsRunning: true
+            pipelineIsRunning: true,
+            hostDecisionPending: false
         ))
         #expect(!PipelineApprovalControl.isEnabled(
             approvalReady: true,
             controlsAvailable: false,
             gateWriting: false,
-            pipelineIsRunning: false
+            pipelineIsRunning: false,
+            hostDecisionPending: false
+        ))
+        #expect(!PipelineApprovalControl.isEnabled(
+            approvalReady: true,
+            controlsAvailable: true,
+            gateWriting: false,
+            pipelineIsRunning: false,
+            hostDecisionPending: true
         ))
     }
 

@@ -907,7 +907,7 @@ struct WorkflowToolsTests {
             ]
         )
         #expect(blockedDialog.isError)
-        #expect(ToolHarness.textOf(blockedDialog).contains("host-owned decision"))
+        #expect(ToolHarness.textOf(blockedDialog).contains("host-owned Existing story card"))
     }
 
     @Test("list_project_files + copy_project_file stage files and refuse to escape the project")

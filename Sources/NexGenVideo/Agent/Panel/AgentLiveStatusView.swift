@@ -3,6 +3,7 @@ import SwiftUI
 struct AgentLiveStatus: Equatable {
     enum State: Equatable {
         case working
+        case streaming
         case waiting
         case failed
         case ready
@@ -57,6 +58,13 @@ struct AgentLiveStatusView: View {
         case .working:
             ProgressView()
                 .controlSize(.mini)
+        case .streaming:
+            Image(systemName: "ellipsis")
+                .font(.system(
+                    size: AppTheme.FontSize.xs,
+                    weight: AppTheme.FontWeight.semibold
+                ))
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
         case .waiting:
             Image(systemName: "clock.fill")
                 .font(.system(size: AppTheme.FontSize.xs))

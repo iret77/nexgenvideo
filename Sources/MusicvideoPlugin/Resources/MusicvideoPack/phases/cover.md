@@ -1,206 +1,135 @@
-# Phase C — Cover Images (optional, per platform format)
+# Post-pipeline utility — Cover Images
 
 > **Orchestrator instruction (main-session context).** Never spawn this
-> phase as a sub-agent — presenting a structured dialog (`show_dialog`) is a
+> utility as a sub-agent — presenting a structured dialog (`show_dialog`) is a
 > main-session UI capability.
 > Use the **interface language supplied by the host** unless the user explicitly
-> requests another language; everything written
-> into provider-facing fields is **English**.
+> requests another language; provider-facing fields are **English**.
 
-All paths below are relative to the **project data root**.
+This is an optional utility after the production pipeline, not a pipeline
+phase. It has no gate, never changes phase order or lineage, and never rewinds
+an approved artifact. Run it only when `get_project_state(project_dir)` proves
+that Render and every earlier phase are approved.
 
 ## Goal
 
-Produce album/cover artwork per selected platform format: one clean
-image (mandatory) plus optionally a second variant with artist + title.
-Every cover is a `generate_image` call whose prompt the agent composes
-from the subject hint + bible refs + format-specific layout.
+Create project-media cover artwork for selected platform formats: one clean
+image per format and, optionally, a second image with integrated artist/title
+typography.
 
 | Format | Aspect | Use |
 |---|---|---|
-| `square` | 1:1 | Spotify, Apple Music, Bandcamp, Instagram feed post |
+| `square` | 1:1 | Spotify, Apple Music, Bandcamp, Instagram feed |
 | `landscape` | 16:9 | YouTube thumbnail, Facebook cover |
 | `portrait` | 9:16 | TikTok, Instagram Reels/Story, YouTube Shorts |
 
+Generated covers remain normal project media assets with descriptive names such
+as `Cover — Square — Clean` and `Cover — Square — Artist + Title`. Do not write
+cover manifests or files into canonical pipeline directories.
+
 ## Inputs
 
-- Gate `bible` approved (K5; check via `get_project_state(project_dir)`).
-  The phase can run any time after that — it blocks **no** render. A
-  sensible last step before R2 or in parallel with rendering.
-- Bible sheets as optional generation refs (e.g.
-  `bible/main_character/front.png`, `bible/main_location/wide.png`),
-  read via `get_bible(project_dir)`.
-- A text-capable image model when a text variant is wanted (confirm via
-  `list_models` with `type="image"`).
-
-## Outputs & gate
-
-Per format under `cover/`:
-
-- `<format>_clean.png` — without text (mandatory variant)
-- `<format>_text.png` — optional, with artist + title
-
-Gate: after the user approves the produced covers,
-`approve_gate(project_dir, "cover")`. The phase is optional and blocks
-no render — if the user skips it, leave the gate unset. `approve_gate`
-surfaces the approval to the user and writes only after they tap Approve;
-you're requesting it, not granting it. On a decline, stay on this phase.
+- A fully approved pipeline, including Render.
+- Bible sheets as optional generation references, read with `get_bible` and
+  imported as host media with `import_media` when needed.
+- Runnable image models from `list_models(type="image")`.
 
 ## Steps
 
-### C1 — Which formats?
+### C1 — Choose formats
 
-`show_dialog`: "Which platforms do you need covers for?"
-Multi-select options:
+Use `show_dialog`: "Which platforms need cover artwork?" Multi-select:
 
-- "Streaming standard (square, 1:1) — Spotify, Apple Music, IG post"
-- "YouTube thumbnail (landscape, 16:9)"
-- "TikTok / Reels / Shorts (portrait, 9:16)"
+- Streaming standard — square, 1:1
+- YouTube thumbnail — landscape, 16:9
+- TikTok / Reels / Shorts — portrait, 9:16
 
-The selected formats are processed one after another through C2–C5.
+Process each selected format through C2–C5.
 
-### C2 — Per format: cover briefing
+### C2 — Brief the current format
 
-Briefly clarify with the user for the current format:
+Ask for the subject:
 
-1. **Subject hint** (`show_dialog`): "What does the cover show?"
-   - "Main character (central, from the bible)"
-   - "Location motif (mood image, from the bible)"
-   - "Abstract style image"
-   - "Other — user free text"
+- Main character from the Bible
+- Location motif from the Bible
+- Abstract style image
+- Other — free text
 
-2. **Model** (`show_dialog`): present the host's registered image
-   models (resolve via `list_models` with `type="image"`). Offer a
-   multi-ref high-consistency model (good for character/location
-   motifs), a text-capable model (pick this if a text variant comes
-   later), and a photoreal model as the three concrete options.
+Call `list_models(type="image")`. Offer only models the host reports as loaded
+and runnable. Explain which offered model supports the selected Bible reference
+count and which can render integrated typography when a text variant is wanted.
 
-**Bake the format-specific hint into the subject hint:**
+Add the format constraint to the intent:
 
-- `landscape`: the image is meant as a **YouTube thumbnail** — subject
-  slightly off-center, plenty of negative space for a title overlay,
-  readable at 320px width.
-- `portrait`: the image is for **TikTok/Reels** — compose vertically,
-  main motif in the upper or middle third, let the lower third breathe
-  (the app UI with username, caption, like button overlays the lower
-  15% + the right edge).
+- `landscape`: YouTube thumbnail, subject slightly off-center, negative space,
+  readable at 320 px width.
+- `portrait`: vertical social composition, motif in the upper or middle third,
+  lower 15% and right edge clear of critical detail.
 
-### C3 — Generate the clean cover
+### C3 — Generate and review the clean cover
 
-Compose the cover prompt from the subject hint + the format layout note
-+ `bible.look.style` (verbatim). For the reference images: import the
-chosen bible sheets via `import_media(source={path:...})` and pass the
-mediaRefs in `generate_image(..., referenceMediaRefs=[...])`. Confirm
-generation availability first via `list_models` (`loaded=true` + the
-model present in `models`). Compile the cover intent with
-`compile_prompt(..., shotId="none")` first.
+Compose the intent from the subject, format constraint, and Bible look. Import
+only the chosen Bible sheets, then call
+`compile_prompt(..., shotId="none")` and `generate_image` with the returned
+compiled prompt/token, the selected aspect ratio, optional reference media, and
+a descriptive media name.
 
-```
-generate_image(
-  prompt=<compiledPrompt>,
-  compileToken=<compileToken>,
-  shotId="none",
-  model="<chosen image model>",
-  aspectRatio="1:1 | 16:9 | 9:16 per the format",
-  referenceMediaRefs=[<imported bible refs>],
-)
-```
+The host owns spend approval. Never imply that a model is free or submit a paid
+generation without its spend card.
 
-When the asset is ready, bring it into the project as
-`cover/<format>_clean.png`.
+When ready, show the generated media and use a granular review dialog:
 
-**Show the output** via the `Read` tool (`cover/<format>_clean.png`) and
-**get approval**:
+- Keep
+- Revise the subject or model
+- Skip this format
 
-- `approve` / `revise` (different subject hint / model) / `skip` (the
-  format is skipped).
+This review decides only the current image; it is not a phase approval.
 
-### C4 — Offer the text variant
+### C4 — Offer a typography variant
 
-`show_dialog`: "Render a second variant with artist + title?"
+Use `show_dialog`: "Create a second variant with artist and title?"
 
-- `yes` → C5
-- `no` → done with this format; next format or end of phase.
+- Yes → C5
+- No → next format
 
-### C5 — Artist + title + renderer
+### C5 — Generate integrated typography
 
-**Mandatory explicit question** (never derive from the project name or
-the brief):
+Ask explicitly for Artist and Title. Never infer either from the project name,
+Brief, Treatment, or imported filenames.
 
-`show_dialog` form with:
+Select a runnable text-capable image model. Import the approved clean cover as a
+reference, compile a new `shotId="none"` intent that asks the model to integrate
+the exact artist/title wording into the design, and call `generate_image` with a
+descriptive media name.
 
-- **Artist** (required, free text)
-- **Title** (required, free text)
-- **Renderer**:
-  - "Text-capable image model (the model generates the cover with
-    integrated typography — the text feels like part of the design)"
-  - "Deterministic overlay (100% correct letters, but the text looks
-    pasted on)"
+Show the result and offer a granular Keep / Revise / Skip review. If text is
+garbled, offer another text-capable model or omit the typography variant. Do not
+claim a deterministic local overlay exists; the host exposes no such renderer.
 
-Background: most image models do not render text reliably (wrong
-letters, smeared glyphs). A text-capable image model is the path for
-covers-with-text; a deterministic overlay is the safety variant when the
-user prioritizes correctness over aesthetics.
+### C6 — Finish
 
-**With the text-capable image model:** fold the artist + title into the
-`generate_image` prompt — "integrate the title '<title>' and artist
-'<artist>' as part of the cover typography" — anchored on the clean
-cover (`cover/<format>_clean.png`) imported as a `referenceMediaRefs`
-entry so the composition carries over. Bring the result in as
-`cover/<format>_text.png`.
-
-**With the deterministic overlay:** additionally ask:
-
-- Layout (`bottom` / `top` / `center`)
-- Font (`Helvetica` / `Avenir` / `Avenir Condensed`)
-- Color (`auto` / `white` / `black`) — default `auto`
-
-Then overlay the text onto `cover/<format>_clean.png` locally (e.g.
-`Bash` with an image tool — Pillow / ImageMagick) and write
-`cover/<format>_text.png`. This path makes no provider call and is
-exact.
-
-**Show the output** and get approval. On `revise`:
-
-- Switch the renderer (text-capable model ↔ deterministic overlay)
-- Different layout / font / color (overlay)
-- Different artist/title wording (with another explicit follow-up
-  question)
-
-### C6 — Loop or end
-
-If the user selected multiple formats in C1: continue with the next
-format from C2. When all are done: display the produced covers inline
-via `Read`, get final user approval, and set the gate
-`approve_gate(project_dir, "cover")`.
+After all selected formats, show the kept media assets together and summarize
+their names, aspect ratios, and models. The utility is complete immediately;
+there is no aggregate approval or pipeline mutation.
 
 ## Mandatory rules
 
-- **Never** derive the artist or title from the project name,
-  `target_platform`, treatment texts, or the brief subject. **Always**
-  ask the user explicitly. A wrong artist credit in a persisted cover
-  artifact is 3× worse than a short question.
-- The mandatory variant per format is `<format>_clean.png`. The text
-  variant is additive; the original is kept.
-- The aspect is **not** derived from the brief — `format` determines
-  everything. The brief aspect is for the video render, not for covers.
-- Cover generation runs through the host's `nexgen` `generate_image`
-  tool; bible refs are imported via `import_media` first, then passed as
-  `referenceMediaRefs`. Provider costs accrue per attempt — tell the
-  user the estimate before the call (`estimate_cost` shows the project
-  budget picture).
-- Never guess generation availability; check `list_models` (`loaded=true`
-  + the model present in `models`).
+- Run only after the canonical pipeline is fully approved.
+- Use only post-pipeline utility capabilities: `list_models`, `get_bible`,
+  `import_media`, `compile_prompt`, `generate_image`, and `show_dialog`.
+- Never call phase runners, gate writers, canonical artifact writers,
+  `record_render`, or timeline assembly from this utility.
+- Never derive artist/title text. Ask explicitly.
+- Keep the clean variant when creating typography.
+- Never guess model availability; use the current host catalog.
+- Never write into `analysis/`, `production_design/`, `treatment/`,
+  `storyboard/`, `bible/`, `shotlist/`, `frames/`, or render manifests.
 
-## Failure modes & escalation
+## Failure modes
 
-- **Generation unavailable** (the chosen model missing from
-  `list_models`, or `loaded=false`): inform the user and either have the model
-  / key bound in the host, or fall back to the deterministic overlay for
-  the text variant (it needs no provider). Keys are bound in the host
-  (Keychain / Settings), never a shell command.
-- **Text comes out garbled** from the image model: switch to the
-  deterministic overlay path.
-- **Repeated rejection in review:** revise loop — switch model or
-  renderer, adjust the subject hint, change layout/font/color (overlay),
-  or `skip` the format.
+- No runnable image model: stop before spend and explain which provider/model
+  capability is missing.
+- Reference count unsupported: reduce the selected Bible references or choose a
+  model that supports the exact count.
+- Typography remains wrong after revision: keep the clean cover and omit text.
+- Repeated visual rejection: revise the subject/model or skip that format.

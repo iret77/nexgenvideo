@@ -75,10 +75,11 @@ for timing; do not describe the song's structure from "listening".
   done: `interpretation.section_labels` is written through the typed tool (the
   measured sections are labeled). Run the DSP for real, THEN interpret, THEN approve — approving
   right after the DSP run is refused. After writing the interpretation, give a
-  summary (BPM, section labels, anomalies) and request approval via
-  show_dialog with `workflowDecision="analysis_interpretation_review"`
-  ("approve / change a label / re-analyze"). On approval:
-  `approve_gate(project_dir, "analysis", notes=...)` — which surfaces the
+  summary (BPM, section labels, anomalies). If a review choice is still needed,
+  use `show_dialog` with `workflowDecision="analysis_interpretation_review"`
+  (`change_label / re_analyze / continue_to_gate`) — never an approval option.
+  Once the artifact is ready, call
+  `approve_gate(project_dir, "analysis", notes=...)` directly. It surfaces the
   approval to the user and writes only after they tap Approve; you're
   requesting it, not granting it. On a decline, stay on this phase.
 
@@ -157,8 +158,8 @@ You are spawned fresh on every `/continue`. Before doing any work:
   `interpretation` with `section_labels`, `anomalies`,
   `overall_character`? → show_dialog with
   `workflowDecision="analysis_interpretation_review"`: "An interpretation already
-  exists. Approve it (set the gate), change it (which field), or
-  regenerate?" On `approve` → set the gate, done. On `change` → re-ask
+  exists. Continue to its gate review, change it (which field), or
+  regenerate?" On `continue_to_gate` → call `approve_gate` directly. On `change` → re-ask
   / rewrite only the affected field by calling
   `write_analysis_interpretation` with the complete revised interpretation.
   On `regenerate` → call the same tool with the replacement interpretation.

@@ -30,6 +30,8 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     var sessionId: String?
     /// Resume an existing session id (takes precedence over sessionId).
     var resumeSessionId: String?
+    /// The in-app chat that owns this embedded runtime's MCP calls.
+    var appSessionId: UUID?
 
     init(
         workingDirectory: URL,
@@ -41,7 +43,8 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         model: String? = nil,
         appendSystemPrompt: String? = nil,
         sessionId: String? = nil,
-        resumeSessionId: String? = nil
+        resumeSessionId: String? = nil,
+        appSessionId: UUID? = nil
     ) {
         self.workingDirectory = workingDirectory
         self.pluginDirectories = pluginDirectories
@@ -53,6 +56,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         self.appendSystemPrompt = appendSystemPrompt
         self.sessionId = sessionId
         self.resumeSessionId = resumeSessionId
+        self.appSessionId = appSessionId
     }
 }
 
@@ -61,8 +65,17 @@ enum ClaudeCodeLaunch {
     /// Inline MCP config (passed via --mcp-config). Always registers the local `nexgen` HTTP server;
     /// merges in any external plugin-contributed servers so both survive `--strict-mcp-config`.
     /// `pluginServers` values are already-serialized JSON objects.
-    static func mcpConfigJSON(port: Int, pluginServers: [String: String] = [:]) -> String {
-        var entries = ["\"nexgen\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:\(port)/mcp\"}"]
+    static func mcpConfigJSON(
+        port: Int,
+        appSessionId: UUID? = nil,
+        pluginServers: [String: String] = [:]
+    ) -> String {
+        let headers = appSessionId.map {
+            ",\"headers\":{\"\(MCPHTTPServer.agentSessionHeader)\":\"\($0.uuidString)\"}"
+        } ?? ""
+        var entries = [
+            "\"nexgen\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:\(port)/mcp\"\(headers)}"
+        ]
         for name in pluginServers.keys.sorted() where name != "nexgen" {
             entries.append("\"\(name)\":\(pluginServers[name]!)")
         }
@@ -79,7 +92,11 @@ enum ClaudeCodeLaunch {
             // claude refuses `--print --output-format=stream-json` without --verbose (exits to stderr,
             // no stdout) — its absence is a silent total failure.
             "--verbose",
-            "--mcp-config", mcpConfigJSON(port: cfg.mcpPort, pluginServers: cfg.pluginMcpServers),
+            "--mcp-config", mcpConfigJSON(
+                port: cfg.mcpPort,
+                appSessionId: cfg.appSessionId,
+                pluginServers: cfg.pluginMcpServers
+            ),
             "--strict-mcp-config",
             "--permission-mode", "bypassPermissions",
             "--tools", "Read",

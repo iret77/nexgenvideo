@@ -119,12 +119,41 @@ struct AgentTranscriptLayoutPolicyTests {
         ))
         #expect(status.lowerBound < footer.lowerBound)
         #expect(implementation.contains("if let dialog = service.pendingDialog"))
+        #expect(implementation.contains("} else if let gate = service.pendingGateApproval"))
+        #expect(implementation.contains("} else if let dialog = service.pendingDialog"))
 
         let statusSource = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift"
         )
         #expect(!statusSource.contains(".overlay"))
         #expect(!statusSource.contains("ZStack"))
+    }
+
+    @Test func runningTranscriptActivityOwnsTheOnlyOperationSpinnerAndLabel() throws {
+        let panel = try agentPanelSource()
+        let streamingStart = try #require(panel.range(
+            of: "if service.isStreaming"
+        ))
+        let streamingEnd = try #require(panel.range(
+            of: "if service.isCheckingBackend",
+            range: streamingStart.upperBound..<panel.endIndex
+        ))
+        let streaming = panel[streamingStart.lowerBound..<streamingEnd.lowerBound]
+        #expect(streaming.contains("runningTranscriptActivity"))
+        #expect(streaming.contains("state: .streaming"))
+        #expect(!streaming.contains("ToolRunPresentation.label"))
+
+        let statusSource = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentLiveStatusView.swift"
+        )
+        let stateStart = try #require(statusSource.range(of: "case .streaming:"))
+        let stateEnd = try #require(statusSource.range(
+            of: "case .waiting:",
+            range: stateStart.upperBound..<statusSource.endIndex
+        ))
+        let streamingIcon = statusSource[stateStart.lowerBound..<stateEnd.lowerBound]
+        #expect(streamingIcon.contains("Image(systemName: \"ellipsis\")"))
+        #expect(!streamingIcon.contains("ProgressView"))
     }
 
     @Test func dialogChoiceChipsUseBoundedCompactTitles() throws {

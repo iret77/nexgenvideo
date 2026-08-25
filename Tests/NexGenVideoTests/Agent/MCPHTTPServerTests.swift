@@ -74,6 +74,35 @@ struct MCPHTTPServerTests {
         #expect(status == 413)
     }
 
+    @Test("embedded MCP calls carry their exact chat while external calls stay external")
+    func explicitToolCallOrigin() throws {
+        let chatID = UUID()
+        let mcpID = UUID()
+        let embeddedData = Data(
+            "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\(MCPHTTPServer.agentSessionHeader): \(chatID.uuidString)\r\n\r\n".utf8
+        )
+        guard case .complete(let embedded, _) = MCPHTTPServer.decodeRequest(embeddedData) else {
+            Issue.record("Embedded request did not decode")
+            return
+        }
+        #expect(MCPHTTPServer.toolCallOrigin(
+            request: embedded,
+            mcpSessionID: mcpID
+        ) == .embeddedRuntime(chatSessionID: chatID, mcpSessionID: mcpID))
+
+        let externalData = Data(
+            "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\r\n".utf8
+        )
+        guard case .complete(let external, _) = MCPHTTPServer.decodeRequest(externalData) else {
+            Issue.record("External request did not decode")
+            return
+        }
+        #expect(MCPHTTPServer.toolCallOrigin(
+            request: external,
+            mcpSessionID: mcpID
+        ) == .externalMCP(sessionID: mcpID))
+    }
+
     @MainActor
     @Test("a disconnected long call is rejoined after MCP reinitializes")
     func longCallSurvivesReconnect() async throws {

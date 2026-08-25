@@ -33,22 +33,22 @@ struct GateApprovalTests {
     // MARK: - Request / resolve seam
 
     @Test("requestGateApproval returns immediately and leaves one durable card")
-    func requestReturnsPending() {
+    func requestReturnsPending() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
 
-        let request = service.requestGateApproval(GateApproval(phase: "brief"))
+        let request = try service.requestGateApproval(GateApproval(phase: "brief"))
         #expect(request.isNew)
         #expect(service.pendingGateApproval?.phase == "brief")
     }
 
     @Test("A retry preserves the original card and request id")
-    func retryIsIdempotent() {
+    func retryIsIdempotent() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
 
-        let first = service.requestGateApproval(GateApproval(phase: "brief"))
-        let retry = service.requestGateApproval(GateApproval(phase: "brief"))
+        let first = try service.requestGateApproval(GateApproval(phase: "brief"))
+        let retry = try service.requestGateApproval(GateApproval(phase: "brief"))
 
         #expect(retry.isNew == false)
         #expect(retry.matchesRequestedApproval)
@@ -57,36 +57,111 @@ struct GateApprovalTests {
     }
 
     @Test("A competing request cannot replace the open card")
-    func competingRequestKeepsFirstCard() {
+    func competingRequestKeepsFirstCard() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
 
-        let first = service.requestGateApproval(GateApproval(phase: "brief"))
-        let competing = service.requestGateApproval(GateApproval(phase: "analysis"))
+        let first = try service.requestGateApproval(GateApproval(phase: "brief"))
+        let competing = try service.requestGateApproval(GateApproval(phase: "analysis"))
 
         #expect(competing.isNew == false)
         #expect(competing.matchesRequestedApproval == false)
         #expect(competing.approval.id == first.approval.id)
         #expect(service.pendingGateApproval?.phase == "brief")
+
+        let dialog = AgentDialog(
+            id: "blocked-dialog",
+            title: "Choose",
+            symbol: "questionmark",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        )
+        #expect(throws: ToolError.self) {
+            try service.presentDialog(dialog)
+        }
+        #expect(service.pendingDialog == nil)
+        #expect(service.pendingGateApproval?.id == first.approval.id)
+    }
+
+    @Test("A dialog prevents a gate card from being added")
+    func dialogBlocksGateRequest() throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let dialog = AgentDialog(
+            id: "existing-dialog",
+            title: "Choose",
+            symbol: "questionmark",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        )
+        try service.presentDialog(dialog)
+
+        #expect(throws: ToolError.self) {
+            try service.requestGateApproval(GateApproval(phase: "brief"))
+        }
+        #expect(service.pendingGateApproval == nil)
+        #expect(service.pendingDialog?.id == dialog.id)
+    }
+
+    @Test("A native gate mutation and composer decisions exclude each other")
+    func nativeGateMutationOwnsDecisionBoundary() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let mutationID = try #require(service.beginNativeGateMutation())
+
+        #expect(throws: ToolError.self) {
+            try service.requestGateApproval(GateApproval(phase: "brief"))
+        }
+        let option = SpendOption(
+            modelId: "model",
+            modelName: "Model",
+            target: ResolvedGenerationTarget(
+                modelId: "model",
+                provider: .fal,
+                endpoint: "model",
+                binding: nil
+            ),
+            credits: 1,
+            requiresCatalogAvailability: false
+        )
+        let spend = SpendApproval(
+            id: "spend",
+            recommendedOptionId: option.id,
+            options: [option],
+            actionLabel: "Generate image"
+        )
+        #expect(await service.requestSpendApproval(spend) == .blocked(
+            reason: "A native pipeline gate change is already being applied."
+        ))
+
+        service.endNativeGateMutation(mutationID)
+        #expect(try service.requestGateApproval(GateApproval(phase: "brief")).isNew)
+        #expect(service.beginNativeGateMutation() == nil)
     }
 
     @Test("Cancelling the model transport does not decide or remove the gate")
-    func transportCancellationKeepsCard() {
+    func transportCancellationKeepsCard() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
 
-        _ = service.requestGateApproval(GateApproval(phase: "brief"))
+        _ = try service.requestGateApproval(GateApproval(phase: "brief"))
         service.cancel()
 
         #expect(service.pendingGateApproval?.phase == "brief")
     }
 
     @Test("Declining is an explicit decision and clears the card")
-    func declineClears() async {
+    func declineClears() async throws {
         let editor = EditorViewModel()
         let service = editor.agentService
 
-        _ = service.requestGateApproval(GateApproval(phase: "brief"))
+        _ = try service.requestGateApproval(GateApproval(phase: "brief"))
         let result = await service.resolveGate(.declined)
 
         #expect(result?.isError == false)
@@ -94,16 +169,61 @@ struct GateApprovalTests {
     }
 
     @Test("An external MCP approval does not start an unrelated in-app turn")
-    func externalApprovalDoesNotSendInAppMessage() async {
+    func externalApprovalDoesNotSendInAppMessage() async throws {
         let editor = EditorViewModel()
         let service = editor.agentService
 
-        _ = service.requestGateApproval(GateApproval(phase: "brief"))
+        _ = try service.requestGateApproval(GateApproval(phase: "brief"))
         _ = await service.resolveGate(.declined)
         await Task.yield()
 
         #expect(service.messages.isEmpty)
         #expect(service.streamError?.errorDescription == nil)
+    }
+
+    @Test("caller origin, never global streaming state, owns gate resumption")
+    func explicitCallerOriginOwnsResumption() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        service.isStreaming = true
+        let unrelatedChat = try #require(service.currentSessionId)
+        let externalSession = UUID()
+
+        _ = try service.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: .externalMCP(sessionID: externalSession)
+        )
+        #expect(service.pendingGateApproval?.sessionId == nil)
+        _ = await service.resolveGate(.declined)
+        #expect(service.messages.isEmpty)
+
+        _ = try service.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: .embeddedRuntime(
+                chatSessionID: unrelatedChat,
+                mcpSessionID: UUID()
+            )
+        )
+        #expect(service.pendingGateApproval?.sessionId == unrelatedChat)
+    }
+
+    @Test("an unknown embedded chat header is treated as external MCP")
+    func unknownEmbeddedChatCannotClaimResumption() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+
+        let result = await h.executor.execute(
+            name: "approve_gate",
+            args: ["project_dir": dataRoot.path, "phase": "project_init"],
+            origin: .embeddedRuntime(
+                chatSessionID: UUID(),
+                mcpSessionID: UUID()
+            )
+        )
+
+        #expect(result.turnDisposition == .suspendTurn)
+        #expect(h.editor.agentService.pendingGateApproval?.sessionId == nil)
     }
 
     @Test("approve_gate returns approval_pending without waiting or writing")
@@ -120,6 +240,7 @@ struct GateApprovalTests {
         ) as? [String: Any]
 
         #expect(result.isError == false)
+        #expect(result.turnDisposition == .suspendTurn)
         #expect(payload?["status"] as? String == "approval_pending")
         #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
 
@@ -181,13 +302,13 @@ struct GateApprovalTests {
     }
 
     @Test("A failed host write leaves the card open with the real reason")
-    func failedWriteKeepsCard() async {
+    func failedWriteKeepsCard() async throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         let missingRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("missing-gate-root-\(UUID().uuidString)", isDirectory: true)
 
-        _ = service.requestGateApproval(GateApproval(
+        _ = try service.requestGateApproval(GateApproval(
             phase: "project_init",
             dataRoot: missingRoot
         ))
@@ -205,10 +326,10 @@ struct GateApprovalTests {
         let service = h.editor.agentService
         service.newChat()
         service.isStreaming = true
-        _ = service.requestGateApproval(GateApproval(
+        _ = try service.requestGateApproval(GateApproval(
             phase: "project_init",
             dataRoot: dataRoot
-        ))
+        ), origin: .inAppChat(sessionID: try #require(service.currentSessionId)))
         service.isStreaming = false
 
         let intake = AgentDialog(
@@ -230,16 +351,121 @@ struct GateApprovalTests {
             ),
             purpose: .workflowIntake
         )
-        service.pendingDialog = intake
-
         let result = await service.resolveGate(.approved)
         #expect(result?.isError == false)
+        try service.presentDialog(intake)
         #expect(!service.resumePendingGateFollowUp())
         await Task.yield()
         #expect(service.pendingDialog?.id == intake.id)
 
-        service.pendingDialog = nil
+        service.abandonDialog()
         #expect(service.resumePendingGateFollowUp())
+    }
+
+    @Test("a gate decision suspends the tool batch before later calls execute")
+    func gateSuspendsRemainingToolBatch() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let service = h.editor.agentService
+        service.newChat()
+        let sessionID = try #require(service.currentSessionId)
+        let assistant = AgentMessage(
+            role: .assistant,
+            blocks: [
+                .toolUse(
+                    id: "gate",
+                    name: "approve_gate",
+                    inputJSON: "{\"project_dir\":\"\(dataRoot.path)\",\"phase\":\"project_init\"}"
+                ),
+                .toolUse(id: "later", name: "get_timeline", inputJSON: "{}"),
+            ]
+        )
+        service.messages = [assistant]
+
+        let suspended = await service.runPendingToolUses(
+            assistantID: assistant.id,
+            origin: .inAppChat(sessionID: sessionID)
+        )
+
+        #expect(suspended)
+        let results = try #require(service.messages.last?.blocks)
+        #expect(results.count == 2)
+        guard case .toolResult(_, _, let gateError) = results[0],
+              case .toolResult(_, let laterContent, let laterError) = results[1]
+        else {
+            Issue.record("Expected one gate result and one skipped result")
+            return
+        }
+        #expect(!gateError)
+        #expect(laterError)
+        #expect(laterContent.contains { block in
+            if case .text(let text) = block {
+                return text.contains("Not executed")
+            }
+            return false
+        })
+    }
+
+    @Test("fast external resolution keeps the old logical MCP turn fenced")
+    func fastExternalResolutionKeepsTurnFenced() async throws {
+        let h = ToolHarness()
+        let origin = ToolCallOrigin.externalMCP(sessionID: UUID())
+
+        _ = try h.editor.agentService.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: origin
+        )
+        _ = await h.editor.agentService.resolveGate(.declined)
+
+        let stale = await h.executor.execute(
+            name: "get_timeline",
+            args: [:],
+            origin: origin
+        )
+        #expect(stale.isError)
+        #expect(ToolHarness.textOf(stale).contains("logical agent turn is suspended"))
+
+        let reinitialized = await h.executor.execute(
+            name: "get_timeline",
+            args: [:],
+            origin: .externalMCP(sessionID: UUID())
+        )
+        #expect(!reinitialized.isError)
+    }
+
+    @Test("an embedded follow-up cannot revive its superseded MCP turn")
+    func embeddedFollowUpKeepsOldMCPSessionFenced() async throws {
+        let h = ToolHarness()
+        h.editor.agentService.newChat()
+        let chatID = try #require(h.editor.agentService.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: chatID,
+            mcpSessionID: UUID()
+        )
+
+        _ = try h.editor.agentService.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: origin
+        )
+        _ = await h.editor.agentService.resolveGate(.declined)
+        #expect(h.editor.agentService.resumePendingGateFollowUp())
+
+        let stale = await h.executor.execute(
+            name: "get_timeline",
+            args: [:],
+            origin: origin
+        )
+        #expect(stale.isError)
+
+        let replacement = await h.executor.execute(
+            name: "get_timeline",
+            args: [:],
+            origin: .embeddedRuntime(
+                chatSessionID: chatID,
+                mcpSessionID: UUID()
+            )
+        )
+        #expect(!replacement.isError)
     }
 
     // MARK: - Tool outcome (approve writes, decline does not)

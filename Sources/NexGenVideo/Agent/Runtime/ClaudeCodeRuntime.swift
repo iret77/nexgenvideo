@@ -38,10 +38,12 @@ final class ClaudeCodeRuntime {
     private var generation = 0
     private var reportedSessionId = false
     private var resumeFailureHandled = false
+    private let appSessionId: UUID?
 
     init(
         pluginDirectories: [URL] = [],
         mcpPort: Int = 19789,
+        appSessionId: UUID? = nil,
         resumeSessionId: String? = nil,
         seedMessages: [AgentMessage] = [],
         resolveExecutable: @escaping () -> URL? = { ClaudeCodeLocator.resolve().executableURL },
@@ -53,6 +55,7 @@ final class ClaudeCodeRuntime {
     ) {
         self.pluginDirectories = pluginDirectories
         self.mcpPort = mcpPort
+        self.appSessionId = appSessionId
         self.resumeSessionId = resumeSessionId
         self.resolveExecutable = resolveExecutable
         self.resolveWorkingDirectory = resolveWorkingDirectory
@@ -120,7 +123,8 @@ final class ClaudeCodeRuntime {
             // serverInstructions as its `system:` prompt. The MCP-advertised `instructions` field is a
             // soft protocol hint, not guaranteed injection — this closes that backend gap.
             appendSystemPrompt: AgentInstructions.serverInstructions,
-            resumeSessionId: resumeSessionId
+            resumeSessionId: resumeSessionId,
+            appSessionId: appSessionId
         )
         let newProcess = ClaudeCodeProcess()
         do {

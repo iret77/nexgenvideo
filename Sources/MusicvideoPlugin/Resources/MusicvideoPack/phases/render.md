@@ -336,7 +336,9 @@ call-out the path just floats in the answer and the user never views it.
 ### 9. Gates
 
 - R1 (preview) done: no gate — proceed to the final pass.
-- R2 (final) done: `approve_gate(project_dir, "render")` — closes the pipeline.
+- R2 (final) done: call `approve_gate(project_dir, "render")` directly — its
+  single gate card closes the pipeline. Do not add an aggregate approval
+  `show_dialog`; per-shot clip reviews remain granular.
 
 ### 10. Timeline placement (optional)
 

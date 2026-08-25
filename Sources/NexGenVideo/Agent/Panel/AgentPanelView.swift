@@ -57,9 +57,7 @@ struct AgentPanelView: View {
     private var canSend: Bool {
         // A pending dialog card (or spend / gate approval) owns the input — the composer is locked, so
         // neither the Send button, Return-to-send, nor submit() may fire a stale draft past the card.
-        service.pendingDialog == nil &&
-        service.pendingSpendApproval == nil &&
-        service.pendingGateApproval == nil &&
+        !service.isComposerBlocked &&
         !service.isStreaming &&
         service.canStream &&
         (service.pendingFunction != nil ||
@@ -78,9 +76,8 @@ struct AgentPanelView: View {
                     onDecline: { service.resolveSpend(.declined) }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
-            }
-            if let gate = service.pendingGateApproval,
-               !pendingGateIsBlockedByPhaseRun {
+            } else if let gate = service.pendingGateApproval,
+                      !pendingGateIsBlockedByPhaseRun {
                 GateApprovalCard(
                     approval: gate,
                     error: service.gateApprovalError,
@@ -94,8 +91,7 @@ struct AgentPanelView: View {
                     }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
-            }
-            if let dialog = service.pendingDialog {
+            } else if let dialog = service.pendingDialog {
                 @Bindable var service = service
                 AgentDialogCard(
                     dialog: dialog,
@@ -168,6 +164,13 @@ struct AgentPanelView: View {
     private var liveStatus: AgentLiveStatus {
         if let snapshot = editor.pipelinePhaseExecution.snapshot,
            snapshot.isRunning {
+            if runningTranscriptActivity != nil {
+                return AgentLiveStatus(
+                    state: .streaming,
+                    title: "Agent is working",
+                    detail: "Current operation appears in the transcript"
+                )
+            }
             let presentation = PipelinePhaseProgressPresentation(
                 stageID: snapshot.stageID
             )
@@ -239,20 +242,17 @@ struct AgentPanelView: View {
             )
         }
         if service.isStreaming {
-            let activity = transcriptEntries.compactMap { entry -> AgentActivity? in
-                guard case .activity(let activity) = entry,
-                      activity.isRunning else { return nil }
-                return activity
-            }.last
-            let title = activity?.steps.last.map {
-                ToolRunPresentation.label(for: $0.name)
+            if runningTranscriptActivity != nil {
+                return AgentLiveStatus(
+                    state: .streaming,
+                    title: "Agent is working",
+                    detail: "Current operation appears in the transcript"
+                )
             }
-                ?? activity?.currentStatus
-                ?? "Agent is working"
             return AgentLiveStatus(
                 state: .working,
-                title: title,
-                detail: activity?.currentStatus ?? "The current task is still running"
+                title: "Agent is working",
+                detail: "The current task is still running"
             )
         }
         if service.isCheckingBackend {
@@ -274,6 +274,14 @@ struct AgentPanelView: View {
             title: "Ready",
             detail: "No task is running"
         )
+    }
+
+    private var runningTranscriptActivity: AgentActivity? {
+        transcriptEntries.compactMap { entry -> AgentActivity? in
+            guard case .activity(let activity) = entry,
+                  activity.isRunning else { return nil }
+            return activity
+        }.last
     }
 
     private var floatingTabBar: some View {
