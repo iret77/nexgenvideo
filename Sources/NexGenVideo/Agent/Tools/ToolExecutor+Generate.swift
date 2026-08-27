@@ -12,7 +12,7 @@ extension ToolExecutor {
         let prompt = try args.requireString("prompt")
         switch type {
         case .video:
-            guard let modelId = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) } ?? VideoModelConfig.allModels.first?.id else {
+            guard let modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? VideoModelConfig.allModels.first?.id else {
                 throw ToolError("Model catalog not loaded yet. Try again in a moment.")
             }
             guard let model = VideoModelConfig.allModels.first(where: { $0.id == modelId }) else {
@@ -383,7 +383,7 @@ extension ToolExecutor {
         let approved = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: editCredits, actionLabel: "Generate edit",
-            alternatives: { cheaperVideoAlternatives(
+            alternatives: { self.cheaperVideoAlternatives(
                 than: model.id,
                 currentCredits: editCredits,
                 duration: editSeconds,
@@ -502,7 +502,7 @@ extension ToolExecutor {
         let approved = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate video",
-            alternatives: { cheaperVideoAlternatives(
+            alternatives: { self.cheaperVideoAlternatives(
                 than: model.id,
                 currentCredits: credits,
                 duration: billedDuration,
@@ -633,7 +633,7 @@ extension ToolExecutor {
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate image",
             alternatives: {
-                isMarble ? [] : availableImageAlternatives(
+                isMarble ? [] : self.availableImageAlternatives(
                     than: model.id,
                     aspectRatio: aspectRatio,
                     resolution: resolution,
@@ -781,7 +781,7 @@ extension ToolExecutor {
     }
 
     func generateAudio(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
-        guard let modelId = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) } ?? AudioModelConfig.allModels.first?.id else {
+        guard let modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? AudioModelConfig.allModels.first?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
         guard let model = AudioModelConfig.allModels.first(where: { $0.id == modelId }) else {
@@ -944,7 +944,7 @@ extension ToolExecutor {
 
         let available = UpscaleModelConfig.models(for: asset.type)
         let model: UpscaleModelConfig
-        if let requested = args.string("model").map { ModelCatalog.shared.internalId(forLogical: $0) } {
+        if let requested = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) {
             guard let match = available.first(where: { $0.id == requested }) else {
                 let ids = available.map(\.id).joined(separator: ", ")
                 throw ToolError("Model '\(requested)' does not support \(asset.type.rawValue). Available: \(ids)")
