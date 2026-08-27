@@ -194,6 +194,9 @@ struct Gemini3ImageTests {
 
     @Test("Gemini image models use their recognizable Nano Banana product names")
     func geminiNamesExposeNanoBananaBrand() throws {
+        let original = try #require(FalModelRegistry.entries.first {
+            $0.id == "fal-ai/gemini-25-flash-image/edit"
+        })
         let pro = try #require(GoogleModelRegistry.models.first {
             $0.entry.id == "google/gemini-3-pro-image"
         })
@@ -201,6 +204,7 @@ struct Gemini3ImageTests {
             $0.entry.id == "google/gemini-3.1-flash-image"
         })
 
+        #expect(original.displayName == "Nano Banana (Gemini 2.5 Flash)")
         #expect(pro.entry.displayName == "Nano Banana Pro (Gemini 3 Pro Image)")
         #expect(flash.entry.displayName == "Nano Banana 2 (Gemini 3.1 Flash Image)")
     }

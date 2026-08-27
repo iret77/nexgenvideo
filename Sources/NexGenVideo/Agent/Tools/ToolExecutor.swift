@@ -211,12 +211,22 @@ final class ToolExecutor {
         case .showDialog: return try showDialog(editor, args, origin: origin)
         case .showBlocks: return try showBlocks(args)
         case .compilePrompt: return try await compilePrompt(editor, args)
-        case .generateVideo: return try await generate(editor, args, type: .video)
-        case .generateImage: return try await generate(editor, args, type: .image)
-        case .generateAudio: return try await generateAudio(editor, args)
-        case .upscaleMedia:  return try await upscaleMedia(editor, args)
+        case .generateVideo:
+            await CatalogDiscovery.ensureCurrent()
+            return try await generate(editor, args, type: .video)
+        case .generateImage:
+            await CatalogDiscovery.ensureCurrent()
+            return try await generate(editor, args, type: .image)
+        case .generateAudio:
+            await CatalogDiscovery.ensureCurrent()
+            return try await generateAudio(editor, args)
+        case .upscaleMedia:
+            await CatalogDiscovery.ensureCurrent()
+            return try await upscaleMedia(editor, args)
         case .importMedia:   return try await importMedia(editor, args)
-        case .listModels:    return listModels(args)
+        case .listModels:
+            await CatalogDiscovery.ensureCurrent()
+            return listModels(args)
         case .listFolders:   return listFolders(editor)
         case .createFolder:  return try createFolder(editor, args)
         case .moveToFolder:  return try moveToFolder(editor, args)

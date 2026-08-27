@@ -269,6 +269,7 @@ enum MCPModelDiscovery {
 
     private static func audioCaps(_ model: ModelItem) -> AudioCaps {
         let tags = (model.tags ?? []).map { $0.lowercased() }
+        let acceptsVideo = hasMedia(model, type: "video")
         let category: String
         if tags.contains(where: { $0.contains("music") }) { category = "music" }
         else if tags.contains(where: { $0.contains("sfx") || $0.contains("sound-effect") }) { category = "sfx" }
@@ -279,7 +280,9 @@ enum MCPModelDiscovery {
             supportsLyrics: category == "music", supportsInstrumental: category == "music",
             supportsStyleInstructions: false,
             durations: model.durations,
-            minPromptLength: 1, inputs: ["text"], promptLabel: nil,
+            minPromptLength: acceptsVideo ? 0 : 1,
+            inputs: acceptsVideo ? ["text", "video"] : ["text"],
+            promptLabel: nil,
             minSeconds: span.first, maxSeconds: span.last)
     }
 
@@ -321,7 +324,11 @@ enum MCPModelDiscovery {
     }
 
     private static func hasImageMedia(_ model: ModelItem) -> Bool {
-        (model.medias ?? []).contains { ($0.type ?? "").lowercased() == "image" }
+        hasMedia(model, type: "image")
+    }
+
+    private static func hasMedia(_ model: ModelItem, type: String) -> Bool {
+        (model.medias ?? []).contains { ($0.type ?? "").lowercased() == type }
     }
 
     private static func maxOutputImages(_ model: ModelItem) -> Int {
@@ -375,7 +382,9 @@ enum MCPModelDiscovery {
             params = .audio(AudioGenerationParams(
                 prompt: "schema preflight", voice: nil, lyrics: nil,
                 styleInstructions: nil, instrumental: false,
-                durationSeconds: model.durations?.first
+                durationSeconds: model.durations?.first,
+                videoURL: includeMedia && hasMedia(model, type: "video")
+                    ? "https://example.invalid/reference.mp4" : nil
             ))
         case .upscale:
             params = .upscale(UpscaleGenerationParams(

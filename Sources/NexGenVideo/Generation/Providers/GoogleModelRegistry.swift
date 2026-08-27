@@ -42,7 +42,8 @@ enum GoogleModelRegistry {
         // the 3.x line below supersedes it for quality, but this id is fal's and stays reachable.
         GoogleImageModel(
             entry: CatalogEntry(
-                id: "fal-ai/gemini-25-flash-image/edit", kind: .image, displayName: "Gemini 2.5 Flash (edit)",
+                id: "fal-ai/gemini-25-flash-image/edit", kind: .image,
+                displayName: "Nano Banana (Gemini 2.5 Flash)",
                 allowedEndpoints: ["fal-ai/gemini-25-flash-image/edit"], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: geminiAspects, qualities: nil,

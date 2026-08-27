@@ -114,6 +114,37 @@ struct CostGuardTests {
     }
 
     @MainActor
+    @Test func pendingApprovalCanRefreshItsProviderAndModelOptions() async {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let initial = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
+        let discovered = option(modelId: "m2", name: "Model Two", provider: .higgsfield, credits: 40)
+        var includeDiscovered = false
+        let approval = SpendApproval(
+            id: "refreshable-spend",
+            recommendedOptionId: initial.id,
+            options: [initial],
+            actionLabel: "Generate image"
+        )
+
+        async let decision = service.requestSpendApproval(approval, refresh: {
+            SpendApproval(
+                id: approval.id,
+                recommendedOptionId: initial.id,
+                options: includeDiscovered ? [initial, discovered] : [initial],
+                actionLabel: approval.actionLabel
+            )
+        })
+        for _ in 0..<20 where service.pendingSpendApproval == nil { await Task.yield() }
+        includeDiscovered = true
+        service.refreshSpendApproval()
+
+        #expect(service.pendingSpendApproval?.options == [initial, discovered])
+        service.resolveSpend(.declined)
+        #expect(await decision == .declined)
+    }
+
+    @MainActor
     @Test func gateApprovalBlocksSpendWithoutAddingOrReplacingACard() async throws {
         let editor = EditorViewModel()
         let service = editor.agentService

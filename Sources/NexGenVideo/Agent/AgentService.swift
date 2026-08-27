@@ -1190,11 +1190,17 @@ final class AgentService {
     @ObservationIgnored
     private var spendContinuation: CheckedContinuation<SpendDecision, Never>?
 
+    @ObservationIgnored
+    private var spendApprovalRefresh: (@MainActor () -> SpendApproval)?
+
     /// Suspend the agent's render tool-call until the user taps Approve/Decline. This is what makes it
     /// user-clicks-to-confirm and not agent-self-asserted: the continuation resolves ONLY from
     /// `resolveSpend`, which the card's buttons call. A competing host decision is rejected without
     /// replacing either card or continuation.
-    func requestSpendApproval(_ approval: SpendApproval) async -> SpendDecision {
+    func requestSpendApproval(
+        _ approval: SpendApproval,
+        refresh: (@MainActor () -> SpendApproval)? = nil
+    ) async -> SpendDecision {
         guard pendingDialog == nil else {
             return .blocked(reason: "A host-owned dialog is already waiting for the user.")
         }
@@ -1210,8 +1216,17 @@ final class AgentService {
         editor?.agentPanelVisible = true
         return await withCheckedContinuation { continuation in
             spendContinuation = continuation
+            spendApprovalRefresh = refresh
             pendingSpendApproval = approval
         }
+    }
+
+    func refreshSpendApproval() {
+        guard let current = pendingSpendApproval,
+              let refresh = spendApprovalRefresh else { return }
+        let updated = refresh()
+        guard updated.id == current.id else { return }
+        pendingSpendApproval = updated
     }
 
     func approveSpend(_ option: SpendOption) -> String? {
@@ -1230,6 +1245,7 @@ final class AgentService {
     /// resumes the suspended tool call exactly once.
     func resolveSpend(_ decision: SpendDecision) {
         pendingSpendApproval = nil
+        spendApprovalRefresh = nil
         guard let continuation = spendContinuation else { return }
         spendContinuation = nil
         continuation.resume(returning: decision)

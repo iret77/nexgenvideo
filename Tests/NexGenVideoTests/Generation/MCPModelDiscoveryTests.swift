@@ -148,7 +148,9 @@ struct MCPModelDiscoveryTests {
         let listing = #"""
         {"items":[
           {"id":"sonilo_music","name":"Sonilo Music","output_type":"audio","tags":["audio","music"]},
-          {"id":"seed_audio","name":"Seed Audio 1.0","output_type":"audio","tags":["audio","tts"]}
+          {"id":"seed_audio","name":"Seed Audio 1.0","output_type":"audio","tags":["audio","tts"]},
+          {"id":"mirelo_sfx","name":"Mirelo SFX","output_type":"audio","tags":["audio","sfx"],
+           "medias":[{"name":"medias","type":"video","roles":["video"]}]}
         ]}
         """#
         let (models, _) = MCPModelDiscovery.parseListing(listing)
@@ -161,6 +163,15 @@ struct MCPModelDiscoveryTests {
         let tts = try! #require(entries.first { $0.id == "seed_audio" })
         guard case let .audio(caps2) = tts.uiCapabilities else { Issue.record("expected audio caps"); return }
         #expect(caps2.category == "tts")
+        let videoSFX = try! #require(entries.first { $0.id == "mirelo_sfx" })
+        guard case let .audio(caps3) = videoSFX.uiCapabilities else {
+            Issue.record("expected audio caps")
+            return
+        }
+        #expect(caps3.category == "sfx")
+        #expect(caps3.inputs == ["text", "video"])
+        #expect(caps3.minPromptLength == 0)
+        #expect(videoSFX.offers?.first?.mcpMediaRoles == ["video"])
     }
 
     @Test func modelWithNoGenerateToolForItsModalityIsDropped() {

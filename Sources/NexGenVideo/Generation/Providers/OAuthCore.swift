@@ -151,6 +151,12 @@ enum OAuthCore {
 
     /// Persisted per provider so a session survives relaunch and can refresh without a new sign-in.
     struct StoredTokens: Codable, Equatable {
+        enum SessionState: Equatable {
+            case ready
+            case refreshable
+            case reauthenticationRequired
+        }
+
         var accessToken: String
         var refreshToken: String?
         var expiresAt: Date?
@@ -159,8 +165,15 @@ enum OAuthCore {
 
         /// Fresh enough to use now (60 s safety margin), else it must be refreshed.
         func isFresh(now: Date) -> Bool {
+            guard !accessToken.isEmpty else { return false }
             guard let expiresAt else { return true }   // no expiry advertised → treat as long-lived
             return expiresAt.timeIntervalSince(now) > 60
+        }
+
+        func sessionState(now: Date) -> SessionState {
+            if isFresh(now: now) { return .ready }
+            if refreshToken?.isEmpty == false { return .refreshable }
+            return .reauthenticationRequired
         }
     }
 }

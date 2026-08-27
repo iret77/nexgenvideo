@@ -7,6 +7,14 @@ enum ModelKind: Sendable {
     case upscale(UpscaleModelConfig)
 }
 
+enum ProviderDiscoveryState: Equatable, Sendable {
+    case inactive
+    case checking
+    case ready(modelCount: Int)
+    case actionRequired(String)
+    case unavailable(String)
+}
+
 /// The "education" a model carries for the LLM: what it is good/bad at, what it is best for, and
 /// how it ranks right now. Curated knowledge — hosted remotely and refreshed WITHOUT an app release
 /// (the model landscape moves weekly), so the agent recommends from this current truth, never from
@@ -54,6 +62,7 @@ final class ModelCatalog {
     /// Provider-neutral LOGICAL id → internal catalog id. The LLM sees/requests logical ids
     /// (`kling`, `gen4.5`); NGV maps back to the internal id for resolution + dispatch. Built at load.
     private(set) var internalByLogical: [String: String] = [:]
+    private(set) var providerDiscovery: [GenerationProvider: ProviderDiscoveryState] = [:]
     private(set) var isLoaded: Bool = false
     private(set) var lastError: String?
 
@@ -97,7 +106,18 @@ final class ModelCatalog {
         rebuild()
     }
 
-    private func rebuild() { apply(mergedEntries()) }
+    func setProviderDiscoveryState(
+        _ state: ProviderDiscoveryState,
+        for provider: GenerationProvider
+    ) {
+        providerDiscovery[provider] = state
+        NotificationCenter.default.post(name: .modelCatalogChanged, object: nil)
+    }
+
+    private func rebuild() {
+        apply(mergedEntries())
+        NotificationCenter.default.post(name: .modelCatalogChanged, object: nil)
+    }
 
     /// Base ∪ discovered, base first and its curated fields winning; a model offered by both merges the
     /// offers (so #159's "any activated provider that exposes it" resolves to the cheapest binding).

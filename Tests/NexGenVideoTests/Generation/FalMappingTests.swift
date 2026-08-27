@@ -40,13 +40,13 @@ struct FalImageInputTests {
         #expect(input["aspect_ratio"] as? String == "1:1")
     }
 
-    @Test func editArrayEmitsImageUrlsAndNoSize() throws {
+    @Test func geminiEditEmitsImageUrlsAndAspectRatio() throws {
         let gemini = try #require(FalModelRegistry.model(for: "fal-ai/gemini-25-flash-image/edit"))
-        let p = ImageGenerationParams(prompt: "edit", aspectRatio: "1:1", resolution: nil, quality: nil, imageURLs: ["a", "b"], numImages: 1)
+        let p = ImageGenerationParams(prompt: "edit", aspectRatio: "9:16", resolution: nil, quality: nil, imageURLs: ["a", "b"], numImages: 1)
         let input = FalInputBuilder.imageInput(p, sizeMode: gemini.imageSize, refField: gemini.imageRef, count: 1)
         #expect(input["image_urls"] as? [String] == ["a", "b"])
         #expect(input["image_size"] == nil)
-        #expect(input["aspect_ratio"] == nil)
+        #expect(input["aspect_ratio"] as? String == "9:16")
     }
 
     @Test func imageSizeEnumMapping() {

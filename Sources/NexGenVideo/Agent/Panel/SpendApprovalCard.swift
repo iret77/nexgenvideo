@@ -4,6 +4,7 @@ struct SpendApprovalCard: View {
     let approval: SpendApproval
     let onApprove: (SpendOption) -> String?
     let onDecline: () -> Void
+    let onRefresh: () -> Void
 
     @State private var selectedOptionId: String
     @State private var approvalError: String?
@@ -12,11 +13,13 @@ struct SpendApprovalCard: View {
     init(
         approval: SpendApproval,
         onApprove: @escaping (SpendOption) -> String?,
-        onDecline: @escaping () -> Void
+        onDecline: @escaping () -> Void,
+        onRefresh: @escaping () -> Void = {}
     ) {
         self.approval = approval
         self.onApprove = onApprove
         self.onDecline = onDecline
+        self.onRefresh = onRefresh
         _selectedOptionId = State(initialValue: approval.recommendedOptionId)
     }
 
@@ -50,6 +53,11 @@ struct SpendApprovalCard: View {
             header
             summary
             if availableOptions.count > 1 { selectionControls }
+            if !availableOptions.isEmpty {
+                Text("Only connected models compatible with this request are shown.")
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+            }
             if let approvalError {
                 Text(approvalError)
                     .font(.system(size: AppTheme.FontSize.xxs))
@@ -77,6 +85,11 @@ struct SpendApprovalCard: View {
         .onAppear { normalizeSelection() }
         .onChange(of: availableOptions.map(\.id)) { _, _ in normalizeSelection() }
         .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
+            onRefresh()
+            providerKeyRevision += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .modelCatalogChanged)) { _ in
+            onRefresh()
             providerKeyRevision += 1
         }
         .id(approval.id)

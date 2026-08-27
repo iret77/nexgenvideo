@@ -10,6 +10,7 @@ struct ProvidersPane: View {
     @State private var signInTask: Task<Void, Never>?
     @State private var errorText: [String: String] = [:]
     @FocusState private var focusedProvider: String?
+    private var catalog = ModelCatalog.shared
 
     @AppStorage(PromptCompiler.rawPromptsDefaultsKey) private var allowRawPrompts = false
 
@@ -53,6 +54,9 @@ struct ProvidersPane: View {
             }
         }
         .onAppear(perform: refresh)
+        .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
+            refresh()
+        }
         .onDisappear {
             signInTask?.cancel()
             signInTask = nil
@@ -94,7 +98,12 @@ struct ProvidersPane: View {
 
     private func isReady(_ p: GenerationProvider) -> Bool {
         switch primaryStyle(p) {
-        case .oauth: return connectionState(p).oauthConnected
+        case .oauth:
+            switch catalog.providerDiscovery[p] {
+            case .ready: return true
+            case .checking, .inactive, .none: return connectionState(p).oauthConnected
+            case .actionRequired, .unavailable: return false
+            }
         case .localApp: return connectionState(p).localEnabled
         case .apiKey: return connectionState(p).hasKey
         }
@@ -135,17 +144,29 @@ struct ProvidersPane: View {
     private func statusPill(_ provider: GenerationProvider) -> some View {
         let ready = isReady(provider)
         let label: String
+        let tone: SettingsTone
         switch primaryStyle(provider) {
-        case .oauth: label = ready ? "Signed in" : "Not configured"
-        case .localApp: label = ready ? "Enabled" : "Disabled"
-        case .apiKey: label = ready ? "Key saved" : "Not configured"
+        case .oauth:
+            switch catalog.providerDiscovery[provider] {
+            case .checking: (label, tone) = ("Checking…", .neutral)
+            case .actionRequired: (label, tone) = ("Sign in again", .warning)
+            case .unavailable: (label, tone) = ("Connection failed", .error)
+            case .ready: (label, tone) = ("Signed in", .success)
+            case .inactive, .none:
+                (label, tone) = ready ? ("Signed in", .success) : ("Not configured", .neutral)
+            }
+        case .localApp:
+            (label, tone) = ready ? ("Enabled", .success) : ("Disabled", .neutral)
+        case .apiKey:
+            (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
         }
-        return SettingsStatusBadge(text: label, tone: ready ? .success : .neutral)
+        return SettingsStatusBadge(text: label, tone: tone)
     }
 
     @ViewBuilder
     private func oauthControl(_ provider: GenerationProvider) -> some View {
         let connected = connectionState(provider).oauthConnected
+        let discovery = catalog.providerDiscovery[provider]
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             if let note = provider.mcpCapability?.note {
                 Text(note)
@@ -154,18 +175,33 @@ struct ProvidersPane: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: AppTheme.Spacing.sm) {
-                if connected {
-                    Label("Signed in", systemImage: "checkmark.seal.fill")
-                        .font(.system(size: AppTheme.FontSize.sm)).foregroundStyle(AppTheme.Accent.primary)
-                    Button("Sign out") { ProviderOAuthStore.disconnect(provider); refresh() }
-                        .buttonStyle(.capsule(.secondary, size: .regular))
-                } else if signingIn == provider.id {
+                if signingIn == provider.id {
                     ProgressView().controlSize(.small)
                     Text("Opening \(provider.displayName)…").font(.system(size: AppTheme.FontSize.sm)).foregroundStyle(AppTheme.Text.tertiaryColor)
+                } else if connected {
+                    if case .unavailable = discovery {
+                        Label("Connection failed", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: AppTheme.FontSize.sm))
+                            .foregroundStyle(AppTheme.Status.errorColor)
+                        Button("Sign in again") { signIn(provider) }
+                            .buttonStyle(.capsule(.prominent, size: .regular))
+                    } else {
+                        Label("Signed in", systemImage: "checkmark.seal.fill")
+                            .font(.system(size: AppTheme.FontSize.sm))
+                            .foregroundStyle(AppTheme.Accent.primary)
+                    }
+                    Button("Sign out") { ProviderOAuthStore.disconnect(provider); refresh() }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
                 } else {
                     Button("Sign in with \(provider.displayName)") { signIn(provider) }
                         .buttonStyle(.capsule(.prominent, size: .regular))
                 }
+            }
+            if let message = discoveryMessage(discovery) {
+                Text(message)
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -175,6 +211,13 @@ struct ProvidersPane: View {
             minHeight: AppTheme.ComponentSize.settingsProviderControlMinHeight,
             alignment: .topLeading
         )
+    }
+
+    private func discoveryMessage(_ state: ProviderDiscoveryState?) -> String? {
+        switch state {
+        case .actionRequired(let message), .unavailable(let message): message
+        case .inactive, .checking, .ready, .none: nil
+        }
     }
 
     @ViewBuilder

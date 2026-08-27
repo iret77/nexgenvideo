@@ -303,6 +303,26 @@ struct FalClientTests {
         #expect(requests.map(\.url) == [submit])
     }
 
+    @Test("a lost submit response is treated as an uncertain accepted request")
+    func lostSubmitResponseIsNotSafeToRetry() async throws {
+        let endpoint = "fal-ai/gemini-25-flash-image/edit"
+        let submit = URL(string: "https://queue.fal.run/\(endpoint)")!
+        FixtureURLProtocol.install([:])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = FalClient(apiKey: "test-key", session: testSession)
+
+        do {
+            _ = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
+            Issue.record("Expected uncertain submission error")
+        } catch let error as FalClient.SubmissionOutcomeUnknownError {
+            #expect(error.ledgerRequestID.hasPrefix("unknown-"))
+            #expect(error.localizedDescription.contains("will not retry"))
+        }
+        #expect(FixtureURLProtocol.requests().map(\.method) == ["POST"])
+        #expect(FixtureURLProtocol.requests().map(\.url) == [submit])
+    }
+
     @Test("HTTP failures name provider, lifecycle step, method, safe route, and status")
     func statusFailureIsActionable() async throws {
         let endpoint = "fal-ai/gemini-25-flash-image/edit"
@@ -332,6 +352,70 @@ struct FalClientTests {
                     == "fal.ai status GET queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-405/status returned HTTP 405: Method Not Allowed"
             )
         }
+    }
+
+    @Test("submit response lifecycle URLs are used instead of reconstructed routes")
+    func serverLifecycleURLsAreAuthoritative() async throws {
+        let endpoint = "fal-ai/gemini-25-flash-image/edit"
+        let submit = URL(string: "https://queue.fal.run/\(endpoint)")!
+        let status = URL(
+            string: "https://queue.fal.run/custom-lifecycle/requests/job-server/status"
+        )!
+        let response = URL(
+            string: "https://queue.fal.run/custom-lifecycle/requests/job-server/response"
+        )!
+        let cancel = URL(
+            string: "https://queue.fal.run/custom-lifecycle/requests/job-server/cancel"
+        )!
+        let submitBody = #"{"request_id":"job-server","status_url":"\#(status.absoluteString)","response_url":"\#(response.absoluteString)","cancel_url":"\#(cancel.absoluteString)"}"#
+        FixtureURLProtocol.install([
+            submit: fixture(submitBody),
+            status: fixture("{\"status\":\"COMPLETED\"}"),
+            response: fixture("{\"images\":[]}"),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = FalClient(
+            apiKey: "test-key",
+            session: testSession,
+            pollIntervalNanoseconds: 0,
+            retryBaseDelayNanoseconds: 0
+        )
+
+        let requestID = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
+        _ = try await client.result(endpoint: endpoint, requestId: requestID)
+
+        #expect(FixtureURLProtocol.requests().map(\.url) == [submit, status, response])
+    }
+
+    @Test("untrusted lifecycle URL falls back to the provider route")
+    func untrustedLifecycleURLIsRejected() async throws {
+        let endpoint = "fal-ai/gemini-25-flash-image/edit"
+        let submit = URL(string: "https://queue.fal.run/\(endpoint)")!
+        let fallbackStatus = URL(
+            string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-safe/status"
+        )!
+        let fallbackResponse = URL(
+            string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-safe"
+        )!
+        FixtureURLProtocol.install([
+            submit: fixture(#"{"request_id":"job-safe","status_url":"https://example.com/requests/job-safe/status"}"#),
+            fallbackStatus: fixture("{\"status\":\"COMPLETED\"}"),
+            fallbackResponse: fixture("{\"images\":[]}"),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = FalClient(
+            apiKey: "test-key",
+            session: testSession,
+            pollIntervalNanoseconds: 0,
+            retryBaseDelayNanoseconds: 0
+        )
+
+        let requestID = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
+        _ = try await client.result(endpoint: endpoint, requestId: requestID)
+
+        #expect(FixtureURLProtocol.requests().map(\.url) == [submit, fallbackStatus, fallbackResponse])
     }
 
     @Test("transient empty status responses are retried before completion")

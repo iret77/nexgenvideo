@@ -186,32 +186,36 @@ extension ToolExecutor {
     @MainActor
     private func confirmSpend(
         _ editor: EditorViewModel, currentModelId: String, currentModelName: String,
-        credits: Int?, actionLabel: String, alternatives: [SpendModelCandidate]
+        credits: Int?, actionLabel: String,
+        alternatives: @escaping @MainActor () -> [SpendModelCandidate]
     ) async throws -> SpendOption {
-        let candidates = [SpendModelCandidate(
-            modelId: currentModelId,
-            modelName: currentModelName,
-            credits: credits
-        )] + alternatives
-        let options = candidates.filter {
-            ModelRegistry.exists(id: $0.modelId)
-                && ModelPreferences.shared.isEnabled($0.modelId)
-        }.flatMap { candidate in
-            ProviderManifest.runnableBindingsByProvider(forModelId: candidate.modelId).map { binding in
-                SpendOption(
-                    modelId: candidate.modelId,
-                    modelName: candidate.modelName,
-                    target: ResolvedGenerationTarget(
+        func currentOptions() -> [SpendOption] {
+            let candidates = [SpendModelCandidate(
+                modelId: currentModelId,
+                modelName: currentModelName,
+                credits: credits
+            )] + alternatives()
+            return candidates.filter {
+                ModelRegistry.exists(id: $0.modelId)
+                    && ModelPreferences.shared.isEnabled($0.modelId)
+            }.flatMap { candidate in
+                ProviderManifest.runnableBindingsByProvider(forModelId: candidate.modelId).map { binding in
+                    SpendOption(
                         modelId: candidate.modelId,
-                        provider: binding.provider,
-                        endpoint: binding.providerRef,
-                        binding: binding
-                    ),
-                    credits: candidate.credits,
-                    requiresCatalogAvailability: true
-                )
+                        modelName: candidate.modelName,
+                        target: ResolvedGenerationTarget(
+                            modelId: candidate.modelId,
+                            provider: binding.provider,
+                            endpoint: binding.providerRef,
+                            binding: binding
+                        ),
+                        credits: candidate.credits,
+                        requiresCatalogAvailability: true
+                    )
+                }
             }
         }
+        let options = currentOptions()
         let defaultTarget = GenerationService.dispatchTarget(modelId: currentModelId)
         guard let recommended = options.first(where: {
             $0.modelId == currentModelId && $0.target == defaultTarget
@@ -221,14 +225,25 @@ extension ToolExecutor {
             )
         }
         guard CostGuard.needsApproval(credits: credits) else { return recommended }
-        let orderedOptions = [recommended] + options.filter { $0.id != recommended.id }
-        let approval = SpendApproval(
-            id: UUID().uuidString,
-            recommendedOptionId: recommended.id,
-            options: orderedOptions,
-            actionLabel: actionLabel
-        )
-        switch await editor.agentService.requestSpendApproval(approval) {
+        let approvalID = UUID().uuidString
+        func makeApproval() -> SpendApproval {
+            let latest = currentOptions()
+            let latestRecommended = latest.first(where: {
+                $0.modelId == currentModelId
+                    && $0.target == GenerationService.dispatchTarget(modelId: currentModelId)
+            }) ?? latest.first
+            let ordered = latestRecommended.map { option in
+                [option] + latest.filter { $0.id != option.id }
+            } ?? []
+            return SpendApproval(
+                id: approvalID,
+                recommendedOptionId: latestRecommended?.id ?? "",
+                options: ordered,
+                actionLabel: actionLabel
+            )
+        }
+        let approval = makeApproval()
+        switch await editor.agentService.requestSpendApproval(approval, refresh: makeApproval) {
         case .approved(let option):
             try Task.checkCancellation()
             return option
@@ -368,7 +383,7 @@ extension ToolExecutor {
         let approved = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: editCredits, actionLabel: "Generate edit",
-            alternatives: cheaperVideoAlternatives(
+            alternatives: { cheaperVideoAlternatives(
                 than: model.id,
                 currentCredits: editCredits,
                 duration: editSeconds,
@@ -378,7 +393,7 @@ extension ToolExecutor {
                     candidate.validate(duration: 0, aspectRatio: "", resolution: nil) == nil
                         && inputAssets.validate(for: candidate) == nil
                 }
-            )
+            ) }
         )
         if approved.modelId != model.id,
            let swapped = VideoModelConfig.allModels.first(where: { $0.id == approved.modelId }) {
@@ -487,7 +502,7 @@ extension ToolExecutor {
         let approved = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate video",
-            alternatives: cheaperVideoAlternatives(
+            alternatives: { cheaperVideoAlternatives(
                 than: model.id,
                 currentCredits: credits,
                 duration: billedDuration,
@@ -509,7 +524,7 @@ extension ToolExecutor {
                         resolution: candidateResolution
                     ) == nil && inputAssets.validate(for: candidate) == nil
                 }
-            )
+            ) }
         )
         if approved.modelId != model.id,
            let swapped = VideoModelConfig.allModels.first(where: { $0.id == approved.modelId }) {
@@ -617,13 +632,15 @@ extension ToolExecutor {
         let approved = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate image",
-            alternatives: isMarble ? [] : availableImageAlternatives(
-                than: model.id,
-                aspectRatio: aspectRatio,
-                resolution: resolution,
-                quality: quality,
-                referenceCount: refs.count
-            )
+            alternatives: {
+                isMarble ? [] : availableImageAlternatives(
+                    than: model.id,
+                    aspectRatio: aspectRatio,
+                    resolution: resolution,
+                    quality: quality,
+                    referenceCount: refs.count
+                )
+            }
         )
         if approved.modelId != model.id,
            let swapped = ImageModelConfig.allModels.first(where: { $0.id == approved.modelId }) {
@@ -773,7 +790,16 @@ extension ToolExecutor {
 
         let prompt = (args.string("prompt") ?? "").trimmingCharacters(in: .whitespaces)
         let acceptsVideo = model.inputs.contains(.video)
-        var videoURL: String?
+        var videoReference: MediaAsset?
+        var persistedVideoReferenceID: String?
+        var preprocessReference: (@Sendable (Int, MediaAsset) async throws -> URL?)?
+        var temporaryReferenceURLs: [URL] = []
+        var temporaryReferenceOwnershipTransferred = false
+        defer {
+            if !temporaryReferenceOwnershipTransferred {
+                for url in temporaryReferenceURLs { try? FileManager.default.removeItem(at: url) }
+            }
+        }
         var spanSeconds: Double?
         var placementStartFrame: Int?   // set when a timeline span is given -> auto-place on the timeline
         if let ref = args.string("videoSourceMediaRef") {
@@ -787,7 +813,12 @@ extension ToolExecutor {
             guard editor.mediaResolver.resolveURL(for: videoAsset.id) != nil else {
                 throw ToolError("Could not read the video source file.")
             }
-            throw GenerationBackendError.notConfigured
+            spanSeconds = videoAsset.duration
+            if let error = model.validate(spanSeconds: videoAsset.duration) {
+                throw ToolError(error)
+            }
+            videoReference = videoAsset
+            persistedVideoReferenceID = videoAsset.id
         } else if let start = args.int("videoSourceStartFrame"), let end = args.int("videoSourceEndFrame") {
             guard acceptsVideo else {
                 throw ToolError("Model '\(model.id)' does not accept a video input (see list_models 'inputs').")
@@ -795,17 +826,32 @@ extension ToolExecutor {
             guard start >= 0, end > start else {
                 throw ToolError("videoSourceEndFrame must be greater than videoSourceStartFrame (>= 0).")
             }
+            let seconds = Double(end - start) / Double(max(1, editor.timeline.fps))
+            if let error = model.validate(spanSeconds: seconds) {
+                throw ToolError(error)
+            }
             let mp4 = try await TimelineRenderer.render(
                 timeline: editor.timeline, resolver: editor.mediaResolver,
                 startFrame: start, frameCount: end - start,
                 shortSide: 360, includeAudio: false
             )
-            try? FileManager.default.removeItem(at: mp4)
-            throw GenerationBackendError.notConfigured
+            spanSeconds = seconds
+            placementStartFrame = start
+            temporaryReferenceURLs = [mp4]
+            videoReference = MediaAsset(
+                id: UUID().uuidString,
+                url: mp4,
+                type: .video,
+                name: "Timeline source",
+                duration: seconds
+            )
+            preprocessReference = { @Sendable _, asset in
+                await MainActor.run { asset.url }
+            }
         }
 
         // A video-only model (no text input, e.g. Mirelo) needs a source.
-        if acceptsVideo && !model.inputs.contains(.text) && videoURL == nil {
+        if acceptsVideo && !model.inputs.contains(.text) && videoReference == nil {
             throw ToolError("Model '\(model.id)' generates audio from video. Provide videoSourceStartFrame + videoSourceEndFrame (a timeline span) or videoSourceMediaRef.")
         }
 
@@ -829,7 +875,7 @@ extension ToolExecutor {
                 prompt: compiled, voice: voice, lyrics: lyrics,
                 styleInstructions: styleInstructions,
                 instrumental: model.supportsInstrumental ? instrumental : false,
-                durationSeconds: durationSeconds, videoURL: videoURL)
+                durationSeconds: durationSeconds)
             var genInput = GenerationInput(
                 prompt: compiled, model: model.id, duration: durationSeconds ?? 0,
                 aspectRatio: "", resolution: nil, voice: params.voice, lyrics: params.lyrics,
@@ -838,8 +884,16 @@ extension ToolExecutor {
             genInput.promptShotId = precompiled?.binding.shotId
             genInput.promptProjectKey = precompiled?.binding.projectKey
             genInput.promptShotFingerprint = precompiled?.binding.shotFingerprint
+            genInput.referenceVideoAssetIds = persistedVideoReferenceID.map { [$0] }
             return AudioGenerationSubmission.make(
-                genInput: genInput, model: model, params: params, name: name, folderId: folderId)
+                genInput: genInput,
+                model: model,
+                params: params,
+                name: name,
+                folderId: folderId,
+                references: videoReference.map { [$0] } ?? [],
+                preprocessRef: preprocessReference
+            )
         }
         // Preflight validates the params; build them once with the raw prompt for validation (the
         // compiled text only differs by ledger merge and never invalidates model.validate).
@@ -854,7 +908,8 @@ extension ToolExecutor {
         )
         let approved = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
-            credits: audioCredits, actionLabel: "Generate \(model.category.label)", alternatives: [])
+            credits: audioCredits, actionLabel: "Generate \(model.category.label)",
+            alternatives: { [] })
 
         let placement: GenerationRequest.Placement
         let successCopy: (String) -> String
@@ -863,7 +918,7 @@ extension ToolExecutor {
             successCopy = { "Generation started and placed on the timeline at frame \(startFrame). Placeholder asset ID: \($0). Model: \(model.displayName), \(model.category.label) (scored from video)." }
         } else {
             placement = .mediaLibrary(folderId: folderId)
-            let scored = videoURL != nil ? " (scored from video)" : ""
+            let scored = videoReference != nil ? " (scored from video)" : ""
             successCopy = { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), \(model.category.label)\(scored). Place it with add_clips." }
         }
 
@@ -874,8 +929,10 @@ extension ToolExecutor {
             target: approved.target,
             precompiled: precompiled, rawPrompt: raw,
             submission: .audio(make: { makeSubmission($0) }))
-        return try await routeThroughController(
+        let result = try await routeThroughController(
             request, editor: editor, preflight: preflight, success: successCopy)
+        temporaryReferenceOwnershipTransferred = true
+        return result
     }
 
     func upscaleMedia(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
@@ -907,7 +964,7 @@ extension ToolExecutor {
         let approved = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: CostEstimator.upscaleCost(model: model, durationSeconds: upSeconds),
-            actionLabel: "Upscale", alternatives: [])
+            actionLabel: "Upscale", alternatives: { [] })
 
         guard let placeholderId = await EditSubmitter.submitUpscale(
             asset: asset, model: model, editor: editor, trimmedSource: trimmed,

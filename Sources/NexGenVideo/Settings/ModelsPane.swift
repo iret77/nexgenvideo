@@ -79,6 +79,9 @@ struct ModelsPane: View {
         .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
             keyRevision += 1
         }
+        .onReceive(NotificationCenter.default.publisher(for: .modelCatalogChanged)) { _ in
+            keyRevision += 1
+        }
     }
 
     private var emptyStateText: String {

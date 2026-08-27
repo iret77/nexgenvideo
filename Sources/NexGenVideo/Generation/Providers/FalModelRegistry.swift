@@ -89,7 +89,12 @@ enum FalModelRegistry {
         image("fal-ai/stable-diffusion-v35-large", "Stable Diffusion 3.5 Large"),
         // Image-to-image / edit (needs a reference image — uses the fal storage upload).
         imageEdit("fal-ai/flux-pro/kontext", "FLUX.1 Kontext [pro]", size: .aspectRatio, ref: .single),
-        imageEdit("fal-ai/gemini-25-flash-image/edit", "Gemini 2.5 Flash (edit)", size: .none, ref: .array),
+        imageEdit(
+            "fal-ai/gemini-25-flash-image/edit",
+            "Nano Banana (Gemini 2.5 Flash)",
+            size: .aspectRatio,
+            ref: .array
+        ),
     ]
 
     private static func image(
