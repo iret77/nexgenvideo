@@ -678,6 +678,13 @@ final class GenerationService {
                     editor: editor
                 )
             }
+        } catch let error as FalClient.SubmissionOutcomeUnknownError {
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: error.ledgerRequestID,
+                editor: editor
+            )
+            failJob(placeholders, error.localizedDescription, onFailure)
         } catch let error as FalClient.SubmissionAcknowledgedError {
             markSubmitted(
                 authorization: authorization,
@@ -762,6 +769,9 @@ final class GenerationService {
                 schema: tool.inputSchema,
                 mediaRoles: mediaRoles,
                 requestID: requestId
+            )
+            Log.generation.notice(
+                "MCP submit provider=\(provider.rawValue) tool=\(tool.name) model=\(modelParam ?? "<implicit>") fields=\(arguments.keys.sorted().joined(separator: ","))"
             )
             markSubmitted(
                 authorization: authorization,
@@ -1115,7 +1125,9 @@ final class GenerationService {
                     lengthMs: (params.durationSeconds ?? 90) * 1000,
                     forceInstrumental: params.instrumental)
             default:
-                preconditionFailure("validated ElevenLabs endpoint was not handled")
+                throw GenerationBackendError.transport(
+                    "Unsupported ElevenLabs model: \(endpoint)"
+                )
             }
             // Bytes arrive directly (no result URL) — write to the placeholder's destination and
             // run the same finalize steps downloadAndFinalize performs after its move.

@@ -2,6 +2,7 @@ import Foundation
 
 extension Notification.Name {
     static let providerKeysChanged = Notification.Name("providerKeysChanged")
+    static let modelCatalogChanged = Notification.Name("modelCatalogChanged")
 }
 
 enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {

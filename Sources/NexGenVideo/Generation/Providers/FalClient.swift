@@ -13,6 +13,7 @@ actor FalClient {
     private let retryBaseDelayNanoseconds: UInt64
     private let maxWaitSeconds: TimeInterval
     private let maxInvalidStatusResponses: Int
+    private var lifecycleByRequestID: [String: LifecycleURLs] = [:]
 
     init(
         apiKey: String,
@@ -47,7 +48,17 @@ actor FalClient {
     func submit(endpoint: String, inputBody: Data) async throws -> String {
         let route = try Self.route(endpoint: endpoint)
         let request = makeRequest(url: route.submitURL, method: "POST", body: inputBody)
-        let response = try await send(request)
+        let response: Response
+        do {
+            response = try await send(request)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw SubmissionOutcomeUnknownError(
+                ledgerRequestID: "unknown-\(UUID().uuidString)",
+                message: "fal.ai did not return a submission receipt. The request may still be running, so NexGenVideo will not retry it automatically."
+            )
+        }
         let json = Self.parse(response.data)
         try Self.throwIfError(response, request: request, operation: "submit", json: json)
         guard let requestId = json?["request_id"] as? String else {
@@ -62,6 +73,11 @@ actor FalClient {
                 message: "fal submit returned an unusable request_id"
             )
         }
+        lifecycleByRequestID[requestId] = Self.lifecycleURLs(
+            from: json,
+            requestId: requestId,
+            fallback: route
+        )
         return requestId
     }
 
@@ -72,13 +88,26 @@ actor FalClient {
         var errorDescription: String? { message }
     }
 
+    struct SubmissionOutcomeUnknownError: LocalizedError, Sendable {
+        let ledgerRequestID: String
+        let message: String
+
+        var errorDescription: String? { message }
+    }
+
     /// Poll the queue until the job completes, then fetch and return the raw
     /// output JSON as `Data` for the caller to parse.
     func result(endpoint: String, requestId: String) async throws -> Data {
         let route = try Self.route(endpoint: endpoint)
-        let statusURL = try route.lifecycleURL(requestId: requestId, suffix: "status")
-        let resultURL = try route.lifecycleURL(requestId: requestId)
-        let cancelURL = try route.lifecycleURL(requestId: requestId, suffix: "cancel")
+        let lifecycle = try lifecycleByRequestID[requestId] ?? LifecycleURLs(
+            status: route.lifecycleURL(requestId: requestId, suffix: "status"),
+            response: route.lifecycleURL(requestId: requestId),
+            cancel: route.lifecycleURL(requestId: requestId, suffix: "cancel")
+        )
+        let statusURL = lifecycle.status
+        let resultURL = lifecycle.response
+        let cancelURL = lifecycle.cancel
+        defer { lifecycleByRequestID.removeValue(forKey: requestId) }
 
         let deadline = Date().addingTimeInterval(maxWaitSeconds)
         var invalidStatusResponses = 0
@@ -192,6 +221,50 @@ actor FalClient {
             }
             return url
         }
+    }
+
+    private struct LifecycleURLs: Sendable {
+        let status: URL
+        let response: URL
+        let cancel: URL
+    }
+
+    private static func lifecycleURLs(
+        from response: [String: Any]?,
+        requestId: String,
+        fallback route: Route
+    ) -> LifecycleURLs? {
+        guard let response,
+              let fallbackStatus = try? route.lifecycleURL(requestId: requestId, suffix: "status"),
+              let fallbackResponse = try? route.lifecycleURL(requestId: requestId),
+              let fallbackCancel = try? route.lifecycleURL(requestId: requestId, suffix: "cancel")
+        else { return nil }
+        let status = validatedLifecycleURL(
+            response["status_url"] as? String,
+            requestId: requestId
+        ) ?? fallbackStatus
+        let result = validatedLifecycleURL(
+            response["response_url"] as? String,
+            requestId: requestId
+        ) ?? fallbackResponse
+        let cancel = validatedLifecycleURL(
+            response["cancel_url"] as? String,
+            requestId: requestId
+        ) ?? fallbackCancel
+        return LifecycleURLs(status: status, response: result, cancel: cancel)
+    }
+
+    private static func validatedLifecycleURL(_ raw: String?, requestId: String) -> URL? {
+        guard let raw,
+              let url = URL(string: raw),
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "queue.fal.run",
+              url.user == nil,
+              url.password == nil,
+              url.fragment == nil,
+              url.pathComponents.contains(requestId)
+        else { return nil }
+        return url
     }
 
     /// fal endpoint ids are `owner/app[/submit-path]`. The submit path selects an operation such as

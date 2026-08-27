@@ -11,6 +11,29 @@ import Foundation
 @Suite("CostGuard — the user's final word on paid agent renders (M7)", .serialized)
 struct CostGuardTests {
 
+    @MainActor
+    private final class RefreshableApprovalFixture {
+        let approval: SpendApproval
+        let initial: SpendOption
+        let discovered: SpendOption
+        var includeDiscovered = false
+
+        init(approval: SpendApproval, initial: SpendOption, discovered: SpendOption) {
+            self.approval = approval
+            self.initial = initial
+            self.discovered = discovered
+        }
+
+        func currentApproval() -> SpendApproval {
+            SpendApproval(
+                id: approval.id,
+                recommendedOptionId: initial.id,
+                options: includeDiscovered ? [initial, discovered] : [initial],
+                actionLabel: approval.actionLabel
+            )
+        }
+    }
+
     private func option(
         modelId: String,
         name: String,
@@ -111,6 +134,36 @@ struct CostGuardTests {
         service.resolveSpend(.declined)
         #expect(await decision == .declined)
         #expect(service.pendingSpendApproval == nil)
+    }
+
+    @MainActor
+    @Test func pendingApprovalCanRefreshItsProviderAndModelOptions() async {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let initial = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
+        let discovered = option(modelId: "m2", name: "Model Two", provider: .higgsfield, credits: 40)
+        let approval = SpendApproval(
+            id: "refreshable-spend",
+            recommendedOptionId: initial.id,
+            options: [initial],
+            actionLabel: "Generate image"
+        )
+        let fixture = RefreshableApprovalFixture(
+            approval: approval,
+            initial: initial,
+            discovered: discovered
+        )
+
+        let decision = Task { @MainActor in
+            await service.requestSpendApproval(approval, refresh: fixture.currentApproval)
+        }
+        for _ in 0..<20 where service.pendingSpendApproval == nil { await Task.yield() }
+        fixture.includeDiscovered = true
+        service.refreshSpendApproval()
+
+        #expect(service.pendingSpendApproval?.options == [initial, discovered])
+        service.resolveSpend(.declined)
+        #expect(await decision.value == .declined)
     }
 
     @MainActor

@@ -70,6 +70,15 @@ enum ProviderMCP {
     /// session never sends a stale token.
     static func client(for p: GenerationProvider) async -> MCPProviderClient? {
         guard let endpoint = resolvedEndpoint(p) else { return nil }
-        return MCPProviderClient(config: .init(endpoint: endpoint, bearerToken: await bearer(for: p)))
+        let bearer = await bearer(for: p)
+        if p.mcpCapability?.auth == .oauth {
+            guard let bearer, !bearer.isEmpty else {
+                Log.generation.notice(
+                    "MCP client blocked for \(p.rawValue): no valid OAuth bearer token"
+                )
+                return nil
+            }
+        }
+        return MCPProviderClient(config: .init(endpoint: endpoint, bearerToken: bearer))
     }
 }

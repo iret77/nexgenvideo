@@ -27,7 +27,10 @@ enum OAuthError: LocalizedError {
 enum ProviderOAuthStore {
     static func account(_ p: GenerationProvider) -> String { "provider.\(p.rawValue).oauth" }
 
-    static func isConnected(_ provider: GenerationProvider) -> Bool { load(provider) != nil }
+    static func isConnected(_ provider: GenerationProvider, now: Date = Date()) -> Bool {
+        guard let tokens = load(provider) else { return false }
+        return tokens.sessionState(now: now) != .reauthenticationRequired
+    }
 
     static func disconnect(_ provider: GenerationProvider) {
         KeychainStore.delete(account: account(provider))
@@ -39,7 +42,7 @@ enum ProviderOAuthStore {
     static func validAccessToken(_ provider: GenerationProvider, now: Date = Date()) async -> String? {
         guard var tokens = load(provider) else { return nil }
         if tokens.isFresh(now: now) { return tokens.accessToken }
-        guard let refresh = tokens.refreshToken else { return nil }
+        guard let refresh = tokens.refreshToken, !refresh.isEmpty else { return nil }
         do {
             let resp = try await postToken(tokens.tokenEndpoint, body: OAuthCore.refreshBody(refreshToken: refresh, clientID: tokens.clientID))
             tokens.accessToken = resp.accessToken
@@ -47,7 +50,19 @@ enum ProviderOAuthStore {
             tokens.expiresAt = resp.expiresIn.map { now.addingTimeInterval(TimeInterval($0)) }
             store(tokens, for: provider)
             return tokens.accessToken
-        } catch { return nil }
+        } catch let error as TokenRequestError where error.requiresReauthentication {
+            KeychainStore.delete(account: account(provider))
+            NotificationCenter.default.post(name: .providerKeysChanged, object: nil)
+            Log.generation.notice(
+                "OAuth refresh rejected for \(provider.rawValue); a new sign-in is required"
+            )
+            return nil
+        } catch {
+            Log.generation.notice(
+                "OAuth refresh failed for \(provider.rawValue): \(error.localizedDescription)"
+            )
+            return nil
+        }
     }
 
     static func load(_ provider: GenerationProvider) -> OAuthCore.StoredTokens? {
@@ -108,6 +123,23 @@ enum ProviderOAuthStore {
             clientID: clientID, tokenEndpoint: server.tokenEndpoint), for: provider)
     }
 
+    private struct TokenRequestError: LocalizedError {
+        let status: Int
+        let oauthCode: String?
+        let detail: String?
+
+        var requiresReauthentication: Bool {
+            status == 401
+                || ["invalid_grant", "invalid_token", "unauthorized_client"]
+                    .contains(oauthCode ?? "")
+        }
+
+        var errorDescription: String? {
+            let suffix = detail.map { ": \($0)" } ?? ""
+            return "Token request failed with HTTP \(status)\(suffix)"
+        }
+    }
+
     static func postToken(_ url: URL, body: String) async throws -> OAuthCore.TokenResponse {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -116,9 +148,18 @@ enum ProviderOAuthStore {
         req.httpBody = Data(body.utf8)
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw OAuthError.tokenExchangeFailed("HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)")
+            let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw TokenRequestError(
+                status: (resp as? HTTPURLResponse)?.statusCode ?? 0,
+                oauthCode: payload?["error"] as? String,
+                detail: payload?["error_description"] as? String
+            )
         }
-        return try JSONDecoder().decode(OAuthCore.TokenResponse.self, from: data)
+        let token = try JSONDecoder().decode(OAuthCore.TokenResponse.self, from: data)
+        guard !token.accessToken.isEmpty else {
+            throw OAuthError.tokenExchangeFailed("the provider returned an empty access token")
+        }
+        return token
     }
 
     static func getJSON<T: Decodable>(_ url: URL) async throws -> T {

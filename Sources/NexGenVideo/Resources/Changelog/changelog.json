@@ -2,6 +2,27 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.4.2",
+      "date": "2026-08-27",
+      "sections": [
+        {
+          "heading": "Generation providers",
+          "items": [
+            "Provider and model discovery now completes before generation tools run, and open spend approvals update when connected capabilities change.",
+            "Expired OAuth sessions no longer appear connected or create anonymous provider clients; recoverable outages retain their refresh credentials while rejected sessions request a new sign-in.",
+            "Nano Banana image edits preserve the requested aspect ratio, and fal.ai queue jobs use validated lifecycle URLs without repeating submissions whose outcome is unknown."
+          ]
+        },
+        {
+          "heading": "Generation pipeline",
+          "items": [
+            "Agent video-to-audio generation now routes assigned media and timeline spans through the selected provider instead of stopping after source preparation.",
+            "Provider catalog, OAuth, spend-selection, image, video, audio, and upscale paths now expose actionable diagnostics without recording prompts or credentials."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.4.1",
       "date": "2026-08-23",
       "sections": [

@@ -73,7 +73,8 @@ struct AgentPanelView: View {
                 SpendApprovalCard(
                     approval: approval,
                     onApprove: { option in service.approveSpend(option) },
-                    onDecline: { service.resolveSpend(.declined) }
+                    onDecline: { service.resolveSpend(.declined) },
+                    onRefresh: { service.refreshSpendApproval() }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
             } else if let gate = service.pendingGateApproval,

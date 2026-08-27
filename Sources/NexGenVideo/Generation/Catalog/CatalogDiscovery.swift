@@ -26,6 +26,8 @@ extension MCPProviderClient: MCPCatalogClient {}
 enum CatalogDiscovery {
     private static var running = false
     private static var queued = false
+    private static var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private static var lastCompletedAt: Date?
     private static var observer: NSObjectProtocol?
     /// Bound the enumeration so a misbehaving or huge provider catalog can't loop or balloon memory.
     private static let maxPagesPerModality = 12
@@ -54,6 +56,39 @@ enum CatalogDiscovery {
                 await runOnce()
             } while queued
             running = false
+            lastCompletedAt = Date()
+            let completedWaiters = waiters.values
+            waiters.removeAll()
+            for waiter in completedWaiters { waiter.resume() }
+        }
+    }
+
+    static func ensureCurrent(
+        maxAge: TimeInterval = 60,
+        maxWait: TimeInterval = 10
+    ) async {
+        if let lastCompletedAt,
+           !running,
+           Date().timeIntervalSince(lastCompletedAt) <= maxAge {
+            return
+        }
+        let waiterID = UUID()
+        await withCheckedContinuation { continuation in
+            waiters[waiterID] = continuation
+            if !running { refresh() }
+            Task { @MainActor in
+                let boundedWait = maxWait.isFinite ? max(0, min(maxWait, 60)) : 10
+                if boundedWait > 0 {
+                    try? await Task.sleep(
+                        nanoseconds: UInt64(boundedWait * 1_000_000_000)
+                    )
+                }
+                guard let waiter = waiters.removeValue(forKey: waiterID) else { return }
+                Log.generation.notice(
+                    "catalog readiness wait ended after \(boundedWait)s; discovery continues"
+                )
+                waiter.resume()
+            }
         }
     }
 
@@ -61,12 +96,37 @@ enum CatalogDiscovery {
         var result: [GenerationProvider: [CatalogEntry]] = [:]
         for provider in GenerationProvider.allCases {
             var entries: [CatalogEntry] = []
-            if ProviderMCP.hasConfig(provider) {
+            let mcpConfigured = ProviderMCP.hasConfig(provider)
+            if provider.mcpCapability?.auth == .oauth {
+                ModelCatalog.shared.setProviderDiscoveryState(
+                    mcpConfigured ? .checking : .inactive,
+                    for: provider
+                )
+            }
+            if mcpConfigured {
                 entries += await discover(provider)
             }
             // A provider can be reachable both ways; append rather than replace.
             entries += await DirectImageDiscovery.discover(provider)
             if !entries.isEmpty { result[provider] = entries }
+            if provider.mcpCapability?.auth == .oauth {
+                let state: ProviderDiscoveryState
+                if !ProviderOAuthStore.isConnected(provider) {
+                    state = .actionRequired("Sign in again to refresh this provider's models.")
+                } else if entries.isEmpty {
+                    state = .unavailable(
+                        "Model discovery failed. Check the connection or sign in again."
+                    )
+                } else {
+                    state = .ready(modelCount: entries.count)
+                }
+                ModelCatalog.shared.setProviderDiscoveryState(state, for: provider)
+            }
+            if mcpConfigured || ProviderKeychain.load(provider) != nil {
+                Log.generation.notice(
+                    "catalog provider=\(provider.rawValue) mcp=\(mcpConfigured) models=\(entries.count)"
+                )
+            }
         }
         ModelCatalog.shared.setDiscovered(result)
         Log.generation.notice("catalog discovery: \(result.count) provider(s), \(result.values.map(\.count).reduce(0, +)) model(s)")
@@ -104,7 +164,7 @@ enum CatalogDiscovery {
             // map the discovered generate tools directly.
             if let hint = provider.mcpModelCatalog, tools.contains(where: { $0.name == hint.tool }) {
                 usedModelCatalog = true
-                let models = await enumerate(client: client, hint: hint,
+                let models = await enumerate(provider: provider, client: client, hint: hint,
                                              modalities: Array(toolsByModality.keys))
                 let schemas = Dictionary(uniqueKeysWithValues: toolsByModality.compactMap { modality, name in
                     tools.first(where: { $0.name == name }).map { (modality, $0.inputSchema) }
@@ -131,12 +191,15 @@ enum CatalogDiscovery {
     /// excluded — it has no catalog `type` and stays a REST/workflow op). Stops at the page/model caps
     /// or the first failing page.
     private static func enumerate(
-        client: any MCPCatalogClient, hint: MCPModelCatalog,
+        provider: GenerationProvider,
+        client: any MCPCatalogClient,
+        hint: MCPModelCatalog,
         modalities: [MCPModelDiscovery.Modality]
     ) async -> [MCPModelDiscovery.ModelItem] {
         var all: [MCPModelDiscovery.ModelItem] = []
         for modality in modalities where modality != .upscale {
             var cursor: String?
+            var seenCursors = Set<String>()
             var pages = 0
             repeat {
                 var args = hint.listArgs
@@ -149,13 +212,30 @@ enum CatalogDiscovery {
                         arguments: args.mapValues(Value.string)
                     )
                 }
-                catch { break }
+                catch {
+                    Log.generation.notice(
+                        "catalog listing failed provider=\(provider.rawValue) modality=\(modality.rawValue): \(error.localizedDescription)"
+                    )
+                    break
+                }
                 let parsed = texts.map(MCPModelDiscovery.parseListing)
                 let page = parsed.first(where: { !$0.items.isEmpty || $0.next != nil })
                     ?? (items: [], next: nil)
                 let (items, next) = page
+                if items.isEmpty, next == nil, pages == 0 {
+                    Log.generation.notice(
+                        "catalog listing returned no models provider=\(provider.rawValue) modality=\(modality.rawValue)"
+                    )
+                }
                 all.append(contentsOf: items)
-                cursor = next
+                if let next, !seenCursors.insert(next).inserted {
+                    Log.generation.notice(
+                        "catalog listing repeated cursor provider=\(provider.rawValue) modality=\(modality.rawValue)"
+                    )
+                    cursor = nil
+                } else {
+                    cursor = next
+                }
                 pages += 1
             } while cursor != nil && pages < maxPagesPerModality && all.count < maxModelsPerProvider
         }

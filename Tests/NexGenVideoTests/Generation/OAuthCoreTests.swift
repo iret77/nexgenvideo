@@ -151,10 +151,18 @@ struct OAuthCoreTests {
         let now = Date(timeIntervalSince1970: 1000)
         let long = OAuthCore.StoredTokens(accessToken: "a", refreshToken: nil, expiresAt: nil, clientID: "c", tokenEndpoint: URL(string: "https://a/t")!)
         #expect(long.isFresh(now: now))
+        #expect(long.sessionState(now: now) == .ready)
         var soon = long; soon.expiresAt = now.addingTimeInterval(30)
         #expect(!soon.isFresh(now: now))
+        #expect(soon.sessionState(now: now) == .reauthenticationRequired)
+        soon.refreshToken = "refresh"
+        #expect(soon.sessionState(now: now) == .refreshable)
         var later = long; later.expiresAt = now.addingTimeInterval(120)
         #expect(later.isFresh(now: now))
+        #expect(later.sessionState(now: now) == .ready)
+        var empty = long; empty.accessToken = ""
+        #expect(!empty.isFresh(now: now))
+        #expect(empty.sessionState(now: now) == .reauthenticationRequired)
     }
 
     // MARK: - Provider auth capability model (grounded in real service auth)

@@ -622,6 +622,11 @@ struct GenerationView: View {
             guard !isPopulatingPanel else { return }
             normalizeModelSelection()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .modelCatalogChanged)) { _ in
+            providerKeyRevision += 1
+            guard !isPopulatingPanel else { return }
+            normalizeModelSelection()
+        }
         .onChange(of: selectedType) { _, newValue in
             guard !isPopulatingPanel else { return }
             normalizeModelSelection()
