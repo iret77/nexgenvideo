@@ -46,7 +46,8 @@ enum MarbleModelRegistry {
                     // Marble derives geometry/aspect from the reference image; it
                     // takes no size/aspect param and returns a single panorama.
                     resolutions: nil, aspectRatios: [], qualities: nil,
-                    supportsImageReference: true, requiresImageReference: true, maxImages: 1
+                    supportsImageReference: true, requiresImageReference: true,
+                    maxReferenceImages: 1, maxImages: 1
                 ))
             ),
             model: model

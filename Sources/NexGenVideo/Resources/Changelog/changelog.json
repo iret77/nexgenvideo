@@ -2,6 +2,19 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.4.3",
+      "date": "2026-08-28",
+      "sections": [
+        {
+          "heading": "Generation providers",
+          "items": [
+            "Reference-driven image requests now offer every connected provider and model whose live limits match the assigned media, including Runway and Higgsfield routes alongside fal.ai.",
+            "Provider dispatch now preserves each model's declared reference range, maps Higgsfield uploads to the live tool schema, and replaces an unusable saved selection with a runnable option before requesting spend approval."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.4.2",
       "date": "2026-08-27",
       "sections": [

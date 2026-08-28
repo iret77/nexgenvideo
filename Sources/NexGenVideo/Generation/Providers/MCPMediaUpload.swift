@@ -100,6 +100,7 @@ enum MCPMediaUpload {
         return (try? MCPGenerationArguments.makeMediaConfirm(
             mediaID: "preflight-media",
             filename: "preflight.jpg",
+            mediaType: "image",
             schema: confirm.inputSchema
         )) != nil
     }
@@ -169,6 +170,7 @@ enum MCPMediaUpload {
         let confirmArguments = try MCPGenerationArguments.makeMediaConfirm(
             mediaID: ticket.mediaID,
             filename: fileURL.lastPathComponent,
+            mediaType: mediaType,
             schema: confirmTool.inputSchema
         )
         let confirmPayloads = try await client.callTool(

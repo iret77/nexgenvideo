@@ -48,6 +48,8 @@ struct ImageModelConfig: Identifiable, Sendable {
     var qualities: [String]? { caps.qualities }
     var supportsImageReference: Bool { caps.supportsImageReference }
     var requiresImageReference: Bool { caps.requiresImageReference }
+    var minReferenceImages: Int { caps.minReferenceImages }
+    var maxReferenceImages: Int { caps.maxReferenceImages }
     var maxImages: Int { max(1, min(4, caps.maxImages)) }
 
     func validate(aspectRatio: String, resolution: String?, quality: String?, imageRefCount: Int, numImages: Int) -> String? {
@@ -63,8 +65,14 @@ struct ImageModelConfig: Identifiable, Sendable {
         if imageRefCount > 0, !supportsImageReference {
             return "\(displayName) does not accept reference images."
         }
-        if imageRefCount == 0, requiresImageReference {
-            return "\(displayName) requires a reference image."
+        if imageRefCount < minReferenceImages {
+            if minReferenceImages == 1 {
+                return "\(displayName) requires a reference image."
+            }
+            return "\(displayName) requires at least \(minReferenceImages) reference images."
+        }
+        if imageRefCount > maxReferenceImages {
+            return "\(displayName) accepts at most \(maxReferenceImages) reference image\(maxReferenceImages == 1 ? "" : "s") (got \(imageRefCount))."
         }
         if numImages < 1 || numImages > maxImages {
             return "\(displayName) supports 1…\(maxImages) image\(maxImages == 1 ? "" : "s") per request (got \(numImages))."
@@ -94,5 +102,55 @@ struct ImageModelConfig: Identifiable, Sendable {
         default:          tier = "\(longEdge)p"
         }
         return tier.isEmpty ? orientation : "\(orientation) \(tier)"
+    }
+}
+
+struct ImageAlternativeCandidate: Sendable {
+    let model: ImageModelConfig
+    let aspectRatio: String
+    let resolution: String?
+    let quality: String?
+}
+
+enum ImageAlternativeResolver {
+    static func candidates(
+        models: [ImageModelConfig],
+        excluding modelId: String,
+        aspectRatio: String,
+        resolution: String?,
+        quality: String?,
+        referenceCount: Int,
+        isAvailable: (ImageModelConfig) -> Bool
+    ) -> [ImageAlternativeCandidate] {
+        models
+            .filter { $0.id != modelId && isAvailable($0) }
+            .compactMap { model in
+                let adaptedAspect = model.aspectRatios.contains(aspectRatio)
+                    ? aspectRatio
+                    : (model.aspectRatios.first ?? aspectRatio)
+                let adaptedResolution = model.resolutions.map { allowed in
+                    resolution.flatMap { allowed.contains($0) ? $0 : nil } ?? allowed.first
+                } ?? resolution
+                let adaptedQuality = model.qualities.map { allowed in
+                    quality.flatMap { allowed.contains($0) ? $0 : nil } ?? allowed.last
+                } ?? quality
+                guard model.validate(
+                    aspectRatio: adaptedAspect,
+                    resolution: adaptedResolution,
+                    quality: adaptedQuality,
+                    imageRefCount: referenceCount,
+                    numImages: 1
+                ) == nil else { return nil }
+                return ImageAlternativeCandidate(
+                    model: model,
+                    aspectRatio: adaptedAspect,
+                    resolution: adaptedResolution,
+                    quality: adaptedQuality
+                )
+            }
+            .sorted {
+                $0.model.displayName.localizedCaseInsensitiveCompare($1.model.displayName)
+                    == .orderedAscending
+            }
     }
 }

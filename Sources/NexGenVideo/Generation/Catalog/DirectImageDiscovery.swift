@@ -21,9 +21,8 @@ import Foundation
 enum DirectImageDiscovery {
     /// The direct-API providers whose catalog is resolved at runtime against the key.
     ///
-    /// Runway is here for its discovery-GATED models only (its stable ids stay a static seed): the
-    /// Aleph line proved why a pinned id is not enough — `gen4_aleph` is sunset 2026-07-30, and only
-    /// the account's own model list names the successor it can actually run.
+    /// Runway is entirely discovery-gated: only the account's own model list proves that a pinned id
+    /// is currently entitled and runnable.
     static let providers: [GenerationProvider] = [.google, .runway]
 
     static func discover(_ provider: GenerationProvider) async -> [CatalogEntry] {

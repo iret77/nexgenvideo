@@ -36,14 +36,24 @@ struct MCPMediaUploadTests {
         let uploadSchema: Value = .object([
             "properties": .object([
                 "filename": .object(["type": .string("string")]),
+                "type": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("image"), .string("video"), .string("audio")]),
+                ]),
+                "length": .object(["type": .string("integer")]),
+                "content_type": .object(["type": .string("string")]),
             ]),
-            "required": .array([.string("filename")]),
+            "required": .array([
+                .string("filename"), .string("type"), .string("length"),
+                .string("content_type"),
+            ]),
         ])
         let confirmSchema: Value = .object([
             "properties": .object([
                 "media_id": .object(["type": .string("string")]),
+                "type": .object(["type": .string("string")]),
             ]),
-            "required": .array([.string("media_id")]),
+            "required": .array([.string("media_id"), .string("type")]),
         ])
         let tools = [
             tool("generate_image", "Generate an image."),
@@ -98,11 +108,11 @@ struct MCPMediaUploadTests {
                     "enum": .array([.string("image"), .string("video")]),
                 ]),
                 "content_type": .object(["type": .string("string")]),
-                "size": .object(["type": .string("integer")]),
+                "length": .object(["type": .string("integer")]),
             ]),
             "required": .array([
                 .string("filename"), .string("media_type"),
-                .string("content_type"), .string("size"),
+                .string("content_type"), .string("length"),
             ]),
         ])
 
@@ -117,7 +127,30 @@ struct MCPMediaUploadTests {
         #expect(arguments["filename"] == .string("reference.jpg"))
         #expect(arguments["media_type"] == .string("image"))
         #expect(arguments["content_type"] == .string("image/jpeg"))
-        #expect(arguments["size"] == .int(42))
+        #expect(arguments["length"] == .int(42))
+    }
+
+    @Test func confirmationMetadataMatchesTheDiscoveredSchema() throws {
+        let schema: Value = .object([
+            "properties": .object([
+                "media_id": .object(["type": .string("string")]),
+                "type": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("image"), .string("video"), .string("audio")]),
+                ]),
+            ]),
+            "required": .array([.string("media_id"), .string("type")]),
+        ])
+
+        let arguments = try MCPGenerationArguments.makeMediaConfirm(
+            mediaID: "pending-123",
+            filename: "reference.jpg",
+            mediaType: "image",
+            schema: schema
+        )
+
+        #expect(arguments["media_id"] == .string("pending-123"))
+        #expect(arguments["type"] == .string("image"))
     }
 
     @Test func malformedUploadTicketFailsClosed() {

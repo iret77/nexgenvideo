@@ -49,8 +49,38 @@ struct CatalogDiscoveryTests {
                     ]),
                     "required": .array([.string("model"), .string("prompt")]),
                 ]),
+                "medias": .object([
+                    "type": .string("array"),
+                    "items": .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "value": .object(["type": .string("string")]),
+                            "role": .object(["type": .string("string")]),
+                        ]),
+                        "required": .array([.string("value"), .string("role")]),
+                    ]),
+                ]),
             ]),
             "required": .array([.string("params")]),
+        ])
+        let uploadSchema: Value = .object([
+            "properties": .object([
+                "filename": .object(["type": .string("string")]),
+                "type": .object(["type": .string("string")]),
+                "length": .object(["type": .string("integer")]),
+                "content_type": .object(["type": .string("string")]),
+            ]),
+            "required": .array([
+                .string("filename"), .string("type"), .string("length"),
+                .string("content_type"),
+            ]),
+        ])
+        let confirmSchema: Value = .object([
+            "properties": .object([
+                "media_id": .object(["type": .string("string")]),
+                "type": .object(["type": .string("string")]),
+            ]),
+            "required": .array([.string("media_id"), .string("type")]),
         ])
         let tools = [
             MCPProviderClient.DiscoveredTool(
@@ -63,11 +93,23 @@ struct CatalogDiscoveryTests {
                 description: "Find generation models.",
                 inputSchema: .object([:])
             ),
+            MCPProviderClient.DiscoveredTool(
+                name: "media_upload",
+                description: "Create a media upload.",
+                inputSchema: uploadSchema
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "media_confirm",
+                description: "Confirm uploaded media.",
+                inputSchema: confirmSchema
+            ),
         ]
         let listing = #"""
         {"items":[
-          {"id":"nano_banana_pro","name":"Nano Banana Pro","output_type":"image","aspect_ratios":["1:1","16:9"]},
-          {"id":"gpt_image_2","name":"GPT Image 2","output_type":"image","aspect_ratios":["1:1","16:9"]}
+          {"id":"nano_banana_2","name":"Nano Banana Pro","output_type":"image","aspect_ratios":["1:1","16:9"],
+           "medias":[{"name":"medias","type":"image","roles":["image_references"],"min":0,"max":14}]},
+          {"id":"gpt_image_2","name":"GPT Image 2","output_type":"image","aspect_ratios":["1:1","16:9"],
+           "medias":[{"name":"medias","type":"image","roles":["image_references"],"min":0,"max":16}]}
         ],"has_more":false}
         """#
         let client = StubClient(tools: tools, listing: listing)
@@ -83,9 +125,24 @@ struct CatalogDiscoveryTests {
                 transport: .mcp,
                 providerRef: "generate_image",
                 modelParam: entry.id,
-                mcpMediaRoles: []
+                mcpMediaRoles: ["image_references"]
             )]
         })
+        for entry in entries {
+            guard case .image(let caps) = entry.uiCapabilities else {
+                Issue.record("Expected image capabilities")
+                continue
+            }
+            #expect(caps.maxReferenceImages >= 14)
+            let model = ImageModelConfig(entry: entry, caps: caps)
+            #expect(model.validate(
+                aspectRatio: "16:9",
+                resolution: nil,
+                quality: nil,
+                imageRefCount: 4,
+                numImages: 1
+            ) == nil)
+        }
         #expect(snapshot.calls == ["models_explore"])
         #expect(snapshot.disconnected)
     }

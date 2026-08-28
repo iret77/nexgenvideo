@@ -23,6 +23,50 @@ enum CostGuard {
     }
 }
 
+struct SpendModelCandidate: Sendable {
+    let modelId: String
+    let modelName: String
+    let credits: Int?
+}
+
+enum SpendOptionBuilder {
+    @MainActor
+    static func options(
+        candidates: [SpendModelCandidate],
+        isModelAvailable: (String) -> Bool,
+        runnableBindings: (String) -> [ProviderBinding]
+    ) -> [SpendOption] {
+        candidates
+            .filter { isModelAvailable($0.modelId) }
+            .flatMap { candidate in
+                runnableBindings(candidate.modelId).map { binding in
+                    SpendOption(
+                        modelId: candidate.modelId,
+                        modelName: candidate.modelName,
+                        target: ResolvedGenerationTarget(
+                            modelId: candidate.modelId,
+                            provider: binding.provider,
+                            endpoint: binding.providerRef,
+                            binding: binding
+                        ),
+                        credits: candidate.credits,
+                        requiresCatalogAvailability: true
+                    )
+                }
+            }
+    }
+
+    static func recommended(
+        from options: [SpendOption],
+        currentModelId: String,
+        defaultTarget: ResolvedGenerationTarget
+    ) -> SpendOption? {
+        options.first {
+            $0.modelId == currentModelId && $0.target == defaultTarget
+        } ?? options.first
+    }
+}
+
 /// One exact model/provider combination the user can approve and dispatch unchanged.
 struct SpendOption: Identifiable, Equatable, Sendable {
     let modelId: String

@@ -895,9 +895,7 @@ final class GenerationService {
                     model: model.apiModel, promptImage: image, promptText: p.prompt,
                     ratio: RunwayModelRegistry.videoRatio(for: p.aspectRatio), duration: duration)
             case .image(let p):
-                taskId = try await client.createTextToImage(
-                    model: model.apiModel, promptText: p.prompt,
-                    ratio: RunwayModelRegistry.imageRatio(for: p.aspectRatio))
+                taskId = try await client.createTextToImage(model: model, params: p)
             default:
                 return failBeforeSubmission(
                     placeholders, "Unsupported Runway request: \(endpoint)",

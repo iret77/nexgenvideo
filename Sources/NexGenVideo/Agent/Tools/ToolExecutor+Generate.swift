@@ -1,12 +1,6 @@
 import Foundation
 import NexGenEngine
 
-private struct SpendModelCandidate {
-    let modelId: String
-    let modelName: String
-    let credits: Int?
-}
-
 extension ToolExecutor {
     func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) async throws -> ToolResult {
         let prompt = try args.requireString("prompt")
@@ -187,51 +181,43 @@ extension ToolExecutor {
     private func confirmSpend(
         _ editor: EditorViewModel, currentModelId: String, currentModelName: String,
         credits: Int?, actionLabel: String,
+        currentIsCompatible: Bool = true,
+        noCompatibleModelReason: String? = nil,
         alternatives: @escaping @MainActor () -> [SpendModelCandidate]
     ) async throws -> SpendOption {
         func currentOptions() -> [SpendOption] {
-            let candidates = [SpendModelCandidate(
-                modelId: currentModelId,
-                modelName: currentModelName,
-                credits: credits
-            )] + alternatives()
-            return candidates.filter {
-                ModelRegistry.exists(id: $0.modelId)
-                    && ModelPreferences.shared.isEnabled($0.modelId)
-            }.flatMap { candidate in
-                ProviderManifest.runnableBindingsByProvider(forModelId: candidate.modelId).map { binding in
-                    SpendOption(
-                        modelId: candidate.modelId,
-                        modelName: candidate.modelName,
-                        target: ResolvedGenerationTarget(
-                            modelId: candidate.modelId,
-                            provider: binding.provider,
-                            endpoint: binding.providerRef,
-                            binding: binding
-                        ),
-                        credits: candidate.credits,
-                        requiresCatalogAvailability: true
-                    )
-                }
-            }
+            let current = currentIsCompatible ? [SpendModelCandidate(
+                modelId: currentModelId, modelName: currentModelName, credits: credits
+            )] : []
+            return SpendOptionBuilder.options(
+                candidates: current + alternatives(),
+                isModelAvailable: {
+                    ModelRegistry.exists(id: $0) && ModelPreferences.shared.isEnabled($0)
+                },
+                runnableBindings: ProviderManifest.runnableBindingsByProvider
+            )
         }
         let options = currentOptions()
         let defaultTarget = GenerationService.dispatchTarget(modelId: currentModelId)
-        guard let recommended = options.first(where: {
-            $0.modelId == currentModelId && $0.target == defaultTarget
-        }) else {
+        guard let recommended = SpendOptionBuilder.recommended(
+            from: options,
+            currentModelId: currentModelId,
+            defaultTarget: defaultTarget
+        ) else {
             throw ToolError(
-                "The selected model is no longer available through an active provider. Choose a runnable model from list_models."
+                noCompatibleModelReason
+                    ?? "No enabled model is available through an active provider for this request. Choose a runnable model from list_models."
             )
         }
-        guard CostGuard.needsApproval(credits: credits) else { return recommended }
+        guard CostGuard.needsApproval(credits: recommended.credits) else { return recommended }
         let approvalID = UUID().uuidString
         func makeApproval() -> SpendApproval {
             let latest = currentOptions()
-            let latestRecommended = latest.first(where: {
-                $0.modelId == currentModelId
-                    && $0.target == GenerationService.dispatchTarget(modelId: currentModelId)
-            }) ?? latest.first
+            let latestRecommended = SpendOptionBuilder.recommended(
+                from: latest,
+                currentModelId: currentModelId,
+                defaultTarget: GenerationService.dispatchTarget(modelId: currentModelId)
+            )
             let ordered = latestRecommended.map { option in
                 [option] + latest.filter { $0.id != option.id }
             } ?? []
@@ -295,42 +281,32 @@ extension ToolExecutor {
         quality: String?,
         referenceCount: Int
     ) -> [SpendModelCandidate] {
-        return ImageModelConfig.allModels
-            .filter {
-                $0.id != modelId
-                    && !MarbleModelRegistry.isMarbleModel($0.id)
+        ImageAlternativeResolver.candidates(
+            models: ImageModelConfig.allModels,
+            excluding: modelId,
+            aspectRatio: aspectRatio,
+            resolution: resolution,
+            quality: quality,
+            referenceCount: referenceCount,
+            isAvailable: {
+                !MarbleModelRegistry.isMarbleModel($0.id)
                     && ModelPreferences.shared.isEnabled($0.id)
                     && GenerationProvider.canRun(modelId: $0.id)
             }
-            .compactMap { m -> SpendModelCandidate? in
-                let adaptedAspect = m.aspectRatios.contains(aspectRatio)
-                    ? aspectRatio
-                    : (m.aspectRatios.first ?? aspectRatio)
-                let adaptedResolution = m.resolutions.map { allowed in
-                    resolution.flatMap { allowed.contains($0) ? $0 : nil } ?? allowed.first
-                } ?? resolution
-                let adaptedQuality = m.qualities.map { allowed in
-                    quality.flatMap { allowed.contains($0) ? $0 : nil } ?? allowed.last
-                } ?? quality
-                guard m.validate(
-                    aspectRatio: adaptedAspect,
-                    resolution: adaptedResolution,
-                    quality: adaptedQuality,
-                    imageRefCount: referenceCount,
-                    numImages: 1
-                ) == nil else { return nil }
+        )
+            .map { candidate in
+                let model = candidate.model
                 return SpendModelCandidate(
-                    modelId: m.id,
-                    modelName: m.displayName,
+                    modelId: model.id,
+                    modelName: model.displayName,
                     credits: CostEstimator.imageCost(
-                        model: m,
-                        resolution: adaptedResolution,
-                        quality: adaptedQuality,
+                        model: model,
+                        resolution: candidate.resolution,
+                        quality: candidate.quality,
                         numImages: 1
                     )
                 )
             }
-            .sorted { $0.modelName.localizedCaseInsensitiveCompare($1.modelName) == .orderedAscending }
     }
 
     @MainActor
@@ -611,15 +587,13 @@ extension ToolExecutor {
             }
             return a
         }
-        if let error = model.validate(
+        let currentValidation = model.validate(
             aspectRatio: aspectRatio,
             resolution: resolution,
             quality: quality,
             imageRefCount: refs.count,
             numImages: 1
-        ) {
-            throw ToolError(error)
-        }
+        )
         let isMarble = MarbleModelRegistry.isMarbleModel(model.id)
         if isMarble, refs.isEmpty {
             throw ToolError(
@@ -632,6 +606,8 @@ extension ToolExecutor {
         let approved = try await confirmSpend(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate image",
+            currentIsCompatible: currentValidation == nil,
+            noCompatibleModelReason: currentValidation,
             alternatives: {
                 isMarble ? [] : self.availableImageAlternatives(
                     than: model.id,
@@ -1098,6 +1074,9 @@ extension ToolExecutor {
             "aspectRatios": m.aspectRatios,
             "supportsImageReference": m.supportsImageReference,
             "requiresImageReference": m.requiresImageReference,
+            "minReferenceImages": m.minReferenceImages,
+            "maxReferenceImages": m.maxReferenceImages,
+            "maxImages": m.maxImages,
         ]
         if includeType { info["type"] = "image" }
         if let r = m.resolutions { info["resolutions"] = r }
