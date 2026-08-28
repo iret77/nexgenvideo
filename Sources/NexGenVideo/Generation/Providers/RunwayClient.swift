@@ -48,12 +48,49 @@ actor RunwayClient {
     }
 
     /// POST /v1/text_to_image.
-    func createTextToImage(model: String, promptText: String, ratio: String) async throws -> String {
-        try await createTask(path: "text_to_image", body: [
-            "model": model,
-            "promptText": promptText,
+    func createTextToImage(model: RunwayModel, params: ImageGenerationParams) async throws -> String {
+        try await createTask(
+            path: "text_to_image",
+            body: try Self.textToImageBody(model: model, params: params)
+        )
+    }
+
+    static func textToImageBody(
+        model: RunwayModel,
+        params: ImageGenerationParams
+    ) throws -> [String: Any] {
+        guard let request = model.imageRequest,
+              let ratio = RunwayModelRegistry.imageRatio(for: model, aspect: params.aspectRatio),
+              case .image(let caps) = model.entry.uiCapabilities else {
+            throw GenerationBackendError.transport(
+                "\(model.entry.displayName) is not a Runway image-generation model."
+            )
+        }
+        let config = ImageModelConfig(entry: model.entry, caps: caps)
+        if let error = config.validate(
+            aspectRatio: params.aspectRatio,
+            resolution: params.resolution,
+            quality: params.quality,
+            imageRefCount: params.imageURLs.count,
+            numImages: params.numImages
+        ) {
+            throw GenerationBackendError.transport(error)
+        }
+        var body: [String: Any] = [
+            "model": model.apiModel,
+            "promptText": params.prompt,
             "ratio": ratio,
-        ])
+        ]
+        if !params.imageURLs.isEmpty {
+            body["referenceImages"] = params.imageURLs.map { ["uri": $0] }
+        }
+        if request.sendsOutputCount, params.numImages > 1 {
+            body["outputCount"] = params.numImages
+        }
+        if request.sendsQuality, let quality = params.quality {
+            body["quality"] = quality
+        }
+        return body
     }
 
     func output(taskId: String) async throws -> [String] {

@@ -47,7 +47,7 @@ enum GoogleModelRegistry {
                 allowedEndpoints: ["fal-ai/gemini-25-flash-image/edit"], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
-                    supportsImageReference: true, maxImages: 1))),
+                    supportsImageReference: true, maxReferenceImages: 3, maxImages: 1))),
             apiModelCandidates: ["gemini-2.5-flash-image", "gemini-2.5-flash-image-preview"]),
         // The current Gemini image line. No fal counterpart in the registry, so these carry their own
         // `google/` ids. Two tiers, because that is the real choice: quality vs speed/price. (The
@@ -60,7 +60,7 @@ enum GoogleModelRegistry {
                 allowedEndpoints: ["google/gemini-3-pro-image"], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
-                    supportsImageReference: true, maxImages: 1))),
+                    supportsImageReference: true, maxReferenceImages: 14, maxImages: 1))),
             apiModelCandidates: ["gemini-3-pro-image", "gemini-3-pro-image-preview"]),
         GoogleImageModel(
             entry: CatalogEntry(
@@ -69,7 +69,7 @@ enum GoogleModelRegistry {
                 allowedEndpoints: ["google/gemini-3.1-flash-image"], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
                     resolutions: nil, aspectRatios: geminiAspects, qualities: nil,
-                    supportsImageReference: true, maxImages: 1))),
+                    supportsImageReference: true, maxReferenceImages: 14, maxImages: 1))),
             apiModelCandidates: ["gemini-3.1-flash-image", "gemini-3.1-flash-image-preview"]),
     ]
 

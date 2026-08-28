@@ -241,7 +241,13 @@ enum MCPModelDiscovery {
 
     private static func videoCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> VideoCaps {
         let roles = allowsLocalMedia ? mediaRoles(model) : []
-        let hasImageRef = allowsLocalMedia && hasImageMedia(model)
+        let imageBounds = allowsLocalMedia
+            ? mediaBounds(model, type: "image") : (min: 0, max: 0)
+        let videoBounds = allowsLocalMedia
+            ? mediaBounds(model, type: "video") : (min: 0, max: 0)
+        let audioBounds = allowsLocalMedia
+            ? mediaBounds(model, type: "audio") : (min: 0, max: 0)
+        let totalMaximum = imageBounds.max + videoBounds.max + audioBounds.max
         return VideoCaps(
             durations: model.durations ?? [],
             durationRange: durationRange(model.durationRange),
@@ -250,20 +256,25 @@ enum MCPModelDiscovery {
             aspectRatios: aspectRatios(model),
             supportsFirstFrame: roles.contains("start_image"),
             supportsLastFrame: roles.contains("end_image"),
-            maxReferenceImages: hasImageRef ? 1 : 0,
-            maxReferenceVideos: 0, maxReferenceAudios: 0,
-            maxTotalReferences: nil,
+            maxReferenceImages: imageBounds.max,
+            maxReferenceVideos: videoBounds.max, maxReferenceAudios: audioBounds.max,
+            maxTotalReferences: totalMaximum > 0 ? totalMaximum : nil,
             maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil,
             framesAndReferencesExclusive: false, referenceTagNoun: "image",
-            requiresSourceVideo: false, requiresReferenceImage: false)
+            requiresSourceVideo: false, requiresReferenceImage: imageBounds.min > 0)
     }
 
     private static func imageCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> ImageCaps {
+        let bounds = allowsLocalMedia
+            ? mediaBounds(model, type: "image") : (min: 0, max: 0)
         ImageCaps(
             resolutions: options(model, param: "resolution"),
             aspectRatios: aspectRatios(model),
             qualities: options(model, param: "quality") ?? options(model, param: "mode"),
-            supportsImageReference: allowsLocalMedia && hasImageMedia(model),
+            supportsImageReference: bounds.max > 0,
+            requiresImageReference: bounds.min > 0,
+            minReferenceImages: bounds.min,
+            maxReferenceImages: bounds.max,
             maxImages: maxOutputImages(model))
     }
 
@@ -329,6 +340,15 @@ enum MCPModelDiscovery {
 
     private static func hasMedia(_ model: ModelItem, type: String) -> Bool {
         (model.medias ?? []).contains { ($0.type ?? "").lowercased() == type }
+    }
+
+    private static func mediaBounds(_ model: ModelItem, type: String) -> (min: Int, max: Int) {
+        (model.medias ?? [])
+            .filter { ($0.type ?? "").lowercased() == type }
+            .reduce(into: (min: 0, max: 0)) { bounds, media in
+                bounds.min += Swift.max(0, media.min ?? 0)
+                bounds.max += Swift.max(0, media.max ?? 1)
+            }
     }
 
     private static func maxOutputImages(_ model: ModelItem) -> Int {

@@ -123,10 +123,15 @@ enum MCPGenerationArguments {
     static func makeMediaConfirm(
         mediaID: String,
         filename: String,
+        mediaType: String,
         schema: Value
     ) throws -> [String: Value] {
         let result = try map(
-            candidates: ["mediaid": .string(mediaID), "filename": .string(filename)],
+            candidates: [
+                "mediaid": .string(mediaID),
+                "filename": .string(filename),
+                "mediatype": .string(mediaType),
+            ],
             media: [],
             schema: schema,
             mode: .mediaConfirm
@@ -416,13 +421,14 @@ enum MCPGenerationArguments {
             case "filename", "name": ["filename"]
             case "mimetype", "contenttype": ["mimetype"]
             case "mediatype", "type": ["mediatype", "mimetype"]
-            case "filesize", "size", "contentlength": ["filesize"]
+            case "filesize", "size", "length", "contentlength": ["filesize"]
             default: []
             }
         case .mediaConfirm:
             switch field {
             case "id", "mediaid", "pendingid", "uploadid": ["mediaid"]
             case "filename", "name": ["filename"]
+            case "mediatype", "type": ["mediatype"]
             default: []
             }
         }

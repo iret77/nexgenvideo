@@ -50,7 +50,8 @@ enum ModelRegistry {
 final class ModelCatalog {
     static let shared = ModelCatalog()
     static let launchEntries =
-        FalModelRegistry.entries + MarbleModelRegistry.entries + RunwayModelRegistry.entries
+        FalModelRegistry.entries + MarbleModelRegistry.entries
+    static let bootstrapEntries = launchEntries + RunwayModelRegistry.entries
 
     private(set) var video: [VideoModelConfig] = []
     private(set) var image: [ImageModelConfig] = []
@@ -160,7 +161,7 @@ final class ModelCatalog {
 
     func modelKindForRerun(id: String) -> ModelKind? {
         if let current = byId[id] { return current }
-        guard !isLoaded, let entry = Self.launchEntries.first(where: { $0.id == id }) else {
+        guard !isLoaded, let entry = Self.bootstrapEntries.first(where: { $0.id == id }) else {
             return nil
         }
         switch entry.uiCapabilities {
@@ -524,6 +525,8 @@ struct ImageCaps: Decodable, Sendable {
     let qualities: [String]?
     let supportsImageReference: Bool
     let requiresImageReference: Bool
+    let minReferenceImages: Int
+    let maxReferenceImages: Int
     let maxImages: Int
 
     init(
@@ -532,32 +535,55 @@ struct ImageCaps: Decodable, Sendable {
         qualities: [String]?,
         supportsImageReference: Bool,
         requiresImageReference: Bool = false,
+        minReferenceImages: Int? = nil,
+        maxReferenceImages: Int? = nil,
         maxImages: Int
     ) {
+        let minimum = max(0, minReferenceImages ?? (requiresImageReference ? 1 : 0))
+        let maximum = max(0, maxReferenceImages ?? (supportsImageReference ? max(1, minimum) : 0))
         self.resolutions = resolutions
         self.aspectRatios = aspectRatios
         self.qualities = qualities
-        self.supportsImageReference = supportsImageReference
-        self.requiresImageReference = requiresImageReference
+        self.supportsImageReference = supportsImageReference && maximum > 0
+        self.requiresImageReference = requiresImageReference || minimum > 0
+        self.minReferenceImages = minimum
+        self.maxReferenceImages = maximum
         self.maxImages = maxImages
     }
 
     private enum CodingKeys: String, CodingKey {
         case resolutions, aspectRatios, qualities, supportsImageReference
-        case requiresImageReference, maxImages
+        case requiresImageReference, minReferenceImages, maxReferenceImages, maxImages
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        resolutions = try container.decodeIfPresent([String].self, forKey: .resolutions)
-        aspectRatios = try container.decode([String].self, forKey: .aspectRatios)
-        qualities = try container.decodeIfPresent([String].self, forKey: .qualities)
-        supportsImageReference = try container.decode(Bool.self, forKey: .supportsImageReference)
-        requiresImageReference = try container.decodeIfPresent(
+        let resolutions = try container.decodeIfPresent([String].self, forKey: .resolutions)
+        let aspectRatios = try container.decode([String].self, forKey: .aspectRatios)
+        let qualities = try container.decodeIfPresent([String].self, forKey: .qualities)
+        let supportsImageReference = try container.decode(Bool.self, forKey: .supportsImageReference)
+        let requiresImageReference = try container.decodeIfPresent(
             Bool.self,
             forKey: .requiresImageReference
         ) ?? false
-        maxImages = try container.decode(Int.self, forKey: .maxImages)
+        let minReferenceImages = try container.decodeIfPresent(
+            Int.self,
+            forKey: .minReferenceImages
+        )
+        let maxReferenceImages = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maxReferenceImages
+        )
+        self.init(
+            resolutions: resolutions,
+            aspectRatios: aspectRatios,
+            qualities: qualities,
+            supportsImageReference: supportsImageReference,
+            requiresImageReference: requiresImageReference,
+            minReferenceImages: minReferenceImages,
+            maxReferenceImages: maxReferenceImages,
+            maxImages: try container.decode(Int.self, forKey: .maxImages)
+        )
     }
 }
 
