@@ -267,7 +267,7 @@ enum MCPModelDiscovery {
     private static func imageCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> ImageCaps {
         let bounds = allowsLocalMedia
             ? mediaBounds(model, type: "image") : (min: 0, max: 0)
-        ImageCaps(
+        return ImageCaps(
             resolutions: options(model, param: "resolution"),
             aspectRatios: aspectRatios(model),
             qualities: options(model, param: "quality") ?? options(model, param: "mode"),
