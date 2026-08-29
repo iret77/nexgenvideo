@@ -1029,7 +1029,7 @@ final class AppState {
         let attributed = NSAttributedString(string: text, attributes: [
             .paragraphStyle: style,
             .font: font,
-            .foregroundColor: AppTheme.Text.primary,
+            .foregroundColor: AppTheme.Text.systemSecondary,
         ])
         let label = NSTextField(labelWithAttributedString: attributed)
         label.lineBreakMode = .byWordWrapping

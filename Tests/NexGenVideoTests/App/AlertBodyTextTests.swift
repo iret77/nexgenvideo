@@ -32,6 +32,33 @@ struct AlertBodyTextTests {
         #expect(field.usesSingleLineMode == false)
     }
 
+    @Test("the text adapts to the native alert appearance")
+    func textAdaptsToAlertAppearance() throws {
+        let field = try #require(AppState.bodyText("Adaptive alert body") as? NSTextField)
+        let color = try #require(
+            field.attributedStringValue.attribute(
+                .foregroundColor,
+                at: 0,
+                effectiveRange: nil
+            ) as? NSColor
+        )
+        let lightAppearance = try #require(NSAppearance(named: .aqua))
+        let darkAppearance = try #require(NSAppearance(named: .darkAqua))
+        var lightColor: NSColor?
+        var darkColor: NSColor?
+        lightAppearance.performAsCurrentDrawingAppearance {
+            lightColor = color.usingColorSpace(.deviceRGB)
+        }
+        darkAppearance.performAsCurrentDrawingAppearance {
+            darkColor = color.usingColorSpace(.deviceRGB)
+        }
+        let resolvedLight = try #require(lightColor)
+        let resolvedDark = try #require(darkColor)
+
+        #expect(resolvedLight.brightnessComponent < 0.5)
+        #expect(resolvedDark.brightnessComponent > 0.5)
+    }
+
     @Test("the label reserves the full wrapped text height")
     func labelFitsWrappedText() throws {
         let long = String(repeating: "wrapping across several lines. ", count: 8)
