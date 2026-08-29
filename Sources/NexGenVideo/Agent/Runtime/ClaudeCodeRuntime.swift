@@ -267,7 +267,7 @@ final class ClaudeCodeRuntime {
         for (provider, name) in providerEnvNames {
             if let key = ProviderKeychain.load(provider) { env[name] = key }
         }
-        // Spend approval still suspends; gate approval no longer depends on this timeout.
+        // Provider and pipeline operations may legitimately run for several minutes.
         env["MCP_TOOL_TIMEOUT"] = "1800000"
         env["MCP_TOOL_IDLE_TIMEOUT"] = "1800000"
         return env

@@ -8,7 +8,11 @@ extension ToolExecutor {
     /// gates hold: content generation is refused here (it must go through the gated generate_* paths
     /// so the prompt engine runs), and the paid call waits for the user's spend approval — the agent
     /// never spends or calls a provider on its own.
-    func runProviderTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+    func runProviderTool(
+        _ editor: EditorViewModel,
+        _ args: [String: Any],
+        origin: ToolCallOrigin
+    ) async throws -> ToolResult {
         let tool = try args.requireString("tool")
         if Self.looksLikeGeneration(tool) {
             throw ToolError("'\(tool)' looks like content generation — use generate_video / generate_image / generate_audio (or upscale_media). Those enforce the prompt engine and the spend confirmation; run_provider_tool is for non-generative workflow tools only.")
@@ -71,44 +75,79 @@ extension ToolExecutor {
                 options: [option],
                 actionLabel: "Run \(match.name)"
             )
-            switch await editor.agentService.requestSpendApproval(approval) {
-            case .approved:
-                break
-            case .declined:
+            await client.disconnect()
+            let release: @MainActor () -> Void = {
                 try? editor.recordSpendEvent(
                     authorization: authorization,
                     kind: .released,
-                    note: "User declined the provider tool."
+                    note: "The provider tool was not submitted."
                 )
-                await client.disconnect()
-                throw ToolError("Tool call declined — the user did not approve running '\(match.name)'.")
-            case .blocked(let reason):
-                try? editor.recordSpendEvent(
-                    authorization: authorization,
-                    kind: .released,
-                    note: reason
-                )
-                await client.disconnect()
-                throw ToolError(reason)
             }
-
             do {
-                try editor.recordSpendEvent(
-                    authorization: authorization,
-                    kind: .submitted,
-                    providerRequestId: UUID().uuidString,
-                    money: authorization.estimate
+                return try editor.agentService.requestSpendApproval(
+                    approval,
+                    origin: origin,
+                    cancel: release,
+                    execute: { _ in
+                        guard let approvedClient = await ProviderMCP.client(for: provider) else {
+                            throw ToolError("\(provider.displayName) is no longer connected.")
+                        }
+                        let currentTools: [MCPProviderClient.DiscoveredTool]
+                        do {
+                            currentTools = try await approvedClient.discoverTools()
+                        } catch {
+                            await approvedClient.disconnect()
+                            throw ToolError(
+                                "Couldn't revalidate \(provider.displayName): \(error.localizedDescription)"
+                            )
+                        }
+                        guard let current = currentTools.first(where: {
+                            $0.name.caseInsensitiveCompare(match.name) == .orderedSame
+                        }),
+                        !Self.advertisesPrompt(current.inputSchema) else {
+                            await approvedClient.disconnect()
+                            throw ToolError(
+                                "\(match.name) is no longer an available prompt-free provider tool."
+                            )
+                        }
+                        do {
+                            try editor.recordSpendEvent(
+                                authorization: authorization,
+                                kind: .submitted,
+                                providerRequestId: UUID().uuidString,
+                                money: authorization.estimate
+                            )
+                        } catch {
+                            await approvedClient.disconnect()
+                            throw error
+                        }
+                        do {
+                            let texts = try await approvedClient.callTool(
+                                name: current.name,
+                                arguments: arguments
+                            )
+                            await approvedClient.disconnect()
+                            let body = texts.joined(separator: "\n")
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                            if body.isEmpty {
+                                return .ok(
+                                    "\(current.name) ran on \(provider.displayName) with no text output."
+                                )
+                            }
+                            return .ok(
+                                "\(current.name) (\(provider.displayName)):\n\(body)\n\nIf this returned media URLs, import them with import_media before using them on the timeline."
+                            )
+                        } catch {
+                            await approvedClient.disconnect()
+                            return .error(
+                                "\(current.name) on \(provider.displayName) failed after submission: \(error.localizedDescription)"
+                            )
+                        }
+                    }
                 )
-                let texts = try await client.callTool(name: match.name, arguments: arguments)
-                await client.disconnect()
-                let body = texts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-                if body.isEmpty {
-                    return .ok("\(match.name) ran on \(provider.displayName) with no text output.")
-                }
-                return .ok("\(match.name) (\(provider.displayName)):\n\(body)\n\nIf this returned media URLs, import them with import_media before using them on the timeline.")
             } catch {
-                await client.disconnect()
-                throw ToolError("\(match.name) on \(provider.displayName) failed: \(error.localizedDescription)")
+                release()
+                throw error
             }
         }
 

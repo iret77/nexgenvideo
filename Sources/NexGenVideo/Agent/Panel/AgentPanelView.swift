@@ -72,8 +72,12 @@ struct AgentPanelView: View {
             if let approval = service.pendingSpendApproval {
                 SpendApprovalCard(
                     approval: approval,
-                    onApprove: { option in service.approveSpend(option) },
-                    onDecline: { service.resolveSpend(.declined) },
+                    error: service.spendApprovalError,
+                    isWorking: service.spendApprovalIsRunning,
+                    onApprove: { option in
+                        Task { await service.approveSpend(option) }
+                    },
+                    onDecline: { service.declineSpend() },
                     onRefresh: { service.refreshSpendApproval() }
                 )
                 .padding(.bottom, AppTheme.Spacing.xs)
@@ -191,6 +195,13 @@ struct AgentPanelView: View {
                 detail: service.pendingGateApproval.map {
                     PhaseDisplay.label($0.phase)
                 } ?? "Updating the pipeline gate"
+            )
+        }
+        if service.spendApprovalIsRunning {
+            return AgentLiveStatus(
+                state: .working,
+                title: "Starting generation",
+                detail: service.pendingSpendApproval?.actionLabel ?? "Submitting the approved request"
             )
         }
         if service.submittingDialogID != nil {

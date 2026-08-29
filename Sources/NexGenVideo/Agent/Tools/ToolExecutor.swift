@@ -111,6 +111,7 @@ final class ToolExecutor {
             result = try await run(tool, editor, resolved, origin: origin)
             if tool != .runPhase,
                !result.isError,
+               result.turnDisposition == .continueTurn,
                let phase = guardedPhase,
                let root = guardedRoot,
                tool.invalidatesPhaseState(args: resolved, dataRoot: root) {
@@ -138,7 +139,9 @@ final class ToolExecutor {
         }
         // A successful pipeline write diverges the working copy from the saved package — mark the
         // document edited so ⌘S persists it and the user is warned before closing without saving.
-        if !result.isError, tool.isDurableWrite {
+        if !result.isError,
+           result.turnDisposition == .continueTurn,
+           tool.isDurableWrite {
             editor.onPipelineChanged?()
         }
         feedbackState.record(result, for: tool)
@@ -213,16 +216,16 @@ final class ToolExecutor {
         case .compilePrompt: return try await compilePrompt(editor, args)
         case .generateVideo:
             await CatalogDiscovery.ensureCurrent()
-            return try await generate(editor, args, type: .video)
+            return try await generate(editor, args, type: .video, origin: origin)
         case .generateImage:
             await CatalogDiscovery.ensureCurrent()
-            return try await generate(editor, args, type: .image)
+            return try await generate(editor, args, type: .image, origin: origin)
         case .generateAudio:
             await CatalogDiscovery.ensureCurrent()
-            return try await generateAudio(editor, args)
+            return try await generateAudio(editor, args, origin: origin)
         case .upscaleMedia:
             await CatalogDiscovery.ensureCurrent()
-            return try await upscaleMedia(editor, args)
+            return try await upscaleMedia(editor, args, origin: origin)
         case .importMedia:   return try await importMedia(editor, args)
         case .listModels:
             await CatalogDiscovery.ensureCurrent()
@@ -275,7 +278,7 @@ final class ToolExecutor {
         case .resolveModel:         return try resolveModelTool(editor, args)
         case .getUIContract:        return try getUIContractTool(editor)
         case .setGateState:         return try await setGateStateTool(editor, args, origin: origin)
-        case .runProviderTool:      return try await runProviderTool(editor, args)
+        case .runProviderTool:      return try await runProviderTool(editor, args, origin: origin)
         }
     }
 
