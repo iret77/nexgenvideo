@@ -5,6 +5,25 @@ import Testing
 
 @Suite("Catalog discovery coordinator")
 struct CatalogDiscoveryTests {
+    actor AsyncGate {
+        private var isOpen = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func wait() async {
+            guard !isOpen else { return }
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+        }
+
+        func open() {
+            isOpen = true
+            let pending = waiters
+            waiters.removeAll()
+            for waiter in pending { waiter.resume() }
+        }
+    }
+
     actor StubClient: MCPCatalogClient {
         let tools: [MCPProviderClient.DiscoveredTool]
         let listing: String
@@ -35,6 +54,41 @@ struct CatalogDiscoveryTests {
         func snapshot() -> (calls: [String], disconnected: Bool) {
             (calls, didDisconnect)
         }
+    }
+
+    @MainActor
+    @Test("A slow provider does not delay another provider's catalog publication")
+    func providerResultsPublishIndependently() async {
+        let slowProvider = AsyncGate()
+        let fastProviderPublished = AsyncGate()
+        var published: [GenerationProvider] = []
+        let run = Task { @MainActor in
+            await CatalogDiscovery.forEachProviderResult(
+                [.higgsfield, .fal],
+                operation: { provider in
+                    if provider == .higgsfield { await slowProvider.wait() }
+                    return CatalogDiscovery.ProviderResult(
+                        provider: provider,
+                        mcpConfigured: false,
+                        oauthConnected: false,
+                        entries: []
+                    )
+                },
+                consume: { result in
+                    published.append(result.provider)
+                    if result.provider == .fal {
+                        Task { await fastProviderPublished.open() }
+                    }
+                }
+            )
+        }
+
+        await fastProviderPublished.wait()
+        #expect(published == [.fal])
+
+        await slowProvider.open()
+        await run.value
+        #expect(published == [.fal, .higgsfield])
     }
 
     @MainActor

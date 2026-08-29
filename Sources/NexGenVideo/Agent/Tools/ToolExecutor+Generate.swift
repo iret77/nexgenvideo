@@ -2,7 +2,12 @@ import Foundation
 import NexGenEngine
 
 extension ToolExecutor {
-    func generate(_ editor: EditorViewModel, _ args: [String: Any], type: ClipType) async throws -> ToolResult {
+    func generate(
+        _ editor: EditorViewModel,
+        _ args: [String: Any],
+        type: ClipType,
+        origin: ToolCallOrigin
+    ) async throws -> ToolResult {
         let prompt = try args.requireString("prompt")
         switch type {
         case .video:
@@ -18,11 +23,15 @@ extension ToolExecutor {
                 model: model
             )
             return model.requiresSourceVideo
-                ? try await generateVideoEdit(editor, args, prompt: prompt, model: model)
-                : try await generateVideoText(editor, args, prompt: prompt, model: model)
+                ? try await generateVideoEdit(
+                    editor, args, prompt: prompt, model: model, origin: origin
+                )
+                : try await generateVideoText(
+                    editor, args, prompt: prompt, model: model, origin: origin
+                )
         case .image:
             try enforceImageShotSourceContract(editor: editor, args: args)
-            return try await generateImage(editor, args, prompt: prompt)
+            return try await generateImage(editor, args, prompt: prompt, origin: origin)
         case .audio:
             throw ToolError("internal: audio generation is dispatched via the async path")
         case .text:
@@ -178,13 +187,16 @@ extension ToolExecutor {
     // MARK: - Cost-Guard (M7) — the user's final word on paid agent renders
 
     @MainActor
-    private func confirmSpend(
+    private func withSpendApproval(
         _ editor: EditorViewModel, currentModelId: String, currentModelName: String,
         credits: Int?, actionLabel: String,
+        origin: ToolCallOrigin,
         currentIsCompatible: Bool = true,
         noCompatibleModelReason: String? = nil,
-        alternatives: @escaping @MainActor () -> [SpendModelCandidate]
-    ) async throws -> SpendOption {
+        alternatives: @escaping @MainActor () -> [SpendModelCandidate],
+        cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
+        execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
+    ) async throws -> ToolResult {
         func currentOptions() -> [SpendOption] {
             let current = currentIsCompatible ? [SpendModelCandidate(
                 modelId: currentModelId, modelName: currentModelName, credits: credits
@@ -209,7 +221,14 @@ extension ToolExecutor {
                     ?? "No enabled model is available through an active provider for this request. Choose a runnable model from list_models."
             )
         }
-        guard CostGuard.needsApproval(credits: recommended.credits) else { return recommended }
+        guard CostGuard.needsApproval(credits: recommended.credits) else {
+            do {
+                return try await execute(editor, recommended)
+            } catch {
+                cancel(editor)
+                throw error
+            }
+        }
         let approvalID = UUID().uuidString
         func makeApproval() -> SpendApproval {
             let latest = currentOptions()
@@ -228,16 +247,14 @@ extension ToolExecutor {
                 actionLabel: actionLabel
             )
         }
-        let approval = makeApproval()
-        switch await editor.agentService.requestSpendApproval(approval, refresh: makeApproval) {
-        case .approved(let option):
-            try Task.checkCancellation()
-            return option
-        case .declined:
-            throw ToolError("Render declined — the user did not approve the spend.")
-        case .blocked(let reason):
-            throw ToolError(reason)
-        }
+        return try editor.agentService.requestSpendApproval(
+            makeApproval(),
+            origin: origin,
+            editor: editor,
+            refresh: makeApproval,
+            cancel: cancel,
+            execute: execute
+        )
     }
 
     @MainActor
@@ -328,9 +345,10 @@ extension ToolExecutor {
 
     private func generateVideoEdit(
         _ editor: EditorViewModel, _ args: [String: Any],
-        prompt: String, model modelIn: VideoModelConfig
+        prompt: String, model modelIn: VideoModelConfig,
+        origin: ToolCallOrigin
     ) async throws -> ToolResult {
-        var model = modelIn
+        let model = modelIn
         guard let sourceRef = args.string("sourceVideoMediaRef") else {
             throw ToolError("Model '\(model.id)' requires 'sourceVideoMediaRef' pointing to a video asset.")
         }
@@ -356,9 +374,10 @@ extension ToolExecutor {
         let editCredits = CostEstimator.videoCost(
             model: model, durationSeconds: editSeconds, resolution: nil, generateAudio: true)
         let originalModelId = model.id
-        let approved = try await confirmSpend(
+        return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: editCredits, actionLabel: "Generate edit",
+            origin: origin,
             alternatives: { self.cheaperVideoAlternatives(
                 than: model.id,
                 currentCredits: editCredits,
@@ -369,55 +388,68 @@ extension ToolExecutor {
                     candidate.validate(duration: 0, aspectRatio: "", resolution: nil) == nil
                         && inputAssets.validate(for: candidate) == nil
                 }
-            ) }
+            ) },
+            execute: { editor, approved in
+                var selectedModel = model
+                if approved.modelId != selectedModel.id,
+                   let swapped = VideoModelConfig.allModels.first(where: {
+                       $0.id == approved.modelId
+                   }) {
+                    selectedModel = swapped
+                }
+                let finalModel = selectedModel
+                let approvedPrompt = try await self.promptForApprovedModel(
+                    precompiled,
+                    originalModelId: originalModelId,
+                    approvedModelId: finalModel.id,
+                    editor: editor
+                )
+                let name = args.string("name")
+                let folderId = sourceAsset.folderId
+                let placeholderDuration = trimmed?.durationSeconds
+                    ?? (sourceAsset.duration > 0 ? sourceAsset.duration : 5)
+                let request = GenerationRequest(
+                    modality: .video, modelId: finalModel.id, intent: prompt,
+                    placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
+                    target: approved.target,
+                    precompiled: approvedPrompt, rawPrompt: raw,
+                    submission: .video(make: { compiled in
+                        var genInput = GenerationInput(
+                            prompt: compiled, model: finalModel.id,
+                            duration: Int(sourceAsset.duration.rounded()),
+                            aspectRatio: "", resolution: nil)
+                        genInput.promptShotId = approvedPrompt?.binding.shotId
+                        genInput.promptProjectKey = approvedPrompt?.binding.projectKey
+                        genInput.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
+                        return VideoGenerationSubmission.make(
+                            genInput: genInput, model: finalModel, inputAssets: inputAssets,
+                            placeholderDuration: placeholderDuration,
+                            trimmedSourceOverride: trimmed,
+                            name: name, folderId: folderId, generateAudio: true)
+                    }))
+                return try await self.routeThroughController(
+                    request, editor: editor,
+                    preflight: {
+                        if let err = finalModel.validate(
+                            duration: 0, aspectRatio: "", resolution: nil
+                        ) { return err }
+                        return inputAssets.validate(for: finalModel)
+                    },
+                    success: {
+                        "Edit started. Placeholder asset ID: \($0). Model: \(finalModel.displayName), source: \(sourceAsset.name)"
+                    })
+            }
         )
-        if approved.modelId != model.id,
-           let swapped = VideoModelConfig.allModels.first(where: { $0.id == approved.modelId }) {
-            model = swapped
-        }
-        let approvedPrompt = try await promptForApprovedModel(
-            precompiled,
-            originalModelId: originalModelId,
-            approvedModelId: model.id,
-            editor: editor
-        )
-        let name = args.string("name")
-        let folderId = sourceAsset.folderId
-        let placeholderDuration = trimmed?.durationSeconds ?? (sourceAsset.duration > 0 ? sourceAsset.duration : 5)
-
-        let request = GenerationRequest(
-            modality: .video, modelId: model.id, intent: prompt,
-            placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
-            target: approved.target,
-            precompiled: approvedPrompt, rawPrompt: raw,
-            submission: .video(make: { compiled in
-                var genInput = GenerationInput(
-                    prompt: compiled, model: model.id, duration: Int(sourceAsset.duration.rounded()),
-                    aspectRatio: "", resolution: nil)
-                genInput.promptShotId = approvedPrompt?.binding.shotId
-                genInput.promptProjectKey = approvedPrompt?.binding.projectKey
-                genInput.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
-                return VideoGenerationSubmission.make(
-                    genInput: genInput, model: model, inputAssets: inputAssets,
-                    placeholderDuration: placeholderDuration, trimmedSourceOverride: trimmed,
-                    name: name, folderId: folderId, generateAudio: true)
-            }))
-        return try await routeThroughController(
-            request, editor: editor,
-            preflight: {
-                if let err = model.validate(duration: 0, aspectRatio: "", resolution: nil) { return err }
-                return inputAssets.validate(for: model)
-            },
-            success: { "Edit started. Placeholder asset ID: \($0). Model: \(model.displayName), source: \(sourceAsset.name)" })
     }
 
     private func generateVideoText(
         _ editor: EditorViewModel, _ args: [String: Any],
-        prompt: String, model modelIn: VideoModelConfig
+        prompt: String, model modelIn: VideoModelConfig,
+        origin: ToolCallOrigin
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
 
-        var model = modelIn
+        let model = modelIn
         var duration: VideoDuration
         if let raw = args["duration"] as? String {
             guard raw.lowercased() == "auto" else {
@@ -429,9 +461,9 @@ extension ToolExecutor {
         } else {
             duration = model.durationCapabilities.defaultValue
         }
-        var billedDuration = duration.seconds ?? model.durationCapabilities.maximumSeconds ?? 0
-        var aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
-        var resolution = args.string("resolution") ?? model.resolutions?.first
+        let billedDuration = duration.seconds ?? model.durationCapabilities.maximumSeconds ?? 0
+        let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
+        let resolution = args.string("resolution") ?? model.resolutions?.first
         let (precompiled, raw) = try Self.agentPrompt(
             args,
             prompt: prompt,
@@ -475,9 +507,10 @@ extension ToolExecutor {
         let credits = CostEstimator.videoCost(
             model: model, durationSeconds: billedDuration, resolution: resolution, generateAudio: true)
         let originalModelId = model.id
-        let approved = try await confirmSpend(
+        return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate video",
+            origin: origin,
             alternatives: { self.cheaperVideoAlternatives(
                 than: model.id,
                 currentCredits: credits,
@@ -500,80 +533,104 @@ extension ToolExecutor {
                         resolution: candidateResolution
                     ) == nil && inputAssets.validate(for: candidate) == nil
                 }
-            ) }
-        )
-        if approved.modelId != model.id,
-           let swapped = VideoModelConfig.allModels.first(where: { $0.id == approved.modelId }) {
-            model = swapped
-            if !swapped.durationCapabilities.accepts(duration) {
-                duration = swapped.durationCapabilities.defaultValue
-                billedDuration = duration.seconds ?? swapped.durationCapabilities.maximumSeconds ?? 0
+            ) },
+            execute: { editor, approved in
+                var selectedModel = model
+                var selectedDuration = duration
+                var selectedBilledDuration = billedDuration
+                var selectedAspectRatio = aspectRatio
+                var selectedResolution = resolution
+                if approved.modelId != selectedModel.id,
+                   let swapped = VideoModelConfig.allModels.first(where: {
+                       $0.id == approved.modelId
+                   }) {
+                    selectedModel = swapped
+                    if !swapped.durationCapabilities.accepts(selectedDuration) {
+                        selectedDuration = swapped.durationCapabilities.defaultValue
+                        selectedBilledDuration = selectedDuration.seconds
+                            ?? swapped.durationCapabilities.maximumSeconds ?? 0
+                    }
+                    if !swapped.aspectRatios.contains(selectedAspectRatio) {
+                        selectedAspectRatio = swapped.aspectRatios.first ?? selectedAspectRatio
+                    }
+                    if let allowed = swapped.resolutions,
+                       let selected = selectedResolution,
+                       !allowed.contains(selected) {
+                        selectedResolution = allowed.first
+                    }
+                }
+                let approvedPrompt = try await self.promptForApprovedModel(
+                    precompiled,
+                    originalModelId: originalModelId,
+                    approvedModelId: selectedModel.id,
+                    editor: editor
+                )
+                let folderId = try self.resolveFolderId(
+                    args,
+                    editor: editor,
+                    fallbackReferences: inputAssets.textToVideoReferences
+                )
+                let name = args.string("name")
+                let finalModel = selectedModel
+                let finalDuration = selectedDuration
+                let finalBilledDuration = selectedBilledDuration
+                let finalAspectRatio = selectedAspectRatio
+                let finalResolution = selectedResolution
+                let request = GenerationRequest(
+                    modality: .video, modelId: finalModel.id, intent: prompt,
+                    aspectRatio: finalAspectRatio,
+                    durationSeconds: Double(finalBilledDuration),
+                    placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
+                    target: approved.target,
+                    precompiled: approvedPrompt, rawPrompt: raw,
+                    submission: .video(make: { compiled in
+                        var genInput = GenerationInput(
+                            prompt: compiled, model: finalModel.id,
+                            duration: finalBilledDuration,
+                            aspectRatio: finalAspectRatio, resolution: finalResolution)
+                        genInput.videoDuration = finalDuration
+                        genInput.promptShotId = approvedPrompt?.binding.shotId
+                        genInput.promptProjectKey = approvedPrompt?.binding.projectKey
+                        genInput.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
+                        return VideoGenerationSubmission.make(
+                            genInput: genInput, model: finalModel, inputAssets: inputAssets,
+                            placeholderDuration: Double(max(1, finalBilledDuration)),
+                            name: name, folderId: folderId, generateAudio: true)
+                    }))
+                let refSummary = totalRefs > 0
+                    ? ", refs: \(imageRefCount)img/\(videoRefCount)vid/\(audioRefCount)aud"
+                    : ""
+                return try await self.routeThroughController(
+                    request, editor: editor,
+                    preflight: {
+                        if let err = finalModel.validate(
+                            duration: finalDuration,
+                            aspectRatio: finalAspectRatio,
+                            resolution: finalResolution
+                        ) { return err }
+                        return inputAssets.validate(for: finalModel)
+                    },
+                    success: {
+                        "Generation started. Placeholder asset ID: \($0). Model: \(finalModel.displayName), duration: \(finalDuration.displayLabel), aspect: \(finalAspectRatio)\(refSummary)"
+                    })
             }
-            if !swapped.aspectRatios.contains(aspectRatio) {
-                aspectRatio = swapped.aspectRatios.first ?? aspectRatio
-            }
-            if let allowed = swapped.resolutions,
-               let selected = resolution,
-               !allowed.contains(selected) {
-                resolution = allowed.first
-            }
-        }
-        let approvedPrompt = try await promptForApprovedModel(
-            precompiled,
-            originalModelId: originalModelId,
-            approvedModelId: model.id,
-            editor: editor
         )
-
-        let folderId = try resolveFolderId(
-            args, editor: editor, fallbackReferences: inputAssets.textToVideoReferences
-        )
-        let name = args.string("name")
-
-        let request = GenerationRequest(
-            modality: .video, modelId: model.id, intent: prompt,
-            aspectRatio: aspectRatio, durationSeconds: Double(billedDuration),
-            placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
-            target: approved.target,
-            precompiled: approvedPrompt, rawPrompt: raw,
-            submission: .video(make: { compiled in
-                var genInput = GenerationInput(
-                    prompt: compiled, model: model.id, duration: billedDuration,
-                    aspectRatio: aspectRatio, resolution: resolution)
-                genInput.videoDuration = duration
-                genInput.promptShotId = approvedPrompt?.binding.shotId
-                genInput.promptProjectKey = approvedPrompt?.binding.projectKey
-                genInput.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
-                return VideoGenerationSubmission.make(
-                    genInput: genInput, model: model, inputAssets: inputAssets,
-                    placeholderDuration: Double(max(1, billedDuration)),
-                    name: name, folderId: folderId, generateAudio: true)
-            }))
-        let refSummary = totalRefs > 0
-            ? ", refs: \(imageRefCount)img/\(videoRefCount)vid/\(audioRefCount)aud"
-            : ""
-        return try await routeThroughController(
-            request, editor: editor,
-            preflight: {
-                if let err = model.validate(duration: duration, aspectRatio: aspectRatio, resolution: resolution) { return err }
-                return inputAssets.validate(for: model)
-            },
-            success: { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), duration: \(duration.displayLabel), aspect: \(aspectRatio)\(refSummary)" })
     }
 
     private func generateImage(
-        _ editor: EditorViewModel, _ args: [String: Any], prompt: String
+        _ editor: EditorViewModel, _ args: [String: Any], prompt: String,
+        origin: ToolCallOrigin
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
-        guard var modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? ImageModelConfig.allModels.first?.id else {
+        guard let modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? ImageModelConfig.allModels.first?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
-        guard var model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
+        guard let model = ImageModelConfig.allModels.first(where: { $0.id == modelId }) else {
             throw ToolError("Unknown model '\(modelId)'. Available: \(ImageModelConfig.allModels.map(\.id).joined(separator: ", "))")
         }
-        var aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
-        var resolution = args.string("resolution") ?? model.resolutions?.first
-        var quality = args.string("quality") ?? model.qualities?.last
+        let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
+        let resolution = args.string("resolution") ?? model.resolutions?.first
+        let quality = args.string("quality") ?? model.qualities?.last
         let (precompiled, raw) = try Self.agentPrompt(
             args,
             prompt: prompt,
@@ -603,9 +660,10 @@ extension ToolExecutor {
         let credits = CostEstimator.imageCost(
             model: model, resolution: resolution, quality: quality, numImages: 1)
         let originalModelId = model.id
-        let approved = try await confirmSpend(
+        return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate image",
+            origin: origin,
             currentIsCompatible: currentValidation == nil,
             noCompatibleModelReason: currentValidation,
             alternatives: {
@@ -616,82 +674,108 @@ extension ToolExecutor {
                     quality: quality,
                     referenceCount: refs.count
                 )
+            },
+            execute: { editor, approved in
+                var selectedModel = model
+                var selectedModelID = modelId
+                var selectedAspectRatio = aspectRatio
+                var selectedResolution = resolution
+                var selectedQuality = quality
+                if approved.modelId != selectedModel.id,
+                   let swapped = ImageModelConfig.allModels.first(where: {
+                       $0.id == approved.modelId
+                   }) {
+                    selectedModel = swapped
+                    selectedModelID = swapped.id
+                    if !swapped.aspectRatios.contains(selectedAspectRatio) {
+                        selectedAspectRatio = swapped.aspectRatios.first ?? selectedAspectRatio
+                    }
+                    if let allowed = swapped.resolutions,
+                       let selected = selectedResolution,
+                       !allowed.contains(selected) {
+                        selectedResolution = allowed.first
+                    }
+                    if let allowed = swapped.qualities,
+                       let selected = selectedQuality,
+                       !allowed.contains(selected) {
+                        selectedQuality = allowed.last
+                    }
+                }
+                let approvedPrompt = try await self.promptForApprovedModel(
+                    precompiled,
+                    originalModelId: originalModelId,
+                    approvedModelId: selectedModel.id,
+                    editor: editor
+                )
+                let folderId = try self.resolveFolderId(
+                    args, editor: editor, fallbackReferences: refs
+                )
+                let name = args.string("name")
+                let finalModel = selectedModel
+                let finalModelID = selectedModelID
+                let finalAspectRatio = selectedAspectRatio
+                let finalResolution = selectedResolution
+                let finalQuality = selectedQuality
+                func genInput(_ compiled: String) -> GenerationInput {
+                    var input = GenerationInput(
+                        prompt: compiled, model: finalModelID, duration: 0,
+                        aspectRatio: finalAspectRatio,
+                        resolution: finalResolution,
+                        quality: finalQuality)
+                    input.promptShotId = approvedPrompt?.binding.shotId
+                    input.promptProjectKey = approvedPrompt?.binding.projectKey
+                    input.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
+                    return input
+                }
+                let preflight: GenerationController.Preflight = {
+                    finalModel.validate(
+                        aspectRatio: finalAspectRatio,
+                        resolution: finalResolution,
+                        quality: finalQuality,
+                        imageRefCount: refIds.count,
+                        numImages: 1)
+                }
+                if MarbleModelRegistry.isMarbleModel(finalModelID) {
+                    guard let reference = refs.first else {
+                        throw ToolError(
+                            "\(finalModel.displayName) requires a reference image via 'referenceMediaRefs' (the world is generated from it)."
+                        )
+                    }
+                    let request = GenerationRequest(
+                        modality: .image, modelId: finalModelID, intent: prompt,
+                        aspectRatio: finalAspectRatio,
+                        placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
+                        target: approved.target,
+                        precompiled: approvedPrompt, rawPrompt: raw,
+                        submission: .image(make: { compiled in
+                            ImageGenerationSubmission.makeMarble(
+                                genInput: genInput(compiled), model: finalModel,
+                                reference: reference, name: name, folderId: folderId)
+                        }))
+                    return try await self.routeThroughController(
+                        request, editor: editor, preflight: preflight,
+                        success: {
+                            "Marble world generation started (this can take several minutes). Placeholder asset ID: \($0). Model: \(finalModel.displayName). Result: equirectangular panorama image."
+                        })
+                }
+                let request = GenerationRequest(
+                    modality: .image, modelId: finalModelID, intent: prompt,
+                    aspectRatio: finalAspectRatio,
+                    placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
+                    target: approved.target,
+                    precompiled: approvedPrompt, rawPrompt: raw,
+                    submission: .image(make: { compiled in
+                        ImageGenerationSubmission.make(
+                            genInput: genInput(compiled), model: finalModel,
+                            references: refs, name: name, folderId: folderId)
+                    }))
+                return try await self.routeThroughController(
+                    request, editor: editor, preflight: preflight,
+                    success: {
+                        "Generation started. Placeholder asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio)"
+                    })
             }
         )
-        if approved.modelId != model.id,
-           let swapped = ImageModelConfig.allModels.first(where: { $0.id == approved.modelId }) {
-            model = swapped
-            modelId = swapped.id
-            if !swapped.aspectRatios.contains(aspectRatio) {
-                aspectRatio = swapped.aspectRatios.first ?? aspectRatio
-            }
-            if let allowed = swapped.resolutions,
-               let selected = resolution,
-               !allowed.contains(selected) {
-                resolution = allowed.first
-            }
-            if let allowed = swapped.qualities,
-               let selected = quality,
-               !allowed.contains(selected) {
-                quality = allowed.last
-            }
-        }
-        let approvedPrompt = try await promptForApprovedModel(
-            precompiled,
-            originalModelId: originalModelId,
-            approvedModelId: model.id,
-            editor: editor
-        )
-        let folderId = try resolveFolderId(args, editor: editor, fallbackReferences: refs)
-        let name = args.string("name")
-
-        func genInput(_ compiled: String) -> GenerationInput {
-            var input = GenerationInput(
-                prompt: compiled, model: modelId, duration: 0,
-                aspectRatio: aspectRatio, resolution: resolution, quality: quality)
-            input.promptShotId = approvedPrompt?.binding.shotId
-            input.promptProjectKey = approvedPrompt?.binding.projectKey
-            input.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
-            return input
-        }
-        let preflight: GenerationController.Preflight = {
-            model.validate(
-                aspectRatio: aspectRatio, resolution: resolution, quality: quality,
-                imageRefCount: refIds.count, numImages: 1)
-        }
-
-        if MarbleModelRegistry.isMarbleModel(modelId) {
-            guard let reference = refs.first else {
-                throw ToolError("\(model.displayName) requires a reference image via 'referenceMediaRefs' (the world is generated from it).")
-            }
-            let request = GenerationRequest(
-                modality: .image, modelId: modelId, intent: prompt, aspectRatio: aspectRatio,
-                placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
-                target: approved.target,
-                precompiled: approvedPrompt, rawPrompt: raw,
-                submission: .image(make: { compiled in
-                    ImageGenerationSubmission.makeMarble(
-                        genInput: genInput(compiled), model: model, reference: reference,
-                        name: name, folderId: folderId)
-                }))
-            return try await routeThroughController(
-                request, editor: editor, preflight: preflight,
-                success: { "Marble world generation started (this can take several minutes). Placeholder asset ID: \($0). Model: \(model.displayName). Result: equirectangular panorama image." })
-        }
-
-        let request = GenerationRequest(
-            modality: .image, modelId: modelId, intent: prompt, aspectRatio: aspectRatio,
-            placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
-            target: approved.target,
-            precompiled: approvedPrompt, rawPrompt: raw,
-            submission: .image(make: { compiled in
-                ImageGenerationSubmission.make(
-                    genInput: genInput(compiled), model: model, references: refs,
-                    name: name, folderId: folderId)
-            }))
-        return try await routeThroughController(
-            request, editor: editor, preflight: preflight,
-            success: { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), aspect: \(aspectRatio)" })
     }
 
     func showDialog(
@@ -756,7 +840,11 @@ extension ToolExecutor {
         return .ok(json)
     }
 
-    func generateAudio(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+    func generateAudio(
+        _ editor: EditorViewModel,
+        _ args: [String: Any],
+        origin: ToolCallOrigin
+    ) async throws -> ToolResult {
         guard let modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? AudioModelConfig.allModels.first?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
@@ -770,12 +858,6 @@ extension ToolExecutor {
         var persistedVideoReferenceID: String?
         var preprocessReference: (@Sendable (Int, MediaAsset) async throws -> URL?)?
         var temporaryReferenceURLs: [URL] = []
-        var temporaryReferenceOwnershipTransferred = false
-        defer {
-            if !temporaryReferenceOwnershipTransferred {
-                for url in temporaryReferenceURLs { try? FileManager.default.removeItem(at: url) }
-            }
-        }
         var spanSeconds: Double?
         var placementStartFrame: Int?   // set when a timeline span is given -> auto-place on the timeline
         if let ref = args.string("videoSourceMediaRef") {
@@ -882,11 +964,6 @@ extension ToolExecutor {
             prompt: prompt,
             durationSeconds: durationSeconds
         )
-        let approved = try await confirmSpend(
-            editor, currentModelId: model.id, currentModelName: model.displayName,
-            credits: audioCredits, actionLabel: "Generate \(model.category.label)",
-            alternatives: { [] })
-
         let placement: GenerationRequest.Placement
         let successCopy: (String) -> String
         if let startFrame = placementStartFrame, let span = spanSeconds {
@@ -897,21 +974,38 @@ extension ToolExecutor {
             let scored = videoReference != nil ? " (scored from video)" : ""
             successCopy = { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), \(model.category.label)\(scored). Place it with add_clips." }
         }
-
-        let request = GenerationRequest(
-            modality: .audio, modelId: model.id, intent: prompt,
-            durationSeconds: durationSeconds.map(Double.init),
-            placement: placement, origin: .agentTool,
-            target: approved.target,
-            precompiled: precompiled, rawPrompt: raw,
-            submission: .audio(make: { makeSubmission($0) }))
-        let result = try await routeThroughController(
-            request, editor: editor, preflight: preflight, success: successCopy)
-        temporaryReferenceOwnershipTransferred = true
-        return result
+        let cleanupURLs = temporaryReferenceURLs
+        return try await withSpendApproval(
+            editor, currentModelId: model.id, currentModelName: model.displayName,
+            credits: audioCredits, actionLabel: "Generate \(model.category.label)",
+            origin: origin,
+            alternatives: { [] },
+            cancel: { _ in
+                for url in cleanupURLs { try? FileManager.default.removeItem(at: url) }
+            },
+            execute: { editor, approved in
+                let request = GenerationRequest(
+                    modality: .audio, modelId: model.id, intent: prompt,
+                    durationSeconds: durationSeconds.map(Double.init),
+                    placement: placement, origin: .agentTool,
+                    target: approved.target,
+                    precompiled: precompiled, rawPrompt: raw,
+                    submission: .audio(make: { makeSubmission($0) }))
+                return try await self.routeThroughController(
+                    request,
+                    editor: editor,
+                    preflight: preflight,
+                    success: successCopy
+                )
+            }
+        )
     }
 
-    func upscaleMedia(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
+    func upscaleMedia(
+        _ editor: EditorViewModel,
+        _ args: [String: Any],
+        origin: ToolCallOrigin
+    ) async throws -> ToolResult {
         let mediaRef = try args.requireString("mediaRef")
         let asset = try asset(mediaRef, editor: editor)
         guard asset.type == .video || asset.type == .image else {
@@ -937,18 +1031,28 @@ extension ToolExecutor {
 
         // Cost-Guard (M7): approval before this paid upscale. Upscalers are type-specific, so no swap.
         let upSeconds = Int((trimmed?.durationSeconds ?? (asset.duration > 0 ? asset.duration : 1)).rounded())
-        let approved = try await confirmSpend(
+        return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: CostEstimator.upscaleCost(model: model, durationSeconds: upSeconds),
-            actionLabel: "Upscale", alternatives: { [] })
-
-        guard let placeholderId = await EditSubmitter.submitUpscale(
-            asset: asset, model: model, editor: editor, trimmedSource: trimmed,
-            origin: .agentTool, target: approved.target
-        ) else {
-            throw ToolError("Failed to start upscale")
-        }
-        return .ok("Upscale started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")")
+            actionLabel: "Upscale",
+            origin: origin,
+            alternatives: { [] },
+            execute: { editor, approved in
+                guard let placeholderId = await EditSubmitter.submitUpscale(
+                    asset: asset,
+                    model: model,
+                    editor: editor,
+                    trimmedSource: trimmed,
+                    origin: .agentTool,
+                    target: approved.target
+                ) else {
+                    throw ToolError("Failed to start upscale")
+                }
+                return .ok(
+                    "Upscale started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")"
+                )
+            }
+        )
     }
 
     private func trimmedSource(

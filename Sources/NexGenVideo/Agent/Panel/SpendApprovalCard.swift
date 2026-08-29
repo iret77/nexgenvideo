@@ -2,7 +2,9 @@ import SwiftUI
 
 struct SpendApprovalCard: View {
     let approval: SpendApproval
-    let onApprove: (SpendOption) -> String?
+    let error: String?
+    let isWorking: Bool
+    let onApprove: (SpendOption) -> Void
     let onDecline: () -> Void
     let onRefresh: () -> Void
 
@@ -12,11 +14,15 @@ struct SpendApprovalCard: View {
 
     init(
         approval: SpendApproval,
-        onApprove: @escaping (SpendOption) -> String?,
+        error: String? = nil,
+        isWorking: Bool = false,
+        onApprove: @escaping (SpendOption) -> Void,
         onDecline: @escaping () -> Void,
         onRefresh: @escaping () -> Void = {}
     ) {
         self.approval = approval
+        self.error = error
+        self.isWorking = isWorking
         self.onApprove = onApprove
         self.onDecline = onDecline
         self.onRefresh = onRefresh
@@ -58,8 +64,8 @@ struct SpendApprovalCard: View {
                     .font(.system(size: AppTheme.FontSize.xxs))
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
-            if let approvalError {
-                Text(approvalError)
+            if let message = approvalError ?? error {
+                Text(message)
                     .font(.system(size: AppTheme.FontSize.xxs))
                     .foregroundStyle(AppTheme.Status.errorColor)
             } else if availableOptions.isEmpty {
@@ -112,6 +118,7 @@ struct SpendApprovalCard: View {
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
             .help("Decline (Esc)")
+            .disabled(isWorking)
         }
     }
 
@@ -145,7 +152,7 @@ struct SpendApprovalCard: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .controlSize(.small)
-                .disabled(availableProviders.count < 2)
+                .disabled(isWorking || availableProviders.count < 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -164,7 +171,7 @@ struct SpendApprovalCard: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .controlSize(.small)
-                .disabled(modelOptions.count < 2)
+                .disabled(isWorking || modelOptions.count < 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -190,14 +197,16 @@ struct SpendApprovalCard: View {
             Button("Decline") { onDecline() }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .controlSize(.small)
+                .disabled(isWorking)
             Spacer()
-            Button("\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
+            Button(isWorking ? "Starting…" : "\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
                 guard let selectedOption else { return }
-                approvalError = onApprove(selectedOption)
+                approvalError = nil
+                onApprove(selectedOption)
             }
             .buttonStyle(.capsule(.prominent, size: .regular))
             .controlSize(.small)
-            .disabled(selectedOption == nil)
+            .disabled(selectedOption == nil || isWorking)
         }
     }
 

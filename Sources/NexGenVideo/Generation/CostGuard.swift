@@ -3,7 +3,7 @@ import Foundation
 /// The user's final word on paid AGENT renders (locked provider architecture, M7). NGV/the agent
 /// recommends a model and NGV derives a default provider — but before the agent spends money on the
 /// user's behalf, the user can change either and confirms. This is user-clicks-to-confirm, never
-/// agent-self-asserted: the gate suspends the tool call on a continuation the UI resolves.
+/// agent-self-asserted: the host stores the exact operation and executes it only from the card.
 ///
 /// Only `.agentTool` renders pass through here. Panel / dialog / rerun renders are the user's own
 /// click — already confirmed. The threshold is the user's budget dial: renders at or under it run
@@ -108,11 +108,4 @@ struct SpendApproval: Identifiable, Equatable, Sendable {
     /// Verb for the action, e.g. "Generate video", used on the approve button.
     let actionLabel: String
 
-}
-
-/// The user's decision. `.approved` carries the exact model/provider target selected in the card.
-enum SpendDecision: Equatable, Sendable {
-    case approved(option: SpendOption)
-    case declined
-    case blocked(reason: String)
 }

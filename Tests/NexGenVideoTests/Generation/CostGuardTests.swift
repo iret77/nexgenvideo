@@ -96,7 +96,7 @@ struct CostGuardTests {
     }
 
     @MainActor
-    @Test func approvalSuspendsUntilResolvedAndCarriesTheSwap() async {
+    @Test func approvalEndsTheTurnAndRunsTheStoredOperationAfterTheClick() async throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         let recommended = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
@@ -107,18 +107,26 @@ struct CostGuardTests {
             options: [recommended, selected],
             actionLabel: "Generate video"
         )
+        var executed: SpendOption?
+        let result = try service.requestSpendApproval(
+            approval,
+            origin: .direct,
+            editor: editor,
+            execute: { _, option in
+                executed = option
+                return .ok("started")
+            }
+        )
 
-        async let decision = service.requestSpendApproval(approval)
-        for _ in 0..<20 where service.pendingSpendApproval == nil { await Task.yield() }
+        #expect(result.turnDisposition == .suspendTurn)
         #expect(service.pendingSpendApproval?.id == "spend-1")
-
-        #expect(service.approveSpend(selected) == nil)
-        #expect(await decision == .approved(option: selected))
+        await service.approveSpend(selected)
+        #expect(executed == selected)
         #expect(service.pendingSpendApproval == nil)
     }
 
     @MainActor
-    @Test func declineResolvesToDeclinedAndClears() async {
+    @Test func declineCancelsTheStoredOperationAndClears() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         let selected = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
@@ -128,16 +136,99 @@ struct CostGuardTests {
             options: [selected],
             actionLabel: "Generate image"
         )
-
-        async let decision = service.requestSpendApproval(approval)
-        for _ in 0..<20 where service.pendingSpendApproval == nil { await Task.yield() }
-        service.resolveSpend(.declined)
-        #expect(await decision == .declined)
+        var cancelled = false
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: .direct,
+            editor: editor,
+            cancel: { _ in cancelled = true },
+            execute: { _, _ in .ok("unexpected") }
+        )
+        service.declineSpend()
+        #expect(cancelled)
         #expect(service.pendingSpendApproval == nil)
     }
 
     @MainActor
-    @Test func pendingApprovalCanRefreshItsProviderAndModelOptions() async {
+    @Test func embeddedTurnCannotRetryWhileItsHostApprovalIsOpen() throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let chatSessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: chatSessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "embedded-spend",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        var executed = false
+        let result = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in
+                executed = true
+                return .ok("unexpected")
+            }
+        )
+
+        #expect(result.turnDisposition == .suspendTurn)
+        let blockReason = service.toolCallBlockReason(
+            tool: .generateImage,
+            args: [:],
+            origin: origin
+        )
+        #expect(blockReason?.contains("suspended at a host decision") == true)
+        #expect(!executed)
+
+        service.cancel()
+        #expect(service.pendingSpendApproval == nil)
+    }
+
+    @MainActor
+    @Test func approvedOperationFailureIsTerminalAndCannotLeaveAStaleCard() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "failed-spend",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        var released = false
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: .direct,
+            editor: editor,
+            cancel: { _ in released = true },
+            execute: { _, _ in throw ToolError("preflight failed") }
+        )
+
+        await service.approveSpend(selected)
+
+        #expect(released)
+        #expect(service.pendingSpendApproval == nil)
+        #expect(!service.spendApprovalIsRunning)
+    }
+
+    @MainActor
+    @Test func pendingApprovalCanRefreshItsProviderAndModelOptions() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         let initial = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
@@ -154,20 +245,22 @@ struct CostGuardTests {
             discovered: discovered
         )
 
-        let decision = Task { @MainActor in
-            await service.requestSpendApproval(approval, refresh: fixture.currentApproval)
-        }
-        for _ in 0..<20 where service.pendingSpendApproval == nil { await Task.yield() }
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: .direct,
+            editor: editor,
+            refresh: fixture.currentApproval,
+            execute: { _, _ in .ok("started") }
+        )
         fixture.includeDiscovered = true
         service.refreshSpendApproval()
 
         #expect(service.pendingSpendApproval?.options == [initial, discovered])
-        service.resolveSpend(.declined)
-        #expect(await decision.value == .declined)
+        service.declineSpend()
     }
 
     @MainActor
-    @Test func gateApprovalBlocksSpendWithoutAddingOrReplacingACard() async throws {
+    @Test func gateApprovalBlocksSpendWithoutAddingOrReplacingACard() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         _ = try service.requestGateApproval(GateApproval(phase: "brief"))
@@ -179,15 +272,20 @@ struct CostGuardTests {
             actionLabel: "Generate image"
         )
 
-        let decision = await service.requestSpendApproval(approval)
-
-        #expect(decision == .blocked(reason: "A gate approval is already waiting for the user."))
+        #expect(throws: ToolError.self) {
+            try service.requestSpendApproval(
+                approval,
+                origin: .direct,
+                editor: editor,
+                execute: { _, _ in .ok("unexpected") }
+            )
+        }
         #expect(service.pendingSpendApproval == nil)
         #expect(service.pendingGateApproval?.phase == "brief")
     }
 
     @MainActor
-    @Test func dialogBlocksSpendWithoutAddingOrReplacingACard() async throws {
+    @Test func dialogBlocksSpendWithoutAddingOrReplacingACard() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         let dialog = AgentDialog(
@@ -209,15 +307,20 @@ struct CostGuardTests {
             actionLabel: "Generate image"
         )
 
-        let decision = await service.requestSpendApproval(approval)
-
-        #expect(decision == .blocked(reason: "A host-owned dialog is already waiting for the user."))
+        #expect(throws: ToolError.self) {
+            try service.requestSpendApproval(
+                approval,
+                origin: .direct,
+                editor: editor,
+                execute: { _, _ in .ok("unexpected") }
+            )
+        }
         #expect(service.pendingSpendApproval == nil)
         #expect(service.pendingDialog?.id == dialog.id)
     }
 
     @MainActor
-    @Test func secondSpendAndGateCannotReplacePendingSpend() async {
+    @Test func secondSpendAndGateCannotReplacePendingSpend() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
         let selected = option(modelId: "m1", name: "Model One", provider: .fal, credits: 120)
@@ -234,11 +337,20 @@ struct CostGuardTests {
             actionLabel: "Generate image"
         )
 
-        async let firstDecision = service.requestSpendApproval(first)
-        for _ in 0..<20 where service.pendingSpendApproval == nil { await Task.yield() }
-        let secondDecision = await service.requestSpendApproval(second)
-
-        #expect(secondDecision == .blocked(reason: "A spend approval is already waiting for the user."))
+        _ = try service.requestSpendApproval(
+            first,
+            origin: .direct,
+            editor: editor,
+            execute: { _, _ in .ok("started") }
+        )
+        #expect(throws: ToolError.self) {
+            try service.requestSpendApproval(
+                second,
+                origin: .direct,
+                editor: editor,
+                execute: { _, _ in .ok("unexpected") }
+            )
+        }
         #expect(service.pendingSpendApproval?.id == first.id)
         #expect(throws: ToolError.self) {
             try service.requestGateApproval(GateApproval(phase: "brief"))
@@ -260,7 +372,40 @@ struct CostGuardTests {
         #expect(service.pendingDialog == nil)
         #expect(service.pendingSpendApproval?.id == first.id)
 
-        service.resolveSpend(.declined)
-        #expect(await firstDecision == .declined)
+        service.declineSpend()
+    }
+
+    @MainActor
+    @Test func pendingSpendOperationDoesNotRetainItsEditor() async throws {
+        var editor: EditorViewModel? = EditorViewModel()
+        weak var weakEditor = editor
+        let service = try #require(editor?.agentService)
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "weak-editor",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: .direct,
+            editor: try #require(editor),
+            execute: { editor, _ in
+                _ = editor.timeline
+                return .ok("unexpected")
+            }
+        )
+
+        editor = nil
+        #expect(weakEditor == nil)
+        await service.approveSpend(selected)
+        #expect(service.pendingSpendApproval == nil)
     }
 }

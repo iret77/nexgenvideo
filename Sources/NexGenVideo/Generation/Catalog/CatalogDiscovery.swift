@@ -16,14 +16,21 @@ extension MCPProviderClient: MCPCatalogClient {}
 /// - **Direct-API image providers** (#212): the provider's own model list decides which registry
 ///   entries are really reachable on this key (`DirectImageDiscovery`).
 ///
-/// Both feed ONE `setDiscovered` call, because that write replaces the discovered set wholesale — two
-/// writers would clobber each other's providers.
+/// Each provider publishes its own discovered slice as soon as it finishes. This prevents a slow
+/// provider from hiding already-runnable models from the open generation and approval surfaces.
 ///
 /// Self-correcting: each refresh rediscovers every activated provider, so a signed-out provider's (or
 /// a revoked key's) models vanish (usable-only, #159). Runs at launch and on every
 /// `.providerKeysChanged` (sign-in / sign-out / key change), coalescing overlapping runs.
 @MainActor
 enum CatalogDiscovery {
+    struct ProviderResult: Sendable {
+        let provider: GenerationProvider
+        let mcpConfigured: Bool
+        let oauthConnected: Bool
+        let entries: [CatalogEntry]
+    }
+
     private static var running = false
     private static var queued = false
     private static var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
@@ -93,43 +100,81 @@ enum CatalogDiscovery {
     }
 
     private static func runOnce() async {
-        var result: [GenerationProvider: [CatalogEntry]] = [:]
-        for provider in GenerationProvider.allCases {
-            var entries: [CatalogEntry] = []
-            let mcpConfigured = ProviderMCP.hasConfig(provider)
-            if provider.mcpCapability?.auth == .oauth {
-                ModelCatalog.shared.setProviderDiscoveryState(
-                    mcpConfigured ? .checking : .inactive,
-                    for: provider
-                )
-            }
-            if mcpConfigured {
-                entries += await discover(provider)
-            }
-            // A provider can be reachable both ways; append rather than replace.
-            entries += await DirectImageDiscovery.discover(provider)
-            if !entries.isEmpty { result[provider] = entries }
-            if provider.mcpCapability?.auth == .oauth {
-                let state: ProviderDiscoveryState
-                if !ProviderOAuthStore.isConnected(provider) {
-                    state = .actionRequired("Sign in again to refresh this provider's models.")
-                } else if entries.isEmpty {
-                    state = .unavailable(
-                        "Model discovery failed. Check the connection or sign in again."
-                    )
-                } else {
-                    state = .ready(modelCount: entries.count)
+        let providers = GenerationProvider.allCases
+        for provider in providers where provider.mcpCapability?.auth == .oauth {
+            ModelCatalog.shared.setProviderDiscoveryState(
+                ProviderMCP.hasConfig(provider) ? .checking : .inactive,
+                for: provider
+            )
+        }
+        var modelCount = 0
+        var providerCount = 0
+        await forEachProviderResult(
+            providers,
+            operation: { provider in
+                let mcpConfigured = ProviderMCP.hasConfig(provider)
+                var entries: [CatalogEntry] = []
+                if mcpConfigured {
+                    entries += await discover(provider)
                 }
-                ModelCatalog.shared.setProviderDiscoveryState(state, for: provider)
-            }
-            if mcpConfigured || ProviderKeychain.load(provider) != nil {
-                Log.generation.notice(
-                    "catalog provider=\(provider.rawValue) mcp=\(mcpConfigured) models=\(entries.count)"
+                entries += await DirectImageDiscovery.discover(provider)
+                return ProviderResult(
+                    provider: provider,
+                    mcpConfigured: mcpConfigured,
+                    oauthConnected: ProviderOAuthStore.isConnected(provider),
+                    entries: entries
                 )
+            },
+            consume: { result in
+                let provider = result.provider
+                let entries = result.entries
+                ModelCatalog.shared.applyDiscovered(entries, for: provider)
+                if !entries.isEmpty {
+                    providerCount += 1
+                    modelCount += entries.count
+                }
+                if provider.mcpCapability?.auth == .oauth {
+                    let state: ProviderDiscoveryState
+                    if !result.oauthConnected {
+                        state = .actionRequired(
+                            "Sign in again to refresh this provider's models."
+                        )
+                    } else if entries.isEmpty {
+                        state = .unavailable(
+                            "Model discovery failed. Check the connection or sign in again."
+                        )
+                    } else {
+                        state = .ready(modelCount: entries.count)
+                    }
+                    ModelCatalog.shared.setProviderDiscoveryState(state, for: provider)
+                }
+                if result.mcpConfigured || ProviderKeychain.load(provider) != nil {
+                    Log.generation.notice(
+                        "catalog provider=\(provider.rawValue) mcp=\(result.mcpConfigured) models=\(entries.count)"
+                    )
+                }
+            }
+        )
+        Log.generation.notice(
+            "catalog discovery: \(providerCount) provider(s), \(modelCount) model(s)"
+        )
+    }
+
+    static func forEachProviderResult(
+        _ providers: [GenerationProvider],
+        operation: @escaping @Sendable @MainActor (GenerationProvider) async -> ProviderResult,
+        consume: @MainActor (ProviderResult) -> Void
+    ) async {
+        await withTaskGroup(of: ProviderResult.self) { group in
+            for provider in providers {
+                group.addTask {
+                    await operation(provider)
+                }
+            }
+            for await result in group {
+                consume(result)
             }
         }
-        ModelCatalog.shared.setDiscovered(result)
-        Log.generation.notice("catalog discovery: \(result.count) provider(s), \(result.values.map(\.count).reduce(0, +)) model(s)")
     }
 
     private static func discover(_ provider: GenerationProvider) async -> [CatalogEntry] {

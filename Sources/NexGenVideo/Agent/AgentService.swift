@@ -198,6 +198,9 @@ final class AgentService {
             if !isStreaming, pendingGateFollowUp != nil {
                 Task { @MainActor [weak self] in await self?.preparePendingGateFollowUp() }
             }
+            if !isStreaming, pendingSpendFollowUp != nil {
+                Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
+            }
         }
     }
     var streamError: AgentStreamError?
@@ -248,7 +251,7 @@ final class AgentService {
     ) throws {
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
-              spendContinuation == nil,
+              pendingSpendOperation == nil,
               pendingGateApproval == nil,
               nativeGateMutationID == nil else {
             throw ToolError(
@@ -1176,6 +1179,7 @@ final class AgentService {
     var isComposerBlocked: Bool {
         pendingDialog != nil
             || pendingSpendApproval != nil
+            || pendingSpendFollowUp != nil
             || pendingGateApproval != nil
             || pendingGateFollowUp != nil
     }
@@ -1186,39 +1190,78 @@ final class AgentService {
     /// paid agent renders). Set while an agent render waits for approval; the composer dock renders a
     /// `SpendApprovalCard` above the input, exactly where the generative dialog lives (never a modal).
     private(set) var pendingSpendApproval: SpendApproval?
+    private(set) var spendApprovalIsRunning = false
+    private(set) var spendApprovalError: String?
 
     @ObservationIgnored
-    private var spendContinuation: CheckedContinuation<SpendDecision, Never>?
+    private var pendingSpendOperation: PendingSpendOperation?
 
     @ObservationIgnored
     private var spendApprovalRefresh: (@MainActor () -> SpendApproval)?
 
-    /// Suspend the agent's render tool-call until the user taps Approve/Decline. This is what makes it
-    /// user-clicks-to-confirm and not agent-self-asserted: the continuation resolves ONLY from
-    /// `resolveSpend`, which the card's buttons call. A competing host decision is rejected without
-    /// replacing either card or continuation.
+    @ObservationIgnored
+    private var pendingSpendFollowUp: SpendFollowUp?
+
+    private struct PendingSpendOperation {
+        let origin: ToolCallOrigin
+        let execute: @MainActor (SpendOption) async throws -> ToolResult
+        let cancel: @MainActor () -> Void
+    }
+
+    private struct SpendFollowUp {
+        let origin: ToolCallOrigin
+        let text: String
+    }
+
+    /// Register the exact operation behind the approval and end the current agent turn immediately.
+    /// Human wait time never holds an MCP request open: the card starts the stored operation in a
+    /// fresh host task, then reports its result to the originating chat as a semantic follow-up.
     func requestSpendApproval(
         _ approval: SpendApproval,
-        refresh: (@MainActor () -> SpendApproval)? = nil
-    ) async -> SpendDecision {
+        origin: ToolCallOrigin,
+        editor: EditorViewModel,
+        refresh: (@MainActor () -> SpendApproval)? = nil,
+        cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
+        execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
+    ) throws -> ToolResult {
+        if case .externalMCP = origin {
+            throw ToolError(
+                "External MCP sessions cannot own an in-app spend approval. Start the request from an in-app chat."
+            )
+        }
         guard pendingDialog == nil else {
-            return .blocked(reason: "A host-owned dialog is already waiting for the user.")
+            throw ToolError("A host-owned dialog is already waiting for the user.")
         }
         guard nativeGateMutationID == nil else {
-            return .blocked(reason: "A native pipeline gate change is already being applied.")
+            throw ToolError("A native pipeline gate change is already being applied.")
         }
         guard pendingGateApproval == nil else {
-            return .blocked(reason: "A gate approval is already waiting for the user.")
+            throw ToolError("A gate approval is already waiting for the user.")
         }
-        guard spendContinuation == nil, pendingSpendApproval == nil else {
-            return .blocked(reason: "A spend approval is already waiting for the user.")
+        guard pendingSpendOperation == nil, pendingSpendApproval == nil else {
+            throw ToolError("A spend approval is already waiting for the user.")
         }
-        editor?.agentPanelVisible = true
-        return await withCheckedContinuation { continuation in
-            spendContinuation = continuation
-            spendApprovalRefresh = refresh
-            pendingSpendApproval = approval
-        }
+        editor.agentPanelVisible = true
+        spendApprovalError = nil
+        spendApprovalRefresh = refresh
+        pendingSpendOperation = PendingSpendOperation(
+            origin: origin,
+            execute: { [weak editor] option in
+                guard let editor else {
+                    throw ToolError("The project closed before the approved operation could start.")
+                }
+                return try await execute(editor, option)
+            },
+            cancel: { [weak editor] in
+                guard let editor else { return }
+                cancel(editor)
+            }
+        )
+        suspendToolCalls(from: origin)
+        pendingSpendApproval = approval
+        return .suspended(
+            "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
+        )
     }
 
     func refreshSpendApproval() {
@@ -1229,26 +1272,108 @@ final class AgentService {
         pendingSpendApproval = updated
     }
 
-    func approveSpend(_ option: SpendOption) -> String? {
+    func approveSpend(_ option: SpendOption) async {
+        guard !spendApprovalIsRunning else { return }
         guard let approval = pendingSpendApproval,
               approval.options.contains(option) else {
-            return "This provider and model are no longer part of the pending approval."
+            spendApprovalError = "This provider and model are no longer part of the pending approval."
+            return
         }
         guard option.isCurrentlyAvailable else {
-            return "This provider or model is no longer available. Choose another valid option."
+            spendApprovalError = "This provider or model is no longer available. Choose another valid option."
+            return
         }
-        resolveSpend(.approved(option: option))
-        return nil
+        guard let operation = pendingSpendOperation else {
+            spendApprovalError = "The approved operation is no longer available. Decline it and try again."
+            return
+        }
+        let approvalID = approval.id
+        spendApprovalIsRunning = true
+        spendApprovalError = nil
+        do {
+            let result = try await operation.execute(option)
+            let message = result.content.compactMap { block -> String? in
+                guard case .text(let text) = block else { return nil }
+                return text
+            }.joined(separator: "\n")
+            if pendingSpendApproval?.id == approvalID {
+                clearSpendApproval(cancelling: false)
+            }
+            enqueueSpendFollowUp(
+                result.isError
+                    ? "The approved operation failed: \(message)"
+                    : message,
+                origin: operation.origin
+            )
+        } catch {
+            let origin = operation.origin
+            let message = error.localizedDescription
+            if pendingSpendApproval?.id == approvalID {
+                clearSpendApproval(cancelling: true)
+            } else {
+                operation.cancel()
+            }
+            enqueueSpendFollowUp(
+                "The approved operation failed before submission: \(message)",
+                origin: origin
+            )
+        }
     }
 
-    /// Resolve the pending approval (from the card's buttons, or teardown). Clears the card and
-    /// resumes the suspended tool call exactly once.
-    func resolveSpend(_ decision: SpendDecision) {
+    func declineSpend(reason: String = "The user declined the spend request.") {
+        guard let operation = pendingSpendOperation else {
+            clearSpendApproval(cancelling: true)
+            return
+        }
+        clearSpendApproval(cancelling: true)
+        enqueueSpendFollowUp(reason, origin: operation.origin)
+    }
+
+    private func clearSpendApproval(cancelling: Bool) {
+        let operation = pendingSpendOperation
         pendingSpendApproval = nil
         spendApprovalRefresh = nil
-        guard let continuation = spendContinuation else { return }
-        spendContinuation = nil
-        continuation.resume(returning: decision)
+        pendingSpendOperation = nil
+        spendApprovalIsRunning = false
+        spendApprovalError = nil
+        if cancelling { operation?.cancel() }
+    }
+
+    private func abandonSpendApproval() {
+        guard !spendApprovalIsRunning else { return }
+        clearSpendApproval(cancelling: true)
+        pendingSpendFollowUp = nil
+    }
+
+    private func enqueueSpendFollowUp(_ text: String, origin: ToolCallOrigin) {
+        guard origin.chatSessionID != nil else { return }
+        pendingSpendFollowUp = SpendFollowUp(origin: origin, text: text)
+        Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
+    }
+
+    @discardableResult
+    func resumePendingSpendFollowUp() -> Bool {
+        guard !isStreaming, let followUp = pendingSpendFollowUp else { return false }
+        guard pendingDialog == nil,
+              pendingSpendApproval == nil,
+              pendingGateApproval == nil else { return false }
+        if let sessionID = followUp.origin.chatSessionID {
+            guard sessions.contains(where: { $0.id == sessionID }) else {
+                pendingSpendFollowUp = nil
+                resumeToolCalls(from: followUp.origin)
+                return false
+            }
+            if currentSessionId != sessionID { selectSession(sessionID) }
+        }
+        pendingSpendFollowUp = nil
+        prepareToolCallsForFollowUp(from: followUp.origin)
+        send(
+            text: "Host generation result: \(followUp.text) Continue from this result; do not request the same spend approval again.",
+            mentions: [],
+            hidden: true,
+            allowWhileBlocked: true
+        )
+        return true
     }
 
     // MARK: - Gate approval (HAX G11 — a phase gate is the user's decision)
@@ -1336,7 +1461,7 @@ final class AgentService {
         }
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
-              spendContinuation == nil,
+              pendingSpendOperation == nil,
               nativeGateMutationID == nil else {
             throw ToolError(
                 "The composer already has a host-owned decision. Do not replace or duplicate it; stop and wait for the user."
@@ -1622,7 +1747,7 @@ final class AgentService {
         abandonDialog()
         dialogOrigins.removeAll()
         abandonGateApproval()
-        resolveSpend(.blocked(reason: "The project changed before spend approval."))
+        abandonSpendApproval()
         currentTask?.cancel()
         currentTask = nil
         _claudeRuntime?.stop()
@@ -1651,7 +1776,7 @@ final class AgentService {
     func newChat() {
         currentTask?.cancel()
         abandonSessionDialog()
-        resolveSpend(.declined)
+        abandonSpendApproval()
         // The runtime process IS a single conversation kept alive for the whole session — a fresh chat
         // must therefore START a fresh process, or it would silently continue the previous conversation.
         _claudeRuntime?.stop()
@@ -1681,7 +1806,7 @@ final class AgentService {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
         currentTask?.cancel()
         abandonSessionDialog()
-        resolveSpend(.declined)
+        abandonSpendApproval()
         syncMessagesIntoCurrentSession()
         if !sessions[idx].isOpen {
             sessions[idx].isOpen = true
@@ -1706,7 +1831,7 @@ final class AgentService {
             // THIS session — otherwise the still-running task appends into the next tab's messages.
             currentTask?.cancel()
             abandonSessionDialog()
-            resolveSpend(.declined)
+            abandonSpendApproval()
             isStreaming = false
             syncMessagesIntoCurrentSession()
             if let next = sessions.first(where: { $0.isOpen }) {
@@ -1728,7 +1853,7 @@ final class AgentService {
         if deletingActive {
             currentTask?.cancel()
             abandonSessionDialog()
-            resolveSpend(.declined)     // the deleted chat's suspended card/continuation must not carry over
+            abandonSpendApproval()
             currentSessionId = sessions.first(where: { $0.isOpen })?.id
             messages = currentSessionId
                 .flatMap { id in sessions.first { $0.id == id }?.messages }
@@ -1827,7 +1952,7 @@ final class AgentService {
 
     func cancel() {
         // Gate approval remains open because its tool call has already returned.
-        resolveSpend(.declined)
+        abandonSpendApproval()
         if claudeRuntimeEnabled {
             currentTask?.cancel()          // a pending attachment encode
             currentTask = nil

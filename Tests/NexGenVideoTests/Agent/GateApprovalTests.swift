@@ -136,9 +136,14 @@ struct GateApprovalTests {
             options: [option],
             actionLabel: "Generate image"
         )
-        #expect(await service.requestSpendApproval(spend) == .blocked(
-            reason: "A native pipeline gate change is already being applied."
-        ))
+        #expect(throws: ToolError.self) {
+            try service.requestSpendApproval(
+                spend,
+                origin: .direct,
+                editor: editor,
+                execute: { _, _ in .ok("unexpected") }
+            )
+        }
 
         service.endNativeGateMutation(mutationID)
         #expect(try service.requestGateApproval(GateApproval(phase: "brief")).isNew)
