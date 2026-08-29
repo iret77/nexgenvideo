@@ -2,6 +2,20 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.4.4",
+      "date": "2026-08-29",
+      "sections": [
+        {
+          "heading": "Generation providers",
+          "items": [
+            "Approved image, video, audio, upscale, and provider-tool requests now start exactly once from the host-owned card and resume the originating chat after submission without holding an MCP request open.",
+            "Connected provider catalogs now publish independently as discovery completes, so Higgsfield and other slower services can appear in an already-open spend approval instead of being hidden behind the first provider.",
+            "Pending generation approvals no longer keep a closed project in memory."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.4.3",
       "date": "2026-08-28",
       "sections": [
