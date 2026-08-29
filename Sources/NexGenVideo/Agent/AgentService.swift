@@ -1418,7 +1418,8 @@ final class AgentService {
     }
 
     private func resumeToolCalls(from origin: ToolCallOrigin) {
-        if let key = origin.suspensionKey {
+        if case .inAppChat = origin,
+           let key = origin.suspensionKey {
             suspendedToolOrigins.remove(key)
         }
     }
@@ -1428,7 +1429,6 @@ final class AgentService {
         case .inAppChat:
             resumeToolCalls(from: origin)
         case .embeddedRuntime:
-            resumeToolCalls(from: origin)
             _claudeRuntime?.stop()
             _claudeRuntime = nil
         case .direct, .externalMCP:
