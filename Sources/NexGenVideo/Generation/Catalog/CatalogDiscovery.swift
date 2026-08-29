@@ -167,7 +167,7 @@ enum CatalogDiscovery {
     ) async {
         await withTaskGroup(of: ProviderResult.self) { group in
             for provider in providers {
-                group.addTask { @MainActor in
+                group.addTask {
                     await operation(provider)
                 }
             }
