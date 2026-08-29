@@ -28,7 +28,3 @@ enum ToolCallOrigin: Hashable, Sendable {
         }
     }
 }
-
-enum MCPToolCallContext {
-    @TaskLocal static var origin: ToolCallOrigin = .direct
-}

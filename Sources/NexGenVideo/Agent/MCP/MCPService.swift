@@ -48,7 +48,7 @@ final class MCPService {
         lastError = nil
         let httpServer = MCPHTTPServer(
             port: Self.port,
-            makeServer: { [weak self] in
+            makeServer: { [weak self] origin in
                 let server = Server(
                     name: "nexgen",
                     version: "1.0.0",
@@ -58,7 +58,7 @@ final class MCPService {
                         tools: .init(listChanged: false)
                     )
                 )
-                await self?.registerTools(on: server)
+                await self?.registerTools(on: server, origin: origin)
                 await self?.registerResources(on: server)
                 return server
             },
@@ -134,7 +134,10 @@ final class MCPService {
         lastError = message
     }
 
-    private func registerTools(on server: Server) async {
+    private func registerTools(
+        on server: Server,
+        origin: MCPHTTPServer.SessionOrigin
+    ) async {
         let tools: [Tool] = ToolDefinitions.all.map { def in
             Tool(name: def.name.rawValue, description: def.description, inputSchema: def.mcpSchemaValue)
         }
@@ -147,17 +150,20 @@ final class MCPService {
             guard let self else {
                 return ToolResult.error("Editor not available").toMCPResult()
             }
-            return await self.dispatchCall(params)
+            return await self.dispatchCall(params, origin: origin.value)
         }
     }
 
     // Convert args inside the actor so the non-Sendable dict never crosses the hop.
-    private func dispatchCall(_ params: CallTool.Parameters) async -> CallTool.Result {
+    private func dispatchCall(
+        _ params: CallTool.Parameters,
+        origin: ToolCallOrigin
+    ) async -> CallTool.Result {
         let args = ToolArgsBridge.argsFromMCP(params.arguments ?? [:])
         let result = await toolExecutor.execute(
             name: params.name,
             args: args,
-            origin: MCPToolCallContext.origin
+            origin: origin
         )
         return result.toMCPResult()
     }

@@ -92,17 +92,12 @@ struct CatalogDiscoveryTests {
     }
 
     @MainActor
-    @Test("Higgsfield catalog works without a separate job-status tool")
-    func higgsfieldSynchronousMCPModelsRemainAvailable() async throws {
+    @Test("Higgsfield's current catalog supports reference image requests")
+    func higgsfieldCurrentMCPModelsRemainAvailable() async throws {
         let generationSchema: Value = .object([
             "properties": .object([
-                "params": .object([
-                    "properties": .object([
-                        "model": .object(["type": .string("string")]),
-                        "prompt": .object(["type": .string("string")]),
-                    ]),
-                    "required": .array([.string("model"), .string("prompt")]),
-                ]),
+                "job_set_type": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
                 "medias": .object([
                     "type": .string("array"),
                     "items": .object([
@@ -115,7 +110,7 @@ struct CatalogDiscoveryTests {
                     ]),
                 ]),
             ]),
-            "required": .array([.string("params")]),
+            "required": .array([.string("job_set_type"), .string("prompt")]),
         ])
         let uploadSchema: Value = .object([
             "properties": .object([
@@ -159,12 +154,12 @@ struct CatalogDiscoveryTests {
             ),
         ]
         let listing = #"""
-        {"items":[
-          {"id":"nano_banana_2","name":"Nano Banana Pro","output_type":"image","aspect_ratios":["1:1","16:9"],
+        {"data":{"models":[
+          {"job_set_type":"nano_banana_2","name":"Nano Banana Pro","type":"image","aspect_ratios":["1:1","16:9"],
            "medias":[{"name":"medias","type":"image","roles":["image_references"],"min":0,"max":14}]},
-          {"id":"gpt_image_2","name":"GPT Image 2","output_type":"image","aspect_ratios":["1:1","16:9"],
+          {"job_set_type":"gpt_image_2","name":"GPT Image 2","type":"image","aspect_ratios":["1:1","16:9"],
            "medias":[{"name":"medias","type":"image","roles":["image_references"],"min":0,"max":16}]}
-        ],"has_more":false}
+        ],"has_more":false}}
         """#
         let client = StubClient(tools: tools, listing: listing)
 

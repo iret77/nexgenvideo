@@ -74,21 +74,33 @@ final class ClaudeCodeRuntime {
 
     /// `context` (e.g. the user's current selection) is prepended to the payload sent to the model but
     /// never shown in the transcript — the user sees exactly what they typed.
+    @discardableResult
     func send(
         text: String,
         context: String? = nil,
         imageBlocks: [[String: Any]] = [],
         hidden: Bool = false,
         presentation: AgentUserPresentation? = nil
-    ) {
+    ) -> Bool {
         mapper.appendUserText(text, hidden: hidden, presentation: presentation)
         let payload = context.map { "\($0)\n\n\(text)" } ?? text
         if process == nil {
-            guard startSession(firstMessage: payload, imageBlocks: imageBlocks) else { return }  // failure path already published
+            guard startSession(firstMessage: payload, imageBlocks: imageBlocks) else { return false }
         } else {
-            process?.send(line: ClaudeCodeLaunch.userMessageLine(payload, imageBlocks: imageBlocks))
+            guard process?.send(
+                line: ClaudeCodeLaunch.userMessageLine(payload, imageBlocks: imageBlocks)
+            ) == true else {
+                generation &+= 1
+                readTask?.cancel()
+                readTask = nil
+                process?.terminate()
+                process = nil
+                fail("Claude Code stopped before the next turn could start.")
+                return false
+            }
         }
         onUpdate(mapper.messages, true)
+        return true
     }
 
     func stop() {
@@ -135,7 +147,14 @@ final class ClaudeCodeRuntime {
                 environment: Self.childEnvironment()
             )
             process = newProcess
-            newProcess.send(line: ClaudeCodeLaunch.userMessageLine(firstMessage, imageBlocks: imageBlocks))
+            guard newProcess.send(
+                line: ClaudeCodeLaunch.userMessageLine(firstMessage, imageBlocks: imageBlocks)
+            ) else {
+                newProcess.terminate()
+                process = nil
+                fail("Failed to send the first turn to Claude Code.")
+                return false
+            }
             let gen = generation   // captured NOW, not inside the task: a stop() before consume runs must invalidate it
             readTask = Task { [weak self] in
                 await self?.consume(stream, generation: gen)

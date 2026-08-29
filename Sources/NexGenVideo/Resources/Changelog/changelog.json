@@ -2,6 +2,20 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.4.5",
+      "date": "2026-08-29",
+      "sections": [
+        {
+          "heading": "Generation providers",
+          "items": [
+            "Completed spend and phase approvals now resume the exact originating agent session automatically instead of waiting for another chat message or continuing with stale card state.",
+            "A host follow-up that cannot start remains visible and retryable instead of silently returning the agent to Ready.",
+            "Higgsfield discovery now accepts the provider's current job-set catalog shape, preserves the selected model identifier during dispatch, and waits for connected catalogs before opening a generation approval."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.4.4",
       "date": "2026-08-29",
       "sections": [

@@ -103,6 +103,94 @@ struct MCPHTTPServerTests {
         ) == .externalMCP(sessionID: mcpID))
     }
 
+    @Test("MCP session rotation preserves exact client ownership")
+    func sessionRotationPreservesExactClientOwnership() async throws {
+        let port: UInt16 = 29_988
+        let chatID = UUID()
+        let server = MCPHTTPServer(port: port, makeServer: { origin in
+            let server = Server(
+                name: "mcp-origin-test",
+                version: "1.0.0",
+                capabilities: .init(tools: .init(listChanged: false))
+            )
+            await server.withMethodHandler(CallTool.self) { _ in
+                let owner = switch origin.value {
+                case .embeddedRuntime(let sessionID, _): sessionID.uuidString
+                case .direct: "direct"
+                case .inAppChat: "in-app"
+                case .externalMCP: "external"
+                }
+                return .init(content: [.text(owner)], isError: false)
+            }
+            return server
+        })
+        do {
+            try await server.start()
+            let endpoint = try #require(
+                URL(string: "http://127.0.0.1:\(port)/mcp")
+            )
+            let initialize = """
+            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}
+            """
+            let initialized = try await post(
+                initialize,
+                to: endpoint,
+                protocolVersion: nil,
+                agentSessionID: chatID
+            )
+            #expect(initialized.statusCode == 200)
+
+            let call = """
+            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"owner","arguments":{}}}
+            """
+            let response = try await post(
+                call,
+                to: endpoint,
+                protocolVersion: "2025-03-26",
+                agentSessionID: chatID
+            )
+            #expect(response.statusCode == 200)
+            #expect(String(decoding: response.data, as: UTF8.self).contains(chatID.uuidString))
+
+            let staleExternal = try await post(
+                call,
+                to: endpoint,
+                protocolVersion: "2025-03-26"
+            )
+            #expect(staleExternal.statusCode == 409)
+
+            let externalInitialize = try await post(
+                initialize,
+                to: endpoint,
+                protocolVersion: nil
+            )
+            #expect(externalInitialize.statusCode == 200)
+
+            let staleEmbedded = try await post(
+                call,
+                to: endpoint,
+                protocolVersion: "2025-03-26",
+                agentSessionID: chatID
+            )
+            #expect(staleEmbedded.statusCode == 409)
+
+            let externalResponse = try await post(
+                call,
+                to: endpoint,
+                protocolVersion: "2025-03-26"
+            )
+            #expect(externalResponse.statusCode == 200)
+            #expect(
+                String(decoding: externalResponse.data, as: UTF8.self)
+                    .contains("external")
+            )
+            await server.stop()
+        } catch {
+            await server.stop()
+            throw error
+        }
+    }
+
     @MainActor
     @Test("a disconnected long call is rejoined after MCP reinitializes")
     func longCallSurvivesReconnect() async throws {
@@ -119,7 +207,7 @@ struct MCPHTTPServerTests {
             runCount.increment()
             runnerLatch.block()
         }
-        let server = MCPHTTPServer(port: port, makeServer: {
+        let server = MCPHTTPServer(port: port, makeServer: { _ in
             serverCount.increment()
             let server = Server(
                 name: "mcp-http-test",
@@ -271,6 +359,7 @@ struct MCPHTTPServerTests {
         _ json: String,
         to endpoint: URL,
         protocolVersion: String?,
+        agentSessionID: UUID? = nil,
         session: URLSession = .shared
     ) async throws -> (data: Data, statusCode: Int) {
         var request = URLRequest(url: endpoint)
@@ -286,6 +375,12 @@ struct MCPHTTPServerTests {
             request.setValue(
                 protocolVersion,
                 forHTTPHeaderField: "MCP-Protocol-Version"
+            )
+        }
+        if let agentSessionID {
+            request.setValue(
+                agentSessionID.uuidString,
+                forHTTPHeaderField: MCPHTTPServer.agentSessionHeader
             )
         }
         let (data, rawResponse) = try await session.data(for: request)

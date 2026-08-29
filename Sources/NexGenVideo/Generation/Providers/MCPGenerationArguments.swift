@@ -393,7 +393,7 @@ enum MCPGenerationArguments {
         case .generation:
             switch field {
             case "prompt", "textprompt", "text", "description": ["prompt"]
-            case "model", "modelid": ["model"]
+            case "model", "modelid", "jobsettype": ["model"]
             case "aspectratio": ["aspectratio"]
             case "resolution": ["resolution"]
             case "quality", "mode": ["quality"]

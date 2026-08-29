@@ -253,6 +253,13 @@ struct AgentPanelView: View {
                 detail: error.localizedDescription
             )
         }
+        if service.hasPendingHostFollowUp {
+            return AgentLiveStatus(
+                state: .working,
+                title: "Resuming agent",
+                detail: "Continuing from the completed host action"
+            )
+        }
         if service.isStreaming {
             if runningTranscriptActivity != nil {
                 return AgentLiveStatus(
@@ -616,6 +623,12 @@ struct AgentPanelView: View {
 
     private func errorCTA(for error: AgentStreamError?) -> ErrorCTA? {
         guard let error else { return nil }
+        if service.hasPendingHostFollowUp {
+            return ErrorCTA(
+                title: "Retry",
+                action: { service.retryPendingHostFollowUp() }
+            )
+        }
         switch error {
         case .upstream:
             return nil

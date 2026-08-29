@@ -126,6 +126,46 @@ struct CostGuardTests {
     }
 
     @MainActor
+    @Test func embeddedApprovalKeepsItsResumeOwner() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        service.isStreaming = true
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: try #require(service.currentSessionId),
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "owned-spend",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in .ok("rendered") }
+        )
+
+        await service.approveSpend(selected)
+
+        #expect(service.pendingSpendApproval == nil)
+        #expect(service.hasPendingHostFollowUp)
+        #expect(service.isComposerBlocked)
+
+        service.isStreaming = false
+        #expect(!service.resumePendingSpendFollowUp())
+        #expect(service.hasPendingHostFollowUp)
+    }
+
+    @MainActor
     @Test func declineCancelsTheStoredOperationAndClears() throws {
         let editor = EditorViewModel()
         let service = editor.agentService

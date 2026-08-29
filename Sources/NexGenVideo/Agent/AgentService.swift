@@ -195,10 +195,12 @@ final class AgentService {
                 onSessionsChanged?()
                 Task { @MainActor [weak self] in await self?.editor?.refreshEngineState() }
             }
-            if !isStreaming, pendingGateFollowUp != nil {
+            if !isStreaming, !hostFollowUpStartInProgress,
+               pendingGateFollowUp != nil {
                 Task { @MainActor [weak self] in await self?.preparePendingGateFollowUp() }
             }
-            if !isStreaming, pendingSpendFollowUp != nil {
+            if !isStreaming, !hostFollowUpStartInProgress,
+               pendingSpendFollowUp != nil {
                 Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
             }
         }
@@ -1202,6 +1204,9 @@ final class AgentService {
     @ObservationIgnored
     private var pendingSpendFollowUp: SpendFollowUp?
 
+    @ObservationIgnored
+    private var hostFollowUpStartInProgress = false
+
     private struct PendingSpendOperation {
         let origin: ToolCallOrigin
         let execute: @MainActor (SpendOption) async throws -> ToolResult
@@ -1353,7 +1358,8 @@ final class AgentService {
 
     @discardableResult
     func resumePendingSpendFollowUp() -> Bool {
-        guard !isStreaming, let followUp = pendingSpendFollowUp else { return false }
+        guard !isStreaming, !hostFollowUpStartInProgress,
+              let followUp = pendingSpendFollowUp else { return false }
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
               pendingGateApproval == nil else { return false }
@@ -1365,15 +1371,23 @@ final class AgentService {
             }
             if currentSessionId != sessionID { selectSession(sessionID) }
         }
-        pendingSpendFollowUp = nil
+        hostFollowUpStartInProgress = true
+        defer { hostFollowUpStartInProgress = false }
         prepareToolCallsForFollowUp(from: followUp.origin)
-        send(
+        let started = send(
             text: "Host generation result: \(followUp.text) Continue from this result; do not request the same spend approval again.",
             mentions: [],
             hidden: true,
             allowWhileBlocked: true
         )
-        return true
+        if started {
+            pendingSpendFollowUp = nil
+        } else if streamError == nil {
+            streamError = .upstream(
+                "Couldn't resume the agent after generation. Retry the host follow-up."
+            )
+        }
+        return started
     }
 
     // MARK: - Gate approval (HAX G11 — a phase gate is the user's decision)
@@ -1557,7 +1571,8 @@ final class AgentService {
 
     @discardableResult
     func resumePendingGateFollowUp(nextPhasePrompt: String? = nil) -> Bool {
-        guard !isStreaming, let followUp = pendingGateFollowUp else { return false }
+        guard !isStreaming, !hostFollowUpStartInProgress,
+              let followUp = pendingGateFollowUp else { return false }
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
               pendingGateApproval == nil else { return false }
@@ -1571,7 +1586,8 @@ final class AgentService {
                 selectSession(sessionId)
             }
         }
-        pendingGateFollowUp = nil
+        hostFollowUpStartInProgress = true
+        defer { hostFollowUpStartInProgress = false }
         prepareToolCallsForFollowUp(from: followUp.origin)
         let phasePrompt = followUp.includeNextPhaseInstructions
             ? nextPhasePrompt
@@ -1580,8 +1596,36 @@ final class AgentService {
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
-        send(text: text, mentions: [], hidden: true, allowWhileBlocked: true)
-        return true
+        let started = send(
+            text: text,
+            mentions: [],
+            hidden: true,
+            allowWhileBlocked: true
+        )
+        if started {
+            pendingGateFollowUp = nil
+        } else if streamError == nil {
+            streamError = .upstream(
+                "Couldn't resume the agent after approval. Retry the host follow-up."
+            )
+        }
+        return started
+    }
+
+    var hasPendingHostFollowUp: Bool {
+        pendingSpendFollowUp != nil || pendingGateFollowUp != nil
+    }
+
+    func retryPendingHostFollowUp() {
+        guard hasPendingHostFollowUp, !isStreaming else { return }
+        streamError = nil
+        if pendingSpendFollowUp != nil {
+            _ = resumePendingSpendFollowUp()
+        } else {
+            Task { @MainActor [weak self] in
+                await self?.preparePendingGateFollowUp()
+            }
+        }
     }
 
     private func abandonGateApproval() {
@@ -1868,33 +1912,38 @@ final class AgentService {
 
     /// `hidden` seeds the agent's first turn without a visible user bubble — for kickoffs the user
     /// never typed (Start production, a pack starter). The model sees it; the transcript does not.
+    @discardableResult
     func send(
         text: String,
         mentions: [AgentMention],
         hidden: Bool = false,
         presentation: AgentUserPresentation? = nil,
         allowWhileBlocked: Bool = false
-    ) {
-        guard allowWhileBlocked || !isComposerBlocked else { return }
+    ) -> Bool {
+        guard allowWhileBlocked || !isComposerBlocked else { return false }
         if claudeRuntimeEnabled {
             guard canStream else {
                 streamError = .upstream(setupPrompt + " Agent settings.")
-                return
+                return false
             }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            guard prepareWorkingCopyForTurn() else { return }
+            guard !trimmed.isEmpty else { return false }
+            guard prepareWorkingCopyForTurn() else { return false }
             streamError = nil
-            sendViaClaudeRuntime(trimmed, mentions: mentions, hidden: hidden, presentation: presentation)
-            return
+            return sendViaClaudeRuntime(
+                trimmed,
+                mentions: mentions,
+                hidden: hidden,
+                presentation: presentation
+            )
         }
         guard canStream else {
             streamError = .upstream("Add an Anthropic API key in Settings to start.")
-            return
+            return false
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard prepareWorkingCopyForTurn() else { return }
+        guard !trimmed.isEmpty else { return false }
+        guard prepareWorkingCopyForTurn() else { return false }
         let referencedMentions = AgentMentionContext.referencedMentions(mentions, in: trimmed)
         let mentionHint = referencedMentions.isEmpty
             ? nil
@@ -1911,6 +1960,7 @@ final class AgentService {
         checkpointCurrentSession()
         streamError = nil
         kickOffStream()
+        return true
     }
 
     func send(controlTurn: AgentControlTurn) {
@@ -2049,26 +2099,32 @@ final class AgentService {
     /// being dropped: referenced image mentions are inlined as base64 image blocks, and the mention JSON
     /// + each asset's on-disk path go into the app-context so the agent can Read / inspect_media a
     /// non-image too.
+    @discardableResult
     private func sendViaClaudeRuntime(
         _ trimmed: String,
         mentions: [AgentMention],
         hidden: Bool = false,
         presentation: AgentUserPresentation? = nil
-    ) {
+    ) -> Bool {
         // One turn at a time per chat: the composer disables send while streaming, but programmatic
         // callers (kickoffs, pack starters) don't — without this a second send could jump ahead of a
         // first turn still encoding its attachments, delivering the two out of order. Marking busy NOW
         // also means a synchronous launch failure (no binary / no project dir) still transitions
         // true→false, so its error note + the user message get flushed into the chat and the doc dirtied.
-        guard !isStreaming else { return }
+        guard !isStreaming else { return false }
         isStreaming = true
         let referenced = AgentMentionContext.referencedMentions(mentions, in: trimmed)
         guard !referenced.isEmpty else {
             // No attachments — send synchronously (the selection/plugin context only).
             let context = Self.selectionHint(editor: editor).map { "<app-context>\($0)</app-context>" }
-            claudeRuntime.send(text: trimmed, context: context, hidden: hidden, presentation: presentation)
+            let started = claudeRuntime.send(
+                text: trimmed,
+                context: context,
+                hidden: hidden,
+                presentation: presentation
+            )
             checkpointCurrentSession()
-            return
+            return started
         }
         let selection = Self.selectionHint(editor: editor)
         let mentionHint = AgentMentionContext.hint(referenced, editor: editor)
@@ -2096,6 +2152,7 @@ final class AgentService {
             )
             self.checkpointCurrentSession()
         }
+        return true
     }
 
     /// The on-disk path of each mentioned library asset, so the runtime agent (which has native Read over

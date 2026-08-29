@@ -173,6 +173,32 @@ struct GateApprovalTests {
         #expect(service.pendingGateApproval == nil)
     }
 
+    @Test("an embedded gate keeps its resume owner")
+    func embeddedGateKeepsResumeOwner() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        service.isStreaming = true
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: try #require(service.currentSessionId),
+            mcpSessionID: UUID()
+        )
+
+        _ = try service.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: origin
+        )
+        _ = await service.resolveGate(.declined)
+
+        #expect(service.pendingGateApproval == nil)
+        #expect(service.hasPendingHostFollowUp)
+        #expect(service.isComposerBlocked)
+
+        service.isStreaming = false
+        #expect(!service.resumePendingGateFollowUp())
+        #expect(service.hasPendingHostFollowUp)
+    }
+
     @Test("An external MCP approval does not start an unrelated in-app turn")
     func externalApprovalDoesNotSendInAppMessage() async throws {
         let editor = EditorViewModel()
@@ -364,7 +390,8 @@ struct GateApprovalTests {
         #expect(service.pendingDialog?.id == intake.id)
 
         service.abandonDialog()
-        #expect(service.resumePendingGateFollowUp())
+        #expect(!service.resumePendingGateFollowUp())
+        #expect(service.hasPendingHostFollowUp)
     }
 
     @Test("a gate decision suspends the tool batch before later calls execute")
@@ -453,7 +480,8 @@ struct GateApprovalTests {
             origin: origin
         )
         _ = await h.editor.agentService.resolveGate(.declined)
-        #expect(h.editor.agentService.resumePendingGateFollowUp())
+        #expect(!h.editor.agentService.resumePendingGateFollowUp())
+        #expect(h.editor.agentService.hasPendingHostFollowUp)
 
         let stale = await h.executor.execute(
             name: "get_timeline",
