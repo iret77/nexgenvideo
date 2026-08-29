@@ -1219,9 +1219,10 @@ final class AgentService {
     func requestSpendApproval(
         _ approval: SpendApproval,
         origin: ToolCallOrigin,
+        editor: EditorViewModel,
         refresh: (@MainActor () -> SpendApproval)? = nil,
-        cancel: @escaping @MainActor () -> Void = {},
-        execute: @escaping @MainActor (SpendOption) async throws -> ToolResult
+        cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
+        execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
     ) throws -> ToolResult {
         if case .externalMCP = origin {
             throw ToolError(
@@ -1245,8 +1246,16 @@ final class AgentService {
         spendApprovalRefresh = refresh
         pendingSpendOperation = PendingSpendOperation(
             origin: origin,
-            execute: execute,
-            cancel: cancel
+            execute: { [weak editor] option in
+                guard let editor else {
+                    throw ToolError("The project closed before the approved operation could start.")
+                }
+                return try await execute(editor, option)
+            },
+            cancel: { [weak editor] in
+                guard let editor else { return }
+                cancel(editor)
+            }
         )
         suspendToolCalls(from: origin)
         pendingSpendApproval = approval

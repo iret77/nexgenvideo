@@ -111,7 +111,8 @@ struct CostGuardTests {
         let result = try service.requestSpendApproval(
             approval,
             origin: .direct,
-            execute: { option in
+            editor: editor,
+            execute: { _, option in
                 executed = option
                 return .ok("started")
             }
@@ -139,8 +140,9 @@ struct CostGuardTests {
         _ = try service.requestSpendApproval(
             approval,
             origin: .direct,
-            cancel: { cancelled = true },
-            execute: { _ in .ok("unexpected") }
+            editor: editor,
+            cancel: { _ in cancelled = true },
+            execute: { _, _ in .ok("unexpected") }
         )
         service.declineSpend()
         #expect(cancelled)
@@ -173,7 +175,8 @@ struct CostGuardTests {
         let result = try service.requestSpendApproval(
             approval,
             origin: origin,
-            execute: { _ in
+            editor: editor,
+            execute: { _, _ in
                 executed = true
                 return .ok("unexpected")
             }
@@ -212,8 +215,9 @@ struct CostGuardTests {
         _ = try service.requestSpendApproval(
             approval,
             origin: .direct,
-            cancel: { released = true },
-            execute: { _ in throw ToolError("preflight failed") }
+            editor: editor,
+            cancel: { _ in released = true },
+            execute: { _, _ in throw ToolError("preflight failed") }
         )
 
         await service.approveSpend(selected)
@@ -244,8 +248,9 @@ struct CostGuardTests {
         _ = try service.requestSpendApproval(
             approval,
             origin: .direct,
+            editor: editor,
             refresh: fixture.currentApproval,
-            execute: { _ in .ok("started") }
+            execute: { _, _ in .ok("started") }
         )
         fixture.includeDiscovered = true
         service.refreshSpendApproval()
@@ -271,7 +276,8 @@ struct CostGuardTests {
             try service.requestSpendApproval(
                 approval,
                 origin: .direct,
-                execute: { _ in .ok("unexpected") }
+                editor: editor,
+                execute: { _, _ in .ok("unexpected") }
             )
         }
         #expect(service.pendingSpendApproval == nil)
@@ -305,7 +311,8 @@ struct CostGuardTests {
             try service.requestSpendApproval(
                 approval,
                 origin: .direct,
-                execute: { _ in .ok("unexpected") }
+                editor: editor,
+                execute: { _, _ in .ok("unexpected") }
             )
         }
         #expect(service.pendingSpendApproval == nil)
@@ -333,13 +340,15 @@ struct CostGuardTests {
         _ = try service.requestSpendApproval(
             first,
             origin: .direct,
-            execute: { _ in .ok("started") }
+            editor: editor,
+            execute: { _, _ in .ok("started") }
         )
         #expect(throws: ToolError.self) {
             try service.requestSpendApproval(
                 second,
                 origin: .direct,
-                execute: { _ in .ok("unexpected") }
+                editor: editor,
+                execute: { _, _ in .ok("unexpected") }
             )
         }
         #expect(service.pendingSpendApproval?.id == first.id)
@@ -364,5 +373,39 @@ struct CostGuardTests {
         #expect(service.pendingSpendApproval?.id == first.id)
 
         service.declineSpend()
+    }
+
+    @MainActor
+    @Test func pendingSpendOperationDoesNotRetainItsEditor() async throws {
+        var editor: EditorViewModel? = EditorViewModel()
+        weak var weakEditor = editor
+        let service = try #require(editor?.agentService)
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "weak-editor",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: .direct,
+            editor: try #require(editor),
+            execute: { editor, _ in
+                _ = editor.timeline
+                return .ok("unexpected")
+            }
+        )
+
+        editor = nil
+        #expect(weakEditor == nil)
+        await service.approveSpend(selected)
+        #expect(service.pendingSpendApproval == nil)
     }
 }

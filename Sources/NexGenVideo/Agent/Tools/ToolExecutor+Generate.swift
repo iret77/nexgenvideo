@@ -194,8 +194,8 @@ extension ToolExecutor {
         currentIsCompatible: Bool = true,
         noCompatibleModelReason: String? = nil,
         alternatives: @escaping @MainActor () -> [SpendModelCandidate],
-        cancel: @escaping @MainActor () -> Void = {},
-        execute: @escaping @MainActor (SpendOption) async throws -> ToolResult
+        cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
+        execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
     ) async throws -> ToolResult {
         func currentOptions() -> [SpendOption] {
             let current = currentIsCompatible ? [SpendModelCandidate(
@@ -223,9 +223,9 @@ extension ToolExecutor {
         }
         guard CostGuard.needsApproval(credits: recommended.credits) else {
             do {
-                return try await execute(recommended)
+                return try await execute(editor, recommended)
             } catch {
-                cancel()
+                cancel(editor)
                 throw error
             }
         }
@@ -250,6 +250,7 @@ extension ToolExecutor {
         return try editor.agentService.requestSpendApproval(
             makeApproval(),
             origin: origin,
+            editor: editor,
             refresh: makeApproval,
             cancel: cancel,
             execute: execute
@@ -388,7 +389,7 @@ extension ToolExecutor {
                         && inputAssets.validate(for: candidate) == nil
                 }
             ) },
-            execute: { approved in
+            execute: { editor, approved in
                 var selectedModel = model
                 if approved.modelId != selectedModel.id,
                    let swapped = VideoModelConfig.allModels.first(where: {
@@ -533,7 +534,7 @@ extension ToolExecutor {
                     ) == nil && inputAssets.validate(for: candidate) == nil
                 }
             ) },
-            execute: { approved in
+            execute: { editor, approved in
                 var selectedModel = model
                 var selectedDuration = duration
                 var selectedBilledDuration = billedDuration
@@ -674,7 +675,7 @@ extension ToolExecutor {
                     referenceCount: refs.count
                 )
             },
-            execute: { approved in
+            execute: { editor, approved in
                 var selectedModel = model
                 var selectedModelID = modelId
                 var selectedAspectRatio = aspectRatio
@@ -979,10 +980,10 @@ extension ToolExecutor {
             credits: audioCredits, actionLabel: "Generate \(model.category.label)",
             origin: origin,
             alternatives: { [] },
-            cancel: {
+            cancel: { _ in
                 for url in cleanupURLs { try? FileManager.default.removeItem(at: url) }
             },
-            execute: { approved in
+            execute: { editor, approved in
                 let request = GenerationRequest(
                     modality: .audio, modelId: model.id, intent: prompt,
                     durationSeconds: durationSeconds.map(Double.init),
@@ -1036,7 +1037,7 @@ extension ToolExecutor {
             actionLabel: "Upscale",
             origin: origin,
             alternatives: { [] },
-            execute: { approved in
+            execute: { editor, approved in
                 guard let placeholderId = await EditSubmitter.submitUpscale(
                     asset: asset,
                     model: model,

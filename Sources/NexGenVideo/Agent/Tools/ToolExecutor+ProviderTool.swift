@@ -76,7 +76,7 @@ extension ToolExecutor {
                 actionLabel: "Run \(match.name)"
             )
             await client.disconnect()
-            let release: @MainActor () -> Void = {
+            let release: @MainActor (EditorViewModel) -> Void = { editor in
                 try? editor.recordSpendEvent(
                     authorization: authorization,
                     kind: .released,
@@ -87,8 +87,9 @@ extension ToolExecutor {
                 return try editor.agentService.requestSpendApproval(
                     approval,
                     origin: origin,
+                    editor: editor,
                     cancel: release,
-                    execute: { _ in
+                    execute: { editor, _ in
                         guard let approvedClient = await ProviderMCP.client(for: provider) else {
                             throw ToolError("\(provider.displayName) is no longer connected.")
                         }
@@ -146,7 +147,7 @@ extension ToolExecutor {
                     }
                 )
             } catch {
-                release()
+                release(editor)
                 throw error
             }
         }

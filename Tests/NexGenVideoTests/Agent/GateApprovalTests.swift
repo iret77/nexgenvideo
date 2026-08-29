@@ -140,7 +140,8 @@ struct GateApprovalTests {
             try service.requestSpendApproval(
                 spend,
                 origin: .direct,
-                execute: { _ in .ok("unexpected") }
+                editor: editor,
+                execute: { _, _ in .ok("unexpected") }
             )
         }
 
