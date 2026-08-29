@@ -1241,7 +1241,7 @@ final class AgentService {
         guard pendingSpendOperation == nil, pendingSpendApproval == nil else {
             throw ToolError("A spend approval is already waiting for the user.")
         }
-        editor?.agentPanelVisible = true
+        editor.agentPanelVisible = true
         spendApprovalError = nil
         spendApprovalRefresh = refresh
         pendingSpendOperation = PendingSpendOperation(
