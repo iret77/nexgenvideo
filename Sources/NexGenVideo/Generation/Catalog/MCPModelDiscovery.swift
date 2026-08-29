@@ -69,6 +69,28 @@ enum MCPModelDiscovery {
         struct Param: Decodable, Sendable, Equatable {
             let name: String?
             let options: [Scalar]?
+            let min: Int?
+            let max: Int?
+
+            private enum CodingKeys: String, CodingKey {
+                case name, options, min, max
+                case minimum
+                case maximum
+                case minItems = "min_items"
+                case maxItems = "max_items"
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                name = try c.decodeIfPresent(String.self, forKey: .name)
+                options = try c.decodeIfPresent([Scalar].self, forKey: .options)
+                min = try c.decodeIfPresent(Int.self, forKey: .min)
+                    ?? c.decodeIfPresent(Int.self, forKey: .minimum)
+                    ?? c.decodeIfPresent(Int.self, forKey: .minItems)
+                max = try c.decodeIfPresent(Int.self, forKey: .max)
+                    ?? c.decodeIfPresent(Int.self, forKey: .maximum)
+                    ?? c.decodeIfPresent(Int.self, forKey: .maxItems)
+            }
         }
         struct Media: Decodable, Sendable, Equatable {
             let name: String?
@@ -91,38 +113,153 @@ enum MCPModelDiscovery {
         }
 
         enum CodingKeys: String, CodingKey {
-            case id, name, description, parameters, medias, tags
+            case id, name, description, parameters, medias, tags, type, modality
+            case jobSetType = "job_set_type"
+            case jobSetTypeCamel = "jobSetType"
+            case modelId = "model_id"
+            case modelIdCamel = "modelId"
+            case displayName = "display_name"
+            case displayNameCamel = "displayName"
+            case params
+            case mediaInputs = "media_inputs"
+            case mediaInputsCamel = "mediaInputs"
             case outputType = "output_type"
+            case outputTypeCamel = "outputType"
             case aspectRatios = "aspect_ratios"
+            case aspectRatiosCamel = "aspectRatios"
             case durations
             case durationRange = "duration_range"
+            case durationRangeCamel = "durationRange"
         }
-    }
 
-    private struct Listing: Decodable {
-        let items: [ModelItem]?
-        let hasMore: Bool?
-        let nextPageToken: String?
-        enum CodingKeys: String, CodingKey {
-            case items
-            case hasMore = "has_more"
-            case nextPageToken = "next_page_token"
+        init(
+            id: String,
+            name: String?,
+            description: String?,
+            outputType: String?,
+            aspectRatios: [String]?,
+            durations: [Int]?,
+            durationRange: SpanRange?,
+            parameters: [Param]?,
+            medias: [Media]?,
+            tags: [String]?
+        ) {
+            self.id = id
+            self.name = name
+            self.description = description
+            self.outputType = outputType
+            self.aspectRatios = aspectRatios
+            self.durations = durations
+            self.durationRange = durationRange
+            self.parameters = parameters
+            self.medias = medias
+            self.tags = tags
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(String.self, forKey: .id)
+                ?? c.decodeIfPresent(String.self, forKey: .jobSetType)
+                ?? c.decodeIfPresent(String.self, forKey: .jobSetTypeCamel)
+                ?? c.decodeIfPresent(String.self, forKey: .modelId)
+                ?? c.decode(String.self, forKey: .modelIdCamel)
+            name = try c.decodeIfPresent(String.self, forKey: .name)
+                ?? c.decodeIfPresent(String.self, forKey: .displayName)
+                ?? c.decodeIfPresent(String.self, forKey: .displayNameCamel)
+            description = try c.decodeIfPresent(String.self, forKey: .description)
+            outputType = try c.decodeIfPresent(String.self, forKey: .outputType)
+                ?? c.decodeIfPresent(String.self, forKey: .outputTypeCamel)
+                ?? c.decodeIfPresent(String.self, forKey: .type)
+                ?? c.decodeIfPresent(String.self, forKey: .modality)
+            aspectRatios = try c.decodeIfPresent([String].self, forKey: .aspectRatios)
+                ?? c.decodeIfPresent([String].self, forKey: .aspectRatiosCamel)
+            durations = try c.decodeIfPresent([Int].self, forKey: .durations)
+            durationRange = try c.decodeIfPresent(SpanRange.self, forKey: .durationRange)
+                ?? c.decodeIfPresent(SpanRange.self, forKey: .durationRangeCamel)
+            parameters = try c.decodeIfPresent([Param].self, forKey: .parameters)
+                ?? c.decodeIfPresent([Param].self, forKey: .params)
+            medias = try c.decodeIfPresent([Media].self, forKey: .medias)
+                ?? c.decodeIfPresent([Media].self, forKey: .mediaInputs)
+                ?? c.decodeIfPresent([Media].self, forKey: .mediaInputsCamel)
+            tags = try c.decodeIfPresent([String].self, forKey: .tags)
+        }
+
+        func withOutputType(_ fallback: String?) -> ModelItem {
+            guard outputType?.isEmpty != false, let fallback else { return self }
+            return ModelItem(
+                id: id,
+                name: name,
+                description: description,
+                outputType: fallback,
+                aspectRatios: aspectRatios,
+                durations: durations,
+                durationRange: durationRange,
+                parameters: parameters,
+                medias: medias,
+                tags: tags
+            )
         }
     }
 
     /// Parse a catalog tool's textual result into models + the next-page cursor (nil when the last
     /// page or unpaged). Tolerant: accepts the `{items,has_more,next_page_token}` envelope or a bare
     /// `[ModelItem]` array; returns `([], nil)` on anything it can't read (never throws).
-    static func parseListing(_ text: String) -> (items: [ModelItem], next: String?) {
-        guard let data = text.data(using: .utf8) else { return ([], nil) }
+    static func parseListing(
+        _ text: String,
+        defaultOutputType: String? = nil
+    ) -> (items: [ModelItem], next: String?) {
+        guard let json = jsonPayload(in: text),
+              let data = json.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data),
+              let listing = listingPayload(root)
+        else { return ([], nil) }
         let decoder = JSONDecoder()
-        if let listing = try? decoder.decode(Listing.self, from: data), let items = listing.items {
-            return (items, listing.hasMore == true ? listing.nextPageToken : nil)
+        let items = listing.items.compactMap { value -> ModelItem? in
+            guard JSONSerialization.isValidJSONObject(value),
+                  let data = try? JSONSerialization.data(withJSONObject: value),
+                  let item = try? decoder.decode(ModelItem.self, from: data)
+            else { return nil }
+            return item.withOutputType(defaultOutputType)
         }
-        if let bare = try? decoder.decode([ModelItem].self, from: data) {
-            return (bare, nil)
+        return (items, listing.next)
+    }
+
+    private static func jsonPayload(in text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let start = trimmed.firstIndex(where: { $0 == "{" || $0 == "[" }) else {
+            return nil
         }
-        return ([], nil)
+        guard let end = trimmed.lastIndex(where: { $0 == "}" || $0 == "]" }),
+              start <= end else { return nil }
+        return String(trimmed[start...end])
+    }
+
+    private static func listingPayload(
+        _ value: Any
+    ) -> (items: [[String: Any]], next: String?)? {
+        if let array = value as? [[String: Any]] {
+            return (array, nil)
+        }
+        guard let object = value as? [String: Any] else { return nil }
+        let cursor = object["next_page_token"] as? String
+            ?? object["nextPageToken"] as? String
+            ?? object["next"] as? String
+            ?? object["cursor"] as? String
+        let reachedLastPage = object["has_more"] as? Bool == false
+            || object["hasMore"] as? Bool == false
+        let next = reachedLastPage ? nil : cursor
+        for key in ["items", "models", "job_sets", "jobSets"] {
+            if let items = object[key] as? [[String: Any]] {
+                return (items, next)
+            }
+        }
+        for key in ["data", "result", "payload"] {
+            if let nested = object[key],
+               let listing = listingPayload(nested) {
+                return (listing.items, listing.next ?? next)
+            }
+        }
+        return nil
     }
 
     // MARK: - Mapping (the unit-tested core)

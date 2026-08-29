@@ -54,9 +54,15 @@ final class ClaudeCodeProcess: @unchecked Sendable {
     }
 
     /// Write one stream-json line (a newline is appended) to the process stdin.
-    func send(line: String) {
-        guard let data = (line + "\n").data(using: .utf8) else { return }
-        try? stdinHandle.write(contentsOf: data)
+    @discardableResult
+    func send(line: String) -> Bool {
+        guard let data = (line + "\n").data(using: .utf8) else { return false }
+        do {
+            try stdinHandle.write(contentsOf: data)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Close stdin (signals end-of-input to the child).

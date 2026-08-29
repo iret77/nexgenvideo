@@ -85,6 +85,31 @@ struct MCPModelDiscoveryTests {
         #expect(next == nil)
     }
 
+    @Test func currentHiggsfieldJobSetShapeIsDiscovered() {
+        let listing = #"""
+        {"data":{"models":[
+          {"job_set_type":"nano_banana_2","display_name":"Nano Banana Pro","type":"image",
+           "params":[{"name":"aspect_ratio","options":["1:1","16:9","9:16"]}]},
+          {"job_set_type":"gpt_image_2","name":"GPT Image 2","modality":"image"}
+        ]}}
+        """#
+        let parsed = MCPModelDiscovery.parseListing(listing)
+
+        #expect(parsed.items.map(\.id) == ["nano_banana_2", "gpt_image_2"])
+        #expect(parsed.items.map(\.outputType) == ["image", "image"])
+        #expect(parsed.items.first?.name == "Nano Banana Pro")
+    }
+
+    @Test func requestedModalityFillsLeanCatalogItems() {
+        let listing = #"{"items":[{"job_set_type":"nano_banana_2","name":"Nano Banana Pro"}]}"#
+        let parsed = MCPModelDiscovery.parseListing(
+            listing,
+            defaultOutputType: "image"
+        )
+
+        #expect(parsed.items.first?.outputType == "image")
+    }
+
     // MARK: - the mapping core
 
     @Test func modelsMapToGatedMcpCatalogEntries() {

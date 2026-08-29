@@ -5,10 +5,44 @@ import Network
 actor MCPHTTPServer {
     static let agentSessionHeader = "X-NexGen-Agent-Session"
 
+    final class SessionOrigin: @unchecked Sendable {
+        private let lock = NSLock()
+        private let mcpSessionID: UUID
+        private var chatSessionID: UUID?
+
+        init(mcpSessionID: UUID) {
+            self.mcpSessionID = mcpSessionID
+        }
+
+        var value: ToolCallOrigin {
+            lock.withLock {
+                chatSessionID.map {
+                    .embeddedRuntime(
+                        chatSessionID: $0,
+                        mcpSessionID: mcpSessionID
+                    )
+                } ?? .externalMCP(sessionID: mcpSessionID)
+            }
+        }
+
+        func bind(chatSessionID: UUID?) {
+            lock.withLock {
+                self.chatSessionID = chatSessionID
+            }
+        }
+
+        func accepts(chatSessionID: UUID?) -> Bool {
+            lock.withLock {
+                self.chatSessionID == chatSessionID
+            }
+        }
+    }
+
     private struct SDKSession {
         let id: UUID
         let server: Server
         let transport: StatelessHTTPServerTransport
+        let origin: SessionOrigin
         var inFlight = 0
         var didInitialize = false
         var retired = false
@@ -31,7 +65,7 @@ actor MCPHTTPServer {
     private static let maxRequestBytes = 20 * 1_024 * 1_024
 
     private let port: UInt16
-    private let makeServer: @Sendable () async -> Server
+    private let makeServer: @Sendable (SessionOrigin) async -> Server
     private let onFailure: @Sendable (String) async -> Void
     private var listener: NWListener?
     private var sessions: [UUID: SDKSession] = [:]
@@ -45,7 +79,7 @@ actor MCPHTTPServer {
 
     init(
         port: UInt16,
-        makeServer: @escaping @Sendable () async -> Server,
+        makeServer: @escaping @Sendable (SessionOrigin) async -> Server,
         onFailure: @escaping @Sendable (String) async -> Void = { _ in }
     ) {
         self.port = port
@@ -183,6 +217,8 @@ actor MCPHTTPServer {
     }
 
     private func makeSession() async throws -> SDKSession {
+        let id = UUID()
+        let origin = SessionOrigin(mcpSessionID: id)
         let pipeline = StandardValidationPipeline(validators: [
             OriginValidator.localhost(port: Int(port)),
             AcceptHeaderValidator(mode: .jsonOnly),
@@ -192,7 +228,7 @@ actor MCPHTTPServer {
         let transport = StatelessHTTPServerTransport(
             validationPipeline: pipeline
         )
-        let server = await makeServer()
+        let server = await makeServer(origin)
         do {
             try await server.start(transport: transport)
         } catch {
@@ -200,9 +236,10 @@ actor MCPHTTPServer {
             throw error
         }
         return SDKSession(
-            id: UUID(),
+            id: id,
             server: server,
-            transport: transport
+            transport: transport,
+            origin: origin
         )
     }
 
@@ -475,12 +512,22 @@ actor MCPHTTPServer {
                 let session = try await acquireSession(
                     isInitialize: isInitialize
                 )
-                let origin = Self.toolCallOrigin(
-                    request: request,
-                    mcpSessionID: session.id
-                )
-                response = await MCPToolCallContext.$origin.withValue(origin) {
-                    await session.transport.handleRequest(request)
+                if isInitialize {
+                    session.origin.bind(
+                        chatSessionID: Self.agentChatSessionID(request: request)
+                    )
+                }
+                if isInitialize || session.origin.accepts(
+                    chatSessionID: Self.agentChatSessionID(request: request)
+                ) {
+                    response = await session.transport.handleRequest(request)
+                } else {
+                    response = .error(
+                        statusCode: 409,
+                        .invalidRequest(
+                            "MCP client identity changed; initialize a fresh session."
+                        )
+                    )
                 }
                 await releaseSession(session.id)
             } catch {
@@ -687,14 +734,20 @@ actor MCPHTTPServer {
         request: HTTPRequest,
         mcpSessionID: UUID
     ) -> ToolCallOrigin {
-        if let raw = header(request.headers, named: agentSessionHeader),
-           let chatSessionID = UUID(uuidString: raw) {
+        if let chatSessionID = agentChatSessionID(request: request) {
             return .embeddedRuntime(
                 chatSessionID: chatSessionID,
                 mcpSessionID: mcpSessionID
             )
         }
         return .externalMCP(sessionID: mcpSessionID)
+    }
+
+    private nonisolated static func agentChatSessionID(
+        request: HTTPRequest
+    ) -> UUID? {
+        header(request.headers, named: agentSessionHeader)
+            .flatMap(UUID.init(uuidString:))
     }
 
     private nonisolated static func responseHead(

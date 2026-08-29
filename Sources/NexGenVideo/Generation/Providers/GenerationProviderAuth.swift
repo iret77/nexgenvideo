@@ -50,15 +50,14 @@ extension GenerationProvider {
         }
     }
 
-    /// When a provider's MCP generate tools take a free-form `model` id (rather than an inline enum),
+    /// When a provider's MCP generate tools take a free-form model id (rather than an inline enum),
     /// the full model list lives behind a separate catalog tool. This names ONLY that tool + how to
     /// page it — the model list itself stays live/discovery-driven (never a hardcoded model table).
     /// `nil` → NGV maps the discovered generate tools directly (inline `model` enum expanded, else one
     /// entry per modality).
     var mcpModelCatalog: MCPModelCatalog? {
         switch self {
-        // Higgsfield: `generate_*` take `model` as a required free string; `models_explore(action:list,
-        // type:…)` paginates the full catalog (`items[]`, `has_more`, `next_page_token`).
+        // Higgsfield exposes its free-form `job_set_type` catalog through `models_explore`.
         case .higgsfield:
             return MCPModelCatalog(tool: "models_explore", listArgs: ["action": "list"],
                                    typeArg: "type", cursorArg: "after")

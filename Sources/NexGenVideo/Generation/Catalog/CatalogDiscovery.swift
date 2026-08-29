@@ -72,7 +72,7 @@ enum CatalogDiscovery {
 
     static func ensureCurrent(
         maxAge: TimeInterval = 60,
-        maxWait: TimeInterval = 10
+        maxWait: TimeInterval = 60
     ) async {
         if let lastCompletedAt,
            !running,
@@ -204,9 +204,8 @@ enum CatalogDiscovery {
             }
             var entries: [CatalogEntry] = []
             var usedModelCatalog = false
-            // A provider whose generate tools take a free-form `model` id (Higgsfield) advertises its
-            // full catalog through a separate tool; enumerate it. Otherwise (or if that yields nothing)
-            // map the discovered generate tools directly.
+            // Some providers advertise the selected model as a free-form field and expose the full
+            // catalog through a separate tool; enumerate it before mapping the generation schema.
             if let hint = provider.mcpModelCatalog, tools.contains(where: { $0.name == hint.tool }) {
                 usedModelCatalog = true
                 let models = await enumerate(provider: provider, client: client, hint: hint,
@@ -263,7 +262,12 @@ enum CatalogDiscovery {
                     )
                     break
                 }
-                let parsed = texts.map(MCPModelDiscovery.parseListing)
+                let parsed = texts.map {
+                    MCPModelDiscovery.parseListing(
+                        $0,
+                        defaultOutputType: modality.rawValue
+                    )
+                }
                 let page = parsed.first(where: { !$0.items.isEmpty || $0.next != nil })
                     ?? (items: [], next: nil)
                 let (items, next) = page
