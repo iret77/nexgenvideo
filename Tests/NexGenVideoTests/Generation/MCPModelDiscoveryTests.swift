@@ -139,7 +139,7 @@ struct MCPModelDiscoveryTests {
         #expect(caps.duration.range == .init(min: 4, max: 15))
         #expect(caps.supportsFirstFrame)                         // start_image role present
         #expect(caps.supportsLastFrame)                          // end_image role present
-        #expect(caps.maxReferenceImages == 1)                    // image media present
+        #expect(caps.maxReferenceImages == 0)                    // unresolved list cardinality fails closed
         #expect(top.card?.tags == ["cinematic", "premium"])
 
         // The second item uses an explicit durations list, not a range.
@@ -252,6 +252,24 @@ struct MCPModelDiscoveryTests {
 
         #expect(!caps.supportsImageReference)
         #expect(entry.offers?.first?.mcpMediaRoles == [])
+    }
+
+    @Test func unresolvedReferenceLimitFailsClosed() {
+        let listing = #"{"items":[{"id":"anchor","output_type":"image","medias":[{"name":"medias","type":"image","roles":["image_references"]}]}]}"#
+        let (models, _) = MCPModelDiscovery.parseListing(listing)
+        let entries = MCPModelDiscovery.catalogEntries(
+            models: models,
+            toolsByModality: [.image: "generate_image"],
+            provider: .higgsfield
+        )
+        let entry = try! #require(entries.first)
+        guard case .image(let caps) = entry.uiCapabilities else {
+            Issue.record("expected image caps")
+            return
+        }
+
+        #expect(caps.referenceImageLimit == .unknown)
+        #expect(!caps.supportsImageReference)
     }
 
     @Test func toolOnlyFallbackRejectsUnsupportedRequiredSchema() {

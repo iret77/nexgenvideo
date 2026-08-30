@@ -1,3 +1,4 @@
+import Foundation
 import MCP
 import Testing
 
@@ -24,15 +25,70 @@ struct CatalogDiscoveryTests {
         }
     }
 
+    @MainActor
+    @Test("Completed direct discovery replaces stale base image offers for every direct provider")
+    func directImageDiscoveryReplacesBaseOffers() throws {
+        let entry = CatalogEntry(
+            id: "shared-image",
+            kind: .image,
+            displayName: "Shared image",
+            allowedEndpoints: ["shared-image"],
+            responseShape: .images,
+            uiCapabilities: .image(ImageCaps(
+                resolutions: nil,
+                aspectRatios: ["1:1"],
+                qualities: nil,
+                supportsImageReference: false,
+                maxReferenceImages: 0,
+                maxImages: 1
+            )),
+            offers: [
+                ProviderOffer(provider: .fal),
+                ProviderOffer(provider: .runway),
+                ProviderOffer(provider: .higgsfield, transport: .mcp),
+            ]
+        )
+
+        let filtered = ModelCatalog.gatingCompletedDirectImageProviders(
+            in: [entry],
+            completedProviders: [.fal, .runway, .google]
+        )
+        let remaining = try #require(filtered.first?.offers)
+
+        #expect(remaining.map(\.provider) == [.higgsfield])
+    }
+
     actor StubClient: MCPCatalogClient {
         let tools: [MCPProviderClient.DiscoveredTool]
-        let listing: String
+        let pages: [[String]]
+        let details: [String: [String]]
         private var calls: [String] = []
         private var didDisconnect = false
 
-        init(tools: [MCPProviderClient.DiscoveredTool], listing: String) {
+        init(
+            tools: [MCPProviderClient.DiscoveredTool],
+            listing: String,
+            details: [String: String] = [:]
+        ) {
             self.tools = tools
-            self.listing = listing
+            self.pages = [[listing]]
+            self.details = details.mapValues { [$0] }
+        }
+
+        init(
+            tools: [MCPProviderClient.DiscoveredTool],
+            listing: String,
+            detailPayloads: [String: [String]]
+        ) {
+            self.tools = tools
+            self.pages = [[listing]]
+            self.details = detailPayloads
+        }
+
+        init(tools: [MCPProviderClient.DiscoveredTool], pages: [[String]]) {
+            self.tools = tools
+            self.pages = pages
+            self.details = [:]
         }
 
         func discoverTools() async throws -> [MCPProviderClient.DiscoveredTool] {
@@ -44,7 +100,16 @@ struct CatalogDiscoveryTests {
             guard name == "models_explore" else {
                 throw MCPProviderClient.ClientError.toolFailed("Unexpected call to \(name)")
             }
-            return [listing]
+            if arguments["action"] == .string("get"),
+               case .string(let modelID)? = arguments["model_id"],
+               let detail = details[modelID] {
+                return detail
+            }
+            let page = min(
+                calls.filter { $0 == "models_explore" }.count - 1,
+                pages.count - 1
+            )
+            return pages[page]
         }
 
         func disconnect() async {
@@ -54,6 +119,39 @@ struct CatalogDiscoveryTests {
         func snapshot() -> (calls: [String], disconnected: Bool) {
             (calls, didDisconnect)
         }
+    }
+
+    @MainActor
+    @Test("Catalog discovery combines models and cursor data from every MCP content block")
+    func catalogDiscoveryCombinesContentBlocks() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ]
+        let client = StubClient(
+            tools: tools,
+            pages: [
+                [
+                    #"{"items":[{"id":"first","output_type":"image"}]}"#,
+                    #"{"items":[{"id":"first","name":"First","output_type":"image"},{"id":"second","output_type":"image"}]}"#,
+                    #"{"next_page_token":"page-2"}"#,
+                ],
+                [#"{"items":[{"id":"third","output_type":"image"}],"has_more":false}"#],
+            ]
+        )
+
+        let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+
+        #expect(entries.map(\.id) == ["first", "second", "third"])
+        #expect(entries.first?.displayName == "First")
     }
 
     @MainActor
@@ -143,6 +241,29 @@ struct CatalogDiscoveryTests {
                 inputSchema: .object([:])
             ),
             MCPProviderClient.DiscoveredTool(
+                name: "job_status",
+                description: "Check a generation job.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "job_set_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("job_set_id")]),
+                ])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "job_display",
+                description: "Display completed generation output.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "ids": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                        ]),
+                    ]),
+                    "required": .array([.string("ids")]),
+                ])
+            ),
+            MCPProviderClient.DiscoveredTool(
                 name: "media_upload",
                 description: "Create a media upload.",
                 inputSchema: uploadSchema
@@ -156,12 +277,18 @@ struct CatalogDiscoveryTests {
         let listing = #"""
         {"data":{"models":[
           {"job_set_type":"nano_banana_2","name":"Nano Banana Pro","type":"image","aspect_ratios":["1:1","16:9"],
-           "medias":[{"name":"medias","type":"image","roles":["image_references"],"min":0,"max":14}]},
-          {"job_set_type":"gpt_image_2","name":"GPT Image 2","type":"image","aspect_ratios":["1:1","16:9"],
-           "medias":[{"name":"medias","type":"image","roles":["image_references"],"min":0,"max":16}]}
+           "medias":[{"name":"medias","type":"image","roles":["image"],"min":0}]},
+          {"job_set_type":"gpt_image_2","name":"GPT Image 2","type":"image","aspect_ratios":["1:1","16:9"]}
         ],"has_more":false}}
         """#
-        let client = StubClient(tools: tools, listing: listing)
+        let client = StubClient(
+            tools: tools,
+            listing: listing,
+            details: [
+                "nano_banana_2": #"{"job_set_type":"nano_banana_2","type":"image","constraints":["At most 14 image references are allowed."],"medias":[{"name":"medias","type":"image","roles":["image"],"min":0}]}"#,
+                "gpt_image_2": #"{"job_set_type":"gpt_image_2","type":"image","medias":[{"name":"medias","type":"image","roles":["image"],"min":0}]}"#,
+            ]
+        )
 
         let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
         let snapshot = await client.snapshot()
@@ -174,7 +301,7 @@ struct CatalogDiscoveryTests {
                 transport: .mcp,
                 providerRef: "generate_image",
                 modelParam: entry.id,
-                mcpMediaRoles: ["image_references"]
+                mcpMediaRoles: ["image"]
             )]
         })
         for entry in entries {
@@ -182,8 +309,12 @@ struct CatalogDiscoveryTests {
                 Issue.record("Expected image capabilities")
                 continue
             }
-            #expect(caps.maxReferenceImages >= 14)
             let model = ImageModelConfig(entry: entry, caps: caps)
+            if entry.id == "nano_banana_2" {
+                #expect(model.referenceImageLimit == .bounded(14))
+            } else {
+                #expect(model.referenceImageLimit == .providerUnbounded(hostMaximum: 32))
+            }
             #expect(model.validate(
                 aspectRatio: "16:9",
                 resolution: nil,
@@ -192,18 +323,155 @@ struct CatalogDiscoveryTests {
                 numImages: 1
             ) == nil)
         }
-        #expect(snapshot.calls == ["models_explore"])
+        #expect(snapshot.calls == ["models_explore", "models_explore", "models_explore"])
         #expect(snapshot.disconnected)
     }
 
     @MainActor
-    @Test("An advertised but unmappable lifecycle remains fail-closed")
-    func malformedLifecycleIsNotCataloged() async {
+    @Test("Higgsfield video detail contracts preserve every reference class")
+    func higgsfieldVideoReferenceContractsRemainAvailable() async throws {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_video",
+                description: "Generate a video.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ]
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"seedance_2_0","name":"Seedance 2.0","output_type":"video"},{"id":"cinematic_studio_video_3_5","name":"Cinematic Studio 3.5","output_type":"video"},{"id":"gemini_omni","name":"Gemini Omni","output_type":"video"}]}"#,
+            detailPayloads: [
+                "seedance_2_0": [
+                    #"{"id":"seedance_2_0","output_type":"video","constraints":["At most 9 image references are allowed (counting start_image and end_image).","At most 3 video_references are allowed.","At most 3 audio_references are allowed.","At most 12 reference files are allowed in total across images, videos, and audios."],"medias":[{"name":"medias","type":"image","roles":["image","start_image","end_image"]}]}"#,
+                    #"{"id":"seedance_2_0","output_type":"video","medias":[{"name":"medias","type":"video","roles":["video"]}]}"#,
+                    #"{"id":"seedance_2_0","output_type":"video","medias":[{"name":"medias","type":"audio","roles":["audio"]}]}"#,
+                ],
+                "cinematic_studio_video_3_5": [
+                    #"{"id":"cinematic_studio_video_3_5","output_type":"video","constraints":["At most 15 media references are allowed in total (image_references + start_image + end_image + video_references + audio_references)."],"medias":[{"name":"medias","type":"image","roles":["image","start_image","end_image"]},{"name":"medias","type":"video","roles":["video"]},{"name":"medias","type":"audio","roles":["audio"]}]}"#,
+                ],
+                "gemini_omni": [
+                    #"{"id":"gemini_omni","output_type":"video","constraints":["At most 1 video_references entry is allowed.","When a video reference is provided, at most 5 image_references are allowed.","At most 7 image_references are allowed."],"medias":[{"name":"medias","type":"image","roles":["image"]},{"name":"medias","type":"video","roles":["video"]}]}"#,
+                ],
+            ]
+        )
+
+        let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let entry = try #require(entries.first(where: { $0.id == "seedance_2_0" }))
+        guard case .video(let caps) = entry.uiCapabilities else {
+            Issue.record("Expected video capabilities")
+            return
+        }
+
+        #expect(caps.supportsFirstFrame)
+        #expect(caps.supportsLastFrame)
+        #expect(caps.maxReferenceImages == 9)
+        #expect(caps.maxReferenceVideos == 3)
+        #expect(caps.maxReferenceAudios == 3)
+        #expect(caps.maxTotalReferences == 12)
+        #expect(caps.framesCountTowardImageReferenceLimit)
+        #expect(caps.framesCountTowardTotalReferenceLimit)
+
+        let model = VideoModelConfig(entry: entry, caps: caps)
+        func asset(_ id: String, _ type: ClipType) -> MediaAsset {
+            MediaAsset(
+                id: id,
+                url: URL(fileURLWithPath: "/tmp/\(id)"),
+                type: type,
+                name: id
+            )
+        }
+        let frames = [asset("start.png", .image), asset("end.png", .image)]
+        let validImages = (0..<7).map { asset("image-\($0).png", .image) }
+        let excessImages = validImages + [asset("image-7.png", .image)]
+        #expect(VideoGenerationSubmission.InputAssets(
+            frames: frames,
+            imageRefs: validImages
+        ).validate(for: model) == nil)
+        #expect(VideoGenerationSubmission.InputAssets(
+            frames: frames,
+            imageRefs: excessImages
+        ).validate(for: model) != nil)
+
+        let cinematicEntry = try #require(entries.first {
+            $0.id == "cinematic_studio_video_3_5"
+        })
+        guard case .video(let cinematicCaps) = cinematicEntry.uiCapabilities else {
+            Issue.record("Expected Cinematic Studio video capabilities")
+            return
+        }
+        #expect(cinematicCaps.maxTotalReferences == 15)
+        #expect(!cinematicCaps.framesCountTowardImageReferenceLimit)
+        #expect(cinematicCaps.framesCountTowardTotalReferenceLimit)
+
+        let geminiEntry = try #require(entries.first { $0.id == "gemini_omni" })
+        guard case .video(let geminiCaps) = geminiEntry.uiCapabilities else {
+            Issue.record("Expected Gemini Omni video capabilities")
+            return
+        }
+        #expect(geminiCaps.maxReferenceImages == 7)
+        #expect(geminiCaps.maxReferenceImagesWhenVideoPresent == 5)
+        let geminiModel = VideoModelConfig(entry: geminiEntry, caps: geminiCaps)
+        let sixImages = (0..<6).map { asset("gemini-image-\($0).png", .image) }
+        #expect(VideoGenerationSubmission.InputAssets(
+            imageRefs: sixImages
+        ).validate(for: geminiModel) == nil)
+        #expect(VideoGenerationSubmission.InputAssets(
+            imageRefs: sixImages,
+            videoRefs: [asset("gemini-video.mp4", .video)]
+        ).validate(for: geminiModel) != nil)
+    }
+
+    @MainActor
+    @Test("A detail response resolves only the media classes it actually declares")
+    func detailResolutionIsScopedPerMediaClass() async throws {
         let tools = [
             MCPProviderClient.DiscoveredTool(
                 name: "generate_image",
                 description: "Generate an image.",
                 inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ]
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"partial-image","output_type":"image","medias":[{"name":"medias","type":"image","roles":["image"]}]}]}"#,
+            details: [
+                "partial-image": #"{"id":"partial-image","output_type":"image","medias":[{"name":"medias","type":"audio","roles":["audio"]}]}"#,
+            ]
+        )
+
+        let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let entry = try #require(entries.first)
+        guard case .image(let caps) = entry.uiCapabilities else {
+            Issue.record("Expected image capabilities")
+            return
+        }
+
+        #expect(caps.referenceImageLimit == .unknown)
+        #expect(!caps.supportsImageReference)
+    }
+
+    @MainActor
+    @Test("Catalog discovery is independent of the billed generation lifecycle")
+    func malformedLifecycleDoesNotHideCatalog() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "wait": .object(["type": .string("boolean")]),
+                    ]),
+                ])
             ),
             MCPProviderClient.DiscoveredTool(
                 name: "job_status",
@@ -223,14 +491,45 @@ struct CatalogDiscoveryTests {
         ]
         let client = StubClient(
             tools: tools,
-            listing: #"{"items":[{"id":"must_not_surface","output_type":"image"}]}"#
+            listing: #"{"items":[{"id":"listed-image","output_type":"image"}]}"#
         )
 
         let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
         let snapshot = await client.snapshot()
 
-        #expect(entries.isEmpty)
-        #expect(snapshot.calls.isEmpty)
+        #expect(entries.map(\.id) == ["listed-image"])
+        #expect(snapshot.calls == ["models_explore"])
         #expect(snapshot.disconnected)
+    }
+
+    @MainActor
+    @Test("Schema-free synchronous MCP generators remain discoverable")
+    func schemaFreeSynchronousGeneratorRemainsAvailable() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate and return an image.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "model": .object(["type": .string("string")]),
+                        "prompt": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("model"), .string("prompt")]),
+                ])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ]
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"direct-image","output_type":"image"}]}"#
+        )
+
+        let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+
+        #expect(entries.map(\.id) == ["direct-image"])
     }
 }

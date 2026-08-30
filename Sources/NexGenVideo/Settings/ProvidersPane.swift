@@ -105,7 +105,11 @@ struct ProvidersPane: View {
             case .actionRequired, .unavailable: return false
             }
         case .localApp: return connectionState(p).localEnabled
-        case .apiKey: return connectionState(p).hasKey
+        case .apiKey:
+            switch catalog.providerDiscovery[p] {
+            case .unavailable, .actionRequired: return false
+            case .inactive, .checking, .ready, .none: return connectionState(p).hasKey
+            }
         }
     }
 
@@ -158,7 +162,14 @@ struct ProvidersPane: View {
         case .localApp:
             (label, tone) = ready ? ("Enabled", .success) : ("Disabled", .neutral)
         case .apiKey:
-            (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
+            switch catalog.providerDiscovery[provider] {
+            case .checking where connectionState(provider).hasKey:
+                (label, tone) = ("Checking…", .neutral)
+            case .unavailable where connectionState(provider).hasKey:
+                (label, tone) = ("Connection failed", .error)
+            default:
+                (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
+            }
         }
         return SettingsStatusBadge(text: label, tone: tone)
     }
@@ -260,6 +271,13 @@ struct ProvidersPane: View {
                         focusedProvider == provider.id ? AppTheme.Border.primaryColor : AppTheme.Border.subtleColor,
                         lineWidth: AppTheme.BorderWidth.thin))
                 trailingControl(provider)
+            }
+            if connectionState(provider).hasKey,
+               let message = discoveryMessage(catalog.providerDiscovery[provider]) {
+                Text(message)
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, AppTheme.Spacing.mdLg)

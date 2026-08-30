@@ -242,13 +242,13 @@ Repeat until `next_render_shot(project_dir, "<phase>")` reports
    duration=<shot.duration_s>, aspectRatio=<brief aspect>,
    resolution=<brief.final_resolution for final / a cheaper res for
    preview>, startFrameMediaRef=..., endFrameMediaRef=...,
-   referenceImageMediaRefs=[...])`. It returns an async placeholder
-   asset; wait until `get_media` shows the asset ready (or failed).
+   referenceImageMediaRefs=[...])`. It returns only after the rendered
+   asset is ready, or returns the provider failure.
    For `ai_enhanced`, call the same tool with
    `sourceVideoMediaRef=<source_video_media_ref>` and omit frame/reference
    arguments.
 6. **Record:** `record_render(project_dir, "<phase>", shot_id,
-   output=<the ready rendered clip's media asset id>,
+   output=<the completed rendered clip's media asset id>,
    cost_eur=<shot cost>, status="rendered")`. On a provider failure mark
    it `status="failed"` and keep the loop going.
    The host fingerprints the output and every actual submission input.

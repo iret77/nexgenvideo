@@ -107,5 +107,22 @@ struct SpendApproval: Identifiable, Equatable, Sendable {
     let options: [SpendOption]
     /// Verb for the action, e.g. "Generate video", used on the approve button.
     let actionLabel: String
+    let providerScope: [GenerationProvider]
 
+    init(
+        id: String,
+        recommendedOptionId: String,
+        options: [SpendOption],
+        actionLabel: String,
+        providerScope: [GenerationProvider]? = nil
+    ) {
+        self.id = id
+        self.recommendedOptionId = recommendedOptionId
+        self.options = options
+        self.actionLabel = actionLabel
+        var seen = Set<GenerationProvider>()
+        self.providerScope = (providerScope ?? options.map(\.target.provider)).filter {
+            seen.insert($0).inserted
+        }
+    }
 }

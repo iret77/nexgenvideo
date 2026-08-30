@@ -6,15 +6,25 @@ import Foundation
 
 enum FalInputBuilder {
 
-    static func imageInput(_ p: ImageGenerationParams, sizeMode: FalImageSizeMode, refField: FalImageRefField, count: Int) -> [String: Any] {
+    static func imageInput(
+        _ p: ImageGenerationParams,
+        model: FalModel,
+        count: Int
+    ) -> [String: Any] {
         var input: [String: Any] = ["prompt": p.prompt]
         if count > 1 { input["num_images"] = count }   // 1 is every model's default; omit so edit models never see an unsupported field
-        switch sizeMode {
+        switch model.imageSize {
         case .imageSizeEnum: input["image_size"] = imageSizeEnum(p.aspectRatio)
         case .aspectRatio:   input["aspect_ratio"] = p.aspectRatio
         case .none:          break
         }
-        switch refField {
+        if model.imageSendsResolution, let resolution = p.resolution {
+            input["resolution"] = resolution
+        }
+        if model.imageSendsQuality, let quality = p.quality {
+            input["quality"] = quality
+        }
+        switch model.imageRef {
         case .none:   break
         case .single: if let first = p.imageURLs.first { input["image_url"] = first }
         case .array:  if !p.imageURLs.isEmpty { input["image_urls"] = p.imageURLs }

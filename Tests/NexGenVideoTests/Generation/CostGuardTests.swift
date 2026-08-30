@@ -34,6 +34,20 @@ struct CostGuardTests {
         }
     }
 
+    @MainActor
+    private final class PendingExecutionFixture {
+        private var continuation: CheckedContinuation<Void, Never>?
+
+        func wait() async {
+            await withCheckedContinuation { continuation = $0 }
+        }
+
+        func finish() {
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
     private func option(
         modelId: String,
         name: String,
@@ -93,6 +107,18 @@ struct CostGuardTests {
             #expect(CostGuard.needsApproval(credits: 50) == false)
             #expect(CostGuard.needsApproval(credits: 51))
         }
+    }
+
+    @Test func providerDiagnosticScopeSurvivesAnEmptyOptionRefresh() {
+        let approval = SpendApproval(
+            id: "provider-outage",
+            recommendedOptionId: "",
+            options: [],
+            actionLabel: "Generate image",
+            providerScope: [.fal, .higgsfield]
+        )
+
+        #expect(approval.providerScope == [.fal, .higgsfield])
     }
 
     @MainActor
@@ -166,6 +192,131 @@ struct CostGuardTests {
     }
 
     @MainActor
+    @Test func approvedImageReplacesTheSuspendedResultWithVisibleMedia() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let chatSessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: chatSessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "fal-ai/nano-banana-pro/edit",
+            name: "Nano Banana Pro (edit)",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "visible-result",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        let suspended = "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
+        service.messages = [
+            AgentMessage(role: .assistant, blocks: [
+                .toolUse(id: "image-tool", name: ToolName.generateImage.rawValue, inputJSON: "{}")
+            ]),
+            AgentMessage(role: .user, blocks: [
+                .toolResult(toolUseId: "image-tool", content: [.text(suspended)], isError: false)
+            ]),
+        ]
+        service.isStreaming = true
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in
+                ToolResult(
+                    content: [
+                        .text("Generation completed. Asset ID: image-1."),
+                        .image(base64: "aW1hZ2U=", mediaType: "image/png"),
+                    ],
+                    isError: false
+                )
+            }
+        )
+
+        await service.approveSpend(selected)
+
+        let resultContent = service.messages.flatMap(\.blocks).compactMap { block in
+            guard case .toolResult(let id, let content, _) = block,
+                  id == "image-tool" else { return nil }
+            return content
+        }.first
+        #expect(resultContent?.contains(where: {
+            guard case .image(let base64, let mediaType) = $0 else { return false }
+            return base64 == "aW1hZ2U=" && mediaType == "image/png"
+        }) == true)
+    }
+
+    @MainActor
+    @Test func completedImageReturnsToItsOriginatingChatAfterTabSwitch() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let originSessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: originSessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "fal-ai/nano-banana-pro/edit",
+            name: "Nano Banana Pro (edit)",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "tab-switch-result",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "image-tool",
+                content: [.text("The spend approval card is open. End this turn and wait for the host result; do not retry this tool call.")],
+                isError: false
+            ),
+        ])]
+        let fixture = PendingExecutionFixture()
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in
+                await fixture.wait()
+                return ToolResult(
+                    content: [
+                        .text("Generation completed. Asset ID: switched-image."),
+                        .image(base64: "c3dpdGNoZWQ=", mediaType: "image/png"),
+                    ],
+                    isError: false
+                )
+            }
+        )
+
+        let approvalTask = Task { await service.approveSpend(selected) }
+        while !service.spendApprovalIsRunning { await Task.yield() }
+        service.newChat()
+        service.isStreaming = true
+        fixture.finish()
+        await approvalTask.value
+
+        let originSession = try #require(
+            service.sessions.first(where: { $0.id == originSessionID })
+        )
+        #expect(originSession.messages.flatMap(\.blocks).contains { block in
+            guard case .toolResult(_, let content, _) = block else { return false }
+            return content.contains {
+                guard case .image(let base64, _) = $0 else { return false }
+                return base64 == "c3dpdGNoZWQ="
+            }
+        })
+    }
+
+    @MainActor
     @Test func declineCancelsTheStoredOperationAndClears() throws {
         let editor = EditorViewModel()
         let service = editor.agentService
@@ -211,6 +362,13 @@ struct CostGuardTests {
             options: [selected],
             actionLabel: "Generate image"
         )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "pending-image",
+                content: [.text("The spend approval card is open. End this turn and wait for the host result; do not retry this tool call.")],
+                isError: false
+            ),
+        ])]
         var executed = false
         let result = try service.requestSpendApproval(
             approval,
@@ -233,6 +391,15 @@ struct CostGuardTests {
 
         service.cancel()
         #expect(service.pendingSpendApproval == nil)
+        #expect(service.toolCallBlockReason(
+            tool: .generateImage,
+            args: [:],
+            origin: origin
+        ) == nil)
+        #expect(service.messages.flatMap(\.blocks).contains { block in
+            guard case .toolResult(let id, _, let isError) = block else { return false }
+            return id == "pending-image" && isError
+        })
     }
 
     @MainActor

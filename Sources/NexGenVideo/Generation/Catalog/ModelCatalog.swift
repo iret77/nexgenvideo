@@ -74,6 +74,7 @@ final class ModelCatalog {
     /// Runtime MCP-discovered models per provider (#163). Layered ON TOP of the base so a remote
     /// refresh never drops a signed-in provider's models, and a sign-out clears exactly that provider's.
     @ObservationIgnored private var discoveredByProvider: [GenerationProvider: [CatalogEntry]] = [:]
+    @ObservationIgnored private var completedDiscoveryProviders = Set<GenerationProvider>()
 
     private init() {}
 
@@ -95,6 +96,7 @@ final class ModelCatalog {
     /// Replace the runtime-discovered models for one provider (empty clears them), then rebuild the
     /// union. Called when a provider signs in / out or its MCP discovery re-runs.
     func applyDiscovered(_ entries: [CatalogEntry], for provider: GenerationProvider) {
+        completedDiscoveryProviders.insert(provider)
         discoveredByProvider[provider] = entries.isEmpty ? nil : entries
         rebuild()
     }
@@ -103,6 +105,7 @@ final class ModelCatalog {
     /// provider absent from `byProvider` has its discovered models cleared (signed out), so this is
     /// self-correcting: what's not rediscovered disappears (usable-only).
     func setDiscovered(_ byProvider: [GenerationProvider: [CatalogEntry]]) {
+        completedDiscoveryProviders = Set(byProvider.keys)
         discoveredByProvider = byProvider.filter { !$0.value.isEmpty }
         rebuild()
     }
@@ -138,11 +141,30 @@ final class ModelCatalog {
                 }
             }
         }
-        add(baseEntries)
+        let base = Self.gatingCompletedDirectImageProviders(
+            in: baseEntries,
+            completedProviders: completedDiscoveryProviders
+        )
+        add(base)
         for provider in GenerationProvider.allCases {
             if let entries = discoveredByProvider[provider] { add(entries) }
         }
         return order.map { byId[$0]! }
+    }
+
+    static func gatingCompletedDirectImageProviders(
+        in entries: [CatalogEntry],
+        completedProviders: Set<GenerationProvider>
+    ) -> [CatalogEntry] {
+        let gated = completedProviders.intersection(DirectImageDiscovery.providers)
+        guard !gated.isEmpty else { return entries }
+        return entries.compactMap { entry in
+            guard case .image = entry.uiCapabilities else { return entry }
+            var filtered = entry
+            let offers = entry.offers ?? ProviderManifest.defaultOffers(forModelId: entry.id)
+            filtered.offers = offers.filter { !gated.contains($0.provider) }
+            return filtered.offers?.isEmpty == false ? filtered : nil
+        }
     }
 
     /// The provider-neutral LOGICAL id the LLM sees — a known provider prefix stripped off.
@@ -457,6 +479,9 @@ struct VideoCaps: Decodable, Sendable {
     let referenceTagNoun: String
     let requiresSourceVideo: Bool
     let requiresReferenceImage: Bool
+    let framesCountTowardImageReferenceLimit: Bool
+    let framesCountTowardTotalReferenceLimit: Bool
+    let maxReferenceImagesWhenVideoPresent: Int?
 
     var durations: [Int] { duration.discrete }
 
@@ -465,6 +490,8 @@ struct VideoCaps: Decodable, Sendable {
         case maxReferenceImages, maxReferenceVideos, maxReferenceAudios, maxTotalReferences
         case maxCombinedVideoRefSeconds, maxCombinedAudioRefSeconds, framesAndReferencesExclusive
         case referenceTagNoun, requiresSourceVideo, requiresReferenceImage
+        case framesCountTowardImageReferenceLimit, framesCountTowardTotalReferenceLimit
+        case maxReferenceImagesWhenVideoPresent
     }
 
     init(
@@ -475,7 +502,10 @@ struct VideoCaps: Decodable, Sendable {
         maxReferenceImages: Int, maxReferenceVideos: Int, maxReferenceAudios: Int,
         maxTotalReferences: Int?, maxCombinedVideoRefSeconds: Double?,
         maxCombinedAudioRefSeconds: Double?, framesAndReferencesExclusive: Bool,
-        referenceTagNoun: String, requiresSourceVideo: Bool, requiresReferenceImage: Bool
+        referenceTagNoun: String, requiresSourceVideo: Bool, requiresReferenceImage: Bool,
+        framesCountTowardImageReferenceLimit: Bool = false,
+        framesCountTowardTotalReferenceLimit: Bool = false,
+        maxReferenceImagesWhenVideoPresent: Int? = nil
     ) {
         duration = VideoDurationCapabilities(
             discrete: durations,
@@ -496,6 +526,9 @@ struct VideoCaps: Decodable, Sendable {
         self.referenceTagNoun = referenceTagNoun
         self.requiresSourceVideo = requiresSourceVideo
         self.requiresReferenceImage = requiresReferenceImage
+        self.framesCountTowardImageReferenceLimit = framesCountTowardImageReferenceLimit
+        self.framesCountTowardTotalReferenceLimit = framesCountTowardTotalReferenceLimit
+        self.maxReferenceImagesWhenVideoPresent = maxReferenceImagesWhenVideoPresent
     }
 
     init(from decoder: Decoder) throws {
@@ -516,6 +549,36 @@ struct VideoCaps: Decodable, Sendable {
         referenceTagNoun = try container.decode(String.self, forKey: .referenceTagNoun)
         requiresSourceVideo = try container.decode(Bool.self, forKey: .requiresSourceVideo)
         requiresReferenceImage = try container.decode(Bool.self, forKey: .requiresReferenceImage)
+        framesCountTowardImageReferenceLimit = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .framesCountTowardImageReferenceLimit
+        ) ?? false
+        framesCountTowardTotalReferenceLimit = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .framesCountTowardTotalReferenceLimit
+        ) ?? false
+        maxReferenceImagesWhenVideoPresent = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maxReferenceImagesWhenVideoPresent
+        )
+    }
+}
+
+enum ImageReferenceLimit: Sendable, Equatable {
+    case bounded(Int)
+    case providerUnbounded(hostMaximum: Int)
+    case unknown
+
+    var hostMaximum: Int {
+        switch self {
+        case .bounded(let maximum), .providerUnbounded(let maximum): max(0, maximum)
+        case .unknown: 0
+        }
+    }
+
+    var declaredMaximum: Int? {
+        guard case .bounded(let maximum) = self else { return nil }
+        return max(0, maximum)
     }
 }
 
@@ -526,8 +589,10 @@ struct ImageCaps: Decodable, Sendable {
     let supportsImageReference: Bool
     let requiresImageReference: Bool
     let minReferenceImages: Int
-    let maxReferenceImages: Int
+    let referenceImageLimit: ImageReferenceLimit
     let maxImages: Int
+
+    var maxReferenceImages: Int { referenceImageLimit.hostMaximum }
 
     init(
         resolutions: [String]?,
@@ -537,17 +602,20 @@ struct ImageCaps: Decodable, Sendable {
         requiresImageReference: Bool = false,
         minReferenceImages: Int? = nil,
         maxReferenceImages: Int? = nil,
+        referenceImageLimit: ImageReferenceLimit? = nil,
         maxImages: Int
     ) {
         let minimum = max(0, minReferenceImages ?? (requiresImageReference ? 1 : 0))
-        let maximum = max(0, maxReferenceImages ?? (supportsImageReference ? max(1, minimum) : 0))
+        let limit = referenceImageLimit ?? .bounded(
+            max(0, maxReferenceImages ?? (supportsImageReference ? max(1, minimum) : 0))
+        )
         self.resolutions = resolutions
         self.aspectRatios = aspectRatios
         self.qualities = qualities
-        self.supportsImageReference = supportsImageReference && maximum > 0
+        self.supportsImageReference = supportsImageReference && limit.hostMaximum > 0
         self.requiresImageReference = requiresImageReference || minimum > 0
         self.minReferenceImages = minimum
-        self.maxReferenceImages = maximum
+        self.referenceImageLimit = limit
         self.maxImages = maxImages
     }
 

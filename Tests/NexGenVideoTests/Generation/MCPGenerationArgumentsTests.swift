@@ -53,6 +53,7 @@ struct MCPGenerationArgumentsTests {
             "properties": .object([
                 "model": .object(["type": .string("string")]),
                 "prompt": .object(["type": .string("string")]),
+                "wait": .object(["type": .string("boolean")]),
             ]),
             "required": .array([.string("model"), .string("prompt")]),
         ])
@@ -73,6 +74,7 @@ struct MCPGenerationArgumentsTests {
 
         #expect(arguments["model"] == .string("image-model"))
         #expect(arguments["prompt"] == .string("compiled prompt"))
+        #expect(arguments["wait"] == .bool(true))
     }
 
     @Test func jobSetTypeReceivesTheSelectedModel() throws {
@@ -349,6 +351,22 @@ struct MCPGenerationArgumentsTests {
                 "sync": .bool(true),
             ]),
         ])
+    }
+
+    @Test func higgsfieldJobSetIdentifierMapsToStatusTool() throws {
+        let schema: Value = .object([
+            "properties": .object([
+                "job_set_id": .object(["type": .string("string")]),
+            ]),
+            "required": .array([.string("job_set_id")]),
+        ])
+
+        let arguments = try MCPGenerationArguments.makeJob(
+            jobID: "job-set-123",
+            schema: schema
+        )
+
+        #expect(arguments == ["job_set_id": .string("job-set-123")])
     }
 
     @Test func requiredSchemaDefaultsAreHonored() throws {

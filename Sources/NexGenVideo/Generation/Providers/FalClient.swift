@@ -43,6 +43,44 @@ actor FalClient {
         statusCodes: [429, 500, 502, 503, 504]
     )
 
+    func availableImageModelIds() async throws -> Set<String> {
+        var ids = Set<String>()
+        for category in ["text-to-image", "image-to-image"] {
+            var cursor: String?
+            var pages = 0
+            repeat {
+                var components = URLComponents(string: "https://api.fal.ai/v1/models")!
+                var query = [
+                    URLQueryItem(name: "category", value: category),
+                    URLQueryItem(name: "status", value: "active"),
+                    URLQueryItem(name: "limit", value: "100"),
+                ]
+                if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+                components.queryItems = query
+                guard let url = components.url else {
+                    throw GenerationBackendError.transport("Invalid fal.ai model-catalog URL")
+                }
+                let request = makeRequest(url: url, method: "GET", body: nil)
+                let response = try await send(
+                    request,
+                    retryPolicy: Self.statusRetryPolicy,
+                    deadline: Date().addingTimeInterval(30)
+                )
+                try Self.throwIfError(
+                    response,
+                    request: request,
+                    operation: "model catalog",
+                    json: Self.parse(response.data)
+                )
+                let page = try JSONDecoder().decode(ModelCatalogPage.self, from: response.data)
+                ids.formUnion(page.models.map(\.endpointId))
+                cursor = page.hasMore == true ? page.nextCursor : nil
+                pages += 1
+            } while cursor != nil && pages < 10
+        }
+        return ids
+    }
+
     /// Submit a job to the queue; `inputBody` is the serialized input object with its fields at
     /// the top level (the HTTP queue API's shape — not the SDK's `{"input": …}`). Returns the request id.
     func submit(endpoint: String, inputBody: Data) async throws -> String {
@@ -418,6 +456,26 @@ actor FalClient {
         let status: Int
         let url: URL?
         let retryAfterNanoseconds: UInt64?
+    }
+
+    private struct ModelCatalogPage: Decodable {
+        struct Model: Decodable {
+            let endpointId: String
+
+            private enum CodingKeys: String, CodingKey {
+                case endpointId = "endpoint_id"
+            }
+        }
+
+        let models: [Model]
+        let nextCursor: String?
+        let hasMore: Bool?
+
+        private enum CodingKeys: String, CodingKey {
+            case models
+            case nextCursor = "next_cursor"
+            case hasMore = "has_more"
+        }
     }
 
     private struct RetryPolicy {

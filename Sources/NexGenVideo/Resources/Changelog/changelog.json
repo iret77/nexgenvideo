@@ -2,6 +2,26 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.4.6",
+      "date": "2026-08-30",
+      "sections": [
+        {
+          "heading": "Generation providers",
+          "items": [
+            "fal.ai image choices now come from the authenticated active-model catalog and include the current Nano Banana, Nano Banana 2, Nano Banana Pro, and GPT Image 2 generation and editing endpoints.",
+            "Connected Higgsfield models use the provider's complete paged tool catalog, per-model reference contract, job-set identifier, and validated status/display lifecycle; synchronous MCP tools remain available when their live schema declares direct media output.",
+            "Image, video, audio, and upscale approvals remain active until the provider settles, returning the completed asset or the exact failure instead of stopping at a background placeholder."
+          ]
+        },
+        {
+          "heading": "Generation pipeline",
+          "items": [
+            "Production Design lighting anchors pass every staged style reference into a compatible image model and display the completed generated image directly in the agent transcript."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.4.5",
       "date": "2026-08-29",
       "sections": [

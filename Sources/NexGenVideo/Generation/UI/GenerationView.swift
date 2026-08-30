@@ -228,11 +228,23 @@ struct GenerationView: View {
     }
 
     private var allRefs: [MediaAsset] { refImages + refVideos + refAudios }
-    private var totalRefCount: Int { allRefs.count }
+    private var selectedFrameCount: Int {
+        return videoInputAssets(for: videoModel).frames.count
+    }
+    private var framesInImageLimit: Int {
+        videoModel.framesCountTowardImageReferenceLimit ? selectedFrameCount : 0
+    }
+    private var framesInTotalLimit: Int {
+        videoModel.framesCountTowardTotalReferenceLimit ? selectedFrameCount : 0
+    }
+    private var totalRefCount: Int { allRefs.count + framesInTotalLimit }
 
     private var isRefCapReached: Bool {
         if let total = videoModel.maxTotalReferences, totalRefCount >= total { return true }
-        let imgFull = videoModel.maxReferenceImages == 0 || refImages.count >= videoModel.maxReferenceImages
+        let imageLimit = videoModel.maxReferenceImages(
+            hasVideoReference: !refVideos.isEmpty
+        )
+        let imgFull = imageLimit == 0 || refImages.count + framesInImageLimit >= imageLimit
         let vidFull = videoModel.maxReferenceVideos == 0 || refVideos.count >= videoModel.maxReferenceVideos
         let audFull = videoModel.maxReferenceAudios == 0 || refAudios.count >= videoModel.maxReferenceAudios
         return imgFull && vidFull && audFull
@@ -1035,7 +1047,8 @@ struct GenerationView: View {
 
     private func refCap(for type: ClipType) -> Int {
         switch type {
-        case .image: videoModel.maxReferenceImages
+        case .image:
+            videoModel.maxReferenceImages(hasVideoReference: !refVideos.isEmpty)
         case .video: videoModel.maxReferenceVideos
         case .audio: videoModel.maxReferenceAudios
         case .text, .lottie, .document: 0
@@ -1140,9 +1153,12 @@ struct GenerationView: View {
         let total = totalRefCount
         if let cap = videoModel.maxTotalReferences {
             let shortLabel: (ClipType) -> String = { switch $0 { case .image: "img"; case .video: "vid"; case .audio: "aud"; case .text: "txt"; case .lottie: "lot"; case .document: "doc" } }
-            let parts = ClipType.allCases
+            var parts = ClipType.allCases
                 .filter { refCap(for: $0) > 0 }
                 .map { "\(refCount(for: $0)) \(shortLabel($0))" }
+            if framesInTotalLimit > 0 {
+                parts.insert("\(framesInTotalLimit) frame", at: 0)
+            }
             return "\(total)/\(cap) · \(parts.joined(separator: " · "))"
         }
         let singleCap = ClipType.allCases.map(refCap(for:)).max() ?? 0

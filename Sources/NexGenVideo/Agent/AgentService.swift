@@ -1216,7 +1216,11 @@ final class AgentService {
     private struct SpendFollowUp {
         let origin: ToolCallOrigin
         let text: String
+        let imageBlocks: [[String: Any]]
     }
+
+    private static let spendSuspensionText =
+        "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
 
     /// Register the exact operation behind the approval and end the current agent turn immediately.
     /// Human wait time never holds an MCP request open: the card starts the stored operation in a
@@ -1264,9 +1268,7 @@ final class AgentService {
         )
         suspendToolCalls(from: origin)
         pendingSpendApproval = approval
-        return .suspended(
-            "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
-        )
+        return .suspended(Self.spendSuspensionText)
     }
 
     func refreshSpendApproval() {
@@ -1301,6 +1303,7 @@ final class AgentService {
                 guard case .text(let text) = block else { return nil }
                 return text
             }.joined(separator: "\n")
+            replacePendingSpendToolResult(result, origin: operation.origin)
             if pendingSpendApproval?.id == approvalID {
                 clearSpendApproval(cancelling: false)
             }
@@ -1308,19 +1311,23 @@ final class AgentService {
                 result.isError
                     ? "The approved operation failed: \(message)"
                     : message,
-                origin: operation.origin
+                origin: operation.origin,
+                result: result
             )
         } catch {
             let origin = operation.origin
             let message = error.localizedDescription
+            let result = ToolResult.error("The approved operation failed: \(message)")
+            replacePendingSpendToolResult(result, origin: origin)
             if pendingSpendApproval?.id == approvalID {
                 clearSpendApproval(cancelling: true)
             } else {
                 operation.cancel()
             }
             enqueueSpendFollowUp(
-                "The approved operation failed before submission: \(message)",
-                origin: origin
+                "The approved operation failed: \(message)",
+                origin: origin,
+                result: result
             )
         }
     }
@@ -1330,8 +1337,10 @@ final class AgentService {
             clearSpendApproval(cancelling: true)
             return
         }
+        let result = ToolResult.error(reason)
+        replacePendingSpendToolResult(result, origin: operation.origin)
         clearSpendApproval(cancelling: true)
-        enqueueSpendFollowUp(reason, origin: operation.origin)
+        enqueueSpendFollowUp(reason, origin: operation.origin, result: result)
     }
 
     private func clearSpendApproval(cancelling: Bool) {
@@ -1346,14 +1355,88 @@ final class AgentService {
 
     private func abandonSpendApproval() {
         guard !spendApprovalIsRunning else { return }
+        let operation = pendingSpendOperation
+        let abandonedApproval = pendingSpendApproval != nil || operation != nil
+        if let operation {
+            replacePendingSpendToolResult(
+                .error("Generation approval was cancelled before it ran."),
+                origin: operation.origin
+            )
+        }
         clearSpendApproval(cancelling: true)
-        pendingSpendFollowUp = nil
+        if abandonedApproval {
+            pendingSpendFollowUp = nil
+            if let operation { resumeToolCalls(from: operation.origin) }
+        }
     }
 
-    private func enqueueSpendFollowUp(_ text: String, origin: ToolCallOrigin) {
+    private func enqueueSpendFollowUp(
+        _ text: String,
+        origin: ToolCallOrigin,
+        result: ToolResult? = nil
+    ) {
         guard origin.chatSessionID != nil else { return }
-        pendingSpendFollowUp = SpendFollowUp(origin: origin, text: text)
+        let imageBlocks: [[String: Any]] = result?.content.compactMap { block in
+            guard case .image(let base64, let mediaType) = block else { return nil }
+            return [
+                "type": "image",
+                "source": [
+                    "type": "base64",
+                    "media_type": mediaType,
+                    "data": base64,
+                ],
+            ]
+        } ?? []
+        pendingSpendFollowUp = SpendFollowUp(
+            origin: origin,
+            text: text,
+            imageBlocks: imageBlocks
+        )
         Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
+    }
+
+    private func replacePendingSpendToolResult(
+        _ result: ToolResult,
+        origin: ToolCallOrigin
+    ) {
+        guard let sessionID = origin.chatSessionID else { return }
+        if sessionID == currentSessionId {
+            guard Self.replacePendingSpendToolResult(result, in: &messages) else { return }
+            syncMessagesIntoCurrentSession()
+            onSessionsChanged?()
+            return
+        }
+        guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }),
+              Self.replacePendingSpendToolResult(
+                  result,
+                  in: &sessions[sessionIndex].messages
+              ) else { return }
+        sessions[sessionIndex].updatedAt = Date()
+        onSessionsChanged?()
+    }
+
+    private static func replacePendingSpendToolResult(
+        _ result: ToolResult,
+        in messages: inout [AgentMessage]
+    ) -> Bool {
+        for messageIndex in messages.indices.reversed() {
+            for blockIndex in messages[messageIndex].blocks.indices.reversed() {
+                guard case .toolResult(let toolUseId, let content, _) =
+                    messages[messageIndex].blocks[blockIndex],
+                    content.contains(where: {
+                        guard case .text(let text) = $0 else { return false }
+                        return text == Self.spendSuspensionText
+                    })
+                else { continue }
+                messages[messageIndex].blocks[blockIndex] = .toolResult(
+                    toolUseId: toolUseId,
+                    content: result.content,
+                    isError: result.isError
+                )
+                return true
+            }
+        }
+        return false
     }
 
     @discardableResult
@@ -1374,12 +1457,25 @@ final class AgentService {
         hostFollowUpStartInProgress = true
         defer { hostFollowUpStartInProgress = false }
         prepareToolCallsForFollowUp(from: followUp.origin)
-        let started = send(
-            text: "Host generation result: \(followUp.text) Continue from this result; do not request the same spend approval again.",
-            mentions: [],
-            hidden: true,
-            allowWhileBlocked: true
-        )
+        let followUpText = "Host generation result: \(followUp.text) Continue from this result; do not request the same spend approval again."
+        let started: Bool
+        if claudeRuntimeEnabled {
+            guard canStream, prepareWorkingCopyForTurn() else { return false }
+            streamError = nil
+            started = claudeRuntime.send(
+                text: followUpText,
+                imageBlocks: followUp.imageBlocks,
+                hidden: true
+            )
+            checkpointCurrentSession()
+        } else {
+            started = send(
+                text: followUpText,
+                mentions: [],
+                hidden: true,
+                allowWhileBlocked: true
+            )
+        }
         if started {
             pendingSpendFollowUp = nil
         } else if streamError == nil {
@@ -1441,8 +1537,7 @@ final class AgentService {
     }
 
     private func resumeToolCalls(from origin: ToolCallOrigin) {
-        if case .inAppChat = origin,
-           let key = origin.suspensionKey {
+        if let key = origin.suspensionKey {
             suspendedToolOrigins.remove(key)
         }
     }
@@ -1452,7 +1547,9 @@ final class AgentService {
         case .inAppChat:
             resumeToolCalls(from: origin)
         case .embeddedRuntime:
+            let preservedMessages = messages
             _claudeRuntime?.stop()
+            messages = preservedMessages
             _claudeRuntime = nil
         case .direct, .externalMCP:
             break

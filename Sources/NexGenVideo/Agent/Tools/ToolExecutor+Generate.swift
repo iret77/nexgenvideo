@@ -1,5 +1,36 @@
 import Foundation
+import ImageIO
 import NexGenEngine
+
+@MainActor
+private final class AgentGenerationAwaiter {
+    enum Completion {
+        case succeeded(MediaAsset?)
+        case failed
+    }
+
+    private var completion: Completion?
+    private var continuation: CheckedContinuation<Completion, Never>?
+    private var isResolved = false
+
+    func resolve(_ completion: Completion) {
+        guard !isResolved else { return }
+        isResolved = true
+        if let continuation {
+            self.continuation = nil
+            continuation.resume(returning: completion)
+        } else {
+            self.completion = completion
+        }
+    }
+
+    func value() async -> Completion {
+        if let completion { return completion }
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+}
 
 extension ToolExecutor {
     func generate(
@@ -137,14 +168,58 @@ extension ToolExecutor {
     private func routeThroughController(
         _ request: GenerationRequest, editor: EditorViewModel,
         preflight: GenerationController.Preflight? = nil,
-        success: (String) -> String
+        success: @escaping (String) -> String
     ) async throws -> ToolResult {
-        switch await GenerationController.submit(request, editor: editor, preflight: preflight) {
-        case .success(let outcome):
-            return .ok(success(outcome.placeholderId))
+        let awaiter = AgentGenerationAwaiter()
+        let submission = await GenerationController.submit(
+            request,
+            editor: editor,
+            preflight: preflight,
+            onSuccess: { asset in awaiter.resolve(.succeeded(asset)) },
+            onFailure: { awaiter.resolve(.failed) }
+        )
+        switch submission {
         case .failure(let error):
             throw ToolError(error.errorDescription ?? "Generation failed.")
+        case .success(let outcome):
+            switch await awaiter.value() {
+            case .failed:
+                let message = editor.mediaAssets.first(where: {
+                    $0.id == outcome.placeholderId
+                }).flatMap { asset -> String? in
+                    guard case .failed(let message) = asset.generationStatus else { return nil }
+                    return message
+                } ?? "The provider did not return a usable result."
+                throw ToolError(message)
+            case .succeeded(let asset):
+                return try await Self.completedGenerationResult(
+                    text: success(outcome.placeholderId),
+                    asset: request.modality == .image ? asset : nil
+                )
+            }
         }
+    }
+
+    private static func completedGenerationResult(
+        text: String,
+        asset: MediaAsset?
+    ) async throws -> ToolResult {
+        var content: [ToolResult.Block] = [.text(text)]
+        if let asset {
+            let url = asset.url
+            guard let encoded = await Task.detached(priority: .utility) {
+                ImageEncoder.encode(url: url)
+            }.value else {
+                throw ToolError(
+                    "The image was generated and saved as '\(asset.name)', but NexGenVideo could not decode it for the agent transcript. Open it from Media before continuing."
+                )
+            }
+            content.append(.image(
+                base64: encoded.data.base64EncodedString(),
+                mediaType: encoded.mime
+            ))
+        }
+        return ToolResult(content: content, isError: false)
     }
 
     /// The agent's precompiled prompt (from compile_prompt) + token, or nil for the raw-prompt escape.
@@ -230,8 +305,10 @@ extension ToolExecutor {
             }
         }
         let approvalID = UUID().uuidString
+        var providerScope = Set(options.map(\.target.provider))
         func makeApproval() -> SpendApproval {
             let latest = currentOptions()
+            providerScope.formUnion(latest.map(\.target.provider))
             let latestRecommended = SpendOptionBuilder.recommended(
                 from: latest,
                 currentModelId: currentModelId,
@@ -244,7 +321,10 @@ extension ToolExecutor {
                 id: approvalID,
                 recommendedOptionId: latestRecommended?.id ?? "",
                 options: ordered,
-                actionLabel: actionLabel
+                actionLabel: actionLabel,
+                providerScope: GenerationProvider.allCases.filter {
+                    providerScope.contains($0)
+                }
             )
         }
         return try editor.agentService.requestSpendApproval(
@@ -436,7 +516,7 @@ extension ToolExecutor {
                         return inputAssets.validate(for: finalModel)
                     },
                     success: {
-                        "Edit started. Placeholder asset ID: \($0). Model: \(finalModel.displayName), source: \(sourceAsset.name)"
+                        "Edit completed. Asset ID: \($0). Model: \(finalModel.displayName), source: \(sourceAsset.name)"
                     })
             }
         )
@@ -611,7 +691,7 @@ extension ToolExecutor {
                         return inputAssets.validate(for: finalModel)
                     },
                     success: {
-                        "Generation started. Placeholder asset ID: \($0). Model: \(finalModel.displayName), duration: \(finalDuration.displayLabel), aspect: \(finalAspectRatio)\(refSummary)"
+                        "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), duration: \(finalDuration.displayLabel), aspect: \(finalAspectRatio)\(refSummary)"
                     })
             }
         )
@@ -637,13 +717,32 @@ extension ToolExecutor {
             editor: editor
         )
         let refIds = args.stringArray("referenceMediaRefs")
-        let refs: [MediaAsset] = try refIds.map { id in
+        let libraryRefs: [MediaAsset] = try refIds.map { id in
             let a = try asset(id, editor: editor, label: "Reference image")
             guard a.type == .image else {
                 throw ToolError("referenceMediaRefs entry '\(id)' must be an image asset (got \(a.type.rawValue))")
             }
             return a
         }
+        let requestedProjectPaths = args.stringArray("referenceProjectPaths")
+        let productionDesignPaths: [String]?
+        if let workingRoot = editor.workingRoot,
+           let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
+           try currentPhaseIfEnforced(
+               tool: .generateImage,
+               editor: editor,
+               dataRoot: dataRoot
+           ) == "production_design" {
+            productionDesignPaths = try Self.productionDesignReferencePaths(
+                dataRoot: dataRoot
+            )
+        } else {
+            productionDesignPaths = nil
+        }
+        let projectPaths = productionDesignPaths ?? requestedProjectPaths
+        let projectRefs = try projectImageReferences(projectPaths, editor: editor)
+        let effectiveLibraryRefs = productionDesignPaths == nil ? libraryRefs : []
+        let refs = effectiveLibraryRefs + projectRefs
         let currentValidation = model.validate(
             aspectRatio: aspectRatio,
             resolution: resolution,
@@ -676,6 +775,15 @@ extension ToolExecutor {
                 )
             },
             execute: { editor, approved in
+                if let productionDesignPaths,
+                   let workingRoot = editor.workingRoot,
+                   let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
+                   try Self.productionDesignReferencePaths(dataRoot: dataRoot)
+                    != productionDesignPaths {
+                    throw ToolError(
+                        "The staged Production Design references changed while approval was open. Review the updated set and generate again."
+                    )
+                }
                 var selectedModel = model
                 var selectedModelID = modelId
                 var selectedAspectRatio = aspectRatio
@@ -732,7 +840,7 @@ extension ToolExecutor {
                         aspectRatio: finalAspectRatio,
                         resolution: finalResolution,
                         quality: finalQuality,
-                        imageRefCount: refIds.count,
+                        imageRefCount: refs.count,
                         numImages: 1)
                 }
                 if MarbleModelRegistry.isMarbleModel(finalModelID) {
@@ -755,7 +863,7 @@ extension ToolExecutor {
                     return try await self.routeThroughController(
                         request, editor: editor, preflight: preflight,
                         success: {
-                            "Marble world generation started (this can take several minutes). Placeholder asset ID: \($0). Model: \(finalModel.displayName). Result: equirectangular panorama image."
+                            "Marble world generation completed. Asset ID: \($0). Model: \(finalModel.displayName). Result: equirectangular panorama image."
                         })
                 }
                 let request = GenerationRequest(
@@ -767,15 +875,127 @@ extension ToolExecutor {
                     submission: .image(make: { compiled in
                         ImageGenerationSubmission.make(
                             genInput: genInput(compiled), model: finalModel,
-                            references: refs, name: name, folderId: folderId)
+                            references: refs,
+                            referenceAssetIDs: effectiveLibraryRefs.map(\.id),
+                            name: name, folderId: folderId)
                     }))
                 return try await self.routeThroughController(
                     request, editor: editor, preflight: preflight,
                     success: {
-                        "Generation started. Placeholder asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio)"
+                        "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio)"
                     })
             }
         )
+    }
+
+    nonisolated static func productionDesignReferencePaths(
+        dataRoot: URL
+    ) throws -> [String] {
+        let canonicalDataRoot = dataRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let refsRoot = canonicalDataRoot
+            .appendingPathComponent("production_design/refs", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: refsRoot.path) else { return [] }
+        var paths: [String] = []
+
+        func collect(_ directory: URL) throws {
+            let children = try FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [
+                    .isDirectoryKey,
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                ],
+                options: [.skipsHiddenFiles]
+            )
+            for child in children {
+                let values = try child.resourceValues(forKeys: [
+                    .isDirectoryKey,
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                ])
+                if values.isSymbolicLink == true {
+                    throw ToolError(
+                        "Production Design references must be project-local files, not symbolic links."
+                    )
+                }
+                if values.isDirectory == true {
+                    try collect(child)
+                    continue
+                }
+                guard values.isRegularFile == true,
+                      ClipType(fileExtension: child.pathExtension.lowercased()) == .image else {
+                    continue
+                }
+                let canonical = child.standardizedFileURL.resolvingSymlinksInPath()
+                guard canonical.path.hasPrefix(canonicalDataRoot.path + "/") else {
+                    throw ToolError(
+                        "Production Design references must remain inside the project pipeline."
+                    )
+                }
+                guard isDecodableProjectImage(canonical) else { continue }
+                paths.append(String(canonical.path.dropFirst(canonicalDataRoot.path.count + 1)))
+            }
+        }
+
+        try collect(refsRoot)
+        return paths.sorted()
+    }
+
+    private func projectImageReferences(
+        _ paths: [String],
+        editor: EditorViewModel
+    ) throws -> [MediaAsset] {
+        guard !paths.isEmpty else { return [] }
+        guard let workingRoot = editor.workingRoot,
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot) else {
+            throw ToolError("referenceProjectPaths requires an open pipeline project.")
+        }
+        let canonicalRoot = dataRoot.standardizedFileURL.resolvingSymlinksInPath()
+        var seen = Set<URL>()
+        return try paths.compactMap { path in
+            guard path == path.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !path.isEmpty,
+                  !NSString(string: path).isAbsolutePath,
+                  !path.split(separator: "/", omittingEmptySubsequences: false)
+                    .contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
+                throw ToolError("referenceProjectPaths must contain normalized pipeline-relative paths.")
+            }
+            let url = dataRoot.appendingPathComponent(path)
+                .standardizedFileURL.resolvingSymlinksInPath()
+            guard url.path.hasPrefix(canonicalRoot.path + "/"),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                  ClipType(fileExtension: url.pathExtension.lowercased()) == .image,
+                  Self.isDecodableProjectImage(url) else {
+                throw ToolError("Project reference '\(path)' must be a real image inside pipeline/.")
+            }
+            guard seen.insert(url).inserted else { return nil }
+            return MediaAsset(
+                id: "pipeline-reference:\(path)",
+                url: url,
+                type: .image,
+                name: url.deletingPathExtension().lastPathComponent,
+                originalFilename: url.lastPathComponent
+            )
+        }
+    }
+
+    nonisolated private static func isDecodableProjectImage(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(
+            url as CFURL,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        ), CGImageSourceGetCount(source) > 0,
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+            as? [CFString: Any],
+           let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+           let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+           width > 0, height > 0,
+           width <= 16_384, height <= 16_384,
+           width <= 64_000_000 / height else { return false }
+        return CGImageSourceCreateImageAtIndex(
+            source,
+            0,
+            [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+        ) != nil
     }
 
     func showDialog(
@@ -968,11 +1188,11 @@ extension ToolExecutor {
         let successCopy: (String) -> String
         if let startFrame = placementStartFrame, let span = spanSeconds {
             placement = .timelineAt(startFrame: startFrame, spanSeconds: span, actionName: "Add \(model.category.label)")
-            successCopy = { "Generation started and placed on the timeline at frame \(startFrame). Placeholder asset ID: \($0). Model: \(model.displayName), \(model.category.label) (scored from video)." }
+            successCopy = { "Generation completed and was placed on the timeline at frame \(startFrame). Asset ID: \($0). Model: \(model.displayName), \(model.category.label) (scored from video)." }
         } else {
             placement = .mediaLibrary(folderId: folderId)
             let scored = videoReference != nil ? " (scored from video)" : ""
-            successCopy = { "Generation started. Placeholder asset ID: \($0). Model: \(model.displayName), \(model.category.label)\(scored). Place it with add_clips." }
+            successCopy = { "Generation completed. Asset ID: \($0). Model: \(model.displayName), \(model.category.label)\(scored). Place it with add_clips." }
         }
         let cleanupURLs = temporaryReferenceURLs
         return try await withSpendApproval(
@@ -1038,19 +1258,36 @@ extension ToolExecutor {
             origin: origin,
             alternatives: { [] },
             execute: { editor, approved in
+                let awaiter = AgentGenerationAwaiter()
                 guard let placeholderId = await EditSubmitter.submitUpscale(
                     asset: asset,
                     model: model,
                     editor: editor,
                     trimmedSource: trimmed,
                     origin: .agentTool,
-                    target: approved.target
+                    target: approved.target,
+                    onComplete: { awaiter.resolve(.succeeded($0)) },
+                    onFailure: { awaiter.resolve(.failed) }
                 ) else {
                     throw ToolError("Failed to start upscale")
                 }
-                return .ok(
-                    "Upscale started. Placeholder asset ID: \(placeholderId). Model: \(model.displayName), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")"
-                )
+                switch await awaiter.value() {
+                case .failed:
+                    let message = editor.mediaAssets.first(where: {
+                        $0.id == placeholderId
+                    }).flatMap { placeholder -> String? in
+                        guard case .failed(let message) = placeholder.generationStatus else {
+                            return nil
+                        }
+                        return message
+                    } ?? "The provider did not return a usable upscale result."
+                    throw ToolError(message)
+                case .succeeded(let completed):
+                    return try await Self.completedGenerationResult(
+                        text: "Upscale completed. Asset ID: \(placeholderId). Model: \(model.displayName), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")",
+                        asset: asset.type == .image ? completed : nil
+                    )
+                }
             }
         )
     }
@@ -1164,9 +1401,18 @@ extension ToolExecutor {
             if m.maxReferenceVideos > 0 { info["maxReferenceVideos"] = m.maxReferenceVideos }
             if m.maxReferenceAudios > 0 { info["maxReferenceAudios"] = m.maxReferenceAudios }
             if let total = m.maxTotalReferences { info["maxTotalReferences"] = total }
+            if let conditional = m.maxReferenceImagesWhenVideoPresent {
+                info["maxReferenceImagesWhenVideoPresent"] = conditional
+            }
             if let s = m.maxCombinedVideoRefSeconds { info["maxCombinedVideoRefSeconds"] = Int(s) }
             if let s = m.maxCombinedAudioRefSeconds { info["maxCombinedAudioRefSeconds"] = Int(s) }
             if m.framesAndReferencesExclusive { info["framesAndReferencesExclusive"] = true }
+            if m.framesCountTowardImageReferenceLimit {
+                info["framesCountTowardImageReferenceLimit"] = true
+            }
+            if m.framesCountTowardTotalReferenceLimit {
+                info["framesCountTowardTotalReferenceLimit"] = true
+            }
             info["referenceTagNoun"] = m.referenceTagNoun
         }
         return info
@@ -1179,9 +1425,17 @@ extension ToolExecutor {
             "supportsImageReference": m.supportsImageReference,
             "requiresImageReference": m.requiresImageReference,
             "minReferenceImages": m.minReferenceImages,
-            "maxReferenceImages": m.maxReferenceImages,
             "maxImages": m.maxImages,
         ]
+        switch m.referenceImageLimit {
+        case .bounded(let maximum):
+            info["maxReferenceImages"] = maximum
+        case .providerUnbounded(let hostMaximum):
+            info["referenceImageLimit"] = "provider-unbounded"
+            info["hostMaxReferenceImages"] = hostMaximum
+        case .unknown:
+            info["referenceImageLimit"] = "unknown"
+        }
         if includeType { info["type"] = "image" }
         if let r = m.resolutions { info["resolutions"] = r }
         if let q = m.qualities { info["qualities"] = q }

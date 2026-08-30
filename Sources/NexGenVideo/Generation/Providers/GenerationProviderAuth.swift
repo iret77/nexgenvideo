@@ -60,7 +60,8 @@ extension GenerationProvider {
         // Higgsfield exposes its free-form `job_set_type` catalog through `models_explore`.
         case .higgsfield:
             return MCPModelCatalog(tool: "models_explore", listArgs: ["action": "list"],
-                                   typeArg: "type", cursorArg: "after")
+                                   typeArg: "type", cursorArg: "after",
+                                   detailArgs: ["action": "get"], detailModelArg: "model_id")
         // OpenArt's model-advertising shape is not yet verified on-device; until it is, OpenArt maps its
         // discovered generate tools directly (usable, just not model-expanded). Fill this in once its
         // catalog tool is confirmed — no guessing a shape we can't test.
@@ -84,4 +85,8 @@ struct MCPModelCatalog: Equatable, Sendable {
     let typeArg: String?
     /// The argument that carries the next-page cursor back to the tool (`after`), or nil if unpaged.
     let cursorArg: String?
+    /// Fixed arguments for the model-detail contract that resolves constraints omitted by list pages.
+    let detailArgs: [String: String]?
+    /// The argument that selects one model for the detail request.
+    let detailModelArg: String?
 }

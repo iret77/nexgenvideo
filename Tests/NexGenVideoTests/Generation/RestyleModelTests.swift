@@ -208,10 +208,10 @@ struct RestyleModelTests {
             }
         )
 
-        #expect(Set(options.map(\.providerLabel)) == ["Runway", "Higgsfield"])
+        #expect(Set(options.map(\.providerLabel)) == ["fal.ai", "Runway", "Higgsfield"])
+        #expect(options.filter { $0.target.provider == .fal }.count == 3)
         #expect(options.filter { $0.target.provider == .runway }.count == 5)
         #expect(options.filter { $0.target.provider == .higgsfield }.count == 1)
-        #expect(options.allSatisfy { $0.target.provider != .fal })
         let originalBinding = ProviderBinding(
             provider: .fal,
             transport: .api,
@@ -236,6 +236,36 @@ struct RestyleModelTests {
     @Test("discovery covers Runway alongside the image providers")
     func discoveryIncludesRunway() {
         #expect(DirectImageDiscovery.providers.contains(.runway))
+    }
+
+    @Test("Production Design derives every staged image reference")
+    func productionDesignReferenceSetIsHostOwned() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let refs = root.appendingPathComponent(
+            "production_design/refs/nested",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: refs,
+            withIntermediateDirectories: true
+        )
+        let png = try #require(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        ))
+        try png.write(to: refs.appendingPathComponent("character.png"))
+        try png.write(to: refs.deletingLastPathComponent()
+            .appendingPathComponent("palette.png"))
+        try Data([0]).write(to: refs.appendingPathComponent("broken.jpg"))
+        try Data([0]).write(to: refs.appendingPathComponent("notes.txt"))
+
+        let paths = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+
+        #expect(paths == [
+            "production_design/refs/nested/character.png",
+            "production_design/refs/palette.png",
+        ])
     }
 
     @Test("it was the first model on the edit path — which is no longer a facade")

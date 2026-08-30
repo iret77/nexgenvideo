@@ -154,8 +154,11 @@ Procedure:
    `compile_prompt(intent=<lighting prompt>,
    model=<brief.bible_image_model>, shotId="none")`. Pass its
    `compiledPrompt`, `compileToken`, and `shotId="none"` unchanged to
-   `generate_image` (project aspect ratio). When `get_media` reports the returned asset
-   ready, call `copy_project_file(media=<asset id>,
+   `generate_image` (project aspect ratio). The host automatically attaches every
+   staged `production_design/refs/*` image and rejects models that cannot accept
+   the full set; the lighting anchor cannot render without the approved style
+   references. When the returned asset is ready,
+   call `copy_project_file(media=<asset id>,
    to="production_design/lighting_anchor.png")` (a single still — no
    timeline placement is needed here). Confirm availability first via
    `list_models` with `type="image"`. If

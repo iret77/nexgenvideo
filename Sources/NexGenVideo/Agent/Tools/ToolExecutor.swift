@@ -43,6 +43,19 @@ final class ToolExecutor {
         )
     }
 
+    func currentPhaseIfEnforced(
+        tool: ToolName,
+        editor: EditorViewModel,
+        dataRoot: URL
+    ) throws -> String? {
+        guard enforceHardGates else { return nil }
+        return try editor.pipelineAgentHarness.guardCurrentPhaseWork(
+            tool: tool,
+            dataRoot: dataRoot,
+            declaredPack: editor.declaredPluginName
+        )
+    }
+
     func execute(
         name: String,
         args: [String: Any],

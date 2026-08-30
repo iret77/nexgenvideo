@@ -17,7 +17,9 @@ enum MCPGenerationExecutor {
 
     struct Result: Equatable {
         let jobID: String?
-        let outputURLs: [String]
+        let output: MCPGenerationLifecycle.Output
+
+        var outputURLs: [String] { output.urls }
     }
 
     static func run(
@@ -30,16 +32,27 @@ enum MCPGenerationExecutor {
         pollIntervalNanoseconds: UInt64 = 3_000_000_000,
         timeoutSeconds: TimeInterval = 30 * 60
     ) async throws -> Result {
-        let hasLifecycle = try validateLifecycleIfAdvertised(tools: tools)
+        let hasLifecycle = hasUsableLifecycle(tools: tools)
+        let hasDirectOutput = hasDirectOutputContract(generationTool)
+        guard hasLifecycle
+                || hasDirectOutput
+                || MCPGenerationArguments.requestsSynchronousCompletion(
+                    arguments: arguments
+                )
+                || MCPGenerationLifecycle.statusTool(in: tools) == nil else {
+            throw GenerationBackendError.transport(
+                "\(provider.displayName)'s generation tool exposes neither synchronous completion nor a usable job-status contract. No job was submitted."
+            )
+        }
         let payloads = try await client.callTool(
             name: generationTool.name,
             arguments: arguments
         )
         let submission = MCPGenerationLifecycle.submission(from: payloads)
-        if !submission.outputURLs.isEmpty {
+        if !submission.output.isEmpty {
             switch MCPGenerationLifecycle.status(from: payloads) {
             case .succeeded:
-                return Result(jobID: submission.jobID, outputURLs: submission.outputURLs)
+                return Result(jobID: submission.jobID, output: submission.output)
             case .failed(let message):
                 if let jobID = submission.jobID {
                     throw JobFailure(jobID: jobID, message: message)
@@ -66,7 +79,7 @@ enum MCPGenerationExecutor {
             )
         }
         do {
-            let urls = try await poll(
+            let output = try await poll(
                 jobID: jobID,
                 provider: provider,
                 tools: tools,
@@ -75,29 +88,42 @@ enum MCPGenerationExecutor {
                 intervalNanoseconds: pollIntervalNanoseconds,
                 timeoutSeconds: timeoutSeconds
             )
-            return Result(jobID: jobID, outputURLs: urls)
+            return Result(jobID: jobID, output: output)
         } catch {
             throw JobFailure(jobID: jobID, message: error.localizedDescription)
         }
     }
 
-    @discardableResult
-    static func validateLifecycleIfAdvertised(
+    static func hasUsableLifecycle(
         tools: [MCPProviderClient.DiscoveredTool]
-    ) throws -> Bool {
+    ) -> Bool {
         guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else { return false }
-        _ = try MCPGenerationArguments.makeJob(
-            jobID: "preflight-job",
-            schema: statusTool.inputSchema,
-            sync: false
-        )
-        if let resultTool = MCPGenerationLifecycle.resultTool(in: tools) {
+        do {
+            _ = try MCPGenerationArguments.makeJob(
+                jobID: "preflight-job",
+                schema: statusTool.inputSchema,
+                sync: false
+            )
+            if MCPGenerationLifecycle.outputSchemaSupportsMedia(statusTool.outputSchema) {
+                return true
+            }
+            guard let resultTool = MCPGenerationLifecycle.resultTool(in: tools) else {
+                return false
+            }
             _ = try MCPGenerationArguments.makeJob(
                 jobID: "preflight-job",
                 schema: resultTool.inputSchema
             )
+            return true
+        } catch {
+            return false
         }
-        return true
+    }
+
+    static func hasDirectOutputContract(
+        _ tool: MCPProviderClient.DiscoveredTool
+    ) -> Bool {
+        MCPGenerationLifecycle.outputSchemaSupportsMedia(tool.outputSchema)
     }
 
     private static func cancelAcceptedJob(
@@ -128,7 +154,7 @@ enum MCPGenerationExecutor {
         maxAttempts: Int,
         intervalNanoseconds: UInt64,
         timeoutSeconds: TimeInterval
-    ) async throws -> [String] {
+    ) async throws -> MCPGenerationLifecycle.Output {
         guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else {
             throw GenerationBackendError.transport(
                 "\(provider.displayName)'s MCP accepted job '\(jobID)' but exposes no job-status tool."
@@ -163,8 +189,8 @@ enum MCPGenerationExecutor {
                 }
             case .failed(let message):
                 throw GenerationBackendError.transport(message)
-            case .succeeded(let urls) where !urls.isEmpty:
-                return urls
+            case .succeeded(let output) where !output.isEmpty:
+                return output
             case .succeeded:
                 return try await fetchResult(
                     jobID: jobID,
@@ -185,7 +211,7 @@ enum MCPGenerationExecutor {
         provider: GenerationProvider,
         tools: [MCPProviderClient.DiscoveredTool],
         client: any MCPToolCalling
-    ) async throws -> [String] {
+    ) async throws -> MCPGenerationLifecycle.Output {
         guard let resultTool = MCPGenerationLifecycle.resultTool(in: tools) else {
             throw GenerationBackendError.transport(
                 "\(provider.displayName)'s MCP completed job '\(jobID)' without output media."
@@ -199,12 +225,12 @@ enum MCPGenerationExecutor {
         if case .failed(let message) = MCPGenerationLifecycle.status(from: payloads) {
             throw GenerationBackendError.transport(message)
         }
-        let urls = MCPGenerationLifecycle.resultURLs(from: payloads)
-        guard !urls.isEmpty else {
+        let output = MCPGenerationLifecycle.resultOutput(from: payloads)
+        guard !output.isEmpty else {
             throw GenerationBackendError.transport(
                 "\(provider.displayName)'s MCP completed job '\(jobID)' without output media."
             )
         }
-        return urls
+        return output
     }
 }

@@ -54,6 +54,17 @@ struct SpendApprovalCard: View {
         return availableOptions.filter { $0.target.provider == selectedProvider }
     }
 
+    private var providerIssues: [String] {
+        approval.providerScope.compactMap { provider in
+            switch ModelCatalog.shared.providerDiscovery[provider] {
+            case .actionRequired(let message), .unavailable(let message):
+                return "\(provider.displayName): \(message)"
+            case .inactive, .checking, .ready, .none:
+                return nil
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             header
@@ -63,6 +74,11 @@ struct SpendApprovalCard: View {
                 Text("Only connected models compatible with this request are shown.")
                     .font(.system(size: AppTheme.FontSize.xxs))
                     .foregroundStyle(AppTheme.Text.mutedColor)
+            }
+            ForEach(providerIssues, id: \.self) { message in
+                Text(message)
+                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .foregroundStyle(AppTheme.Status.warningColor)
             }
             if let message = approvalError ?? error {
                 Text(message)
@@ -199,7 +215,7 @@ struct SpendApprovalCard: View {
                 .controlSize(.small)
                 .disabled(isWorking)
             Spacer()
-            Button(isWorking ? "Starting…" : "\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
+            Button(isWorking ? "Generating…" : "\(approval.actionLabel) · \(CostEstimator.format(selectedOption?.credits))") {
                 guard let selectedOption else { return }
                 approvalError = nil
                 onApprove(selectedOption)

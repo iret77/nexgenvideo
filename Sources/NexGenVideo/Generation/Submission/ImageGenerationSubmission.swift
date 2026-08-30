@@ -63,12 +63,14 @@ struct ImageGenerationSubmission {
         genInput baseInput: GenerationInput,
         model: ImageModelConfig,
         references: [MediaAsset],
+        referenceAssetIDs: [String]? = nil,
         name: String? = nil,
         numImages: Int = 1,
         folderId: String? = nil
     ) -> ImageGenerationSubmission {
         var genInput = baseInput
-        genInput.imageURLAssetIds = references.isEmpty ? nil : references.map(\.id)
+        let assetIDs = referenceAssetIDs ?? references.map(\.id)
+        genInput.imageURLAssetIds = assetIDs.isEmpty ? nil : assetIDs
         return ImageGenerationSubmission(
             genInput: genInput,
             references: references,

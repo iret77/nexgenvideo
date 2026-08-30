@@ -1,12 +1,13 @@
 import Foundation
 
-/// Availability discovery for the direct-API providers (#212 Google images, #223 Runway).
+/// Availability discovery for direct-API image providers.
 ///
 /// The registries carry the curated capabilities (aspect ratios, reference support, image count) that
 /// no model-list call can tell you. This supplies the other half: which of those models the provider
 /// says exist for this key, so a renamed or retired id simply never appears.
 ///
 /// **How much this filter is worth differs per provider — do not blur them:**
+/// - **fal.ai** — the authenticated active-model catalog selects the exact supported endpoint set.
 /// - **Runway** — `GET /v1/organization` returns `tier.models`, the ACCOUNT's entitlements. Presence
 ///   there really does mean runnable.
 /// - **Google** — `GET /v1beta/models` is a CATALOG, not an entitlement list. Verified the hard way:
@@ -23,12 +24,15 @@ enum DirectImageDiscovery {
     ///
     /// Runway is entirely discovery-gated: only the account's own model list proves that a pinned id
     /// is currently entitled and runnable.
-    static let providers: [GenerationProvider] = [.google, .runway]
+    static let providers: [GenerationProvider] = [.fal, .google, .runway]
 
     static func discover(_ provider: GenerationProvider) async -> [CatalogEntry] {
         guard providers.contains(provider), let apiKey = ProviderKeychain.load(provider) else { return [] }
         do {
             switch provider {
+            case .fal:
+                let ids = try await FalClient(apiKey: apiKey).availableImageModelIds()
+                return FalModelRegistry.discoveredEntries(availableModelIds: ids)
             case .google:
                 let ids = try await GoogleImageClient(apiKey: apiKey).availableModelIds()
                 return GoogleModelRegistry.entries(availableModelIds: ids)

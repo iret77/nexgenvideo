@@ -1,4 +1,6 @@
+import AVFoundation
 import Foundation
+import ImageIO
 
 /// Used by replace-clip callbacks so only the
 /// first successful asset of an N-image generation swaps the clip
@@ -511,13 +513,19 @@ final class GenerationService {
             break
         }
 
-        let falModel = FalModelRegistry.model(for: endpoint)
+        let falModel = FalModelRegistry.model(for: genInput.model)
+            ?? FalModelRegistry.model(for: endpoint)
         let input: [String: Any]
         let shape: CatalogEntry.ResponseShape
 
         switch params {
         case .image(let p):
-            input = FalInputBuilder.imageInput(p, sizeMode: falModel?.imageSize ?? .imageSizeEnum, refField: falModel?.imageRef ?? .none, count: placeholders.count)
+            guard let falModel else {
+                return failBeforeSubmission(
+                    placeholders, "Unknown image model: \(endpoint)",
+                    authorization: authorization, editor: editor, onFailure: onFailure)
+            }
+            input = FalInputBuilder.imageInput(p, model: falModel, count: placeholders.count)
             shape = .images
         case .video(let p):
             guard let falModel else {
@@ -750,14 +758,23 @@ final class GenerationService {
             }
             selectedToolName = tool.name
             let requestId = UUID().uuidString
-            _ = try MCPGenerationArguments.make(
+            let preflightArguments = try MCPGenerationArguments.make(
                 for: params,
                 model: modelParam,
                 schema: tool.inputSchema,
                 mediaRoles: mediaRoles,
                 requestID: requestId
             )
-            try MCPGenerationExecutor.validateLifecycleIfAdvertised(tools: tools)
+            guard MCPGenerationExecutor.hasUsableLifecycle(tools: tools)
+                    || MCPGenerationExecutor.hasDirectOutputContract(tool)
+                    || MCPGenerationArguments.requestsSynchronousCompletion(
+                        arguments: preflightArguments
+                    )
+                    || MCPGenerationLifecycle.statusTool(in: tools) == nil else {
+                throw GenerationBackendError.transport(
+                    "\(provider.displayName)'s generation tool exposes neither synchronous completion nor a usable job-status contract. No job was submitted."
+                )
+            }
             let preparedParams = try await MCPMediaUpload.prepare(
                 params,
                 tools: tools,
@@ -788,11 +805,22 @@ final class GenerationService {
             )
             await client.disconnect()
             let job = BackendGenerationJob(
-                _id: result.jobID ?? requestId, status: .succeeded, resultUrls: result.outputURLs,
+                _id: result.jobID ?? requestId, status: .succeeded,
+                resultUrls: result.output.urls,
                 errorMessage: nil, costCredits: nil, completedAt: nil)
-            await finalizeSuccess(
-                job: job, placeholders: placeholders, editor: editor,
-                onComplete: onComplete, onFailure: onFailure)
+            if result.output.inlineMedia.isEmpty {
+                await finalizeSuccess(
+                    job: job, placeholders: placeholders, editor: editor,
+                    onComplete: onComplete, onFailure: onFailure)
+            } else {
+                await finalizeMCPMedia(
+                    result.output.media,
+                    placeholders: placeholders,
+                    editor: editor,
+                    onComplete: onComplete,
+                    onFailure: onFailure
+                )
+            }
             markCharged(authorization: authorization, editor: editor)
         } catch {
             await client.disconnect()
@@ -1023,12 +1051,22 @@ final class GenerationService {
     /// URL's extension); the bytes path has no URL to read, so it reads the bytes. Magic numbers are
     /// also provider-independent — the next provider's default format needs no new plumbing.
     /// nil for anything unrecognized, which leaves the placeholder's own extension alone.
-    private static func imageExtension(sniffing data: Data) -> String? {
+    nonisolated private static func imageExtension(sniffing data: Data) -> String? {
         let b = [UInt8](data.prefix(12))
         guard b.count >= 12 else { return nil }
         if b.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { return "png" }
         if b.starts(with: [0xFF, 0xD8, 0xFF]) { return "jpg" }
         if b.starts(with: [0x52, 0x49, 0x46, 0x46]), Array(b[8..<12]) == [0x57, 0x45, 0x42, 0x50] { return "webp" }
+        if b.starts(with: [0x49, 0x49, 0x2A, 0x00])
+            || b.starts(with: [0x4D, 0x4D, 0x00, 0x2A]) {
+            return "tiff"
+        }
+        if Array(b[4..<8]) == [0x66, 0x74, 0x79, 0x70],
+           ["heic", "heix", "hevc", "hevx", "mif1", "msf1"].contains(
+               String(bytes: b[8..<12], encoding: .ascii)
+           ) {
+            return "heic"
+        }
         return nil
     }
 
@@ -1073,6 +1111,218 @@ final class GenerationService {
         AppNotifications.generationComplete(
             assetId: first.id, projectURL: editor.projectURL, assetName: first.name,
             assetType: first.type, count: finalized.count)
+    }
+
+    private func finalizeMCPMedia(
+        _ outputMedia: [MCPGenerationLifecycle.OutputMedia],
+        placeholders: [MediaAsset],
+        editor: EditorViewModel,
+        onComplete: (@MainActor (MediaAsset) -> Void)?,
+        onFailure: (@MainActor () -> Void)?
+    ) async {
+        var finalized: [MediaAsset] = []
+        for (index, placeholder) in placeholders.enumerated() {
+            guard editor.mediaAssets.contains(where: { $0.id == placeholder.id }) else { continue }
+            guard outputMedia.indices.contains(index) else {
+                placeholder.generationStatus = .failed("No media for placeholder")
+                continue
+            }
+            switch outputMedia[index] {
+            case .remoteURL(let value):
+                guard let remoteURL = URL(string: value) else {
+                    placeholder.generationStatus = .failed("Provider returned an invalid media URL.")
+                    continue
+                }
+                if await downloadAndFinalize(
+                    asset: placeholder,
+                    remoteURL: remoteURL,
+                    editor: editor
+                ) {
+                    onComplete?(placeholder)
+                    finalized.append(placeholder)
+                }
+                continue
+            case .inline(let media):
+                let expectedPrefix: String
+                switch placeholder.type {
+                case .image: expectedPrefix = "image/"
+                case .audio: expectedPrefix = "audio/"
+                default:
+                    placeholder.generationStatus = .failed(
+                        "The provider returned inline media for an unsupported \(placeholder.type.rawValue) request."
+                    )
+                    continue
+                }
+                guard media.mimeType.lowercased().hasPrefix(expectedPrefix) else {
+                    placeholder.generationStatus = .failed(
+                        "Provider returned \(media.mimeType) for a \(placeholder.type.rawValue) request."
+                    )
+                    continue
+                }
+                let expectedType = placeholder.type
+                let fileExtension = await Task.detached(priority: .utility) {
+                    Self.validatedFileExtension(
+                        data: media.data,
+                        mimeType: media.mimeType,
+                        expectedType: expectedType
+                    )
+                }.value
+                guard let fileExtension else {
+                    placeholder.generationStatus = .failed(
+                        "Provider media bytes do not match the declared \(media.mimeType) container."
+                    )
+                    continue
+                }
+                if fileExtension != placeholder.url.pathExtension.lowercased() {
+                    placeholder.url = placeholder.url.deletingPathExtension()
+                        .appendingPathExtension(fileExtension)
+                }
+                do {
+                    try? FileManager.default.removeItem(at: placeholder.url)
+                    try media.data.write(to: placeholder.url, options: .atomic)
+                } catch {
+                    placeholder.generationStatus = .failed(error.localizedDescription)
+                    continue
+                }
+                placeholder.generationStatus = .none
+                editor.importMediaAsset(placeholder, skipAppend: true)
+                editor.appendGenerationLog(for: placeholder)
+                await editor.finalizeImportedAsset(placeholder)
+                onComplete?(placeholder)
+                finalized.append(placeholder)
+            }
+        }
+        guard let first = finalized.first else {
+            onFailure?()
+            return
+        }
+        AppNotifications.generationComplete(
+            assetId: first.id,
+            projectURL: editor.projectURL,
+            assetName: first.name,
+            assetType: first.type,
+            count: finalized.count
+        )
+    }
+
+    nonisolated static func validatedFileExtension(
+        data: Data,
+        mimeType: String,
+        expectedType: ClipType
+    ) -> String? {
+        let base = mimeType.lowercased().split(separator: ";", maxSplits: 1)
+            .first.map(String.init) ?? ""
+        let allowedExtensions: Set<String>
+        let actualExtension: String?
+        switch expectedType {
+        case .image:
+            allowedExtensions = switch base {
+            case "image/jpeg", "image/jpg": ["jpg"]
+            case "image/png": ["png"]
+            case "image/webp": ["webp"]
+            case "image/heic", "image/heif": ["heic"]
+            case "image/tiff", "image/x-tiff": ["tiff"]
+            default: []
+            }
+            actualExtension = imageExtension(sniffing: data)
+        case .audio:
+            allowedExtensions = switch base {
+            case "audio/mpeg", "audio/mp3": ["mp3"]
+            case "audio/wav", "audio/x-wav", "audio/wave": ["wav"]
+            case "audio/aac": ["aac"]
+            case "audio/mp4", "audio/x-m4a", "audio/m4a": ["m4a"]
+            case "audio/flac", "audio/x-flac": ["flac"]
+            case "audio/aiff", "audio/x-aiff", "audio/aifc", "audio/x-aifc":
+                ["aiff", "aifc"]
+            default: []
+            }
+            actualExtension = audioExtension(sniffing: data)
+        default:
+            return nil
+        }
+        guard let actualExtension, allowedExtensions.contains(actualExtension) else { return nil }
+        switch expectedType {
+        case .image:
+            guard isDecodableImage(data) else { return nil }
+        case .audio:
+            guard isReadableAudio(data, fileExtension: actualExtension) else { return nil }
+        default:
+            return nil
+        }
+        return actualExtension
+    }
+
+    nonisolated private static func isDecodableImage(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(
+            data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        ), CGImageSourceGetCount(source) > 0,
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+            as? [CFString: Any],
+           let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+           let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+           width > 0, height > 0,
+           width <= 16_384, height <= 16_384,
+           width <= 64_000_000 / height else {
+            return false
+        }
+        return CGImageSourceCreateImageAtIndex(
+            source,
+            0,
+            [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+        ) != nil
+    }
+
+    nonisolated private static func isReadableAudio(
+        _ data: Data,
+        fileExtension: String
+    ) -> Bool {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ngv-provider-audio-\(UUID().uuidString)")
+            .appendingPathExtension(fileExtension)
+        do {
+            try data.write(to: url, options: .atomic)
+            defer { try? FileManager.default.removeItem(at: url) }
+            let file = try AVAudioFile(forReading: url)
+            guard file.length > 0,
+                  file.processingFormat.channelCount > 0,
+                  file.processingFormat.sampleRate > 0,
+                  let buffer = AVAudioPCMBuffer(
+                      pcmFormat: file.processingFormat,
+                      frameCapacity: AVAudioFrameCount(min(file.length, 1_024))
+                  ) else {
+                return false
+            }
+            try file.read(into: buffer)
+            return buffer.frameLength > 0
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            return false
+        }
+    }
+
+    nonisolated private static func audioExtension(sniffing data: Data) -> String? {
+        let bytes = [UInt8](data.prefix(16))
+        guard bytes.count >= 12 else { return nil }
+        if bytes.starts(with: [0x66, 0x4C, 0x61, 0x43]) { return "flac" }
+        if bytes.starts(with: [0x52, 0x49, 0x46, 0x46]),
+           Array(bytes[8..<12]) == [0x57, 0x41, 0x56, 0x45] {
+            return "wav"
+        }
+        if bytes.starts(with: [0x46, 0x4F, 0x52, 0x4D]) {
+            let form = String(bytes: bytes[8..<12], encoding: .ascii)
+            if form == "AIFF" { return "aiff" }
+            if form == "AIFC" { return "aifc" }
+        }
+        if bytes.starts(with: [0x49, 0x44, 0x33])
+            || (bytes[0] == 0xFF
+                && (bytes[1] & 0xE0) == 0xE0
+                && (bytes[1] & 0x06) != 0) {
+            return "mp3"
+        }
+        if bytes[0] == 0xFF, (bytes[1] & 0xF6) == 0xF0 { return "aac" }
+        if Array(bytes[4..<8]) == [0x66, 0x74, 0x79, 0x70] { return "m4a" }
+        return nil
     }
 
     private func runElevenLabsJob(

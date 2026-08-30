@@ -126,8 +126,15 @@ struct FalClientTests {
         "fal-ai/imagen4": "fal-ai/imagen4",
         "fal-ai/qwen-image": "fal-ai/qwen-image",
         "fal-ai/stable-diffusion-v35-large": "fal-ai/stable-diffusion-v35-large",
+        "fal-ai/nano-banana": "fal-ai/nano-banana",
+        "fal-ai/nano-banana-2": "fal-ai/nano-banana-2",
+        "fal-ai/nano-banana-pro": "fal-ai/nano-banana-pro",
+        "fal-ai/gpt-image-2": "fal-ai/gpt-image-2",
         "fal-ai/flux-pro/kontext": "fal-ai/flux-pro",
         "fal-ai/gemini-25-flash-image/edit": "fal-ai/gemini-25-flash-image",
+        "fal-ai/nano-banana-2/edit": "fal-ai/nano-banana-2",
+        "fal-ai/nano-banana-pro/edit": "fal-ai/nano-banana-pro",
+        "fal-ai/gpt-image-2/edit": "fal-ai/gpt-image-2",
         "fal-ai/kling-video/v2.5-turbo/pro/text-to-video": "fal-ai/kling-video",
         "fal-ai/bytedance/seedance/v1/pro/text-to-video": "fal-ai/bytedance",
         "bytedance/seedance-2.0/text-to-video": "bytedance/seedance-2.0",
@@ -147,6 +154,41 @@ struct FalClientTests {
         "fal-ai/clarity-upscaler": "fal-ai/clarity-upscaler",
         "fal-ai/topaz/upscale/video": "fal-ai/topaz",
     ]
+
+    @Test("image catalog pages both active fal.ai image categories with the saved key")
+    func discoversCurrentImageInventory() async throws {
+        func catalogURL(category: String) -> URL {
+            var components = URLComponents(string: "https://api.fal.ai/v1/models")!
+            components.queryItems = [
+                URLQueryItem(name: "category", value: category),
+                URLQueryItem(name: "status", value: "active"),
+                URLQueryItem(name: "limit", value: "100"),
+            ]
+            return components.url!
+        }
+        let textURL = catalogURL(category: "text-to-image")
+        let editURL = catalogURL(category: "image-to-image")
+        FixtureURLProtocol.install([
+            textURL: fixture(#"{"models":[{"endpoint_id":"fal-ai/nano-banana-2"},{"endpoint_id":"openai/gpt-image-2"}],"has_more":false}"#),
+            editURL: fixture(#"{"models":[{"endpoint_id":"fal-ai/nano-banana-pro/edit"}],"has_more":false}"#),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        let ids = try await FalClient(
+            apiKey: "test-key",
+            session: testSession
+        ).availableImageModelIds()
+
+        #expect(ids == [
+            "fal-ai/nano-banana-2",
+            "openai/gpt-image-2",
+            "fal-ai/nano-banana-pro/edit",
+        ])
+        #expect(FixtureURLProtocol.requests().allSatisfy {
+            $0.authorization == "Key test-key" && $0.method == "GET"
+        })
+    }
 
     @Test("submit keeps the operation path; status and result use the owning app")
     func imageEditLifecycleUsesApplicationRoute() async throws {

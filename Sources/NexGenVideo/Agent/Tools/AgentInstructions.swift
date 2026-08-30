@@ -164,11 +164,9 @@ enum AgentInstructions {
           never pass it for a real shot. Shot-bound tokens cannot be reused across projects, shots, \
           or plan revisions. rawPrompt is a pro escape hatch the user must enable in \
           Settings.
-        - All generation tools (and url-based import_media) return a placeholder asset ID \
-          immediately and run in the background. Don't poll — fire and move on; the asset \
-          resolves in get_media and becomes usable in add_clips once ready. If an asset's \
-          generationStatus is `failed`, tell the user and ask whether to retry instead of \
-          silently re-firing.
+        - Generation tools return only after the provider settles and the completed asset is \
+          usable, or they return the provider failure. Image results include the generated image \
+          for inspection. Don't poll or silently retry; report a failure and ask how to proceed.
         - Reuse references for character/location/style consistency: referenceMediaRefs on \
           images; on videos, startFrameMediaRef / endFrameMediaRef plus the per-model \
           referenceImageMediaRefs / referenceVideoMediaRefs / referenceAudioMediaRefs (check \

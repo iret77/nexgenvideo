@@ -11,6 +11,8 @@ import MCP
 /// REST providers — discovery adds models, never a raw-prompt bypass.
 enum MCPModelDiscovery {
 
+    private static let providerUnboundedReferenceHostMaximum = 32
+
     enum Modality: String, Sendable, CaseIterable {
         case video, image, audio, upscale
     }
@@ -64,6 +66,8 @@ enum MCPModelDiscovery {
         let parameters: [Param]?
         let medias: [Media]?
         let tags: [String]?
+        let constraints: [String]?
+        let resolvedMediaTypes: Set<String>
 
         struct SpanRange: Decodable, Sendable, Equatable { let min: Int?; let max: Int? }
         struct Param: Decodable, Sendable, Equatable {
@@ -71,6 +75,13 @@ enum MCPModelDiscovery {
             let options: [Scalar]?
             let min: Int?
             let max: Int?
+
+            init(name: String?, options: [Scalar]?, min: Int?, max: Int?) {
+                self.name = name
+                self.options = options
+                self.min = min
+                self.max = max
+            }
 
             private enum CodingKeys: String, CodingKey {
                 case name, options, min, max
@@ -98,6 +109,38 @@ enum MCPModelDiscovery {
             let roles: [String]?
             let min: Int?
             let max: Int?
+
+            init(name: String?, type: String?, roles: [String]?, min: Int?, max: Int?) {
+                self.name = name
+                self.type = type
+                self.roles = roles
+                self.min = min
+                self.max = max
+            }
+
+            private enum CodingKeys: String, CodingKey {
+                case name, type, roles, min, max
+                case minimum, maximum
+                case minItems = "min_items"
+                case maxItems = "max_items"
+                case minItemsCamel = "minItems"
+                case maxItemsCamel = "maxItems"
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                name = try c.decodeIfPresent(String.self, forKey: .name)
+                type = try c.decodeIfPresent(String.self, forKey: .type)
+                roles = try c.decodeIfPresent([String].self, forKey: .roles)
+                min = try c.decodeIfPresent(Int.self, forKey: .min)
+                    ?? c.decodeIfPresent(Int.self, forKey: .minimum)
+                    ?? c.decodeIfPresent(Int.self, forKey: .minItems)
+                    ?? c.decodeIfPresent(Int.self, forKey: .minItemsCamel)
+                max = try c.decodeIfPresent(Int.self, forKey: .max)
+                    ?? c.decodeIfPresent(Int.self, forKey: .maximum)
+                    ?? c.decodeIfPresent(Int.self, forKey: .maxItems)
+                    ?? c.decodeIfPresent(Int.self, forKey: .maxItemsCamel)
+            }
         }
         /// A param option value that may arrive as string / number / bool — normalized to its text.
         struct Scalar: Decodable, Sendable, Equatable {
@@ -113,7 +156,7 @@ enum MCPModelDiscovery {
         }
 
         enum CodingKeys: String, CodingKey {
-            case id, name, description, parameters, medias, tags, type, modality
+            case id, name, description, parameters, medias, tags, constraints, type, modality
             case jobSetType = "job_set_type"
             case jobSetTypeCamel = "jobSetType"
             case modelId = "model_id"
@@ -142,7 +185,9 @@ enum MCPModelDiscovery {
             durationRange: SpanRange?,
             parameters: [Param]?,
             medias: [Media]?,
-            tags: [String]?
+            tags: [String]?,
+            constraints: [String]? = nil,
+            resolvedMediaTypes: Set<String> = []
         ) {
             self.id = id
             self.name = name
@@ -154,6 +199,8 @@ enum MCPModelDiscovery {
             self.parameters = parameters
             self.medias = medias
             self.tags = tags
+            self.constraints = constraints
+            self.resolvedMediaTypes = resolvedMediaTypes
         }
 
         init(from decoder: Decoder) throws {
@@ -182,6 +229,9 @@ enum MCPModelDiscovery {
                 ?? c.decodeIfPresent([Media].self, forKey: .mediaInputs)
                 ?? c.decodeIfPresent([Media].self, forKey: .mediaInputsCamel)
             tags = try c.decodeIfPresent([String].self, forKey: .tags)
+            constraints = (try? c.decode([String].self, forKey: .constraints))
+                ?? (try? c.decode(String.self, forKey: .constraints)).map { [$0] }
+            resolvedMediaTypes = []
         }
 
         func withOutputType(_ fallback: String?) -> ModelItem {
@@ -196,8 +246,137 @@ enum MCPModelDiscovery {
                 durationRange: durationRange,
                 parameters: parameters,
                 medias: medias,
-                tags: tags
+                tags: tags,
+                constraints: constraints,
+                resolvedMediaTypes: resolvedMediaTypes
             )
+        }
+
+        func merging(_ detail: ModelItem, resolvingMediaDetails: Bool) -> ModelItem {
+            ModelItem(
+                id: id,
+                name: detail.name ?? name,
+                description: detail.description ?? description,
+                outputType: detail.outputType ?? outputType,
+                aspectRatios: detail.aspectRatios ?? aspectRatios,
+                durations: detail.durations ?? durations,
+                durationRange: detail.durationRange ?? durationRange,
+                parameters: Self.moreCompleteParameters(parameters, detail.parameters),
+                medias: Self.moreCompleteMedia(medias, detail.medias),
+                tags: detail.tags ?? tags,
+                constraints: Self.mergedStrings(constraints, detail.constraints),
+                resolvedMediaTypes: resolvedMediaTypes.union(
+                    resolvingMediaDetails ? detail.declaredReferenceMediaTypes : []
+                ).union(detail.resolvedMediaTypes)
+            )
+        }
+
+        func hasResolvedMediaType(_ type: String) -> Bool {
+            resolvedMediaTypes.contains(type.lowercased())
+        }
+
+        private var declaredReferenceMediaTypes: Set<String> {
+            var types = Set((medias ?? []).compactMap { $0.type?.lowercased() })
+            for parameter in parameters ?? [] {
+                let name = (parameter.name ?? "").lowercased()
+                    .replacingOccurrences(of: "_", with: "")
+                for type in ["image", "video", "audio"]
+                    where name == type || name == "\(type)s" || name == "\(type)references" {
+                    types.insert(type)
+                }
+            }
+            for constraint in constraints ?? [] {
+                let normalized = constraint.lowercased().replacingOccurrences(of: "_", with: " ")
+                for type in ["image", "video", "audio"]
+                    where normalized.contains(type) && normalized.contains("reference") {
+                    types.insert(type)
+                }
+            }
+            return types
+        }
+
+        private static func moreCompleteParameters(
+            _ current: [Param]?,
+            _ candidate: [Param]?
+        ) -> [Param]? {
+            var merged: [Param] = []
+            var indices: [String: Int] = [:]
+            for value in (current ?? []) + (candidate ?? []) {
+                let key = (value.name ?? "").lowercased()
+                guard !key.isEmpty, let index = indices[key] else {
+                    if !key.isEmpty { indices[key] = merged.count }
+                    merged.append(value)
+                    continue
+                }
+                let existing = merged[index]
+                merged[index] = Param(
+                    name: value.name ?? existing.name,
+                    options: mergedScalars(existing.options, value.options),
+                    min: stricterMinimum(existing.min, value.min),
+                    max: stricterMaximum(existing.max, value.max)
+                )
+            }
+            return merged.isEmpty ? nil : merged
+        }
+
+        private static func moreCompleteMedia(
+            _ current: [Media]?,
+            _ candidate: [Media]?
+        ) -> [Media]? {
+            var merged: [Media] = []
+            var indices: [String: Int] = [:]
+            for value in (current ?? []) + (candidate ?? []) {
+                let name = (value.name ?? "").lowercased()
+                let type = (value.type ?? "").lowercased()
+                let key = name + "\u{0}" + type
+                guard key != "\u{0}", let index = indices[key] else {
+                    if key != "\u{0}" { indices[key] = merged.count }
+                    merged.append(value)
+                    continue
+                }
+                let existing = merged[index]
+                merged[index] = Media(
+                    name: value.name ?? existing.name,
+                    type: value.type ?? existing.type,
+                    roles: mergedStrings(existing.roles, value.roles),
+                    min: stricterMinimum(existing.min, value.min),
+                    max: stricterMaximum(existing.max, value.max)
+                )
+            }
+            return merged.isEmpty ? nil : merged
+        }
+
+        private static func mergedScalars(
+            _ lhs: [Scalar]?,
+            _ rhs: [Scalar]?
+        ) -> [Scalar]? {
+            let merged = (lhs ?? []) + (rhs ?? [])
+            var seen = Set<String>()
+            let unique = merged.filter { seen.insert($0.text).inserted }
+            return unique.isEmpty ? nil : unique
+        }
+
+        private static func stricterMinimum(_ lhs: Int?, _ rhs: Int?) -> Int? {
+            switch (lhs, rhs) {
+            case (.some(let lhs), .some(let rhs)): Swift.max(lhs, rhs)
+            case (.some(let value), .none), (.none, .some(let value)): value
+            case (.none, .none): nil
+            }
+        }
+
+        private static func stricterMaximum(_ lhs: Int?, _ rhs: Int?) -> Int? {
+            switch (lhs, rhs) {
+            case (.some(let lhs), .some(let rhs)): Swift.min(lhs, rhs)
+            case (.some(let value), .none), (.none, .some(let value)): value
+            case (.none, .none): nil
+            }
+        }
+
+        private static func mergedStrings(_ lhs: [String]?, _ rhs: [String]?) -> [String]? {
+            let merged = (lhs ?? []) + (rhs ?? [])
+            var seen = Set<String>()
+            let unique = merged.filter { seen.insert($0).inserted }
+            return unique.isEmpty ? nil : unique
         }
     }
 
@@ -258,6 +437,18 @@ enum MCPModelDiscovery {
                let listing = listingPayload(nested) {
                 return (listing.items, listing.next ?? next)
             }
+        }
+        for key in ["model", "job_set", "jobSet"] {
+            if let item = object[key] as? [String: Any] {
+                return ([item], next)
+            }
+        }
+        if ["id", "job_set_type", "jobSetType", "model_id", "modelId"]
+            .contains(where: { object[$0] != nil }) {
+            return ([object], next)
+        }
+        if cursor != nil || object["has_more"] != nil || object["hasMore"] != nil {
+            return ([], next)
         }
         return nil
     }
@@ -329,7 +520,7 @@ enum MCPModelDiscovery {
 
     // MARK: - Entry construction
 
-    private static func modalityOf(_ model: ModelItem) -> Modality? {
+    static func modalityOf(_ model: ModelItem) -> Modality? {
         switch (model.outputType ?? "").lowercased() {
         case "video": return .video
         case "image": return .image
@@ -379,12 +570,15 @@ enum MCPModelDiscovery {
     private static func videoCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> VideoCaps {
         let roles = allowsLocalMedia ? mediaRoles(model) : []
         let imageBounds = allowsLocalMedia
-            ? mediaBounds(model, type: "image") : (min: 0, max: 0)
+            ? mediaBounds(model, type: "image") : .none
         let videoBounds = allowsLocalMedia
-            ? mediaBounds(model, type: "video") : (min: 0, max: 0)
+            ? mediaBounds(model, type: "video") : .none
         let audioBounds = allowsLocalMedia
-            ? mediaBounds(model, type: "audio") : (min: 0, max: 0)
-        let totalMaximum = imageBounds.max + videoBounds.max + audioBounds.max
+            ? mediaBounds(model, type: "audio") : .none
+        let derivedTotalMaximum = [imageBounds, videoBounds, audioBounds]
+            .allSatisfy { !$0.declared || $0.declaredMaximum != nil }
+            ? imageBounds.max + videoBounds.max + audioBounds.max
+            : nil
         return VideoCaps(
             durations: model.durations ?? [],
             durationRange: durationRange(model.durationRange),
@@ -395,23 +589,33 @@ enum MCPModelDiscovery {
             supportsLastFrame: roles.contains("end_image"),
             maxReferenceImages: imageBounds.max,
             maxReferenceVideos: videoBounds.max, maxReferenceAudios: audioBounds.max,
-            maxTotalReferences: totalMaximum > 0 ? totalMaximum : nil,
+            maxTotalReferences: constraintMaximum(model, mediaType: "total")
+                ?? derivedTotalMaximum.flatMap { $0 > 0 ? $0 : nil },
             maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil,
             framesAndReferencesExclusive: false, referenceTagNoun: "image",
-            requiresSourceVideo: false, requiresReferenceImage: imageBounds.min > 0)
+            requiresSourceVideo: false, requiresReferenceImage: imageBounds.min > 0,
+            framesCountTowardImageReferenceLimit: framesCountTowardImageReferenceLimit(model),
+            framesCountTowardTotalReferenceLimit: framesCountTowardTotalReferenceLimit(model),
+            maxReferenceImagesWhenVideoPresent: conditionalConstraintMaximum(
+                model,
+                mediaType: "image",
+                whenReferenceType: "video"
+            ))
     }
 
     private static func imageCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> ImageCaps {
         let bounds = allowsLocalMedia
-            ? mediaBounds(model, type: "image") : (min: 0, max: 0)
+            ? mediaBounds(model, type: "image") : .none
+        let referenceLimit = allowsLocalMedia
+            ? imageReferenceLimit(model) : .bounded(0)
         return ImageCaps(
             resolutions: options(model, param: "resolution"),
             aspectRatios: aspectRatios(model),
             qualities: options(model, param: "quality") ?? options(model, param: "mode"),
-            supportsImageReference: bounds.max > 0,
+            supportsImageReference: referenceLimit.hostMaximum > 0,
             requiresImageReference: bounds.min > 0,
             minReferenceImages: bounds.min,
-            maxReferenceImages: bounds.max,
+            referenceImageLimit: referenceLimit,
             maxImages: maxOutputImages(model))
     }
 
@@ -479,13 +683,166 @@ enum MCPModelDiscovery {
         (model.medias ?? []).contains { ($0.type ?? "").lowercased() == type }
     }
 
-    private static func mediaBounds(_ model: ModelItem, type: String) -> (min: Int, max: Int) {
-        (model.medias ?? [])
-            .filter { ($0.type ?? "").lowercased() == type }
-            .reduce(into: (min: 0, max: 0)) { bounds, media in
-                bounds.min += Swift.max(0, media.min ?? 0)
-                bounds.max += Swift.max(0, media.max ?? 1)
+    private struct MediaBounds {
+        let min: Int
+        let max: Int
+        let declaredMaximum: Int?
+        let declared: Bool
+
+        static let none = MediaBounds(
+            min: 0,
+            max: 0,
+            declaredMaximum: nil,
+            declared: false
+        )
+    }
+
+    private static func mediaBounds(_ model: ModelItem, type: String) -> MediaBounds {
+        let medias = referenceMedia(model, type: type)
+        let parameter = referenceParameter(model, type: type)
+        let constraintMax = constraintMaximum(model, mediaType: type)
+        let mediaMax = !medias.isEmpty && medias.allSatisfy { $0.max != nil }
+            ? medias.reduce(0) { $0 + Swift.max(0, $1.max ?? 0) }
+            : nil
+        let declaredMaximum = [constraintMax, parameter?.max, mediaMax]
+            .compactMap { $0 }
+            .min()
+        let declared = !medias.isEmpty || parameter != nil || constraintMax != nil
+        let minimum = Swift.max(
+            medias.reduce(0) { $0 + Swift.max(0, $1.min ?? 0) },
+            Swift.max(0, parameter?.min ?? 0)
+        )
+        let maximum: Int
+        if let declaredMaximum {
+            maximum = Swift.max(0, declaredMaximum)
+        } else if declared, model.hasResolvedMediaType(type) {
+            maximum = providerUnboundedReferenceHostMaximum
+        } else {
+            maximum = 0
+        }
+        return MediaBounds(
+            min: minimum,
+            max: maximum,
+            declaredMaximum: declaredMaximum,
+            declared: declared
+        )
+    }
+
+    private static func imageReferenceLimit(_ model: ModelItem) -> ImageReferenceLimit {
+        let bounds = mediaBounds(model, type: "image")
+        guard bounds.declared else { return .bounded(0) }
+        if let maximum = bounds.declaredMaximum { return .bounded(maximum) }
+        guard model.hasResolvedMediaType("image") else { return .unknown }
+        return .providerUnbounded(hostMaximum: providerUnboundedReferenceHostMaximum)
+    }
+
+    private static func referenceMedia(_ model: ModelItem, type: String) -> [ModelItem.Media] {
+        let genericRoles: Set<String>
+        switch type {
+        case "image": genericRoles = ["image", "image_references"]
+        case "video": genericRoles = ["video", "video_references"]
+        case "audio": genericRoles = ["audio", "audio_references"]
+        default: return []
+        }
+        return (model.medias ?? []).filter { media in
+            guard (media.type ?? "").lowercased() == type else { return false }
+            let roles = Set((media.roles ?? []).map { $0.lowercased() })
+            let name = (media.name ?? "").lowercased()
+            return roles.isEmpty
+                ? name.isEmpty || genericRoles.contains(name)
+                : !roles.isDisjoint(with: genericRoles)
+        }
+    }
+
+    private static func referenceParameter(
+        _ model: ModelItem,
+        type: String
+    ) -> ModelItem.Param? {
+        let names = Set([type, "\(type)s", "\(type)_references", "\(type)references"])
+        return model.parameters?.first {
+            guard let name = $0.name?.lowercased() else { return false }
+            return names.contains(name) || names.contains(name.replacingOccurrences(of: "_", with: ""))
+        }
+    }
+
+    private static func constraintMaximum(_ model: ModelItem, mediaType: String) -> Int? {
+        let constraints = model.constraints ?? []
+        var maxima: [Int] = []
+        for value in constraints {
+            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+            guard !isConditionalConstraint(normalized) else { continue }
+            let concernsType: Bool
+            if mediaType == "total" {
+                concernsType = normalized.contains("reference")
+                    && (normalized.contains("total") || normalized.contains("across"))
+            } else {
+                concernsType = normalized.contains(mediaType)
+                    && normalized.contains("reference")
+                    && !isAggregateTotalConstraint(normalized)
             }
+            guard concernsType else { continue }
+            if let maximum = declaredMaximum(in: normalized) { maxima.append(maximum) }
+        }
+        return maxima.min()
+    }
+
+    private static func conditionalConstraintMaximum(
+        _ model: ModelItem,
+        mediaType: String,
+        whenReferenceType: String
+    ) -> Int? {
+        (model.constraints ?? []).compactMap { value -> Int? in
+            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+            guard isConditionalConstraint(normalized),
+                  normalized.contains(mediaType),
+                  normalized.contains("reference"),
+                  normalized.contains(whenReferenceType) else { return nil }
+            return declaredMaximum(in: normalized)
+        }.min()
+    }
+
+    private static func declaredMaximum(in normalized: String) -> Int? {
+        if normalized.contains("exactly one") || normalized.contains("at most one") {
+            return 1
+        }
+        guard normalized.contains("at most")
+                || normalized.contains("maximum")
+                || normalized.contains("up to") else { return nil }
+        return normalized.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }.first
+    }
+
+    private static func isConditionalConstraint(_ normalized: String) -> Bool {
+        normalized.contains("when ")
+            || normalized.contains(" if ")
+            || normalized.hasPrefix("if ")
+            || normalized.contains("provided,")
+    }
+
+    private static func isAggregateTotalConstraint(_ normalized: String) -> Bool {
+        guard normalized.contains("total") || normalized.contains("across") else { return false }
+        let mediaTypeCount = ["image", "video", "audio"].filter {
+            normalized.contains($0)
+        }.count
+        return mediaTypeCount > 1 || normalized.contains("+")
+    }
+
+    private static func framesCountTowardImageReferenceLimit(_ model: ModelItem) -> Bool {
+        (model.constraints ?? []).contains { value in
+            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+            return normalized.contains("image")
+                && normalized.contains("reference")
+                && !isAggregateTotalConstraint(normalized)
+                && (normalized.contains("counting") || normalized.contains("including"))
+                && (normalized.contains("start image") || normalized.contains("end image"))
+        }
+    }
+
+    private static func framesCountTowardTotalReferenceLimit(_ model: ModelItem) -> Bool {
+        framesCountTowardImageReferenceLimit(model) || (model.constraints ?? []).contains { value in
+            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+            return isAggregateTotalConstraint(normalized)
+                && (normalized.contains("start image") || normalized.contains("end image"))
+        }
     }
 
     private static func maxOutputImages(_ model: ModelItem) -> Int {
