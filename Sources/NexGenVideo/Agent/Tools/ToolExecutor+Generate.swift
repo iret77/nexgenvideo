@@ -302,9 +302,10 @@ extension ToolExecutor {
         var content: [ToolResult.Block] = [.text(text)]
         if let asset {
             let url = asset.url
-            guard let encoded = await Task.detached(priority: .utility) {
+            let encodedResult = await Task.detached(priority: .utility) {
                 ImageEncoder.encode(url: url)
-            }.value else {
+            }.value
+            guard let encoded = encodedResult else {
                 throw ToolError(
                     "The image was generated and saved as '\(asset.name)', but NexGenVideo could not decode it for the agent transcript. Open it from Media before continuing."
                 )
@@ -878,9 +879,14 @@ extension ToolExecutor {
                 if let productionDesignSnapshot {
                     guard let approvedDataRoot = productionDesignDataRoot,
                           let workingRoot = editor.workingRoot,
-                          let currentDataRoot = DataRootResolver.dataRoot(of: workingRoot)
-                            ?.standardizedFileURL.resolvingSymlinksInPath(),
-                          currentDataRoot == approvedDataRoot else {
+                          let resolvedDataRoot = DataRootResolver.dataRoot(of: workingRoot) else {
+                        throw ToolError(
+                            "The Production Design project changed while approval was open. Review the references and generate again."
+                        )
+                    }
+                    let currentDataRoot = resolvedDataRoot.standardizedFileURL
+                        .resolvingSymlinksInPath()
+                    guard currentDataRoot == approvedDataRoot else {
                         throw ToolError(
                             "The Production Design project changed while approval was open. Review the references and generate again."
                         )
