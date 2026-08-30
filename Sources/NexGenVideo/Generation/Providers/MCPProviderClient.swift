@@ -168,7 +168,7 @@ actor MCPProviderClient {
         }
 
         func receive(_ result: Result<Output, Error>) {
-            let continuation = lock.withLock {
+            let continuation: CheckedContinuation<Output, Error>? = lock.withLock {
                 guard !cancellationRequested, self.result == nil else { return nil }
                 self.result = result
                 let continuation = self.continuation
@@ -199,7 +199,7 @@ actor MCPProviderClient {
         }
 
         private func settle(_ result: Result<Output, Error>) {
-            let continuation = lock.withLock {
+            let continuation: CheckedContinuation<Output, Error>? = lock.withLock {
                 guard self.result == nil else { return nil }
                 self.result = result
                 let continuation = self.continuation

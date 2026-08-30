@@ -326,12 +326,17 @@ enum MCPModelDiscovery {
                 ?? c.decodeIfPresent([Media].self, forKey: .mediaInputs)
                 ?? c.decodeIfPresent([Media].self, forKey: .mediaInputsCamel)
             tags = try c.decodeIfPresent([String].self, forKey: .tags)
-            if !c.contains(.constraints) || (try c.decodeNil(forKey: .constraints)) {
+            if !c.contains(.constraints) {
                 constraints = nil
-            } else if let values = try? c.decode([String].self, forKey: .constraints) {
-                constraints = values
             } else {
-                constraints = [try c.decode(String.self, forKey: .constraints)]
+                let constraintsAreNull = try c.decodeNil(forKey: .constraints)
+                if constraintsAreNull {
+                    constraints = nil
+                } else if let values = try? c.decode([String].self, forKey: .constraints) {
+                    constraints = values
+                } else {
+                    constraints = [try c.decode(String.self, forKey: .constraints)]
+                }
             }
             resolvedMediaTypes = []
         }
