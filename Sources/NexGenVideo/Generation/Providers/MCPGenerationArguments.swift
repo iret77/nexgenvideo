@@ -260,12 +260,30 @@ enum MCPGenerationArguments {
                 mappedMedia.formUnion(selected.map(\.key))
                 continue
             }
-            if let candidateName = candidateNames(for: normalized, mode: mode)
-                .first(where: { candidates[$0] != nil && !mappedNames.contains($0) }),
-               let value = candidates[candidateName] {
-                result[field] = try coerce(value, for: fieldSchema, path: path + field)
-                mappedNames.insert(candidateName)
-                continue
+            let availableCandidates = candidateNames(for: normalized, mode: mode)
+                .filter { candidates[$0] != nil && !mappedNames.contains($0) }
+            if !availableCandidates.isEmpty {
+                var mappedCandidate = false
+                for candidateName in availableCandidates {
+                    guard let value = candidates[candidateName],
+                          let converted = try? coerce(
+                              value,
+                              for: fieldSchema,
+                              path: path + field
+                          ) else { continue }
+                    result[field] = converted
+                    mappedNames.insert(candidateName)
+                    mappedCandidate = true
+                    break
+                }
+                if mappedCandidate { continue }
+                if required.contains(field) {
+                    if let fixed = fixedSchemaValue(fieldSchema) {
+                        result[field] = fixed
+                        continue
+                    }
+                    throw MappingError.incompatibleField(path + field)
+                }
             }
             if required.contains(field), let fixed = fixedSchemaValue(fieldSchema) {
                 result[field] = fixed

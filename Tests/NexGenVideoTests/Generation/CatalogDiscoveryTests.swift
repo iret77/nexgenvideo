@@ -4,7 +4,7 @@ import Testing
 
 @testable import NexGenVideo
 
-@Suite("Catalog discovery coordinator")
+@Suite("Catalog discovery coordinator", .serialized)
 struct CatalogDiscoveryTests {
     actor AsyncGate {
         private var isOpen = false
@@ -121,6 +121,66 @@ struct CatalogDiscoveryTests {
         }
     }
 
+    actor DetailStressClient: MCPCatalogClient {
+        let tools: [MCPProviderClient.DiscoveredTool]
+        private let modelCount: Int
+        private let failingModelIDs: Set<String>
+        private var firstModelName: String?
+        private var detailCalls = 0
+        private var activeDetails = 0
+        private var maximumActiveDetails = 0
+
+        init(modelCount: Int, failingModelIDs: Set<String>) {
+            tools = [
+                MCPProviderClient.DiscoveredTool(
+                    name: "generate_image",
+                    description: "Generate an image.",
+                    inputSchema: .object([:])
+                ),
+                MCPProviderClient.DiscoveredTool(
+                    name: "models_explore",
+                    description: "Find generation models.",
+                    inputSchema: .object([:])
+                ),
+            ]
+            self.modelCount = modelCount
+            self.failingModelIDs = failingModelIDs
+        }
+
+        func discoverTools() async throws -> [MCPProviderClient.DiscoveredTool] { tools }
+
+        func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
+            guard name == "models_explore" else {
+                throw MCPProviderClient.ClientError.toolFailed("Unexpected call to \(name)")
+            }
+            guard arguments["action"] == .string("get"),
+                  case .string(let modelID)? = arguments["model_id"] else {
+                let items = (0..<modelCount).map { index in
+                    let name = index == 0 ? firstModelName.map { ",\"name\":\"\($0)\"" } ?? "" : ""
+                    return #"{"id":"stress-\#(index)","output_type":"image"\#(name)}"#
+                }.joined(separator: ",")
+                return ["{\"items\":[\(items)]}"]
+            }
+            detailCalls += 1
+            activeDetails += 1
+            maximumActiveDetails = max(maximumActiveDetails, activeDetails)
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            activeDetails -= 1
+            if failingModelIDs.contains(modelID) {
+                throw MCPProviderClient.ClientError.toolFailed("Detail unavailable")
+            }
+            return [#"{"id":"\#(modelID)","constraints":["At most 4 image references are allowed."]}"#]
+        }
+
+        func disconnect() async {}
+
+        func renameFirstModel(_ name: String) { firstModelName = name }
+
+        func snapshot() -> (detailCalls: Int, maximumActiveDetails: Int) {
+            (detailCalls, maximumActiveDetails)
+        }
+    }
+
     @MainActor
     @Test("Catalog discovery combines models and cursor data from every MCP content block")
     func catalogDiscoveryCombinesContentBlocks() async {
@@ -152,6 +212,39 @@ struct CatalogDiscoveryTests {
 
         #expect(entries.map(\.id) == ["first", "second", "third"])
         #expect(entries.first?.displayName == "First")
+    }
+
+    @MainActor
+    @Test("Model details use a bounded cache and one failed detail does not block the catalog")
+    func modelDetailDiscoveryIsBoundedCachedAndFailureIsolated() async {
+        CatalogDiscovery.invalidateDetailCache()
+        let client = DetailStressClient(
+            modelCount: 12,
+            failingModelIDs: ["stress-3"]
+        )
+
+        let first = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let firstSnapshot = await client.snapshot()
+        let second = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let secondSnapshot = await client.snapshot()
+        await client.renameFirstModel("Changed")
+        let third = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let thirdSnapshot = await client.snapshot()
+        CatalogDiscovery.invalidateDetailCache()
+        let fourth = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let fourthSnapshot = await client.snapshot()
+
+        #expect(first.count == 12)
+        #expect(second.count == 12)
+        #expect(third.count == 12)
+        #expect(fourth.count == 12)
+        #expect(firstSnapshot.detailCalls == 12)
+        #expect(firstSnapshot.maximumActiveDetails > 1)
+        #expect(firstSnapshot.maximumActiveDetails <= 4)
+        #expect(secondSnapshot.detailCalls == 13)
+        #expect(thirdSnapshot.detailCalls == 15)
+        #expect(fourthSnapshot.detailCalls == 27)
+        CatalogDiscovery.invalidateDetailCache()
     }
 
     @MainActor
@@ -500,6 +593,47 @@ struct CatalogDiscoveryTests {
         #expect(entries.map(\.id) == ["listed-image"])
         #expect(snapshot.calls == ["models_explore"])
         #expect(snapshot.disconnected)
+    }
+
+    @MainActor
+    @Test("A status-only asynchronous lifecycle remains discoverable without an output schema")
+    func statusOnlyLifecycleRemainsDiscoverable() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "model": .object(["type": .string("string")]),
+                        "prompt": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("model"), .string("prompt")]),
+                ])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "job_status",
+                description: "Check generation job status.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "job_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("job_id")]),
+                ])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ]
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"status-image","output_type":"image"}]}"#
+        )
+
+        let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+
+        #expect(entries.map(\.id) == ["status-image"])
     }
 
     @MainActor

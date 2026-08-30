@@ -162,6 +162,68 @@ struct DirectImageProviderTests {
         #expect(DirectImageDiscovery.providers.contains(.google))
     }
 
+    @Test("catalog errors distinguish rejected credentials from transient failures")
+    func catalogFailureClassificationIsFailClosed() {
+        for status in [401, 403] {
+            #expect(DirectImageDiscovery.isAuthenticationFailure(
+                GenerationBackendError.api(
+                    status: status,
+                    code: String(status),
+                    message: "Rejected"
+                )
+            ))
+        }
+        for status in [429, 500, 502, 503] {
+            #expect(!DirectImageDiscovery.isAuthenticationFailure(
+                GenerationBackendError.api(
+                    status: status,
+                    code: String(status),
+                    message: "Transient"
+                )
+            ))
+            #expect(DirectImageDiscovery.isTransientFailure(
+                GenerationBackendError.api(
+                    status: status,
+                    code: String(status),
+                    message: "Transient"
+                )
+            ))
+        }
+        #expect(!DirectImageDiscovery.isTransientFailure(
+            GenerationBackendError.api(status: 400, code: "400", message: "Bad request")
+        ))
+        #expect(!DirectImageDiscovery.isAuthenticationFailure(
+            GenerationBackendError.transport("Timed out")
+        ))
+        #expect(DirectImageDiscovery.isTransientFailure(
+            GenerationBackendError.transport("Timed out")
+        ))
+    }
+
+    @Test("only transient refresh failures retain a verified catalog")
+    func onlyTransientFailuresPreserveLastKnownGood() {
+        #expect(DirectImageDiscovery.preservesLastKnownGood(
+            after: .transientFailure("Retry"),
+            currentModelCount: 8
+        ))
+        #expect(!DirectImageDiscovery.preservesLastKnownGood(
+            after: .transientFailure("Retry"),
+            currentModelCount: 0
+        ))
+        #expect(!DirectImageDiscovery.preservesLastKnownGood(
+            after: .authenticationFailure("Replace key"),
+            currentModelCount: 8
+        ))
+        #expect(!DirectImageDiscovery.preservesLastKnownGood(
+            after: .unavailableFailure("Rejected"),
+            currentModelCount: 8
+        ))
+        #expect(!DirectImageDiscovery.preservesLastKnownGood(
+            after: .success([]),
+            currentModelCount: 8
+        ))
+    }
+
     @Test("the LLM sees provider-neutral logical ids")
     func logicalIdsAreProviderNeutral() {
         #expect(ModelCatalog.deriveLogicalId("google/some-image") == "some-image")

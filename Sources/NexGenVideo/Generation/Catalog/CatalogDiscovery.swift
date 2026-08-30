@@ -24,11 +24,68 @@ extension MCPProviderClient: MCPCatalogClient {}
 /// `.providerKeysChanged` (sign-in / sign-out / key change), coalescing overlapping runs.
 @MainActor
 enum CatalogDiscovery {
+    private struct MCPDiscoveryResult: Sendable {
+        let entries: [CatalogEntry]
+        let isComplete: Bool
+    }
+
+    private struct EnumerationResult: Sendable {
+        let models: [MCPModelDiscovery.ModelItem]
+        let isComplete: Bool
+    }
+
+    private struct EnrichmentResult: Sendable {
+        let models: [MCPModelDiscovery.ModelItem]
+        let isComplete: Bool
+    }
+
+    private struct DetailCacheKey: Hashable, Sendable {
+        let provider: GenerationProvider
+        let modelID: String
+    }
+
+    private struct DetailCacheValue: Sendable {
+        let listedModel: MCPModelDiscovery.ModelItem
+        let details: [MCPModelDiscovery.ModelItem]
+    }
+
+    private struct DetailRequest: Sendable {
+        let index: Int
+        let key: DetailCacheKey
+        let cacheGeneration: UInt64
+        let model: MCPModelDiscovery.ModelItem
+        let arguments: [String: String]
+        let staleDetails: [MCPModelDiscovery.ModelItem]
+    }
+
+    private enum DetailResponse: Sendable {
+        case success(DetailRequest, [MCPModelDiscovery.ModelItem])
+        case failure(DetailRequest, String)
+    }
+
     struct ProviderResult: Sendable {
         let provider: GenerationProvider
         let mcpConfigured: Bool
         let oauthConnected: Bool
         let entries: [CatalogEntry]
+        let directResult: DirectImageDiscovery.Result
+        let mcpDiscoveryIsComplete: Bool
+
+        init(
+            provider: GenerationProvider,
+            mcpConfigured: Bool,
+            oauthConnected: Bool,
+            entries: [CatalogEntry],
+            directResult: DirectImageDiscovery.Result = .inactive,
+            mcpDiscoveryIsComplete: Bool = true
+        ) {
+            self.provider = provider
+            self.mcpConfigured = mcpConfigured
+            self.oauthConnected = oauthConnected
+            self.entries = entries
+            self.directResult = directResult
+            self.mcpDiscoveryIsComplete = mcpDiscoveryIsComplete
+        }
     }
 
     private static var running = false
@@ -36,9 +93,12 @@ enum CatalogDiscovery {
     private static var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     private static var lastCompletedAt: Date?
     private static var observer: NSObjectProtocol?
+    private static var detailCache: [DetailCacheKey: DetailCacheValue] = [:]
+    private static var detailCacheGeneration: UInt64 = 0
     /// Bound the enumeration so a misbehaving or huge provider catalog can't loop or balloon memory.
     private static let maxPagesPerModality = 12
     private static let maxModelsPerProvider = 400
+    private static let maxConcurrentDetailRequests = 4
 
     /// Observe activation changes and run an initial pass. Idempotent — safe to call once at launch.
     static func start() {
@@ -46,7 +106,10 @@ enum CatalogDiscovery {
             observer = NotificationCenter.default.addObserver(
                 forName: .providerKeysChanged, object: nil, queue: nil
             ) { _ in
-                Task { @MainActor in refresh() }
+                Task { @MainActor in
+                    invalidateDetailCache()
+                    refresh()
+                }
             }
         }
         refresh()
@@ -68,6 +131,11 @@ enum CatalogDiscovery {
             waiters.removeAll()
             for waiter in completedWaiters { waiter.resume() }
         }
+    }
+
+    static func invalidateDetailCache() {
+        detailCacheGeneration &+= 1
+        detailCache.removeAll()
     }
 
     static func ensureCurrent(
@@ -108,6 +176,9 @@ enum CatalogDiscovery {
             )
         }
         for provider in providers where DirectImageDiscovery.providers.contains(provider) {
+            if ProviderKeychain.load(provider) != nil {
+                ModelCatalog.shared.beginDirectDiscovery(for: provider)
+            }
             ModelCatalog.shared.setProviderDiscoveryState(
                 ProviderKeychain.load(provider) == nil ? .inactive : .checking,
                 for: provider
@@ -119,25 +190,65 @@ enum CatalogDiscovery {
             providers,
             operation: { provider in
                 let mcpConfigured = ProviderMCP.hasConfig(provider)
-                var entries: [CatalogEntry] = []
+                var mcpResult = MCPDiscoveryResult(entries: [], isComplete: true)
                 if mcpConfigured {
-                    entries += await discover(provider)
+                    mcpResult = await discoverResult(provider)
                 }
-                entries += await DirectImageDiscovery.discover(provider)
                 return ProviderResult(
                     provider: provider,
                     mcpConfigured: mcpConfigured,
                     oauthConnected: ProviderOAuthStore.isConnected(provider),
-                    entries: entries
+                    entries: mcpResult.entries,
+                    directResult: await DirectImageDiscovery.discover(provider),
+                    mcpDiscoveryIsComplete: mcpResult.isComplete
                 )
             },
             consume: { result in
                 let provider = result.provider
-                let entries = result.entries
-                ModelCatalog.shared.applyDiscovered(entries, for: provider)
-                if !entries.isEmpty {
+                var publishedEntries = result.entries
+                var directState: ProviderDiscoveryState?
+                let retainedCount = ModelCatalog.shared.discoveredModelCount(for: provider)
+                switch result.directResult {
+                case .inactive:
+                    break
+                case .success(let entries):
+                    publishedEntries += entries
+                    directState = .ready(modelCount: entries.count)
+                case .authenticationFailure(let message):
+                    directState = .actionRequired(message)
+                case .unavailableFailure(let message):
+                    directState = .unavailable(message)
+                case .transientFailure(let message):
+                    if retainedCount > 0 {
+                        directState = .stale(modelCount: retainedCount, message: message)
+                    } else {
+                        directState = .unavailable(message)
+                    }
+                }
+                let preserveDirectCatalog = DirectImageDiscovery.preservesLastKnownGood(
+                    after: result.directResult,
+                    currentModelCount: retainedCount
+                )
+                let preserveMCPCatalog = result.mcpConfigured
+                    && result.oauthConnected
+                    && !result.mcpDiscoveryIsComplete
+                    && retainedCount > 0
+                if result.mcpConfigured,
+                   provider.mcpCapability?.auth == .oauth,
+                   !result.oauthConnected {
+                    publishedEntries = []
+                }
+                if preserveDirectCatalog || preserveMCPCatalog {
+                    publishedEntries = []
+                } else {
+                    ModelCatalog.shared.applyDiscovered(publishedEntries, for: provider)
+                }
+                let visibleCount = publishedEntries.isEmpty
+                    ? ModelCatalog.shared.discoveredModelCount(for: provider)
+                    : publishedEntries.count
+                if visibleCount > 0 {
                     providerCount += 1
-                    modelCount += entries.count
+                    modelCount += visibleCount
                 }
                 if provider.mcpCapability?.auth == .oauth {
                     let state: ProviderDiscoveryState
@@ -145,30 +256,35 @@ enum CatalogDiscovery {
                         state = .actionRequired(
                             "Sign in again to refresh this provider's models."
                         )
-                    } else if entries.isEmpty {
+                    } else if preserveMCPCatalog {
+                        state = .stale(
+                            modelCount: retainedCount,
+                            message: "Model refresh is incomplete. Using the last verified catalog while NexGenVideo retries."
+                        )
+                    } else if publishedEntries.isEmpty {
                         state = .unavailable(
                             "Model discovery failed. Check the connection or sign in again."
                         )
+                    } else if !result.mcpDiscoveryIsComplete {
+                        state = .stale(
+                            modelCount: publishedEntries.count,
+                            message: "Some model details could not be refreshed. NexGenVideo will retry automatically."
+                        )
                     } else {
-                        state = .ready(modelCount: entries.count)
+                        state = .ready(modelCount: publishedEntries.count)
                     }
                     ModelCatalog.shared.setProviderDiscoveryState(state, for: provider)
                 } else if DirectImageDiscovery.providers.contains(provider) {
-                    let state: ProviderDiscoveryState
-                    if ProviderKeychain.load(provider) == nil {
-                        state = .inactive
-                    } else if entries.isEmpty {
-                        state = .unavailable(
+                    let state = ProviderKeychain.load(provider) == nil
+                        ? ProviderDiscoveryState.inactive
+                        : directState ?? .unavailable(
                             "The saved key could not load an active image-model catalog. Check the key and connection."
                         )
-                    } else {
-                        state = .ready(modelCount: entries.count)
-                    }
                     ModelCatalog.shared.setProviderDiscoveryState(state, for: provider)
                 }
                 if result.mcpConfigured || ProviderKeychain.load(provider) != nil {
                     Log.generation.notice(
-                        "catalog provider=\(provider.rawValue) mcp=\(result.mcpConfigured) models=\(entries.count)"
+                        "catalog provider=\(provider.rawValue) mcp=\(result.mcpConfigured) models=\(visibleCount)"
                     )
                 }
             }
@@ -195,15 +311,24 @@ enum CatalogDiscovery {
         }
     }
 
-    private static func discover(_ provider: GenerationProvider) async -> [CatalogEntry] {
-        guard let client = await ProviderMCP.client(for: provider) else { return [] }
-        return await discover(provider, client: client)
+    private static func discoverResult(_ provider: GenerationProvider) async -> MCPDiscoveryResult {
+        guard let client = await ProviderMCP.client(for: provider) else {
+            return MCPDiscoveryResult(entries: [], isComplete: false)
+        }
+        return await discoverResult(provider, client: client)
     }
 
     static func discover(
         _ provider: GenerationProvider,
         client: any MCPCatalogClient
     ) async -> [CatalogEntry] {
+        await discoverResult(provider, client: client).entries
+    }
+
+    private static func discoverResult(
+        _ provider: GenerationProvider,
+        client: any MCPCatalogClient
+    ) async -> MCPDiscoveryResult {
         do {
             let tools = try await client.discoverTools()
             let discoveredToolsByModality = MCPModelDiscovery.generateToolsByModality(tools)
@@ -219,31 +344,33 @@ enum CatalogDiscovery {
             }
             guard !toolsByModality.isEmpty else {
                 await client.disconnect()
-                return []
+                return MCPDiscoveryResult(entries: [], isComplete: true)
             }
             var entries: [CatalogEntry] = []
+            var discoveryIsComplete = true
             var usedModelCatalog = false
             // Some providers advertise the selected model as a free-form field and expose the full
             // catalog through a separate tool; enumerate it before mapping the generation schema.
             if let hint = provider.mcpModelCatalog, tools.contains(where: { $0.name == hint.tool }) {
                 usedModelCatalog = true
-                let listedModels = await enumerate(
+                let enumeration = await enumerate(
                     provider: provider,
                     client: client,
                     hint: hint,
                     modalities: Array(toolsByModality.keys)
                 )
-                let models = await enrichMediaContracts(
-                    listedModels,
+                let enrichment = await enrichMediaContracts(
+                    enumeration.models,
                     provider: provider,
                     client: client,
                     hint: hint
                 )
+                discoveryIsComplete = enumeration.isComplete && enrichment.isComplete
                 let schemas = Dictionary(uniqueKeysWithValues: toolsByModality.compactMap { modality, name in
                     tools.first(where: { $0.name == name }).map { (modality, $0.inputSchema) }
                 })
                 entries = MCPModelDiscovery.catalogEntries(
-                    models: models, toolsByModality: toolsByModality,
+                    models: enrichment.models, toolsByModality: toolsByModality,
                     toolSchemasByModality: schemas,
                     allowsLocalMedia: MCPMediaUpload.supportsUploadContract(tools),
                     provider: provider)
@@ -252,11 +379,11 @@ enum CatalogDiscovery {
                 entries = MCPModelDiscovery.catalogEntriesFromTools(tools, provider: provider)
             }
             await client.disconnect()
-            return entries
+            return MCPDiscoveryResult(entries: entries, isComplete: discoveryIsComplete)
         } catch {
             await client.disconnect()
             Log.generation.notice("MCP discovery failed for \(provider.rawValue): \(error.localizedDescription)")
-            return []
+            return MCPDiscoveryResult(entries: [], isComplete: false)
         }
     }
 
@@ -268,9 +395,10 @@ enum CatalogDiscovery {
         client: any MCPCatalogClient,
         hint: MCPModelCatalog,
         modalities: [MCPModelDiscovery.Modality]
-    ) async -> [MCPModelDiscovery.ModelItem] {
+    ) async -> EnumerationResult {
         var all: [MCPModelDiscovery.ModelItem] = []
         var indexByModelID: [String: Int] = [:]
+        var isComplete = true
         for modality in modalities where modality != .upscale {
             var cursor: String?
             var seenCursors = Set<String>()
@@ -287,6 +415,7 @@ enum CatalogDiscovery {
                     )
                 }
                 catch {
+                    isComplete = false
                     Log.generation.notice(
                         "catalog listing failed provider=\(provider.rawValue) modality=\(modality.rawValue): \(error.localizedDescription)"
                     )
@@ -301,6 +430,7 @@ enum CatalogDiscovery {
                 let items = parsed.flatMap { $0.items }
                 let cursors = Set(parsed.compactMap { $0.next })
                 guard cursors.count <= 1 else {
+                    isComplete = false
                     Log.generation.notice(
                         "catalog listing returned conflicting cursors provider=\(provider.rawValue) modality=\(modality.rawValue)"
                     )
@@ -324,6 +454,7 @@ enum CatalogDiscovery {
                     }
                 }
                 if let next, !seenCursors.insert(next).inserted {
+                    isComplete = false
                     Log.generation.notice(
                         "catalog listing repeated cursor provider=\(provider.rawValue) modality=\(modality.rawValue)"
                     )
@@ -333,8 +464,9 @@ enum CatalogDiscovery {
                 }
                 pages += 1
             } while cursor != nil && pages < maxPagesPerModality && all.count < maxModelsPerProvider
+            if cursor != nil { isComplete = false }
         }
-        return all
+        return EnumerationResult(models: all, isComplete: isComplete)
     }
 
     private static func enrichMediaContracts(
@@ -342,43 +474,109 @@ enum CatalogDiscovery {
         provider: GenerationProvider,
         client: any MCPCatalogClient,
         hint: MCPModelCatalog
-    ) async -> [MCPModelDiscovery.ModelItem] {
+    ) async -> EnrichmentResult {
         guard let detailArgs = hint.detailArgs,
-              let detailModelArg = hint.detailModelArg else { return models }
+              let detailModelArg = hint.detailModelArg else {
+            return EnrichmentResult(models: models, isComplete: true)
+        }
         var enriched = models
-        for index in enriched.indices {
-            let model = enriched[index]
+        var pending: [DetailRequest] = []
+        for (index, model) in enriched.enumerated() {
             guard let modality = MCPModelDiscovery.modalityOf(model),
                   modality == .image || modality == .video else { continue }
-            var args = detailArgs
-            args[detailModelArg] = model.id
-            do {
-                let payloads = try await client.callTool(
-                    name: hint.tool,
-                    arguments: args.mapValues(Value.string)
-                )
-                let details = payloads.flatMap {
-                    MCPModelDiscovery.parseListing(
-                        $0,
-                        defaultOutputType: model.outputType
-                    ).items
-                }
-                let matching = details.filter { $0.id == model.id }
-                guard !matching.isEmpty else {
-                    Log.generation.notice(
-                        "catalog detail returned no matching model provider=\(provider.rawValue) model=\(model.id)"
-                    )
-                    continue
-                }
-                enriched[index] = matching.reduce(model) {
+            let key = DetailCacheKey(provider: provider, modelID: model.id)
+            if let cached = detailCache[key], cached.listedModel == model {
+                enriched[index] = cached.details.reduce(model) {
                     $0.merging($1, resolvingMediaDetails: true)
                 }
-            } catch {
-                Log.generation.notice(
-                    "catalog detail failed provider=\(provider.rawValue) model=\(model.id): \(error.localizedDescription)"
-                )
+                continue
+            }
+            var args = detailArgs
+            args[detailModelArg] = model.id
+            pending.append(DetailRequest(
+                index: index,
+                key: key,
+                cacheGeneration: detailCacheGeneration,
+                model: model,
+                arguments: args,
+                staleDetails: detailCache[key]?.details ?? []
+            ))
+        }
+        var isComplete = true
+        for batchStart in stride(
+            from: 0,
+            to: pending.count,
+            by: maxConcurrentDetailRequests
+        ) {
+            let batchEnd = min(batchStart + maxConcurrentDetailRequests, pending.count)
+            let batch = Array(pending[batchStart..<batchEnd])
+            let responses = await withTaskGroup(
+                of: DetailResponse.self,
+                returning: [DetailResponse].self
+            ) { group in
+                for request in batch {
+                    group.addTask {
+                        await fetchDetail(request, tool: hint.tool, client: client)
+                    }
+                }
+                var fetched: [DetailResponse] = []
+                for await response in group { fetched.append(response) }
+                return fetched
+            }
+            for response in responses {
+                switch response {
+                case .success(let request, let details) where !details.isEmpty:
+                    if request.cacheGeneration == detailCacheGeneration {
+                        detailCache[request.key] = DetailCacheValue(
+                            listedModel: request.model,
+                            details: details
+                        )
+                    }
+                    enriched[request.index] = details.reduce(request.model) {
+                        $0.merging($1, resolvingMediaDetails: true)
+                    }
+                case .success(let request, _):
+                    isComplete = false
+                    Log.generation.notice(
+                        "catalog detail returned no matching model provider=\(provider.rawValue) model=\(request.model.id)"
+                    )
+                    enriched[request.index] = request.staleDetails.reduce(request.model) {
+                        $0.merging($1, resolvingMediaDetails: true)
+                    }
+                case .failure(let request, let message):
+                    isComplete = false
+                    Log.generation.notice(
+                        "catalog detail failed provider=\(provider.rawValue) model=\(request.model.id): \(message)"
+                    )
+                    enriched[request.index] = request.staleDetails.reduce(request.model) {
+                        $0.merging($1, resolvingMediaDetails: true)
+                    }
+                }
             }
         }
-        return enriched
+        return EnrichmentResult(models: enriched, isComplete: isComplete)
+    }
+
+    private static func fetchDetail(
+        _ request: DetailRequest,
+        tool: String,
+        client: any MCPCatalogClient
+    ) async -> DetailResponse {
+        do {
+            let payloads = try await client.callTool(
+                name: tool,
+                arguments: request.arguments.mapValues(Value.string)
+            )
+            let details = payloads.flatMap {
+                MCPModelDiscovery.parseListing(
+                    $0,
+                    defaultOutputType: request.model.outputType,
+                    context: .detail
+                ).items
+            }.filter { $0.id == request.model.id }
+            return .success(request, details)
+        } catch {
+            return .failure(request, error.localizedDescription)
+        }
     }
 }

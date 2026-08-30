@@ -11,6 +11,7 @@ enum ProviderDiscoveryState: Equatable, Sendable {
     case inactive
     case checking
     case ready(modelCount: Int)
+    case stale(modelCount: Int, message: String)
     case actionRequired(String)
     case unavailable(String)
 }
@@ -99,6 +100,15 @@ final class ModelCatalog {
         completedDiscoveryProviders.insert(provider)
         discoveredByProvider[provider] = entries.isEmpty ? nil : entries
         rebuild()
+    }
+
+    func beginDirectDiscovery(for provider: GenerationProvider) {
+        completedDiscoveryProviders.insert(provider)
+        rebuild()
+    }
+
+    func discoveredModelCount(for provider: GenerationProvider) -> Int {
+        discoveredByProvider[provider]?.count ?? 0
     }
 
     /// Replace the ENTIRE discovered set in one rebuild — the coordinator's per-refresh result. A

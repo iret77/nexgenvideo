@@ -59,6 +59,8 @@ struct SpendApprovalCard: View {
             switch ModelCatalog.shared.providerDiscovery[provider] {
             case .actionRequired(let message), .unavailable(let message):
                 return "\(provider.displayName): \(message)"
+            case .stale(_, let message):
+                return "\(provider.displayName): \(message)"
             case .inactive, .checking, .ready, .none:
                 return nil
             }

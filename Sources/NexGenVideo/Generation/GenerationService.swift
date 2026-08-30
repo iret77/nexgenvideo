@@ -41,6 +41,7 @@ enum ReferenceHosting: Equatable {
 final class GenerationService {
 
     private static let uploadCacheTTL: TimeInterval = 6 * 24 * 60 * 60
+    private var generationTasks: [String: Task<Void, Never>] = [:]
 
     @discardableResult
     func generate(
@@ -98,9 +99,13 @@ final class GenerationService {
         let target = authorization.target
         let hosting = Self.referenceHosting(for: target)
 
-        Task { @MainActor in
+        let task = Task { @MainActor [weak self, weak editor] in
+            guard let self, let editor else { return }
             var tempToCleanup: [URL] = []
-            defer { Self.cleanupTempFiles(tempToCleanup) }
+            defer {
+                Self.cleanupTempFiles(tempToCleanup)
+                self.generationTasks.removeValue(forKey: primaryId)
+            }
             do {
                 let uploaded: [String]
                 if let preUploadedURLs, !preUploadedURLs.isEmpty {
@@ -181,6 +186,17 @@ final class GenerationService {
                     onComplete: onComplete,
                     onFailure: onFailure
                 )
+            } catch is CancellationError {
+                let message = "Generation cancelled."
+                for placeholder in placeholders {
+                    placeholder.generationStatus = .failed(message)
+                }
+                try? editor.recordSpendEvent(
+                    authorization: authorization,
+                    kind: .released,
+                    note: message
+                )
+                onFailure?()
             } catch {
                 let message = error.localizedDescription
                 Log.generation.error("upload failed model=\(authorizedGenInput.model) error=\(message)")
@@ -195,8 +211,16 @@ final class GenerationService {
                 onFailure?()
             }
         }
+        generationTasks[primaryId] = task
 
         return primaryId
+    }
+
+    @discardableResult
+    func cancelGeneration(placeholderId: String) -> Bool {
+        guard let task = generationTasks[placeholderId] else { return false }
+        task.cancel()
+        return true
     }
 
     private static func cleanupTempFiles(_ urls: [URL]) {
@@ -947,6 +971,19 @@ final class GenerationService {
                 job: job, placeholders: placeholders, editor: editor,
                 onComplete: onComplete, onFailure: onFailure)
             markCharged(authorization: authorization, editor: editor)
+        } catch is CancellationError {
+            let message = "Generation cancelled."
+            if taskId == nil {
+                failBeforeSubmission(
+                    placeholders,
+                    message,
+                    authorization: authorization,
+                    editor: editor,
+                    onFailure: onFailure
+                )
+            } else {
+                failJob(placeholders, message, onFailure)
+            }
         } catch {
             if taskId == nil {
                 failBeforeSubmission(

@@ -353,6 +353,92 @@ struct MCPGenerationArgumentsTests {
         ])
     }
 
+    @Test func optionalIntegerWaitFieldDoesNotReceiveInjectedBoolean() throws {
+        let schema: Value = .object([
+            "properties": .object([
+                "model": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+                "wait": .object(["type": .string("integer")]),
+            ]),
+            "required": .array([.string("model"), .string("prompt")]),
+        ])
+        let params = BackendGenerationParams.image(ImageGenerationParams(
+            prompt: "compiled prompt",
+            aspectRatio: "1:1",
+            resolution: nil,
+            quality: nil,
+            imageURLs: [],
+            numImages: 1
+        ))
+
+        let arguments = try MCPGenerationArguments.make(
+            for: params,
+            model: "image-model",
+            schema: schema
+        )
+
+        #expect(arguments["wait"] == nil)
+    }
+
+    @Test func optionalStringSyncEnumDoesNotReceiveUnsupportedValue() throws {
+        let schema: Value = .object([
+            "properties": .object([
+                "model": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+                "sync_mode": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("queued"), .string("deferred")]),
+                ]),
+            ]),
+            "required": .array([.string("model"), .string("prompt")]),
+        ])
+        let params = BackendGenerationParams.image(ImageGenerationParams(
+            prompt: "compiled prompt",
+            aspectRatio: "1:1",
+            resolution: nil,
+            quality: nil,
+            imageURLs: [],
+            numImages: 1
+        ))
+
+        let arguments = try MCPGenerationArguments.make(
+            for: params,
+            model: "image-model",
+            schema: schema
+        )
+
+        #expect(arguments["sync_mode"] == nil)
+    }
+
+    @Test func requiredIncompatibleWaitFieldFailsBeforeSubmission() {
+        let schema: Value = .object([
+            "properties": .object([
+                "model": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+                "wait": .object(["type": .string("integer")]),
+            ]),
+            "required": .array([
+                .string("model"), .string("prompt"), .string("wait"),
+            ]),
+        ])
+        let params = BackendGenerationParams.image(ImageGenerationParams(
+            prompt: "compiled prompt",
+            aspectRatio: "1:1",
+            resolution: nil,
+            quality: nil,
+            imageURLs: [],
+            numImages: 1
+        ))
+
+        #expect(throws: MCPGenerationArguments.MappingError.incompatibleField("wait")) {
+            try MCPGenerationArguments.make(
+                for: params,
+                model: "image-model",
+                schema: schema
+            )
+        }
+    }
+
     @Test func higgsfieldJobSetIdentifierMapsToStatusTool() throws {
         let schema: Value = .object([
             "properties": .object([

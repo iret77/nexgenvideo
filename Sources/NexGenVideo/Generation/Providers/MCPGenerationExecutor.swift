@@ -68,7 +68,7 @@ enum MCPGenerationExecutor {
             )
         }
         guard hasLifecycle else {
-            let cancellation = await cancelAcceptedJob(
+            let cancellation = await cancelAcceptedJobIndependently(
                 jobID: jobID,
                 tools: tools,
                 client: client
@@ -90,6 +90,17 @@ enum MCPGenerationExecutor {
             )
             return Result(jobID: jobID, output: output)
         } catch {
+            if error is CancellationError || Task.isCancelled {
+                let cancellation = await cancelAcceptedJobIndependently(
+                    jobID: jobID,
+                    tools: tools,
+                    client: client
+                )
+                throw JobFailure(
+                    jobID: jobID,
+                    message: "Generation cancelled. \(cancellation)"
+                )
+            }
             throw JobFailure(jobID: jobID, message: error.localizedDescription)
         }
     }
@@ -103,16 +114,6 @@ enum MCPGenerationExecutor {
                 jobID: "preflight-job",
                 schema: statusTool.inputSchema,
                 sync: false
-            )
-            if MCPGenerationLifecycle.outputSchemaSupportsMedia(statusTool.outputSchema) {
-                return true
-            }
-            guard let resultTool = MCPGenerationLifecycle.resultTool(in: tools) else {
-                return false
-            }
-            _ = try MCPGenerationArguments.makeJob(
-                jobID: "preflight-job",
-                schema: resultTool.inputSchema
             )
             return true
         } catch {
@@ -144,6 +145,17 @@ enum MCPGenerationExecutor {
         } catch {
             return "Cancellation failed (\(error.localizedDescription)); the provider may still charge for the accepted job."
         }
+    }
+
+    private static func cancelAcceptedJobIndependently(
+        jobID: String,
+        tools: [MCPProviderClient.DiscoveredTool],
+        client: any MCPToolCalling
+    ) async -> String {
+        let cancellation = Task.detached {
+            await cancelAcceptedJob(jobID: jobID, tools: tools, client: client)
+        }
+        return await cancellation.value
     }
 
     private static func poll(

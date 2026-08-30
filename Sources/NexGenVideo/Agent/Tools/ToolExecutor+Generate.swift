@@ -6,12 +6,14 @@ import NexGenEngine
 private final class AgentGenerationAwaiter {
     enum Completion {
         case succeeded(MediaAsset?)
-        case failed
+        case failed(String?)
     }
 
     private var completion: Completion?
     private var continuation: CheckedContinuation<Completion, Never>?
     private var isResolved = false
+    private var cancellationRequested = false
+    private var cancelOperation: (@MainActor () -> Bool)?
 
     func resolve(_ completion: Completion) {
         guard !isResolved else { return }
@@ -30,6 +32,36 @@ private final class AgentGenerationAwaiter {
             self.continuation = continuation
         }
     }
+
+    func installCancellation(_ action: @escaping @MainActor () -> Bool) {
+        guard !isResolved else { return }
+        if cancellationRequested {
+            if !action() {
+                resolve(.failed("Generation cancelled."))
+            }
+        } else {
+            cancelOperation = action
+        }
+    }
+
+    func cancel() {
+        guard !isResolved else { return }
+        cancellationRequested = true
+        if let cancelOperation, !cancelOperation() {
+            resolve(.failed("Generation cancelled."))
+        }
+    }
+}
+
+struct ProductionDesignReferenceSnapshot: Equatable, Sendable {
+    struct Entry: Equatable, Sendable {
+        let path: String
+        let sha256: String
+    }
+
+    let entries: [Entry]
+
+    var paths: [String] { entries.map(\.path) }
 }
 
 extension ToolExecutor {
@@ -171,32 +203,42 @@ extension ToolExecutor {
         success: @escaping (String) -> String
     ) async throws -> ToolResult {
         let awaiter = AgentGenerationAwaiter()
-        let submission = await GenerationController.submit(
-            request,
-            editor: editor,
-            preflight: preflight,
-            onSuccess: { asset in awaiter.resolve(.succeeded(asset)) },
-            onFailure: { awaiter.resolve(.failed) }
-        )
-        switch submission {
-        case .failure(let error):
-            throw ToolError(error.errorDescription ?? "Generation failed.")
-        case .success(let outcome):
-            switch await awaiter.value() {
-            case .failed:
-                let message = editor.mediaAssets.first(where: {
-                    $0.id == outcome.placeholderId
-                }).flatMap { asset -> String? in
-                    guard case .failed(let message) = asset.generationStatus else { return nil }
-                    return message
-                } ?? "The provider did not return a usable result."
-                throw ToolError(message)
-            case .succeeded(let asset):
-                return try await Self.completedGenerationResult(
-                    text: success(outcome.placeholderId),
-                    asset: request.modality == .image ? asset : nil
-                )
+        return try await withTaskCancellationHandler {
+            let submission = await GenerationController.submit(
+                request,
+                editor: editor,
+                preflight: preflight,
+                onSuccess: { asset in awaiter.resolve(.succeeded(asset)) },
+                onFailure: { awaiter.resolve(.failed(nil)) }
+            )
+            switch submission {
+            case .failure(let error):
+                throw ToolError(error.errorDescription ?? "Generation failed.")
+            case .success(let outcome):
+                awaiter.installCancellation {
+                    editor.generationService.cancelGeneration(
+                        placeholderId: outcome.placeholderId
+                    )
+                }
+                if Task.isCancelled { awaiter.cancel() }
+                switch await awaiter.value() {
+                case .failed(let explicitMessage):
+                    let message = explicitMessage ?? editor.mediaAssets.first(where: {
+                        $0.id == outcome.placeholderId
+                    }).flatMap { asset -> String? in
+                        guard case .failed(let message) = asset.generationStatus else { return nil }
+                        return message
+                    } ?? "The provider did not return a usable result."
+                    throw ToolError(message)
+                case .succeeded(let asset):
+                    return try await Self.completedGenerationResult(
+                        text: success(outcome.placeholderId),
+                        asset: request.modality == .image ? asset : nil
+                    )
+                }
             }
+        } onCancel: {
+            Task { @MainActor [weak awaiter] in awaiter?.cancel() }
         }
     }
 
@@ -725,7 +767,7 @@ extension ToolExecutor {
             return a
         }
         let requestedProjectPaths = args.stringArray("referenceProjectPaths")
-        let productionDesignPaths: [String]?
+        let productionDesignSnapshot: ProductionDesignReferenceSnapshot?
         if let workingRoot = editor.workingRoot,
            let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
            try currentPhaseIfEnforced(
@@ -733,15 +775,15 @@ extension ToolExecutor {
                editor: editor,
                dataRoot: dataRoot
            ) == "production_design" {
-            productionDesignPaths = try Self.productionDesignReferencePaths(
+            productionDesignSnapshot = try Self.productionDesignReferenceSnapshot(
                 dataRoot: dataRoot
             )
         } else {
-            productionDesignPaths = nil
+            productionDesignSnapshot = nil
         }
-        let projectPaths = productionDesignPaths ?? requestedProjectPaths
+        let projectPaths = productionDesignSnapshot?.paths ?? requestedProjectPaths
         let projectRefs = try projectImageReferences(projectPaths, editor: editor)
-        let effectiveLibraryRefs = productionDesignPaths == nil ? libraryRefs : []
+        let effectiveLibraryRefs = productionDesignSnapshot == nil ? libraryRefs : []
         let refs = effectiveLibraryRefs + projectRefs
         let currentValidation = model.validate(
             aspectRatio: aspectRatio,
@@ -775,11 +817,11 @@ extension ToolExecutor {
                 )
             },
             execute: { editor, approved in
-                if let productionDesignPaths,
+                if let productionDesignSnapshot,
                    let workingRoot = editor.workingRoot,
                    let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
-                   try Self.productionDesignReferencePaths(dataRoot: dataRoot)
-                    != productionDesignPaths {
+                   try Self.productionDesignReferenceSnapshot(dataRoot: dataRoot)
+                    != productionDesignSnapshot {
                     throw ToolError(
                         "The staged Production Design references changed while approval was open. Review the updated set and generate again."
                     )
@@ -891,11 +933,29 @@ extension ToolExecutor {
     nonisolated static func productionDesignReferencePaths(
         dataRoot: URL
     ) throws -> [String] {
+        try productionDesignReferenceSnapshot(dataRoot: dataRoot).paths
+    }
+
+    nonisolated static func productionDesignReferenceSnapshot(
+        dataRoot: URL
+    ) throws -> ProductionDesignReferenceSnapshot {
         let canonicalDataRoot = dataRoot.standardizedFileURL.resolvingSymlinksInPath()
         let refsRoot = canonicalDataRoot
             .appendingPathComponent("production_design/refs", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: refsRoot.path) else { return [] }
-        var paths: [String] = []
+        guard FileManager.default.fileExists(atPath: refsRoot.path) else {
+            return ProductionDesignReferenceSnapshot(entries: [])
+        }
+        let rootValues = try refsRoot.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+        ])
+        guard rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {
+            throw ToolError(
+                "Production Design references must be a project-local directory, not a symbolic link."
+            )
+        }
+        var entries: [ProductionDesignReferenceSnapshot.Entry] = []
+        var seenPaths = Set<String>()
 
         func collect(_ directory: URL) throws {
             let children = try FileManager.default.contentsOfDirectory(
@@ -904,10 +964,13 @@ extension ToolExecutor {
                     .isDirectoryKey,
                     .isRegularFileKey,
                     .isSymbolicLinkKey,
-                ],
-                options: [.skipsHiddenFiles]
+                ]
             )
             for child in children {
+                let stagedPath = child.standardizedFileURL.path
+                let relativeStagedPath = stagedPath.hasPrefix(canonicalDataRoot.path + "/")
+                    ? String(stagedPath.dropFirst(canonicalDataRoot.path.count + 1))
+                    : child.lastPathComponent
                 let values = try child.resourceValues(forKeys: [
                     .isDirectoryKey,
                     .isRegularFileKey,
@@ -915,30 +978,54 @@ extension ToolExecutor {
                 ])
                 if values.isSymbolicLink == true {
                     throw ToolError(
-                        "Production Design references must be project-local files, not symbolic links."
+                        "Production Design reference '\(relativeStagedPath)' is a symbolic link. Use a project-local image file."
                     )
                 }
                 if values.isDirectory == true {
                     try collect(child)
                     continue
                 }
-                guard values.isRegularFile == true,
-                      ClipType(fileExtension: child.pathExtension.lowercased()) == .image else {
-                    continue
-                }
+                guard values.isRegularFile == true else { continue }
                 let canonical = child.standardizedFileURL.resolvingSymlinksInPath()
                 guard canonical.path.hasPrefix(canonicalDataRoot.path + "/") else {
                     throw ToolError(
                         "Production Design references must remain inside the project pipeline."
                     )
                 }
-                guard isDecodableProjectImage(canonical) else { continue }
-                paths.append(String(canonical.path.dropFirst(canonicalDataRoot.path.count + 1)))
+                let relativePath = String(
+                    canonical.path.dropFirst(canonicalDataRoot.path.count + 1)
+                )
+                let source = CGImageSourceCreateWithURL(
+                    canonical as CFURL,
+                    [kCGImageSourceShouldCache: false] as CFDictionary
+                )
+                let declaredImage = ClipType(
+                    fileExtension: child.pathExtension.lowercased()
+                ) == .image
+                guard declaredImage || source != nil else { continue }
+                guard declaredImage else {
+                    throw ToolError(
+                        "Production Design reference '\(relativePath)' uses an unsupported image format."
+                    )
+                }
+                if let reason = projectImageValidationFailure(canonical, source: source) {
+                    throw ToolError(
+                        "Production Design reference '\(relativePath)' \(reason)."
+                    )
+                }
+                if seenPaths.insert(relativePath).inserted {
+                    entries.append(.init(
+                        path: relativePath,
+                        sha256: try FileDigest.sha256(of: canonical)
+                    ))
+                }
             }
         }
 
         try collect(refsRoot)
-        return paths.sorted()
+        return ProductionDesignReferenceSnapshot(
+            entries: entries.sorted { $0.path < $1.path }
+        )
     }
 
     private func projectImageReferences(
@@ -965,7 +1052,7 @@ extension ToolExecutor {
             guard url.path.hasPrefix(canonicalRoot.path + "/"),
                   (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
                   ClipType(fileExtension: url.pathExtension.lowercased()) == .image,
-                  Self.isDecodableProjectImage(url) else {
+                  Self.projectImageValidationFailure(url) == nil else {
                 throw ToolError("Project reference '\(path)' must be a real image inside pipeline/.")
             }
             guard seen.insert(url).inserted else { return nil }
@@ -979,23 +1066,35 @@ extension ToolExecutor {
         }
     }
 
-    nonisolated private static func isDecodableProjectImage(_ url: URL) -> Bool {
-        guard let source = CGImageSourceCreateWithURL(
+    nonisolated private static func projectImageValidationFailure(
+        _ url: URL,
+        source existingSource: CGImageSource? = nil
+    ) -> String? {
+        guard let source = existingSource ?? CGImageSourceCreateWithURL(
             url as CFURL,
             [kCGImageSourceShouldCache: false] as CFDictionary
-        ), CGImageSourceGetCount(source) > 0,
-           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+        ), CGImageSourceGetCount(source) > 0 else {
+            return "cannot be decoded as an image"
+        }
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
             as? [CFString: Any],
-           let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
-           let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
-           width > 0, height > 0,
-           width <= 16_384, height <= 16_384,
-           width <= 64_000_000 / height else { return false }
-        return CGImageSourceCreateImageAtIndex(
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+              width > 0, height > 0 else {
+            return "has invalid image dimensions"
+        }
+        guard width <= 16_384, height <= 16_384,
+              width <= 64_000_000 / height else {
+            return "exceeds the 16,384-pixel or 64-megapixel safety limit"
+        }
+        guard CGImageSourceCreateImageAtIndex(
             source,
             0,
             [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
-        ) != nil
+        ) != nil else {
+            return "cannot be decoded as an image"
+        }
+        return nil
     }
 
     func showDialog(

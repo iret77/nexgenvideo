@@ -190,6 +190,29 @@ struct FalClientTests {
         })
     }
 
+    @Test("malformed image catalog data fails instead of becoming an empty successful inventory")
+    func malformedImageInventoryFails() async {
+        var components = URLComponents(string: "https://api.fal.ai/v1/models")!
+        components.queryItems = [
+            URLQueryItem(name: "category", value: "text-to-image"),
+            URLQueryItem(name: "status", value: "active"),
+            URLQueryItem(name: "limit", value: "100"),
+        ]
+        FixtureURLProtocol.install([
+            components.url!: fixture(#"{"models":"not-an-array","has_more":false}"#),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        await #expect(throws: (any Error).self) {
+            try await FalClient(
+                apiKey: "test-key",
+                session: testSession,
+                retryBaseDelayNanoseconds: 0
+            ).availableImageModelIds()
+        }
+    }
+
     @Test("submit keeps the operation path; status and result use the owning app")
     func imageEditLifecycleUsesApplicationRoute() async throws {
         let endpoint = "fal-ai/gemini-25-flash-image/edit"

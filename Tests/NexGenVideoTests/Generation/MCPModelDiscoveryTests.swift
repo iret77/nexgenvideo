@@ -85,6 +85,49 @@ struct MCPModelDiscoveryTests {
         #expect(next == nil)
     }
 
+    @Test func listingIgnoresAuxiliaryIdentifiersWithoutExplicitModality() {
+        for payload in [
+            #"{"id":"request-123","status":"completed"}"#,
+            #"{"job_set_type":"generation-job","created_at":"now"}"#,
+            #"{"model_id":"echoed-request-model","action":"list"}"#,
+            #"{"data":{"id":"nested-job","status":"queued"}}"#,
+            #"{"data":[{"id":"nested-job","status":"queued"}]}"#,
+        ] {
+            #expect(MCPModelDiscovery.parseListing(
+                payload,
+                defaultOutputType: "image"
+            ).items.isEmpty)
+        }
+    }
+
+    @Test func standaloneListingRequiresExplicitModalityButDetailDoesNot() {
+        let explicit = MCPModelDiscovery.parseListing(
+            #"{"id":"real-image","output_type":"image"}"#
+        )
+        let detail = MCPModelDiscovery.parseListing(
+            #"{"id":"detail-image","constraints":["At most 2 image references are allowed."]}"#,
+            defaultOutputType: "image",
+            context: .detail
+        )
+
+        #expect(explicit.items.map(\.id) == ["real-image"])
+        #expect(detail.items.map(\.id) == ["detail-image"])
+    }
+
+    @Test func mixedContentBlocksKeepDeclaredModelsWithoutPromotingMetadata() {
+        let blocks = [
+            #"{"items":[{"id":"first","output_type":"image"}]}"#,
+            #"{"id":"request-123","status":"completed"}"#,
+            #"{"job_set_type":"job-456","status":"queued"}"#,
+            #"{"models":[{"id":"second","name":"Second"}]}"#,
+        ]
+        let ids = blocks.flatMap {
+            MCPModelDiscovery.parseListing($0, defaultOutputType: "image").items
+        }.map(\.id)
+
+        #expect(ids == ["first", "second"])
+    }
+
     @Test func currentHiggsfieldJobSetShapeIsDiscovered() {
         let listing = #"""
         {"data":{"models":[

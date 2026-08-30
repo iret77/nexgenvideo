@@ -100,7 +100,7 @@ struct ProvidersPane: View {
         switch primaryStyle(p) {
         case .oauth:
             switch catalog.providerDiscovery[p] {
-            case .ready: return true
+            case .ready, .stale: return true
             case .checking, .inactive, .none: return connectionState(p).oauthConnected
             case .actionRequired, .unavailable: return false
             }
@@ -108,7 +108,7 @@ struct ProvidersPane: View {
         case .apiKey:
             switch catalog.providerDiscovery[p] {
             case .unavailable, .actionRequired: return false
-            case .inactive, .checking, .ready, .none: return connectionState(p).hasKey
+            case .inactive, .checking, .ready, .stale, .none: return connectionState(p).hasKey
             }
         }
     }
@@ -155,6 +155,7 @@ struct ProvidersPane: View {
             case .checking: (label, tone) = ("Checking…", .neutral)
             case .actionRequired: (label, tone) = ("Sign in again", .warning)
             case .unavailable: (label, tone) = ("Connection failed", .error)
+            case .stale: (label, tone) = ("Refresh pending", .warning)
             case .ready: (label, tone) = ("Signed in", .success)
             case .inactive, .none:
                 (label, tone) = ready ? ("Signed in", .success) : ("Not configured", .neutral)
@@ -167,6 +168,10 @@ struct ProvidersPane: View {
                 (label, tone) = ("Checking…", .neutral)
             case .unavailable where connectionState(provider).hasKey:
                 (label, tone) = ("Connection failed", .error)
+            case .actionRequired where connectionState(provider).hasKey:
+                (label, tone) = ("Key rejected", .error)
+            case .stale where connectionState(provider).hasKey:
+                (label, tone) = ("Refresh pending", .warning)
             default:
                 (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
             }
@@ -226,7 +231,8 @@ struct ProvidersPane: View {
 
     private func discoveryMessage(_ state: ProviderDiscoveryState?) -> String? {
         switch state {
-        case .actionRequired(let message), .unavailable(let message): message
+        case .actionRequired(let message), .unavailable(let message),
+             .stale(_, let message): message
         case .inactive, .checking, .ready, .none: nil
         }
     }

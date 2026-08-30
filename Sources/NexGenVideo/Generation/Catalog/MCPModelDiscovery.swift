@@ -17,6 +17,11 @@ enum MCPModelDiscovery {
         case video, image, audio, upscale
     }
 
+    enum ParsingContext: Sendable {
+        case listing
+        case detail
+    }
+
     // MARK: - Tool classification
 
     /// Whether a discovered tool *creates* content (vs. edits existing media). Only creators become
@@ -385,12 +390,13 @@ enum MCPModelDiscovery {
     /// `[ModelItem]` array; returns `([], nil)` on anything it can't read (never throws).
     static func parseListing(
         _ text: String,
-        defaultOutputType: String? = nil
+        defaultOutputType: String? = nil,
+        context: ParsingContext = .listing
     ) -> (items: [ModelItem], next: String?) {
         guard let json = jsonPayload(in: text),
               let data = json.data(using: .utf8),
               let root = try? JSONSerialization.jsonObject(with: data),
-              let listing = listingPayload(root)
+              let listing = listingPayload(root, context: context, allowBareArray: true)
         else { return ([], nil) }
         let decoder = JSONDecoder()
         let items = listing.items.compactMap { value -> ModelItem? in
@@ -414,10 +420,12 @@ enum MCPModelDiscovery {
     }
 
     private static func listingPayload(
-        _ value: Any
+        _ value: Any,
+        context: ParsingContext,
+        allowBareArray: Bool
     ) -> (items: [[String: Any]], next: String?)? {
         if let array = value as? [[String: Any]] {
-            return (array, nil)
+            return allowBareArray ? (array, nil) : nil
         }
         guard let object = value as? [String: Any] else { return nil }
         let cursor = object["next_page_token"] as? String
@@ -434,23 +442,37 @@ enum MCPModelDiscovery {
         }
         for key in ["data", "result", "payload"] {
             if let nested = object[key],
-               let listing = listingPayload(nested) {
+               let listing = listingPayload(
+                   nested,
+                   context: context,
+                   allowBareArray: false
+               ) {
                 return (listing.items, listing.next ?? next)
             }
         }
         for key in ["model", "job_set", "jobSet"] {
-            if let item = object[key] as? [String: Any] {
+            if let item = object[key] as? [String: Any],
+               context == .detail || hasExplicitModality(item) {
                 return ([item], next)
             }
         }
         if ["id", "job_set_type", "jobSetType", "model_id", "modelId"]
-            .contains(where: { object[$0] != nil }) {
+            .contains(where: { object[$0] != nil }),
+           context == .detail || hasExplicitModality(object) {
             return ([object], next)
         }
         if cursor != nil || object["has_more"] != nil || object["hasMore"] != nil {
             return ([], next)
         }
         return nil
+    }
+
+    private static func hasExplicitModality(_ object: [String: Any]) -> Bool {
+        for key in ["output_type", "outputType", "type", "modality"] {
+            guard let raw = object[key] as? String else { continue }
+            if Modality(rawValue: raw.lowercased()) != nil { return true }
+        }
+        return false
     }
 
     // MARK: - Mapping (the unit-tested core)

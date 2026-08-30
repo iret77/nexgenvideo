@@ -37,8 +37,10 @@ struct CostGuardTests {
     @MainActor
     private final class PendingExecutionFixture {
         private var continuation: CheckedContinuation<Void, Never>?
+        private(set) var didStart = false
 
         func wait() async {
+            didStart = true
             await withCheckedContinuation { continuation = $0 }
         }
 
@@ -46,6 +48,15 @@ struct CostGuardTests {
             continuation?.resume()
             continuation = nil
         }
+    }
+
+    @MainActor
+    private func waitUntil(_ predicate: @MainActor () -> Bool) async {
+        for _ in 0..<1_000 {
+            if predicate() { return }
+            await Task.yield()
+        }
+        Issue.record("Timed out waiting for the spend state to settle")
     }
 
     private func option(
@@ -134,12 +145,14 @@ struct CostGuardTests {
             actionLabel: "Generate video"
         )
         var executed: SpendOption?
+        let fixture = PendingExecutionFixture()
         let result = try service.requestSpendApproval(
             approval,
             origin: .direct,
             editor: editor,
             execute: { _, option in
                 executed = option
+                await fixture.wait()
                 return .ok("started")
             }
         )
@@ -147,15 +160,35 @@ struct CostGuardTests {
         #expect(result.turnDisposition == .suspendTurn)
         #expect(service.pendingSpendApproval?.id == "spend-1")
         await service.approveSpend(selected)
-        #expect(executed == selected)
         #expect(service.pendingSpendApproval == nil)
+        #expect(service.currentSpendRun?.id == approval.id)
+        #expect(!service.isComposerBlocked)
+
+        await waitUntil { fixture.didStart }
+        #expect(executed == selected)
+        #expect(service.spendApprovalIsRunning)
+
+        fixture.finish()
+        await waitUntil { !service.spendApprovalIsRunning }
+        #expect(!service.spendApprovalIsRunning)
     }
 
     @MainActor
     @Test func embeddedApprovalKeepsItsResumeOwner() async throws {
         let editor = EditorViewModel()
-        let service = editor.agentService
+        let service = AgentService(backend: .claudeCode)
+        service.editor = editor
         service.newChat()
+        let unavailable = ClaudeCodeLocator.Status(
+            executableURL: nil,
+            version: nil,
+            isAuthenticated: false
+        )
+        NotificationCenter.default.post(
+            name: .claudeCodeStatusChanged,
+            object: unavailable
+        )
+        #expect(!service.canStream)
         service.isStreaming = true
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: try #require(service.currentSessionId),
@@ -181,14 +214,28 @@ struct CostGuardTests {
         )
 
         await service.approveSpend(selected)
+        await waitUntil { service.hasPendingHostFollowUp }
 
         #expect(service.pendingSpendApproval == nil)
         #expect(service.hasPendingHostFollowUp)
         #expect(service.isComposerBlocked)
 
+        NotificationCenter.default.post(
+            name: .claudeCodeStatusChanged,
+            object: unavailable
+        )
         service.isStreaming = false
         #expect(!service.resumePendingSpendFollowUp())
         #expect(service.hasPendingHostFollowUp)
+        #expect(service.toolCallBlockReason(
+            tool: .generateImage,
+            args: [:],
+            origin: origin
+        )?.contains("suspended at a host decision") == true)
+        guard case .authenticationRequired? = service.streamError else {
+            Issue.record("Expected the unavailable backend to remain visible before retry")
+            return
+        }
     }
 
     @MainActor
@@ -239,6 +286,7 @@ struct CostGuardTests {
         )
 
         await service.approveSpend(selected)
+        await waitUntil { !service.spendApprovalIsRunning }
 
         let resultContent = service.messages.flatMap(\.blocks).compactMap { block in
             guard case .toolResult(let id, let content, _) = block,
@@ -297,12 +345,20 @@ struct CostGuardTests {
             }
         )
 
-        let approvalTask = Task { await service.approveSpend(selected) }
-        while !service.spendApprovalIsRunning { await Task.yield() }
+        await service.approveSpend(selected)
+        #expect(service.spendApprovalIsRunning)
+        await waitUntil { fixture.didStart }
         service.newChat()
-        service.isStreaming = true
+        let newSessionID = try #require(service.currentSessionId)
+        #expect(newSessionID != originSessionID)
+        #expect(service.currentSpendRun == nil)
+        #expect(!service.isComposerBlocked)
+
         fixture.finish()
-        await approvalTask.value
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        #expect(service.currentSessionId == newSessionID)
+        #expect(!service.hasPendingHostFollowUp)
 
         let originSession = try #require(
             service.sessions.first(where: { $0.id == originSessionID })
@@ -313,6 +369,79 @@ struct CostGuardTests {
                 guard case .image(let base64, _) = $0 else { return false }
                 return base64 == "c3dpdGNoZWQ="
             }
+        })
+
+        service.selectSession(originSessionID)
+        #expect(service.currentSessionId == originSessionID)
+        #expect(service.hasPendingHostFollowUp)
+    }
+
+    @MainActor
+    @Test func runningGenerationCanBeCancelledAndSettlesExactlyOnce() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let sessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: sessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "fal-ai/nano-banana-pro/edit",
+            name: "Nano Banana Pro (edit)",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "cancel-running-spend",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "cancelled-image",
+                content: [.text("The spend approval card is open. End this turn and wait for the host result; do not retry this tool call.")],
+                isError: false
+            ),
+        ])]
+        service.isStreaming = true
+        var didStart = false
+        var cancellationCount = 0
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            cancel: { _ in cancellationCount += 1 },
+            execute: { _, _ in
+                didStart = true
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+                return .ok("unexpected")
+            }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { didStart }
+        #expect(service.currentSpendRun?.cancellationRequested == false)
+
+        service.cancelRunningSpend()
+        service.cancelRunningSpend()
+        #expect(service.currentSpendRun?.cancellationRequested == true)
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        #expect(cancellationCount == 1)
+        #expect(service.hasPendingHostFollowUp)
+        let results = service.messages.flatMap(\.blocks).compactMap { block -> ([ToolResult.Block], Bool)? in
+            guard case .toolResult(let id, let content, let isError) = block,
+                  id == "cancelled-image" else { return nil }
+            return (content, isError)
+        }
+        #expect(results.count == 1)
+        #expect(results.first?.1 == true)
+        let cancelledContent = try #require(results.first?.0)
+        #expect(cancelledContent.contains { block in
+            guard case .text(let text) = block else { return false }
+            return text == "Generation cancelled."
         })
     }
 
@@ -428,6 +557,7 @@ struct CostGuardTests {
         )
 
         await service.approveSpend(selected)
+        await waitUntil { !service.spendApprovalIsRunning }
 
         #expect(released)
         #expect(service.pendingSpendApproval == nil)
@@ -613,6 +743,7 @@ struct CostGuardTests {
         editor = nil
         #expect(weakEditor == nil)
         await service.approveSpend(selected)
+        await waitUntil { !service.spendApprovalIsRunning }
         #expect(service.pendingSpendApproval == nil)
     }
 }

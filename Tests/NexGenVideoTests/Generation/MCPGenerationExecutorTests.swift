@@ -8,13 +8,27 @@ struct MCPGenerationExecutorTests {
     actor StubClient: MCPToolCalling {
         private var responses: [String: [[String]]]
         private var calls: [String] = []
+        private let suspendedTools: Set<String>
+        private let failures: [String: String]
 
-        init(responses: [String: [[String]]]) {
+        init(
+            responses: [String: [[String]]],
+            suspendedTools: Set<String> = [],
+            failures: [String: String] = [:]
+        ) {
             self.responses = responses
+            self.suspendedTools = suspendedTools
+            self.failures = failures
         }
 
         func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
             calls.append(name)
+            if suspendedTools.contains(name) {
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+            if let failure = failures[name] {
+                throw MCPProviderClient.ClientError.toolFailed(failure)
+            }
             guard var queue = responses[name], !queue.isEmpty else {
                 throw MCPProviderClient.ClientError.toolFailed("Unexpected call to \(name)")
             }
@@ -24,6 +38,15 @@ struct MCPGenerationExecutorTests {
         }
 
         func calledTools() -> [String] { calls }
+    }
+
+    private func waitForCall(_ name: String, client: StubClient) async -> Bool {
+        for _ in 0..<400 {
+            let calls = await client.calledTools()
+            if calls.contains(name) { return true }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return false
     }
 
     private var mediaOutputSchema: Value {
@@ -86,6 +109,93 @@ struct MCPGenerationExecutorTests {
         #expect(result.outputURLs == ["https://output.invalid/anchor.png"])
         #expect(calls == ["generate_image", "job_status", "job_status"])
         #expect(calls.filter { $0 == "generate_image" }.count == 1)
+    }
+
+    @Test func statusOnlyLifecycleReturnsMediaFromCompletedStatus() async throws {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"job_id":"status-only","status":"queued"}"#]],
+            "job_status": [[#"{"job_id":"status-only","status":"completed","result":{"url":"https://output.invalid/status.png"}}"#]],
+        ])
+
+        let result = try await MCPGenerationExecutor.run(
+            generationTool: generate,
+            arguments: ["prompt": .string("compiled anchor")],
+            tools: [generate, status],
+            provider: .higgsfield,
+            client: client,
+            maxPollAttempts: 1,
+            pollIntervalNanoseconds: 0
+        )
+
+        #expect(result.outputURLs == ["https://output.invalid/status.png"])
+        #expect(await client.calledTools() == ["generate_image", "job_status"])
+    }
+
+    @Test func statusOnlyLifecycleFailsExplicitlyWhenCompletionHasNoMedia() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"job_id":"empty-status","status":"queued"}"#]],
+            "job_status": [[#"{"job_id":"empty-status","status":"completed"}"#]],
+        ])
+
+        do {
+            try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                maxPollAttempts: 1,
+                pollIntervalNanoseconds: 0
+            )
+            Issue.record("Expected completed status without media to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("completed job 'empty-status' without output media"))
+        }
+        #expect(await client.calledTools() == ["generate_image", "job_status"])
+    }
+
+    @Test func completedStatusWithoutMediaFallsBackToCompatibleResultTool() async throws {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let resultTool = tool("job_result", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let client = StubClient(responses: [
+            "generate_image": [[#"{"job_id":"fallback-result","status":"queued"}"#]],
+            "job_status": [[#"{"job_id":"fallback-result","status":"completed"}"#]],
+            "job_result": [[#"{"result":{"url":"https://output.invalid/result.png"}}"#]],
+        ])
+
+        let result = try await MCPGenerationExecutor.run(
+            generationTool: generate,
+            arguments: ["prompt": .string("compiled anchor")],
+            tools: [generate, status, resultTool],
+            provider: .higgsfield,
+            client: client,
+            maxPollAttempts: 1,
+            pollIntervalNanoseconds: 0
+        )
+
+        #expect(result.outputURLs == ["https://output.invalid/result.png"])
+        #expect(await client.calledTools() == [
+            "generate_image", "job_status", "job_result",
+        ])
     }
 
     @Test func synchronousOutputDoesNotPollOrResubmit() async throws {
@@ -276,6 +386,136 @@ struct MCPGenerationExecutorTests {
         #expect(calls.filter { $0 == "job_status" }.count == 3)
     }
 
+    @Test func taskCancellationCancelsAcceptedJobExactlyOnce() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let cancel = tool("job_cancel", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let client = StubClient(
+            responses: [
+                "generate_image": [[#"{"job_id":"cancelled-job","status":"queued"}"#]],
+                "job_cancel": [[#"{"status":"cancelled"}"#]],
+            ],
+            suspendedTools: ["job_status"]
+        )
+        let task = Task {
+            try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status, cancel],
+                provider: .higgsfield,
+                client: client,
+                pollIntervalNanoseconds: 0
+            )
+        }
+
+        #expect(await waitForCall("job_status", client: client))
+        task.cancel()
+        do {
+            _ = try await task.value
+            Issue.record("Expected cancellation to stop the accepted job")
+        } catch let error as MCPGenerationExecutor.JobFailure {
+            #expect(error.jobID == "cancelled-job")
+            #expect(error.message.contains("Generation cancelled"))
+            #expect(error.message.contains("sent a cancellation request"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        let calls = await client.calledTools()
+        #expect(calls == ["generate_image", "job_status", "job_cancel"])
+        #expect(calls.filter { $0 == "generate_image" }.count == 1)
+        #expect(calls.filter { $0 == "job_cancel" }.count == 1)
+    }
+
+    @Test func taskCancellationWithoutCancelToolNeverResubmits() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let client = StubClient(
+            responses: [
+                "generate_image": [[#"{"job_id":"unsupported-cancel","status":"queued"}"#]],
+            ],
+            suspendedTools: ["job_status"]
+        )
+        let task = Task {
+            try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status],
+                provider: .higgsfield,
+                client: client,
+                pollIntervalNanoseconds: 0
+            )
+        }
+
+        #expect(await waitForCall("job_status", client: client))
+        task.cancel()
+        do {
+            _ = try await task.value
+            Issue.record("Expected cancellation to stop the accepted job")
+        } catch let error as MCPGenerationExecutor.JobFailure {
+            #expect(error.message.contains("No compatible cancellation tool"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(await client.calledTools() == ["generate_image", "job_status"])
+    }
+
+    @Test func rejectedCancellationDoesNotRetryOrResubmit() async {
+        let generate = tool("generate_image", properties: [
+            "prompt": .object(["type": .string("string")]),
+        ])
+        let status = tool("job_status", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let cancel = tool("job_cancel", properties: [
+            "job_id": .object(["type": .string("string")]),
+        ])
+        let client = StubClient(
+            responses: [
+                "generate_image": [[#"{"job_id":"terminal-job","status":"queued"}"#]],
+            ],
+            suspendedTools: ["job_status"],
+            failures: ["job_cancel": "job is already terminal"]
+        )
+        let task = Task {
+            try await MCPGenerationExecutor.run(
+                generationTool: generate,
+                arguments: ["prompt": .string("compiled anchor")],
+                tools: [generate, status, cancel],
+                provider: .higgsfield,
+                client: client,
+                pollIntervalNanoseconds: 0
+            )
+        }
+
+        #expect(await waitForCall("job_status", client: client))
+        task.cancel()
+        do {
+            _ = try await task.value
+            Issue.record("Expected cancellation to settle the accepted job")
+        } catch let error as MCPGenerationExecutor.JobFailure {
+            #expect(error.message.contains("job is already terminal"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        let calls = await client.calledTools()
+        #expect(calls == ["generate_image", "job_status", "job_cancel"])
+        #expect(calls.filter { $0 == "generate_image" }.count == 1)
+        #expect(calls.filter { $0 == "job_cancel" }.count == 1)
+    }
+
     @Test func outputSchemaAllowsSynchronousByDefaultTool() async throws {
         let generate = tool(
             "generate_image",
@@ -327,7 +567,7 @@ struct MCPGenerationExecutorTests {
         #expect(await client.calledTools() == ["generate_image"])
     }
 
-    @Test func unmappableResultToolFailsBeforeSubmission() async {
+    @Test func unmappableResultToolFailsOnlyWhenCompletedStatusNeedsIt() async {
         let generate = tool("generate_image", properties: [
             "prompt": .object(["type": .string("string")]),
         ])
@@ -339,6 +579,7 @@ struct MCPGenerationExecutorTests {
         ])
         let client = StubClient(responses: [
             "generate_image": [[#"{"job_set_id":"paid-job"}"#]],
+            "job_status": [[#"{"job_set_id":"paid-job","status":"completed"}"#]],
         ])
 
         do {
@@ -349,10 +590,10 @@ struct MCPGenerationExecutorTests {
                 provider: .higgsfield,
                 client: client
             )
-            Issue.record("Expected lifecycle preflight failure")
+            Issue.record("Expected result mapping failure")
         } catch {
-            #expect(error.localizedDescription.contains("No job was submitted"))
+            #expect(error.localizedDescription.contains("tenant_id"))
         }
-        #expect(await client.calledTools().isEmpty)
+        #expect(await client.calledTools() == ["generate_image", "job_status"])
     }
 }

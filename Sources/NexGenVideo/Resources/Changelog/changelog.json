@@ -9,14 +9,16 @@
           "heading": "Generation providers",
           "items": [
             "fal.ai image choices now come from the authenticated active-model catalog and include the current Nano Banana, Nano Banana 2, Nano Banana Pro, and GPT Image 2 generation and editing endpoints.",
-            "Connected Higgsfield models use the provider's complete paged tool catalog, per-model reference contract, job-set identifier, and validated status/display lifecycle; synchronous MCP tools remain available when their live schema declares direct media output.",
-            "Image, video, audio, and upscale approvals remain active until the provider settles, returning the completed asset or the exact failure instead of stopping at a background placeholder."
+            "Connected Higgsfield models use the provider's complete paged tool catalog, cached and bounded per-model reference discovery, job-set identifier, and validated status/display lifecycle; status-only and synchronous MCP contracts remain runnable when their live schemas support them.",
+            "Temporary fal.ai catalog failures retain the last verified runnable model set, while rejected credentials fail closed with an actionable Settings state.",
+            "After approval, image, video, audio, and upscale work moves into a cancellable running state without blocking the composer; completion, failure, or cancellation returns exactly once to the originating chat."
           ]
         },
         {
           "heading": "Generation pipeline",
           "items": [
-            "Production Design lighting anchors pass every staged style reference into a compatible image model and display the completed generated image directly in the agent transcript."
+            "Production Design lighting anchors pass every staged style reference into a compatible image model and display the completed generated image directly in the agent transcript.",
+            "Corrupt, unsupported, oversized, symlinked, or approval-time changed Production Design references now stop generation with the exact staged path instead of being silently omitted."
           ]
         }
       ]

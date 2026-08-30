@@ -257,7 +257,6 @@ struct RestyleModelTests {
         try png.write(to: refs.appendingPathComponent("character.png"))
         try png.write(to: refs.deletingLastPathComponent()
             .appendingPathComponent("palette.png"))
-        try Data([0]).write(to: refs.appendingPathComponent("broken.jpg"))
         try Data([0]).write(to: refs.appendingPathComponent("notes.txt"))
 
         let paths = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
@@ -266,6 +265,145 @@ struct RestyleModelTests {
             "production_design/refs/nested/character.png",
             "production_design/refs/palette.png",
         ])
+    }
+
+    @Test("Production Design rejects a corrupt declared image by path")
+    func productionDesignRejectsCorruptReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let broken = root.appendingPathComponent("production_design/refs/broken.jpg")
+        try Data([0]).write(to: broken)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected corrupt Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("production_design/refs/broken.jpg"))
+            #expect(error.localizedDescription.contains("cannot be decoded"))
+        }
+    }
+
+    @Test("Production Design rejects a decodable image with an unsupported extension")
+    func productionDesignRejectsUnsupportedReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let png = try referencePNG()
+        let unsupported = root.appendingPathComponent("production_design/refs/reference.gif")
+        try png.write(to: unsupported)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected unsupported Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("production_design/refs/reference.gif"))
+            #expect(error.localizedDescription.contains("unsupported image format"))
+        }
+    }
+
+    @Test("Production Design rejects oversized image dimensions before approval")
+    func productionDesignRejectsOversizedReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let oversized = root.appendingPathComponent("production_design/refs/oversized.png")
+        try oversizedPNG().write(to: oversized)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected oversized Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("production_design/refs/oversized.png"))
+            #expect(error.localizedDescription.contains("safety limit"))
+        }
+    }
+
+    @Test("Production Design rejects symlinked references by path")
+    func productionDesignRejectsSymlinkReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("outside.png")
+        try referencePNG().write(to: target)
+        let link = root.appendingPathComponent("production_design/refs/linked.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected symlinked Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("production_design/refs/linked.png"))
+            #expect(error.localizedDescription.contains("symbolic link"))
+        }
+    }
+
+    @Test("Production Design snapshot changes when staged paths or bytes change")
+    func productionDesignSnapshotTracksExactStagedSet() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstURL = root.appendingPathComponent("production_design/refs/first.png")
+        let firstBytes = try referencePNG()
+        try firstBytes.write(to: firstURL)
+        let initial = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+
+        var changedBytes = firstBytes
+        changedBytes.append(0)
+        try changedBytes.write(to: firstURL)
+        let byteChanged = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        #expect(byteChanged != initial)
+        #expect(byteChanged.paths == initial.paths)
+
+        try firstBytes.write(
+            to: root.appendingPathComponent("production_design/refs/second.png")
+        )
+        let pathChanged = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        #expect(pathChanged != byteChanged)
+        #expect(pathChanged.paths == [
+            "production_design/refs/first.png",
+            "production_design/refs/second.png",
+        ])
+    }
+
+    private func productionDesignReferenceRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("production_design/refs", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        return root
+    }
+
+    private func referencePNG() throws -> Data {
+        try #require(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        ))
+    }
+
+    private func oversizedPNG() throws -> Data {
+        var bytes = try referencePNG()
+        let dimension: UInt32 = 20_000
+        for offset in 0..<4 {
+            let shift = UInt32((3 - offset) * 8)
+            bytes[16 + offset] = UInt8((dimension >> shift) & 0xff)
+            bytes[20 + offset] = UInt8((dimension >> shift) & 0xff)
+        }
+        let checksum = crc32(bytes[12..<29])
+        for offset in 0..<4 {
+            let shift = UInt32((3 - offset) * 8)
+            bytes[29 + offset] = UInt8((checksum >> shift) & 0xff)
+        }
+        return bytes
+    }
+
+    private func crc32(_ bytes: Data.SubSequence) -> UInt32 {
+        var value: UInt32 = 0xffff_ffff
+        for byte in bytes {
+            value ^= UInt32(byte)
+            for _ in 0..<8 {
+                value = (value & 1) == 1
+                    ? (value >> 1) ^ 0xedb8_8320
+                    : value >> 1
+            }
+        }
+        return value ^ 0xffff_ffff
     }
 
     @Test("it was the first model on the edit path — which is no longer a facade")

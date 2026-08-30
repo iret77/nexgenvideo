@@ -5,9 +5,11 @@ import Foundation
 /// enums verified against Runway's official SDK (runwayml/sdk-node).
 actor RunwayClient {
     let apiKey: String
+    private let session: URLSession
 
-    init(apiKey: String) {
+    init(apiKey: String, session: URLSession = .shared) {
         self.apiKey = apiKey
+        self.session = session
     }
 
     private static let base = "https://api.dev.runwayml.com/v1"
@@ -94,7 +96,17 @@ actor RunwayClient {
     }
 
     func output(taskId: String) async throws -> [String] {
-        try await waitForOutput(taskId: taskId)
+        do {
+            return try await waitForOutput(taskId: taskId)
+        } catch {
+            guard error is CancellationError || Task.isCancelled else { throw error }
+            if let failure = await cancelIndependently(taskId: taskId) {
+                throw GenerationBackendError.transport(
+                    "Generation was cancelled locally, but Runway task cancellation failed: \(failure). The provider task may still run and incur charges."
+                )
+            }
+            throw CancellationError()
+        }
     }
 
     // MARK: - Reference hosting
@@ -217,6 +229,31 @@ actor RunwayClient {
         }
     }
 
+    private func cancelIndependently(taskId: String) async -> String? {
+        let cancellation = Task.detached { [self] () -> String? in
+            do {
+                let (data, status) = try await send(
+                    method: "DELETE",
+                    path: "tasks/\(taskId)",
+                    body: nil
+                )
+                guard (200..<300).contains(status) || status == 404 || status == 409 else {
+                    let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
+                    throw GenerationBackendError.transport(
+                        "Runway task cancellation HTTP \(status): \(detail)"
+                    )
+                }
+                return nil
+            } catch {
+                Log.generation.error(
+                    "Runway task cancellation failed id=\(taskId) error=\(error.localizedDescription)"
+                )
+                return error.localizedDescription
+            }
+        }
+        return await cancellation.value
+    }
+
     private func send(method: String, path: String, body: [String: Any]?) async throws -> (Data, Int) {
         guard let url = URL(string: "\(Self.base)/\(path)") else {
             throw GenerationBackendError.transport("Invalid Runway endpoint: \(path)")
@@ -229,7 +266,7 @@ actor RunwayClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 }
