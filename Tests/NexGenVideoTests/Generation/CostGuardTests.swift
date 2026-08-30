@@ -302,11 +302,14 @@ struct CostGuardTests {
         await service.approveSpend(selected)
         await waitUntil { !service.spendApprovalIsRunning }
 
-        let resultContent = service.messages.flatMap(\.blocks).compactMap { block in
-            guard case .toolResult(let id, let content, _) = block,
-                  id == "image-tool" else { return nil }
-            return content
-        }.first
+        let resultContent = service.messages
+            .flatMap(\.blocks)
+            .compactMap { block -> [ToolResult.Block]? in
+                guard case .toolResult(let id, let content, _) = block,
+                      id == "image-tool" else { return nil }
+                return content
+            }
+            .first
         #expect(resultContent?.contains(where: {
             guard case .image(let base64, let mediaType) = $0 else { return false }
             return base64 == "aW1hZ2U=" && mediaType == "image/png"

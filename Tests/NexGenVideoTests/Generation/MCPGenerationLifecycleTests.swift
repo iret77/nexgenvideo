@@ -409,7 +409,7 @@ struct MCPGenerationLifecycleTests {
         ])
     }
 
-    @Test func everyOutputEnvelopeUsesTheSameSchemaAndRuntimeContract() {
+    @Test func everyOutputEnvelopeUsesTheSameSchemaAndRuntimeContract() throws {
         let bytes = Data([0x01, 0x02, 0x03])
         let inlineSchema: Value = .object([
             "type": .string("object"),
@@ -448,7 +448,7 @@ struct MCPGenerationLifecycleTests {
             let label = path.joined(separator: ".")
             let schema = wrapped(inlineSchema, path: path, schema: true)
             let content = wrapped(inlineOutput, path: path, schema: false)
-            let result = CallTool.Result(content: [], structuredContent: content)
+            let result = try CallTool.Result(content: [], structuredContent: content)
 
             #expect(
                 MCPGenerationLifecycle.outputSchemaSupportsMedia(schema),
@@ -488,7 +488,7 @@ struct MCPGenerationLifecycleTests {
             path: ["result", "image"],
             schema: true
         )
-        let imageURLResult = CallTool.Result(
+        let imageURLResult = try CallTool.Result(
             content: [],
             structuredContent: wrapped(
                 .string("https://output.invalid/image.png"),
