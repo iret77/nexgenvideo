@@ -23,11 +23,14 @@ actor MCPProviderClient {
     enum ClientError: LocalizedError, Sendable {
         case notConnected
         case toolFailed(String)
+        case cancellationFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .notConnected: "The provider MCP is not connected."
             case .toolFailed(let message): message
+            case .cancellationFailed(let message):
+                "The provider MCP request could not be cancelled (\(message)). It may still run and incur charges."
             }
         }
     }
@@ -86,12 +89,125 @@ actor MCPProviderClient {
             name: name,
             arguments: arguments
         )
-        let result = try await context.value
+        return try await payloads(from: context, client: client)
+    }
+
+    func callGenerationTool(
+        name: String,
+        arguments: [String: Value],
+        onDispatched: @escaping @MainActor @Sendable () -> Void
+    ) async throws -> [String] {
+        let client = try await connectedClient()
+        let context: RequestContext<CallTool.Result> = try await client.callTool(
+            name: name,
+            arguments: arguments
+        )
+        await onDispatched()
+        return try await payloads(from: context, client: client)
+    }
+
+    private func payloads(
+        from context: RequestContext<CallTool.Result>,
+        client: Client
+    ) async throws -> [String] {
+        let result = try await Self.awaitRequest(context) { requestID in
+            try await client.cancelRequest(
+                requestID,
+                reason: "The NexGenVideo request was cancelled."
+            )
+        }
         if result.isError == true {
             let message = Self.toolErrorMessage(result)
             throw ClientError.toolFailed(message.isEmpty ? "provider tool reported an error" : message)
         }
         return Self.payloadContents(result)
+    }
+
+    static func awaitRequest<Output: Sendable & Decodable>(
+        _ context: RequestContext<Output>,
+        cancelRequest: @escaping @Sendable (ID) async throws -> Void
+    ) async throws -> Output {
+        let settlement = RequestSettlement<Output> {
+            try await cancelRequest(context.requestID)
+        }
+        let requestTask = Task {
+            do {
+                settlement.receive(.success(try await context.value))
+            } catch {
+                settlement.receive(.failure(error))
+            }
+        }
+        return try await withTaskCancellationHandler {
+            defer { requestTask.cancel() }
+            return try await settlement.value()
+        } onCancel: {
+            settlement.cancel()
+        }
+    }
+
+    private final class RequestSettlement<Output: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private let cancelAction: @Sendable () async throws -> Void
+        private var continuation: CheckedContinuation<Output, Error>?
+        private var result: Result<Output, Error>?
+        private var cancellationRequested = false
+
+        init(cancelAction: @escaping @Sendable () async throws -> Void) {
+            self.cancelAction = cancelAction
+        }
+
+        func value() async throws -> Output {
+            try await withCheckedThrowingContinuation { continuation in
+                let completed = lock.withLock { () -> Result<Output, Error>? in
+                    if let result { return result }
+                    self.continuation = continuation
+                    return nil
+                }
+                if let completed { continuation.resume(with: completed) }
+            }
+        }
+
+        func receive(_ result: Result<Output, Error>) {
+            let continuation = lock.withLock {
+                guard !cancellationRequested, self.result == nil else { return nil }
+                self.result = result
+                let continuation = self.continuation
+                self.continuation = nil
+                return continuation
+            }
+            continuation?.resume(with: result)
+        }
+
+        func cancel() {
+            let shouldSend = lock.withLock {
+                guard result == nil, !cancellationRequested else { return false }
+                cancellationRequested = true
+                return true
+            }
+            guard shouldSend else { return }
+            let cancelAction = self.cancelAction
+            Task { [self] in
+                do {
+                    try await cancelAction()
+                    settle(.failure(CancellationError()))
+                } catch {
+                    settle(.failure(ClientError.cancellationFailed(
+                        error.localizedDescription
+                    )))
+                }
+            }
+        }
+
+        private func settle(_ result: Result<Output, Error>) {
+            let continuation = lock.withLock {
+                guard self.result == nil else { return nil }
+                self.result = result
+                let continuation = self.continuation
+                self.continuation = nil
+                return continuation
+            }
+            continuation?.resume(with: result)
+        }
     }
 
     func callTool(name: String, arguments: [String: String]) async throws -> [String] {
@@ -167,7 +283,17 @@ actor MCPProviderClient {
         for part in result.content {
             switch part {
             case .text(let text, _, _):
-                payloads.append(text)
+                let extraction = inlineMediaPayloads(
+                    in: Data(text.utf8),
+                    remainingCharacters: &remainingInlineCharacters
+                )
+                if extraction.foundCandidate {
+                    if let sanitizedPayload = extraction.sanitizedPayload {
+                        payloads.append(sanitizedPayload)
+                    }
+                } else {
+                    payloads.append(text)
+                }
             case .resource(let resource, _, _):
                 if let data = try? JSONEncoder().encode(resource) {
                     let extraction = inlineMediaPayloads(
@@ -227,8 +353,7 @@ actor MCPProviderClient {
         mimeType: String,
         remainingCharacters: inout Int
     ) -> String? {
-        let normalizedMIME = mimeType.lowercased()
-        guard normalizedMIME.hasPrefix("image/") || normalizedMIME.hasPrefix("audio/") else {
+        guard MCPGenerationLifecycle.isSupportedInlineMIMEType(mimeType) else {
             return nil
         }
         let characterCount = data.utf8.count
@@ -269,47 +394,26 @@ actor MCPProviderClient {
             )
         }
         var foundCandidate = false
-        let excludedTokens = [
-            "argument", "input", "parameter", "params", "prompt", "reference", "request",
-            "source", "thumbnail",
-        ]
-        let outputKeys: Set<String> = [
-            "audio", "audios", "data", "file", "files", "image", "images", "job",
-            "jobs", "jobset", "media", "output", "outputs", "payload", "raw", "resource",
-            "resources", "result", "results",
-        ]
-
-        func isExcluded(_ value: String) -> Bool {
-            excludedTokens.contains { value.contains($0) }
-        }
 
         func sanitized(_ value: Any, context: InlineMediaContext) -> Any {
             if let object = value as? [String: Any] {
-                let declaredType = (object["type"] as? String)
-                    .map(MCPGenerationLifecycle.normalizeFieldName)
                 let effectiveContext: InlineMediaContext = if context == .excluded
-                    || declaredType.map(isExcluded) == true {
+                    || (object["type"] as? String).map(
+                        MCPGenerationLifecycle.isExcludedOutputFieldName
+                    ) == true {
                     .excluded
                 } else {
                     context
                 }
                 var sanitizedObject: [String: Any] = [:]
                 var inlineMarker: [String: Any]?
-                let containsInlineBytes = (object["data"] ?? object["blob"]) is String
-                    && (object["mimeType"]
-                        ?? object["mime_type"]
-                        ?? object["contentType"]
-                        ?? object["content_type"]) is String
-                if let encoded = (object["data"] ?? object["blob"]) as? String,
-                   let mimeType = (object["mimeType"]
-                        ?? object["mime_type"]
-                        ?? object["contentType"]
-                        ?? object["content_type"]) as? String {
+                let inlineMedia = MCPGenerationLifecycle.inlineMediaStrings(in: object)
+                let containsInlineBytes = inlineMedia != nil
+                if let (encoded, mimeType) = inlineMedia {
                     foundCandidate = true
-                    let normalizedMIME = mimeType.lowercased()
                     let characterCount = encoded.utf8.count
                     if effectiveContext == .rootRecord || effectiveContext == .output,
-                       normalizedMIME.hasPrefix("image/") || normalizedMIME.hasPrefix("audio/"),
+                       MCPGenerationLifecycle.isSupportedInlineMIMEType(mimeType),
                        characterCount <= remainingCharacters {
                         inlineMarker = ["data": encoded, "mime_type": mimeType]
                         remainingCharacters -= characterCount
@@ -317,13 +421,11 @@ actor MCPProviderClient {
                 }
                 for (key, child) in object {
                     if containsInlineBytes, (key == "data" || key == "blob") { continue }
-                    let normalized = MCPGenerationLifecycle.normalizeFieldName(key)
                     let childContext: InlineMediaContext
-                    if effectiveContext == .excluded || isExcluded(normalized) {
+                    if effectiveContext == .excluded
+                        || MCPGenerationLifecycle.isExcludedOutputFieldName(key) {
                         childContext = .excluded
-                    } else if outputKeys.contains(normalized) {
-                        childContext = .output
-                    } else if effectiveContext == .output {
+                    } else if MCPGenerationLifecycle.isOutputEnvelopeFieldName(key) {
                         childContext = .output
                     } else {
                         childContext = .unknown

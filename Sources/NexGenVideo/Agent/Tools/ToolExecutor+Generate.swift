@@ -3,7 +3,7 @@ import ImageIO
 import NexGenEngine
 
 @MainActor
-private final class AgentGenerationAwaiter {
+final class AgentGenerationAwaiter {
     enum Completion {
         case succeeded(MediaAsset?)
         case failed(String?)
@@ -11,13 +11,32 @@ private final class AgentGenerationAwaiter {
 
     private var completion: Completion?
     private var continuation: CheckedContinuation<Completion, Never>?
-    private var isResolved = false
+    private(set) var isResolved = false
     private var cancellationRequested = false
+    private var cancellationDispatched = false
     private var cancelOperation: (@MainActor () -> Bool)?
+
+    static func waitForSubmission(
+        start: @escaping @MainActor (AgentGenerationAwaiter) async throws -> String,
+        cancel: @escaping @MainActor (String) -> Bool
+    ) async throws -> (placeholderId: String, completion: Completion) {
+        let awaiter = AgentGenerationAwaiter()
+        return try await withTaskCancellationHandler {
+            let placeholderId = try await start(awaiter)
+            awaiter.installCancellation { cancel(placeholderId) }
+            if Task.isCancelled { awaiter.cancel() }
+            let completion = await awaiter.value()
+            if Task.isCancelled { awaiter.cancel() }
+            return (placeholderId, awaiter.terminal(completion))
+        } onCancel: {
+            Task { @MainActor [weak awaiter] in awaiter?.cancel() }
+        }
+    }
 
     func resolve(_ completion: Completion) {
         guard !isResolved else { return }
         isResolved = true
+        let completion = terminal(completion)
         if let continuation {
             self.continuation = nil
             continuation.resume(returning: completion)
@@ -35,20 +54,32 @@ private final class AgentGenerationAwaiter {
 
     func installCancellation(_ action: @escaping @MainActor () -> Bool) {
         guard !isResolved else { return }
-        if cancellationRequested {
-            if !action() {
-                resolve(.failed("Generation cancelled."))
-            }
-        } else {
-            cancelOperation = action
-        }
+        cancelOperation = action
+        dispatchCancellationIfNeeded()
     }
 
     func cancel() {
-        guard !isResolved else { return }
         cancellationRequested = true
-        if let cancelOperation, !cancelOperation() {
-            resolve(.failed("Generation cancelled."))
+        guard !isResolved else { return }
+        dispatchCancellationIfNeeded()
+    }
+
+    private func dispatchCancellationIfNeeded() {
+        guard cancellationRequested,
+              !cancellationDispatched,
+              let cancelOperation else { return }
+        cancellationDispatched = true
+        self.cancelOperation = nil
+        _ = cancelOperation()
+    }
+
+    private func terminal(_ completion: Completion) -> Completion {
+        guard cancellationRequested else { return completion }
+        switch completion {
+        case .succeeded:
+            return .failed("Generation cancelled.")
+        case .failed:
+            return completion
         }
     }
 }
@@ -62,6 +93,32 @@ struct ProductionDesignReferenceSnapshot: Equatable, Sendable {
     let entries: [Entry]
 
     var paths: [String] { entries.map(\.path) }
+}
+
+@MainActor
+final class ProductionDesignReferenceStaging {
+    let directory: URL
+    let references: [MediaAsset]
+
+    init(directory: URL, references: [MediaAsset]) {
+        self.directory = directory
+        self.references = references
+    }
+
+    func cleanup() {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        do {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: directory.path
+            )
+            try FileManager.default.removeItem(at: directory)
+        } catch {
+            Log.generation.error(
+                "failed to clean Production Design reference staging: \(error.localizedDescription)"
+            )
+        }
+    }
 }
 
 extension ToolExecutor {
@@ -202,43 +259,39 @@ extension ToolExecutor {
         preflight: GenerationController.Preflight? = nil,
         success: @escaping (String) -> String
     ) async throws -> ToolResult {
-        let awaiter = AgentGenerationAwaiter()
-        return try await withTaskCancellationHandler {
-            let submission = await GenerationController.submit(
-                request,
-                editor: editor,
-                preflight: preflight,
-                onSuccess: { asset in awaiter.resolve(.succeeded(asset)) },
-                onFailure: { awaiter.resolve(.failed(nil)) }
-            )
-            switch submission {
-            case .failure(let error):
-                throw ToolError(error.errorDescription ?? "Generation failed.")
-            case .success(let outcome):
-                awaiter.installCancellation {
-                    editor.generationService.cancelGeneration(
-                        placeholderId: outcome.placeholderId
-                    )
+        let result = try await AgentGenerationAwaiter.waitForSubmission(
+            start: { awaiter in
+                let submission = await GenerationController.submit(
+                    request,
+                    editor: editor,
+                    preflight: preflight,
+                    onSuccess: { asset in awaiter.resolve(.succeeded(asset)) },
+                    onFailure: { awaiter.resolve(.failed(nil)) }
+                )
+                switch submission {
+                case .failure(let error):
+                    throw ToolError(error.errorDescription ?? "Generation failed.")
+                case .success(let outcome):
+                    return outcome.placeholderId
                 }
-                if Task.isCancelled { awaiter.cancel() }
-                switch await awaiter.value() {
-                case .failed(let explicitMessage):
-                    let message = explicitMessage ?? editor.mediaAssets.first(where: {
-                        $0.id == outcome.placeholderId
-                    }).flatMap { asset -> String? in
-                        guard case .failed(let message) = asset.generationStatus else { return nil }
-                        return message
-                    } ?? "The provider did not return a usable result."
-                    throw ToolError(message)
-                case .succeeded(let asset):
-                    return try await Self.completedGenerationResult(
-                        text: success(outcome.placeholderId),
-                        asset: request.modality == .image ? asset : nil
-                    )
-                }
+            }, cancel: { placeholderId in
+                editor.generationService.cancelGeneration(placeholderId: placeholderId)
             }
-        } onCancel: {
-            Task { @MainActor [weak awaiter] in awaiter?.cancel() }
+        )
+        switch result.completion {
+        case .failed(let explicitMessage):
+            let message = explicitMessage ?? editor.mediaAssets.first(where: {
+                $0.id == result.placeholderId
+            }).flatMap { asset -> String? in
+                guard case .failed(let message) = asset.generationStatus else { return nil }
+                return message
+            } ?? "The provider did not return a usable result."
+            throw ToolError(message)
+        case .succeeded(let asset):
+            return try await Self.completedGenerationResult(
+                text: success(result.placeholderId),
+                asset: request.modality == .image ? asset : nil
+            )
         }
     }
 
@@ -768,6 +821,7 @@ extension ToolExecutor {
         }
         let requestedProjectPaths = args.stringArray("referenceProjectPaths")
         let productionDesignSnapshot: ProductionDesignReferenceSnapshot?
+        let productionDesignDataRoot: URL?
         if let workingRoot = editor.workingRoot,
            let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
            try currentPhaseIfEnforced(
@@ -778,8 +832,11 @@ extension ToolExecutor {
             productionDesignSnapshot = try Self.productionDesignReferenceSnapshot(
                 dataRoot: dataRoot
             )
+            productionDesignDataRoot = dataRoot.standardizedFileURL
+                .resolvingSymlinksInPath()
         } else {
             productionDesignSnapshot = nil
+            productionDesignDataRoot = nil
         }
         let projectPaths = productionDesignSnapshot?.paths ?? requestedProjectPaths
         let projectRefs = try projectImageReferences(projectPaths, editor: editor)
@@ -817,79 +874,110 @@ extension ToolExecutor {
                 )
             },
             execute: { editor, approved in
-                if let productionDesignSnapshot,
-                   let workingRoot = editor.workingRoot,
-                   let dataRoot = DataRootResolver.dataRoot(of: workingRoot),
-                   try Self.productionDesignReferenceSnapshot(dataRoot: dataRoot)
-                    != productionDesignSnapshot {
-                    throw ToolError(
-                        "The staged Production Design references changed while approval was open. Review the updated set and generate again."
-                    )
-                }
-                var selectedModel = model
-                var selectedModelID = modelId
-                var selectedAspectRatio = aspectRatio
-                var selectedResolution = resolution
-                var selectedQuality = quality
-                if approved.modelId != selectedModel.id,
-                   let swapped = ImageModelConfig.allModels.first(where: {
-                       $0.id == approved.modelId
-                   }) {
-                    selectedModel = swapped
-                    selectedModelID = swapped.id
-                    if !swapped.aspectRatios.contains(selectedAspectRatio) {
-                        selectedAspectRatio = swapped.aspectRatios.first ?? selectedAspectRatio
-                    }
-                    if let allowed = swapped.resolutions,
-                       let selected = selectedResolution,
-                       !allowed.contains(selected) {
-                        selectedResolution = allowed.first
-                    }
-                    if let allowed = swapped.qualities,
-                       let selected = selectedQuality,
-                       !allowed.contains(selected) {
-                        selectedQuality = allowed.last
-                    }
-                }
-                let approvedPrompt = try await self.promptForApprovedModel(
-                    precompiled,
-                    originalModelId: originalModelId,
-                    approvedModelId: selectedModel.id,
-                    editor: editor
-                )
-                let folderId = try self.resolveFolderId(
-                    args, editor: editor, fallbackReferences: refs
-                )
-                let name = args.string("name")
-                let finalModel = selectedModel
-                let finalModelID = selectedModelID
-                let finalAspectRatio = selectedAspectRatio
-                let finalResolution = selectedResolution
-                let finalQuality = selectedQuality
-                func genInput(_ compiled: String) -> GenerationInput {
-                    var input = GenerationInput(
-                        prompt: compiled, model: finalModelID, duration: 0,
-                        aspectRatio: finalAspectRatio,
-                        resolution: finalResolution,
-                        quality: finalQuality)
-                    input.promptShotId = approvedPrompt?.binding.shotId
-                    input.promptProjectKey = approvedPrompt?.binding.projectKey
-                    input.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
-                    return input
-                }
-                let preflight: GenerationController.Preflight = {
-                    finalModel.validate(
-                        aspectRatio: finalAspectRatio,
-                        resolution: finalResolution,
-                        quality: finalQuality,
-                        imageRefCount: refs.count,
-                        numImages: 1)
-                }
-                if MarbleModelRegistry.isMarbleModel(finalModelID) {
-                    guard let reference = refs.first else {
+                var verifiedProductionDesignRoot: URL?
+                if let productionDesignSnapshot {
+                    guard let approvedDataRoot = productionDesignDataRoot,
+                          let workingRoot = editor.workingRoot,
+                          let currentDataRoot = DataRootResolver.dataRoot(of: workingRoot)
+                            ?.standardizedFileURL.resolvingSymlinksInPath(),
+                          currentDataRoot == approvedDataRoot else {
                         throw ToolError(
-                            "\(finalModel.displayName) requires a reference image via 'referenceMediaRefs' (the world is generated from it)."
+                            "The Production Design project changed while approval was open. Review the references and generate again."
                         )
+                    }
+                    guard try Self.productionDesignReferenceSnapshot(
+                        dataRoot: currentDataRoot
+                    ) == productionDesignSnapshot else {
+                        throw ToolError(
+                            "The staged Production Design references changed while approval was open. Review the updated set and generate again."
+                        )
+                    }
+                    verifiedProductionDesignRoot = currentDataRoot
+                }
+
+                let submit: @MainActor ([MediaAsset]) async throws -> ToolResult = {
+                    generationReferences in
+                    var selectedModel = model
+                    var selectedModelID = modelId
+                    var selectedAspectRatio = aspectRatio
+                    var selectedResolution = resolution
+                    var selectedQuality = quality
+                    if approved.modelId != selectedModel.id,
+                       let swapped = ImageModelConfig.allModels.first(where: {
+                           $0.id == approved.modelId
+                       }) {
+                        selectedModel = swapped
+                        selectedModelID = swapped.id
+                        if !swapped.aspectRatios.contains(selectedAspectRatio) {
+                            selectedAspectRatio = swapped.aspectRatios.first ?? selectedAspectRatio
+                        }
+                        if let allowed = swapped.resolutions,
+                           let selected = selectedResolution,
+                           !allowed.contains(selected) {
+                            selectedResolution = allowed.first
+                        }
+                        if let allowed = swapped.qualities,
+                           let selected = selectedQuality,
+                           !allowed.contains(selected) {
+                            selectedQuality = allowed.last
+                        }
+                    }
+                    let approvedPrompt = try await self.promptForApprovedModel(
+                        precompiled,
+                        originalModelId: originalModelId,
+                        approvedModelId: selectedModel.id,
+                        editor: editor
+                    )
+                    let folderId = try self.resolveFolderId(
+                        args, editor: editor, fallbackReferences: generationReferences
+                    )
+                    let name = args.string("name")
+                    let finalModel = selectedModel
+                    let finalModelID = selectedModelID
+                    let finalAspectRatio = selectedAspectRatio
+                    let finalResolution = selectedResolution
+                    let finalQuality = selectedQuality
+                    func genInput(_ compiled: String) -> GenerationInput {
+                        var input = GenerationInput(
+                            prompt: compiled, model: finalModelID, duration: 0,
+                            aspectRatio: finalAspectRatio,
+                            resolution: finalResolution,
+                            quality: finalQuality)
+                        input.promptShotId = approvedPrompt?.binding.shotId
+                        input.promptProjectKey = approvedPrompt?.binding.projectKey
+                        input.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
+                        return input
+                    }
+                    let preflight: GenerationController.Preflight = {
+                        finalModel.validate(
+                            aspectRatio: finalAspectRatio,
+                            resolution: finalResolution,
+                            quality: finalQuality,
+                            imageRefCount: generationReferences.count,
+                            numImages: 1)
+                    }
+                    if MarbleModelRegistry.isMarbleModel(finalModelID) {
+                        guard let reference = generationReferences.first else {
+                            throw ToolError(
+                                "\(finalModel.displayName) requires a reference image via 'referenceMediaRefs' (the world is generated from it)."
+                            )
+                        }
+                        let request = GenerationRequest(
+                            modality: .image, modelId: finalModelID, intent: prompt,
+                            aspectRatio: finalAspectRatio,
+                            placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
+                            target: approved.target,
+                            precompiled: approvedPrompt, rawPrompt: raw,
+                            submission: .image(make: { compiled in
+                                ImageGenerationSubmission.makeMarble(
+                                    genInput: genInput(compiled), model: finalModel,
+                                    reference: reference, name: name, folderId: folderId)
+                            }))
+                        return try await self.routeThroughController(
+                            request, editor: editor, preflight: preflight,
+                            success: {
+                                "Marble world generation completed. Asset ID: \($0). Model: \(finalModel.displayName). Result: equirectangular panorama image."
+                            })
                     }
                     let request = GenerationRequest(
                         modality: .image, modelId: finalModelID, intent: prompt,
@@ -898,34 +986,33 @@ extension ToolExecutor {
                         target: approved.target,
                         precompiled: approvedPrompt, rawPrompt: raw,
                         submission: .image(make: { compiled in
-                            ImageGenerationSubmission.makeMarble(
+                            ImageGenerationSubmission.make(
                                 genInput: genInput(compiled), model: finalModel,
-                                reference: reference, name: name, folderId: folderId)
+                                references: generationReferences,
+                                referenceAssetIDs: effectiveLibraryRefs.map(\.id),
+                                name: name, folderId: folderId)
                         }))
                     return try await self.routeThroughController(
                         request, editor: editor, preflight: preflight,
                         success: {
-                            "Marble world generation completed. Asset ID: \($0). Model: \(finalModel.displayName). Result: equirectangular panorama image."
+                            "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio)"
                         })
                 }
-                let request = GenerationRequest(
-                    modality: .image, modelId: finalModelID, intent: prompt,
-                    aspectRatio: finalAspectRatio,
-                    placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
-                    target: approved.target,
-                    precompiled: approvedPrompt, rawPrompt: raw,
-                    submission: .image(make: { compiled in
-                        ImageGenerationSubmission.make(
-                            genInput: genInput(compiled), model: finalModel,
-                            references: refs,
-                            referenceAssetIDs: effectiveLibraryRefs.map(\.id),
-                            name: name, folderId: folderId)
-                    }))
-                return try await self.routeThroughController(
-                    request, editor: editor, preflight: preflight,
-                    success: {
-                        "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), aspect: \(finalAspectRatio)"
-                    })
+
+                guard let productionDesignSnapshot else {
+                    return try await submit(refs)
+                }
+                guard let verifiedProductionDesignRoot else {
+                    throw ToolError(
+                        "The Production Design references could not be verified. Review them and generate again."
+                    )
+                }
+                return try await Self.withStagedProductionDesignReferences(
+                    snapshot: productionDesignSnapshot,
+                    projectReferences: projectRefs,
+                    dataRoot: verifiedProductionDesignRoot,
+                    operation: submit
+                )
             }
         )
     }
@@ -1026,6 +1113,143 @@ extension ToolExecutor {
         return ProductionDesignReferenceSnapshot(
             entries: entries.sorted { $0.path < $1.path }
         )
+    }
+
+    static func withStagedProductionDesignReferences<Result>(
+        snapshot: ProductionDesignReferenceSnapshot,
+        projectReferences: [MediaAsset],
+        dataRoot: URL,
+        stagingParent: URL? = nil,
+        operation: @MainActor ([MediaAsset]) async throws -> Result
+    ) async throws -> Result {
+        let staging = try stageProductionDesignReferences(
+            snapshot: snapshot,
+            projectReferences: projectReferences,
+            dataRoot: dataRoot,
+            stagingParent: stagingParent
+        )
+        defer { staging.cleanup() }
+        return try await operation(staging.references)
+    }
+
+    static func stageProductionDesignReferences(
+        snapshot: ProductionDesignReferenceSnapshot,
+        projectReferences: [MediaAsset],
+        dataRoot: URL,
+        stagingParent suppliedParent: URL? = nil
+    ) throws -> ProductionDesignReferenceStaging {
+        guard snapshot.entries.count == projectReferences.count else {
+            throw ToolError(
+                "The Production Design reference set no longer matches the approved snapshot. Review it and generate again."
+            )
+        }
+
+        let fileManager = FileManager.default
+        let canonicalDataRoot = dataRoot.standardizedFileURL.resolvingSymlinksInPath()
+        let parent = (suppliedParent ?? AppPaths.caches.appendingPathComponent(
+            "generation-references",
+            isDirectory: true
+        )).standardizedFileURL
+        let canonicalParent = parent.resolvingSymlinksInPath()
+        guard canonicalParent.path != canonicalDataRoot.path,
+              !canonicalParent.path.hasPrefix(canonicalDataRoot.path + "/") else {
+            throw ToolError(
+                "Production Design generation references must be staged outside the project pipeline."
+            )
+        }
+
+        do {
+            try fileManager.createDirectory(
+                at: parent,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        } catch {
+            throw ToolError(
+                "Production Design references could not be staged: \(error.localizedDescription)"
+            )
+        }
+
+        let directory = parent.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        do {
+            try fileManager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+        } catch {
+            throw ToolError(
+                "Production Design references could not be staged: \(error.localizedDescription)"
+            )
+        }
+
+        do {
+            var stagedReferences: [MediaAsset] = []
+            stagedReferences.reserveCapacity(snapshot.entries.count)
+            for (index, pair) in zip(snapshot.entries, projectReferences).enumerated() {
+                let entry = pair.0
+                let reference = pair.1
+                let expectedID = "pipeline-reference:\(entry.path)"
+                guard reference.id == expectedID, reference.type == .image else {
+                    throw ToolError(
+                        "Production Design reference '\(entry.path)' no longer matches its approved identity. Review it and generate again."
+                    )
+                }
+
+                let source = canonicalDataRoot.appendingPathComponent(entry.path)
+                    .standardizedFileURL.resolvingSymlinksInPath()
+                guard source.path.hasPrefix(canonicalDataRoot.path + "/"),
+                      source == reference.url.standardizedFileURL.resolvingSymlinksInPath(),
+                      (try? source.resourceValues(forKeys: [.isRegularFileKey])
+                        .isRegularFile) == true else {
+                    throw ToolError(
+                        "Production Design reference '\(entry.path)' is no longer a project-local image. Review it and generate again."
+                    )
+                }
+
+                let destination = directory.appendingPathComponent(
+                    String(format: "%03d", index) + "-" + source.lastPathComponent
+                )
+                try fileManager.copyItem(at: source, to: destination)
+                guard try FileDigest.sha256(of: destination) == entry.sha256 else {
+                    throw ToolError(
+                        "Production Design reference '\(entry.path)' changed while it was being staged. Review it and generate again."
+                    )
+                }
+                try fileManager.setAttributes(
+                    [.posixPermissions: 0o400],
+                    ofItemAtPath: destination.path
+                )
+                stagedReferences.append(MediaAsset(
+                    id: reference.id,
+                    url: destination,
+                    type: reference.type,
+                    name: reference.name,
+                    originalFilename: reference.originalFilename
+                ))
+            }
+            try fileManager.setAttributes(
+                [.posixPermissions: 0o500],
+                ofItemAtPath: directory.path
+            )
+            return ProductionDesignReferenceStaging(
+                directory: directory,
+                references: stagedReferences
+            )
+        } catch {
+            try? fileManager.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: directory.path
+            )
+            try? fileManager.removeItem(at: directory)
+            if let error = error as? ToolError { throw error }
+            throw ToolError(
+                "Production Design references could not be staged: \(error.localizedDescription)"
+            )
+        }
     }
 
     private func projectImageReferences(
@@ -1357,33 +1581,41 @@ extension ToolExecutor {
             origin: origin,
             alternatives: { [] },
             execute: { editor, approved in
-                let awaiter = AgentGenerationAwaiter()
-                guard let placeholderId = await EditSubmitter.submitUpscale(
-                    asset: asset,
-                    model: model,
-                    editor: editor,
-                    trimmedSource: trimmed,
-                    origin: .agentTool,
-                    target: approved.target,
-                    onComplete: { awaiter.resolve(.succeeded($0)) },
-                    onFailure: { awaiter.resolve(.failed) }
-                ) else {
-                    throw ToolError("Failed to start upscale")
-                }
-                switch await awaiter.value() {
-                case .failed:
+                let result = try await AgentGenerationAwaiter.waitForSubmission(
+                    start: { awaiter in
+                        guard let placeholderId = await EditSubmitter.submitUpscale(
+                            asset: asset,
+                            model: model,
+                            editor: editor,
+                            trimmedSource: trimmed,
+                            origin: .agentTool,
+                            target: approved.target,
+                            onComplete: { awaiter.resolve(.succeeded($0)) },
+                            onFailure: { awaiter.resolve(.failed(nil)) }
+                        ) else {
+                            throw ToolError("Failed to start upscale")
+                        }
+                        return placeholderId
+                    }, cancel: { placeholderId in
+                        editor.generationService.cancelGeneration(
+                            placeholderId: placeholderId
+                        )
+                    }
+                )
+                switch result.completion {
+                case .failed(let explicitMessage):
                     let message = editor.mediaAssets.first(where: {
-                        $0.id == placeholderId
+                        $0.id == result.placeholderId
                     }).flatMap { placeholder -> String? in
                         guard case .failed(let message) = placeholder.generationStatus else {
                             return nil
                         }
                         return message
-                    } ?? "The provider did not return a usable upscale result."
+                    } ?? explicitMessage ?? "The provider did not return a usable upscale result."
                     throw ToolError(message)
                 case .succeeded(let completed):
                     return try await Self.completedGenerationResult(
-                        text: "Upscale completed. Asset ID: \(placeholderId). Model: \(model.displayName), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")",
+                        text: "Upscale completed. Asset ID: \(result.placeholderId). Model: \(model.displayName), source: \(asset.name)\(trimmed != nil ? " (trimmed range)" : "")",
                         asset: asset.type == .image ? completed : nil
                     )
                 }

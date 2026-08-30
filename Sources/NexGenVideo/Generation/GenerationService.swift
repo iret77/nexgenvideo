@@ -14,6 +14,15 @@ final class FirstOnlyFlag {
     }
 }
 
+@MainActor
+private final class MCPSubmissionDispatchState {
+    private(set) var didDispatch = false
+
+    func recordDispatch() {
+        didDispatch = true
+    }
+}
+
 /// Where a model's reference files have to live before the provider can read them. NGV is
 /// provider-agnostic: hosting is a property of the RESOLVED provider, never a fixed dependency on
 /// one vendor's storage (#244 — fal used to host references even for calls that never touched fal,
@@ -39,6 +48,11 @@ enum ReferenceHosting: Equatable {
 
 @MainActor
 final class GenerationService {
+
+    enum MCPFailureHandling: Equatable {
+        case failBeforeSubmission(String)
+        case failJob(String)
+    }
 
     private static let uploadCacheTTL: TimeInterval = 6 * 24 * 60 * 60
     private var generationTasks: [String: Task<Void, Never>] = [:]
@@ -765,7 +779,7 @@ final class GenerationService {
                 placeholders, "No MCP endpoint configured for \(provider.displayName).",
                 authorization: authorization, editor: editor, onFailure: onFailure)
         }
-        var submitted = false
+        let submissionState = MCPSubmissionDispatchState()
         var selectedToolName = toolName
         do {
             let tools = try await client.discoverTools()
@@ -782,21 +796,19 @@ final class GenerationService {
             }
             selectedToolName = tool.name
             let requestId = UUID().uuidString
-            let preflightArguments = try MCPGenerationArguments.make(
+            _ = try MCPGenerationArguments.make(
                 for: params,
                 model: modelParam,
                 schema: tool.inputSchema,
                 mediaRoles: mediaRoles,
                 requestID: requestId
             )
-            guard MCPGenerationExecutor.hasUsableLifecycle(tools: tools)
-                    || MCPGenerationExecutor.hasDirectOutputContract(tool)
-                    || MCPGenerationArguments.requestsSynchronousCompletion(
-                        arguments: preflightArguments
-                    )
-                    || MCPGenerationLifecycle.statusTool(in: tools) == nil else {
+            guard MCPGenerationExecutor.hasProvenResultPath(
+                generationTool: tool,
+                tools: tools
+            ) else {
                 throw GenerationBackendError.transport(
-                    "\(provider.displayName)'s generation tool exposes neither synchronous completion nor a usable job-status contract. No job was submitted."
+                    "\(provider.displayName)'s generation tool exposes no proven direct, synchronous, or asynchronous media result path. No job was submitted."
                 )
             }
             let preparedParams = try await MCPMediaUpload.prepare(
@@ -814,18 +826,20 @@ final class GenerationService {
             Log.generation.notice(
                 "MCP submit provider=\(provider.rawValue) tool=\(tool.name) model=\(modelParam ?? "<implicit>") fields=\(arguments.keys.sorted().joined(separator: ","))"
             )
-            markSubmitted(
-                authorization: authorization,
-                providerRequestId: requestId,
-                editor: editor
-            )
-            submitted = true
             let result = try await MCPGenerationExecutor.run(
                 generationTool: tool,
                 arguments: arguments,
                 tools: tools,
                 provider: provider,
-                client: client
+                client: client,
+                onSubmissionDispatched: {
+                    submissionState.recordDispatch()
+                    self.markSubmitted(
+                        authorization: authorization,
+                        providerRequestId: requestId,
+                        editor: editor
+                    )
+                }
             )
             await client.disconnect()
             let job = BackendGenerationJob(
@@ -855,17 +869,16 @@ final class GenerationService {
             }
             let tool = selectedToolName ?? "<undiscovered>"
             let model = modelParam ?? "<implicit>"
-            let message: String
-            if error is MCPGenerationArguments.MappingError {
-                message = "NexGenVideo cannot map \(provider.displayName) MCP tool '\(tool)' for model '\(model)': \(error.localizedDescription) The generation request was not sent."
-            } else if error is MCPMediaUpload.UploadError, !submitted {
-                message = "\(provider.displayName) reference upload failed before generation: \(error.localizedDescription)"
-            } else {
-                message = "\(provider.displayName) MCP tool '\(tool)' for model '\(model)' failed: \(error.localizedDescription)"
-            }
-            if submitted {
+            switch Self.classifyMCPFailure(
+                error,
+                didDispatch: submissionState.didDispatch,
+                providerName: provider.displayName,
+                toolName: tool,
+                modelName: model
+            ) {
+            case .failJob(let message):
                 failJob(placeholders, message, onFailure)
-            } else {
+            case .failBeforeSubmission(let message):
                 failBeforeSubmission(
                     placeholders,
                     message,
@@ -875,6 +888,26 @@ final class GenerationService {
                 )
             }
         }
+    }
+
+    nonisolated static func classifyMCPFailure(
+        _ error: any Error,
+        didDispatch: Bool,
+        providerName: String,
+        toolName: String,
+        modelName: String
+    ) -> MCPFailureHandling {
+        let message: String
+        if error is CancellationError {
+            message = "Generation cancelled."
+        } else if error is MCPGenerationArguments.MappingError {
+            message = "NexGenVideo cannot map \(providerName) MCP tool '\(toolName)' for model '\(modelName)': \(error.localizedDescription) The generation request was not sent."
+        } else if error is MCPMediaUpload.UploadError, !didDispatch {
+            message = "\(providerName) reference upload failed before generation: \(error.localizedDescription)"
+        } else {
+            message = "\(providerName) MCP tool '\(toolName)' for model '\(modelName)' failed: \(error.localizedDescription)"
+        }
+        return didDispatch ? .failJob(message) : .failBeforeSubmission(message)
     }
 
     /// Best-effort match of a discovered MCP tool to the request modality by name/description keywords
@@ -971,6 +1004,20 @@ final class GenerationService {
                 job: job, placeholders: placeholders, editor: editor,
                 onComplete: onComplete, onFailure: onFailure)
             markCharged(authorization: authorization, editor: editor)
+        } catch let error as RunwayClient.SubmissionOutcomeUnknownError {
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: error.ledgerRequestID,
+                editor: editor
+            )
+            failJob(placeholders, error.localizedDescription, onFailure)
+        } catch let error as RunwayClient.SubmissionAcknowledgedError {
+            markSubmitted(
+                authorization: authorization,
+                providerRequestId: error.ledgerRequestID,
+                editor: editor
+            )
+            failJob(placeholders, error.localizedDescription, onFailure)
         } catch is CancellationError {
             let message = "Generation cancelled."
             if taskId == nil {
@@ -1040,11 +1087,17 @@ final class GenerationService {
         )
     }
 
-    /// Reference bytes for a direct client: the generate flow handed us local paths (see the inline-
-    /// bytes bypass), so read them off disk. A path that can't be read is skipped rather than failing
-    /// the render — the model still has the prompt.
-    private static func referenceBytes(_ paths: [String]) -> [Data] {
-        paths.compactMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
+    static func referenceBytes(_ paths: [String]) throws -> [Data] {
+        try paths.map { path in
+            let url = URL(fileURLWithPath: path)
+            do {
+                return try Data(contentsOf: url)
+            } catch {
+                throw GenerationBackendError.transport(
+                    "Could not read approved reference '\(url.lastPathComponent)' from project storage."
+                )
+            }
+        }
     }
 
     /// #212 — Google AI on the user's own key: the Gemini image line, all on `:generateContent`.
@@ -1063,15 +1116,28 @@ final class GenerationService {
                 placeholders, "Add a Google AI API key in Settings to generate.",
                 authorization: authorization, editor: editor, onFailure: onFailure)
         }
+        let client = GoogleImageClient(apiKey: apiKey)
+        let prepared: GoogleImageClient.PreparedGeminiImageRequest
+        do {
+            let references = try Self.referenceBytes(params.imageURLs)
+            prepared = try await client.prepareGeminiImageRequest(
+                model: apiModel,
+                prompt: params.prompt,
+                aspectRatio: params.aspectRatio,
+                referenceImages: references
+            )
+        } catch {
+            return failBeforeSubmission(
+                placeholders, error.localizedDescription,
+                authorization: authorization, editor: editor, onFailure: onFailure)
+        }
         do {
             markSubmitted(
                 authorization: authorization,
                 providerRequestId: UUID().uuidString,
                 editor: editor
             )
-            let images = try await GoogleImageClient(apiKey: apiKey).geminiImage(
-                model: apiModel, prompt: params.prompt, aspectRatio: params.aspectRatio,
-                referenceImages: Self.referenceBytes(params.imageURLs))
+            let images = try await client.geminiImage(prepared: prepared)
             await finalizeBytes(images, placeholders: placeholders, editor: editor,
                                 onComplete: onComplete, onFailure: onFailure)
             markCharged(authorization: authorization, editor: editor)

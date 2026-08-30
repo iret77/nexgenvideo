@@ -24,9 +24,16 @@ extension MCPProviderClient: MCPCatalogClient {}
 /// `.providerKeysChanged` (sign-in / sign-out / key change), coalescing overlapping runs.
 @MainActor
 enum CatalogDiscovery {
-    private struct MCPDiscoveryResult: Sendable {
+    struct MCPDiscoveryResult: Sendable {
         let entries: [CatalogEntry]
-        let isComplete: Bool
+        let modelListingIsComplete: Bool
+        let detailEnrichmentIsComplete: Bool
+    }
+
+    enum MCPListingPublicationDecision: Equatable, Sendable {
+        case publish
+        case withholdIncompleteFirstRefresh
+        case preserveLastKnownGood
     }
 
     private struct EnumerationResult: Sendable {
@@ -69,7 +76,8 @@ enum CatalogDiscovery {
         let oauthConnected: Bool
         let entries: [CatalogEntry]
         let directResult: DirectImageDiscovery.Result
-        let mcpDiscoveryIsComplete: Bool
+        let mcpModelListingIsComplete: Bool
+        let mcpDetailEnrichmentIsComplete: Bool
 
         init(
             provider: GenerationProvider,
@@ -77,14 +85,16 @@ enum CatalogDiscovery {
             oauthConnected: Bool,
             entries: [CatalogEntry],
             directResult: DirectImageDiscovery.Result = .inactive,
-            mcpDiscoveryIsComplete: Bool = true
+            mcpModelListingIsComplete: Bool = true,
+            mcpDetailEnrichmentIsComplete: Bool = true
         ) {
             self.provider = provider
             self.mcpConfigured = mcpConfigured
             self.oauthConnected = oauthConnected
             self.entries = entries
             self.directResult = directResult
-            self.mcpDiscoveryIsComplete = mcpDiscoveryIsComplete
+            self.mcpModelListingIsComplete = mcpModelListingIsComplete
+            self.mcpDetailEnrichmentIsComplete = mcpDetailEnrichmentIsComplete
         }
     }
 
@@ -169,6 +179,21 @@ enum CatalogDiscovery {
 
     private static func runOnce() async {
         let providers = GenerationProvider.allCases
+        let configuredOAuthProviders = Set(providers.filter { provider in
+            guard provider.mcpCapability?.auth == .oauth else { return false }
+            if ProviderMCP.hasConfig(provider) || ProviderOAuthStore.load(provider) != nil {
+                return true
+            }
+            if ModelCatalog.shared.discoveredModelCount(for: provider) > 0 {
+                return true
+            }
+            switch ModelCatalog.shared.providerDiscovery[provider] {
+            case .checking, .ready, .stale, .actionRequired, .unavailable:
+                return true
+            case .inactive, .none:
+                return false
+            }
+        })
         for provider in providers where provider.mcpCapability?.auth == .oauth {
             ModelCatalog.shared.setProviderDiscoveryState(
                 ProviderMCP.hasConfig(provider) ? .checking : .inactive,
@@ -190,7 +215,11 @@ enum CatalogDiscovery {
             providers,
             operation: { provider in
                 let mcpConfigured = ProviderMCP.hasConfig(provider)
-                var mcpResult = MCPDiscoveryResult(entries: [], isComplete: true)
+                var mcpResult = MCPDiscoveryResult(
+                    entries: [],
+                    modelListingIsComplete: true,
+                    detailEnrichmentIsComplete: true
+                )
                 if mcpConfigured {
                     mcpResult = await discoverResult(provider)
                 }
@@ -200,7 +229,8 @@ enum CatalogDiscovery {
                     oauthConnected: ProviderOAuthStore.isConnected(provider),
                     entries: mcpResult.entries,
                     directResult: await DirectImageDiscovery.discover(provider),
-                    mcpDiscoveryIsComplete: mcpResult.isComplete
+                    mcpModelListingIsComplete: mcpResult.modelListingIsComplete,
+                    mcpDetailEnrichmentIsComplete: mcpResult.detailEnrichmentIsComplete
                 )
             },
             consume: { result in
@@ -229,16 +259,18 @@ enum CatalogDiscovery {
                     after: result.directResult,
                     currentModelCount: retainedCount
                 )
-                let preserveMCPCatalog = result.mcpConfigured
-                    && result.oauthConnected
-                    && !result.mcpDiscoveryIsComplete
-                    && retainedCount > 0
+                let mcpPublicationDecision = result.mcpConfigured && result.oauthConnected
+                    ? mcpListingPublicationDecision(
+                        listingIsComplete: result.mcpModelListingIsComplete,
+                        retainedModelCount: retainedCount
+                    )
+                    : .publish
                 if result.mcpConfigured,
                    provider.mcpCapability?.auth == .oauth,
                    !result.oauthConnected {
                     publishedEntries = []
                 }
-                if preserveDirectCatalog || preserveMCPCatalog {
+                if preserveDirectCatalog || mcpPublicationDecision != .publish {
                     publishedEntries = []
                 } else {
                     ModelCatalog.shared.applyDiscovered(publishedEntries, for: provider)
@@ -253,19 +285,23 @@ enum CatalogDiscovery {
                 if provider.mcpCapability?.auth == .oauth {
                     let state: ProviderDiscoveryState
                     if !result.oauthConnected {
-                        state = .actionRequired(
-                            "Sign in again to refresh this provider's models."
+                        state = oauthDisconnectedState(
+                            wasConfigured: configuredOAuthProviders.contains(provider)
                         )
-                    } else if preserveMCPCatalog {
+                    } else if mcpPublicationDecision == .preserveLastKnownGood {
                         state = .stale(
                             modelCount: retainedCount,
                             message: "Model refresh is incomplete. Using the last verified catalog while NexGenVideo retries."
+                        )
+                    } else if mcpPublicationDecision == .withholdIncompleteFirstRefresh {
+                        state = .unavailable(
+                            "Model refresh is incomplete. NexGenVideo will retry automatically."
                         )
                     } else if publishedEntries.isEmpty {
                         state = .unavailable(
                             "Model discovery failed. Check the connection or sign in again."
                         )
-                    } else if !result.mcpDiscoveryIsComplete {
+                    } else if !result.mcpDetailEnrichmentIsComplete {
                         state = .stale(
                             modelCount: publishedEntries.count,
                             message: "Some model details could not be refreshed. NexGenVideo will retry automatically."
@@ -294,6 +330,24 @@ enum CatalogDiscovery {
         )
     }
 
+    static func oauthDisconnectedState(
+        wasConfigured: Bool
+    ) -> ProviderDiscoveryState {
+        wasConfigured
+            ? .actionRequired("Sign in again to refresh this provider's models.")
+            : .inactive
+    }
+
+    static func mcpListingPublicationDecision(
+        listingIsComplete: Bool,
+        retainedModelCount: Int
+    ) -> MCPListingPublicationDecision {
+        guard !listingIsComplete else { return .publish }
+        return retainedModelCount > 0
+            ? .preserveLastKnownGood
+            : .withholdIncompleteFirstRefresh
+    }
+
     static func forEachProviderResult(
         _ providers: [GenerationProvider],
         operation: @escaping @Sendable @MainActor (GenerationProvider) async -> ProviderResult,
@@ -313,7 +367,11 @@ enum CatalogDiscovery {
 
     private static func discoverResult(_ provider: GenerationProvider) async -> MCPDiscoveryResult {
         guard let client = await ProviderMCP.client(for: provider) else {
-            return MCPDiscoveryResult(entries: [], isComplete: false)
+            return MCPDiscoveryResult(
+                entries: [],
+                modelListingIsComplete: false,
+                detailEnrichmentIsComplete: false
+            )
         }
         return await discoverResult(provider, client: client)
     }
@@ -325,29 +383,31 @@ enum CatalogDiscovery {
         await discoverResult(provider, client: client).entries
     }
 
-    private static func discoverResult(
+    static func discoverResult(
         _ provider: GenerationProvider,
         client: any MCPCatalogClient
     ) async -> MCPDiscoveryResult {
         do {
             let tools = try await client.discoverTools()
             let discoveredToolsByModality = MCPModelDiscovery.generateToolsByModality(tools)
-            let hasLifecycle = MCPGenerationExecutor.hasUsableLifecycle(tools: tools)
             let toolsByModality = discoveredToolsByModality.filter { _, name in
                 guard let tool = tools.first(where: { $0.name == name }) else { return false }
-                return hasLifecycle
-                    || MCPGenerationExecutor.hasDirectOutputContract(tool)
-                    || MCPGenerationArguments.supportsSynchronousCompletion(
-                        schema: tool.inputSchema
-                    )
-                    || MCPGenerationLifecycle.statusTool(in: tools) == nil
+                return MCPGenerationExecutor.hasProvenResultPath(
+                    generationTool: tool,
+                    tools: tools
+                )
             }
             guard !toolsByModality.isEmpty else {
                 await client.disconnect()
-                return MCPDiscoveryResult(entries: [], isComplete: true)
+                return MCPDiscoveryResult(
+                    entries: [],
+                    modelListingIsComplete: true,
+                    detailEnrichmentIsComplete: true
+                )
             }
             var entries: [CatalogEntry] = []
-            var discoveryIsComplete = true
+            var modelListingIsComplete = true
+            var detailEnrichmentIsComplete = true
             var usedModelCatalog = false
             // Some providers advertise the selected model as a free-form field and expose the full
             // catalog through a separate tool; enumerate it before mapping the generation schema.
@@ -359,13 +419,22 @@ enum CatalogDiscovery {
                     hint: hint,
                     modalities: Array(toolsByModality.keys)
                 )
-                let enrichment = await enrichMediaContracts(
-                    enumeration.models,
-                    provider: provider,
-                    client: client,
-                    hint: hint
-                )
-                discoveryIsComplete = enumeration.isComplete && enrichment.isComplete
+                let enrichment: EnrichmentResult
+                if enumeration.isComplete {
+                    enrichment = await enrichMediaContracts(
+                        enumeration.models,
+                        provider: provider,
+                        client: client,
+                        hint: hint
+                    )
+                } else {
+                    enrichment = EnrichmentResult(
+                        models: enumeration.models,
+                        isComplete: false
+                    )
+                }
+                modelListingIsComplete = enumeration.isComplete
+                detailEnrichmentIsComplete = enrichment.isComplete
                 let schemas = Dictionary(uniqueKeysWithValues: toolsByModality.compactMap { modality, name in
                     tools.first(where: { $0.name == name }).map { (modality, $0.inputSchema) }
                 })
@@ -376,14 +445,28 @@ enum CatalogDiscovery {
                     provider: provider)
             }
             if entries.isEmpty, !usedModelCatalog {
-                entries = MCPModelDiscovery.catalogEntriesFromTools(tools, provider: provider)
+                let usableGenerationTools = tools.filter { tool in
+                    toolsByModality.values.contains(tool.name)
+                }
+                entries = MCPModelDiscovery.catalogEntriesFromTools(
+                    usableGenerationTools,
+                    provider: provider
+                )
             }
             await client.disconnect()
-            return MCPDiscoveryResult(entries: entries, isComplete: discoveryIsComplete)
+            return MCPDiscoveryResult(
+                entries: entries,
+                modelListingIsComplete: modelListingIsComplete,
+                detailEnrichmentIsComplete: detailEnrichmentIsComplete
+            )
         } catch {
             await client.disconnect()
             Log.generation.notice("MCP discovery failed for \(provider.rawValue): \(error.localizedDescription)")
-            return MCPDiscoveryResult(entries: [], isComplete: false)
+            return MCPDiscoveryResult(
+                entries: [],
+                modelListingIsComplete: false,
+                detailEnrichmentIsComplete: false
+            )
         }
     }
 
@@ -399,7 +482,14 @@ enum CatalogDiscovery {
         var all: [MCPModelDiscovery.ModelItem] = []
         var indexByModelID: [String: Int] = [:]
         var isComplete = true
-        for modality in modalities where modality != .upscale {
+        modalityLoop: for modality in modalities where modality != .upscale {
+            guard all.count < maxModelsPerProvider else {
+                isComplete = false
+                Log.generation.notice(
+                    "catalog listing reached model limit before modality provider=\(provider.rawValue) modality=\(modality.rawValue) limit=\(maxModelsPerProvider)"
+                )
+                break modalityLoop
+            }
             var cursor: String?
             var seenCursors = Set<String>()
             var pages = 0
@@ -422,26 +512,53 @@ enum CatalogDiscovery {
                     break
                 }
                 let parsed = texts.map {
-                    MCPModelDiscovery.parseListing(
+                    MCPModelDiscovery.parseListingResult(
                         $0,
                         defaultOutputType: modality.rawValue
                     )
                 }
-                let items = parsed.flatMap { $0.items }
-                let cursors = Set(parsed.compactMap { $0.next })
-                guard cursors.count <= 1 else {
+                let catalogPayloads = parsed.filter(\.isCatalogPayload)
+                if catalogPayloads.isEmpty {
                     isComplete = false
                     Log.generation.notice(
-                        "catalog listing returned conflicting cursors provider=\(provider.rawValue) modality=\(modality.rawValue)"
+                        "catalog listing returned no decodable catalog payload provider=\(provider.rawValue) modality=\(modality.rawValue)"
                     )
-                    break
+                } else if catalogPayloads.contains(where: {
+                    !$0.structuralAndDecodeIsComplete
+                }) {
+                    isComplete = false
+                    Log.generation.notice(
+                        "catalog listing was only partially decoded provider=\(provider.rawValue) modality=\(modality.rawValue)"
+                    )
                 }
-                let next = cursors.first
+                let items = catalogPayloads.flatMap(\.items)
+                let pageIsStructurallyComplete = !catalogPayloads.isEmpty
+                    && catalogPayloads.allSatisfy(\.structuralAndDecodeIsComplete)
+                let pagination = MCPModelDiscovery.PaginationEvidence.aggregating(
+                    catalogPayloads.map(\.pagination)
+                )
+                if !pagination.isComplete {
+                    isComplete = false
+                    Log.generation.notice(
+                        "catalog listing returned conflicting pagination provider=\(provider.rawValue) modality=\(modality.rawValue)"
+                    )
+                }
+                var next = pageIsStructurallyComplete && pagination.isComplete
+                    ? pagination.next
+                    : nil
+                if items.isEmpty, next != nil {
+                    isComplete = false
+                    next = nil
+                    Log.generation.notice(
+                        "catalog listing returned an empty page with continuation provider=\(provider.rawValue) modality=\(modality.rawValue)"
+                    )
+                }
                 if items.isEmpty, next == nil, pages == 0 {
                     Log.generation.notice(
                         "catalog listing returned no models provider=\(provider.rawValue) modality=\(modality.rawValue)"
                     )
                 }
+                var exceededModelLimit = false
                 for item in items where !item.id.isEmpty {
                     if let existingIndex = indexByModelID[item.id] {
                         all[existingIndex] = all[existingIndex].merging(
@@ -449,10 +566,19 @@ enum CatalogDiscovery {
                             resolvingMediaDetails: false
                         )
                     } else {
+                        guard all.count < maxModelsPerProvider else {
+                            exceededModelLimit = true
+                            isComplete = false
+                            Log.generation.notice(
+                                "catalog listing exceeded model limit provider=\(provider.rawValue) limit=\(maxModelsPerProvider)"
+                            )
+                            break
+                        }
                         indexByModelID[item.id] = all.count
                         all.append(item)
                     }
                 }
+                if exceededModelLimit { break modalityLoop }
                 if let next, !seenCursors.insert(next).inserted {
                     isComplete = false
                     Log.generation.notice(
@@ -464,7 +590,10 @@ enum CatalogDiscovery {
                 }
                 pages += 1
             } while cursor != nil && pages < maxPagesPerModality && all.count < maxModelsPerProvider
-            if cursor != nil { isComplete = false }
+            if cursor != nil {
+                isComplete = false
+                if all.count >= maxModelsPerProvider { break modalityLoop }
+            }
         }
         return EnumerationResult(models: all, isComplete: isComplete)
     }
@@ -567,13 +696,21 @@ enum CatalogDiscovery {
                 name: tool,
                 arguments: request.arguments.mapValues(Value.string)
             )
-            let details = payloads.flatMap {
-                MCPModelDiscovery.parseListing(
+            let parsed = payloads.map {
+                MCPModelDiscovery.parseListingResult(
                     $0,
                     defaultOutputType: request.model.outputType,
                     context: .detail
-                ).items
-            }.filter { $0.id == request.model.id }
+                )
+            }
+            let catalogPayloads = parsed.filter(\.isCatalogPayload)
+            guard !catalogPayloads.isEmpty else {
+                return .failure(request, "No decodable model-detail payload")
+            }
+            guard catalogPayloads.allSatisfy(\.isComplete) else {
+                return .failure(request, "Model-detail payload was only partially decoded")
+            }
+            let details = catalogPayloads.flatMap(\.items).filter { $0.id == request.model.id }
             return .success(request, details)
         } catch {
             return .failure(request, error.localizedDescription)

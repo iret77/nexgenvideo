@@ -105,7 +105,7 @@ struct MCPGenerationLifecycleTests {
     @Test func completedOrResultToolMayReturnOneRootMediaURL() {
         #expect(MCPGenerationLifecycle.status(from: [
             #"{"status":"completed","url":"https://output.invalid/final.png"}"#,
-        ]) == .succeeded(output(["https://output.invalid/final.png"])))
+        ], allowRootURL: true) == .succeeded(output(["https://output.invalid/final.png"])))
         #expect(MCPGenerationLifecycle.resultURLs(from: [
             #"{"url":"https://output.invalid/final.png"}"#,
         ]) == ["https://output.invalid/final.png"])
@@ -207,6 +207,86 @@ struct MCPGenerationLifecycleTests {
         ])
     }
 
+    @Test func JSONTextMediaIsSanitizedAndCollectedAsInlineOutput() {
+        let image = Data([0x89, 0x50, 0x4E, 0x47])
+        let audio = Data([0x52, 0x49, 0x46, 0x46])
+        let result = CallTool.Result(content: [
+            .text(
+                text: #"{"job_id":"job-text","status":"completed","result":{"image":{"data":"\#(image.base64EncodedString())","mime_type":"image/png"}}}"#,
+                annotations: nil,
+                _meta: nil
+            ),
+            .text(
+                text: #"{"outputs":[{"blob":"\#(audio.base64EncodedString())","contentType":"audio/wav"}]}"#,
+                annotations: nil,
+                _meta: nil
+            ),
+        ])
+
+        let payloads = MCPProviderClient.payloadContents(result)
+        let submission = MCPGenerationLifecycle.submission(from: payloads)
+
+        #expect(payloads.allSatisfy { $0.contains("_ngv_inline_media") })
+        #expect(submission.jobID == "job-text")
+        #expect(submission.output.inlineMedia == [
+            MCPGenerationLifecycle.InlineMedia(data: image, mimeType: "image/png"),
+            MCPGenerationLifecycle.InlineMedia(data: audio, mimeType: "audio/wav"),
+        ])
+    }
+
+    @Test func textAndLifecycleJSONWithoutInlineMediaRemainUnchanged() {
+        let values = [
+            "Provider completed the request.",
+            "https://output.invalid/final.png",
+            #"{"job_id":"job-plain","status":"completed","result":{"url":"https://output.invalid/final.png"}}"#,
+        ]
+        let result = CallTool.Result(content: values.map {
+            .text(text: $0, annotations: nil, _meta: nil)
+        })
+
+        let payloads = MCPProviderClient.payloadContents(result)
+        let submission = MCPGenerationLifecycle.submission(from: payloads)
+
+        #expect(payloads == values)
+        #expect(submission.jobID == "job-plain")
+        #expect(submission.outputURLs == ["https://output.invalid/final.png"])
+    }
+
+    @Test func JSONTextInputReferenceAndUnknownMediaCannotBecomeOutput() throws {
+        let encoded = Data([0x01, 0x02, 0x03]).base64EncodedString()
+        let inline: [String: Any] = [
+            "data": encoded,
+            "mimeType": "image/png",
+        ]
+        let object: [String: Any] = [
+            "result": [
+                "input_image": inline,
+                "request_payload": inline,
+                "reference_image": inline,
+                "source_media": inline,
+                "thumbnail": inline,
+                "artifact": inline,
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        let text = String(decoding: data, as: UTF8.self)
+        let result = CallTool.Result(content: [
+            .text(text: text, annotations: nil, _meta: nil),
+            .text(
+                text: #"{"type":"media_input","data":"\#(encoded)","mimeType":"image/png"}"#,
+                annotations: nil,
+                _meta: nil
+            ),
+        ])
+
+        let payloads = MCPProviderClient.payloadContents(result)
+
+        #expect(payloads.count == 2)
+        #expect(payloads.allSatisfy { !$0.contains(encoded) })
+        #expect(payloads.allSatisfy { !$0.contains("_ngv_inline_media") })
+        #expect(MCPGenerationLifecycle.submission(from: payloads).output.isEmpty)
+    }
+
     @Test func echoedInputMediaIsNeverPromotedToInlineOutput() {
         let encoded = Data([0x89, 0x50, 0x4E, 0x47]).base64EncodedString()
         let submission = MCPGenerationLifecycle.submission(from: [
@@ -292,6 +372,344 @@ struct MCPGenerationLifecycleTests {
         ])
 
         #expect(MCPGenerationLifecycle.outputSchemaSupportsMedia(schema))
+    }
+
+    @Test func outputSchemaAndParserAgreeOnInlineMediaFields() {
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47])
+        let schema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "result": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "data": .object(["type": .string("string")]),
+                        "mime_type": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("image/png")]),
+                        ]),
+                    ]),
+                ]),
+            ]),
+        ])
+        let result = CallTool.Result(
+            content: [],
+            structuredContent: .object([
+                "result": .object([
+                    "data": .string(bytes.base64EncodedString()),
+                    "mime_type": .string("image/png"),
+                ]),
+            ])
+        )
+
+        #expect(MCPGenerationLifecycle.outputSchemaSupportsMedia(schema))
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(result)
+        ).output.inlineMedia == [
+            MCPGenerationLifecycle.InlineMedia(data: bytes, mimeType: "image/png"),
+        ])
+    }
+
+    @Test func everyOutputEnvelopeUsesTheSameSchemaAndRuntimeContract() {
+        let bytes = Data([0x01, 0x02, 0x03])
+        let inlineSchema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "data": .object(["type": .string("string")]),
+                "mimeType": .object(["type": .string("string")]),
+            ]),
+        ])
+        let inlineOutput: Value = .object([
+            "data": .string(bytes.base64EncodedString()),
+            "mimeType": .string("image/png"),
+        ])
+
+        func wrapped(_ leaf: Value, path: [String], schema: Bool) -> Value {
+            path.reversed().reduce(leaf) { child, name in
+                if schema {
+                    return .object([
+                        "type": .string("object"),
+                        "properties": .object([name: child]),
+                    ])
+                }
+                return .object([name: child])
+            }
+        }
+
+        let paths = [
+            ["audio"], ["audios"], ["data"], ["file"], ["files"],
+            ["image"], ["images"], ["job"], ["jobs"], ["job_set"],
+            ["job_sets"], ["media"], ["medias"], ["output"], ["outputs"],
+            ["payload"], ["payloads"], ["raw"], ["resource"], ["resources"],
+            ["result"], ["results"], ["video"], ["videos"],
+            ["result", "image"],
+        ]
+
+        for path in paths {
+            let label = path.joined(separator: ".")
+            let schema = wrapped(inlineSchema, path: path, schema: true)
+            let content = wrapped(inlineOutput, path: path, schema: false)
+            let result = CallTool.Result(content: [], structuredContent: content)
+
+            #expect(
+                MCPGenerationLifecycle.outputSchemaSupportsMedia(schema),
+                "Schema rejected output envelope \(label)"
+            )
+            #expect(MCPGenerationLifecycle.submission(
+                from: MCPProviderClient.payloadContents(result)
+            ).output.inlineMedia == [
+                MCPGenerationLifecycle.InlineMedia(data: bytes, mimeType: "image/png"),
+            ], "Runtime rejected output envelope \(label)")
+        }
+
+        let videosSchema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "videos": .object([
+                    "type": .string("array"),
+                    "items": inlineSchema,
+                ]),
+            ]),
+        ])
+        let videosResult = CallTool.Result(
+            content: [],
+            structuredContent: .object([
+                "videos": .array([inlineOutput]),
+            ])
+        )
+        #expect(MCPGenerationLifecycle.outputSchemaSupportsMedia(videosSchema))
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(videosResult)
+        ).output.inlineMedia == [
+            MCPGenerationLifecycle.InlineMedia(data: bytes, mimeType: "image/png"),
+        ])
+
+        let imageURLSchema = wrapped(
+            .object(["type": .string("string")]),
+            path: ["result", "image"],
+            schema: true
+        )
+        let imageURLResult = CallTool.Result(
+            content: [],
+            structuredContent: wrapped(
+                .string("https://output.invalid/image.png"),
+                path: ["result", "image"],
+                schema: false
+            )
+        )
+        #expect(MCPGenerationLifecycle.outputSchemaSupportsMedia(imageURLSchema))
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(imageURLResult)
+        ).outputURLs == ["https://output.invalid/image.png"])
+    }
+
+    @Test func unknownAndInputEnvelopesCannotPromoteInlineBytes() {
+        let encoded = Data([0x01]).base64EncodedString()
+        let inlineProperties: [String: Value] = [
+            "data": .object(["type": .string("string")]),
+            "mimeType": .object(["type": .string("string")]),
+        ]
+        let unknownSchema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "result": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "artifact": .object([
+                            "type": .string("object"),
+                            "properties": .object(inlineProperties),
+                        ]),
+                    ]),
+                ]),
+            ]),
+        ])
+        let referenceSchema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "result": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "reference_image": .object([
+                            "type": .string("object"),
+                            "properties": .object(inlineProperties),
+                        ]),
+                    ]),
+                ]),
+            ]),
+        ])
+        let inputSchema: Value = .object([
+            "type": .string("object"),
+            "properties": .object(inlineProperties.merging([
+                "type": .object([
+                    "type": .string("string"),
+                    "const": .string("media_input"),
+                ]),
+            ]) { _, replacement in replacement }),
+        ])
+        let unknownResult = CallTool.Result(
+            content: [],
+            structuredContent: .object([
+                "result": .object([
+                    "artifact": .object([
+                        "data": .string(encoded),
+                        "mimeType": .string("image/png"),
+                    ]),
+                ]),
+            ])
+        )
+        let inputResult = CallTool.Result(
+            content: [],
+            structuredContent: .object([
+                "type": .string("media_input"),
+                "data": .string(encoded),
+                "mimeType": .string("image/png"),
+            ])
+        )
+        let referenceResult = CallTool.Result(
+            content: [],
+            structuredContent: .object([
+                "result": .object([
+                    "reference_image": .object([
+                        "data": .string(encoded),
+                        "mimeType": .string("image/png"),
+                    ]),
+                ]),
+            ])
+        )
+
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(unknownSchema))
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(referenceSchema))
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(inputSchema))
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(unknownResult)
+        ).output.isEmpty)
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(inputResult)
+        ).output.isEmpty)
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(referenceResult)
+        ).output.isEmpty)
+    }
+
+    @Test func outputSchemaRejectsInlineFieldsTheParserCannotUse() {
+        func schema(
+            dataName: String = "data",
+            dataSchema: Value = .object(["type": .string("string")]),
+            mimeName: String = "mimeType",
+            mimeSchema: Value = .object(["type": .string("string")])
+        ) -> Value {
+            .object([
+                "type": .string("object"),
+                "properties": .object([
+                    dataName: dataSchema,
+                    mimeName: mimeSchema,
+                ]),
+            ])
+        }
+
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(schema(
+            dataSchema: .object(["type": .string("integer")])
+        )))
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(schema(
+            mimeSchema: .object(["type": .string("integer")])
+        )))
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(schema(
+            mimeSchema: .object([
+                "type": .string("string"),
+                "enum": .array([.string("application/json")]),
+            ])
+        )))
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(schema(
+            dataName: "Data"
+        )))
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(schema(
+            mimeName: "mime-type"
+        )))
+
+        let unsupportedMIME = CallTool.Result(
+            content: [],
+            structuredContent: .object([
+                "data": .string(Data([0x01]).base64EncodedString()),
+                "mimeType": .string("application/json"),
+            ])
+        )
+        let unsupportedFields = CallTool.Result(
+            content: [],
+            structuredContent: .object([
+                "Data": .string(Data([0x01]).base64EncodedString()),
+                "mime-type": .string("image/png"),
+            ])
+        )
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(unsupportedMIME)
+        ).output.isEmpty)
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(unsupportedFields)
+        ).output.isEmpty)
+    }
+
+    @Test func outputURLFieldNamesMatchTheRuntimeParserExactly() {
+        func schema(_ fieldName: String) -> Value {
+            .object([
+                "type": .string("object"),
+                "properties": .object([
+                    fieldName: .object(["type": .string("string")]),
+                ]),
+            ])
+        }
+
+        #expect(MCPGenerationLifecycle.outputSchemaSupportsMedia(schema("outputUrl")))
+        #expect(MCPGenerationLifecycle.submission(from: [
+            #"{"outputUrl":"https://output.invalid/final.png"}"#,
+        ]).outputURLs == ["https://output.invalid/final.png"])
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(schema("outputURL")))
+        #expect(MCPGenerationLifecycle.submission(from: [
+            #"{"outputURL":"https://output.invalid/final.png"}"#,
+        ]).outputURLs.isEmpty)
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(.object([
+            "type": .string("object"),
+            "properties": .object([
+                "outputUrl": .object([
+                    "type": .string("string"),
+                    "enum": .array([.string("file:///tmp/final.png")]),
+                ]),
+            ]),
+        ])))
+    }
+
+    @Test func outputSchemaAndParserAgreeOnRootMediaURL() {
+        let schema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "url": .object(["type": .string("string")]),
+            ]),
+        ])
+
+        #expect(MCPGenerationLifecycle.outputSchemaSupportsMedia(schema))
+        #expect(MCPGenerationLifecycle.outputSchemaAllowsRootURL(schema))
+        #expect(MCPGenerationLifecycle.submission(
+            from: [#"{"url":"https://output.invalid/root.png"}"#],
+            allowRootURL: MCPGenerationLifecycle.outputSchemaAllowsRootURL(schema)
+        ).outputURLs == ["https://output.invalid/root.png"])
+    }
+
+    @Test func metadataURLDoesNotProveOrBecomeGenerationOutput() {
+        let schema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "metadata": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "url": .object(["type": .string("string")]),
+                    ]),
+                ]),
+            ]),
+        ])
+
+        #expect(!MCPGenerationLifecycle.outputSchemaSupportsMedia(schema))
+        #expect(!MCPGenerationLifecycle.outputSchemaAllowsRootURL(schema))
+        #expect(MCPGenerationLifecycle.submission(from: [
+            #"{"metadata":{"url":"https://provider.invalid/jobs/1"}}"#,
+        ]).outputURLs.isEmpty)
     }
 
     @Test func unknownStatusPreservesProviderValue() {

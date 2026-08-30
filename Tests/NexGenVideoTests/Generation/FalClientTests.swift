@@ -11,6 +11,7 @@ struct FalClientTests {
             let data: Data
             let headers: [String: String]
             let delaySeconds: TimeInterval
+            let errorCode: URLError.Code?
         }
 
         struct CapturedRequest: Sendable {
@@ -62,11 +63,15 @@ struct FalClientTests {
                 client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
                 return
             }
-            var headers = fixture.headers
-            headers["Content-Type"] = "application/json"
             if fixture.delaySeconds > 0 {
                 Thread.sleep(forTimeInterval: fixture.delaySeconds)
             }
+            if let errorCode = fixture.errorCode {
+                client?.urlProtocol(self, didFailWithError: URLError(errorCode))
+                return
+            }
+            var headers = fixture.headers
+            headers["Content-Type"] = "application/json"
             let response = HTTPURLResponse(
                 url: url,
                 statusCode: fixture.status,
@@ -106,14 +111,44 @@ struct FalClientTests {
         _ json: String,
         status: Int = 200,
         headers: [String: String] = [:],
-        delaySeconds: TimeInterval = 0
+        delaySeconds: TimeInterval = 0,
+        errorCode: URLError.Code? = nil
     ) -> FixtureURLProtocol.Fixture {
         FixtureURLProtocol.Fixture(
             status: status,
             data: Data(json.utf8),
             headers: headers,
-            delaySeconds: delaySeconds
+            delaySeconds: delaySeconds,
+            errorCode: errorCode
         )
+    }
+
+    private func catalogURL(category: String, cursor: String? = nil) -> URL {
+        var components = URLComponents(string: "https://api.fal.ai/v1/models")!
+        var queryItems = [
+            URLQueryItem(name: "category", value: category),
+            URLQueryItem(name: "status", value: "active"),
+            URLQueryItem(name: "limit", value: "100"),
+        ]
+        if let cursor {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        components.queryItems = queryItems
+        return components.url!
+    }
+
+    private func catalogPage(
+        endpointIDs: [String],
+        hasMore: Bool? = nil,
+        nextCursor: String? = nil
+    ) -> String {
+        var object: [String: Any] = [
+            "models": endpointIDs.map { ["endpoint_id": $0] },
+        ]
+        if let hasMore { object["has_more"] = hasMore }
+        if let nextCursor { object["next_cursor"] = nextCursor }
+        let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static let expectedApplications = [
@@ -157,15 +192,6 @@ struct FalClientTests {
 
     @Test("image catalog pages both active fal.ai image categories with the saved key")
     func discoversCurrentImageInventory() async throws {
-        func catalogURL(category: String) -> URL {
-            var components = URLComponents(string: "https://api.fal.ai/v1/models")!
-            components.queryItems = [
-                URLQueryItem(name: "category", value: category),
-                URLQueryItem(name: "status", value: "active"),
-                URLQueryItem(name: "limit", value: "100"),
-            ]
-            return components.url!
-        }
         let textURL = catalogURL(category: "text-to-image")
         let editURL = catalogURL(category: "image-to-image")
         FixtureURLProtocol.install([
@@ -190,6 +216,251 @@ struct FalClientTests {
         })
     }
 
+    @Test("an explicit terminal signal accepts a full image catalog page")
+    func explicitTerminalImageInventoryIsComplete() async throws {
+        let endpointIDs = (0..<100).map { "fal-ai/terminal-\($0)" }
+        let editURL = catalogURL(category: "image-to-image")
+        FixtureURLProtocol.install([
+            catalogURL(category: "text-to-image"): fixture(
+                catalogPage(endpointIDs: endpointIDs, hasMore: false)
+            ),
+            editURL: fixture(catalogPage(endpointIDs: [], hasMore: false)),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        let ids = try await FalClient(
+            apiKey: "test-key",
+            session: testSession
+        ).availableImageModelIds()
+
+        #expect(ids == Set(endpointIDs))
+        #expect(FixtureURLProtocol.requests().count == 2)
+    }
+
+    @Test("an underfilled image catalog page is terminal when pagination signals are absent")
+    func underfilledImageInventoryIsCompleteWithoutSignals() async throws {
+        let textURL = catalogURL(category: "text-to-image")
+        let editURL = catalogURL(category: "image-to-image")
+        FixtureURLProtocol.install([
+            textURL: fixture(catalogPage(endpointIDs: ["fal-ai/text-model"])),
+            editURL: fixture(catalogPage(endpointIDs: ["fal-ai/edit-model"])),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        let ids = try await FalClient(
+            apiKey: "test-key",
+            session: testSession
+        ).availableImageModelIds()
+
+        #expect(ids == ["fal-ai/text-model", "fal-ai/edit-model"])
+        #expect(FixtureURLProtocol.requests().map(\.url) == [textURL, editURL])
+    }
+
+    @Test("explicit and cursor-only continuation signals page the image catalog")
+    func imageInventoryContinuationSignalsPageToCompletion() async throws {
+        let firstURL = catalogURL(category: "text-to-image")
+        let secondURL = catalogURL(category: "text-to-image", cursor: "page-2")
+        let thirdURL = catalogURL(category: "text-to-image", cursor: "page-3")
+        let editURL = catalogURL(category: "image-to-image")
+        FixtureURLProtocol.install([
+            firstURL: fixture(
+                catalogPage(
+                    endpointIDs: ["fal-ai/first"],
+                    hasMore: true,
+                    nextCursor: "page-2"
+                )
+            ),
+            secondURL: fixture(
+                catalogPage(endpointIDs: ["fal-ai/second"], nextCursor: "page-3")
+            ),
+            thirdURL: fixture(catalogPage(endpointIDs: ["fal-ai/third"])),
+            editURL: fixture(catalogPage(endpointIDs: [], hasMore: false)),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        let ids = try await FalClient(
+            apiKey: "test-key",
+            session: testSession
+        ).availableImageModelIds()
+
+        #expect(ids == ["fal-ai/first", "fal-ai/second", "fal-ai/third"])
+        #expect(
+            FixtureURLProtocol.requests().map(\.url)
+                == [firstURL, secondURL, thirdURL, editURL]
+        )
+    }
+
+    @MainActor
+    @Test("empty image catalog pages never follow continuation cursors")
+    func emptyImageInventoryContinuationFailsBeforeNextRequest() async throws {
+        let firstURL = catalogURL(category: "text-to-image")
+        let emptyURL = catalogURL(category: "text-to-image", cursor: "empty-page")
+        let nextURL = catalogURL(category: "text-to-image", cursor: "must-not-load")
+        let editURL = catalogURL(category: "image-to-image")
+        let cases: [(hasMore: Bool?, label: String)] = [
+            (true, "explicit"),
+            (nil, "cursor-only"),
+        ]
+        for testCase in cases {
+            FixtureURLProtocol.install([
+                firstURL: fixture(catalogPage(
+                    endpointIDs: ["fal-ai/partial"],
+                    hasMore: true,
+                    nextCursor: "empty-page"
+                )),
+                emptyURL: fixture(catalogPage(
+                    endpointIDs: [],
+                    hasMore: testCase.hasMore,
+                    nextCursor: "must-not-load"
+                )),
+                nextURL: fixture(catalogPage(
+                    endpointIDs: ["fal-ai/must-not-load"],
+                    hasMore: false
+                )),
+                editURL: fixture(catalogPage(endpointIDs: [], hasMore: false)),
+            ])
+            let testSession = session()
+
+            do {
+                _ = try await FalClient(
+                    apiKey: "test-key",
+                    session: testSession
+                ).availableImageModelIds()
+                Issue.record("Expected \(testCase.label) empty-page continuation failure")
+            } catch {
+                #expect(error.localizedDescription.contains("empty page with a continuation cursor"))
+                #expect(DirectImageDiscovery.isTransientFailure(error))
+                #expect(DirectImageDiscovery.preservesLastKnownGood(
+                    after: .transientFailure(error.localizedDescription),
+                    currentModelCount: 3
+                ))
+            }
+            #expect(FixtureURLProtocol.requests().map(\.url) == [firstURL, emptyURL])
+            testSession.invalidateAndCancel()
+        }
+    }
+
+    @Test("terminal empty image catalog pages remain complete")
+    func terminalEmptyImageInventoryIsComplete() async throws {
+        let textURL = catalogURL(category: "text-to-image")
+        let editURL = catalogURL(category: "image-to-image")
+        FixtureURLProtocol.install([
+            textURL: fixture(catalogPage(endpointIDs: [], hasMore: false)),
+            editURL: fixture(catalogPage(endpointIDs: [], hasMore: false)),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        let ids = try await FalClient(
+            apiKey: "test-key",
+            session: testSession
+        ).availableImageModelIds()
+
+        #expect(ids.isEmpty)
+        #expect(FixtureURLProtocol.requests().map(\.url) == [textURL, editURL])
+    }
+
+    @Test("a full image catalog page without pagination signals is incomplete")
+    func ambiguousFullImageInventoryFails() async throws {
+        let textURL = catalogURL(category: "text-to-image")
+        let endpointIDs = (0..<100).map { "fal-ai/ambiguous-\($0)" }
+        FixtureURLProtocol.install([
+            textURL: fixture(catalogPage(endpointIDs: endpointIDs)),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        do {
+            _ = try await FalClient(
+                apiKey: "test-key",
+                session: testSession
+            ).availableImageModelIds()
+            Issue.record("Expected ambiguous catalog failure")
+        } catch {
+            #expect(error.localizedDescription.contains("ambiguous full page"))
+        }
+        #expect(FixtureURLProtocol.requests().map(\.url) == [textURL])
+    }
+
+    @Test("an image catalog page cannot be terminal and carry a continuation cursor")
+    func conflictingImageInventorySignalsFail() async throws {
+        let textURL = catalogURL(category: "text-to-image")
+        FixtureURLProtocol.install([
+            textURL: fixture(
+                catalogPage(
+                    endpointIDs: ["fal-ai/conflicting"],
+                    hasMore: false,
+                    nextCursor: "unexpected-page"
+                )
+            ),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        do {
+            _ = try await FalClient(
+                apiKey: "test-key",
+                session: testSession
+            ).availableImageModelIds()
+            Issue.record("Expected conflicting pagination failure")
+        } catch {
+            #expect(error.localizedDescription.contains("conflicting terminal pagination"))
+        }
+        #expect(FixtureURLProtocol.requests().map(\.url) == [textURL])
+    }
+
+    @Test("an image catalog response cannot exceed the requested page size")
+    func oversizedImageInventoryPageFails() async throws {
+        let textURL = catalogURL(category: "text-to-image")
+        let endpointIDs = (0...100).map { "fal-ai/oversized-\($0)" }
+        FixtureURLProtocol.install([
+            textURL: fixture(catalogPage(endpointIDs: endpointIDs, hasMore: false)),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        do {
+            _ = try await FalClient(
+                apiKey: "test-key",
+                session: testSession
+            ).availableImageModelIds()
+            Issue.record("Expected oversized catalog failure")
+        } catch {
+            #expect(error.localizedDescription.contains("exceeded the requested page size"))
+        }
+        #expect(FixtureURLProtocol.requests().map(\.url) == [textURL])
+    }
+
+    @Test("blank and unnormalized image endpoint ids fail closed")
+    func invalidImageInventoryEndpointIDsFail() async throws {
+        let textURL = catalogURL(category: "text-to-image")
+        for endpointID in [
+            "", "   ", " fal-ai/model", "fal-ai/model ", "fal-ai//model", "fal-ai/../model",
+        ] {
+            FixtureURLProtocol.install([
+                textURL: fixture(
+                    catalogPage(endpointIDs: [endpointID], hasMore: false)
+                ),
+            ])
+            let testSession = session()
+
+            do {
+                _ = try await FalClient(
+                    apiKey: "test-key",
+                    session: testSession
+                ).availableImageModelIds()
+                Issue.record("Expected invalid endpoint_id failure for \(endpointID.debugDescription)")
+            } catch {
+                #expect(error.localizedDescription.contains("invalid endpoint_id"))
+            }
+            #expect(FixtureURLProtocol.requests().map(\.url) == [textURL])
+            testSession.invalidateAndCancel()
+        }
+    }
+
     @Test("malformed image catalog data fails instead of becoming an empty successful inventory")
     func malformedImageInventoryFails() async {
         var components = URLComponents(string: "https://api.fal.ai/v1/models")!
@@ -211,6 +482,82 @@ struct FalClientTests {
                 retryBaseDelayNanoseconds: 0
             ).availableImageModelIds()
         }
+    }
+
+    @Test("image catalog rejects a continuation without a usable cursor")
+    func imageInventoryMissingCursorFails() async throws {
+        let textURL = catalogURL(category: "text-to-image")
+        FixtureURLProtocol.install([
+            textURL: fixture(
+                #"{"models":[{"endpoint_id":"fal-ai/partial"}],"has_more":true,"next_cursor":"   "}"#
+            ),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        do {
+            _ = try await FalClient(
+                apiKey: "test-key",
+                session: testSession
+            ).availableImageModelIds()
+            Issue.record("Expected incomplete catalog failure")
+        } catch {
+            #expect(error.localizedDescription.contains("without a cursor"))
+        }
+        #expect(FixtureURLProtocol.requests().map(\.url) == [textURL])
+    }
+
+    @Test("image catalog rejects a repeated cursor")
+    func imageInventoryRepeatedCursorFails() async throws {
+        let firstURL = catalogURL(category: "text-to-image")
+        let repeatedURL = catalogURL(category: "text-to-image", cursor: "same-cursor")
+        FixtureURLProtocol.install([
+            firstURL: fixture(
+                #"{"models":[{"endpoint_id":"fal-ai/first"}],"has_more":true,"next_cursor":"same-cursor"}"#
+            ),
+            repeatedURL: fixture(
+                #"{"models":[{"endpoint_id":"fal-ai/second"}],"has_more":true,"next_cursor":"same-cursor"}"#
+            ),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        do {
+            _ = try await FalClient(
+                apiKey: "test-key",
+                session: testSession
+            ).availableImageModelIds()
+            Issue.record("Expected repeated cursor failure")
+        } catch {
+            #expect(error.localizedDescription.contains("repeated a cursor"))
+        }
+        #expect(FixtureURLProtocol.requests().map(\.url) == [firstURL, repeatedURL])
+    }
+
+    @Test("image catalog rejects a continuation beyond the safe page limit")
+    func imageInventoryPageLimitFails() async throws {
+        var fixtures: [URL: FixtureURLProtocol.Fixture] = [:]
+        for page in 0..<10 {
+            let cursor = page == 0 ? nil : "cursor-\(page)"
+            let nextCursor = "cursor-\(page + 1)"
+            fixtures[catalogURL(category: "text-to-image", cursor: cursor)] = fixture(
+                #"{"models":[{"endpoint_id":"fal-ai/page-\#(page)"}],"has_more":true,"next_cursor":"\#(nextCursor)"}"#
+            )
+        }
+        FixtureURLProtocol.install(fixtures)
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+
+        do {
+            _ = try await FalClient(
+                apiKey: "test-key",
+                session: testSession
+            ).availableImageModelIds()
+            Issue.record("Expected page-limit failure")
+        } catch {
+            #expect(error.localizedDescription.contains("safe page limit"))
+        }
+        #expect(FixtureURLProtocol.requests().count == 10)
     }
 
     @Test("submit keeps the operation path; status and result use the owning app")
@@ -388,6 +735,42 @@ struct FalClientTests {
         #expect(FixtureURLProtocol.requests().map(\.url) == [submit])
     }
 
+    @Test("cancelling an in-flight submit remains an uncertain accepted request")
+    func cancelledSubmitIsNotSafeToRetry() async throws {
+        let endpoint = "fal-ai/gemini-25-flash-image/edit"
+        let submit = URL(string: "https://queue.fal.run/\(endpoint)")!
+        FixtureURLProtocol.install([
+            submit: fixture(
+                "{\"request_id\":\"job-too-late\"}",
+                delaySeconds: 0.25
+            ),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = FalClient(apiKey: "test-key", session: testSession)
+        let submission = Task {
+            try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
+        }
+
+        for _ in 0..<400 {
+            if FixtureURLProtocol.requests().contains(where: { $0.url == submit }) { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        #expect(FixtureURLProtocol.requests().contains(where: { $0.url == submit }))
+        submission.cancel()
+
+        do {
+            _ = try await submission.value
+            Issue.record("Expected uncertain submission error")
+        } catch let error as FalClient.SubmissionOutcomeUnknownError {
+            #expect(error.ledgerRequestID.hasPrefix("unknown-"))
+            #expect(error.localizedDescription.contains("will not retry"))
+        } catch {
+            Issue.record("Expected uncertain submission error, got \(error)")
+        }
+        #expect(FixtureURLProtocol.requests().filter { $0.url == submit }.count == 1)
+    }
+
     @Test("HTTP failures name provider, lifecycle step, method, safe route, and status")
     func statusFailureIsActionable() async throws {
         let endpoint = "fal-ai/gemini-25-flash-image/edit"
@@ -395,9 +778,13 @@ struct FalClientTests {
         let status = URL(
             string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-405/status"
         )!
+        let cancel = URL(
+            string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-405/cancel"
+        )!
         FixtureURLProtocol.install([
             submit: fixture("{\"request_id\":\"job-405\"}"),
             status: fixture("{\"detail\":\"Method Not Allowed\"}", status: 405),
+            cancel: fixture("{}"),
         ])
         let testSession = session()
         defer { testSession.invalidateAndCancel() }
@@ -416,6 +803,7 @@ struct FalClientTests {
                 error.localizedDescription
                     == "fal.ai status GET queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-405/status returned HTTP 405: Method Not Allowed"
             )
+            #expect(FixtureURLProtocol.requests().map(\.url) == [submit, status, cancel])
         }
     }
 
@@ -518,33 +906,42 @@ struct FalClientTests {
         #expect(FixtureURLProtocol.requests().filter { $0.url == status }.count == 4)
     }
 
-    @Test("cancelled provider states fail immediately")
-    func cancelledProviderStateFailsImmediately() async throws {
+    @Test("terminal provider failure states fail without cancellation")
+    func terminalProviderFailureStatesAreNotCancelled() async throws {
         let endpoint = "fal-ai/gemini-25-flash-image/edit"
         let submit = URL(string: "https://queue.fal.run/\(endpoint)")!
-        let status = URL(
-            string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-cancelled/status"
-        )!
-        FixtureURLProtocol.install([
-            submit: fixture("{\"request_id\":\"job-cancelled\"}"),
-            status: fixture("{\"status\":\"CANCELLED\",\"error\":\"provider cancelled\"}"),
-        ])
-        let testSession = session()
-        defer { testSession.invalidateAndCancel() }
-        let client = FalClient(
-            apiKey: "test-key",
-            session: testSession,
-            pollIntervalNanoseconds: 0,
-            retryBaseDelayNanoseconds: 0
-        )
-        let requestID = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
+        for providerStatus in ["FAILED", "ERROR", "CANCELLED"] {
+            let requestID = "job-\(providerStatus.lowercased())"
+            let status = URL(
+                string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/\(requestID)/status"
+            )!
+            FixtureURLProtocol.install([
+                submit: fixture("{\"request_id\":\"\(requestID)\"}"),
+                status: fixture(
+                    "{\"status\":\"\(providerStatus)\",\"error\":\"provider stopped\"}"
+                ),
+            ])
+            let testSession = session()
+            let client = FalClient(
+                apiKey: "test-key",
+                session: testSession,
+                pollIntervalNanoseconds: 0,
+                retryBaseDelayNanoseconds: 0
+            )
+            let submittedID = try await client.submit(
+                endpoint: endpoint,
+                inputBody: Data("{}".utf8)
+            )
 
-        do {
-            _ = try await client.result(endpoint: endpoint, requestId: requestID)
-            Issue.record("Expected terminal status failure")
-        } catch {
-            #expect(error.localizedDescription.contains("provider cancelled"))
-            #expect(FixtureURLProtocol.requests().filter { $0.url == status }.count == 1)
+            do {
+                _ = try await client.result(endpoint: endpoint, requestId: submittedID)
+                Issue.record("Expected terminal \(providerStatus) failure")
+            } catch {
+                #expect(error.localizedDescription.contains("provider stopped"))
+            }
+            #expect(FixtureURLProtocol.requests().map(\.url) == [submit, status])
+            #expect(FixtureURLProtocol.requests().map(\.method) == ["POST", "GET"])
+            testSession.invalidateAndCancel()
         }
     }
 
@@ -693,6 +1090,84 @@ struct FalClientTests {
         #expect(FixtureURLProtocol.requests().filter { $0.url == status }.count == 6)
         #expect(FixtureURLProtocol.requests().last?.url == cancel)
         #expect(FixtureURLProtocol.requests().last?.method == "PUT")
+    }
+
+    @Test("exhausted retryable status transport failures cancel the exact provider job")
+    func exhaustedStatusTransportRetriesCancelProviderJob() async throws {
+        let endpoint = "fal-ai/gemini-25-flash-image/edit"
+        let submit = URL(string: "https://queue.fal.run/\(endpoint)")!
+        let status = URL(
+            string: "https://queue.fal.run/custom-lifecycle/requests/job-transport/status"
+        )!
+        let cancel = URL(
+            string: "https://queue.fal.run/custom-lifecycle/requests/job-transport/cancel"
+        )!
+        let submitBody = #"{"request_id":"job-transport","status_url":"\#(status.absoluteString)","cancel_url":"\#(cancel.absoluteString)"}"#
+        FixtureURLProtocol.installSequence([
+            submit: [fixture(submitBody)],
+            status: Array(
+                repeating: fixture("", errorCode: .networkConnectionLost),
+                count: 6
+            ),
+            cancel: [fixture("{}")],
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = FalClient(
+            apiKey: "test-key",
+            session: testSession,
+            pollIntervalNanoseconds: 0,
+            retryBaseDelayNanoseconds: 0
+        )
+        let requestID = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
+
+        await #expect(throws: GenerationBackendError.self) {
+            _ = try await client.result(endpoint: endpoint, requestId: requestID)
+        }
+        let requests = FixtureURLProtocol.requests()
+        #expect(requests.filter { $0.url == submit }.count == 1)
+        #expect(requests.filter { $0.url == status }.count == 6)
+        #expect(requests.last?.url == cancel)
+        #expect(requests.last?.method == "PUT")
+    }
+
+    @Test("failed provider cancellation is surfaced with a possible-charge warning")
+    func failedCancellationIsSurfaced() async throws {
+        let endpoint = "fal-ai/gemini-25-flash-image/edit"
+        let submit = URL(string: "https://queue.fal.run/\(endpoint)")!
+        let status = URL(
+            string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-cancel-failed/status"
+        )!
+        let cancel = URL(
+            string: "https://queue.fal.run/fal-ai/gemini-25-flash-image/requests/job-cancel-failed/cancel"
+        )!
+        FixtureURLProtocol.install([
+            submit: fixture("{\"request_id\":\"job-cancel-failed\"}"),
+            status: fixture("{}"),
+            cancel: fixture("{\"detail\":\"cancellation unavailable\"}", status: 503),
+        ])
+        let testSession = session()
+        defer { testSession.invalidateAndCancel() }
+        let client = FalClient(
+            apiKey: "test-key",
+            session: testSession,
+            pollIntervalNanoseconds: 0,
+            retryBaseDelayNanoseconds: 0,
+            maxInvalidStatusResponses: 1
+        )
+        let requestID = try await client.submit(endpoint: endpoint, inputBody: Data("{}".utf8))
+
+        do {
+            _ = try await client.result(endpoint: endpoint, requestId: requestID)
+            Issue.record("Expected cancellation failure")
+        } catch {
+            #expect(error.localizedDescription.contains("no valid state after 1 attempts"))
+            #expect(error.localizedDescription.contains("provider cancellation failed"))
+            #expect(error.localizedDescription.contains("HTTP 503: cancellation unavailable"))
+            #expect(error.localizedDescription.contains("may still be running and may incur charges"))
+        }
+        #expect(FixtureURLProtocol.requests().map(\.url) == [submit, status, cancel])
+        #expect(FixtureURLProtocol.requests().map(\.method) == ["POST", "GET", "PUT"])
     }
 
     @Test("timeout cancels the provider job")

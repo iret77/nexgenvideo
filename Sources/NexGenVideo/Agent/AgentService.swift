@@ -11,6 +11,8 @@ final class AgentService {
     private var backendObserver: NSObjectProtocol?
     private var claudeStatusObserver: NSObjectProtocol?
     private var apiKeyGeneration = 0
+    private let hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)?
+    private let embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)?
 
     private(set) var backend: AgentBackend
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
@@ -18,8 +20,15 @@ final class AgentService {
     private(set) var isCheckingClaude = false
     private var claudeStatusGeneration = 0
 
-    init(backend: AgentBackend = AgentBackendPreference.selected) {
+    init(
+        backend: AgentBackend = AgentBackendPreference.selected,
+        refreshBackendStatusOnInit: Bool = true,
+        hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
+        embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)? = nil
+    ) {
         self.backend = backend
+        self.hostFollowUpReadinessOverride = hostFollowUpReadinessOverride
+        self.embeddedHostFollowUpSender = embeddedHostFollowUpSender
         apiKeyObserver = NotificationCenter.default.addObserver(
             forName: .anthropicAPIKeyChanged,
             object: nil,
@@ -61,7 +70,9 @@ final class AgentService {
                 }
             }
         }
-        refreshBackendStatus()
+        if refreshBackendStatusOnInit {
+            refreshBackendStatus()
+        }
     }
 
     private func reloadAPIKey() {
@@ -201,7 +212,7 @@ final class AgentService {
                 Task { @MainActor [weak self] in await self?.preparePendingGateFollowUp() }
             }
             if !isStreaming, !hostFollowUpStartInProgress,
-               pendingSpendFollowUp != nil {
+               currentSpendFollowUp != nil {
                 Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
             }
         }
@@ -1182,7 +1193,7 @@ final class AgentService {
     var isComposerBlocked: Bool {
         pendingDialog != nil
             || pendingSpendApproval != nil
-            || pendingSpendFollowUp?.origin.chatSessionID == currentSessionId
+            || currentSpendFollowUp != nil
             || pendingGateApproval != nil
             || pendingGateFollowUp?.origin.chatSessionID == currentSessionId
     }
@@ -1213,7 +1224,7 @@ final class AgentService {
     private var spendApprovalRefresh: (@MainActor () -> SpendApproval)?
 
     @ObservationIgnored
-    private var pendingSpendFollowUp: SpendFollowUp?
+    private var pendingSpendFollowUps: [SpendFollowUp] = []
 
     @ObservationIgnored
     private var runningSpendTask: Task<Void, Never>?
@@ -1243,6 +1254,12 @@ final class AgentService {
         let origin: ToolCallOrigin
         let text: String
         let imageBlocks: [[String: Any]]
+    }
+
+    private var currentSpendFollowUp: SpendFollowUp? {
+        pendingSpendFollowUps.first {
+            $0.origin.chatSessionID == currentSessionId
+        }
     }
 
     private static let spendSuspensionText =
@@ -1464,7 +1481,6 @@ final class AgentService {
         }
         clearSpendApproval(cancelling: true)
         if abandonedApproval {
-            pendingSpendFollowUp = nil
             if let operation { resumeToolCalls(from: operation.origin) }
         }
     }
@@ -1493,11 +1509,11 @@ final class AgentService {
                 ],
             ]
         } ?? []
-        pendingSpendFollowUp = SpendFollowUp(
+        pendingSpendFollowUps.append(SpendFollowUp(
             origin: origin,
             text: text,
             imageBlocks: imageBlocks
-        )
+        ))
         Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
     }
 
@@ -1548,13 +1564,16 @@ final class AgentService {
     @discardableResult
     func resumePendingSpendFollowUp() -> Bool {
         guard !isStreaming, !hostFollowUpStartInProgress,
-              let followUp = pendingSpendFollowUp else { return false }
+              let followUpIndex = pendingSpendFollowUps.firstIndex(where: {
+                  $0.origin.chatSessionID == currentSessionId
+              }) else { return false }
+        let followUp = pendingSpendFollowUps[followUpIndex]
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
               pendingGateApproval == nil else { return false }
         if let sessionID = followUp.origin.chatSessionID {
             guard sessions.contains(where: { $0.id == sessionID }) else {
-                pendingSpendFollowUp = nil
+                pendingSpendFollowUps.remove(at: followUpIndex)
                 resumeToolCalls(from: followUp.origin)
                 return false
             }
@@ -1568,11 +1587,14 @@ final class AgentService {
         let started: Bool
         if claudeRuntimeEnabled {
             streamError = nil
-            started = claudeRuntime.send(
-                text: followUpText,
-                imageBlocks: followUp.imageBlocks,
-                hidden: true
-            )
+            started = embeddedHostFollowUpSender?(
+                followUpText,
+                followUp.imageBlocks
+            ) ?? claudeRuntime.send(
+                    text: followUpText,
+                    imageBlocks: followUp.imageBlocks,
+                    hidden: true
+                )
             checkpointCurrentSession()
         } else {
             started = send(
@@ -1583,7 +1605,7 @@ final class AgentService {
             )
         }
         if started {
-            pendingSpendFollowUp = nil
+            pendingSpendFollowUps.remove(at: followUpIndex)
         } else if streamError == nil {
             streamError = .upstream(
                 "Couldn't resume the agent after generation. Retry the host follow-up."
@@ -1597,6 +1619,10 @@ final class AgentService {
             streamError = backend == .claudeCode
                 ? .authenticationRequired
                 : .upstream("Add an Anthropic API key in Settings to continue the agent.")
+            return false
+        }
+        if let error = hostFollowUpReadinessOverride?() {
+            streamError = error
             return false
         }
         return prepareWorkingCopyForTurn()
@@ -1825,14 +1851,14 @@ final class AgentService {
     }
 
     var hasPendingHostFollowUp: Bool {
-        pendingSpendFollowUp?.origin.chatSessionID == currentSessionId
+        currentSpendFollowUp != nil
             || pendingGateFollowUp?.origin.chatSessionID == currentSessionId
     }
 
     func retryPendingHostFollowUp() {
         guard hasPendingHostFollowUp, !isStreaming else { return }
         streamError = nil
-        if pendingSpendFollowUp != nil {
+        if currentSpendFollowUp != nil {
             _ = resumePendingSpendFollowUp()
         } else {
             Task { @MainActor [weak self] in
@@ -2006,6 +2032,7 @@ final class AgentService {
         abandonGateApproval()
         abandonSpendApproval()
         abandonRunningSpend()
+        pendingSpendFollowUps.removeAll()
         currentTask?.cancel()
         currentTask = nil
         _claudeRuntime?.stop()
@@ -2079,7 +2106,7 @@ final class AgentService {
         _claudeRuntime?.stop()
         _claudeRuntime = nil
         streamError = nil
-        if pendingSpendFollowUp?.origin.chatSessionID == id {
+        if currentSpendFollowUp != nil {
             Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
         } else if pendingGateFollowUp?.origin.chatSessionID == id {
             Task { @MainActor [weak self] in
@@ -2116,6 +2143,13 @@ final class AgentService {
         let deletingActive = currentSessionId == id
         if runningSpendStatus?.chatSessionID == id {
             abandonRunningSpend()
+        }
+        let discardedSpendFollowUps = pendingSpendFollowUps.filter {
+            $0.origin.chatSessionID == id
+        }
+        pendingSpendFollowUps.removeAll { $0.origin.chatSessionID == id }
+        for followUp in discardedSpendFollowUps {
+            resumeToolCalls(from: followUp.origin)
         }
         sessions.removeAll { $0.id == id }
         if deletingActive {

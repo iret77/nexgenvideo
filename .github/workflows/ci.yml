@@ -6,7 +6,6 @@ name: CI
 # receive commits that never went through a PR.
 on:
   pull_request:
-    paths-ignore: ['docs/**', '**/*.md']
   workflow_dispatch:
 
 concurrency:
@@ -14,8 +13,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  source-gate:
+  classify_changes:
+    name: Classify Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      code_changed: ${{ steps.classify.outputs.code_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify pull request paths
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            echo "code_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git cat-file -e "$BASE_SHA^{commit}"
+          git cat-file -e "$HEAD_SHA^{commit}"
+          changed_paths="$RUNNER_TEMP/ci-changed-paths"
+          git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$changed_paths"
+
+          code_changed=false
+          changed_count=0
+          while IFS= read -r -d '' path; do
+            changed_count=$((changed_count + 1))
+            case "$path" in
+              docs/*|*.md) ;;
+              *) code_changed=true ;;
+            esac
+          done < "$changed_paths"
+
+          if [[ "$changed_count" -eq 0 ]]; then
+            echo "::warning::No changed paths found; running the full CI fail-safe"
+            code_changed=true
+          fi
+
+          echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
+
+  source_gate:
     name: Source Gate
+    needs: classify_changes
+    if: needs.classify_changes.outputs.code_changed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -27,9 +76,10 @@ jobs:
       - name: Verify private fixture bundle tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
-  build-test:
+  build_test:
     name: Build & Test
-    needs: source-gate
+    needs: [classify_changes, source_gate]
+    if: needs.classify_changes.outputs.code_changed == 'true' && needs.source_gate.result == 'success'
     # Xcode 27 compiles the macOS 26 product and its availability-gated macOS 27 adapter.
     runs-on: xcode-27
     # Real runs take ~5.5 min. This is a COST CEILING, not a budget: a hung job on a 10x-billed macOS
@@ -86,3 +136,51 @@ jobs:
           done
           echo "::error::swift test hit the environmental crash on all $attempts attempts"
           exit 1
+
+  merge_gate:
+    name: Merge Gate
+    needs: [classify_changes, source_gate, build_test]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require the applicable CI jobs
+        shell: bash
+        env:
+          CLASSIFY_RESULT: ${{ needs.classify_changes.result }}
+          CODE_CHANGED: ${{ needs.classify_changes.outputs.code_changed }}
+          SOURCE_GATE_RESULT: ${{ needs.source_gate.result }}
+          BUILD_TEST_RESULT: ${{ needs.build_test.result }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$CLASSIFY_RESULT" != "success" ]]; then
+            echo "::error::Change classification did not succeed ($CLASSIFY_RESULT)"
+            exit 1
+          fi
+
+          if [[ "$CODE_CHANGED" == "false" ]]; then
+            if [[ "$SOURCE_GATE_RESULT" != "skipped" || "$BUILD_TEST_RESULT" != "skipped" ]]; then
+              echo "::error::Documentation-only CI ran an unexpected job"
+              exit 1
+            fi
+            echo "Documentation-only pull request; macOS CI was not allocated."
+            exit 0
+          fi
+
+          if [[ "$CODE_CHANGED" != "true" ]]; then
+            echo "::error::Change classification returned an invalid value"
+            exit 1
+          fi
+
+          if [[ "$SOURCE_GATE_RESULT" != "success" ]]; then
+            echo "::error::Source Gate did not succeed ($SOURCE_GATE_RESULT)"
+            exit 1
+          fi
+
+          if [[ "$BUILD_TEST_RESULT" != "success" ]]; then
+            echo "::error::Build & Test did not succeed ($BUILD_TEST_RESULT)"
+            exit 1
+          fi
+
+          echo "All required CI jobs succeeded."

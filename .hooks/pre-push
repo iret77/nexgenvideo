@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+if [ "${ALLOW_PUSH_TO_MAIN:-}" = "1" ]; then
+  exit 0
+fi
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    cat >&2 <<'EOF'
+Direct pushes to main are blocked. Open a pull request instead.
+To perform an explicitly authorized emergency push, set ALLOW_PUSH_TO_MAIN=1.
+EOF
+    exit 1
+  fi
+done
+
+exit 0

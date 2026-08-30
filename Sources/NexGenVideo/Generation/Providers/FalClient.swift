@@ -42,18 +42,20 @@ actor FalClient {
         maxRetries: 3,
         statusCodes: [429, 500, 502, 503, 504]
     )
+    private static let catalogPageLimit = 100
+    private static let maxCatalogPagesPerCategory = 10
 
     func availableImageModelIds() async throws -> Set<String> {
         var ids = Set<String>()
         for category in ["text-to-image", "image-to-image"] {
             var cursor: String?
-            var pages = 0
-            repeat {
+            var seenCursors = Set<String>()
+            for pageNumber in 1...Self.maxCatalogPagesPerCategory {
                 var components = URLComponents(string: "https://api.fal.ai/v1/models")!
                 var query = [
                     URLQueryItem(name: "category", value: category),
                     URLQueryItem(name: "status", value: "active"),
-                    URLQueryItem(name: "limit", value: "100"),
+                    URLQueryItem(name: "limit", value: String(Self.catalogPageLimit)),
                 ]
                 if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
                 components.queryItems = query
@@ -73,10 +75,65 @@ actor FalClient {
                     json: Self.parse(response.data)
                 )
                 let page = try JSONDecoder().decode(ModelCatalogPage.self, from: response.data)
-                ids.formUnion(page.models.map(\.endpointId))
-                cursor = page.hasMore == true ? page.nextCursor : nil
-                pages += 1
-            } while cursor != nil && pages < 10
+                guard page.models.count <= Self.catalogPageLimit else {
+                    throw GenerationBackendError.transport(
+                        "fal.ai model catalog exceeded the requested page size for \(category)"
+                    )
+                }
+                let pageIDs = try page.models.map { model in
+                    guard Self.isUsableCatalogEndpointID(model.endpointId) else {
+                        throw GenerationBackendError.transport(
+                            "fal.ai model catalog returned an invalid endpoint_id for \(category)"
+                        )
+                    }
+                    return model.endpointId
+                }
+                ids.formUnion(pageIDs)
+
+                let nextCursor = page.nextCursor.flatMap { value in
+                    value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+                }
+                let continuationCursor: String?
+                switch (page.hasMore, nextCursor) {
+                case (true, .some(let nextCursor)):
+                    continuationCursor = nextCursor
+                case (true, .none):
+                    throw GenerationBackendError.transport(
+                        "fal.ai model catalog reported another page without a cursor for \(category)"
+                    )
+                case (false, .some):
+                    throw GenerationBackendError.transport(
+                        "fal.ai model catalog returned conflicting terminal pagination for \(category)"
+                    )
+                case (false, .none):
+                    continuationCursor = nil
+                case (nil, .some(let nextCursor)):
+                    continuationCursor = nextCursor
+                case (nil, .none) where page.models.count < Self.catalogPageLimit:
+                    continuationCursor = nil
+                case (nil, .none):
+                    throw GenerationBackendError.transport(
+                        "fal.ai model catalog returned an ambiguous full page for \(category)"
+                    )
+                }
+                if page.models.isEmpty, continuationCursor != nil {
+                    throw GenerationBackendError.transport(
+                        "fal.ai model catalog returned an empty page with a continuation cursor for \(category)"
+                    )
+                }
+                guard let nextCursor = continuationCursor else { break }
+                guard pageNumber < Self.maxCatalogPagesPerCategory else {
+                    throw GenerationBackendError.transport(
+                        "fal.ai model catalog exceeded the safe page limit for \(category)"
+                    )
+                }
+                guard seenCursors.insert(nextCursor).inserted else {
+                    throw GenerationBackendError.transport(
+                        "fal.ai model catalog repeated a cursor for \(category)"
+                    )
+                }
+                cursor = nextCursor
+            }
         }
         return ids
     }
@@ -89,8 +146,6 @@ actor FalClient {
         let response: Response
         do {
             response = try await send(request)
-        } catch is CancellationError {
-            throw CancellationError()
         } catch {
             throw SubmissionOutcomeUnknownError(
                 ledgerRequestID: "unknown-\(UUID().uuidString)",
@@ -150,6 +205,7 @@ actor FalClient {
         let deadline = Date().addingTimeInterval(maxWaitSeconds)
         var invalidStatusResponses = 0
         var finalPollAvailable = true
+        var providerReachedTerminalState = false
         do {
             while true {
                 try Task.checkCancellation()
@@ -160,21 +216,12 @@ actor FalClient {
                     deadline: deadline
                 )
                 let json = Self.parse(response.data)
-                do {
-                    try Self.throwIfError(
-                        response, request: statusRequest, operation: "status", json: json
-                    )
-                } catch let error as GenerationBackendError {
-                    if case .api(let status, _, _) = error,
-                       Self.statusRetryPolicy.statusCodes.contains(status) {
-                        await cancelIndependently(url: cancelURL)
-                    }
-                    throw error
-                }
+                try Self.throwIfError(
+                    response, request: statusRequest, operation: "status", json: json
+                )
                 guard let status = json?["status"] as? String, !status.isEmpty else {
                     invalidStatusResponses += 1
                     guard invalidStatusResponses < maxInvalidStatusResponses else {
-                        await cancelIndependently(url: cancelURL)
                         throw GenerationBackendError.transport(
                             "fal.ai status returned no valid state after \(invalidStatusResponses) attempts for request \(Self.safeRequestID(requestId))"
                         )
@@ -187,6 +234,7 @@ actor FalClient {
                 }
                 switch status {
                 case "COMPLETED":
+                    providerReachedTerminalState = true
                     invalidStatusResponses = 0
                     let resultRequest = makeRequest(url: resultURL, method: "GET", body: nil)
                     let resultResponse = try await send(
@@ -206,6 +254,7 @@ actor FalClient {
                         finalPollAvailable: finalPollAvailable
                     )
                 case "FAILED", "ERROR", "CANCELLED":
+                    providerReachedTerminalState = true
                     let detail = Self.errorMessage(in: json) ?? "provider reported failure"
                     throw GenerationBackendError.transport(
                         "fal.ai generation failed for \(route.application), request \(Self.safeRequestID(requestId)): \(detail)"
@@ -213,7 +262,6 @@ actor FalClient {
                 default:
                     invalidStatusResponses += 1
                     guard invalidStatusResponses < maxInvalidStatusResponses else {
-                        await cancelIndependently(url: cancelURL)
                         throw GenerationBackendError.transport(
                             "fal.ai status returned unsupported state '\(status)' after \(invalidStatusResponses) attempts for \(route.application), request \(Self.safeRequestID(requestId))"
                         )
@@ -225,15 +273,32 @@ actor FalClient {
                 }
             }
         } catch is DeadlineExceeded {
-            let error = await timeoutError(
-                route: route,
-                requestId: requestId,
+            let message =
+                "fal.ai generation timed out for \(route.application), request \(Self.safeRequestID(requestId))"
+            guard !providerReachedTerminalState else {
+                throw GenerationBackendError.transport(message)
+            }
+            let error = await abandonmentError(
+                message,
                 cancelURL: cancelURL
             )
             throw error
         } catch is CancellationError {
-            await cancelIndependently(url: cancelURL)
+            guard !providerReachedTerminalState else { throw CancellationError() }
+            if let warning = await cancellationFailureWarning(url: cancelURL) {
+                throw GenerationBackendError.transport(
+                    "fal.ai generation was cancelled locally. \(warning)"
+                )
+            }
             throw CancellationError()
+        } catch {
+            guard !providerReachedTerminalState else { throw error }
+            if let warning = await cancellationFailureWarning(url: cancelURL) {
+                throw GenerationBackendError.transport(
+                    "\(error.localizedDescription) \(warning)"
+                )
+            }
+            throw error
         }
     }
 
@@ -342,6 +407,10 @@ actor FalClient {
             }
     }
 
+    private static func isUsableCatalogEndpointID(_ endpoint: String) -> Bool {
+        return (try? route(endpoint: endpoint)) != nil
+    }
+
     private static func isRequestIDSegment(_ value: String) -> Bool {
         !value.isEmpty
             && value != "."
@@ -384,40 +453,37 @@ actor FalClient {
         return finalPollAvailable
     }
 
-    private func timeoutError(
-        route: Route,
-        requestId: String,
+    private func abandonmentError(
+        _ message: String,
         cancelURL: URL
     ) async -> GenerationBackendError {
-        await cancelIndependently(url: cancelURL)
-        return GenerationBackendError.transport(
-            "fal.ai generation timed out for \(route.application), request \(Self.safeRequestID(requestId))"
-        )
+        guard let warning = await cancellationFailureWarning(url: cancelURL) else {
+            return GenerationBackendError.transport(message)
+        }
+        return GenerationBackendError.transport("\(message) \(warning)")
     }
 
-    private func cancelForFailure(url: URL) async {
-        guard let failure = await cancel(url: url) else { return }
+    private func cancellationFailureWarning(url: URL) async -> String? {
+        guard let failure = await cancelIndependently(url: url) else { return nil }
+        let detail: String
         switch failure {
-        case .response(let status, let message)
-            where (400..<500).contains(status) && ![401, 403, 404, 405].contains(status):
-            Log.generation.notice(
-                "fal request was no longer cancellable at \(Self.safeLocation(url)): \(message)"
-            )
-        case .response(_, let message), .transport(let message):
-            Log.generation.error(
-                "fal cancellation failed at \(Self.safeLocation(url)): \(message)"
-            )
+        case .response(let status, let message):
+            detail = "HTTP \(status): \(message)"
+        case .transport(let message):
+            detail = message
         }
+        return "fal.ai provider cancellation failed at \(Self.safeLocation(url)): \(detail). "
+            + "The request may still be running and may incur charges."
     }
 
-    private func cancelIndependently(url: URL) async {
+    private func cancelIndependently(url: URL) async -> CancellationFailure? {
         let cancellation = Task.detached { [self] in
-            await cancelForFailure(url: url)
+            await cancel(url: url)
         }
-        await cancellation.value
+        return await cancellation.value
     }
 
-    private enum CancellationFailure {
+    private enum CancellationFailure: Sendable {
         case response(status: Int, message: String)
         case transport(String)
     }

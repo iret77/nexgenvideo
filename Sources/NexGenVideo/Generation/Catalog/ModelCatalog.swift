@@ -151,7 +151,7 @@ final class ModelCatalog {
                 }
             }
         }
-        let base = Self.gatingCompletedDirectImageProviders(
+        let base = Self.gatingCompletedDirectProviders(
             in: baseEntries,
             completedProviders: completedDiscoveryProviders
         )
@@ -162,17 +162,24 @@ final class ModelCatalog {
         return order.map { byId[$0]! }
     }
 
-    static func gatingCompletedDirectImageProviders(
+    static func gatingCompletedDirectProviders(
         in entries: [CatalogEntry],
         completedProviders: Set<GenerationProvider>
     ) -> [CatalogEntry] {
         let gated = completedProviders.intersection(DirectImageDiscovery.providers)
         guard !gated.isEmpty else { return entries }
+        let everyModality = gated.intersection([.runway])
         return entries.compactMap { entry in
-            guard case .image = entry.uiCapabilities else { return entry }
+            let providers: Set<GenerationProvider>
+            if case .image = entry.uiCapabilities {
+                providers = gated
+            } else {
+                providers = everyModality
+            }
+            guard !providers.isEmpty else { return entry }
             var filtered = entry
             let offers = entry.offers ?? ProviderManifest.defaultOffers(forModelId: entry.id)
-            filtered.offers = offers.filter { !gated.contains($0.provider) }
+            filtered.offers = offers.filter { !providers.contains($0.provider) }
             return filtered.offers?.isEmpty == false ? filtered : nil
         }
     }

@@ -10,7 +10,11 @@
           "items": [
             "fal.ai image choices now come from the authenticated active-model catalog and include the current Nano Banana, Nano Banana 2, Nano Banana Pro, and GPT Image 2 generation and editing endpoints.",
             "Connected Higgsfield models use the provider's complete paged tool catalog, cached and bounded per-model reference discovery, job-set identifier, and validated status/display lifecycle; status-only and synchronous MCP contracts remain runnable when their live schemas support them.",
+            "Malformed MCP catalog pages and media-result schemas now fail closed before publication or spend, preserving the last verified model catalog and exposing only outputs the runtime can parse.",
             "Temporary fal.ai catalog failures retain the last verified runnable model set, while rejected credentials fail closed with an actionable Settings state.",
+            "Google AI and Runway catalog authentication, malformed responses, incomplete pagination, transient task polling, and uncertain submissions now fail closed without publishing partial models, repeating paid work, or releasing ambiguous spend.",
+            "Accepted fal.ai, Runway, and MCP work is cancelled at the provider when local polling or user cancellation stops; failed cancellation remains visible with a possible-charge warning.",
+            "MCP spend is recorded only after the provider request is dispatched, and completed work remains queued for its exact originating chat across tab changes.",
             "After approval, image, video, audio, and upscale work moves into a cancellable running state without blocking the composer; completion, failure, or cancellation returns exactly once to the originating chat."
           ]
         },
@@ -18,7 +22,14 @@
           "heading": "Generation pipeline",
           "items": [
             "Production Design lighting anchors pass every staged style reference into a compatible image model and display the completed generated image directly in the agent transcript.",
-            "Corrupt, unsupported, oversized, symlinked, or approval-time changed Production Design references now stop generation with the exact staged path instead of being silently omitted."
+            "Corrupt, unsupported, oversized, symlinked, or approval-time changed Production Design references now stop generation with the exact staged path instead of being silently omitted.",
+            "Approved Production Design reference bytes are copied into an immutable task-local staging area before provider upload, closing the approval-to-render mutation window."
+          ]
+        },
+        {
+          "heading": "Interface",
+          "items": [
+            "The project-version update dialog now uses native readable body text instead of low-contrast white text."
           ]
         }
       ]

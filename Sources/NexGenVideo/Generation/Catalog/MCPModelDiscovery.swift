@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import MCP
 
@@ -12,6 +13,23 @@ import MCP
 enum MCPModelDiscovery {
 
     private static let providerUnboundedReferenceHostMaximum = 32
+    private static let paginationCursorKeys = [
+        "next_page_token", "nextPageToken", "next", "cursor",
+    ]
+    private static let paginationHasMoreKeys = ["has_more", "hasMore"]
+    private static let catalogContentKeys = [
+        "items", "models", "job_sets", "jobSets", "model", "job_set", "jobSet",
+        "job_set_type", "jobSetType", "model_id", "modelId", "output_type",
+        "outputType", "modality",
+    ]
+    private static let identityFallbackKeys = ["id"]
+    private static let operationalEnvelopeKeys = ["status", "action"]
+    private static var paginationFieldKeys: [String] {
+        paginationCursorKeys + paginationHasMoreKeys
+    }
+    private static var catalogDetectionKeys: [String] {
+        catalogContentKeys + paginationFieldKeys
+    }
 
     enum Modality: String, Sendable, CaseIterable {
         case video, image, audio, upscale
@@ -20,6 +38,80 @@ enum MCPModelDiscovery {
     enum ParsingContext: Sendable {
         case listing
         case detail
+    }
+
+    struct ListingParseResult: Sendable {
+        let items: [ModelItem]
+        let pagination: PaginationEvidence
+        let isCatalogPayload: Bool
+        let structuralAndDecodeIsComplete: Bool
+
+        var next: String? {
+            structuralAndDecodeIsComplete ? pagination.next : nil
+        }
+        var isComplete: Bool {
+            structuralAndDecodeIsComplete && pagination.isComplete
+        }
+    }
+
+    private enum ListingPayloadResult {
+        case catalog(
+            items: [Any],
+            pagination: PaginationEvidence,
+            isStructurallyComplete: Bool
+        )
+        case notCatalog
+    }
+
+    private struct JSONSegment {
+        let text: String
+        let isBalanced: Bool
+    }
+
+    struct PaginationEvidence: Sendable {
+        let cursor: String?
+        let cursorWasPresent: Bool
+        let hasMore: Bool?
+        let hasMoreWasPresent: Bool
+        let isStructurallyComplete: Bool
+
+        static let none = PaginationEvidence(
+            cursor: nil,
+            cursorWasPresent: false,
+            hasMore: nil,
+            hasMoreWasPresent: false,
+            isStructurallyComplete: true
+        )
+
+        var hasFields: Bool { cursorWasPresent || hasMoreWasPresent }
+
+        var next: String? {
+            guard isComplete, hasMore != false else { return nil }
+            return cursor
+        }
+
+        var isComplete: Bool {
+            guard isStructurallyComplete else { return false }
+            switch hasMore {
+            case true: return cursor != nil
+            case false: return cursor == nil
+            case nil: return true
+            }
+        }
+
+        static func aggregating(_ evidence: [PaginationEvidence]) -> PaginationEvidence {
+            let cursors = Set(evidence.compactMap(\.cursor))
+            let hasMoreValues = Set(evidence.compactMap(\.hasMore))
+            return PaginationEvidence(
+                cursor: cursors.count == 1 ? cursors.first : nil,
+                cursorWasPresent: evidence.contains(where: \.cursorWasPresent),
+                hasMore: hasMoreValues.count == 1 ? hasMoreValues.first : nil,
+                hasMoreWasPresent: evidence.contains(where: \.hasMoreWasPresent),
+                isStructurallyComplete: evidence.allSatisfy(\.isStructurallyComplete)
+                    && cursors.count <= 1
+                    && hasMoreValues.count <= 1
+            )
+        }
     }
 
     // MARK: - Tool classification
@@ -234,8 +326,13 @@ enum MCPModelDiscovery {
                 ?? c.decodeIfPresent([Media].self, forKey: .mediaInputs)
                 ?? c.decodeIfPresent([Media].self, forKey: .mediaInputsCamel)
             tags = try c.decodeIfPresent([String].self, forKey: .tags)
-            constraints = (try? c.decode([String].self, forKey: .constraints))
-                ?? (try? c.decode(String.self, forKey: .constraints)).map { [$0] }
+            if !c.contains(.constraints) || (try c.decodeNil(forKey: .constraints)) {
+                constraints = nil
+            } else if let values = try? c.decode([String].self, forKey: .constraints) {
+                constraints = values
+            } else {
+                constraints = [try c.decode(String.self, forKey: .constraints)]
+            }
             resolvedMediaTypes = []
         }
 
@@ -385,94 +482,461 @@ enum MCPModelDiscovery {
         }
     }
 
-    /// Parse a catalog tool's textual result into models + the next-page cursor (nil when the last
-    /// page or unpaged). Tolerant: accepts the `{items,has_more,next_page_token}` envelope or a bare
-    /// `[ModelItem]` array; returns `([], nil)` on anything it can't read (never throws).
     static func parseListing(
         _ text: String,
         defaultOutputType: String? = nil,
         context: ParsingContext = .listing
     ) -> (items: [ModelItem], next: String?) {
-        guard let json = jsonPayload(in: text),
-              let data = json.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data),
-              let listing = listingPayload(root, context: context, allowBareArray: true)
-        else { return ([], nil) }
-        let decoder = JSONDecoder()
-        let items = listing.items.compactMap { value -> ModelItem? in
-            guard JSONSerialization.isValidJSONObject(value),
-                  let data = try? JSONSerialization.data(withJSONObject: value),
-                  let item = try? decoder.decode(ModelItem.self, from: data)
-            else { return nil }
-            return item.withOutputType(defaultOutputType)
-        }
-        return (items, listing.next)
+        let result = parseListingResult(
+            text,
+            defaultOutputType: defaultOutputType,
+            context: context
+        )
+        return (result.items, result.next)
     }
 
-    private static func jsonPayload(in text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let start = trimmed.firstIndex(where: { $0 == "{" || $0 == "[" }) else {
-            return nil
+    /// Parse one catalog-tool content block and report any structural or model-decoding loss.
+    static func parseListingResult(
+        _ text: String,
+        defaultOutputType: String? = nil,
+        context: ParsingContext = .listing
+    ) -> ListingParseResult {
+        let segments = jsonSegments(in: text)
+        let hasUnbalancedJSONSegment = segments.contains { !$0.isBalanced }
+        var rawItems: [Any] = []
+        var paginationEvidence: [PaginationEvidence] = []
+        var isCatalogPayload = false
+        var structuralAndDecodeIsComplete = true
+        for segment in segments {
+            guard segment.isBalanced,
+                  let data = segment.text.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: data) else {
+                if looksLikeCatalogPayload(
+                    segment.text,
+                    defaultOutputType: defaultOutputType,
+                    context: context
+                ) {
+                    isCatalogPayload = true
+                    structuralAndDecodeIsComplete = false
+                }
+                continue
+            }
+            guard case .catalog(
+                let items,
+                let pagination,
+                let payloadIsStructurallyComplete
+            ) = listingPayload(
+                root,
+                context: context
+            ) else { continue }
+            isCatalogPayload = true
+            rawItems.append(contentsOf: items)
+            paginationEvidence.append(pagination)
+            structuralAndDecodeIsComplete = structuralAndDecodeIsComplete
+                && payloadIsStructurallyComplete
         }
-        guard let end = trimmed.lastIndex(where: { $0 == "}" || $0 == "]" }),
-              start <= end else { return nil }
-        return String(trimmed[start...end])
+        if isCatalogPayload && hasUnbalancedJSONSegment {
+            structuralAndDecodeIsComplete = false
+        }
+        guard isCatalogPayload else {
+            return ListingParseResult(
+                items: [],
+                pagination: .none,
+                isCatalogPayload: false,
+                structuralAndDecodeIsComplete: true
+            )
+        }
+        let pagination = PaginationEvidence.aggregating(paginationEvidence)
+        let decoder = JSONDecoder()
+        var items: [ModelItem] = []
+        for value in rawItems {
+            guard let decoded = decodedModelItem(from: value, decoder: decoder) else {
+                structuralAndDecodeIsComplete = false
+                continue
+            }
+            items.append(decoded.withOutputType(defaultOutputType))
+        }
+        return ListingParseResult(
+            items: items,
+            pagination: pagination,
+            isCatalogPayload: true,
+            structuralAndDecodeIsComplete: structuralAndDecodeIsComplete
+        )
+    }
+
+    private static func jsonSegments(in text: String) -> [JSONSegment] {
+        var segments: [JSONSegment] = []
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex,
+              let start = text[searchStart...].firstIndex(where: {
+                $0 == "{" || $0 == "["
+              }) {
+            var expectedClosers: [Character] = []
+            var quote: Character?
+            var isEscaped = false
+            var index = start
+            var foundEnd = false
+            while index < text.endIndex {
+                let character = text[index]
+                if let activeQuote = quote {
+                    if isEscaped {
+                        isEscaped = false
+                    } else if character == "\\" {
+                        isEscaped = true
+                    } else if character == activeQuote {
+                        quote = nil
+                    }
+                } else if character == "\"" || character == "'" {
+                    quote = character
+                } else if character == "{" {
+                    expectedClosers.append("}")
+                } else if character == "[" {
+                    expectedClosers.append("]")
+                } else if character == "}" || character == "]" {
+                    let after = text.index(after: index)
+                    guard expectedClosers.last == character else {
+                        segments.append(JSONSegment(
+                            text: String(text[start..<after]),
+                            isBalanced: false
+                        ))
+                        searchStart = after
+                        foundEnd = true
+                        break
+                    }
+                    expectedClosers.removeLast()
+                    if expectedClosers.isEmpty {
+                        segments.append(JSONSegment(
+                            text: String(text[start..<after]),
+                            isBalanced: true
+                        ))
+                        searchStart = after
+                        foundEnd = true
+                        break
+                    }
+                }
+                index = text.index(after: index)
+            }
+            if !foundEnd {
+                segments.append(JSONSegment(
+                    text: String(text[start...]),
+                    isBalanced: false
+                ))
+                break
+            }
+        }
+        return segments
+    }
+
+    private static func looksLikeCatalogPayload(
+        _ text: String,
+        defaultOutputType: String?,
+        context: ParsingContext
+    ) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.first == "{" || trimmed.first == "[" else { return false }
+        if containsCatalogKeyToken(in: trimmed) { return true }
+        let isOperationalEnvelope = containsObjectKeyToken(
+            in: trimmed,
+            aliases: operationalEnvelopeKeys
+        )
+        let hasIdentityFallback = containsObjectKeyToken(
+            in: trimmed,
+            aliases: identityFallbackKeys
+        )
+        return (context == .detail || defaultOutputType != nil)
+            && (trimmed.first == "[" || (trimmed.first == "{" && !isOperationalEnvelope))
+            && hasIdentityFallback
+    }
+
+    private static func containsCatalogKeyToken(in text: String) -> Bool {
+        containsObjectKeyToken(in: text, aliases: catalogDetectionKeys)
+    }
+
+    private static func containsObjectKeyToken(
+        in text: String,
+        aliases: [String]
+    ) -> Bool {
+        let aliases = Set(aliases.map { $0.lowercased() })
+        var quote: Character?
+        var isEscaped = false
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if let activeQuote = quote {
+                if isEscaped {
+                    isEscaped = false
+                } else if character == "\\" {
+                    isEscaped = true
+                } else if character == activeQuote {
+                    quote = nil
+                }
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character == "{" || character == "," {
+                let after = text.index(after: index)
+                if let key = objectKey(in: text, startingAt: after),
+                   aliases.contains(key.lowercased()) {
+                    return true
+                }
+            }
+            index = text.index(after: index)
+        }
+        return false
+    }
+
+    private static func objectKey(
+        in text: String,
+        startingAt start: String.Index
+    ) -> String? {
+        var index = start
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        guard index < text.endIndex else { return nil }
+        let key: String
+        if text[index] == "\"" || text[index] == "'" {
+            let quote = text[index]
+            let keyStart = text.index(after: index)
+            index = keyStart
+            var isEscaped = false
+            while index < text.endIndex {
+                let character = text[index]
+                if isEscaped {
+                    isEscaped = false
+                } else if character == "\\" {
+                    isEscaped = true
+                } else if character == quote {
+                    break
+                }
+                index = text.index(after: index)
+            }
+            guard index < text.endIndex else { return nil }
+            key = String(text[keyStart..<index])
+            index = text.index(after: index)
+        } else {
+            let keyStart = index
+            while index < text.endIndex {
+                let character = text[index]
+                guard character.isLetter || character.isNumber || character == "_" else {
+                    break
+                }
+                index = text.index(after: index)
+            }
+            guard index > keyStart else { return nil }
+            key = String(text[keyStart..<index])
+        }
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        guard index < text.endIndex, text[index] == ":" else { return nil }
+        return key
     }
 
     private static func listingPayload(
         _ value: Any,
-        context: ParsingContext,
-        allowBareArray: Bool
-    ) -> (items: [[String: Any]], next: String?)? {
-        if let array = value as? [[String: Any]] {
-            return allowBareArray ? (array, nil) : nil
-        }
-        guard let object = value as? [String: Any] else { return nil }
-        let cursor = object["next_page_token"] as? String
-            ?? object["nextPageToken"] as? String
-            ?? object["next"] as? String
-            ?? object["cursor"] as? String
-        let reachedLastPage = object["has_more"] as? Bool == false
-            || object["hasMore"] as? Bool == false
-        let next = reachedLastPage ? nil : cursor
-        for key in ["items", "models", "job_sets", "jobSets"] {
-            if let items = object[key] as? [[String: Any]] {
-                return (items, next)
+        context: ParsingContext
+    ) -> ListingPayloadResult {
+        if let array = value as? [Any] {
+            let containsModel = array.contains { value in
+                guard let object = value as? [String: Any] else { return false }
+                return hasStandaloneModelContract(object, context: context)
+                    && decodedModelItem(from: object) != nil
             }
+            guard containsModel else { return .notCatalog }
+            return .catalog(
+                items: array,
+                pagination: .none,
+                isStructurallyComplete: true
+            )
         }
+        guard let object = value as? [String: Any] else { return .notCatalog }
+        let pagination = paginationMetadata(in: object)
+        var nestedItems: [Any] = []
+        var nestedPagination: [PaginationEvidence] = []
+        var foundNestedCatalog = false
+        var nestedIsStructurallyComplete = true
         for key in ["data", "result", "payload"] {
-            if let nested = object[key],
-               let listing = listingPayload(
-                   nested,
-                   context: context,
-                   allowBareArray: false
-               ) {
-                return (listing.items, listing.next ?? next)
-            }
+            guard let nested = object[key],
+                  case .catalog(
+                    let items,
+                    let evidence,
+                    let isStructurallyComplete
+                  ) = listingPayload(
+                    nested,
+                    context: context
+                  ) else { continue }
+            foundNestedCatalog = true
+            nestedItems.append(contentsOf: items)
+            nestedPagination.append(evidence)
+            nestedIsStructurallyComplete = nestedIsStructurallyComplete
+                && isStructurallyComplete
         }
-        for key in ["model", "job_set", "jobSet"] {
-            if let item = object[key] as? [String: Any],
-               context == .detail || hasExplicitModality(item) {
-                return ([item], next)
+        let combinedPagination = PaginationEvidence.aggregating(
+            [pagination] + nestedPagination
+        )
+
+        let collectionKeys = ["items", "models", "job_sets", "jobSets"]
+        let presentCollections = collectionKeys.filter { object[$0] != nil }
+        if !presentCollections.isEmpty {
+            var items: [Any] = []
+            var isStructurallyComplete = combinedPagination.isStructurallyComplete
+                && (!foundNestedCatalog || nestedIsStructurallyComplete)
+            for key in presentCollections {
+                guard let values = object[key] as? [Any] else {
+                    isStructurallyComplete = false
+                    continue
+                }
+                items.append(contentsOf: values)
             }
+            return .catalog(
+                items: items,
+                pagination: combinedPagination,
+                isStructurallyComplete: isStructurallyComplete
+            )
         }
+
+        let singleKeys = ["model", "job_set", "jobSet"]
+        let presentSingles = singleKeys.filter { object[$0] != nil }
+        if !presentSingles.isEmpty {
+            var items: [Any] = []
+            var isStructurallyComplete = combinedPagination.isStructurallyComplete
+                && (!foundNestedCatalog || nestedIsStructurallyComplete)
+            for key in presentSingles {
+                guard let item = object[key] as? [String: Any],
+                      hasStandaloneModelContract(item, context: context) else {
+                    isStructurallyComplete = false
+                    continue
+                }
+                items.append(item)
+            }
+            return .catalog(
+                items: items,
+                pagination: combinedPagination,
+                isStructurallyComplete: isStructurallyComplete
+            )
+        }
+
         if ["id", "job_set_type", "jobSetType", "model_id", "modelId"]
             .contains(where: { object[$0] != nil }),
-           context == .detail || hasExplicitModality(object) {
-            return ([object], next)
+           hasStandaloneModelContract(object, context: context) {
+            return .catalog(
+                items: [object],
+                pagination: combinedPagination,
+                isStructurallyComplete: combinedPagination.isStructurallyComplete
+                    && (!foundNestedCatalog || nestedIsStructurallyComplete)
+            )
         }
-        if cursor != nil || object["has_more"] != nil || object["hasMore"] != nil {
-            return ([], next)
+        if foundNestedCatalog {
+            return .catalog(
+                items: nestedItems,
+                pagination: combinedPagination,
+                isStructurallyComplete: combinedPagination.isStructurallyComplete
+                    && nestedIsStructurallyComplete
+            )
         }
-        return nil
+        if combinedPagination.hasFields {
+            return .catalog(
+                items: [],
+                pagination: combinedPagination,
+                isStructurallyComplete: combinedPagination.isStructurallyComplete
+            )
+        }
+        return .notCatalog
     }
 
-    private static func hasExplicitModality(_ object: [String: Any]) -> Bool {
-        for key in ["output_type", "outputType", "type", "modality"] {
+    private static func decodedModelItem(
+        from value: Any,
+        decoder: JSONDecoder = JSONDecoder()
+    ) -> ModelItem? {
+        guard let object = value as? [String: Any],
+              !isOperationalEnvelope(object),
+              JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let decoded = try? decoder.decode(ModelItem.self, from: data),
+              !decoded.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return decoded
+    }
+
+    private static func paginationMetadata(
+        in object: [String: Any]
+    ) -> PaginationEvidence {
+        let cursorWasPresent = paginationCursorKeys.contains { object[$0] != nil }
+        let hasMoreWasPresent = paginationHasMoreKeys.contains { object[$0] != nil }
+        var isComplete = true
+        var cursors = Set<String>()
+        for key in paginationCursorKeys where object[key] != nil {
+            guard let value = object[key] else { continue }
+            if value is NSNull { continue }
+            guard let cursor = value as? String,
+                  !cursor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                isComplete = false
+                continue
+            }
+            cursors.insert(cursor)
+        }
+        if cursors.count > 1 { isComplete = false }
+
+        var moreValues = Set<Bool>()
+        for key in paginationHasMoreKeys where object[key] != nil {
+            guard let number = object[key] as? NSNumber,
+                  CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID() else {
+                isComplete = false
+                continue
+            }
+            moreValues.insert(number.boolValue)
+        }
+        if moreValues.count > 1 { isComplete = false }
+        let hasMore = moreValues.count == 1 ? moreValues.first : nil
+        let cursor = cursors.count == 1 ? cursors.first : nil
+        return PaginationEvidence(
+            cursor: cursor,
+            cursorWasPresent: cursorWasPresent,
+            hasMore: hasMore,
+            hasMoreWasPresent: hasMoreWasPresent,
+            isStructurallyComplete: isComplete
+        )
+    }
+
+    private static func hasStandaloneModelContract(
+        _ object: [String: Any],
+        context: ParsingContext
+    ) -> Bool {
+        guard hasValidModelIdentity(object), !isOperationalEnvelope(object) else {
+            return false
+        }
+        if context == .detail { return true }
+        if hasDeclaredOutputModality(object) { return true }
+        let hasJobSetIdentity = ["job_set_type", "jobSetType"].contains { key in
+            guard let value = object[key] as? String else { return false }
+            return !value.isEmpty
+        }
+        return hasJobSetIdentity && hasGenericTypeModality(object)
+    }
+
+    private static func hasValidModelIdentity(_ object: [String: Any]) -> Bool {
+        ["id", "job_set_type", "jobSetType", "model_id", "modelId"].contains { key in
+            guard let value = object[key] as? String else { return false }
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private static func hasDeclaredOutputModality(_ object: [String: Any]) -> Bool {
+        for key in ["output_type", "outputType", "modality"] {
             guard let raw = object[key] as? String else { continue }
             if Modality(rawValue: raw.lowercased()) != nil { return true }
         }
         return false
+    }
+
+    private static func hasGenericTypeModality(_ object: [String: Any]) -> Bool {
+        guard let raw = object["type"] as? String else { return false }
+        return Modality(rawValue: raw.lowercased()) != nil
+    }
+
+    private static func isOperationalEnvelope(_ object: [String: Any]) -> Bool {
+        object["action"] != nil || object["status"] != nil
     }
 
     // MARK: - Mapping (the unit-tested core)

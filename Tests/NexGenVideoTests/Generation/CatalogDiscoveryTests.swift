@@ -6,6 +6,44 @@ import Testing
 
 @Suite("Catalog discovery coordinator", .serialized)
 struct CatalogDiscoveryTests {
+    private var mappableHiggsfieldResultLifecycle: [MCPProviderClient.DiscoveredTool] {
+        [
+            MCPProviderClient.DiscoveredTool(
+                name: "job_status",
+                description: "Check a generation job.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "job_set_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("job_set_id")]),
+                ])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "job_display",
+                description: "Display completed generation output.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "ids": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                        ]),
+                    ]),
+                    "required": .array([.string("ids")]),
+                ])
+            ),
+        ]
+    }
+
+    private func listingPage(
+        _ range: Range<Int>,
+        hasMore: Bool,
+        cursor: String? = nil
+    ) -> String {
+        let items = range.map { #"{"id":"limit-\#($0)"}"# }.joined(separator: ",")
+        let cursorField = cursor.map { ",\"next_page_token\":\"\($0)\"" } ?? ""
+        return "{\"items\":[\(items)]\(cursorField),\"has_more\":\(hasMore)}"
+    }
+
     actor AsyncGate {
         private var isOpen = false
         private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -49,13 +87,58 @@ struct CatalogDiscoveryTests {
             ]
         )
 
-        let filtered = ModelCatalog.gatingCompletedDirectImageProviders(
+        let filtered = ModelCatalog.gatingCompletedDirectProviders(
             in: [entry],
             completedProviders: [.fal, .runway, .google]
         )
         let remaining = try #require(filtered.first?.offers)
 
         #expect(remaining.map(\.provider) == [.higgsfield])
+    }
+
+    @MainActor
+    @Test("Runway entitlement discovery replaces stale base offers for every modality")
+    func runwayDiscoveryReplacesBaseVideoOffers() throws {
+        let shared = CatalogEntry(
+            id: "shared-video",
+            kind: .video,
+            displayName: "Shared video",
+            allowedEndpoints: ["shared-video"],
+            responseShape: .video,
+            uiCapabilities: .video(VideoCaps(
+                durations: [5],
+                resolutions: nil,
+                aspectRatios: ["16:9"],
+                supportsFirstFrame: true,
+                supportsLastFrame: false,
+                maxReferenceImages: 1,
+                maxReferenceVideos: 0,
+                maxReferenceAudios: 0,
+                maxTotalReferences: 1,
+                maxCombinedVideoRefSeconds: nil,
+                maxCombinedAudioRefSeconds: nil,
+                framesAndReferencesExclusive: false,
+                referenceTagNoun: "image",
+                requiresSourceVideo: false,
+                requiresReferenceImage: false
+            )),
+            offers: [
+                ProviderOffer(provider: .runway),
+                ProviderOffer(provider: .fal),
+                ProviderOffer(provider: .higgsfield, transport: .mcp),
+            ]
+        )
+        var runwayOnly = shared
+        runwayOnly.offers = [ProviderOffer(provider: .runway)]
+
+        let filtered = ModelCatalog.gatingCompletedDirectProviders(
+            in: [shared, runwayOnly],
+            completedProviders: [.fal, .runway]
+        )
+        let remaining = try #require(filtered.first?.offers)
+
+        #expect(filtered.count == 1)
+        #expect(remaining.map(\.provider) == [.fal, .higgsfield])
     }
 
     actor StubClient: MCPCatalogClient {
@@ -142,6 +225,29 @@ struct CatalogDiscoveryTests {
                     description: "Find generation models.",
                     inputSchema: .object([:])
                 ),
+                MCPProviderClient.DiscoveredTool(
+                    name: "job_status",
+                    description: "Check a generation job.",
+                    inputSchema: .object([
+                        "properties": .object([
+                            "job_set_id": .object(["type": .string("string")]),
+                        ]),
+                        "required": .array([.string("job_set_id")]),
+                    ])
+                ),
+                MCPProviderClient.DiscoveredTool(
+                    name: "job_display",
+                    description: "Display completed generation output.",
+                    inputSchema: .object([
+                        "properties": .object([
+                            "ids": .object([
+                                "type": .string("array"),
+                                "items": .object(["type": .string("string")]),
+                            ]),
+                        ]),
+                        "required": .array([.string("ids")]),
+                    ])
+                ),
             ]
             self.modelCount = modelCount
             self.failingModelIDs = failingModelIDs
@@ -182,6 +288,15 @@ struct CatalogDiscoveryTests {
     }
 
     @MainActor
+    @Test("OAuth discovery distinguishes inactive providers from disconnected providers")
+    func oauthDiscoveryStateRequiresConfigurationHistory() {
+        #expect(CatalogDiscovery.oauthDisconnectedState(wasConfigured: false) == .inactive)
+        #expect(CatalogDiscovery.oauthDisconnectedState(wasConfigured: true) == .actionRequired(
+            "Sign in again to refresh this provider's models."
+        ))
+    }
+
+    @MainActor
     @Test("Catalog discovery combines models and cursor data from every MCP content block")
     func catalogDiscoveryCombinesContentBlocks() async {
         let tools = [
@@ -195,11 +310,12 @@ struct CatalogDiscoveryTests {
                 description: "Find generation models.",
                 inputSchema: .object([:])
             ),
-        ]
+        ] + mappableHiggsfieldResultLifecycle
         let client = StubClient(
             tools: tools,
             pages: [
                 [
+                    "Model catalog follows.",
                     #"{"items":[{"id":"first","output_type":"image"}]}"#,
                     #"{"items":[{"id":"first","name":"First","output_type":"image"},{"id":"second","output_type":"image"}]}"#,
                     #"{"next_page_token":"page-2"}"#,
@@ -208,10 +324,583 @@ struct CatalogDiscoveryTests {
             ]
         )
 
-        let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let entries = result.entries
 
         #expect(entries.map(\.id) == ["first", "second", "third"])
         #expect(entries.first?.displayName == "First")
+        #expect(result.modelListingIsComplete)
+    }
+
+    @MainActor
+    @Test("A partially decoded MCP model page is never publishable")
+    func partiallyDecodedModelPageIsIncomplete() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"kept","output_type":"image"},{"id":7,"output_type":"image"}]}"#
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+
+        #expect(result.entries.map(\.id) == ["kept"])
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 0
+        ) == .withholdIncompleteFirstRefresh)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 4
+        ) == .preserveLastKnownGood)
+    }
+
+    @MainActor
+    @Test("Has-more evidence accepts one cursor from another content block")
+    func splitHasMoreAndCursorContinuesPagination() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            pages: [
+                [
+                    #"{"items":[{"id":"split-first","output_type":"image"}],"has_more":true}"#,
+                    #"{"next_page_token":"page-2"}"#,
+                ],
+                [#"{"items":[{"id":"split-second","output_type":"image"}],"has_more":false}"#],
+            ]
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+
+        #expect(result.entries.map(\.id) == ["split-first", "split-second"])
+        #expect(result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 2
+        ) == .publish)
+    }
+
+    @MainActor
+    @Test("Terminal evidence in one content block rejects a cursor from another block")
+    func splitTerminalCursorPreservesLastKnownGood() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            pages: [[
+                #"{"items":[{"id":"split-terminal","output_type":"image"}],"has_more":false}"#,
+                #"{"next_page_token":"unexpected"}"#,
+            ]]
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.map(\.id) == ["split-terminal"])
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 0
+        ) == .withholdIncompleteFirstRefresh)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 6
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("A truncated cursor content block withholds the page and preserves last-known-good")
+    func truncatedCursorBlockPreservesLastKnownGood() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            pages: [[
+                #"{"items":[{"id":"valid-item","output_type":"image"}]}"#,
+                #"{"cursor":"must-not-follow""#,
+            ]]
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.map(\.id) == ["valid-item"])
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 0
+        ) == .withholdIncompleteFirstRefresh)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 8
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("Conflicting has-more evidence across content blocks stops pagination")
+    func splitConflictingHasMoreStopsPagination() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            pages: [[
+                #"{"items":[{"id":"split-conflict","output_type":"image"}],"has_more":true}"#,
+                #"{"has_more":false}"#,
+                #"{"next_page_token":"must-not-follow"}"#,
+            ]]
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.map(\.id) == ["split-conflict"])
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 2
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("A valid cursor cannot bypass a truncated catalog sibling")
+    func validCursorWithTruncatedCatalogSiblingPreservesLastKnownGood() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            pages: [[
+                #"{"items":[{"id":"valid-before-loss","output_type":"image"}]}"#,
+                #"{"next_page_token":"must-not-follow"}"#,
+                #"{"items":["#,
+            ]]
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.map(\.id) == ["valid-before-loss"])
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 0
+        ) == .withholdIncompleteFirstRefresh)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 10
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("A nested terminal marker rejects an outer collection cursor")
+    func nestedTerminalRejectsOuterCursor() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"outer-cursor","output_type":"image"}],"next_page_token":"unexpected","data":{"has_more":false}}"#
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.map(\.id) == ["outer-cursor"])
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 7
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("An outer terminal marker rejects a nested sibling cursor")
+    func outerTerminalRejectsNestedCursor() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"outer-terminal","output_type":"image"}],"has_more":false,"result":{"next_page_token":"unexpected"}}"#
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.map(\.id) == ["outer-terminal"])
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 0
+        ) == .withholdIncompleteFirstRefresh)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 7
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("An incomplete first model-list pagination is withheld")
+    func incompleteFirstPaginationIsWithheld() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            pages: [
+                [#"{"items":[{"id":"partial-first","output_type":"image"}],"next_page_token":"repeat"}"#],
+                [#"{"items":[{"id":"partial-second","output_type":"image"}],"next_page_token":"repeat"}"#],
+            ]
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let decision = CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 0
+        )
+
+        #expect(result.entries.map(\.id) == ["partial-first", "partial-second"])
+        #expect(!result.modelListingIsComplete)
+        #expect(decision == .withholdIncompleteFirstRefresh)
+    }
+
+    @MainActor
+    @Test("An empty page with continuation stops without following the cursor")
+    func emptyPageWithContinuationPreservesLastKnownGood() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            pages: [
+                [#"{"items":[],"has_more":true,"next_page_token":"page-2"}"#],
+                [#"{"items":[{"id":"must-not-load","output_type":"image"}],"has_more":false}"#],
+            ]
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.isEmpty)
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 5
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("An empty terminal page remains a complete listing")
+    func emptyTerminalPageIsComplete() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[],"has_more":false}"#
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.isEmpty)
+        #expect(result.modelListingIsComplete)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("An incomplete later model-list pagination preserves the last-known-good catalog")
+    func incompleteLaterPaginationPreservesLastKnownGood() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            pages: [
+                [#"{"items":[{"id":"partial-first","output_type":"image"}],"next_page_token":"repeat"}"#],
+                [#"{"items":[{"id":"partial-second","output_type":"image"}],"next_page_token":"repeat"}"#],
+            ]
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let decision = CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 3
+        )
+
+        #expect(!result.modelListingIsComplete)
+        #expect(decision == .preserveLastKnownGood)
+    }
+
+    @MainActor
+    @Test("A terminal page with a cursor is withheld and preserves the last-known-good catalog")
+    func contradictoryTerminalPaginationPreservesLastKnownGood() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"contradictory","output_type":"image"}],"has_more":false,"next_page_token":"unexpected"}"#
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.map(\.id) == ["contradictory"])
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 0
+        ) == .withholdIncompleteFirstRefresh)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 5
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("A single oversized terminal page is withheld and preserves the last-known-good catalog")
+    func oversizedTerminalPagePreservesLastKnownGood() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            listing: listingPage(0..<401, hasMore: false)
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.count == 400)
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 0
+        ) == .withholdIncompleteFirstRefresh)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 9
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
+    }
+
+    @MainActor
+    @Test("The provider model limit stops listing before another modality")
+    func providerModelLimitStopsBeforeAnotherModality() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_video",
+                description: "Generate a video.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            pages: [
+                [listingPage(0..<250, hasMore: true, cursor: "page-2")],
+                [listingPage(250..<401, hasMore: false)],
+            ]
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.count == 400)
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 4
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore", "models_explore"])
+    }
+
+    @MainActor
+    @Test("An exactly full terminal modality prevents listing another modality")
+    func exactProviderModelLimitStopsBeforeAnotherModality() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_video",
+                description: "Generate a video.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            listing: listingPage(0..<400, hasMore: false)
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
+
+        #expect(result.entries.count == 400)
+        #expect(!result.modelListingIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: result.modelListingIsComplete,
+            retainedModelCount: 3
+        ) == .preserveLastKnownGood)
+        #expect(snapshot.calls == ["models_explore"])
     }
 
     @MainActor
@@ -223,7 +912,8 @@ struct CatalogDiscoveryTests {
             failingModelIDs: ["stress-3"]
         )
 
-        let first = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let firstResult = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+        let first = firstResult.entries
         let firstSnapshot = await client.snapshot()
         let second = await CatalogDiscovery.discover(.higgsfield, client: client)
         let secondSnapshot = await client.snapshot()
@@ -235,6 +925,12 @@ struct CatalogDiscoveryTests {
         let fourthSnapshot = await client.snapshot()
 
         #expect(first.count == 12)
+        #expect(firstResult.modelListingIsComplete)
+        #expect(!firstResult.detailEnrichmentIsComplete)
+        #expect(CatalogDiscovery.mcpListingPublicationDecision(
+            listingIsComplete: firstResult.modelListingIsComplete,
+            retainedModelCount: 12
+        ) == .publish)
         #expect(second.count == 12)
         #expect(third.count == 12)
         #expect(fourth.count == 12)
@@ -245,6 +941,124 @@ struct CatalogDiscoveryTests {
         #expect(thirdSnapshot.detailCalls == 15)
         #expect(fourthSnapshot.detailCalls == 27)
         CatalogDiscovery.invalidateDetailCache()
+    }
+
+    @MainActor
+    @Test("A truncated job-set detail sibling preserves the cached detail contract")
+    func truncatedJobSetDetailSiblingPreservesCachedDetails() async throws {
+        CatalogDiscovery.invalidateDetailCache()
+        defer { CatalogDiscovery.invalidateDetailCache() }
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let initialClient = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"detail-jobset","name":"Initial","output_type":"image"}]}"#,
+            detailPayloads: [
+                "detail-jobset": [
+                    #"{"id":"detail-jobset","constraints":["At most 4 image references are allowed."]}"#,
+                ],
+            ]
+        )
+
+        let initial = await CatalogDiscovery.discoverResult(
+            .higgsfield,
+            client: initialClient
+        )
+        let refreshClient = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"detail-jobset","name":"Changed","output_type":"image"}]}"#,
+            detailPayloads: [
+                "detail-jobset": [
+                    #"{"id":"detail-jobset","constraints":["At most 9 image references are allowed."]}"#,
+                    #"{"job_set_type":"detail-jobset""#,
+                ],
+            ]
+        )
+
+        let refreshed = await CatalogDiscovery.discoverResult(
+            .higgsfield,
+            client: refreshClient
+        )
+        let entry = try #require(refreshed.entries.first)
+        guard case .image(let caps) = entry.uiCapabilities else {
+            Issue.record("Expected image capabilities")
+            return
+        }
+
+        #expect(initial.modelListingIsComplete)
+        #expect(initial.detailEnrichmentIsComplete)
+        #expect(refreshed.modelListingIsComplete)
+        #expect(!refreshed.detailEnrichmentIsComplete)
+        #expect(entry.displayName == "Changed")
+        #expect(ImageModelConfig(entry: entry, caps: caps).referenceImageLimit == .bounded(4))
+    }
+
+    @MainActor
+    @Test("Malformed constraints preserve the cached detail contract")
+    func malformedConstraintsPreserveCachedDetails() async throws {
+        CatalogDiscovery.invalidateDetailCache()
+        defer { CatalogDiscovery.invalidateDetailCache() }
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let initialClient = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"detail-constraints","name":"Initial","output_type":"image"}]}"#,
+            detailPayloads: [
+                "detail-constraints": [
+                    #"{"id":"detail-constraints","constraints":["At most 4 image references are allowed."]}"#,
+                ],
+            ]
+        )
+
+        let initial = await CatalogDiscovery.discoverResult(
+            .higgsfield,
+            client: initialClient
+        )
+        let refreshClient = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"detail-constraints","name":"Changed","output_type":"image"}]}"#,
+            detailPayloads: [
+                "detail-constraints": [
+                    #"{"id":"detail-constraints","constraints":["At most 9 image references are allowed.",7]}"#,
+                ],
+            ]
+        )
+
+        let refreshed = await CatalogDiscovery.discoverResult(
+            .higgsfield,
+            client: refreshClient
+        )
+        let entry = try #require(refreshed.entries.first)
+        guard case .image(let caps) = entry.uiCapabilities else {
+            Issue.record("Expected image capabilities")
+            return
+        }
+
+        #expect(initial.detailEnrichmentIsComplete)
+        #expect(refreshed.modelListingIsComplete)
+        #expect(!refreshed.detailEnrichmentIsComplete)
+        #expect(entry.displayName == "Changed")
+        #expect(ImageModelConfig(entry: entry, caps: caps).referenceImageLimit == .bounded(4))
     }
 
     @MainActor
@@ -434,7 +1248,7 @@ struct CatalogDiscoveryTests {
                 description: "Find generation models.",
                 inputSchema: .object([:])
             ),
-        ]
+        ] + mappableHiggsfieldResultLifecycle
         let client = StubClient(
             tools: tools,
             listing: #"{"items":[{"id":"seedance_2_0","name":"Seedance 2.0","output_type":"video"},{"id":"cinematic_studio_video_3_5","name":"Cinematic Studio 3.5","output_type":"video"},{"id":"gemini_omni","name":"Gemini Omni","output_type":"video"}]}"#,
@@ -533,7 +1347,7 @@ struct CatalogDiscoveryTests {
                 description: "Find generation models.",
                 inputSchema: .object([:])
             ),
-        ]
+        ] + mappableHiggsfieldResultLifecycle
         let client = StubClient(
             tools: tools,
             listing: #"{"items":[{"id":"partial-image","output_type":"image","medias":[{"name":"medias","type":"image","roles":["image"]}]}]}"#,
@@ -596,8 +1410,8 @@ struct CatalogDiscoveryTests {
     }
 
     @MainActor
-    @Test("A status-only asynchronous lifecycle remains discoverable without an output schema")
-    func statusOnlyLifecycleRemainsDiscoverable() async {
+    @Test("Status-only lifecycle without a declared media result is rejected")
+    func statusOnlyLifecycleWithoutMediaResultIsRejected() async {
         let tools = [
             MCPProviderClient.DiscoveredTool(
                 name: "generate_image",
@@ -632,13 +1446,16 @@ struct CatalogDiscoveryTests {
         )
 
         let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
 
-        #expect(entries.map(\.id) == ["status-image"])
+        #expect(entries.isEmpty)
+        #expect(snapshot.calls.isEmpty)
+        #expect(snapshot.disconnected)
     }
 
     @MainActor
-    @Test("Schema-free synchronous MCP generators remain discoverable")
-    func schemaFreeSynchronousGeneratorRemainsAvailable() async {
+    @Test("No-status schema-free generator is rejected without a direct or sync contract")
+    func schemaFreeNoStatusGeneratorIsRejected() async {
         let tools = [
             MCPProviderClient.DiscoveredTool(
                 name: "generate_image",
@@ -663,7 +1480,177 @@ struct CatalogDiscoveryTests {
         )
 
         let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+        let snapshot = await client.snapshot()
 
-        #expect(entries.map(\.id) == ["direct-image"])
+        #expect(entries.isEmpty)
+        #expect(snapshot.calls.isEmpty)
+        #expect(snapshot.disconnected)
+    }
+
+    @MainActor
+    @Test("Status output schema proves an asynchronous media result path")
+    func declaredStatusMediaOutputRemainsDiscoverable() async {
+        let mediaOutputSchema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "result": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "url": .object(["type": .string("string")]),
+                    ]),
+                ]),
+            ]),
+        ])
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "job_status",
+                description: "Check generation job status.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "job_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("job_id")]),
+                ]),
+                outputSchema: mediaOutputSchema
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ]
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"status-image","output_type":"image"}]}"#
+        )
+
+        let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+
+        #expect(entries.map(\.id) == ["status-image"])
+    }
+
+    @MainActor
+    @Test("Higgsfield's schema-free mappable result tool is an explicit result path")
+    func mappableHiggsfieldResultToolRemainsDiscoverable() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"higgsfield-image","output_type":"image"}]}"#
+        )
+
+        let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+
+        #expect(entries.map(\.id) == ["higgsfield-image"])
+    }
+
+    @MainActor
+    @Test("A result tool that declares no media output cannot publish a model")
+    func declaredNonMediaResultToolIsRejected() async {
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "job_status",
+                description: "Check generation job status.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "job_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("job_id")]),
+                ])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "job_result",
+                description: "Read generation result.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "job_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("job_id")]),
+                ]),
+                outputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "message": .object(["type": .string("string")]),
+                    ]),
+                ])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ]
+        let client = StubClient(
+            tools: tools,
+            listing: #"{"items":[{"id":"unreachable-image","output_type":"image"}]}"#
+        )
+
+        let entries = await CatalogDiscovery.discover(.higgsfield, client: client)
+
+        #expect(entries.isEmpty)
+    }
+
+    @MainActor
+    @Test("Tool-only fallback excludes generation modalities without a usable lifecycle")
+    func toolOnlyFallbackUsesLifecycleFilteredGenerators() async {
+        let mediaOutputSchema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "result": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "url": .object(["type": .string("string")]),
+                    ]),
+                ]),
+            ]),
+        ])
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: .object([:]),
+                outputSchema: mediaOutputSchema
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_video",
+                description: "Generate a video.",
+                inputSchema: .object([:])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "job_status",
+                description: "Check generation job status.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "tenant_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("tenant_id")]),
+                ])
+            ),
+        ]
+        let client = StubClient(tools: tools, listing: "{}")
+
+        let entries = await CatalogDiscovery.discover(.openart, client: client)
+
+        #expect(entries.map(\.id) == ["generate_image"])
     }
 }

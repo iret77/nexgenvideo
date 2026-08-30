@@ -361,6 +361,151 @@ struct RestyleModelTests {
         ])
     }
 
+    @Test("Production Design generation reads only the approved immutable copy")
+    func productionDesignGenerationUsesImmutableStaging() async throws {
+        let root = try productionDesignReferenceRoot()
+        let stagingParent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: stagingParent)
+        }
+        let path = "production_design/refs/character.png"
+        let source = root.appendingPathComponent(path)
+        let approvedBytes = try referencePNG()
+        try approvedBytes.write(to: source)
+        let snapshot = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        let reference = productionDesignReference(path: path, source: source)
+        var stagedURL: URL?
+
+        try await ToolExecutor.withStagedProductionDesignReferences(
+            snapshot: snapshot,
+            projectReferences: [reference],
+            dataRoot: root,
+            stagingParent: stagingParent
+        ) { staged in
+            let stagedReference = try #require(staged.first)
+            stagedURL = stagedReference.url
+            #expect(stagedReference.id == reference.id)
+            #expect(stagedReference.name == reference.name)
+            #expect(stagedReference.originalFilename == reference.originalFilename)
+            #expect(stagedReference.url != source)
+
+            var changedBytes = approvedBytes
+            changedBytes.append(0)
+            try changedBytes.write(to: source)
+
+            #expect(try Data(contentsOf: stagedReference.url) == approvedBytes)
+            let permissions = try FileManager.default.attributesOfItem(
+                atPath: stagedReference.url.path
+            )[.posixPermissions] as? NSNumber
+            #expect(permissions?.intValue == 0o400)
+        }
+
+        #expect(stagedURL.map { !FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(try FileManager.default.contentsOfDirectory(
+            at: stagingParent,
+            includingPropertiesForKeys: nil
+        ).isEmpty)
+    }
+
+    @Test("Production Design staging fails closed when approved bytes changed")
+    func productionDesignStagingRejectsSnapshotMismatch() async throws {
+        let root = try productionDesignReferenceRoot()
+        let stagingParent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: stagingParent)
+        }
+        let path = "production_design/refs/character.png"
+        let source = root.appendingPathComponent(path)
+        var bytes = try referencePNG()
+        try bytes.write(to: source)
+        let snapshot = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        bytes.append(0)
+        try bytes.write(to: source)
+
+        do {
+            try await ToolExecutor.withStagedProductionDesignReferences(
+                snapshot: snapshot,
+                projectReferences: [productionDesignReference(path: path, source: source)],
+                dataRoot: root,
+                stagingParent: stagingParent
+            ) { _ in
+                Issue.record("A mismatched reference reached generation submission")
+            }
+            Issue.record("Expected immutable staging to reject changed bytes")
+        } catch {
+            #expect(error.localizedDescription.contains(path))
+            #expect(error.localizedDescription.contains("changed while it was being staged"))
+        }
+
+        #expect(try FileManager.default.contentsOfDirectory(
+            at: stagingParent,
+            includingPropertiesForKeys: nil
+        ).isEmpty)
+    }
+
+    @Test("Production Design staging is cleaned when generation is cancelled")
+    func productionDesignStagingCleansUpOnCancellation() async throws {
+        let root = try productionDesignReferenceRoot()
+        let stagingParent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: stagingParent)
+        }
+        let path = "production_design/refs/character.png"
+        let source = root.appendingPathComponent(path)
+        try referencePNG().write(to: source)
+        let snapshot = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        let reference = productionDesignReference(path: path, source: source)
+        var stagedURL: URL?
+
+        do {
+            let _: Void = try await ToolExecutor.withStagedProductionDesignReferences(
+                snapshot: snapshot,
+                projectReferences: [reference],
+                dataRoot: root,
+                stagingParent: stagingParent
+            ) { staged in
+                stagedURL = (try #require(staged.first)).url
+                throw CancellationError()
+            }
+            Issue.record("Expected cancellation")
+        } catch is CancellationError {
+        }
+
+        #expect(stagedURL.map { !FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(try FileManager.default.contentsOfDirectory(
+            at: stagingParent,
+            includingPropertiesForKeys: nil
+        ).isEmpty)
+    }
+
+    @Test("Production Design staging cannot enter the canonical pipeline")
+    func productionDesignStagingRejectsCanonicalDestination() async throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = "production_design/refs/character.png"
+        let source = root.appendingPathComponent(path)
+        try referencePNG().write(to: source)
+        let snapshot = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+
+        do {
+            try await ToolExecutor.withStagedProductionDesignReferences(
+                snapshot: snapshot,
+                projectReferences: [productionDesignReference(path: path, source: source)],
+                dataRoot: root,
+                stagingParent: root.appendingPathComponent("generation-staging")
+            ) { _ in }
+            Issue.record("Expected canonical pipeline staging to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("outside the project pipeline"))
+        }
+    }
+
     private func productionDesignReferenceRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -369,6 +514,16 @@ struct RestyleModelTests {
             withIntermediateDirectories: true
         )
         return root
+    }
+
+    private func productionDesignReference(path: String, source: URL) -> MediaAsset {
+        MediaAsset(
+            id: "pipeline-reference:\(path)",
+            url: source,
+            type: .image,
+            name: source.deletingPathExtension().lastPathComponent,
+            originalFilename: source.lastPathComponent
+        )
     }
 
     private func referencePNG() throws -> Data {

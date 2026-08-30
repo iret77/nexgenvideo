@@ -51,6 +51,17 @@ struct CostGuardTests {
     }
 
     @MainActor
+    private final class HostFollowUpFixture {
+        var readinessError: AgentStreamError?
+        private(set) var sent: [String] = []
+
+        func send(_ text: String, imageBlocks: [[String: Any]]) -> Bool {
+            sent.append(text)
+            return true
+        }
+    }
+
+    @MainActor
     private func waitUntil(_ predicate: @MainActor () -> Bool) async {
         for _ in 0..<1_000 {
             if predicate() { return }
@@ -176,7 +187,10 @@ struct CostGuardTests {
     @MainActor
     @Test func embeddedApprovalKeepsItsResumeOwner() async throws {
         let editor = EditorViewModel()
-        let service = AgentService(backend: .claudeCode)
+        let service = AgentService(
+            backend: .claudeCode,
+            refreshBackendStatusOnInit: false
+        )
         service.editor = editor
         service.newChat()
         let unavailable = ClaudeCodeLocator.Status(
@@ -297,6 +311,75 @@ struct CostGuardTests {
             guard case .image(let base64, let mediaType) = $0 else { return false }
             return base64 == "aW1hZ2U=" && mediaType == "image/png"
         }) == true)
+    }
+
+    @MainActor
+    @Test func workingCopyFailurePreservesAndRetryStartsExactEmbeddedFollowUp() async throws {
+        let editor = EditorViewModel()
+        let fixture = HostFollowUpFixture()
+        fixture.readinessError = .upstream("The project working copy is unavailable.")
+        let service = AgentService(
+            backend: .claudeCode,
+            refreshBackendStatusOnInit: false,
+            hostFollowUpReadinessOverride: { fixture.readinessError },
+            embeddedHostFollowUpSender: fixture.send
+        )
+        service.editor = editor
+        service.newChat()
+        NotificationCenter.default.post(
+            name: .claudeCodeStatusChanged,
+            object: ClaudeCodeLocator.Status(
+                executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+                version: "test",
+                isAuthenticated: true
+            )
+        )
+        let sessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: sessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "working-copy-retry",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "working-copy-image",
+                content: [.text("The spend approval card is open. End this turn and wait for the host result; do not retry this tool call.")],
+                isError: false
+            ),
+        ])]
+        service.isStreaming = true
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in .ok("rendered") }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { service.hasPendingHostFollowUp }
+        service.isStreaming = false
+        #expect(!service.resumePendingSpendFollowUp())
+        #expect(service.hasPendingHostFollowUp)
+        #expect(fixture.sent.isEmpty)
+        #expect(service.streamError?.errorDescription?.contains("working copy") == true)
+
+        fixture.readinessError = nil
+        service.retryPendingHostFollowUp()
+        #expect(!service.hasPendingHostFollowUp)
+        #expect(fixture.sent.count == 1)
+        #expect(fixture.sent[0].contains("Host generation result: rendered"))
+        #expect(service.currentSessionId == sessionID)
     }
 
     @MainActor
@@ -443,6 +526,121 @@ struct CostGuardTests {
             guard case .text(let text) = block else { return false }
             return text == "Generation cancelled."
         })
+    }
+
+    @MainActor
+    @Test func completedSpendFollowUpsRemainOwnedByEachInactiveChat() async throws {
+        let editor = EditorViewModel()
+        let followUps = HostFollowUpFixture()
+        let service = AgentService(
+            backend: .claudeCode,
+            refreshBackendStatusOnInit: false,
+            embeddedHostFollowUpSender: followUps.send
+        )
+        service.editor = editor
+        service.newChat()
+        NotificationCenter.default.post(
+            name: .claudeCodeStatusChanged,
+            object: ClaudeCodeLocator.Status(
+                executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+                version: "test",
+                isAuthenticated: true
+            )
+        )
+
+        let firstSessionID = try #require(service.currentSessionId)
+        let firstOrigin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: firstSessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let suspensionText = "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "first-image",
+                content: [.text(suspensionText)],
+                isError: false
+            ),
+        ])]
+        let firstExecution = PendingExecutionFixture()
+        _ = try service.requestSpendApproval(
+            SpendApproval(
+                id: "first-inactive-chat",
+                recommendedOptionId: selected.id,
+                options: [selected],
+                actionLabel: "Generate first image"
+            ),
+            origin: firstOrigin,
+            editor: editor,
+            execute: { _, _ in
+                await firstExecution.wait()
+                return .ok("first chat result")
+            }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { firstExecution.didStart }
+        service.newChat()
+        let secondSessionID = try #require(service.currentSessionId)
+        firstExecution.finish()
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        let secondOrigin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: secondSessionID,
+            mcpSessionID: UUID()
+        )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "second-image",
+                content: [.text(suspensionText)],
+                isError: false
+            ),
+        ])]
+        let secondExecution = PendingExecutionFixture()
+        _ = try service.requestSpendApproval(
+            SpendApproval(
+                id: "second-inactive-chat",
+                recommendedOptionId: selected.id,
+                options: [selected],
+                actionLabel: "Generate second image"
+            ),
+            origin: secondOrigin,
+            editor: editor,
+            execute: { _, _ in
+                await secondExecution.wait()
+                return .ok("second chat result")
+            }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { secondExecution.didStart }
+        service.newChat()
+        let inactiveSessionID = try #require(service.currentSessionId)
+        secondExecution.finish()
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        #expect(service.currentSessionId == inactiveSessionID)
+        #expect(!service.hasPendingHostFollowUp)
+        #expect(followUps.sent.isEmpty)
+
+        service.selectSession(firstSessionID)
+        await waitUntil { followUps.sent.count == 1 }
+        let firstFollowUp = try #require(followUps.sent.first)
+        #expect(firstFollowUp.contains("Host generation result: first chat result"))
+        #expect(!firstFollowUp.contains("second chat result"))
+        #expect(!service.hasPendingHostFollowUp)
+
+        service.selectSession(secondSessionID)
+        await waitUntil { followUps.sent.count == 2 }
+        let secondFollowUp = try #require(followUps.sent.dropFirst().first)
+        #expect(secondFollowUp.contains("Host generation result: second chat result"))
+        #expect(!secondFollowUp.contains("first chat result"))
+        #expect(!service.hasPendingHostFollowUp)
     }
 
     @MainActor
