@@ -32,17 +32,17 @@ struct AgentGenerationCancellationTests {
         var submissionStartedIterator = submissionStarted.makeAsyncIterator()
         _ = await submissionStartedIterator.next()
         task.cancel()
-        let submissionContinuation = try #require(submissionContinuation)
-        submissionContinuation.resume(returning: "upscale-placeholder")
+        let capturedSubmissionContinuation = try #require(submissionContinuation)
+        capturedSubmissionContinuation.resume(returning: "upscale-placeholder")
 
         var providerCancellationIterator = providerCancellation.makeAsyncIterator()
         let cancelledPlaceholder = await providerCancellationIterator.next()
         #expect(cancelledPlaceholder == "upscale-placeholder")
         #expect(cancellationCount == 1)
 
-        let awaiter = try #require(awaiter)
-        #expect(!awaiter.isResolved)
-        awaiter.resolve(.succeeded(nil))
+        let capturedAwaiter = try #require(awaiter)
+        #expect(!capturedAwaiter.isResolved)
+        capturedAwaiter.resolve(.succeeded(nil))
 
         let result = try await task.value
         #expect(result.placeholderId == "upscale-placeholder")
