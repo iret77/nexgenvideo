@@ -147,7 +147,8 @@ struct DirectImageProviderTests {
         // not-activated fallback — both must find the model, or that path reports "unsupported model"
         // instead of "add a key".
         let google = try #require(GoogleModelRegistry.models.first)
-        #expect(GoogleModelRegistry.model(for: try #require(google.apiModelCandidates.first)) != nil)
+        let apiModel = try #require(google.apiModelCandidates.first)
+        #expect(GoogleModelRegistry.model(for: apiModel) != nil)
         #expect(GoogleModelRegistry.model(for: google.entry.id) != nil)
         #expect(GoogleModelRegistry.model(for: "nope") == nil)
     }

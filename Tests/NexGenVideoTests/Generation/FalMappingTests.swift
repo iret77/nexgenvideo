@@ -307,9 +307,13 @@ struct FalRegistryTests {
     }
 
     @Test func sizeDialectsAssignedCorrectly() throws {
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/flux/dev")).imageSize == .imageSizeEnum)
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/flux-pro/v1.1-ultra")).imageSize == .aspectRatio)
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/imagen4")).imageSize == .aspectRatio)
+        let fluxDev = try #require(FalModelRegistry.model(for: "fal-ai/flux/dev"))
+        let fluxUltra = try #require(FalModelRegistry.model(for: "fal-ai/flux-pro/v1.1-ultra"))
+        let imagen = try #require(FalModelRegistry.model(for: "fal-ai/imagen4"))
+
+        #expect(fluxDev.imageSize == .imageSizeEnum)
+        #expect(fluxUltra.imageSize == .aspectRatio)
+        #expect(imagen.imageSize == .aspectRatio)
     }
 
     @Test func liveImageInventoryIncludesCurrentSupportedModelsAndAliases() {
@@ -359,8 +363,15 @@ struct FalRegistryTests {
     }
 
     @Test func imageToVideoModelsCarryRefDialect() throws {
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video")).videoImageRef == true)
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video")).videoImageRef == false)
+        let imageToVideo = try #require(
+            FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video")
+        )
+        let textToVideo = try #require(
+            FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video")
+        )
+
+        #expect(imageToVideo.videoImageRef == true)
+        #expect(textToVideo.videoImageRef == false)
     }
 
     @Test func seedance2FamilyPresentWithCorrectCaps() throws {

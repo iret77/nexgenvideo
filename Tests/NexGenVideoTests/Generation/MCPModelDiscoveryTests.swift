@@ -370,7 +370,9 @@ struct MCPModelDiscoveryTests {
         #expect(string.items.first?.constraints == ["At most 2 image references are allowed."])
         #expect(array.items.first?.constraints == ["First", "Second"])
         #expect(emptyArray.items.first?.constraints == [])
-        #expect([missing, null, string, array, emptyArray].allSatisfy(\.isComplete))
+        let allCollectionsAreComplete = [missing, null, string, array, emptyArray]
+            .allSatisfy(\.isComplete)
+        #expect(allCollectionsAreComplete)
 
         for invalidValue in ["7", "true", "{}", "[1,2]", #"["valid",7]"#] {
             let collection = MCPModelDiscovery.parseListingResult(

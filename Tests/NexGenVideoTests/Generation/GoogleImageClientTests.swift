@@ -133,8 +133,9 @@ struct GoogleImageClientTests {
         #expect(models == ["gemini-first", "gemini-second"])
         let requests = FixtureURLProtocol.requests()
         #expect(requests.count == 2)
+        let lastRequestURL = try #require(requests.last?.url)
         let queryItems = try #require(
-            URLComponents(url: try #require(requests.last?.url), resolvingAgainstBaseURL: false)?
+            URLComponents(url: lastRequestURL, resolvingAgainstBaseURL: false)?
                 .queryItems
         )
         #expect(queryItems.contains(URLQueryItem(name: "pageToken", value: "next page")))
