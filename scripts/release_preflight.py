@@ -36,6 +36,7 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "musicUnderstandingAnalyzer",
     "declarativeCockpitSurface",
     "phaseArtifactProviders",
+    "productionKnowledgeConsumers",
 ]
 ENGINE_BOUNDARY_LAYOUT_CONTRACT = 9
 ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 2

@@ -26,6 +26,33 @@ struct MusicvideoPackTests {
             .generativeFilm,
             .narrativeStorytelling,
         ])
+        #expect(reg.engine.productionKnowledgeConsumers.count == 1)
+    }
+
+    @Test("pack registers a format-neutral selective knowledge descriptor")
+    func productionKnowledgeDescriptor() throws {
+        let reg = PackRegistry()
+        reg.load(MusicvideoPack())
+        let consumers = try ProductionKnowledgeConsumerRegistryV1(
+            registrations: reg.engine.productionKnowledgeConsumers
+        )
+        try consumers.validateResources(
+            in: EngineProductionKnowledgeResourcesV1.loadCatalog()
+        )
+        let registration = try #require(consumers.registration(for: "musicvideo"))
+        let descriptor = registration.descriptor
+
+        #expect(descriptor.profileResourceIDs == [
+            "generative_film", "narrative_storytelling",
+        ])
+        #expect(descriptor.selection(for: "treatment")?.libraryIDs == [
+            "film-craft-baseline", "genre-baselines", "story-containers",
+        ])
+        #expect(descriptor.selection(for: "sanity")?.knowledgePhase == "review")
+        #expect(descriptor.selection(for: "review") == nil)
+        #expect(descriptor.selection(for: "analysis") == nil)
+        #expect(descriptor.budget.maximumUTF8Bytes == 16_384)
+        #expect(descriptor.budget.maximumEstimatedTokens == 4_096)
     }
 
     @Test("phase artifact inventory includes versioned creative truth")

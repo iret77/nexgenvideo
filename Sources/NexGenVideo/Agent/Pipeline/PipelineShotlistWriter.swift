@@ -7,13 +7,15 @@ enum PipelineShotlistWriter {
         executionInputs: [PipelineExecutionShotInput],
         dataRoot: URL,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        disciplineSidecar: ProductionDisciplineSidecarV1? = nil
     ) throws -> URL {
         try validate(
             shotlist,
             dataRoot: dataRoot,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            disciplineSidecar: disciplineSidecar
         )
         let version = (latestShotlistVersion(dataRoot: dataRoot) ?? 0) + 1
         let shotlistPath = PipelineLayout.shotlistVersionFile(version)
@@ -131,13 +133,15 @@ enum PipelineShotlistWriter {
         _ shotlist: Shotlist,
         dataRoot: URL,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        disciplineSidecar: ProductionDisciplineSidecarV1? = nil
     ) throws -> URL {
         try validate(
             shotlist,
             dataRoot: dataRoot,
             declaredPack: declaredPack,
-            declaredBinding: declaredBinding
+            declaredBinding: declaredBinding,
+            disciplineSidecar: disciplineSidecar
         )
         do {
             try requirePackMutation(
@@ -267,7 +271,8 @@ enum PipelineShotlistWriter {
         _ shotlist: Shotlist,
         dataRoot: URL,
         declaredPack: String?,
-        declaredBinding: ProjectPackBinding? = nil
+        declaredBinding: ProjectPackBinding? = nil,
+        disciplineSidecar: ProductionDisciplineSidecarV1? = nil
     ) throws {
         try requirePackMutation(
             dataRoot: dataRoot,
@@ -295,6 +300,20 @@ enum PipelineShotlistWriter {
             }
         } else {
             brief = nil
+        }
+        let bibleURL = PipelineLayout.url(PipelineLayout.bibleFile, in: dataRoot)
+        let bible: Bible?
+        if FileManager.default.fileExists(atPath: bibleURL.path) {
+            do {
+                bible = try loadBible(dataRoot: dataRoot)
+            } catch {
+                throw ToolError(
+                    "The Bible is unreadable. Repair or restore it before writing the Shot List: "
+                        + error.localizedDescription
+                )
+            }
+        } else {
+            bible = nil
         }
         let activePack: String?
         do {
@@ -333,6 +352,49 @@ enum PipelineShotlistWriter {
                     "Every new shot requires production_plan (e.g. "
                         + missingPlans.prefix(3).map(\.id).joined(separator: ", ")
                         + ")."
+                )
+            }
+            let crowded = shotlist.shots.filter {
+                $0.productionPlan != nil
+                    && ProductionDiscipline.hasTooManyVisibleCharacters(
+                        $0,
+                        bible: bible,
+                        route: disciplineSidecar?.route(for: $0.id)
+                    )
+            }
+            guard crowded.isEmpty else {
+                throw ToolError(
+                    "Generated shots exceed the selected routes' visible-character capacity; revise "
+                        + crowded.prefix(3).map(\.id).joined(separator: ", ")
+                        + " or select capable routes."
+                )
+            }
+            let undeclaredLongTakes = shotlist.shots.filter {
+                ProductionDiscipline.hasUndeclaredLongTake(
+                    $0,
+                    route: disciplineSidecar?.route(for: $0.id)
+                )
+            }
+            guard undeclaredLongTakes.isEmpty else {
+                throw ToolError(
+                    "Generated shots exceed the selected routes' duration capacity without "
+                        + "declaring long_take and a rescue cut "
+                        + "(e.g. "
+                        + undeclaredLongTakes.prefix(3).map(\.id).joined(separator: ", ")
+                        + ")."
+                )
+            }
+            let excessiveReferences = shotlist.shots.filter {
+                ProductionDiscipline.exceedsReferenceCapacity(
+                    $0,
+                    route: disciplineSidecar?.route(for: $0.id)
+                )
+            }
+            guard excessiveReferences.isEmpty else {
+                throw ToolError(
+                    "Generated shots exceed the selected routes' reference capacity; revise "
+                        + excessiveReferences.prefix(3).map(\.id).joined(separator: ", ")
+                        + " or select capable routes."
                 )
             }
             let unanchoredBlocking = shotlist.shots.filter {

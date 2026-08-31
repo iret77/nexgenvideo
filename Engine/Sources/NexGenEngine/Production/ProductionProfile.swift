@@ -88,17 +88,43 @@ public enum ProductionDiscipline {
         _ shot: Shot,
         bible: Bible? = nil
     ) -> Bool {
-        shot.sourceMode == .generated
+        hasTooManyVisibleCharacters(shot, bible: bible, route: nil)
+    }
+
+    public static func hasTooManyVisibleCharacters(
+        _ shot: Shot,
+        bible: Bible?,
+        route: ProductionRouteDisciplineV1?
+    ) -> Bool {
+        guard let maximum = route?.maximumVisibleCharacters else { return false }
+        return shot.sourceMode == .generated
             && visibleCharacterCount(shot, bible: bible)
-                > maximumGeneratedVisibleCharacters
+                > maximum
     }
 
     @available(*, deprecated, message: "Revalidate ProductionRequirementV1 against a selected route")
     public static func hasUndeclaredLongTake(_ shot: Shot) -> Bool {
+        hasUndeclaredLongTake(shot, route: nil)
+    }
+
+    public static func hasUndeclaredLongTake(
+        _ shot: Shot,
+        route: ProductionRouteDisciplineV1?
+    ) -> Bool {
+        guard let maximum = route?.maximumDurationSeconds else { return false }
         guard shot.sourceMode == .generated,
-              shot.durationS > normalGeneratedShotMaximumDuration,
+              shot.durationS > maximum,
               let plan = shot.productionPlan else { return false }
         return !plan.risks.contains(.longTake)
+    }
+
+    public static func exceedsReferenceCapacity(
+        _ shot: Shot,
+        route: ProductionRouteDisciplineV1? = nil
+    ) -> Bool {
+        guard let maximum = route?.maximumReferences else { return false }
+        return shot.sourceMode != .imported
+            && shot.referenceImageRefs.count > maximum
     }
 
     public static func hasUnanchoredCharacterBlocking(_ shot: Shot) -> Bool {
@@ -187,7 +213,7 @@ public enum ProductionProfileGuidance {
             """
         case "storyboard":
             return """
-            Keep each generated step to one primary subject action and one coherent camera movement. Preserve every required visible entity and reference demand in structured fields; route selection determines whether a concrete offering can fulfill them. Every character_blocking.set_anchor must exactly name one of that step's visible_zones or prop_request entries; put its spatial relation in character_blocking.relation_to_set. Make entrances, exits, and screen direction explicit in the storyboard fields and notes accepted by the writer.
+            Keep each generated step to one primary subject action and one coherent camera plan. Preserve every required visible entity and reference demand in structured fields; route selection determines whether a concrete offering can fulfill them. Every character_blocking.set_anchor must exactly name one of that step's visible_zones or prop_request entries; put its spatial relation in character_blocking.relation_to_set. Make entrances, exits, and screen direction explicit in the storyboard fields and notes accepted by the writer.
             """
         case "bible":
             return """
@@ -195,7 +221,7 @@ public enum ProductionProfileGuidance {
             """
         case "shotlist":
             return """
-            Give every generated or AI-enhanced shot a production_plan; imported shots omit it. Preserve the requested duration, visible entities, identity locks, reference jobs, mode, resolution, aspect ratio, and audio intent without reducing them to a lowest-common-denominator model. Keep one primary action and one coherent camera movement. Every production_plan.blocking_anchors value must exactly name one of that shot's visible_zones or prop_refs entries. Keep visual_prompt to one present-tense sentence describing only the concrete frame-zero subject state: identity, pose, weight, gaze, hands, and impending movement vector. Camera, composition, blocking anchors, continuity, and action stay in their structured fields. Rate renderability green/yellow/red; explicitly assess readable in-frame text, mirrors/reflections, fine hand actions, close eating/drinking, dense face crowds, continuous fights, physics showcases, vehicle mechanics, identity drift, lip sync, duration, camera movement, and complex interactions. Add a rescue cut for every yellow/red shot, and record continuity locks plus match-action cues.
+            Give every generated or AI-enhanced shot a production_plan; imported shots omit it. Preserve the requested duration, visible entities, identity locks, reference jobs, mode, resolution, aspect ratio, and audio intent without reducing them to a lowest-common-denominator model. Plan those demands against the selected route's effective capability profile. Keep one primary action and one coherent camera plan. Every production_plan.blocking_anchors value must exactly name one of that shot's visible_zones or prop_refs entries. Keep visual_prompt to one present-tense sentence describing only the concrete frame-zero subject state: identity, pose, weight, gaze, hands, and impending movement vector. Camera, composition, blocking anchors, continuity, and action stay in their structured fields. Rate renderability green/yellow/red; explicitly assess readable in-frame text, mirrors/reflections, fine hand actions, close eating/drinking, dense face crowds, continuous fights, physics showcases, vehicle mechanics, identity drift, lip sync, duration, camera movement, and complex interactions. Add a rescue cut for every yellow/red shot, and record continuity locks plus match-action cues.
             """
         case "sanity":
             return """

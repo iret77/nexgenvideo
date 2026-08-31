@@ -269,8 +269,11 @@ public struct EffectiveProductionProfileV1: Sendable, Equatable {
     public let machineRules: [ProductionMachineRuleV1]
 
     public init(descriptors: [ProductionProfileDescriptorV1]) throws {
-        for (id, matches) in Dictionary(grouping: descriptors, by: { $0.id.rawValue })
-            where matches.count > 1 {
+        let groupedDescriptors = Dictionary(grouping: descriptors, by: { $0.id.rawValue })
+        if let id = groupedDescriptors.keys.sorted().first(where: {
+            groupedDescriptors[$0, default: []].count > 1
+        }) {
+            let matches = groupedDescriptors[id, default: []]
             throw ProductionKnowledgeErrorV1.conflictingResource(
                 kind: "profile",
                 id: id,
@@ -297,6 +300,30 @@ public struct EffectiveProductionProfileV1: Sendable, Equatable {
         self.descriptors = ordered
         phaseGuidance = ordered.flatMap(\.phaseGuidance)
         machineRules = rules
+    }
+}
+
+public struct EffectiveCreativeKnowledgeLibrariesV1: Sendable, Equatable {
+    public let libraries: [CreativeKnowledgeLibraryV1]
+
+    public init(libraries: [CreativeKnowledgeLibraryV1]) throws {
+        let groupedLibraries = Dictionary(grouping: libraries, by: { $0.id.rawValue })
+        if let id = groupedLibraries.keys.sorted().first(where: {
+            groupedLibraries[$0, default: []].count > 1
+        }) {
+            let matches = groupedLibraries[id, default: []]
+            throw ProductionKnowledgeErrorV1.conflictingResource(
+                kind: "library",
+                id: id,
+                versions: matches.map { $0.version.rawValue }.sorted()
+            )
+        }
+        self.libraries = libraries.sorted {
+            if $0.id.rawValue == $1.id.rawValue {
+                return $0.version.rawValue < $1.version.rawValue
+            }
+            return $0.id.rawValue < $1.id.rawValue
+        }
     }
 }
 

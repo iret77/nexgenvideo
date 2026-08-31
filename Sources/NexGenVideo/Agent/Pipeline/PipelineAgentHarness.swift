@@ -194,39 +194,69 @@ final class PipelineAgentHarness {
                 prompt = instructions
             }
             guard var prompt else { return nil }
-            let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
-            let brief: Brief?
-            if FileManager.default.fileExists(atPath: briefURL.path) {
-                do {
-                    brief = try YAMLArtifactStore(dataRoot: dataRoot).load(
-                        Brief.self,
-                        at: PipelineLayout.briefFile
-                    )
-                } catch {
-                    throw ToolError(
-                        "The Brief is unreadable. Repair or restore it before continuing: "
-                            + error.localizedDescription
-                    )
-                }
-            } else if snapshot.phases.first(where: { $0.phase == "brief" })?.approved == true {
-                throw ToolError(
-                    "The approved Brief is missing. Repair or restore it before continuing."
-                )
-            } else {
-                brief = nil
-            }
             let registry = PackCatalog.registry(activePack: packName)
-            let activeIDs = registry.activeProductionProfileIDs(metadata: [
-                "concept_type": brief?.conceptType.rawValue ?? "",
-            ])
-            let guidance = ProductionProfileGuidance.instructions(
-                for: phase,
-                profiles: registry.productionProfiles.filter {
-                    activeIDs.contains($0.id)
+            let consumers = try ProductionKnowledgeConsumerRegistryV1(
+                registrations: registry.productionKnowledgeConsumers
+            )
+            guard let registration = consumers.registration(for: packName) else {
+                return prompt
+            }
+            let productionKnowledgeCatalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
+            try consumers.validateResources(in: productionKnowledgeCatalog)
+            let descriptor = registration.descriptor
+            let metadata: ProductionKnowledgeActivationMetadataV1
+            do {
+                metadata = try registration.metadataProvider(dataRoot, phase)
+            } catch let blocked as GateBlocked {
+                throw ToolError(blocked.message)
+            } catch {
+                throw ToolError(
+                    "The \(packName) production-knowledge activation metadata is unavailable: "
+                        + error.localizedDescription
+                )
+            }
+            let activeProfiles = Set(
+                registry.activeProductionProfileIDs(metadata: metadata.values).map {
+                    ProductionProfileDescriptorIDV1(rawValue: $0.rawValue)
                 }
             )
-            if !guidance.isEmpty {
-                prompt += "\n\nFollow these active core production profiles:\n\n\(guidance)"
+            let undeclaredProfiles = activeProfiles.subtracting(descriptor.profileResourceIDs)
+            guard undeclaredProfiles.isEmpty else {
+                throw ToolError(
+                    "The \(packName) production-knowledge descriptor does not declare active profiles: "
+                        + undeclaredProfiles.map(\.rawValue).sorted().joined(separator: ", ")
+                )
+            }
+            let selection = descriptor.selection(for: phase)
+            let declaredLibraries = Set(selection?.libraryIDs ?? [])
+            let activeLibraries: Set<CreativeKnowledgeLibraryIDV1>
+            if let requested = metadata.activeLibraryIDs {
+                let undeclaredLibraries = requested.subtracting(declaredLibraries)
+                guard undeclaredLibraries.isEmpty else {
+                    throw ToolError(
+                        "The \(packName) activation metadata requested undeclared production libraries: "
+                            + undeclaredLibraries.map(\.rawValue).sorted().joined(separator: ", ")
+                    )
+                }
+                activeLibraries = requested
+            } else {
+                activeLibraries = declaredLibraries
+            }
+            let assembly = try ProductionKnowledgeContextAssemblerV1(
+                catalog: productionKnowledgeCatalog,
+                predicates: ProductionMachinePredicateRegistryV1.standard()
+            ).assemble(
+                ProductionKnowledgeAssemblyQueryV1(
+                    packID: packName,
+                    phase: selection?.knowledgePhase ?? phase,
+                    intentTags: metadata.intentTags.union(selection?.intentTags ?? []),
+                    activeProfileIDs: activeProfiles,
+                    activeLibraryIDs: activeLibraries,
+                    budget: descriptor.budget
+                )
+            )
+            if !assembly.prompt.isEmpty {
+                prompt += "\n\nFollow this selected core production knowledge:\n\n\(assembly.prompt)"
             }
             return prompt
         }

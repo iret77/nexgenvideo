@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "applicability": {
     "packIDs": [],
-    "phases": ["production_design", "bible", "shotlist", "review"],
+    "phases": ["production_design", "bible", "storyboard", "shotlist", "review"],
     "intentTags": ["character-sheet", "location-sheet", "style-sheet", "continuity-sheet"],
     "activeProfileIDs": []
   },

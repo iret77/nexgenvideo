@@ -6,6 +6,7 @@ public func productionRenderabilityCheck(_ ctx: AuditContext) throws -> [Finding
 
     for shot in ctx.shotlist.shots {
         guard ProductionDiscipline.requiresProductionPlan(shot) else { continue }
+        let route = ctx.productionDisciplineSidecar?.route(for: shot.id)
         guard let plan = shot.productionPlan else {
             findings.append(Finding(
                 level: .warn,
@@ -16,6 +17,36 @@ public func productionRenderabilityCheck(_ ctx: AuditContext) throws -> [Finding
             continue
         }
 
+        if ProductionDiscipline.hasTooManyVisibleCharacters(
+            shot,
+            bible: ctx.bible,
+            route: route
+        ) {
+            findings.append(Finding(
+                level: .error,
+                code: "TOO_MANY_VISIBLE_CHARACTERS",
+                shotId: shot.id,
+                message: "The shot exceeds the selected route's visible-character capacity; select a capable route or simplify the beat."
+            ))
+        }
+
+        if ProductionDiscipline.hasUndeclaredLongTake(shot, route: route) {
+            findings.append(Finding(
+                level: .error,
+                code: "LONG_TAKE_RISK_UNDECLARED",
+                shotId: shot.id,
+                message: "The shot exceeds the selected route's duration capacity; declare the risk and rescue or select a capable route."
+            ))
+        }
+
+        if ProductionDiscipline.exceedsReferenceCapacity(shot, route: route) {
+            findings.append(Finding(
+                level: .error,
+                code: "REFERENCE_CAPACITY_EXCEEDED",
+                shotId: shot.id,
+                message: "The shot exceeds the selected route's reference capacity; select a capable route or revise the reference plan."
+            ))
+        }
         if ProductionDiscipline.hasUnanchoredCharacterBlocking(shot) {
             findings.append(Finding(
                 level: .error,
