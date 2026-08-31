@@ -208,7 +208,7 @@ final class AgentService {
                 Task { @MainActor [weak self] in await self?.editor?.refreshEngineState() }
             }
             if !isStreaming, !hostFollowUpStartInProgress,
-               pendingGateFollowUp != nil {
+               currentGateFollowUp != nil {
                 Task { @MainActor [weak self] in await self?.preparePendingGateFollowUp() }
             }
             if !isStreaming, !hostFollowUpStartInProgress,
@@ -1195,7 +1195,7 @@ final class AgentService {
             || pendingSpendApproval != nil
             || currentSpendFollowUp != nil
             || pendingGateApproval != nil
-            || pendingGateFollowUp?.origin.chatSessionID == currentSessionId
+            || currentGateFollowUp != nil
     }
 
     // MARK: - Spend approval (Cost-Guard, M7)
@@ -1257,7 +1257,8 @@ final class AgentService {
     }
 
     private var currentSpendFollowUp: SpendFollowUp? {
-        pendingSpendFollowUps.first {
+        guard let currentSessionId else { return nil }
+        return pendingSpendFollowUps.first {
             $0.origin.chatSessionID == currentSessionId
         }
     }
@@ -1650,6 +1651,13 @@ final class AgentService {
         let includeNextPhaseInstructions: Bool
     }
 
+    private var currentGateFollowUp: GateFollowUp? {
+        guard let currentSessionId,
+              let pendingGateFollowUp,
+              pendingGateFollowUp.origin.chatSessionID == currentSessionId else { return nil }
+        return pendingGateFollowUp
+    }
+
     func toolCallBlockReason(
         tool: ToolName,
         args: [String: Any],
@@ -1804,7 +1812,7 @@ final class AgentService {
     }
 
     private func preparePendingGateFollowUp() async {
-        guard !isStreaming, pendingGateFollowUp != nil else { return }
+        guard !isStreaming, currentGateFollowUp != nil else { return }
         await editor?.refreshEngineState()
     }
 
@@ -1852,7 +1860,7 @@ final class AgentService {
 
     var hasPendingHostFollowUp: Bool {
         currentSpendFollowUp != nil
-            || pendingGateFollowUp?.origin.chatSessionID == currentSessionId
+            || currentGateFollowUp != nil
     }
 
     func retryPendingHostFollowUp() {
@@ -2108,7 +2116,7 @@ final class AgentService {
         streamError = nil
         if currentSpendFollowUp != nil {
             Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
-        } else if pendingGateFollowUp?.origin.chatSessionID == id {
+        } else if currentGateFollowUp != nil {
             Task { @MainActor [weak self] in
                 await self?.preparePendingGateFollowUp()
             }
@@ -2149,6 +2157,11 @@ final class AgentService {
         }
         pendingSpendFollowUps.removeAll { $0.origin.chatSessionID == id }
         for followUp in discardedSpendFollowUps {
+            resumeToolCalls(from: followUp.origin)
+        }
+        if let followUp = pendingGateFollowUp,
+           followUp.origin.chatSessionID == id {
+            pendingGateFollowUp = nil
             resumeToolCalls(from: followUp.origin)
         }
         sessions.removeAll { $0.id == id }

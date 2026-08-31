@@ -367,8 +367,18 @@ enum MCPGenerationLifecycle {
                     }
                 }
             }
+            let declaresInlineMediaShape = object.keys.contains(
+                where: resemblesInlineDataFieldName
+            ) && object.keys.contains(
+                where: resemblesInlineMIMEFieldName
+            )
             for key in object.keys.sorted() where isOutputEnvelopeFieldName(key) {
                 guard let child = object[key] else { continue }
+                if declaresInlineMediaShape,
+                   resemblesInlineDataFieldName(key),
+                   child is String {
+                    continue
+                }
                 collectOutputMedia(
                     child,
                     context: .record,
@@ -398,6 +408,7 @@ enum MCPGenerationLifecycle {
     private enum OutputSchemaContext {
         case root
         case envelope
+        case structuredEnvelope
     }
 
     private static func schemaSupportsMedia(
@@ -422,19 +433,33 @@ enum MCPGenerationLifecycle {
                 }
             }
             if let items = object["items"],
-               schemaSupportsMedia(items, context: context) {
+               schemaSupportsMedia(
+                   items,
+                   context: context == .structuredEnvelope ? .envelope : context
+               ) {
                 return true
             }
             if let properties {
                 if schemaSupportsInlineMedia(properties) {
                     return true
                 }
+                let declaresInlineMediaShape = properties.keys.contains(
+                    where: resemblesInlineDataFieldName
+                ) && properties.keys.contains(
+                    where: resemblesInlineMIMEFieldName
+                )
                 for name in directOutputURLFieldNames + genericOutputURLFieldNames {
                     if let child = properties[name], schemaAllowsHTTPURL(child) {
                         return true
                     }
                 }
                 for (name, child) in properties where isOutputEnvelopeFieldName(name) {
+                    if declaresInlineMediaShape, resemblesInlineDataFieldName(name) {
+                        if schemaSupportsMedia(child, context: .structuredEnvelope) {
+                            return true
+                        }
+                        continue
+                    }
                     if schemaSupportsMedia(child, context: .envelope) {
                         return true
                     }
@@ -464,6 +489,14 @@ enum MCPGenerationLifecycle {
             return false
         }
         return true
+    }
+
+    private static func resemblesInlineDataFieldName(_ value: String) -> Bool {
+        inlineDataFieldNames.contains { normalize($0) == normalize(value) }
+    }
+
+    private static func resemblesInlineMIMEFieldName(_ value: String) -> Bool {
+        inlineMIMEFieldNames.contains { normalize($0) == normalize(value) }
     }
 
     private static func schemaDeclaresExcludedOutputType(

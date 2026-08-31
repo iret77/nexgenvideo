@@ -300,6 +300,24 @@ struct RestyleModelTests {
         }
     }
 
+    @Test("Production Design rejects unknown undecodable staged files")
+    func productionDesignRejectsUnknownPartialReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let partial = root.appendingPathComponent(
+            "production_design/refs/reference.jpg.download"
+        )
+        try Data([0]).write(to: partial)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected unknown partial Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("reference.jpg.download"))
+            #expect(error.localizedDescription.contains("unsupported image format"))
+        }
+    }
+
     @Test("Production Design rejects oversized image dimensions before approval")
     func productionDesignRejectsOversizedReference() throws {
         let root = try productionDesignReferenceRoot()

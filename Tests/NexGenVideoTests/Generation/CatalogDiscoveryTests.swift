@@ -34,6 +34,38 @@ struct CatalogDiscoveryTests {
         ]
     }
 
+    private var mappableHiggsfieldMediaUpload: [MCPProviderClient.DiscoveredTool] {
+        [
+            MCPProviderClient.DiscoveredTool(
+                name: "media_upload",
+                description: "Create a media upload.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "filename": .object(["type": .string("string")]),
+                        "type": .object(["type": .string("string")]),
+                        "length": .object(["type": .string("integer")]),
+                        "content_type": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([
+                        .string("filename"), .string("type"), .string("length"),
+                        .string("content_type"),
+                    ]),
+                ])
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "media_confirm",
+                description: "Confirm uploaded media.",
+                inputSchema: .object([
+                    "properties": .object([
+                        "media_id": .object(["type": .string("string")]),
+                        "type": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("media_id"), .string("type")]),
+                ])
+            ),
+        ]
+    }
+
     private func listingPage(
         _ range: Range<Int>,
         hasMore: Bool,
@@ -959,7 +991,7 @@ struct CatalogDiscoveryTests {
                 description: "Find generation models.",
                 inputSchema: .object([:])
             ),
-        ] + mappableHiggsfieldResultLifecycle
+        ] + mappableHiggsfieldResultLifecycle + mappableHiggsfieldMediaUpload
         let initialClient = StubClient(
             tools: tools,
             listing: #"{"items":[{"id":"detail-jobset","name":"Initial","output_type":"image"}]}"#,
@@ -1019,7 +1051,7 @@ struct CatalogDiscoveryTests {
                 description: "Find generation models.",
                 inputSchema: .object([:])
             ),
-        ] + mappableHiggsfieldResultLifecycle
+        ] + mappableHiggsfieldResultLifecycle + mappableHiggsfieldMediaUpload
         let initialClient = StubClient(
             tools: tools,
             listing: #"{"items":[{"id":"detail-constraints","name":"Initial","output_type":"image"}]}"#,
@@ -1248,7 +1280,7 @@ struct CatalogDiscoveryTests {
                 description: "Find generation models.",
                 inputSchema: .object([:])
             ),
-        ] + mappableHiggsfieldResultLifecycle
+        ] + mappableHiggsfieldResultLifecycle + mappableHiggsfieldMediaUpload
         let client = StubClient(
             tools: tools,
             listing: #"{"items":[{"id":"seedance_2_0","name":"Seedance 2.0","output_type":"video"},{"id":"cinematic_studio_video_3_5","name":"Cinematic Studio 3.5","output_type":"video"},{"id":"gemini_omni","name":"Gemini Omni","output_type":"video"}]}"#,
@@ -1347,7 +1379,7 @@ struct CatalogDiscoveryTests {
                 description: "Find generation models.",
                 inputSchema: .object([:])
             ),
-        ] + mappableHiggsfieldResultLifecycle
+        ] + mappableHiggsfieldResultLifecycle + mappableHiggsfieldMediaUpload
         let client = StubClient(
             tools: tools,
             listing: #"{"items":[{"id":"partial-image","output_type":"image","medias":[{"name":"medias","type":"image","roles":["image"]}]}]}"#,
@@ -1368,7 +1400,7 @@ struct CatalogDiscoveryTests {
     }
 
     @MainActor
-    @Test("Catalog discovery is independent of the billed generation lifecycle")
+    @Test("Catalog discovery uses a proven sync path without invoking lifecycle tools")
     func malformedLifecycleDoesNotHideCatalog() async {
         let tools = [
             MCPProviderClient.DiscoveredTool(
@@ -1376,8 +1408,11 @@ struct CatalogDiscoveryTests {
                 description: "Generate an image.",
                 inputSchema: .object([
                     "properties": .object([
+                        "model": .object(["type": .string("string")]),
+                        "prompt": .object(["type": .string("string")]),
                         "wait": .object(["type": .string("boolean")]),
                     ]),
+                    "required": .array([.string("model"), .string("prompt")]),
                 ])
             ),
             MCPProviderClient.DiscoveredTool(
@@ -1405,7 +1440,11 @@ struct CatalogDiscoveryTests {
         let snapshot = await client.snapshot()
 
         #expect(entries.map(\.id) == ["listed-image"])
-        #expect(snapshot.calls == ["models_explore"])
+        #expect(snapshot.calls == ["models_explore", "models_explore"])
+        #expect(MCPGenerationExecutor.hasProvenResultPath(
+            generationTool: tools[0],
+            tools: tools
+        ))
         #expect(snapshot.disconnected)
     }
 

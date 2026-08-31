@@ -639,12 +639,51 @@ struct MCPGenerationLifecycleTests {
                 "mime-type": .string("image/png"),
             ])
         )
+        let malformedInlineAlias = CallTool.Result(
+            content: [],
+            structuredContent: .object([
+                "data": .string("https://output.invalid/not-inline.png"),
+                "mime-type": .string("image/png"),
+            ])
+        )
         #expect(MCPGenerationLifecycle.submission(
             from: MCPProviderClient.payloadContents(unsupportedMIME)
         ).output.isEmpty)
         #expect(MCPGenerationLifecycle.submission(
             from: MCPProviderClient.payloadContents(unsupportedFields)
         ).output.isEmpty)
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(malformedInlineAlias)
+        ).output.isEmpty)
+    }
+
+    @Test func structuredDataEnvelopeWithMIMESiblingRemainsSupported() {
+        let schema: Value = .object([
+            "type": .string("object"),
+            "properties": .object([
+                "data": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "url": .object(["type": .string("string")]),
+                    ]),
+                ]),
+                "mimeType": .object(["type": .string("string")]),
+            ]),
+        ])
+        let result = CallTool.Result(
+            content: [],
+            structuredContent: .object([
+                "data": .object([
+                    "url": .string("https://output.invalid/nested.png"),
+                ]),
+                "mimeType": .string("image/png"),
+            ])
+        )
+
+        #expect(MCPGenerationLifecycle.outputSchemaSupportsMedia(schema))
+        #expect(MCPGenerationLifecycle.submission(
+            from: MCPProviderClient.payloadContents(result)
+        ).outputURLs == ["https://output.invalid/nested.png"])
     }
 
     @Test func outputURLFieldNamesMatchTheRuntimeParserExactly() {

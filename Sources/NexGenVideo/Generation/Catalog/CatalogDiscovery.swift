@@ -291,11 +291,11 @@ enum CatalogDiscovery {
                     } else if mcpPublicationDecision == .preserveLastKnownGood {
                         state = .stale(
                             modelCount: retainedCount,
-                            message: "Model refresh is incomplete. Using the last verified catalog while NexGenVideo retries."
+                            message: "Model refresh is incomplete. The last verified catalog remains available."
                         )
                     } else if mcpPublicationDecision == .withholdIncompleteFirstRefresh {
                         state = .unavailable(
-                            "Model refresh is incomplete. NexGenVideo will retry automatically."
+                            "Model refresh is incomplete. Check the connection and try again."
                         )
                     } else if publishedEntries.isEmpty {
                         state = .unavailable(
@@ -304,7 +304,7 @@ enum CatalogDiscovery {
                     } else if !result.mcpDetailEnrichmentIsComplete {
                         state = .stale(
                             modelCount: publishedEntries.count,
-                            message: "Some model details could not be refreshed. NexGenVideo will retry automatically."
+                            message: "Some model details could not be refreshed. Try again later."
                         )
                     } else {
                         state = .ready(modelCount: publishedEntries.count)

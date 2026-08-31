@@ -1092,10 +1092,21 @@ extension ToolExecutor {
                     canonical as CFURL,
                     [kCGImageSourceShouldCache: false] as CFDictionary
                 )
-                let declaredImage = ClipType(
+                let declaredType = ClipType(
                     fileExtension: child.pathExtension.lowercased()
-                ) == .image
-                guard declaredImage || source != nil else { continue }
+                )
+                let declaredImage = declaredType == .image
+                let containsImage = source.flatMap {
+                    CGImageSourceCopyPropertiesAtIndex($0, 0, nil)
+                } != nil
+                guard declaredImage || containsImage else {
+                    if declaredType != nil || child.lastPathComponent.hasPrefix(".") {
+                        continue
+                    }
+                    throw ToolError(
+                        "Production Design reference '\(relativePath)' uses an unsupported image format."
+                    )
+                }
                 guard declaredImage else {
                     throw ToolError(
                         "Production Design reference '\(relativePath)' uses an unsupported image format."
@@ -1303,12 +1314,14 @@ extension ToolExecutor {
         guard let source = existingSource ?? CGImageSourceCreateWithURL(
             url as CFURL,
             [kCGImageSourceShouldCache: false] as CFDictionary
-        ), CGImageSourceGetCount(source) > 0 else {
+        ) else {
             return "cannot be decoded as an image"
         }
         guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
-            as? [CFString: Any],
-              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+            as? [CFString: Any] else {
+            return "cannot be decoded as an image"
+        }
+        guard let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
               let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
               width > 0, height > 0 else {
             return "has invalid image dimensions"
