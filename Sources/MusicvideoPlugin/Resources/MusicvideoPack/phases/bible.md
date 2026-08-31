@@ -232,10 +232,9 @@ canonical sheet path with exact prompt/model/hash provenance.
 5. **Generate:** pass the returned `compiledPrompt`, `compileToken`, and
    `shotId="none"` unchanged to `generate_image`, with
    `aspectRatio=<square or the entity's natural ratio>` and
-   `referenceMediaRefs=[...]`. The call returns an async placeholder
-   asset; wait until it is ready (`get_media` shows its
-   `generationStatus` off `generating`/`downloading`).
-6. **Stage:** `copy_project_file(media=<ready asset id>,
+   `referenceMediaRefs=[...]`. The call returns only after the asset is
+   ready, or returns the provider failure.
+6. **Stage:** `copy_project_file(media=<completed asset id>,
    to="bible/<id>/<view>.png")`. The host records exact generated-media
    provenance. Only then record that path in `sheets[<view>]`.
 

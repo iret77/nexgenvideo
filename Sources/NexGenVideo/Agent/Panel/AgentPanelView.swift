@@ -113,7 +113,10 @@ struct AgentPanelView: View {
                 .id(dialog.id)
                 .padding(.bottom, AppTheme.Spacing.xs)
             }
-            AgentLiveStatusView(status: liveStatus)
+            AgentLiveStatusView(
+                status: liveStatus,
+                onCancel: { service.cancelRunningSpend() }
+            )
             footer
         }
         .onAppear {
@@ -163,10 +166,22 @@ struct AgentPanelView: View {
             hasDialog: service.pendingDialog != nil,
             hasGateApproval: service.pendingGateApproval != nil,
             hasSpendApproval: service.pendingSpendApproval != nil
+                || service.currentSpendRun != nil
         )
     }
 
     private var liveStatus: AgentLiveStatus {
+        if let run = service.currentSpendRun {
+            return AgentLiveStatus(
+                state: .working,
+                title: run.cancellationRequested
+                    ? "Cancelling generation"
+                    : "Generation in progress",
+                detail: "\(run.actionLabel) · \(run.modelName) via \(run.providerName)",
+                canCancel: true,
+                cancellationRequested: run.cancellationRequested
+            )
+        }
         if let snapshot = editor.pipelinePhaseExecution.snapshot,
            snapshot.isRunning {
             if runningTranscriptActivity != nil {
@@ -195,13 +210,6 @@ struct AgentPanelView: View {
                 detail: service.pendingGateApproval.map {
                     PhaseDisplay.label($0.phase)
                 } ?? "Updating the pipeline gate"
-            )
-        }
-        if service.spendApprovalIsRunning {
-            return AgentLiveStatus(
-                state: .working,
-                title: "Starting generation",
-                detail: service.pendingSpendApproval?.actionLabel ?? "Submitting the approved request"
             )
         }
         if service.submittingDialogID != nil {

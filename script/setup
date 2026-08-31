@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$repo_root"
+
+git config --local --replace-all core.hooksPath .hooks
+
+echo "Repository hooks installed from .hooks."
+echo "Build and test only through GitHub Actions."

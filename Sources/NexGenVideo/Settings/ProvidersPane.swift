@@ -100,12 +100,16 @@ struct ProvidersPane: View {
         switch primaryStyle(p) {
         case .oauth:
             switch catalog.providerDiscovery[p] {
-            case .ready: return true
+            case .ready, .stale: return true
             case .checking, .inactive, .none: return connectionState(p).oauthConnected
             case .actionRequired, .unavailable: return false
             }
         case .localApp: return connectionState(p).localEnabled
-        case .apiKey: return connectionState(p).hasKey
+        case .apiKey:
+            switch catalog.providerDiscovery[p] {
+            case .unavailable, .actionRequired: return false
+            case .inactive, .checking, .ready, .stale, .none: return connectionState(p).hasKey
+            }
         }
     }
 
@@ -151,6 +155,7 @@ struct ProvidersPane: View {
             case .checking: (label, tone) = ("Checking…", .neutral)
             case .actionRequired: (label, tone) = ("Sign in again", .warning)
             case .unavailable: (label, tone) = ("Connection failed", .error)
+            case .stale: (label, tone) = ("Refresh pending", .warning)
             case .ready: (label, tone) = ("Signed in", .success)
             case .inactive, .none:
                 (label, tone) = ready ? ("Signed in", .success) : ("Not configured", .neutral)
@@ -158,7 +163,18 @@ struct ProvidersPane: View {
         case .localApp:
             (label, tone) = ready ? ("Enabled", .success) : ("Disabled", .neutral)
         case .apiKey:
-            (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
+            switch catalog.providerDiscovery[provider] {
+            case .checking where connectionState(provider).hasKey:
+                (label, tone) = ("Checking…", .neutral)
+            case .unavailable where connectionState(provider).hasKey:
+                (label, tone) = ("Connection failed", .error)
+            case .actionRequired where connectionState(provider).hasKey:
+                (label, tone) = ("Key rejected", .error)
+            case .stale where connectionState(provider).hasKey:
+                (label, tone) = ("Refresh pending", .warning)
+            default:
+                (label, tone) = ready ? ("Key saved", .success) : ("Not configured", .neutral)
+            }
         }
         return SettingsStatusBadge(text: label, tone: tone)
     }
@@ -215,7 +231,8 @@ struct ProvidersPane: View {
 
     private func discoveryMessage(_ state: ProviderDiscoveryState?) -> String? {
         switch state {
-        case .actionRequired(let message), .unavailable(let message): message
+        case .actionRequired(let message), .unavailable(let message),
+             .stale(_, let message): message
         case .inactive, .checking, .ready, .none: nil
         }
     }
@@ -260,6 +277,13 @@ struct ProvidersPane: View {
                         focusedProvider == provider.id ? AppTheme.Border.primaryColor : AppTheme.Border.subtleColor,
                         lineWidth: AppTheme.BorderWidth.thin))
                 trailingControl(provider)
+            }
+            if connectionState(provider).hasKey,
+               let message = discoveryMessage(catalog.providerDiscovery[provider]) {
+                Text(message)
+                    .font(.system(size: AppTheme.FontSize.sm))
+                    .foregroundStyle(AppTheme.Status.errorColor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, AppTheme.Spacing.mdLg)

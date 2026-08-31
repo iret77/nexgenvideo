@@ -34,6 +34,42 @@ struct CostGuardTests {
         }
     }
 
+    @MainActor
+    private final class PendingExecutionFixture {
+        private var continuation: CheckedContinuation<Void, Never>?
+        private(set) var didStart = false
+
+        func wait() async {
+            didStart = true
+            await withCheckedContinuation { continuation = $0 }
+        }
+
+        func finish() {
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    @MainActor
+    private final class HostFollowUpFixture {
+        var readinessError: AgentStreamError?
+        private(set) var sent: [String] = []
+
+        func send(_ text: String, imageBlocks: [[String: Any]]) -> Bool {
+            sent.append(text)
+            return true
+        }
+    }
+
+    @MainActor
+    private func waitUntil(_ predicate: @MainActor () -> Bool) async {
+        for _ in 0..<1_000 {
+            if predicate() { return }
+            await Task.yield()
+        }
+        Issue.record("Timed out waiting for the spend state to settle")
+    }
+
     private func option(
         modelId: String,
         name: String,
@@ -95,6 +131,18 @@ struct CostGuardTests {
         }
     }
 
+    @Test func providerDiagnosticScopeSurvivesAnEmptyOptionRefresh() {
+        let approval = SpendApproval(
+            id: "provider-outage",
+            recommendedOptionId: "",
+            options: [],
+            actionLabel: "Generate image",
+            providerScope: [.fal, .higgsfield]
+        )
+
+        #expect(approval.providerScope == [.fal, .higgsfield])
+    }
+
     @MainActor
     @Test func approvalEndsTheTurnAndRunsTheStoredOperationAfterTheClick() async throws {
         let editor = EditorViewModel()
@@ -108,12 +156,14 @@ struct CostGuardTests {
             actionLabel: "Generate video"
         )
         var executed: SpendOption?
+        let fixture = PendingExecutionFixture()
         let result = try service.requestSpendApproval(
             approval,
             origin: .direct,
             editor: editor,
             execute: { _, option in
                 executed = option
+                await fixture.wait()
                 return .ok("started")
             }
         )
@@ -121,15 +171,38 @@ struct CostGuardTests {
         #expect(result.turnDisposition == .suspendTurn)
         #expect(service.pendingSpendApproval?.id == "spend-1")
         await service.approveSpend(selected)
-        #expect(executed == selected)
         #expect(service.pendingSpendApproval == nil)
+        #expect(service.currentSpendRun?.id == approval.id)
+        #expect(!service.isComposerBlocked)
+
+        await waitUntil { fixture.didStart }
+        #expect(executed == selected)
+        #expect(service.spendApprovalIsRunning)
+
+        fixture.finish()
+        await waitUntil { !service.spendApprovalIsRunning }
+        #expect(!service.spendApprovalIsRunning)
     }
 
     @MainActor
     @Test func embeddedApprovalKeepsItsResumeOwner() async throws {
         let editor = EditorViewModel()
-        let service = editor.agentService
+        let service = AgentService(
+            backend: .claudeCode,
+            refreshBackendStatusOnInit: false
+        )
+        service.editor = editor
         service.newChat()
+        let unavailable = ClaudeCodeLocator.Status(
+            executableURL: nil,
+            version: nil,
+            isAuthenticated: false
+        )
+        NotificationCenter.default.post(
+            name: .claudeCodeStatusChanged,
+            object: unavailable
+        )
+        #expect(!service.canStream)
         service.isStreaming = true
         let origin = ToolCallOrigin.embeddedRuntime(
             chatSessionID: try #require(service.currentSessionId),
@@ -155,14 +228,422 @@ struct CostGuardTests {
         )
 
         await service.approveSpend(selected)
+        await waitUntil { service.hasPendingHostFollowUp }
 
         #expect(service.pendingSpendApproval == nil)
         #expect(service.hasPendingHostFollowUp)
         #expect(service.isComposerBlocked)
 
+        NotificationCenter.default.post(
+            name: .claudeCodeStatusChanged,
+            object: unavailable
+        )
         service.isStreaming = false
         #expect(!service.resumePendingSpendFollowUp())
         #expect(service.hasPendingHostFollowUp)
+        #expect(service.toolCallBlockReason(
+            tool: .generateImage,
+            args: [:],
+            origin: origin
+        )?.contains("suspended at a host decision") == true)
+        guard case .authenticationRequired? = service.streamError else {
+            Issue.record("Expected the unavailable backend to remain visible before retry")
+            return
+        }
+    }
+
+    @MainActor
+    @Test func approvedImageReplacesTheSuspendedResultWithVisibleMedia() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let chatSessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: chatSessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "fal-ai/nano-banana-pro/edit",
+            name: "Nano Banana Pro (edit)",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "visible-result",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        let suspended = "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
+        service.messages = [
+            AgentMessage(role: .assistant, blocks: [
+                .toolUse(id: "image-tool", name: ToolName.generateImage.rawValue, inputJSON: "{}")
+            ]),
+            AgentMessage(role: .user, blocks: [
+                .toolResult(toolUseId: "image-tool", content: [.text(suspended)], isError: false)
+            ]),
+        ]
+        service.isStreaming = true
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in
+                ToolResult(
+                    content: [
+                        .text("Generation completed. Asset ID: image-1."),
+                        .image(base64: "aW1hZ2U=", mediaType: "image/png"),
+                    ],
+                    isError: false
+                )
+            }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        let resultContent = service.messages
+            .flatMap(\.blocks)
+            .compactMap { block -> [ToolResult.Block]? in
+                guard case .toolResult(let id, let content, _) = block,
+                      id == "image-tool" else { return nil }
+                return content
+            }
+            .first
+        #expect(resultContent?.contains(where: {
+            guard case .image(let base64, let mediaType) = $0 else { return false }
+            return base64 == "aW1hZ2U=" && mediaType == "image/png"
+        }) == true)
+    }
+
+    @MainActor
+    @Test func workingCopyFailurePreservesAndRetryStartsExactEmbeddedFollowUp() async throws {
+        let editor = EditorViewModel()
+        let fixture = HostFollowUpFixture()
+        fixture.readinessError = .upstream("The project working copy is unavailable.")
+        let service = AgentService(
+            backend: .claudeCode,
+            refreshBackendStatusOnInit: false,
+            hostFollowUpReadinessOverride: { fixture.readinessError },
+            embeddedHostFollowUpSender: fixture.send
+        )
+        service.editor = editor
+        service.newChat()
+        NotificationCenter.default.post(
+            name: .claudeCodeStatusChanged,
+            object: ClaudeCodeLocator.Status(
+                executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+                version: "test",
+                isAuthenticated: true
+            )
+        )
+        let sessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: sessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "working-copy-retry",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "working-copy-image",
+                content: [.text("The spend approval card is open. End this turn and wait for the host result; do not retry this tool call.")],
+                isError: false
+            ),
+        ])]
+        service.isStreaming = true
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in .ok("rendered") }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { service.hasPendingHostFollowUp }
+        service.isStreaming = false
+        #expect(!service.resumePendingSpendFollowUp())
+        #expect(service.hasPendingHostFollowUp)
+        #expect(fixture.sent.isEmpty)
+        #expect(service.streamError?.errorDescription?.contains("working copy") == true)
+
+        fixture.readinessError = nil
+        service.retryPendingHostFollowUp()
+        #expect(!service.hasPendingHostFollowUp)
+        #expect(fixture.sent.count == 1)
+        #expect(fixture.sent[0].contains("Host generation result: rendered"))
+        #expect(service.currentSessionId == sessionID)
+    }
+
+    @MainActor
+    @Test func completedImageReturnsToItsOriginatingChatAfterTabSwitch() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let originSessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: originSessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "fal-ai/nano-banana-pro/edit",
+            name: "Nano Banana Pro (edit)",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "tab-switch-result",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "image-tool",
+                content: [.text("The spend approval card is open. End this turn and wait for the host result; do not retry this tool call.")],
+                isError: false
+            ),
+        ])]
+        let fixture = PendingExecutionFixture()
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in
+                await fixture.wait()
+                return ToolResult(
+                    content: [
+                        .text("Generation completed. Asset ID: switched-image."),
+                        .image(base64: "c3dpdGNoZWQ=", mediaType: "image/png"),
+                    ],
+                    isError: false
+                )
+            }
+        )
+
+        await service.approveSpend(selected)
+        #expect(service.spendApprovalIsRunning)
+        await waitUntil { fixture.didStart }
+        service.newChat()
+        let newSessionID = try #require(service.currentSessionId)
+        #expect(newSessionID != originSessionID)
+        #expect(service.currentSpendRun == nil)
+        #expect(!service.isComposerBlocked)
+
+        fixture.finish()
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        #expect(service.currentSessionId == newSessionID)
+        #expect(!service.hasPendingHostFollowUp)
+
+        let originSession = try #require(
+            service.sessions.first(where: { $0.id == originSessionID })
+        )
+        #expect(originSession.messages.flatMap(\.blocks).contains { block in
+            guard case .toolResult(_, let content, _) = block else { return false }
+            return content.contains {
+                guard case .image(let base64, _) = $0 else { return false }
+                return base64 == "c3dpdGNoZWQ="
+            }
+        })
+
+        service.selectSession(originSessionID)
+        #expect(service.currentSessionId == originSessionID)
+        #expect(service.hasPendingHostFollowUp)
+    }
+
+    @MainActor
+    @Test func runningGenerationCanBeCancelledAndSettlesExactlyOnce() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        let sessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: sessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "fal-ai/nano-banana-pro/edit",
+            name: "Nano Banana Pro (edit)",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "cancel-running-spend",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "cancelled-image",
+                content: [.text("The spend approval card is open. End this turn and wait for the host result; do not retry this tool call.")],
+                isError: false
+            ),
+        ])]
+        service.isStreaming = true
+        var didStart = false
+        var cancellationCount = 0
+        _ = try service.requestSpendApproval(
+            approval,
+            origin: origin,
+            editor: editor,
+            cancel: { _ in cancellationCount += 1 },
+            execute: { _, _ in
+                didStart = true
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+                return .ok("unexpected")
+            }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { didStart }
+        #expect(service.currentSpendRun?.cancellationRequested == false)
+
+        service.cancelRunningSpend()
+        service.cancelRunningSpend()
+        #expect(service.currentSpendRun?.cancellationRequested == true)
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        #expect(cancellationCount == 1)
+        #expect(service.hasPendingHostFollowUp)
+        let results = service.messages.flatMap(\.blocks).compactMap { block -> ([ToolResult.Block], Bool)? in
+            guard case .toolResult(let id, let content, let isError) = block,
+                  id == "cancelled-image" else { return nil }
+            return (content, isError)
+        }
+        #expect(results.count == 1)
+        #expect(results.first?.1 == true)
+        let cancelledContent = try #require(results.first?.0)
+        #expect(cancelledContent.contains { block in
+            guard case .text(let text) = block else { return false }
+            return text == "Generation cancelled."
+        })
+    }
+
+    @MainActor
+    @Test func completedSpendFollowUpsRemainOwnedByEachInactiveChat() async throws {
+        let editor = EditorViewModel()
+        let followUps = HostFollowUpFixture()
+        let service = AgentService(
+            backend: .claudeCode,
+            refreshBackendStatusOnInit: false,
+            embeddedHostFollowUpSender: followUps.send
+        )
+        service.editor = editor
+        service.newChat()
+        NotificationCenter.default.post(
+            name: .claudeCodeStatusChanged,
+            object: ClaudeCodeLocator.Status(
+                executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+                version: "test",
+                isAuthenticated: true
+            )
+        )
+
+        let firstSessionID = try #require(service.currentSessionId)
+        let firstOrigin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: firstSessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let suspensionText = "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "first-image",
+                content: [.text(suspensionText)],
+                isError: false
+            ),
+        ])]
+        let firstExecution = PendingExecutionFixture()
+        _ = try service.requestSpendApproval(
+            SpendApproval(
+                id: "first-inactive-chat",
+                recommendedOptionId: selected.id,
+                options: [selected],
+                actionLabel: "Generate first image"
+            ),
+            origin: firstOrigin,
+            editor: editor,
+            execute: { _, _ in
+                await firstExecution.wait()
+                return .ok("first chat result")
+            }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { firstExecution.didStart }
+        service.newChat()
+        let secondSessionID = try #require(service.currentSessionId)
+        firstExecution.finish()
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        let secondOrigin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: secondSessionID,
+            mcpSessionID: UUID()
+        )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "second-image",
+                content: [.text(suspensionText)],
+                isError: false
+            ),
+        ])]
+        let secondExecution = PendingExecutionFixture()
+        _ = try service.requestSpendApproval(
+            SpendApproval(
+                id: "second-inactive-chat",
+                recommendedOptionId: selected.id,
+                options: [selected],
+                actionLabel: "Generate second image"
+            ),
+            origin: secondOrigin,
+            editor: editor,
+            execute: { _, _ in
+                await secondExecution.wait()
+                return .ok("second chat result")
+            }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { secondExecution.didStart }
+        service.newChat()
+        let inactiveSessionID = try #require(service.currentSessionId)
+        secondExecution.finish()
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        #expect(service.currentSessionId == inactiveSessionID)
+        #expect(!service.hasPendingHostFollowUp)
+        #expect(followUps.sent.isEmpty)
+
+        service.selectSession(firstSessionID)
+        await waitUntil { followUps.sent.count == 1 }
+        let firstFollowUp = try #require(followUps.sent.first)
+        #expect(firstFollowUp.contains("Host generation result: first chat result"))
+        #expect(!firstFollowUp.contains("second chat result"))
+        #expect(!service.hasPendingHostFollowUp)
+
+        service.selectSession(secondSessionID)
+        await waitUntil { followUps.sent.count == 2 }
+        let secondFollowUp = try #require(followUps.sent.dropFirst().first)
+        #expect(secondFollowUp.contains("Host generation result: second chat result"))
+        #expect(!secondFollowUp.contains("first chat result"))
+        #expect(!service.hasPendingHostFollowUp)
     }
 
     @MainActor
@@ -211,6 +692,13 @@ struct CostGuardTests {
             options: [selected],
             actionLabel: "Generate image"
         )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "pending-image",
+                content: [.text("The spend approval card is open. End this turn and wait for the host result; do not retry this tool call.")],
+                isError: false
+            ),
+        ])]
         var executed = false
         let result = try service.requestSpendApproval(
             approval,
@@ -233,6 +721,15 @@ struct CostGuardTests {
 
         service.cancel()
         #expect(service.pendingSpendApproval == nil)
+        #expect(service.toolCallBlockReason(
+            tool: .generateImage,
+            args: [:],
+            origin: origin
+        ) == nil)
+        #expect(service.messages.flatMap(\.blocks).contains { block in
+            guard case .toolResult(let id, _, let isError) = block else { return false }
+            return id == "pending-image" && isError
+        })
     }
 
     @MainActor
@@ -261,6 +758,7 @@ struct CostGuardTests {
         )
 
         await service.approveSpend(selected)
+        await waitUntil { !service.spendApprovalIsRunning }
 
         #expect(released)
         #expect(service.pendingSpendApproval == nil)
@@ -446,6 +944,7 @@ struct CostGuardTests {
         editor = nil
         #expect(weakEditor == nil)
         await service.approveSpend(selected)
+        await waitUntil { !service.spendApprovalIsRunning }
         #expect(service.pendingSpendApproval == nil)
     }
 }

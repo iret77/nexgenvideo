@@ -200,6 +200,13 @@ struct VideoGenerationSubmission {
 
         @MainActor
         private func validateTextToVideoReferences(for model: VideoModelConfig) -> String? {
+            let framesInImageLimit = model.framesCountTowardImageReferenceLimit
+                ? frames.count : 0
+            let framesInTotalLimit = model.framesCountTowardTotalReferenceLimit
+                ? frames.count : 0
+            let imageLimit = model.maxReferenceImages(
+                hasVideoReference: !videoRefs.isEmpty
+            )
             if sourceVideo != nil {
                 return "\(model.displayName) does not accept a source video"
             }
@@ -218,8 +225,11 @@ struct VideoGenerationSubmission {
             if model.framesAndReferencesExclusive, !frames.isEmpty, !allRefs.isEmpty {
                 return "\(model.displayName) uses frames OR references, not both. Clear one side."
             }
-            if imageRefs.count > model.maxReferenceImages {
-                return "\(model.displayName) accepts at most \(model.maxReferenceImages) image references"
+            if imageRefs.count + framesInImageLimit > imageLimit {
+                let inputName = framesInImageLimit > 0
+                    ? "image inputs including frame references"
+                    : "image references"
+                return "\(model.displayName) accepts at most \(imageLimit) \(inputName)"
             }
             if videoRefs.count > model.maxReferenceVideos {
                 return "\(model.displayName) accepts at most \(model.maxReferenceVideos) video references"
@@ -227,7 +237,8 @@ struct VideoGenerationSubmission {
             if audioRefs.count > model.maxReferenceAudios {
                 return "\(model.displayName) accepts at most \(model.maxReferenceAudios) audio references"
             }
-            if let totalCap = model.maxTotalReferences, totalRefCount > totalCap {
+            if let totalCap = model.maxTotalReferences,
+               totalRefCount + framesInTotalLimit > totalCap {
                 return "\(model.displayName) accepts at most \(totalCap) references total"
             }
             if let cap = model.maxCombinedVideoRefSeconds,

@@ -689,7 +689,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .generateVideo,
-            description: "Starts an async AI video generation. Returns a placeholder asset ID immediately; generation runs in the background and the asset becomes usable in add_clips once ready. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. Raw prompts work only for shotId=none when the user enabled the pro setting.",
+            description: "Generates an AI video and returns only after the provider result is imported and usable in add_clips, or returns the provider failure. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. Raw prompts work only for shotId=none when the user enabled the pro setting.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
@@ -721,7 +721,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .generateImage,
-            description: "Starts an async AI image generation. Returns a placeholder asset ID immediately; generation runs in the background. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. Raw prompts work only for shotId=none through the explicit pro escape hatch.",
+            description: "Generates an AI image and returns only after the provider result is imported, including the completed image for inspection, or returns the provider failure. Costs real money and is not undoable. PROMPT GATE: prompt, compileToken, and shotId must be passed unchanged from compile_prompt. A shot-bound token cannot be reused for another shot or project. Raw prompts work only for shotId=none through the explicit pro escape hatch.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
@@ -734,6 +734,7 @@ enum ToolDefinitions {
                     "resolution": ["type": "string", "description": "Resolution (e.g. '2K', '4K')"],
                     "quality": ["type": "string", "description": "Image quality (e.g. 'low', 'medium', 'high'). Only supported by some models — see list_models."],
                     "referenceMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs to use as reference images"],
+                    "referenceProjectPaths": ["type": "array", "items": ["type": "string"], "description": "Project-local image paths under pipeline/ to use as references, for example production_design/refs/claude.png. Production Design automatically attaches its complete staged refs set; omit this field there."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
                 required: ["prompt", "shotId"]
@@ -741,7 +742,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .generateAudio,
-            description: "Starts an async AI audio generation: text-to-speech, text-to-music, or video-to-music (scoring a video). Returns a placeholder asset ID immediately; the asset appears in get_media and becomes usable in add_clips once ready. TTS models (elevenlabs-tts-v3, gemini-3.1-flash-tts) convert the prompt into speech and accept a 'voice'. Music models (lyria3-pro, minimax-music-v2.6, elevenlabs-music, sonilo-v1.1-video-to-music) generate tracks from a prompt; include lyrics/tempo/vocal style in the prompt for Lyria 3 Pro, pass 'lyrics' for MiniMax vocals, or set 'instrumental' true when the selected model supports it. Video-to-audio models (inputs include 'video' — see list_models, e.g. sonilo-v1.1-video-to-music, mirelo-sfx-v1.5-video-to-audio) generate audio that matches a VIDEO: provide a timeline span via videoSourceStartFrame+videoSourceEndFrame (e.g. to score the timeline), or a video asset via videoSourceMediaRef; the prompt is then an optional style guide. PLACEMENT: when you pass a timeline span, the result is placed on the timeline automatically at that span (no add_clips needed); for a media-asset source or a plain text-to-speech/music result, the asset lands in the library and you place it with add_clips. Use list_models with type='audio' to see each model's 'inputs', category, and voices. Costs real money and is not undoable.",
+            description: "Generates AI audio and returns only after the provider result is imported and usable, or returns the provider failure. Supports text-to-speech, text-to-music, and video-to-music. TTS models (elevenlabs-tts-v3, gemini-3.1-flash-tts) convert the prompt into speech and accept a 'voice'. Music models (lyria3-pro, minimax-music-v2.6, elevenlabs-music, sonilo-v1.1-video-to-music) generate tracks from a prompt; include lyrics/tempo/vocal style in the prompt for Lyria 3 Pro, pass 'lyrics' for MiniMax vocals, or set 'instrumental' true when the selected model supports it. Video-to-audio models (inputs include 'video' — see list_models, e.g. sonilo-v1.1-video-to-music, mirelo-sfx-v1.5-video-to-audio) generate audio that matches a VIDEO: provide a timeline span via videoSourceStartFrame+videoSourceEndFrame, or a video asset via videoSourceMediaRef; the prompt is then an optional style guide. PLACEMENT: a timeline span is placed automatically; media-source and plain text results land in the library for add_clips. Use list_models with type='audio' to see each model's inputs, category, and voices. Costs real money and is not undoable.",
             inputSchema: objectSchema(
                 properties: [
                     "compileToken": ["type": "string", "description": "Token from compile_prompt proving 'prompt' is the compiled prompt. Required unless rawPrompt=true."],
@@ -765,7 +766,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .upscaleMedia,
-            description: "Upscales an existing video or image asset to higher resolution using an AI upscaler. Returns a placeholder asset ID immediately; the upscaled asset appears in get_media once ready. Use list_models with type='upscale' to pick a model that supports the asset's type. Costs real money and is not undoable.",
+            description: "Upscales an existing video or image asset and returns only after the provider result is imported, including a completed image for inspection, or returns the provider failure. Use list_models with type='upscale' to pick a model that supports the asset's type. Costs real money and is not undoable.",
             inputSchema: objectSchema(
                 properties: [
                     "mediaRef": ["type": "string", "description": "ID of the video or image asset to upscale"],

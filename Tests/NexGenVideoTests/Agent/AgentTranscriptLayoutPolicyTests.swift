@@ -111,7 +111,7 @@ struct AgentTranscriptLayoutPolicyTests {
         let implementation = source[start.lowerBound..<end.lowerBound]
 
         let status = try #require(implementation.range(
-            of: "AgentLiveStatusView(status: liveStatus)"
+            of: "AgentLiveStatusView("
         ))
         let footer = try #require(implementation.range(
             of: "footer",
@@ -127,6 +127,9 @@ struct AgentTranscriptLayoutPolicyTests {
         )
         #expect(!statusSource.contains(".overlay"))
         #expect(!statusSource.contains("ZStack"))
+        #expect(statusSource.contains("if status.canCancel"))
+        #expect(statusSource.contains("onCancel()"))
+        #expect(implementation.contains("service.cancelRunningSpend()"))
     }
 
     @Test func runningTranscriptActivityOwnsTheOnlyOperationSpinnerAndLabel() throws {

@@ -5,15 +5,53 @@ import Foundation
 /// enums verified against Runway's official SDK (runwayml/sdk-node).
 actor RunwayClient {
     let apiKey: String
+    private let session: URLSession
+    private let pollIntervalNanoseconds: UInt64
+    private let retryBaseDelayNanoseconds: UInt64
+    private let maxWaitSeconds: TimeInterval
+    private let maxPollRetries: Int
 
-    init(apiKey: String) {
+    init(
+        apiKey: String,
+        session: URLSession = .shared,
+        pollIntervalNanoseconds: UInt64 = 3_000_000_000,
+        retryBaseDelayNanoseconds: UInt64 = 1_000_000_000,
+        maxWaitSeconds: TimeInterval = 10 * 60,
+        maxPollRetries: Int = 5
+    ) {
         self.apiKey = apiKey
+        self.session = session
+        self.pollIntervalNanoseconds = pollIntervalNanoseconds
+        self.retryBaseDelayNanoseconds = retryBaseDelayNanoseconds
+        self.maxWaitSeconds = maxWaitSeconds.isFinite
+            ? min(max(0, maxWaitSeconds), 24 * 60 * 60)
+            : 24 * 60 * 60
+        self.maxPollRetries = max(0, maxPollRetries)
     }
 
     private static let base = "https://api.dev.runwayml.com/v1"
     private static let versionHeader = "2024-11-06"
-    private static let pollInterval: UInt64 = 3_000_000_000 // 3s
-    private static let maxWait: TimeInterval = 10 * 60
+    private static let maxRetryDelayNanoseconds: UInt64 = 30_000_000_000
+
+    struct SubmissionAcknowledgedError: LocalizedError, Sendable {
+        let ledgerRequestID: String
+        let message: String
+
+        var errorDescription: String? { message }
+    }
+
+    struct SubmissionOutcomeUnknownError: LocalizedError, Sendable {
+        let ledgerRequestID: String
+        let message: String
+
+        var errorDescription: String? { message }
+    }
+
+    private struct TerminalTaskError: LocalizedError, Sendable {
+        let message: String
+
+        var errorDescription: String? { message }
+    }
 
     // MARK: - Generation
 
@@ -94,7 +132,22 @@ actor RunwayClient {
     }
 
     func output(taskId: String) async throws -> [String] {
-        try await waitForOutput(taskId: taskId)
+        do {
+            return try await waitForOutput(taskId: taskId)
+        } catch let error as TerminalTaskError {
+            throw GenerationBackendError.transport(error.message)
+        } catch {
+            let cancelled = error is CancellationError || Task.isCancelled
+            if let failure = await cancelIndependently(taskId: taskId) {
+                throw GenerationBackendError.transport(
+                    "\(cancelled ? "Generation was cancelled locally" : error.localizedDescription), but Runway task cancellation failed: \(failure). The provider task may still run and incur charges."
+                )
+            }
+            if cancelled { throw CancellationError() }
+            throw GenerationBackendError.transport(
+                "\(error.localizedDescription) Runway cancelled the provider task."
+            )
+        }
     }
 
     // MARK: - Reference hosting
@@ -169,52 +222,205 @@ actor RunwayClient {
     func availableModelIds() async throws -> Set<String> {
         let (data, status) = try await send(method: "GET", path: "organization", body: nil)
         guard (200..<300).contains(status) else {
-            let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
-            throw GenerationBackendError.transport("Runway organization HTTP \(status): \(detail)")
+            throw Self.apiError(data: data, status: status, operation: "organization")
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tier = json["tier"] as? [String: Any],
-              let models = tier["models"] as? [String: Any] else { return [] }
+              let models = tier["models"] as? [String: Any] else {
+            throw GenerationBackendError.transport(
+                "Runway returned a malformed organization model catalog."
+            )
+        }
         return Set(models.keys)
     }
 
     // MARK: - Task flow
 
     private func createTask(path: String, body: [String: Any]) async throws -> String {
-        let (data, status) = try await send(method: "POST", path: path, body: body)
+        let response: (Data, Int)
+        do {
+            response = try await send(method: "POST", path: path, body: body)
+        } catch {
+            throw SubmissionOutcomeUnknownError(
+                ledgerRequestID: "runway-unknown-\(UUID().uuidString)",
+                message: "Runway did not return a submission receipt. The request may still be running, so NexGenVideo will not retry it automatically."
+            )
+        }
+        let (data, status) = response
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard (200..<300).contains(status), let id = json?["id"] as? String else {
-            let detail = String(data: data.prefix(500), encoding: .utf8) ?? ""
-            throw GenerationBackendError.transport("Runway HTTP \(status): \(detail)")
+        guard (200..<300).contains(status) else {
+            throw Self.apiError(data: data, status: status, operation: "submission")
+        }
+        guard let id = json?["id"] as? String, !id.isEmpty else {
+            throw SubmissionAcknowledgedError(
+                ledgerRequestID: "runway-missing-task-id-\(UUID().uuidString)",
+                message: "Runway accepted the submission without returning a usable task id. The request may still be running, so NexGenVideo will not retry it automatically."
+            )
+        }
+        if Task.isCancelled {
+            let cancellationFailure = await cancelIndependently(taskId: id)
+            let message: String
+            if let cancellationFailure {
+                message = "Runway accepted task \(id), but its cancellation failed: \(cancellationFailure). The provider task may still run and incur charges."
+            } else {
+                message = "Runway accepted task \(id) before cancellation and then cancelled the provider task."
+            }
+            throw SubmissionAcknowledgedError(ledgerRequestID: id, message: message)
         }
         return id
     }
 
     private func waitForOutput(taskId: String) async throws -> [String] {
-        let deadline = Date().addingTimeInterval(Self.maxWait)
+        let deadline = Date().addingTimeInterval(maxWaitSeconds)
         while true {
-            let (data, status) = try await send(method: "GET", path: "tasks/\(taskId)", body: nil)
+            if Date() >= deadline {
+                throw GenerationBackendError.transport("Runway generation timed out.")
+            }
+            let (data, status) = try await pollTask(taskId: taskId, deadline: deadline)
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             guard (200..<300).contains(status), let state = json?["status"] as? String else {
-                let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
-                throw GenerationBackendError.transport("Runway task poll HTTP \(status): \(detail)")
+                if !(200..<300).contains(status) {
+                    throw Self.apiError(data: data, status: status, operation: "task poll")
+                }
+                throw GenerationBackendError.transport("Runway returned a malformed task status.")
             }
             switch state {
             case "SUCCEEDED":
                 guard let output = json?["output"] as? [String], !output.isEmpty else {
-                    throw GenerationBackendError.transport("Runway returned no output")
+                    throw TerminalTaskError(message: "Runway returned no output.")
                 }
                 return output
             case "FAILED", "CANCELLED":
                 let reason = (json?["failure"] as? String) ?? "Runway generation \(state.lowercased())"
-                throw GenerationBackendError.transport(reason)
-            default: // PENDING, THROTTLED, RUNNING
+                throw TerminalTaskError(message: reason)
+            case "PENDING", "THROTTLED", "RUNNING":
                 if Date() >= deadline {
-                    throw GenerationBackendError.transport("Runway generation timed out")
+                    throw GenerationBackendError.transport("Runway generation timed out.")
                 }
-                try await Task.sleep(nanoseconds: Self.pollInterval)
+                try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+            default:
+                throw GenerationBackendError.transport(
+                    "Runway returned an unknown task status: \(state)."
+                )
             }
         }
+    }
+
+    private func pollTask(taskId: String, deadline: Date) async throws -> (Data, Int) {
+        var retries = 0
+        while true {
+            try Task.checkCancellation()
+            guard Date() < deadline else {
+                throw GenerationBackendError.transport("Runway generation timed out.")
+            }
+            let response: (Data, Int)
+            do {
+                response = try await send(method: "GET", path: "tasks/\(taskId)", body: nil)
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                guard Self.isRetryableTransport(error), retries < maxPollRetries, Date() < deadline else {
+                    throw GenerationBackendError.transport(
+                        "Runway task polling failed: \(error.localizedDescription)"
+                    )
+                }
+                try await sleepBeforeRetry(retry: retries, deadline: deadline)
+                retries += 1
+                continue
+            }
+            if Self.isTransientStatus(response.1) {
+                guard retries < maxPollRetries, Date() < deadline else {
+                    throw GenerationBackendError.transport(
+                        "Runway task polling remained unavailable after \(retries + 1) attempts (HTTP \(response.1))."
+                    )
+                }
+                try await sleepBeforeRetry(retry: retries, deadline: deadline)
+                retries += 1
+                continue
+            }
+            return response
+        }
+    }
+
+    private func sleepBeforeRetry(retry: Int, deadline: Date) async throws {
+        if Date() >= deadline {
+            throw GenerationBackendError.transport("Runway generation timed out.")
+        }
+        var delay = min(retryBaseDelayNanoseconds, Self.maxRetryDelayNanoseconds)
+        for _ in 0..<min(retry, 5) {
+            if delay >= Self.maxRetryDelayNanoseconds / 2 {
+                delay = Self.maxRetryDelayNanoseconds
+                break
+            }
+            delay *= 2
+        }
+        let remaining = max(0, deadline.timeIntervalSinceNow)
+        let remainingNanoseconds = UInt64(
+            min(Double(UInt64.max), remaining * 1_000_000_000)
+        )
+        try await Task.sleep(nanoseconds: min(delay, remainingNanoseconds))
+    }
+
+    private static func isTransientStatus(_ status: Int) -> Bool {
+        status == 429 || (500...599).contains(status)
+    }
+
+    private static func isRetryableTransport(_ error: Error) -> Bool {
+        guard let error = error as? URLError else { return false }
+        switch error.code {
+        case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+             .dnsLookupFailed, .notConnectedToInternet, .resourceUnavailable,
+             .internationalRoamingOff, .callIsActive, .dataNotAllowed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func apiError(
+        data: Data,
+        status: Int,
+        operation: String
+    ) -> GenerationBackendError {
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let errorObject = json?["error"] as? [String: Any]
+        let message = (json?["message"] as? String)
+            ?? (json?["error"] as? String)
+            ?? (errorObject?["message"] as? String)
+            ?? String(data: data.prefix(500), encoding: .utf8)
+            ?? "Runway request failed."
+        let code = (json?["code"] as? String)
+            ?? (errorObject?["code"] as? String)
+            ?? "\(status)"
+        return .api(
+            status: status,
+            code: code,
+            message: "Runway \(operation) HTTP \(status): \(message)"
+        )
+    }
+
+    private func cancelIndependently(taskId: String) async -> String? {
+        let cancellation = Task.detached { [self] () -> String? in
+            do {
+                let (data, status) = try await send(
+                    method: "DELETE",
+                    path: "tasks/\(taskId)",
+                    body: nil
+                )
+                guard (200..<300).contains(status) || status == 404 || status == 409 else {
+                    let detail = String(data: data.prefix(300), encoding: .utf8) ?? ""
+                    throw GenerationBackendError.transport(
+                        "Runway task cancellation HTTP \(status): \(detail)"
+                    )
+                }
+                return nil
+            } catch {
+                Log.generation.error(
+                    "Runway task cancellation failed id=\(taskId) error=\(error.localizedDescription)"
+                )
+                return error.localizedDescription
+            }
+        }
+        return await cancellation.value
     }
 
     private func send(method: String, path: String, body: [String: Any]?) async throws -> (Data, Int) {
@@ -229,7 +435,7 @@ actor RunwayClient {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 }

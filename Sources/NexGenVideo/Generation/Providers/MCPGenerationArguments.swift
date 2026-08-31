@@ -2,6 +2,11 @@ import Foundation
 import MCP
 
 enum MCPGenerationArguments {
+    private static let synchronousCompletionFields = Set([
+        "block", "blocking", "sync", "syncmode", "synchronous",
+        "wait", "waitforcompletion",
+    ])
+
     enum MappingError: LocalizedError, Equatable {
         case unsupportedRequiredFields([String])
         case unsupportedMediaRoles([String])
@@ -255,12 +260,30 @@ enum MCPGenerationArguments {
                 mappedMedia.formUnion(selected.map(\.key))
                 continue
             }
-            if let candidateName = candidateNames(for: normalized, mode: mode)
-                .first(where: { candidates[$0] != nil && !mappedNames.contains($0) }),
-               let value = candidates[candidateName] {
-                result[field] = try coerce(value, for: fieldSchema, path: path + field)
-                mappedNames.insert(candidateName)
-                continue
+            let availableCandidates = candidateNames(for: normalized, mode: mode)
+                .filter { candidates[$0] != nil && !mappedNames.contains($0) }
+            if !availableCandidates.isEmpty {
+                var mappedCandidate = false
+                for candidateName in availableCandidates {
+                    guard let value = candidates[candidateName],
+                          let converted = try? coerce(
+                              value,
+                              for: fieldSchema,
+                              path: path + field
+                          ) else { continue }
+                    result[field] = converted
+                    mappedNames.insert(candidateName)
+                    mappedCandidate = true
+                    break
+                }
+                if mappedCandidate { continue }
+                if required.contains(field) {
+                    if let fixed = fixedSchemaValue(fieldSchema) {
+                        result[field] = fixed
+                        continue
+                    }
+                    throw MappingError.incompatibleField(path + field)
+                }
             }
             if required.contains(field), let fixed = fixedSchemaValue(fieldSchema) {
                 result[field] = fixed
@@ -295,6 +318,7 @@ enum MCPGenerationArguments {
         var media: [MediaInput] = []
         if let model, !model.isEmpty { values["model"] = .string(model) }
         if let requestID, !requestID.isEmpty { values["requestid"] = .string(requestID) }
+        values["sync"] = .bool(true)
 
         func role(_ preferred: [String], fallback: String) -> String {
             if let match = preferred.first(where: mediaRoles.contains) { return match }
@@ -407,12 +431,16 @@ enum MCPGenerationArguments {
             case "durationseconds": ["durationseconds", "duration"]
             case "sourceurl": ["sourceurl"]
             case "requestid", "clientrequestid", "idempotencykey": ["requestid"]
+            case "block", "blocking", "sync", "syncmode", "synchronous",
+                 "wait", "waitforcompletion": ["sync"]
             default: []
             }
         case .job:
             switch field {
-            case "id", "jobid", "generationid", "taskid", "requestid": ["jobid"]
-            case "ids", "jobids", "generationids", "taskids": ["jobids"]
+            case "handle", "id", "jobhandle", "jobid", "jobsetid",
+                 "generationid", "taskid", "requestid": ["jobid"]
+            case "handles", "ids", "jobhandles", "jobids", "jobsetids",
+                 "generationids", "taskids", "requestids": ["jobids"]
             case "sync", "wait", "block": ["sync"]
             default: []
             }
@@ -586,6 +614,41 @@ enum MCPGenerationArguments {
 
     private static func normalize(_ field: String) -> String {
         field.lowercased().filter(\.isLetter)
+    }
+
+    static func supportsSynchronousCompletion(schema: Value) -> Bool {
+        guard let object = schemaObject(schema) else { return false }
+        if let alternatives = schemaAlternatives(object),
+           alternatives.contains(where: {
+               supportsSynchronousCompletion(schema: $0)
+           }) {
+            return true
+        }
+        guard let properties = schemaProperties(object) else { return false }
+        for (name, child) in properties {
+            if synchronousCompletionFields.contains(normalize(name)),
+               (try? coerce(.bool(true), for: child, path: name)) != nil {
+                return true
+            }
+            if supportsSynchronousCompletion(schema: child) { return true }
+        }
+        return false
+    }
+
+    static func requestsSynchronousCompletion(
+        arguments: [String: Value]
+    ) -> Bool {
+        arguments.contains { element in
+            let (name, value) = element
+            if synchronousCompletionFields.contains(normalize(name)) {
+                switch value {
+                case .bool(true), .string("true"), .int(1): return true
+                default: break
+                }
+            }
+            guard case .object(let nested) = value else { return false }
+            return requestsSynchronousCompletion(arguments: nested)
+        }
     }
 
     private static func schemaObject(_ value: Value) -> [String: Value]? {

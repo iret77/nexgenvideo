@@ -10,24 +10,27 @@ import Foundation
 
 @Suite("FalInputBuilder — image")
 struct FalImageInputTests {
-    @Test func fluxUsesImageSizeEnumAndOmitsNumImagesWhenOne() {
+    @Test func fluxUsesImageSizeEnumAndOmitsNumImagesWhenOne() throws {
+        let model = try #require(FalModelRegistry.model(for: "fal-ai/flux/schnell"))
         let p = ImageGenerationParams(prompt: "a cat", aspectRatio: "16:9", resolution: nil, quality: nil, imageURLs: [], numImages: 1)
-        let input = FalInputBuilder.imageInput(p, sizeMode: .imageSizeEnum, refField: .none, count: 1)
+        let input = FalInputBuilder.imageInput(p, model: model, count: 1)
         #expect(input["prompt"] as? String == "a cat")
         #expect(input["image_size"] as? String == "landscape_16_9")
         #expect(input["num_images"] == nil)
         #expect(input["image_url"] == nil)
     }
 
-    @Test func multiImageSendsNumImages() {
+    @Test func multiImageSendsNumImages() throws {
+        let model = try #require(FalModelRegistry.model(for: "fal-ai/flux/schnell"))
         let p = ImageGenerationParams(prompt: "x", aspectRatio: "1:1", resolution: nil, quality: nil, imageURLs: [], numImages: 4)
-        let input = FalInputBuilder.imageInput(p, sizeMode: .imageSizeEnum, refField: .none, count: 4)
+        let input = FalInputBuilder.imageInput(p, model: model, count: 4)
         #expect(input["num_images"] as? Int == 4)
     }
 
-    @Test func aspectRatioModeSendsAspectRatio() {
+    @Test func aspectRatioModeSendsAspectRatio() throws {
+        let model = try #require(FalModelRegistry.model(for: "fal-ai/flux-pro/v1.1-ultra"))
         let p = ImageGenerationParams(prompt: "x", aspectRatio: "16:9", resolution: nil, quality: nil, imageURLs: [], numImages: 1)
-        let input = FalInputBuilder.imageInput(p, sizeMode: .aspectRatio, refField: .none, count: 1)
+        let input = FalInputBuilder.imageInput(p, model: model, count: 1)
         #expect(input["aspect_ratio"] as? String == "16:9")
         #expect(input["image_size"] == nil)
     }
@@ -35,7 +38,7 @@ struct FalImageInputTests {
     @Test func editSingleEmitsImageUrl() throws {
         let kontext = try #require(FalModelRegistry.model(for: "fal-ai/flux-pro/kontext"))
         let p = ImageGenerationParams(prompt: "edit", aspectRatio: "1:1", resolution: nil, quality: nil, imageURLs: ["https://x/src.png"], numImages: 1)
-        let input = FalInputBuilder.imageInput(p, sizeMode: kontext.imageSize, refField: kontext.imageRef, count: 1)
+        let input = FalInputBuilder.imageInput(p, model: kontext, count: 1)
         #expect(input["image_url"] as? String == "https://x/src.png")
         #expect(input["aspect_ratio"] as? String == "1:1")
     }
@@ -43,10 +46,66 @@ struct FalImageInputTests {
     @Test func geminiEditEmitsImageUrlsAndAspectRatio() throws {
         let gemini = try #require(FalModelRegistry.model(for: "fal-ai/gemini-25-flash-image/edit"))
         let p = ImageGenerationParams(prompt: "edit", aspectRatio: "9:16", resolution: nil, quality: nil, imageURLs: ["a", "b"], numImages: 1)
-        let input = FalInputBuilder.imageInput(p, sizeMode: gemini.imageSize, refField: gemini.imageRef, count: 1)
+        let input = FalInputBuilder.imageInput(p, model: gemini, count: 1)
         #expect(input["image_urls"] as? [String] == ["a", "b"])
         #expect(input["image_size"] == nil)
         #expect(input["aspect_ratio"] as? String == "9:16")
+    }
+
+    @Test func liveFalAliasesPreserveStableModelIdentifiers() throws {
+        let entries = FalModelRegistry.discoveredEntries(availableModelIds: [
+            "fal-ai/nano-banana",
+            "fal-ai/nano-banana/edit",
+            "openai/gpt-image-2",
+            "openai/gpt-image-2/edit",
+        ])
+        let offers = Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
+            entry.offers?.first.map { (entry.id, $0.providerRef) }
+        })
+
+        #expect(offers["fal-ai/nano-banana"] == "fal-ai/nano-banana")
+        #expect(offers["fal-ai/gemini-25-flash-image/edit"] == "fal-ai/nano-banana/edit")
+        #expect(offers["fal-ai/gpt-image-2"] == "openai/gpt-image-2")
+        #expect(offers["fal-ai/gpt-image-2/edit"] == "openai/gpt-image-2/edit")
+
+        let textModel = try #require(
+            FalModelRegistry.model(for: "fal-ai/nano-banana")
+        )
+        guard case .image(let textCaps) = textModel.entry.uiCapabilities else {
+            Issue.record("expected Nano Banana image caps")
+            return
+        }
+        #expect(textCaps.aspectRatios.first == "1:1")
+        #expect(textCaps.aspectRatios.contains("auto") == false)
+    }
+
+    @Test func currentReferenceModelsPreserveRefsResolutionAndQuality() throws {
+        let nano = try #require(FalModelRegistry.model(for: "fal-ai/nano-banana-pro/edit"))
+        let refs = (1...4).map { "https://ref.invalid/\($0).png" }
+        let nanoInput = FalInputBuilder.imageInput(
+            ImageGenerationParams(
+                prompt: "preserve the style", aspectRatio: "9:16", resolution: "2K",
+                quality: nil, imageURLs: refs, numImages: 1
+            ),
+            model: nano,
+            count: 1
+        )
+        #expect(nanoInput["image_urls"] as? [String] == refs)
+        #expect(nanoInput["aspect_ratio"] as? String == "9:16")
+        #expect(nanoInput["resolution"] as? String == "2K")
+
+        let gpt = try #require(FalModelRegistry.model(for: "fal-ai/gpt-image-2/edit"))
+        let gptInput = FalInputBuilder.imageInput(
+            ImageGenerationParams(
+                prompt: "preserve the style", aspectRatio: "9:16", resolution: nil,
+                quality: "high", imageURLs: refs, numImages: 1
+            ),
+            model: gpt,
+            count: 1
+        )
+        #expect(gptInput["image_urls"] as? [String] == refs)
+        #expect(gptInput["image_size"] as? String == "portrait_16_9")
+        #expect(gptInput["quality"] as? String == "high")
     }
 
     @Test func imageSizeEnumMapping() {
@@ -248,14 +307,71 @@ struct FalRegistryTests {
     }
 
     @Test func sizeDialectsAssignedCorrectly() throws {
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/flux/dev")).imageSize == .imageSizeEnum)
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/flux-pro/v1.1-ultra")).imageSize == .aspectRatio)
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/imagen4")).imageSize == .aspectRatio)
+        let fluxDev = try #require(FalModelRegistry.model(for: "fal-ai/flux/dev"))
+        let fluxUltra = try #require(FalModelRegistry.model(for: "fal-ai/flux-pro/v1.1-ultra"))
+        let imagen = try #require(FalModelRegistry.model(for: "fal-ai/imagen4"))
+
+        #expect(fluxDev.imageSize == .imageSizeEnum)
+        #expect(fluxUltra.imageSize == .aspectRatio)
+        #expect(imagen.imageSize == .aspectRatio)
+    }
+
+    @Test func liveImageInventoryIncludesCurrentSupportedModelsAndAliases() {
+        let entries = FalModelRegistry.discoveredEntries(availableModelIds: [
+            "fal-ai/nano-banana-2",
+            "fal-ai/nano-banana-pro/edit",
+            "openai/gpt-image-2",
+            "openai/gpt-image-2/edit",
+            "unmapped/image-tool",
+        ])
+        #expect(Set(entries.map(\.id)) == [
+            "fal-ai/nano-banana-2",
+            "fal-ai/nano-banana-pro/edit",
+            "fal-ai/gpt-image-2",
+            "fal-ai/gpt-image-2/edit",
+        ])
+        #expect(entries.first(where: { $0.id == "fal-ai/gpt-image-2" })?
+            .offers?.first?.providerRef == "openai/gpt-image-2")
+        #expect(entries.first(where: { $0.id == "fal-ai/gpt-image-2/edit" })?
+            .offers?.first?.providerRef == "openai/gpt-image-2/edit")
+    }
+
+    @Test func nanoBananaModelsExposeTheirExactAspectRatioSets() throws {
+        let nano2Model = try #require(
+            FalModelRegistry.model(for: "fal-ai/nano-banana-2")
+        )
+        guard case .image(let nano2) = nano2Model.entry.uiCapabilities else {
+            Issue.record("Expected Nano Banana 2 image capabilities")
+            return
+        }
+        let nanoProModel = try #require(
+            FalModelRegistry.model(for: "fal-ai/nano-banana-pro")
+        )
+        guard case .image(let nanoPro) = nanoProModel.entry.uiCapabilities else {
+            Issue.record("Expected Nano Banana Pro image capabilities")
+            return
+        }
+
+        #expect(Set(nano2.aspectRatios) == [
+            "auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5",
+            "3:4", "2:3", "9:16", "4:1", "1:4", "8:1", "1:8",
+        ])
+        #expect(Set(nanoPro.aspectRatios) == [
+            "auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5",
+            "3:4", "2:3", "9:16",
+        ])
     }
 
     @Test func imageToVideoModelsCarryRefDialect() throws {
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video")).videoImageRef == true)
-        #expect(try #require(FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video")).videoImageRef == false)
+        let imageToVideo = try #require(
+            FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video")
+        )
+        let textToVideo = try #require(
+            FalModelRegistry.model(for: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video")
+        )
+
+        #expect(imageToVideo.videoImageRef == true)
+        #expect(textToVideo.videoImageRef == false)
     }
 
     @Test func seedance2FamilyPresentWithCorrectCaps() throws {

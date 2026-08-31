@@ -204,8 +204,8 @@ the resulting prompt. Then pass its `compiledPrompt` unchanged as `generate_imag
 its `compileToken` as `generate_image.compileToken` and its `shotId` as
 `generate_image.shotId`, together with
 `aspectRatio`, `resolution="2K"`, and the ordered
-`referenceMediaRefs`. It returns an async placeholder media ID; wait
-until `get_media` reports that exact asset ready.
+`referenceMediaRefs`. It returns only after the exact asset is complete,
+or returns the provider failure.
 
 After the image is in, proceed to the F2.5 audit.
 

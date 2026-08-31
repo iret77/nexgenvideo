@@ -501,6 +501,36 @@ struct GateApprovalTests {
         #expect(!replacement.isError)
     }
 
+    @Test("Deleting a chat clears its gate follow-up and resumes its tool origin")
+    func deletingChatClearsGateFollowUp() async throws {
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        service.newChat()
+        service.isStreaming = true
+        let chatID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.inAppChat(sessionID: chatID)
+
+        _ = try service.requestGateApproval(
+            GateApproval(phase: "brief"),
+            origin: origin
+        )
+        _ = await service.resolveGate(.declined)
+        #expect(service.toolCallBlockReason(
+            tool: .getTimeline,
+            args: [:],
+            origin: origin
+        ) != nil)
+
+        service.deleteSession(chatID)
+
+        #expect(!service.hasPendingHostFollowUp)
+        #expect(service.toolCallBlockReason(
+            tool: .getTimeline,
+            args: [:],
+            origin: origin
+        ) == nil)
+    }
+
     // MARK: - Tool outcome (approve writes, decline does not)
 
     private func scaffold() throws -> (ToolHarness, URL, URL) {

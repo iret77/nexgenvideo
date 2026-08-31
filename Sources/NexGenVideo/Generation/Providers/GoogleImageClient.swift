@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 
 /// Direct client for Google's Generative Language API (generativelanguage.googleapis.com), used when
 /// the user has a Google AI key in Settings → Providers — so their own Google account is billed
@@ -16,24 +17,32 @@ import Foundation
 /// Every generation endpoint returns raw image BYTES (no hosted URL), like `ElevenLabsClient`.
 actor GoogleImageClient {
     let apiKey: String
+    private let session: URLSession
 
-    init(apiKey: String) {
+    init(apiKey: String, session: URLSession = .shared) {
         self.apiKey = apiKey
+        self.session = session
     }
 
     private static let base = "https://generativelanguage.googleapis.com/v1beta"
+    static let catalogPageSize = 200
+    static let catalogPageLimit = 20
+
+    struct PreparedGeminiImageRequest: @unchecked Sendable {
+        fileprivate let request: URLRequest
+    }
 
     enum ClientError: LocalizedError {
-        case http(status: Int, message: String)
         case noImage(String)
+        case corruptReference
         case unsupportedReference
 
         var errorDescription: String? {
             switch self {
-            case .http(let status, let message):
-                return "Google AI API error \(status): \(message)"
             case .noImage(let detail):
                 return "Google AI returned no image: \(detail)"
+            case .corruptReference:
+                return "Reference image is corrupt or has an unreadable image container."
             case .unsupportedReference:
                 return "Reference image is not a PNG, JPEG, WebP or HEIC file."
             }
@@ -71,20 +80,92 @@ actor GoogleImageClient {
     /// honest: a registry entry whose id Google doesn't expose to this key never reaches the user
     /// (#159), instead of 404-ing after they've committed to a render.
     func availableModelIds() async throws -> Set<String> {
-        var components = URLComponents(string: "\(Self.base)/models")!
-        // Ask for a generous page — the list is small and this avoids paging for an availability check.
-        components.queryItems = [URLQueryItem(name: "pageSize", value: "200")]
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "GET"
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        let data = try await send(request)
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let models = object["models"] as? [[String: Any]] else { return [] }
-        // Names come back fully qualified ("models/imagen-3.0-generate-002"); the registry stores the
-        // bare id, so normalize.
-        return Set(models.compactMap { model in
-            (model["name"] as? String).map { $0.hasPrefix("models/") ? String($0.dropFirst("models/".count)) : $0 }
-        })
+        var modelIds: Set<String> = []
+        var requestedTokens: Set<String> = []
+        var pageToken: String?
+
+        for pageIndex in 0..<Self.catalogPageLimit {
+            var components = URLComponents(string: "\(Self.base)/models")!
+            var queryItems = [
+                URLQueryItem(name: "pageSize", value: String(Self.catalogPageSize))
+            ]
+            if let pageToken {
+                queryItems.append(URLQueryItem(name: "pageToken", value: pageToken))
+            }
+            components.queryItems = queryItems
+            var request = URLRequest(url: components.url!)
+            request.httpMethod = "GET"
+            request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+
+            let data = try await send(request)
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let models = object["models"] as? [Any],
+                  models.count <= Self.catalogPageSize else {
+                throw Self.malformedCatalog("page \(pageIndex + 1) has an invalid models array")
+            }
+            for (entryIndex, entry) in models.enumerated() {
+                guard let model = entry as? [String: Any],
+                      let name = model["name"] as? String,
+                      !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw Self.malformedCatalog(
+                        "page \(pageIndex + 1) entry \(entryIndex + 1) has no valid name"
+                    )
+                }
+                let normalized = name.hasPrefix("models/")
+                    ? String(name.dropFirst("models/".count)) : name
+                guard !normalized.isEmpty,
+                      !normalized.unicodeScalars.contains(where: {
+                          CharacterSet.whitespacesAndNewlines.contains($0)
+                      }) else {
+                    throw Self.malformedCatalog(
+                        "page \(pageIndex + 1) entry \(entryIndex + 1) has no valid name"
+                    )
+                }
+                modelIds.insert(normalized)
+            }
+
+            let nextToken: String?
+            if let rawToken = object["nextPageToken"] {
+                guard let token = rawToken as? String,
+                      !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw Self.malformedCatalog(
+                        "page \(pageIndex + 1) has an invalid nextPageToken"
+                    )
+                }
+                nextToken = token
+            } else {
+                nextToken = nil
+            }
+
+            if models.isEmpty, nextToken != nil {
+                throw Self.malformedCatalog(
+                    "page \(pageIndex + 1) is empty but includes nextPageToken"
+                )
+            }
+            guard let nextToken else {
+                guard models.count < Self.catalogPageSize else {
+                    throw Self.malformedCatalog(
+                        "page \(pageIndex + 1) is full but omits nextPageToken"
+                    )
+                }
+                return modelIds
+            }
+            guard requestedTokens.insert(nextToken).inserted else {
+                throw Self.malformedCatalog(
+                    "page \(pageIndex + 1) repeats nextPageToken"
+                )
+            }
+            guard pageIndex + 1 < Self.catalogPageLimit else {
+                throw GenerationBackendError.transport(
+                    "Google AI model catalog exceeded the \(Self.catalogPageLimit)-page safety limit."
+                )
+            }
+            pageToken = nextToken
+        }
+
+        throw GenerationBackendError.transport(
+            "Google AI model catalog exceeded the \(Self.catalogPageLimit)-page safety limit."
+        )
     }
 
     // MARK: - Generation
@@ -97,12 +178,13 @@ actor GoogleImageClient {
     /// the brief within 2% — so an unsent ratio flags on every sheet. Google's enum (verified live)
     /// is 1:1 / 1:4 / 1:8 / 2:3 / 3:2 / 3:4 / 4:1 / 4:3 / 4:5 / 5:4 / 8:1 / 9:16 / 16:9 / 21:9, which
     /// covers everything NGV speaks; an empty value is simply omitted.
-    func geminiImage(
+    func prepareGeminiImageRequest(
         model: String, prompt: String, aspectRatio: String = "", referenceImages: [Data] = []
-    ) async throws -> [Data] {
+    ) throws -> PreparedGeminiImageRequest {
         var parts: [[String: Any]] = [["text": prompt]]
         for image in referenceImages {
             let mime = try Self.mimeType(of: image)
+            try Self.validateImageContainer(image)
             parts.append(["inline_data": ["mime_type": mime, "data": image.base64EncodedString()]])
         }
         var generationConfig: [String: Any] = ["responseModalities": ["IMAGE"]]
@@ -113,7 +195,13 @@ actor GoogleImageClient {
             "contents": [["parts": parts]],
             "generationConfig": generationConfig,
         ]
-        let data = try await post(path: "models/\(model):generateContent", body: body)
+        return PreparedGeminiImageRequest(
+            request: try makePostRequest(path: "models/\(model):generateContent", body: body)
+        )
+    }
+
+    func geminiImage(prepared: PreparedGeminiImageRequest) async throws -> [Data] {
+        let data = try await send(prepared.request)
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let candidates = object["candidates"] as? [[String: Any]] else {
             throw ClientError.noImage(Self.snippet(data))
@@ -133,23 +221,42 @@ actor GoogleImageClient {
         return images
     }
 
+    func geminiImage(
+        model: String, prompt: String, aspectRatio: String = "", referenceImages: [Data] = []
+    ) async throws -> [Data] {
+        let prepared = try prepareGeminiImageRequest(
+            model: model,
+            prompt: prompt,
+            aspectRatio: aspectRatio,
+            referenceImages: referenceImages
+        )
+        return try await geminiImage(prepared: prepared)
+    }
+
     // MARK: - Transport
 
-    private func post(path: String, body: [String: Any]) async throws -> Data {
-        var request = URLRequest(url: URL(string: "\(Self.base)/\(path)")!)
+    private func makePostRequest(path: String, body: [String: Any]) throws -> URLRequest {
+        guard let url = URL(string: "\(Self.base)/\(path)") else {
+            throw GenerationBackendError.transport("Could not prepare the Google AI request URL.")
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         // Header auth, not `?key=` — keeps the key out of URLs (and out of any logged request line).
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        return try await send(request)
+        return request
     }
 
     private func send(_ request: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            throw ClientError.http(status: status, message: Self.errorMessage(data))
+            throw GenerationBackendError.api(
+                status: status,
+                code: String(status),
+                message: "Google AI API error \(status): \(Self.errorMessage(data))"
+            )
         }
         return data
     }
@@ -166,5 +273,25 @@ actor GoogleImageClient {
 
     private static func snippet(_ data: Data) -> String {
         String(decoding: data.prefix(400), as: UTF8.self)
+    }
+
+    private static func malformedCatalog(_ detail: String) -> GenerationBackendError {
+        .transport("Google AI returned a malformed model catalog: \(detail).")
+    }
+
+    private static func validateImageContainer(_ data: Data) throws {
+        guard let source = CGImageSourceCreateWithData(
+            data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary
+        ), CGImageSourceGetStatus(source) == .statusComplete,
+           CGImageSourceGetCount(source) > 0,
+           CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+           CGImageSourceCreateImageAtIndex(
+               source,
+               0,
+               [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+           ) != nil else {
+            throw ClientError.corruptReference
+        }
     }
 }

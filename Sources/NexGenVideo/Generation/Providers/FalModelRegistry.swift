@@ -45,6 +45,8 @@ struct FalModel: Sendable {
     let entry: CatalogEntry
     var imageSize: FalImageSizeMode = .imageSizeEnum
     var imageRef: FalImageRefField = .none
+    var imageSendsResolution = false
+    var imageSendsQuality = false
     var videoDuration: FalDurationMode = .plainSeconds
     var videoSendsAspectRatio: Bool = true
     var videoSendsResolution: Bool = false
@@ -76,6 +78,17 @@ enum FalModelRegistry {
     // MARK: - Image (text-to-image)
 
     private static let imageAspects = ["1:1", "16:9", "9:16", "4:3", "3:4"]
+    private static let nanoBanana2Aspects = [
+        "auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5",
+        "3:4", "2:3", "9:16", "4:1", "1:4", "8:1", "1:8",
+    ]
+    private static let nanoBananaProAspects = [
+        "auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5",
+        "3:4", "2:3", "9:16",
+    ]
+    private static let nanoBananaTextAspects = [
+        "1:1", "21:9", "16:9", "3:2", "4:3", "5:4", "4:5", "3:4", "2:3", "9:16",
+    ]
 
     private static let imageModels: [FalModel] = [
         image("fal-ai/flux/schnell", "FLUX.1 [schnell]"),
@@ -87,50 +100,119 @@ enum FalModelRegistry {
         image("fal-ai/imagen4", "Imagen 4", size: .aspectRatio),
         image("fal-ai/qwen-image", "Qwen-Image"),
         image("fal-ai/stable-diffusion-v35-large", "Stable Diffusion 3.5 Large"),
+        image(
+            "fal-ai/nano-banana", "Nano Banana (Gemini 2.5 Flash)",
+            size: .aspectRatio, aspectRatios: nanoBananaTextAspects
+        ),
+        image(
+            "fal-ai/nano-banana-2", "Nano Banana 2",
+            size: .aspectRatio, aspectRatios: nanoBanana2Aspects,
+            resolutions: ["1K", "2K", "4K", "0.5K"]
+        ),
+        image(
+            "fal-ai/nano-banana-pro", "Nano Banana Pro",
+            size: .aspectRatio, aspectRatios: nanoBananaProAspects,
+            resolutions: ["1K", "2K", "4K"]
+        ),
+        image(
+            "fal-ai/gpt-image-2", "GPT Image 2",
+            qualities: ["auto", "low", "medium", "high"]
+        ),
         // Image-to-image / edit (needs a reference image — uses the fal storage upload).
-        imageEdit("fal-ai/flux-pro/kontext", "FLUX.1 Kontext [pro]", size: .aspectRatio, ref: .single),
+        imageEdit(
+            "fal-ai/flux-pro/kontext", "FLUX.1 Kontext [pro]",
+            size: .aspectRatio, ref: .single, maxReferences: 1
+        ),
         imageEdit(
             "fal-ai/gemini-25-flash-image/edit",
             "Nano Banana (Gemini 2.5 Flash)",
             size: .aspectRatio,
-            ref: .array
+            ref: .array,
+            maxReferences: 3,
+            aspectRatios: nanoBananaProAspects
+        ),
+        imageEdit(
+            "fal-ai/nano-banana-2/edit", "Nano Banana 2 (edit)",
+            size: .aspectRatio, ref: .array, maxReferences: 14,
+            aspectRatios: nanoBanana2Aspects,
+            resolutions: ["1K", "2K", "4K", "0.5K"]
+        ),
+        imageEdit(
+            "fal-ai/nano-banana-pro/edit", "Nano Banana Pro (edit)",
+            size: .aspectRatio, ref: .array, maxReferences: 14,
+            aspectRatios: nanoBananaProAspects,
+            resolutions: ["1K", "2K", "4K"]
+        ),
+        imageEdit(
+            "fal-ai/gpt-image-2/edit", "GPT Image 2 (edit)",
+            size: .imageSizeEnum, ref: .array, maxReferences: 16,
+            qualities: ["auto", "low", "medium", "high"]
         ),
     ]
 
     private static func image(
         _ id: String, _ name: String,
-        size: FalImageSizeMode = .imageSizeEnum, maxImages: Int = 4
+        size: FalImageSizeMode = .imageSizeEnum, maxImages: Int = 4,
+        aspectRatios: [String] = imageAspects,
+        resolutions: [String]? = nil, qualities: [String]? = nil
     ) -> FalModel {
         FalModel(
             entry: CatalogEntry(
                 id: id, kind: .image, displayName: name,
                 allowedEndpoints: [id], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
-                    resolutions: nil, aspectRatios: imageAspects, qualities: nil,
+                    resolutions: resolutions, aspectRatios: aspectRatios, qualities: qualities,
                     supportsImageReference: false, maxReferenceImages: 0,
                     maxImages: maxImages
                 ))
             ),
-            imageSize: size
+            imageSize: size,
+            imageSendsResolution: resolutions != nil,
+            imageSendsQuality: qualities != nil
         )
     }
 
     private static func imageEdit(
-        _ id: String, _ name: String, size: FalImageSizeMode, ref: FalImageRefField
+        _ id: String, _ name: String, size: FalImageSizeMode, ref: FalImageRefField,
+        maxReferences: Int, aspectRatios: [String] = imageAspects,
+        resolutions: [String]? = nil, qualities: [String]? = nil
     ) -> FalModel {
         FalModel(
             entry: CatalogEntry(
                 id: id, kind: .image, displayName: name,
                 allowedEndpoints: [id], responseShape: .images,
                 uiCapabilities: .image(ImageCaps(
-                    resolutions: nil, aspectRatios: imageAspects, qualities: nil,
+                    resolutions: resolutions, aspectRatios: aspectRatios, qualities: qualities,
                     supportsImageReference: true, requiresImageReference: true,
-                    maxReferenceImages: ref == .single ? 1 : 3,
+                    maxReferenceImages: maxReferences,
                     maxImages: 1
                 ))
             ),
-            imageSize: size, imageRef: ref
+            imageSize: size, imageRef: ref,
+            imageSendsResolution: resolutions != nil,
+            imageSendsQuality: qualities != nil
         )
+    }
+
+    static func discoveredEntries(availableModelIds: Set<String>) -> [CatalogEntry] {
+        return models
+            .filter { $0.entry.kind == .image }
+            .compactMap { model -> CatalogEntry? in
+                let internalID = model.entry.id
+                let aliases: [String] = switch internalID {
+                case "fal-ai/gemini-25-flash-image/edit":
+                    ["fal-ai/nano-banana/edit", internalID]
+                case let id where id.hasPrefix("fal-ai/gpt-image-2"):
+                    ["openai/" + String(id.dropFirst("fal-ai/".count)), id]
+                default:
+                    [internalID]
+                }
+                let liveEndpoint = aliases.first(where: availableModelIds.contains)
+                guard let liveEndpoint else { return nil }
+                var entry = model.entry
+                entry.offers = [ProviderOffer(provider: .fal, providerRef: liveEndpoint)]
+                return entry
+            }
     }
 
     // MARK: - Video (text-to-video)

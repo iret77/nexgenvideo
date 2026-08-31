@@ -147,7 +147,8 @@ struct DirectImageProviderTests {
         // not-activated fallback — both must find the model, or that path reports "unsupported model"
         // instead of "add a key".
         let google = try #require(GoogleModelRegistry.models.first)
-        #expect(GoogleModelRegistry.model(for: try #require(google.apiModelCandidates.first)) != nil)
+        let apiModel = try #require(google.apiModelCandidates.first)
+        #expect(GoogleModelRegistry.model(for: apiModel) != nil)
         #expect(GoogleModelRegistry.model(for: google.entry.id) != nil)
         #expect(GoogleModelRegistry.model(for: "nope") == nil)
     }
@@ -160,6 +161,68 @@ struct DirectImageProviderTests {
         // its sunset-prone Aleph line), and pinning the exact set would turn red on every addition
         // rather than on a real defect.
         #expect(DirectImageDiscovery.providers.contains(.google))
+    }
+
+    @Test("catalog errors distinguish rejected credentials from transient failures")
+    func catalogFailureClassificationIsFailClosed() {
+        for status in [401, 403] {
+            #expect(DirectImageDiscovery.isAuthenticationFailure(
+                GenerationBackendError.api(
+                    status: status,
+                    code: String(status),
+                    message: "Rejected"
+                )
+            ))
+        }
+        for status in [429, 500, 502, 503] {
+            #expect(!DirectImageDiscovery.isAuthenticationFailure(
+                GenerationBackendError.api(
+                    status: status,
+                    code: String(status),
+                    message: "Transient"
+                )
+            ))
+            #expect(DirectImageDiscovery.isTransientFailure(
+                GenerationBackendError.api(
+                    status: status,
+                    code: String(status),
+                    message: "Transient"
+                )
+            ))
+        }
+        #expect(!DirectImageDiscovery.isTransientFailure(
+            GenerationBackendError.api(status: 400, code: "400", message: "Bad request")
+        ))
+        #expect(!DirectImageDiscovery.isAuthenticationFailure(
+            GenerationBackendError.transport("Timed out")
+        ))
+        #expect(DirectImageDiscovery.isTransientFailure(
+            GenerationBackendError.transport("Timed out")
+        ))
+    }
+
+    @Test("only transient refresh failures retain a verified catalog")
+    func onlyTransientFailuresPreserveLastKnownGood() {
+        #expect(DirectImageDiscovery.preservesLastKnownGood(
+            after: .transientFailure("Retry"),
+            currentModelCount: 8
+        ))
+        #expect(!DirectImageDiscovery.preservesLastKnownGood(
+            after: .transientFailure("Retry"),
+            currentModelCount: 0
+        ))
+        #expect(!DirectImageDiscovery.preservesLastKnownGood(
+            after: .authenticationFailure("Replace key"),
+            currentModelCount: 8
+        ))
+        #expect(!DirectImageDiscovery.preservesLastKnownGood(
+            after: .unavailableFailure("Rejected"),
+            currentModelCount: 8
+        ))
+        #expect(!DirectImageDiscovery.preservesLastKnownGood(
+            after: .success([]),
+            currentModelCount: 8
+        ))
     }
 
     @Test("the LLM sees provider-neutral logical ids")

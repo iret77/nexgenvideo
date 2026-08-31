@@ -317,6 +317,26 @@ struct AgentActivityView: View {
         return "Completed"
     }
 
+    private var generationImages: [String] {
+        activity.steps.flatMap { step -> [String] in
+            guard Self.displaysCompletedImage(for: step.name),
+                  let result = toolResults[step.id] else { return [] }
+            return result.content.compactMap { block in
+                guard case .image(let base64, _) = block else { return nil }
+                return base64
+            }
+        }
+    }
+
+    private static func displaysCompletedImage(for name: String) -> Bool {
+        switch ToolRunPresentation.baseName(for: name) {
+        case ToolName.generateImage.rawValue, ToolName.upscaleMedia.rawValue:
+            true
+        default:
+            false
+        }
+    }
+
     private var activePhaseProgress: PipelinePhaseExecutionSnapshot? {
         guard let snapshot = editor.pipelinePhaseExecution.snapshot,
               snapshot.isRunning,
@@ -369,6 +389,10 @@ struct AgentActivityView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(accessibilityState): \(label)")
+
+                ForEach(Array(generationImages.enumerated()), id: \.offset) { _, base64 in
+                    ToolResultImageView(base64: base64)
+                }
 
                 if expanded {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
@@ -442,6 +466,22 @@ private struct ToolRunRow: View {
         return result.isError
             ? AppTheme.Status.warningColor.opacity(AppTheme.Opacity.prominent)
             : AppTheme.Text.tertiaryColor
+    }
+    private var showsGenerationImage: Bool {
+        Self.displaysCompletedImage(for: name)
+            && result?.content.contains(where: {
+                if case .image = $0 { return true }
+                return false
+            }) == true
+    }
+
+    private static func displaysCompletedImage(for name: String) -> Bool {
+        switch ToolRunPresentation.baseName(for: name) {
+        case ToolName.generateImage.rawValue, ToolName.upscaleMedia.rawValue:
+            true
+        default:
+            false
+        }
     }
 
     var body: some View {
@@ -518,7 +558,9 @@ private struct ToolRunRow: View {
                 case .text(let s):
                     Text(s).frame(maxWidth: .infinity, alignment: .leading)
                 case .image(let base64, _):
-                    ToolResultImageView(base64: base64)
+                    if !showsGenerationImage {
+                        ToolResultImageView(base64: base64)
+                    }
                 }
             }
         }

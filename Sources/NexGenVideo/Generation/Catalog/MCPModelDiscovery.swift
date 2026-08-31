@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import MCP
 
@@ -11,8 +12,106 @@ import MCP
 /// REST providers — discovery adds models, never a raw-prompt bypass.
 enum MCPModelDiscovery {
 
+    private static let providerUnboundedReferenceHostMaximum = 32
+    private static let paginationCursorKeys = [
+        "next_page_token", "nextPageToken", "next", "cursor",
+    ]
+    private static let paginationHasMoreKeys = ["has_more", "hasMore"]
+    private static let catalogContentKeys = [
+        "items", "models", "job_sets", "jobSets", "model", "job_set", "jobSet",
+        "job_set_type", "jobSetType", "model_id", "modelId", "output_type",
+        "outputType", "modality",
+    ]
+    private static let identityFallbackKeys = ["id"]
+    private static let operationalEnvelopeKeys = ["status", "action"]
+    private static var paginationFieldKeys: [String] {
+        paginationCursorKeys + paginationHasMoreKeys
+    }
+    private static var catalogDetectionKeys: [String] {
+        catalogContentKeys + paginationFieldKeys
+    }
+
     enum Modality: String, Sendable, CaseIterable {
         case video, image, audio, upscale
+    }
+
+    enum ParsingContext: Sendable {
+        case listing
+        case detail
+    }
+
+    struct ListingParseResult: Sendable {
+        let items: [ModelItem]
+        let pagination: PaginationEvidence
+        let isCatalogPayload: Bool
+        let structuralAndDecodeIsComplete: Bool
+
+        var next: String? {
+            structuralAndDecodeIsComplete ? pagination.next : nil
+        }
+        var isComplete: Bool {
+            structuralAndDecodeIsComplete && pagination.isComplete
+        }
+    }
+
+    private enum ListingPayloadResult {
+        case catalog(
+            items: [Any],
+            pagination: PaginationEvidence,
+            isStructurallyComplete: Bool
+        )
+        case notCatalog
+    }
+
+    private struct JSONSegment {
+        let text: String
+        let isBalanced: Bool
+    }
+
+    struct PaginationEvidence: Sendable {
+        let cursor: String?
+        let cursorWasPresent: Bool
+        let hasMore: Bool?
+        let hasMoreWasPresent: Bool
+        let isStructurallyComplete: Bool
+
+        static let none = PaginationEvidence(
+            cursor: nil,
+            cursorWasPresent: false,
+            hasMore: nil,
+            hasMoreWasPresent: false,
+            isStructurallyComplete: true
+        )
+
+        var hasFields: Bool { cursorWasPresent || hasMoreWasPresent }
+
+        var next: String? {
+            guard isComplete, hasMore != false else { return nil }
+            return cursor
+        }
+
+        var isComplete: Bool {
+            guard isStructurallyComplete else { return false }
+            switch hasMore {
+            case true: return cursor != nil
+            case false: return cursor == nil
+            case nil: return true
+            }
+        }
+
+        static func aggregating(_ evidence: [PaginationEvidence]) -> PaginationEvidence {
+            let cursors = Set(evidence.compactMap(\.cursor))
+            let hasMoreValues = Set(evidence.compactMap(\.hasMore))
+            return PaginationEvidence(
+                cursor: cursors.count == 1 ? cursors.first : nil,
+                cursorWasPresent: evidence.contains(where: \.cursorWasPresent),
+                hasMore: hasMoreValues.count == 1 ? hasMoreValues.first : nil,
+                hasMoreWasPresent: evidence.contains(where: \.hasMoreWasPresent),
+                isStructurallyComplete: evidence.allSatisfy(\.isStructurallyComplete)
+                    && cursors.count <= 1
+                    && hasMoreValues.count <= 1
+            )
+        }
     }
 
     // MARK: - Tool classification
@@ -64,6 +163,8 @@ enum MCPModelDiscovery {
         let parameters: [Param]?
         let medias: [Media]?
         let tags: [String]?
+        let constraints: [String]?
+        let resolvedMediaTypes: Set<String>
 
         struct SpanRange: Decodable, Sendable, Equatable { let min: Int?; let max: Int? }
         struct Param: Decodable, Sendable, Equatable {
@@ -71,6 +172,13 @@ enum MCPModelDiscovery {
             let options: [Scalar]?
             let min: Int?
             let max: Int?
+
+            init(name: String?, options: [Scalar]?, min: Int?, max: Int?) {
+                self.name = name
+                self.options = options
+                self.min = min
+                self.max = max
+            }
 
             private enum CodingKeys: String, CodingKey {
                 case name, options, min, max
@@ -98,6 +206,38 @@ enum MCPModelDiscovery {
             let roles: [String]?
             let min: Int?
             let max: Int?
+
+            init(name: String?, type: String?, roles: [String]?, min: Int?, max: Int?) {
+                self.name = name
+                self.type = type
+                self.roles = roles
+                self.min = min
+                self.max = max
+            }
+
+            private enum CodingKeys: String, CodingKey {
+                case name, type, roles, min, max
+                case minimum, maximum
+                case minItems = "min_items"
+                case maxItems = "max_items"
+                case minItemsCamel = "minItems"
+                case maxItemsCamel = "maxItems"
+            }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                name = try c.decodeIfPresent(String.self, forKey: .name)
+                type = try c.decodeIfPresent(String.self, forKey: .type)
+                roles = try c.decodeIfPresent([String].self, forKey: .roles)
+                min = try c.decodeIfPresent(Int.self, forKey: .min)
+                    ?? c.decodeIfPresent(Int.self, forKey: .minimum)
+                    ?? c.decodeIfPresent(Int.self, forKey: .minItems)
+                    ?? c.decodeIfPresent(Int.self, forKey: .minItemsCamel)
+                max = try c.decodeIfPresent(Int.self, forKey: .max)
+                    ?? c.decodeIfPresent(Int.self, forKey: .maximum)
+                    ?? c.decodeIfPresent(Int.self, forKey: .maxItems)
+                    ?? c.decodeIfPresent(Int.self, forKey: .maxItemsCamel)
+            }
         }
         /// A param option value that may arrive as string / number / bool — normalized to its text.
         struct Scalar: Decodable, Sendable, Equatable {
@@ -113,7 +253,7 @@ enum MCPModelDiscovery {
         }
 
         enum CodingKeys: String, CodingKey {
-            case id, name, description, parameters, medias, tags, type, modality
+            case id, name, description, parameters, medias, tags, constraints, type, modality
             case jobSetType = "job_set_type"
             case jobSetTypeCamel = "jobSetType"
             case modelId = "model_id"
@@ -142,7 +282,9 @@ enum MCPModelDiscovery {
             durationRange: SpanRange?,
             parameters: [Param]?,
             medias: [Media]?,
-            tags: [String]?
+            tags: [String]?,
+            constraints: [String]? = nil,
+            resolvedMediaTypes: Set<String> = []
         ) {
             self.id = id
             self.name = name
@@ -154,6 +296,8 @@ enum MCPModelDiscovery {
             self.parameters = parameters
             self.medias = medias
             self.tags = tags
+            self.constraints = constraints
+            self.resolvedMediaTypes = resolvedMediaTypes
         }
 
         init(from decoder: Decoder) throws {
@@ -182,6 +326,19 @@ enum MCPModelDiscovery {
                 ?? c.decodeIfPresent([Media].self, forKey: .mediaInputs)
                 ?? c.decodeIfPresent([Media].self, forKey: .mediaInputsCamel)
             tags = try c.decodeIfPresent([String].self, forKey: .tags)
+            if !c.contains(.constraints) {
+                constraints = nil
+            } else {
+                let constraintsAreNull = try c.decodeNil(forKey: .constraints)
+                if constraintsAreNull {
+                    constraints = nil
+                } else if let values = try? c.decode([String].self, forKey: .constraints) {
+                    constraints = values
+                } else {
+                    constraints = [try c.decode(String.self, forKey: .constraints)]
+                }
+            }
+            resolvedMediaTypes = []
         }
 
         func withOutputType(_ fallback: String?) -> ModelItem {
@@ -196,70 +353,595 @@ enum MCPModelDiscovery {
                 durationRange: durationRange,
                 parameters: parameters,
                 medias: medias,
-                tags: tags
+                tags: tags,
+                constraints: constraints,
+                resolvedMediaTypes: resolvedMediaTypes
             )
         }
+
+        func merging(_ detail: ModelItem, resolvingMediaDetails: Bool) -> ModelItem {
+            ModelItem(
+                id: id,
+                name: detail.name ?? name,
+                description: detail.description ?? description,
+                outputType: detail.outputType ?? outputType,
+                aspectRatios: detail.aspectRatios ?? aspectRatios,
+                durations: detail.durations ?? durations,
+                durationRange: detail.durationRange ?? durationRange,
+                parameters: Self.moreCompleteParameters(parameters, detail.parameters),
+                medias: Self.moreCompleteMedia(medias, detail.medias),
+                tags: detail.tags ?? tags,
+                constraints: Self.mergedStrings(constraints, detail.constraints),
+                resolvedMediaTypes: resolvedMediaTypes.union(
+                    resolvingMediaDetails ? detail.declaredReferenceMediaTypes : []
+                ).union(detail.resolvedMediaTypes)
+            )
+        }
+
+        func hasResolvedMediaType(_ type: String) -> Bool {
+            resolvedMediaTypes.contains(type.lowercased())
+        }
+
+        private var declaredReferenceMediaTypes: Set<String> {
+            var types = Set((medias ?? []).compactMap { $0.type?.lowercased() })
+            for parameter in parameters ?? [] {
+                let name = (parameter.name ?? "").lowercased()
+                    .replacingOccurrences(of: "_", with: "")
+                for type in ["image", "video", "audio"]
+                    where name == type || name == "\(type)s" || name == "\(type)references" {
+                    types.insert(type)
+                }
+            }
+            for constraint in constraints ?? [] {
+                let normalized = constraint.lowercased().replacingOccurrences(of: "_", with: " ")
+                for type in ["image", "video", "audio"]
+                    where normalized.contains(type) && normalized.contains("reference") {
+                    types.insert(type)
+                }
+            }
+            return types
+        }
+
+        private static func moreCompleteParameters(
+            _ current: [Param]?,
+            _ candidate: [Param]?
+        ) -> [Param]? {
+            var merged: [Param] = []
+            var indices: [String: Int] = [:]
+            for value in (current ?? []) + (candidate ?? []) {
+                let key = (value.name ?? "").lowercased()
+                guard !key.isEmpty, let index = indices[key] else {
+                    if !key.isEmpty { indices[key] = merged.count }
+                    merged.append(value)
+                    continue
+                }
+                let existing = merged[index]
+                merged[index] = Param(
+                    name: value.name ?? existing.name,
+                    options: mergedScalars(existing.options, value.options),
+                    min: stricterMinimum(existing.min, value.min),
+                    max: stricterMaximum(existing.max, value.max)
+                )
+            }
+            return merged.isEmpty ? nil : merged
+        }
+
+        private static func moreCompleteMedia(
+            _ current: [Media]?,
+            _ candidate: [Media]?
+        ) -> [Media]? {
+            var merged: [Media] = []
+            var indices: [String: Int] = [:]
+            for value in (current ?? []) + (candidate ?? []) {
+                let name = (value.name ?? "").lowercased()
+                let type = (value.type ?? "").lowercased()
+                let key = name + "\u{0}" + type
+                guard key != "\u{0}", let index = indices[key] else {
+                    if key != "\u{0}" { indices[key] = merged.count }
+                    merged.append(value)
+                    continue
+                }
+                let existing = merged[index]
+                merged[index] = Media(
+                    name: value.name ?? existing.name,
+                    type: value.type ?? existing.type,
+                    roles: mergedStrings(existing.roles, value.roles),
+                    min: stricterMinimum(existing.min, value.min),
+                    max: stricterMaximum(existing.max, value.max)
+                )
+            }
+            return merged.isEmpty ? nil : merged
+        }
+
+        private static func mergedScalars(
+            _ lhs: [Scalar]?,
+            _ rhs: [Scalar]?
+        ) -> [Scalar]? {
+            let merged = (lhs ?? []) + (rhs ?? [])
+            var seen = Set<String>()
+            let unique = merged.filter { seen.insert($0.text).inserted }
+            return unique.isEmpty ? nil : unique
+        }
+
+        private static func stricterMinimum(_ lhs: Int?, _ rhs: Int?) -> Int? {
+            switch (lhs, rhs) {
+            case (.some(let lhs), .some(let rhs)): Swift.max(lhs, rhs)
+            case (.some(let value), .none), (.none, .some(let value)): value
+            case (.none, .none): nil
+            }
+        }
+
+        private static func stricterMaximum(_ lhs: Int?, _ rhs: Int?) -> Int? {
+            switch (lhs, rhs) {
+            case (.some(let lhs), .some(let rhs)): Swift.min(lhs, rhs)
+            case (.some(let value), .none), (.none, .some(let value)): value
+            case (.none, .none): nil
+            }
+        }
+
+        private static func mergedStrings(_ lhs: [String]?, _ rhs: [String]?) -> [String]? {
+            let merged = (lhs ?? []) + (rhs ?? [])
+            var seen = Set<String>()
+            let unique = merged.filter { seen.insert($0).inserted }
+            return unique.isEmpty ? nil : unique
+        }
     }
 
-    /// Parse a catalog tool's textual result into models + the next-page cursor (nil when the last
-    /// page or unpaged). Tolerant: accepts the `{items,has_more,next_page_token}` envelope or a bare
-    /// `[ModelItem]` array; returns `([], nil)` on anything it can't read (never throws).
     static func parseListing(
         _ text: String,
-        defaultOutputType: String? = nil
+        defaultOutputType: String? = nil,
+        context: ParsingContext = .listing
     ) -> (items: [ModelItem], next: String?) {
-        guard let json = jsonPayload(in: text),
-              let data = json.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data),
-              let listing = listingPayload(root)
-        else { return ([], nil) }
-        let decoder = JSONDecoder()
-        let items = listing.items.compactMap { value -> ModelItem? in
-            guard JSONSerialization.isValidJSONObject(value),
-                  let data = try? JSONSerialization.data(withJSONObject: value),
-                  let item = try? decoder.decode(ModelItem.self, from: data)
-            else { return nil }
-            return item.withOutputType(defaultOutputType)
-        }
-        return (items, listing.next)
+        let result = parseListingResult(
+            text,
+            defaultOutputType: defaultOutputType,
+            context: context
+        )
+        return (result.items, result.next)
     }
 
-    private static func jsonPayload(in text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let start = trimmed.firstIndex(where: { $0 == "{" || $0 == "[" }) else {
-            return nil
+    /// Parse one catalog-tool content block and report any structural or model-decoding loss.
+    static func parseListingResult(
+        _ text: String,
+        defaultOutputType: String? = nil,
+        context: ParsingContext = .listing
+    ) -> ListingParseResult {
+        let segments = jsonSegments(in: text)
+        let hasUnbalancedJSONSegment = segments.contains { !$0.isBalanced }
+        var rawItems: [Any] = []
+        var paginationEvidence: [PaginationEvidence] = []
+        var isCatalogPayload = false
+        var structuralAndDecodeIsComplete = true
+        for segment in segments {
+            guard segment.isBalanced,
+                  let data = segment.text.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: data) else {
+                if looksLikeCatalogPayload(
+                    segment.text,
+                    defaultOutputType: defaultOutputType,
+                    context: context
+                ) {
+                    isCatalogPayload = true
+                    structuralAndDecodeIsComplete = false
+                }
+                continue
+            }
+            guard case .catalog(
+                let items,
+                let pagination,
+                let payloadIsStructurallyComplete
+            ) = listingPayload(
+                root,
+                context: context
+            ) else { continue }
+            isCatalogPayload = true
+            rawItems.append(contentsOf: items)
+            paginationEvidence.append(pagination)
+            structuralAndDecodeIsComplete = structuralAndDecodeIsComplete
+                && payloadIsStructurallyComplete
         }
-        guard let end = trimmed.lastIndex(where: { $0 == "}" || $0 == "]" }),
-              start <= end else { return nil }
-        return String(trimmed[start...end])
+        if isCatalogPayload && hasUnbalancedJSONSegment {
+            structuralAndDecodeIsComplete = false
+        }
+        guard isCatalogPayload else {
+            return ListingParseResult(
+                items: [],
+                pagination: .none,
+                isCatalogPayload: false,
+                structuralAndDecodeIsComplete: true
+            )
+        }
+        let pagination = PaginationEvidence.aggregating(paginationEvidence)
+        let decoder = JSONDecoder()
+        var items: [ModelItem] = []
+        for value in rawItems {
+            guard let decoded = decodedModelItem(from: value, decoder: decoder) else {
+                structuralAndDecodeIsComplete = false
+                continue
+            }
+            items.append(decoded.withOutputType(defaultOutputType))
+        }
+        return ListingParseResult(
+            items: items,
+            pagination: pagination,
+            isCatalogPayload: true,
+            structuralAndDecodeIsComplete: structuralAndDecodeIsComplete
+        )
+    }
+
+    private static func jsonSegments(in text: String) -> [JSONSegment] {
+        var segments: [JSONSegment] = []
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex,
+              let start = text[searchStart...].firstIndex(where: {
+                $0 == "{" || $0 == "["
+              }) {
+            var expectedClosers: [Character] = []
+            var quote: Character?
+            var isEscaped = false
+            var index = start
+            var foundEnd = false
+            while index < text.endIndex {
+                let character = text[index]
+                if let activeQuote = quote {
+                    if isEscaped {
+                        isEscaped = false
+                    } else if character == "\\" {
+                        isEscaped = true
+                    } else if character == activeQuote {
+                        quote = nil
+                    }
+                } else if character == "\"" || character == "'" {
+                    quote = character
+                } else if character == "{" {
+                    expectedClosers.append("}")
+                } else if character == "[" {
+                    expectedClosers.append("]")
+                } else if character == "}" || character == "]" {
+                    let after = text.index(after: index)
+                    guard expectedClosers.last == character else {
+                        segments.append(JSONSegment(
+                            text: String(text[start..<after]),
+                            isBalanced: false
+                        ))
+                        searchStart = after
+                        foundEnd = true
+                        break
+                    }
+                    expectedClosers.removeLast()
+                    if expectedClosers.isEmpty {
+                        segments.append(JSONSegment(
+                            text: String(text[start..<after]),
+                            isBalanced: true
+                        ))
+                        searchStart = after
+                        foundEnd = true
+                        break
+                    }
+                }
+                index = text.index(after: index)
+            }
+            if !foundEnd {
+                segments.append(JSONSegment(
+                    text: String(text[start...]),
+                    isBalanced: false
+                ))
+                break
+            }
+        }
+        return segments
+    }
+
+    private static func looksLikeCatalogPayload(
+        _ text: String,
+        defaultOutputType: String?,
+        context: ParsingContext
+    ) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.first == "{" || trimmed.first == "[" else { return false }
+        if containsCatalogKeyToken(in: trimmed) { return true }
+        let isOperationalEnvelope = containsObjectKeyToken(
+            in: trimmed,
+            aliases: operationalEnvelopeKeys
+        )
+        let hasIdentityFallback = containsObjectKeyToken(
+            in: trimmed,
+            aliases: identityFallbackKeys
+        )
+        return (context == .detail || defaultOutputType != nil)
+            && (trimmed.first == "[" || (trimmed.first == "{" && !isOperationalEnvelope))
+            && hasIdentityFallback
+    }
+
+    private static func containsCatalogKeyToken(in text: String) -> Bool {
+        containsObjectKeyToken(in: text, aliases: catalogDetectionKeys)
+    }
+
+    private static func containsObjectKeyToken(
+        in text: String,
+        aliases: [String]
+    ) -> Bool {
+        let aliases = Set(aliases.map { $0.lowercased() })
+        var quote: Character?
+        var isEscaped = false
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if let activeQuote = quote {
+                if isEscaped {
+                    isEscaped = false
+                } else if character == "\\" {
+                    isEscaped = true
+                } else if character == activeQuote {
+                    quote = nil
+                }
+            } else if character == "\"" || character == "'" {
+                quote = character
+            } else if character == "{" || character == "," {
+                let after = text.index(after: index)
+                if let key = objectKey(in: text, startingAt: after),
+                   aliases.contains(key.lowercased()) {
+                    return true
+                }
+            }
+            index = text.index(after: index)
+        }
+        return false
+    }
+
+    private static func objectKey(
+        in text: String,
+        startingAt start: String.Index
+    ) -> String? {
+        var index = start
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        guard index < text.endIndex else { return nil }
+        let key: String
+        if text[index] == "\"" || text[index] == "'" {
+            let quote = text[index]
+            let keyStart = text.index(after: index)
+            index = keyStart
+            var isEscaped = false
+            while index < text.endIndex {
+                let character = text[index]
+                if isEscaped {
+                    isEscaped = false
+                } else if character == "\\" {
+                    isEscaped = true
+                } else if character == quote {
+                    break
+                }
+                index = text.index(after: index)
+            }
+            guard index < text.endIndex else { return nil }
+            key = String(text[keyStart..<index])
+            index = text.index(after: index)
+        } else {
+            let keyStart = index
+            while index < text.endIndex {
+                let character = text[index]
+                guard character.isLetter || character.isNumber || character == "_" else {
+                    break
+                }
+                index = text.index(after: index)
+            }
+            guard index > keyStart else { return nil }
+            key = String(text[keyStart..<index])
+        }
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        guard index < text.endIndex, text[index] == ":" else { return nil }
+        return key
     }
 
     private static func listingPayload(
-        _ value: Any
-    ) -> (items: [[String: Any]], next: String?)? {
-        if let array = value as? [[String: Any]] {
-            return (array, nil)
-        }
-        guard let object = value as? [String: Any] else { return nil }
-        let cursor = object["next_page_token"] as? String
-            ?? object["nextPageToken"] as? String
-            ?? object["next"] as? String
-            ?? object["cursor"] as? String
-        let reachedLastPage = object["has_more"] as? Bool == false
-            || object["hasMore"] as? Bool == false
-        let next = reachedLastPage ? nil : cursor
-        for key in ["items", "models", "job_sets", "jobSets"] {
-            if let items = object[key] as? [[String: Any]] {
-                return (items, next)
+        _ value: Any,
+        context: ParsingContext
+    ) -> ListingPayloadResult {
+        if let array = value as? [Any] {
+            let containsModel = array.contains { value in
+                guard let object = value as? [String: Any] else { return false }
+                return hasStandaloneModelContract(object, context: context)
+                    && decodedModelItem(from: object) != nil
             }
+            guard containsModel else { return .notCatalog }
+            return .catalog(
+                items: array,
+                pagination: .none,
+                isStructurallyComplete: true
+            )
         }
+        guard let object = value as? [String: Any] else { return .notCatalog }
+        let pagination = paginationMetadata(in: object)
+        var nestedItems: [Any] = []
+        var nestedPagination: [PaginationEvidence] = []
+        var foundNestedCatalog = false
+        var nestedIsStructurallyComplete = true
         for key in ["data", "result", "payload"] {
-            if let nested = object[key],
-               let listing = listingPayload(nested) {
-                return (listing.items, listing.next ?? next)
-            }
+            guard let nested = object[key],
+                  case .catalog(
+                    let items,
+                    let evidence,
+                    let isStructurallyComplete
+                  ) = listingPayload(
+                    nested,
+                    context: context
+                  ) else { continue }
+            foundNestedCatalog = true
+            nestedItems.append(contentsOf: items)
+            nestedPagination.append(evidence)
+            nestedIsStructurallyComplete = nestedIsStructurallyComplete
+                && isStructurallyComplete
         }
-        return nil
+        let combinedPagination = PaginationEvidence.aggregating(
+            [pagination] + nestedPagination
+        )
+
+        let collectionKeys = ["items", "models", "job_sets", "jobSets"]
+        let presentCollections = collectionKeys.filter { object[$0] != nil }
+        if !presentCollections.isEmpty {
+            var items: [Any] = []
+            var isStructurallyComplete = combinedPagination.isStructurallyComplete
+                && (!foundNestedCatalog || nestedIsStructurallyComplete)
+            for key in presentCollections {
+                guard let values = object[key] as? [Any] else {
+                    isStructurallyComplete = false
+                    continue
+                }
+                items.append(contentsOf: values)
+            }
+            return .catalog(
+                items: items,
+                pagination: combinedPagination,
+                isStructurallyComplete: isStructurallyComplete
+            )
+        }
+
+        let singleKeys = ["model", "job_set", "jobSet"]
+        let presentSingles = singleKeys.filter { object[$0] != nil }
+        if !presentSingles.isEmpty {
+            var items: [Any] = []
+            var isStructurallyComplete = combinedPagination.isStructurallyComplete
+                && (!foundNestedCatalog || nestedIsStructurallyComplete)
+            for key in presentSingles {
+                guard let item = object[key] as? [String: Any],
+                      hasStandaloneModelContract(item, context: context) else {
+                    isStructurallyComplete = false
+                    continue
+                }
+                items.append(item)
+            }
+            return .catalog(
+                items: items,
+                pagination: combinedPagination,
+                isStructurallyComplete: isStructurallyComplete
+            )
+        }
+
+        if ["id", "job_set_type", "jobSetType", "model_id", "modelId"]
+            .contains(where: { object[$0] != nil }),
+           hasStandaloneModelContract(object, context: context) {
+            return .catalog(
+                items: [object],
+                pagination: combinedPagination,
+                isStructurallyComplete: combinedPagination.isStructurallyComplete
+                    && (!foundNestedCatalog || nestedIsStructurallyComplete)
+            )
+        }
+        if foundNestedCatalog {
+            return .catalog(
+                items: nestedItems,
+                pagination: combinedPagination,
+                isStructurallyComplete: combinedPagination.isStructurallyComplete
+                    && nestedIsStructurallyComplete
+            )
+        }
+        if combinedPagination.hasFields {
+            return .catalog(
+                items: [],
+                pagination: combinedPagination,
+                isStructurallyComplete: combinedPagination.isStructurallyComplete
+            )
+        }
+        return .notCatalog
+    }
+
+    private static func decodedModelItem(
+        from value: Any,
+        decoder: JSONDecoder = JSONDecoder()
+    ) -> ModelItem? {
+        guard let object = value as? [String: Any],
+              !isOperationalEnvelope(object),
+              JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let decoded = try? decoder.decode(ModelItem.self, from: data),
+              !decoded.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return decoded
+    }
+
+    private static func paginationMetadata(
+        in object: [String: Any]
+    ) -> PaginationEvidence {
+        let cursorWasPresent = paginationCursorKeys.contains { object[$0] != nil }
+        let hasMoreWasPresent = paginationHasMoreKeys.contains { object[$0] != nil }
+        var isComplete = true
+        var cursors = Set<String>()
+        for key in paginationCursorKeys where object[key] != nil {
+            guard let value = object[key] else { continue }
+            if value is NSNull { continue }
+            guard let cursor = value as? String,
+                  !cursor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                isComplete = false
+                continue
+            }
+            cursors.insert(cursor)
+        }
+        if cursors.count > 1 { isComplete = false }
+
+        var moreValues = Set<Bool>()
+        for key in paginationHasMoreKeys where object[key] != nil {
+            guard let number = object[key] as? NSNumber,
+                  CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID() else {
+                isComplete = false
+                continue
+            }
+            moreValues.insert(number.boolValue)
+        }
+        if moreValues.count > 1 { isComplete = false }
+        let hasMore = moreValues.count == 1 ? moreValues.first : nil
+        let cursor = cursors.count == 1 ? cursors.first : nil
+        return PaginationEvidence(
+            cursor: cursor,
+            cursorWasPresent: cursorWasPresent,
+            hasMore: hasMore,
+            hasMoreWasPresent: hasMoreWasPresent,
+            isStructurallyComplete: isComplete
+        )
+    }
+
+    private static func hasStandaloneModelContract(
+        _ object: [String: Any],
+        context: ParsingContext
+    ) -> Bool {
+        guard hasValidModelIdentity(object), !isOperationalEnvelope(object) else {
+            return false
+        }
+        if context == .detail { return true }
+        if hasDeclaredOutputModality(object) { return true }
+        let hasJobSetIdentity = ["job_set_type", "jobSetType"].contains { key in
+            guard let value = object[key] as? String else { return false }
+            return !value.isEmpty
+        }
+        return hasJobSetIdentity && hasGenericTypeModality(object)
+    }
+
+    private static func hasValidModelIdentity(_ object: [String: Any]) -> Bool {
+        ["id", "job_set_type", "jobSetType", "model_id", "modelId"].contains { key in
+            guard let value = object[key] as? String else { return false }
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private static func hasDeclaredOutputModality(_ object: [String: Any]) -> Bool {
+        for key in ["output_type", "outputType", "modality"] {
+            guard let raw = object[key] as? String else { continue }
+            if Modality(rawValue: raw.lowercased()) != nil { return true }
+        }
+        return false
+    }
+
+    private static func hasGenericTypeModality(_ object: [String: Any]) -> Bool {
+        guard let raw = object["type"] as? String else { return false }
+        return Modality(rawValue: raw.lowercased()) != nil
+    }
+
+    private static func isOperationalEnvelope(_ object: [String: Any]) -> Bool {
+        object["action"] != nil || object["status"] != nil
     }
 
     // MARK: - Mapping (the unit-tested core)
@@ -329,7 +1011,7 @@ enum MCPModelDiscovery {
 
     // MARK: - Entry construction
 
-    private static func modalityOf(_ model: ModelItem) -> Modality? {
+    static func modalityOf(_ model: ModelItem) -> Modality? {
         switch (model.outputType ?? "").lowercased() {
         case "video": return .video
         case "image": return .image
@@ -379,12 +1061,15 @@ enum MCPModelDiscovery {
     private static func videoCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> VideoCaps {
         let roles = allowsLocalMedia ? mediaRoles(model) : []
         let imageBounds = allowsLocalMedia
-            ? mediaBounds(model, type: "image") : (min: 0, max: 0)
+            ? mediaBounds(model, type: "image") : .none
         let videoBounds = allowsLocalMedia
-            ? mediaBounds(model, type: "video") : (min: 0, max: 0)
+            ? mediaBounds(model, type: "video") : .none
         let audioBounds = allowsLocalMedia
-            ? mediaBounds(model, type: "audio") : (min: 0, max: 0)
-        let totalMaximum = imageBounds.max + videoBounds.max + audioBounds.max
+            ? mediaBounds(model, type: "audio") : .none
+        let derivedTotalMaximum = [imageBounds, videoBounds, audioBounds]
+            .allSatisfy { !$0.declared || $0.declaredMaximum != nil }
+            ? imageBounds.max + videoBounds.max + audioBounds.max
+            : nil
         return VideoCaps(
             durations: model.durations ?? [],
             durationRange: durationRange(model.durationRange),
@@ -395,23 +1080,33 @@ enum MCPModelDiscovery {
             supportsLastFrame: roles.contains("end_image"),
             maxReferenceImages: imageBounds.max,
             maxReferenceVideos: videoBounds.max, maxReferenceAudios: audioBounds.max,
-            maxTotalReferences: totalMaximum > 0 ? totalMaximum : nil,
+            maxTotalReferences: constraintMaximum(model, mediaType: "total")
+                ?? derivedTotalMaximum.flatMap { $0 > 0 ? $0 : nil },
             maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil,
             framesAndReferencesExclusive: false, referenceTagNoun: "image",
-            requiresSourceVideo: false, requiresReferenceImage: imageBounds.min > 0)
+            requiresSourceVideo: false, requiresReferenceImage: imageBounds.min > 0,
+            framesCountTowardImageReferenceLimit: framesCountTowardImageReferenceLimit(model),
+            framesCountTowardTotalReferenceLimit: framesCountTowardTotalReferenceLimit(model),
+            maxReferenceImagesWhenVideoPresent: conditionalConstraintMaximum(
+                model,
+                mediaType: "image",
+                whenReferenceType: "video"
+            ))
     }
 
     private static func imageCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> ImageCaps {
         let bounds = allowsLocalMedia
-            ? mediaBounds(model, type: "image") : (min: 0, max: 0)
+            ? mediaBounds(model, type: "image") : .none
+        let referenceLimit = allowsLocalMedia
+            ? imageReferenceLimit(model) : .bounded(0)
         return ImageCaps(
             resolutions: options(model, param: "resolution"),
             aspectRatios: aspectRatios(model),
             qualities: options(model, param: "quality") ?? options(model, param: "mode"),
-            supportsImageReference: bounds.max > 0,
+            supportsImageReference: referenceLimit.hostMaximum > 0,
             requiresImageReference: bounds.min > 0,
             minReferenceImages: bounds.min,
-            maxReferenceImages: bounds.max,
+            referenceImageLimit: referenceLimit,
             maxImages: maxOutputImages(model))
     }
 
@@ -479,13 +1174,166 @@ enum MCPModelDiscovery {
         (model.medias ?? []).contains { ($0.type ?? "").lowercased() == type }
     }
 
-    private static func mediaBounds(_ model: ModelItem, type: String) -> (min: Int, max: Int) {
-        (model.medias ?? [])
-            .filter { ($0.type ?? "").lowercased() == type }
-            .reduce(into: (min: 0, max: 0)) { bounds, media in
-                bounds.min += Swift.max(0, media.min ?? 0)
-                bounds.max += Swift.max(0, media.max ?? 1)
+    private struct MediaBounds {
+        let min: Int
+        let max: Int
+        let declaredMaximum: Int?
+        let declared: Bool
+
+        static let none = MediaBounds(
+            min: 0,
+            max: 0,
+            declaredMaximum: nil,
+            declared: false
+        )
+    }
+
+    private static func mediaBounds(_ model: ModelItem, type: String) -> MediaBounds {
+        let medias = referenceMedia(model, type: type)
+        let parameter = referenceParameter(model, type: type)
+        let constraintMax = constraintMaximum(model, mediaType: type)
+        let mediaMax = !medias.isEmpty && medias.allSatisfy { $0.max != nil }
+            ? medias.reduce(0) { $0 + Swift.max(0, $1.max ?? 0) }
+            : nil
+        let declaredMaximum = [constraintMax, parameter?.max, mediaMax]
+            .compactMap { $0 }
+            .min()
+        let declared = !medias.isEmpty || parameter != nil || constraintMax != nil
+        let minimum = Swift.max(
+            medias.reduce(0) { $0 + Swift.max(0, $1.min ?? 0) },
+            Swift.max(0, parameter?.min ?? 0)
+        )
+        let maximum: Int
+        if let declaredMaximum {
+            maximum = Swift.max(0, declaredMaximum)
+        } else if declared, model.hasResolvedMediaType(type) {
+            maximum = providerUnboundedReferenceHostMaximum
+        } else {
+            maximum = 0
+        }
+        return MediaBounds(
+            min: minimum,
+            max: maximum,
+            declaredMaximum: declaredMaximum,
+            declared: declared
+        )
+    }
+
+    private static func imageReferenceLimit(_ model: ModelItem) -> ImageReferenceLimit {
+        let bounds = mediaBounds(model, type: "image")
+        guard bounds.declared else { return .bounded(0) }
+        if let maximum = bounds.declaredMaximum { return .bounded(maximum) }
+        guard model.hasResolvedMediaType("image") else { return .unknown }
+        return .providerUnbounded(hostMaximum: providerUnboundedReferenceHostMaximum)
+    }
+
+    private static func referenceMedia(_ model: ModelItem, type: String) -> [ModelItem.Media] {
+        let genericRoles: Set<String>
+        switch type {
+        case "image": genericRoles = ["image", "image_references"]
+        case "video": genericRoles = ["video", "video_references"]
+        case "audio": genericRoles = ["audio", "audio_references"]
+        default: return []
+        }
+        return (model.medias ?? []).filter { media in
+            guard (media.type ?? "").lowercased() == type else { return false }
+            let roles = Set((media.roles ?? []).map { $0.lowercased() })
+            let name = (media.name ?? "").lowercased()
+            return roles.isEmpty
+                ? name.isEmpty || genericRoles.contains(name)
+                : !roles.isDisjoint(with: genericRoles)
+        }
+    }
+
+    private static func referenceParameter(
+        _ model: ModelItem,
+        type: String
+    ) -> ModelItem.Param? {
+        let names = Set([type, "\(type)s", "\(type)_references", "\(type)references"])
+        return model.parameters?.first {
+            guard let name = $0.name?.lowercased() else { return false }
+            return names.contains(name) || names.contains(name.replacingOccurrences(of: "_", with: ""))
+        }
+    }
+
+    private static func constraintMaximum(_ model: ModelItem, mediaType: String) -> Int? {
+        let constraints = model.constraints ?? []
+        var maxima: [Int] = []
+        for value in constraints {
+            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+            guard !isConditionalConstraint(normalized) else { continue }
+            let concernsType: Bool
+            if mediaType == "total" {
+                concernsType = normalized.contains("reference")
+                    && (normalized.contains("total") || normalized.contains("across"))
+            } else {
+                concernsType = normalized.contains(mediaType)
+                    && normalized.contains("reference")
+                    && !isAggregateTotalConstraint(normalized)
             }
+            guard concernsType else { continue }
+            if let maximum = declaredMaximum(in: normalized) { maxima.append(maximum) }
+        }
+        return maxima.min()
+    }
+
+    private static func conditionalConstraintMaximum(
+        _ model: ModelItem,
+        mediaType: String,
+        whenReferenceType: String
+    ) -> Int? {
+        (model.constraints ?? []).compactMap { value -> Int? in
+            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+            guard isConditionalConstraint(normalized),
+                  normalized.contains(mediaType),
+                  normalized.contains("reference"),
+                  normalized.contains(whenReferenceType) else { return nil }
+            return declaredMaximum(in: normalized)
+        }.min()
+    }
+
+    private static func declaredMaximum(in normalized: String) -> Int? {
+        if normalized.contains("exactly one") || normalized.contains("at most one") {
+            return 1
+        }
+        guard normalized.contains("at most")
+                || normalized.contains("maximum")
+                || normalized.contains("up to") else { return nil }
+        return normalized.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }.first
+    }
+
+    private static func isConditionalConstraint(_ normalized: String) -> Bool {
+        normalized.contains("when ")
+            || normalized.contains(" if ")
+            || normalized.hasPrefix("if ")
+            || normalized.contains("provided,")
+    }
+
+    private static func isAggregateTotalConstraint(_ normalized: String) -> Bool {
+        guard normalized.contains("total") || normalized.contains("across") else { return false }
+        let mediaTypeCount = ["image", "video", "audio"].filter {
+            normalized.contains($0)
+        }.count
+        return mediaTypeCount > 1 || normalized.contains("+")
+    }
+
+    private static func framesCountTowardImageReferenceLimit(_ model: ModelItem) -> Bool {
+        (model.constraints ?? []).contains { value in
+            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+            return normalized.contains("image")
+                && normalized.contains("reference")
+                && !isAggregateTotalConstraint(normalized)
+                && (normalized.contains("counting") || normalized.contains("including"))
+                && (normalized.contains("start image") || normalized.contains("end image"))
+        }
+    }
+
+    private static func framesCountTowardTotalReferenceLimit(_ model: ModelItem) -> Bool {
+        framesCountTowardImageReferenceLimit(model) || (model.constraints ?? []).contains { value in
+            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+            return isAggregateTotalConstraint(normalized)
+                && (normalized.contains("start image") || normalized.contains("end image"))
+        }
     }
 
     private static func maxOutputImages(_ model: ModelItem) -> Int {

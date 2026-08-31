@@ -33,6 +33,22 @@ struct VideoModelConfig: Identifiable, Sendable {
     var referenceTagNoun: String { caps.referenceTagNoun }
     var requiresSourceVideo: Bool { caps.requiresSourceVideo }
     var requiresReferenceImage: Bool { caps.requiresReferenceImage }
+    var framesCountTowardImageReferenceLimit: Bool {
+        caps.framesCountTowardImageReferenceLimit
+    }
+    var framesCountTowardTotalReferenceLimit: Bool {
+        caps.framesCountTowardTotalReferenceLimit
+    }
+    var maxReferenceImagesWhenVideoPresent: Int? {
+        caps.maxReferenceImagesWhenVideoPresent
+    }
+
+    func maxReferenceImages(hasVideoReference: Bool) -> Int {
+        guard hasVideoReference, let conditional = maxReferenceImagesWhenVideoPresent else {
+            return maxReferenceImages
+        }
+        return min(maxReferenceImages, conditional)
+    }
 
     var supportsReferences: Bool {
         maxReferenceImages > 0 || maxReferenceVideos > 0 || maxReferenceAudios > 0

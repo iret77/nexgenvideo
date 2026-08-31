@@ -3,11 +3,33 @@ import MCP
 
 protocol MCPToolCalling: Sendable {
     func callTool(name: String, arguments: [String: Value]) async throws -> [String]
+    func callGenerationTool(
+        name: String,
+        arguments: [String: Value],
+        onDispatched: @escaping @MainActor @Sendable () -> Void
+    ) async throws -> [String]
+}
+
+extension MCPToolCalling {
+    func callGenerationTool(
+        name: String,
+        arguments: [String: Value],
+        onDispatched: @escaping @MainActor @Sendable () -> Void
+    ) async throws -> [String] {
+        let payloads = try await callTool(name: name, arguments: arguments)
+        await onDispatched()
+        return payloads
+    }
 }
 
 extension MCPProviderClient: MCPToolCalling {}
 
 enum MCPGenerationExecutor {
+    private struct TerminalProviderState: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
     struct JobFailure: LocalizedError {
         let jobID: String
         let message: String
@@ -17,7 +39,9 @@ enum MCPGenerationExecutor {
 
     struct Result: Equatable {
         let jobID: String?
-        let outputURLs: [String]
+        let output: MCPGenerationLifecycle.Output
+
+        var outputURLs: [String] { output.urls }
     }
 
     static func run(
@@ -28,26 +52,60 @@ enum MCPGenerationExecutor {
         client: any MCPToolCalling,
         maxPollAttempts: Int = 600,
         pollIntervalNanoseconds: UInt64 = 3_000_000_000,
-        timeoutSeconds: TimeInterval = 30 * 60
+        timeoutSeconds: TimeInterval = 30 * 60,
+        onSubmissionDispatched: @escaping @MainActor @Sendable () -> Void = {}
     ) async throws -> Result {
-        let hasLifecycle = try validateLifecycleIfAdvertised(tools: tools)
-        let payloads = try await client.callTool(
+        let hasLifecycle = hasUsableLifecycle(tools: tools)
+        let hasDirectOutput = hasDirectOutputContract(generationTool)
+        let hasSynchronousOutput = MCPGenerationArguments.supportsSynchronousCompletion(
+            schema: generationTool.inputSchema
+        ) && MCPGenerationArguments.requestsSynchronousCompletion(arguments: arguments)
+        guard hasLifecycle || hasDirectOutput || hasSynchronousOutput else {
+            throw GenerationBackendError.transport(
+                "\(provider.displayName)'s generation tool exposes no proven direct, synchronous, or asynchronous media result path. No job was submitted."
+            )
+        }
+        let payloads = try await client.callGenerationTool(
             name: generationTool.name,
-            arguments: arguments
+            arguments: arguments,
+            onDispatched: onSubmissionDispatched
         )
-        let submission = MCPGenerationLifecycle.submission(from: payloads)
-        if !submission.outputURLs.isEmpty {
-            switch MCPGenerationLifecycle.status(from: payloads) {
-            case .succeeded:
-                return Result(jobID: submission.jobID, outputURLs: submission.outputURLs)
-            case .failed(let message):
-                if let jobID = submission.jobID {
-                    throw JobFailure(jobID: jobID, message: message)
+        let allowRootURL = MCPGenerationLifecycle.outputSchemaAllowsRootURL(
+            generationTool.outputSchema
+        )
+        let submission = MCPGenerationLifecycle.submission(
+            from: payloads,
+            allowRootURL: allowRootURL
+        )
+        switch MCPGenerationLifecycle.status(
+            from: payloads,
+            allowRootURL: allowRootURL
+        ) {
+        case .succeeded where !submission.output.isEmpty:
+            return Result(jobID: submission.jobID, output: submission.output)
+        case .succeeded:
+            if let jobID = submission.jobID {
+                do {
+                    return Result(
+                        jobID: jobID,
+                        output: try await fetchResult(
+                            jobID: jobID,
+                            provider: provider,
+                            tools: tools,
+                            client: client
+                        )
+                    )
+                } catch {
+                    throw JobFailure(jobID: jobID, message: error.localizedDescription)
                 }
-                throw GenerationBackendError.transport(message)
-            case .pending, .unknown:
-                break
             }
+        case .failed(let message):
+            if let jobID = submission.jobID {
+                throw JobFailure(jobID: jobID, message: message)
+            }
+            throw GenerationBackendError.transport(message)
+        case .pending, .unknown:
+            break
         }
         guard let jobID = submission.jobID else {
             throw GenerationBackendError.transport(
@@ -55,18 +113,18 @@ enum MCPGenerationExecutor {
             )
         }
         guard hasLifecycle else {
-            let cancellation = await cancelAcceptedJob(
+            let cancellation = await cancelAcceptedJobIndependently(
                 jobID: jobID,
                 tools: tools,
                 client: client
             )
             throw JobFailure(
                 jobID: jobID,
-                message: "\(provider.displayName)'s MCP accepted the job but exposes no usable job-status tool. \(cancellation)"
+                message: "\(provider.displayName)'s MCP accepted the job but exposes no usable asynchronous media result path. \(cancellation)"
             )
         }
         do {
-            let urls = try await poll(
+            let output = try await poll(
                 jobID: jobID,
                 provider: provider,
                 tools: tools,
@@ -75,29 +133,73 @@ enum MCPGenerationExecutor {
                 intervalNanoseconds: pollIntervalNanoseconds,
                 timeoutSeconds: timeoutSeconds
             )
-            return Result(jobID: jobID, outputURLs: urls)
+            return Result(jobID: jobID, output: output)
+        } catch let terminal as TerminalProviderState {
+            throw JobFailure(jobID: jobID, message: terminal.message)
         } catch {
-            throw JobFailure(jobID: jobID, message: error.localizedDescription)
+            let cancellation = await cancelAcceptedJobIndependently(
+                jobID: jobID,
+                tools: tools,
+                client: client
+            )
+            let reason = error is CancellationError || Task.isCancelled
+                ? "Generation cancelled."
+                : error.localizedDescription
+            throw JobFailure(
+                jobID: jobID,
+                message: "\(reason) \(cancellation)"
+            )
         }
     }
 
-    @discardableResult
-    static func validateLifecycleIfAdvertised(
+    static func hasProvenResultPath(
+        generationTool: MCPProviderClient.DiscoveredTool,
         tools: [MCPProviderClient.DiscoveredTool]
-    ) throws -> Bool {
+    ) -> Bool {
+        hasDirectOutputContract(generationTool)
+            || MCPGenerationArguments.supportsSynchronousCompletion(
+                schema: generationTool.inputSchema
+            )
+            || hasUsableLifecycle(tools: tools)
+    }
+
+    static func hasUsableLifecycle(
+        tools: [MCPProviderClient.DiscoveredTool]
+    ) -> Bool {
         guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else { return false }
-        _ = try MCPGenerationArguments.makeJob(
-            jobID: "preflight-job",
-            schema: statusTool.inputSchema,
-            sync: false
-        )
-        if let resultTool = MCPGenerationLifecycle.resultTool(in: tools) {
+        do {
             _ = try MCPGenerationArguments.makeJob(
                 jobID: "preflight-job",
-                schema: resultTool.inputSchema
+                schema: statusTool.inputSchema,
+                sync: false
             )
+            return MCPGenerationLifecycle.outputSchemaSupportsMedia(
+                statusTool.outputSchema
+            ) || usableResultTool(in: tools) != nil
+        } catch {
+            return false
         }
-        return true
+    }
+
+    static func hasDirectOutputContract(
+        _ tool: MCPProviderClient.DiscoveredTool
+    ) -> Bool {
+        MCPGenerationLifecycle.outputSchemaSupportsMedia(tool.outputSchema)
+    }
+
+    private static func usableResultTool(
+        in tools: [MCPProviderClient.DiscoveredTool]
+    ) -> MCPProviderClient.DiscoveredTool? {
+        guard let tool = MCPGenerationLifecycle.resultTool(in: tools),
+              tool.outputSchema == nil
+                || MCPGenerationLifecycle.outputSchemaSupportsMedia(tool.outputSchema),
+              (try? MCPGenerationArguments.makeJob(
+                jobID: "preflight-job",
+                schema: tool.inputSchema
+              )) != nil else {
+            return nil
+        }
+        return tool
     }
 
     private static func cancelAcceptedJob(
@@ -120,6 +222,17 @@ enum MCPGenerationExecutor {
         }
     }
 
+    private static func cancelAcceptedJobIndependently(
+        jobID: String,
+        tools: [MCPProviderClient.DiscoveredTool],
+        client: any MCPToolCalling
+    ) async -> String {
+        let cancellation = Task.detached {
+            await cancelAcceptedJob(jobID: jobID, tools: tools, client: client)
+        }
+        return await cancellation.value
+    }
+
     private static func poll(
         jobID: String,
         provider: GenerationProvider,
@@ -128,7 +241,7 @@ enum MCPGenerationExecutor {
         maxAttempts: Int,
         intervalNanoseconds: UInt64,
         timeoutSeconds: TimeInterval
-    ) async throws -> [String] {
+    ) async throws -> MCPGenerationLifecycle.Output {
         guard let statusTool = MCPGenerationLifecycle.statusTool(in: tools) else {
             throw GenerationBackendError.transport(
                 "\(provider.displayName)'s MCP accepted job '\(jobID)' but exposes no job-status tool."
@@ -145,7 +258,12 @@ enum MCPGenerationExecutor {
                 sync: false
             )
             let payloads = try await client.callTool(name: statusTool.name, arguments: arguments)
-            switch MCPGenerationLifecycle.status(from: payloads) {
+            switch MCPGenerationLifecycle.status(
+                from: payloads,
+                allowRootURL: MCPGenerationLifecycle.outputSchemaAllowsRootURL(
+                    statusTool.outputSchema
+                )
+            ) {
             case .pending:
                 unknownStatuses = 0
                 if attempt + 1 < maxAttempts, intervalNanoseconds > 0 {
@@ -162,16 +280,20 @@ enum MCPGenerationExecutor {
                     try await Task.sleep(nanoseconds: intervalNanoseconds)
                 }
             case .failed(let message):
-                throw GenerationBackendError.transport(message)
-            case .succeeded(let urls) where !urls.isEmpty:
-                return urls
+                throw TerminalProviderState(message: message)
+            case .succeeded(let output) where !output.isEmpty:
+                return output
             case .succeeded:
-                return try await fetchResult(
-                    jobID: jobID,
-                    provider: provider,
-                    tools: tools,
-                    client: client
-                )
+                do {
+                    return try await fetchResult(
+                        jobID: jobID,
+                        provider: provider,
+                        tools: tools,
+                        client: client
+                    )
+                } catch {
+                    throw TerminalProviderState(message: error.localizedDescription)
+                }
             }
         }
         let minutes = max(1, Int(timeoutSeconds / 60))
@@ -185,8 +307,8 @@ enum MCPGenerationExecutor {
         provider: GenerationProvider,
         tools: [MCPProviderClient.DiscoveredTool],
         client: any MCPToolCalling
-    ) async throws -> [String] {
-        guard let resultTool = MCPGenerationLifecycle.resultTool(in: tools) else {
+    ) async throws -> MCPGenerationLifecycle.Output {
+        guard let resultTool = usableResultTool(in: tools) else {
             throw GenerationBackendError.transport(
                 "\(provider.displayName)'s MCP completed job '\(jobID)' without output media."
             )
@@ -199,12 +321,12 @@ enum MCPGenerationExecutor {
         if case .failed(let message) = MCPGenerationLifecycle.status(from: payloads) {
             throw GenerationBackendError.transport(message)
         }
-        let urls = MCPGenerationLifecycle.resultURLs(from: payloads)
-        guard !urls.isEmpty else {
+        let output = MCPGenerationLifecycle.resultOutput(from: payloads)
+        guard !output.isEmpty else {
             throw GenerationBackendError.transport(
                 "\(provider.displayName)'s MCP completed job '\(jobID)' without output media."
             )
         }
-        return urls
+        return output
     }
 }

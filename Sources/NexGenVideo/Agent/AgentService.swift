@@ -11,14 +11,24 @@ final class AgentService {
     private var backendObserver: NSObjectProtocol?
     private var claudeStatusObserver: NSObjectProtocol?
     private var apiKeyGeneration = 0
+    private let hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)?
+    private let embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)?
 
-    private(set) var backend = AgentBackendPreference.selected
+    private(set) var backend: AgentBackend
     private(set) var claudeStatus: ClaudeCodeLocator.Status?
     private(set) var isCheckingAPIKey = true
     private(set) var isCheckingClaude = false
     private var claudeStatusGeneration = 0
 
-    init() {
+    init(
+        backend: AgentBackend = AgentBackendPreference.selected,
+        refreshBackendStatusOnInit: Bool = true,
+        hostFollowUpReadinessOverride: (@MainActor () -> AgentStreamError?)? = nil,
+        embeddedHostFollowUpSender: (@MainActor (String, [[String: Any]]) -> Bool)? = nil
+    ) {
+        self.backend = backend
+        self.hostFollowUpReadinessOverride = hostFollowUpReadinessOverride
+        self.embeddedHostFollowUpSender = embeddedHostFollowUpSender
         apiKeyObserver = NotificationCenter.default.addObserver(
             forName: .anthropicAPIKeyChanged,
             object: nil,
@@ -60,7 +70,9 @@ final class AgentService {
                 }
             }
         }
-        refreshBackendStatus()
+        if refreshBackendStatusOnInit {
+            refreshBackendStatus()
+        }
     }
 
     private func reloadAPIKey() {
@@ -196,11 +208,11 @@ final class AgentService {
                 Task { @MainActor [weak self] in await self?.editor?.refreshEngineState() }
             }
             if !isStreaming, !hostFollowUpStartInProgress,
-               pendingGateFollowUp != nil {
+               currentGateFollowUp != nil {
                 Task { @MainActor [weak self] in await self?.preparePendingGateFollowUp() }
             }
             if !isStreaming, !hostFollowUpStartInProgress,
-               pendingSpendFollowUp != nil {
+               currentSpendFollowUp != nil {
                 Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
             }
         }
@@ -1181,9 +1193,9 @@ final class AgentService {
     var isComposerBlocked: Bool {
         pendingDialog != nil
             || pendingSpendApproval != nil
-            || pendingSpendFollowUp != nil
+            || currentSpendFollowUp != nil
             || pendingGateApproval != nil
-            || pendingGateFollowUp != nil
+            || currentGateFollowUp != nil
     }
 
     // MARK: - Spend approval (Cost-Guard, M7)
@@ -1192,8 +1204,18 @@ final class AgentService {
     /// paid agent renders). Set while an agent render waits for approval; the composer dock renders a
     /// `SpendApprovalCard` above the input, exactly where the generative dialog lives (never a modal).
     private(set) var pendingSpendApproval: SpendApproval?
-    private(set) var spendApprovalIsRunning = false
     private(set) var spendApprovalError: String?
+    private(set) var runningSpendStatus: SpendRunStatus?
+
+    var spendApprovalIsRunning: Bool { runningSpendStatus != nil }
+
+    var currentSpendRun: SpendRunStatus? {
+        guard let status = runningSpendStatus,
+              status.chatSessionID == nil || status.chatSessionID == currentSessionId else {
+            return nil
+        }
+        return status
+    }
 
     @ObservationIgnored
     private var pendingSpendOperation: PendingSpendOperation?
@@ -1202,7 +1224,13 @@ final class AgentService {
     private var spendApprovalRefresh: (@MainActor () -> SpendApproval)?
 
     @ObservationIgnored
-    private var pendingSpendFollowUp: SpendFollowUp?
+    private var pendingSpendFollowUps: [SpendFollowUp] = []
+
+    @ObservationIgnored
+    private var runningSpendTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var runningSpendCancel: (@MainActor () -> Void)?
 
     @ObservationIgnored
     private var hostFollowUpStartInProgress = false
@@ -1213,10 +1241,30 @@ final class AgentService {
         let cancel: @MainActor () -> Void
     }
 
+    struct SpendRunStatus: Equatable, Sendable {
+        let id: String
+        let chatSessionID: UUID?
+        let actionLabel: String
+        let modelName: String
+        let providerName: String
+        var cancellationRequested: Bool
+    }
+
     private struct SpendFollowUp {
         let origin: ToolCallOrigin
         let text: String
+        let imageBlocks: [[String: Any]]
     }
+
+    private var currentSpendFollowUp: SpendFollowUp? {
+        guard let currentSessionId else { return nil }
+        return pendingSpendFollowUps.first {
+            $0.origin.chatSessionID == currentSessionId
+        }
+    }
+
+    private static let spendSuspensionText =
+        "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
 
     /// Register the exact operation behind the approval and end the current agent turn immediately.
     /// Human wait time never holds an MCP request open: the card starts the stored operation in a
@@ -1246,6 +1294,11 @@ final class AgentService {
         guard pendingSpendOperation == nil, pendingSpendApproval == nil else {
             throw ToolError("A spend approval is already waiting for the user.")
         }
+        guard runningSpendTask == nil else {
+            throw ToolError(
+                "An approved generation is already running. Wait for it to finish or cancel it before starting another paid request."
+            )
+        }
         editor.agentPanelVisible = true
         spendApprovalError = nil
         spendApprovalRefresh = refresh
@@ -1264,9 +1317,7 @@ final class AgentService {
         )
         suspendToolCalls(from: origin)
         pendingSpendApproval = approval
-        return .suspended(
-            "The spend approval card is open. End this turn and wait for the host result; do not retry this tool call."
-        )
+        return .suspended(Self.spendSuspensionText)
     }
 
     func refreshSpendApproval() {
@@ -1278,7 +1329,7 @@ final class AgentService {
     }
 
     func approveSpend(_ option: SpendOption) async {
-        guard !spendApprovalIsRunning else { return }
+        guard runningSpendTask == nil else { return }
         guard let approval = pendingSpendApproval,
               approval.options.contains(option) else {
             spendApprovalError = "This provider and model are no longer part of the pending approval."
@@ -1292,37 +1343,112 @@ final class AgentService {
             spendApprovalError = "The approved operation is no longer available. Decline it and try again."
             return
         }
-        let approvalID = approval.id
-        spendApprovalIsRunning = true
+        pendingSpendApproval = nil
+        spendApprovalRefresh = nil
+        pendingSpendOperation = nil
         spendApprovalError = nil
+        runningSpendStatus = SpendRunStatus(
+            id: approval.id,
+            chatSessionID: operation.origin.chatSessionID,
+            actionLabel: approval.actionLabel,
+            modelName: option.modelName,
+            providerName: option.providerLabel,
+            cancellationRequested: false
+        )
+        runningSpendCancel = operation.cancel
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.executeApprovedSpend(
+                approvalID: approval.id,
+                option: option,
+                operation: operation
+            )
+        }
+        runningSpendTask = task
+    }
+
+    private func executeApprovedSpend(
+        approvalID: String,
+        option: SpendOption,
+        operation: PendingSpendOperation
+    ) async {
+        guard runningSpendStatus?.id == approvalID else { return }
+        if runningSpendStatus?.cancellationRequested == true || Task.isCancelled {
+            let cancelled = ToolResult.error("Generation cancelled.")
+            settleRunningSpend(
+                approvalID: approvalID,
+                "Generation cancelled.",
+                origin: operation.origin,
+                result: cancelled
+            )
+            return
+        }
         do {
             let result = try await operation.execute(option)
+            guard runningSpendStatus?.id == approvalID else { return }
             let message = result.content.compactMap { block -> String? in
                 guard case .text(let text) = block else { return nil }
                 return text
             }.joined(separator: "\n")
-            if pendingSpendApproval?.id == approvalID {
-                clearSpendApproval(cancelling: false)
-            }
-            enqueueSpendFollowUp(
+            settleRunningSpend(
+                approvalID: approvalID,
                 result.isError
                     ? "The approved operation failed: \(message)"
                     : message,
-                origin: operation.origin
+                origin: operation.origin,
+                result: result
             )
         } catch {
-            let origin = operation.origin
-            let message = error.localizedDescription
-            if pendingSpendApproval?.id == approvalID {
-                clearSpendApproval(cancelling: true)
+            guard runningSpendStatus?.id == approvalID else { return }
+            let wasCancelled = runningSpendStatus?.cancellationRequested == true
+                || Task.isCancelled
+                || error is CancellationError
+            let message: String
+            if wasCancelled, error is CancellationError {
+                message = "Generation cancelled."
+            } else if wasCancelled {
+                message = error.localizedDescription
             } else {
-                operation.cancel()
+                message = "The approved operation failed: \(error.localizedDescription)"
             }
-            enqueueSpendFollowUp(
-                "The approved operation failed before submission: \(message)",
-                origin: origin
+            let result = ToolResult.error(message)
+            invokeRunningSpendCancellation()
+            settleRunningSpend(
+                approvalID: approvalID,
+                message,
+                origin: operation.origin,
+                result: result
             )
         }
+    }
+
+    private func settleRunningSpend(
+        approvalID: String,
+        _ text: String,
+        origin: ToolCallOrigin,
+        result: ToolResult
+    ) {
+        guard runningSpendStatus?.id == approvalID else { return }
+        runningSpendStatus = nil
+        runningSpendTask = nil
+        runningSpendCancel = nil
+        replacePendingSpendToolResult(result, origin: origin)
+        enqueueSpendFollowUp(text, origin: origin, result: result)
+    }
+
+    func cancelRunningSpend() {
+        guard var status = currentSpendRun,
+              !status.cancellationRequested else { return }
+        status.cancellationRequested = true
+        runningSpendStatus = status
+        invokeRunningSpendCancellation()
+        runningSpendTask?.cancel()
+    }
+
+    private func invokeRunningSpendCancellation() {
+        let cancel = runningSpendCancel
+        runningSpendCancel = nil
+        cancel?()
     }
 
     func declineSpend(reason: String = "The user declined the spend request.") {
@@ -1330,8 +1456,10 @@ final class AgentService {
             clearSpendApproval(cancelling: true)
             return
         }
+        let result = ToolResult.error(reason)
+        replacePendingSpendToolResult(result, origin: operation.origin)
         clearSpendApproval(cancelling: true)
-        enqueueSpendFollowUp(reason, origin: operation.origin)
+        enqueueSpendFollowUp(reason, origin: operation.origin, result: result)
     }
 
     private func clearSpendApproval(cancelling: Bool) {
@@ -1339,55 +1467,166 @@ final class AgentService {
         pendingSpendApproval = nil
         spendApprovalRefresh = nil
         pendingSpendOperation = nil
-        spendApprovalIsRunning = false
         spendApprovalError = nil
         if cancelling { operation?.cancel() }
     }
 
     private func abandonSpendApproval() {
-        guard !spendApprovalIsRunning else { return }
+        let operation = pendingSpendOperation
+        let abandonedApproval = pendingSpendApproval != nil || operation != nil
+        if let operation {
+            replacePendingSpendToolResult(
+                .error("Generation approval was cancelled before it ran."),
+                origin: operation.origin
+            )
+        }
         clearSpendApproval(cancelling: true)
-        pendingSpendFollowUp = nil
+        if abandonedApproval {
+            if let operation { resumeToolCalls(from: operation.origin) }
+        }
     }
 
-    private func enqueueSpendFollowUp(_ text: String, origin: ToolCallOrigin) {
+    private func abandonRunningSpend() {
+        invokeRunningSpendCancellation()
+        runningSpendTask?.cancel()
+        runningSpendStatus = nil
+        runningSpendTask = nil
+    }
+
+    private func enqueueSpendFollowUp(
+        _ text: String,
+        origin: ToolCallOrigin,
+        result: ToolResult? = nil
+    ) {
         guard origin.chatSessionID != nil else { return }
-        pendingSpendFollowUp = SpendFollowUp(origin: origin, text: text)
+        let imageBlocks: [[String: Any]] = result?.content.compactMap { block in
+            guard case .image(let base64, let mediaType) = block else { return nil }
+            return [
+                "type": "image",
+                "source": [
+                    "type": "base64",
+                    "media_type": mediaType,
+                    "data": base64,
+                ],
+            ]
+        } ?? []
+        pendingSpendFollowUps.append(SpendFollowUp(
+            origin: origin,
+            text: text,
+            imageBlocks: imageBlocks
+        ))
         Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
+    }
+
+    private func replacePendingSpendToolResult(
+        _ result: ToolResult,
+        origin: ToolCallOrigin
+    ) {
+        guard let sessionID = origin.chatSessionID else { return }
+        if sessionID == currentSessionId {
+            guard Self.replacePendingSpendToolResult(result, in: &messages) else { return }
+            syncMessagesIntoCurrentSession()
+            onSessionsChanged?()
+            return
+        }
+        guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionID }),
+              Self.replacePendingSpendToolResult(
+                  result,
+                  in: &sessions[sessionIndex].messages
+              ) else { return }
+        sessions[sessionIndex].updatedAt = Date()
+        onSessionsChanged?()
+    }
+
+    private static func replacePendingSpendToolResult(
+        _ result: ToolResult,
+        in messages: inout [AgentMessage]
+    ) -> Bool {
+        for messageIndex in messages.indices.reversed() {
+            for blockIndex in messages[messageIndex].blocks.indices.reversed() {
+                guard case .toolResult(let toolUseId, let content, _) =
+                    messages[messageIndex].blocks[blockIndex],
+                    content.contains(where: {
+                        guard case .text(let text) = $0 else { return false }
+                        return text == Self.spendSuspensionText
+                    })
+                else { continue }
+                messages[messageIndex].blocks[blockIndex] = .toolResult(
+                    toolUseId: toolUseId,
+                    content: result.content,
+                    isError: result.isError
+                )
+                return true
+            }
+        }
+        return false
     }
 
     @discardableResult
     func resumePendingSpendFollowUp() -> Bool {
         guard !isStreaming, !hostFollowUpStartInProgress,
-              let followUp = pendingSpendFollowUp else { return false }
+              let followUpIndex = pendingSpendFollowUps.firstIndex(where: {
+                  $0.origin.chatSessionID == currentSessionId
+              }) else { return false }
+        let followUp = pendingSpendFollowUps[followUpIndex]
         guard pendingDialog == nil,
               pendingSpendApproval == nil,
               pendingGateApproval == nil else { return false }
         if let sessionID = followUp.origin.chatSessionID {
             guard sessions.contains(where: { $0.id == sessionID }) else {
-                pendingSpendFollowUp = nil
+                pendingSpendFollowUps.remove(at: followUpIndex)
                 resumeToolCalls(from: followUp.origin)
                 return false
             }
-            if currentSessionId != sessionID { selectSession(sessionID) }
+            guard currentSessionId == sessionID else { return false }
         }
+        guard prepareHostFollowUp() else { return false }
         hostFollowUpStartInProgress = true
         defer { hostFollowUpStartInProgress = false }
         prepareToolCallsForFollowUp(from: followUp.origin)
-        let started = send(
-            text: "Host generation result: \(followUp.text) Continue from this result; do not request the same spend approval again.",
-            mentions: [],
-            hidden: true,
-            allowWhileBlocked: true
-        )
+        let followUpText = "Host generation result: \(followUp.text) Continue from this result; do not request the same spend approval again."
+        let started: Bool
+        if claudeRuntimeEnabled {
+            streamError = nil
+            started = embeddedHostFollowUpSender?(
+                followUpText,
+                followUp.imageBlocks
+            ) ?? claudeRuntime.send(
+                    text: followUpText,
+                    imageBlocks: followUp.imageBlocks,
+                    hidden: true
+                )
+            checkpointCurrentSession()
+        } else {
+            started = send(
+                text: followUpText,
+                mentions: [],
+                hidden: true,
+                allowWhileBlocked: true
+            )
+        }
         if started {
-            pendingSpendFollowUp = nil
+            pendingSpendFollowUps.remove(at: followUpIndex)
         } else if streamError == nil {
             streamError = .upstream(
                 "Couldn't resume the agent after generation. Retry the host follow-up."
             )
         }
         return started
+    }
+
+    private func prepareHostFollowUp() -> Bool {
+        guard canStream else {
+            streamError = backend == .claudeCode
+                ? .authenticationRequired
+                : .upstream("Add an Anthropic API key in Settings to continue the agent.")
+            return false
+        }
+        if let error = hostFollowUpReadinessOverride?() {
+            streamError = error
+            return false
+        }
+        return prepareWorkingCopyForTurn()
     }
 
     // MARK: - Gate approval (HAX G11 — a phase gate is the user's decision)
@@ -1410,6 +1649,13 @@ final class AgentService {
         let origin: ToolCallOrigin
         let text: String
         let includeNextPhaseInstructions: Bool
+    }
+
+    private var currentGateFollowUp: GateFollowUp? {
+        guard let currentSessionId,
+              let pendingGateFollowUp,
+              pendingGateFollowUp.origin.chatSessionID == currentSessionId else { return nil }
+        return pendingGateFollowUp
     }
 
     func toolCallBlockReason(
@@ -1441,8 +1687,7 @@ final class AgentService {
     }
 
     private func resumeToolCalls(from origin: ToolCallOrigin) {
-        if case .inAppChat = origin,
-           let key = origin.suspensionKey {
+        if let key = origin.suspensionKey {
             suspendedToolOrigins.remove(key)
         }
     }
@@ -1452,7 +1697,9 @@ final class AgentService {
         case .inAppChat:
             resumeToolCalls(from: origin)
         case .embeddedRuntime:
+            let preservedMessages = messages
             _claudeRuntime?.stop()
+            messages = preservedMessages
             _claudeRuntime = nil
         case .direct, .externalMCP:
             break
@@ -1565,7 +1812,7 @@ final class AgentService {
     }
 
     private func preparePendingGateFollowUp() async {
-        guard !isStreaming, pendingGateFollowUp != nil else { return }
+        guard !isStreaming, currentGateFollowUp != nil else { return }
         await editor?.refreshEngineState()
     }
 
@@ -1582,10 +1829,9 @@ final class AgentService {
                 resumeToolCalls(from: followUp.origin)
                 return false
             }
-            if sessionId != currentSessionId {
-                selectSession(sessionId)
-            }
+            guard sessionId == currentSessionId else { return false }
         }
+        guard prepareHostFollowUp() else { return false }
         hostFollowUpStartInProgress = true
         defer { hostFollowUpStartInProgress = false }
         prepareToolCallsForFollowUp(from: followUp.origin)
@@ -1613,13 +1859,14 @@ final class AgentService {
     }
 
     var hasPendingHostFollowUp: Bool {
-        pendingSpendFollowUp != nil || pendingGateFollowUp != nil
+        currentSpendFollowUp != nil
+            || currentGateFollowUp != nil
     }
 
     func retryPendingHostFollowUp() {
         guard hasPendingHostFollowUp, !isStreaming else { return }
         streamError = nil
-        if pendingSpendFollowUp != nil {
+        if currentSpendFollowUp != nil {
             _ = resumePendingSpendFollowUp()
         } else {
             Task { @MainActor [weak self] in
@@ -1792,6 +2039,8 @@ final class AgentService {
         dialogOrigins.removeAll()
         abandonGateApproval()
         abandonSpendApproval()
+        abandonRunningSpend()
+        pendingSpendFollowUps.removeAll()
         currentTask?.cancel()
         currentTask = nil
         _claudeRuntime?.stop()
@@ -1865,6 +2114,13 @@ final class AgentService {
         _claudeRuntime?.stop()
         _claudeRuntime = nil
         streamError = nil
+        if currentSpendFollowUp != nil {
+            Task { @MainActor [weak self] in self?.resumePendingSpendFollowUp() }
+        } else if currentGateFollowUp != nil {
+            Task { @MainActor [weak self] in
+                await self?.preparePendingGateFollowUp()
+            }
+        }
     }
 
     func closeTab(_ id: UUID) {
@@ -1893,6 +2149,21 @@ final class AgentService {
 
     func deleteSession(_ id: UUID) {
         let deletingActive = currentSessionId == id
+        if runningSpendStatus?.chatSessionID == id {
+            abandonRunningSpend()
+        }
+        let discardedSpendFollowUps = pendingSpendFollowUps.filter {
+            $0.origin.chatSessionID == id
+        }
+        pendingSpendFollowUps.removeAll { $0.origin.chatSessionID == id }
+        for followUp in discardedSpendFollowUps {
+            resumeToolCalls(from: followUp.origin)
+        }
+        if let followUp = pendingGateFollowUp,
+           followUp.origin.chatSessionID == id {
+            pendingGateFollowUp = nil
+            resumeToolCalls(from: followUp.origin)
+        }
         sessions.removeAll { $0.id == id }
         if deletingActive {
             currentTask?.cancel()

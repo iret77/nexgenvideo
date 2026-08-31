@@ -208,10 +208,10 @@ struct RestyleModelTests {
             }
         )
 
-        #expect(Set(options.map(\.providerLabel)) == ["Runway", "Higgsfield"])
+        #expect(Set(options.map(\.providerLabel)) == ["fal.ai", "Runway", "Higgsfield"])
+        #expect(options.filter { $0.target.provider == .fal }.count == 3)
         #expect(options.filter { $0.target.provider == .runway }.count == 5)
         #expect(options.filter { $0.target.provider == .higgsfield }.count == 1)
-        #expect(options.allSatisfy { $0.target.provider != .fal })
         let originalBinding = ProviderBinding(
             provider: .fal,
             transport: .api,
@@ -236,6 +236,347 @@ struct RestyleModelTests {
     @Test("discovery covers Runway alongside the image providers")
     func discoveryIncludesRunway() {
         #expect(DirectImageDiscovery.providers.contains(.runway))
+    }
+
+    @Test("Production Design derives every staged image reference")
+    func productionDesignReferenceSetIsHostOwned() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let refs = root.appendingPathComponent(
+            "production_design/refs/nested",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: refs,
+            withIntermediateDirectories: true
+        )
+        let png = try #require(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        ))
+        try png.write(to: refs.appendingPathComponent("character.png"))
+        try png.write(to: refs.deletingLastPathComponent()
+            .appendingPathComponent("palette.png"))
+        try Data([0]).write(to: refs.appendingPathComponent("notes.txt"))
+
+        let paths = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+
+        #expect(paths == [
+            "production_design/refs/nested/character.png",
+            "production_design/refs/palette.png",
+        ])
+    }
+
+    @Test("Production Design rejects a corrupt declared image by path")
+    func productionDesignRejectsCorruptReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let broken = root.appendingPathComponent("production_design/refs/broken.jpg")
+        try Data([0]).write(to: broken)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected corrupt Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("production_design/refs/broken.jpg"))
+            #expect(error.localizedDescription.contains("cannot be decoded"))
+        }
+    }
+
+    @Test("Production Design rejects a decodable image with an unsupported extension")
+    func productionDesignRejectsUnsupportedReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let png = try referencePNG()
+        let unsupported = root.appendingPathComponent("production_design/refs/reference.gif")
+        try png.write(to: unsupported)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected unsupported Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("production_design/refs/reference.gif"))
+            #expect(error.localizedDescription.contains("unsupported image format"))
+        }
+    }
+
+    @Test("Production Design rejects unknown undecodable staged files")
+    func productionDesignRejectsUnknownPartialReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let partial = root.appendingPathComponent(
+            "production_design/refs/reference.jpg.download"
+        )
+        try Data([0]).write(to: partial)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected unknown partial Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("reference.jpg.download"))
+            #expect(error.localizedDescription.contains("unsupported image format"))
+        }
+    }
+
+    @Test("Production Design rejects oversized image dimensions before approval")
+    func productionDesignRejectsOversizedReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let oversized = root.appendingPathComponent("production_design/refs/oversized.png")
+        try oversizedPNG().write(to: oversized)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected oversized Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("production_design/refs/oversized.png"))
+            #expect(error.localizedDescription.contains("safety limit"))
+        }
+    }
+
+    @Test("Production Design rejects symlinked references by path")
+    func productionDesignRejectsSymlinkReference() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("outside.png")
+        try referencePNG().write(to: target)
+        let link = root.appendingPathComponent("production_design/refs/linked.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        do {
+            _ = try ToolExecutor.productionDesignReferencePaths(dataRoot: root)
+            Issue.record("Expected symlinked Production Design reference to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("production_design/refs/linked.png"))
+            #expect(error.localizedDescription.contains("symbolic link"))
+        }
+    }
+
+    @Test("Production Design snapshot changes when staged paths or bytes change")
+    func productionDesignSnapshotTracksExactStagedSet() throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstURL = root.appendingPathComponent("production_design/refs/first.png")
+        let firstBytes = try referencePNG()
+        try firstBytes.write(to: firstURL)
+        let initial = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+
+        var changedBytes = firstBytes
+        changedBytes.append(0)
+        try changedBytes.write(to: firstURL)
+        let byteChanged = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        #expect(byteChanged != initial)
+        #expect(byteChanged.paths == initial.paths)
+
+        try firstBytes.write(
+            to: root.appendingPathComponent("production_design/refs/second.png")
+        )
+        let pathChanged = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        #expect(pathChanged != byteChanged)
+        #expect(pathChanged.paths == [
+            "production_design/refs/first.png",
+            "production_design/refs/second.png",
+        ])
+    }
+
+    @Test("Production Design generation reads only the approved immutable copy")
+    func productionDesignGenerationUsesImmutableStaging() async throws {
+        let root = try productionDesignReferenceRoot()
+        let stagingParent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: stagingParent)
+        }
+        let path = "production_design/refs/character.png"
+        let source = root.appendingPathComponent(path)
+        let approvedBytes = try referencePNG()
+        try approvedBytes.write(to: source)
+        let snapshot = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        let reference = productionDesignReference(path: path, source: source)
+        var stagedURL: URL?
+
+        try await ToolExecutor.withStagedProductionDesignReferences(
+            snapshot: snapshot,
+            projectReferences: [reference],
+            dataRoot: root,
+            stagingParent: stagingParent
+        ) { staged in
+            let stagedReference = try #require(staged.first)
+            stagedURL = stagedReference.url
+            #expect(stagedReference.id == reference.id)
+            #expect(stagedReference.name == reference.name)
+            #expect(stagedReference.originalFilename == reference.originalFilename)
+            #expect(stagedReference.url != source)
+
+            var changedBytes = approvedBytes
+            changedBytes.append(0)
+            try changedBytes.write(to: source)
+
+            #expect(try Data(contentsOf: stagedReference.url) == approvedBytes)
+            let permissions = try FileManager.default.attributesOfItem(
+                atPath: stagedReference.url.path
+            )[.posixPermissions] as? NSNumber
+            #expect(permissions?.intValue == 0o400)
+        }
+
+        #expect(stagedURL.map { !FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(try FileManager.default.contentsOfDirectory(
+            at: stagingParent,
+            includingPropertiesForKeys: nil
+        ).isEmpty)
+    }
+
+    @Test("Production Design staging fails closed when approved bytes changed")
+    func productionDesignStagingRejectsSnapshotMismatch() async throws {
+        let root = try productionDesignReferenceRoot()
+        let stagingParent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: stagingParent)
+        }
+        let path = "production_design/refs/character.png"
+        let source = root.appendingPathComponent(path)
+        var bytes = try referencePNG()
+        try bytes.write(to: source)
+        let snapshot = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        bytes.append(0)
+        try bytes.write(to: source)
+
+        do {
+            try await ToolExecutor.withStagedProductionDesignReferences(
+                snapshot: snapshot,
+                projectReferences: [productionDesignReference(path: path, source: source)],
+                dataRoot: root,
+                stagingParent: stagingParent
+            ) { _ in
+                Issue.record("A mismatched reference reached generation submission")
+            }
+            Issue.record("Expected immutable staging to reject changed bytes")
+        } catch {
+            #expect(error.localizedDescription.contains(path))
+            #expect(error.localizedDescription.contains("changed while it was being staged"))
+        }
+
+        #expect(try FileManager.default.contentsOfDirectory(
+            at: stagingParent,
+            includingPropertiesForKeys: nil
+        ).isEmpty)
+    }
+
+    @Test("Production Design staging is cleaned when generation is cancelled")
+    func productionDesignStagingCleansUpOnCancellation() async throws {
+        let root = try productionDesignReferenceRoot()
+        let stagingParent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: stagingParent)
+        }
+        let path = "production_design/refs/character.png"
+        let source = root.appendingPathComponent(path)
+        try referencePNG().write(to: source)
+        let snapshot = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+        let reference = productionDesignReference(path: path, source: source)
+        var stagedURL: URL?
+
+        do {
+            let _: Void = try await ToolExecutor.withStagedProductionDesignReferences(
+                snapshot: snapshot,
+                projectReferences: [reference],
+                dataRoot: root,
+                stagingParent: stagingParent
+            ) { staged in
+                stagedURL = (try #require(staged.first)).url
+                throw CancellationError()
+            }
+            Issue.record("Expected cancellation")
+        } catch is CancellationError {
+        }
+
+        #expect(stagedURL.map { !FileManager.default.fileExists(atPath: $0.path) } == true)
+        #expect(try FileManager.default.contentsOfDirectory(
+            at: stagingParent,
+            includingPropertiesForKeys: nil
+        ).isEmpty)
+    }
+
+    @Test("Production Design staging cannot enter the canonical pipeline")
+    func productionDesignStagingRejectsCanonicalDestination() async throws {
+        let root = try productionDesignReferenceRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = "production_design/refs/character.png"
+        let source = root.appendingPathComponent(path)
+        try referencePNG().write(to: source)
+        let snapshot = try ToolExecutor.productionDesignReferenceSnapshot(dataRoot: root)
+
+        do {
+            try await ToolExecutor.withStagedProductionDesignReferences(
+                snapshot: snapshot,
+                projectReferences: [productionDesignReference(path: path, source: source)],
+                dataRoot: root,
+                stagingParent: root.appendingPathComponent("generation-staging")
+            ) { _ in }
+            Issue.record("Expected canonical pipeline staging to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("outside the project pipeline"))
+        }
+    }
+
+    private func productionDesignReferenceRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("production_design/refs", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        return root
+    }
+
+    private func productionDesignReference(path: String, source: URL) -> MediaAsset {
+        MediaAsset(
+            id: "pipeline-reference:\(path)",
+            url: source,
+            type: .image,
+            name: source.deletingPathExtension().lastPathComponent,
+            originalFilename: source.lastPathComponent
+        )
+    }
+
+    private func referencePNG() throws -> Data {
+        try #require(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        ))
+    }
+
+    private func oversizedPNG() throws -> Data {
+        var bytes = try referencePNG()
+        let dimension: UInt32 = 20_000
+        for offset in 0..<4 {
+            let shift = UInt32((3 - offset) * 8)
+            bytes[16 + offset] = UInt8((dimension >> shift) & 0xff)
+            bytes[20 + offset] = UInt8((dimension >> shift) & 0xff)
+        }
+        let checksum = crc32(bytes[12..<29])
+        for offset in 0..<4 {
+            let shift = UInt32((3 - offset) * 8)
+            bytes[29 + offset] = UInt8((checksum >> shift) & 0xff)
+        }
+        return bytes
+    }
+
+    private func crc32(_ bytes: Data.SubSequence) -> UInt32 {
+        var value: UInt32 = 0xffff_ffff
+        for byte in bytes {
+            value ^= UInt32(byte)
+            for _ in 0..<8 {
+                value = (value & 1) == 1
+                    ? (value >> 1) ^ 0xedb8_8320
+                    : value >> 1
+            }
+        }
+        return value ^ 0xffff_ffff
     }
 
     @Test("it was the first model on the edit path — which is no longer a facade")

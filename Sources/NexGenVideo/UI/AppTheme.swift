@@ -162,6 +162,7 @@ enum AppTheme {
         static let secondary = NSColor.white.withAlphaComponent(0.80)
         static let tertiary = NSColor.white.withAlphaComponent(0.62)
         static let muted = NSColor.white.withAlphaComponent(0.34)
+        static let systemSecondary = NSColor.secondaryLabelColor
 
         static var primaryColor: Color { Color(primary) }
         static var secondaryColor: Color { Color(secondary) }
