@@ -1288,7 +1288,11 @@ struct CatalogDiscoveryTests {
             if entry.id == "nano_banana_2" {
                 #expect(model.referenceImageLimit == .bounded(14))
             } else {
-                #expect(model.referenceImageLimit == .providerUnbounded(hostMaximum: 32))
+                guard case .capabilityProfile(let maximum) = model.referenceImageLimit else {
+                    Issue.record("Expected the intrinsic capability profile to bound references")
+                    continue
+                }
+                #expect(maximum >= 4)
             }
             #expect(model.validate(
                 aspectRatio: "16:9",

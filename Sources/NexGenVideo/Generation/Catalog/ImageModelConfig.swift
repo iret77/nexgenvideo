@@ -52,7 +52,7 @@ struct ImageModelConfig: Identifiable, Sendable {
     var maxReferenceImages: Int { caps.maxReferenceImages }
     var referenceImageLimit: ImageReferenceLimit { caps.referenceImageLimit }
     var declaredMaxReferenceImages: Int? { referenceImageLimit.declaredMaximum }
-    var maxImages: Int { max(1, min(4, caps.maxImages)) }
+    var maxImages: Int { max(1, caps.maxImages) }
 
     func validate(aspectRatio: String, resolution: String?, quality: String?, imageRefCount: Int, numImages: Int) -> String? {
         if !aspectRatios.isEmpty, !aspectRatio.isEmpty, !aspectRatios.contains(aspectRatio) {
@@ -76,8 +76,8 @@ struct ImageModelConfig: Identifiable, Sendable {
         switch referenceImageLimit {
         case .bounded(let maximum) where imageRefCount > maximum:
             return "\(displayName) accepts at most \(maximum) reference image\(maximum == 1 ? "" : "s") (got \(imageRefCount))."
-        case .providerUnbounded(let hostMaximum) where imageRefCount > hostMaximum:
-            return "NexGenVideo supports at most \(hostMaximum) reference images in one request (got \(imageRefCount))."
+        case .capabilityProfile(let maximum) where imageRefCount > maximum:
+            return "\(displayName) reliably accepts at most \(maximum) reference image\(maximum == 1 ? "" : "s") (got \(imageRefCount))."
         default:
             break
         }

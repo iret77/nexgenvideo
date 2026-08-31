@@ -1827,9 +1827,9 @@ extension ToolExecutor {
         switch m.referenceImageLimit {
         case .bounded(let maximum):
             info["maxReferenceImages"] = maximum
-        case .providerUnbounded(let hostMaximum):
-            info["referenceImageLimit"] = "provider-unbounded"
-            info["hostMaxReferenceImages"] = hostMaximum
+        case .capabilityProfile(let maximum):
+            info["referenceImageLimit"] = "capability-profile"
+            info["maxReferenceImages"] = maximum
         case .unknown:
             info["referenceImageLimit"] = "unknown"
         }

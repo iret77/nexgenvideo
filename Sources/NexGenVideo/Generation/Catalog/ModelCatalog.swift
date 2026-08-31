@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 enum ModelKind: Sendable {
     case video(VideoModelConfig)
@@ -65,6 +66,8 @@ final class ModelCatalog {
     /// (`kling`, `gen4.5`); NGV maps back to the internal id for resolution + dispatch. Built at load.
     private(set) var internalByLogical: [String: String] = [:]
     private(set) var providerDiscovery: [GenerationProvider: ProviderDiscoveryState] = [:]
+    private(set) var offeringCapabilitiesByModelID:
+        [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
     private(set) var isLoaded: Bool = false
     private(set) var lastError: String?
 
@@ -144,6 +147,14 @@ final class ModelCatalog {
                     var offers = existing.offers ?? []
                     for offer in (entry.offers ?? []) where !offers.contains(offer) { offers.append(offer) }
                     existing.offers = offers
+                    var capabilities = existing.resolvedOfferingCapabilities ?? []
+                    for capability in entry.resolvedOfferingCapabilities ?? []
+                    where !capabilities.contains(capability) {
+                        capabilities.append(capability)
+                    }
+                    existing.resolvedOfferingCapabilities = capabilities.isEmpty
+                        ? nil
+                        : capabilities
                     byId[entry.id] = existing
                 } else {
                     byId[entry.id] = entry
@@ -212,6 +223,13 @@ final class ModelCatalog {
     }
 
     private func apply(_ entries: [CatalogEntry]) {
+        guard let capabilityResolver = CatalogCapabilityRuntime.resolver else {
+            clearAppliedCatalog(
+                error: CatalogCapabilityRuntime.loadError?.localizedDescription
+                    ?? "Model capability knowledge is unavailable."
+            )
+            return
+        }
         var newVideo: [VideoModelConfig] = []
         var newImage: [ImageModelConfig] = []
         var newAudio: [AudioModelConfig] = []
@@ -220,6 +238,8 @@ final class ModelCatalog {
         var newCardsById: [String: ModelCard] = [:]
         var newOffersById: [String: [ProviderOffer]] = [:]
         var newInternalByLogical: [String: String] = [:]
+        var newOfferingCapabilitiesByModelID:
+            [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
         newVideo.reserveCapacity(entries.count)
         newImage.reserveCapacity(entries.count)
         newAudio.reserveCapacity(entries.count)
@@ -227,6 +247,18 @@ final class ModelCatalog {
         newById.reserveCapacity(entries.count)
 
         for entry in entries {
+            do {
+                let capabilities = try offeringCapabilities(
+                    for: entry,
+                    resolver: capabilityResolver
+                )
+                if !capabilities.isEmpty {
+                    newOfferingCapabilitiesByModelID[entry.id] = capabilities
+                }
+            } catch {
+                clearAppliedCatalog(error: error.localizedDescription)
+                return
+            }
             if let card = entry.card { newCardsById[entry.id] = card }
             if let offers = entry.offers, !offers.isEmpty { newOffersById[entry.id] = offers }
             newInternalByLogical[Self.deriveLogicalId(entry.id)] = entry.id
@@ -258,7 +290,62 @@ final class ModelCatalog {
         self.cardsById = newCardsById
         self.offersById = newOffersById
         self.internalByLogical = newInternalByLogical
+        self.offeringCapabilitiesByModelID = newOfferingCapabilitiesByModelID
         self.lastError = nil
+    }
+
+    private func offeringCapabilities(
+        for entry: CatalogEntry,
+        resolver: ModelCapabilityResolver
+    ) throws -> [ResolvedOfferingCapabilityProfileV1] {
+        if let capabilities = entry.resolvedOfferingCapabilities,
+           !capabilities.isEmpty {
+            return capabilities
+        }
+        let modality: CapabilityModalityV1
+        switch entry.kind {
+        case .video: modality = .video
+        case .image: modality = .image
+        case .audio: modality = .audio
+        case .upscale: return []
+        }
+        let offers = entry.offers ?? ProviderManifest.defaultOffers(forModelId: entry.id)
+        return try offers.map { offer in
+            let catalogModelID = "\(offer.provider.rawValue)/\(entry.id)"
+            let endpointID = offer.providerRef ?? entry.id
+            let offering = CapabilityOfferingIdentityV1(
+                providerID: offer.provider.rawValue,
+                offeringID: [
+                    offer.provider.rawValue,
+                    offer.transport.rawValue,
+                    endpointID,
+                    offer.modelParam ?? entry.id,
+                ].joined(separator: "/"),
+                endpointID: endpointID,
+                catalogModelID: catalogModelID,
+                modality: modality
+            )
+            return try resolver.resolveOffering(
+                offering,
+                lookup: CapabilityLookupV1(
+                    modality: modality,
+                    catalogModelID: catalogModelID
+                )
+            )
+        }
+    }
+
+    private func clearAppliedCatalog(error: String) {
+        video = []
+        image = []
+        audio = []
+        upscale = []
+        byId = [:]
+        cardsById = [:]
+        offersById = [:]
+        internalByLogical = [:]
+        offeringCapabilitiesByModelID = [:]
+        lastError = error
     }
 }
 
@@ -281,6 +368,7 @@ struct CatalogEntry: Decodable, Sendable {
     /// catalog may declare several (one logical model, multiple providers). `var` so a registry can
     /// stamp it onto the entry it builds.
     var offers: [ProviderOffer]?
+    var resolvedOfferingCapabilities: [ResolvedOfferingCapabilityProfileV1]?
 
     enum Kind: String, Decodable, Sendable { case video, image, audio, upscale }
     enum ResponseShape: String, Decodable, Sendable {
@@ -339,7 +427,8 @@ struct CatalogEntry: Decodable, Sendable {
         audioPricing: AudioPricing? = nil,
         creditsPerSecondUpscale: Double? = nil,
         card: ModelCard? = nil,
-        offers: [ProviderOffer]? = nil
+        offers: [ProviderOffer]? = nil,
+        resolvedOfferingCapabilities: [ResolvedOfferingCapabilityProfileV1]? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -355,6 +444,7 @@ struct CatalogEntry: Decodable, Sendable {
         self.creditsPerSecondUpscale = creditsPerSecondUpscale
         self.card = card
         self.offers = offers
+        self.resolvedOfferingCapabilities = resolvedOfferingCapabilities
     }
 
     init(from decoder: Decoder) throws {
@@ -372,6 +462,7 @@ struct CatalogEntry: Decodable, Sendable {
         self.creditsPerSecondUpscale = try c.decodeIfPresent(Double.self, forKey: .creditsPerSecondUpscale)
         self.card = try c.decodeIfPresent(ModelCard.self, forKey: .card)
         self.offers = try c.decodeIfPresent([ProviderOffer].self, forKey: .offers)
+        self.resolvedOfferingCapabilities = nil
         switch self.kind {
         case .video:
             self.uiCapabilities = .video(try c.decode(VideoCaps.self, forKey: .uiCapabilities))
@@ -583,12 +674,12 @@ struct VideoCaps: Decodable, Sendable {
 
 enum ImageReferenceLimit: Sendable, Equatable {
     case bounded(Int)
-    case providerUnbounded(hostMaximum: Int)
+    case capabilityProfile(Int)
     case unknown
 
-    var hostMaximum: Int {
+    var effectiveMaximum: Int {
         switch self {
-        case .bounded(let maximum), .providerUnbounded(let maximum): max(0, maximum)
+        case .bounded(let maximum), .capabilityProfile(let maximum): max(0, maximum)
         case .unknown: 0
         }
     }
@@ -609,7 +700,7 @@ struct ImageCaps: Decodable, Sendable {
     let referenceImageLimit: ImageReferenceLimit
     let maxImages: Int
 
-    var maxReferenceImages: Int { referenceImageLimit.hostMaximum }
+    var maxReferenceImages: Int { referenceImageLimit.effectiveMaximum }
 
     init(
         resolutions: [String]?,
@@ -629,7 +720,7 @@ struct ImageCaps: Decodable, Sendable {
         self.resolutions = resolutions
         self.aspectRatios = aspectRatios
         self.qualities = qualities
-        self.supportsImageReference = supportsImageReference && limit.hostMaximum > 0
+        self.supportsImageReference = supportsImageReference && limit.effectiveMaximum > 0
         self.requiresImageReference = requiresImageReference || minimum > 0
         self.minReferenceImages = minimum
         self.referenceImageLimit = limit

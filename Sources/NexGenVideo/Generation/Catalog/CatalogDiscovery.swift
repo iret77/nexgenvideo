@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import NexGenEngine
 
 protocol MCPCatalogClient: MCPToolCalling {
     func discoverTools() async throws -> [MCPProviderClient.DiscoveredTool]
@@ -378,14 +379,20 @@ enum CatalogDiscovery {
 
     static func discover(
         _ provider: GenerationProvider,
-        client: any MCPCatalogClient
+        client: any MCPCatalogClient,
+        capabilityResolver: ModelCapabilityResolver? = CatalogCapabilityRuntime.resolver
     ) async -> [CatalogEntry] {
-        await discoverResult(provider, client: client).entries
+        await discoverResult(
+            provider,
+            client: client,
+            capabilityResolver: capabilityResolver
+        ).entries
     }
 
     static func discoverResult(
         _ provider: GenerationProvider,
-        client: any MCPCatalogClient
+        client: any MCPCatalogClient,
+        capabilityResolver: ModelCapabilityResolver? = CatalogCapabilityRuntime.resolver
     ) async -> MCPDiscoveryResult {
         do {
             let tools = try await client.discoverTools()
@@ -438,10 +445,21 @@ enum CatalogDiscovery {
                 let schemas = Dictionary(uniqueKeysWithValues: toolsByModality.compactMap { modality, name in
                     tools.first(where: { $0.name == name }).map { (modality, $0.inputSchema) }
                 })
+                guard let capabilityResolver else {
+                    throw CatalogCapabilityRuntimeError.unavailable
+                }
+                let capabilities = try MCPModelDiscovery.resolveOfferingCapabilities(
+                    models: enrichment.models,
+                    toolsByModality: toolsByModality,
+                    provider: provider,
+                    resolver: capabilityResolver,
+                    observedAt: CatalogCapabilityRuntime.observationTimestamp()
+                )
                 entries = MCPModelDiscovery.catalogEntries(
                     models: enrichment.models, toolsByModality: toolsByModality,
                     toolSchemasByModality: schemas,
                     allowsLocalMedia: MCPMediaUpload.supportsUploadContract(tools),
+                    resolvedCapabilities: capabilities,
                     provider: provider)
             }
             if entries.isEmpty, !usedModelCatalog {
