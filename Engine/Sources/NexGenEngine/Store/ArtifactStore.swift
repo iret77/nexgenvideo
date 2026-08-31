@@ -34,6 +34,10 @@ public enum PipelineLayout {
     public static let sanityDir = "sanity"
     public static let sanityReportFile = "sanity/report.json"
     public static let rendersDir = "renders"
+    public static let executionDir = "execution"
+    public static let executionPlanFile = "execution/plan.v1.json"
+    public static let creativeContextFile = "execution/creative-context.v1.json"
+    public static let executionExtensionsDir = "execution/extensions"
 
     /// Format-neutral data-root subdirs created at init — exact order and names
     /// from `core/layout.py::CORE_SUBDIRS`. Pack dirs come separately.
@@ -46,6 +50,7 @@ public enum PipelineLayout {
         "sanity",
         "frames",
         "renders",
+        "execution/extensions",
         "import",
         "import/characters",
         "import/locations",
