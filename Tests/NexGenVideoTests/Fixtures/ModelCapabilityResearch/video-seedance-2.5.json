@@ -1,0 +1,34 @@
+{
+  "schema": "model-capability-research-candidate/v1",
+  "binding": {
+    "identity": {"family_id": "seedance", "variant_id": "default", "version_id": "2.5", "modality": "video"},
+    "provider_id": "runway",
+    "offering_id": "runway::seedance2_5",
+    "endpoint_id": "image_to_video",
+    "catalog_model_id": "seedance-2.5",
+    "mode": "reference"
+  },
+  "scope": "endpoint",
+  "fields": {
+    "integers": {
+      "video.reference_images": {"value": 30, "semantics": "hard_api_limit", "evidence": [{"source_url": "https://docs.dev.runwayml.com/api-details/api_changelog/", "source_title": "Runway API changelog — Seedance 2.5", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.99}]},
+      "video.reference_videos": {"value": 10, "semantics": "hard_api_limit", "evidence": [{"source_url": "https://docs.dev.runwayml.com/api-details/api_changelog/", "source_title": "Runway API changelog — Seedance 2.5", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.99}]},
+      "video.reference_audios": {"value": 10, "semantics": "hard_api_limit", "evidence": [{"source_url": "https://docs.dev.runwayml.com/api-details/api_changelog/", "source_title": "Runway API changelog — Seedance 2.5", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.99}]}
+    },
+    "decimals": {
+      "video.duration_minimum_seconds": {"value": 4, "semantics": "hard_api_limit", "evidence": [{"source_url": "https://docs.dev.runwayml.com/api-details/api_changelog/", "source_title": "Runway API changelog — Seedance 2.5", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.99}]},
+      "video.duration_maximum_seconds": {"value": 30, "semantics": "hard_api_limit", "evidence": [{"source_url": "https://docs.dev.runwayml.com/api-details/api_changelog/", "source_title": "Runway API changelog — Seedance 2.5", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.99}]}
+    },
+    "booleans": {
+      "video.first_frame": {"value": true, "semantics": "supported_value", "evidence": [{"source_url": "https://docs.dev.runwayml.com/assets/inputs/", "source_title": "Runway API input parameters", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.98}]},
+      "video.last_frame": {"value": true, "semantics": "supported_value", "evidence": [{"source_url": "https://docs.dev.runwayml.com/assets/inputs/", "source_title": "Runway API input parameters", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.98}]},
+      "video.source_video": {"value": true, "semantics": "supported_value", "evidence": [{"source_url": "https://docs.dev.runwayml.com/api-details/api_changelog/", "source_title": "Runway API changelog — Seedance 2.5", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.99}]},
+      "video.native_audio": {"value": true, "semantics": "supported_value", "evidence": [{"source_url": "https://docs.dev.runwayml.com/api-details/api_changelog/", "source_title": "Runway API changelog — Seedance 2.5", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.96}]}
+    },
+    "strings": {
+      "common.modes": {"value": ["text", "image", "video", "reference", "extend"], "semantics": "supported_set", "evidence": [{"source_url": "https://docs.dev.runwayml.com/api-details/api_changelog/", "source_title": "Runway API changelog — Seedance 2.5", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.95}]},
+      "common.resolutions": {"value": ["480p", "720p"], "semantics": "supported_set", "evidence": [{"source_url": "https://docs.dev.runwayml.com/api-details/api_changelog/", "source_title": "Runway API changelog — Seedance 2.5", "observed_at": "2026-08-31", "kind": "documented_api", "confidence": 0.99}]}
+    },
+    "integer_lists": {}
+  }
+}
