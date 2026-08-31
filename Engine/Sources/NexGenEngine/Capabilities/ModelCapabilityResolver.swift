@@ -128,35 +128,12 @@ public struct ModelCapabilityResolver: Sendable {
         to profile: ResolvedCapabilityProfileV1
     ) throws -> ResolvedCapabilityProfileV1 {
         let endpointID = overlay.offering.endpointID
-        try Self.validate(overlay.offering)
+        try Self.validate(overlay)
         guard profile.requestedIdentity?.modality == nil
                 || profile.requestedIdentity?.modality == overlay.offering.modality,
               profile.resolvedIdentity?.modality == nil
                 || profile.resolvedIdentity?.modality == overlay.offering.modality else {
             throw ModelCapabilityKnowledgeError.invalidOffering("resolved_profile_modality")
-        }
-        guard !overlay.schemaEvidence.isEmpty else {
-            throw ModelCapabilityKnowledgeError.invalidEndpointConstraint("schema_evidence")
-        }
-        try Self.validateEvidence(overlay.schemaEvidence)
-        try Self.validateEvidence(overlay.restrictions)
-        try Self.validateEndpointFields(
-            overlay.restrictions,
-            modality: overlay.offering.modality
-        )
-        for (field, constraint) in overlay.arrayConstraints {
-            try Self.require(field, field: "array_constraint.field")
-            guard constraint.maxItems.map({ $0 >= 0 }) ?? true else {
-                throw ModelCapabilityKnowledgeError.invalidEndpointConstraint(field)
-            }
-            let definition = try Self.registeredField(
-                field,
-                type: .integer,
-                modality: overlay.offering.modality
-            )
-            guard definition.endpointMergePolicy == .maximum else {
-                throw ModelCapabilityKnowledgeError.invalidEndpointMergePolicy(field)
-            }
         }
 
         var fields = profile.fields
@@ -298,6 +275,33 @@ public struct ModelCapabilityResolver: Sendable {
                     versionID: predecessorID,
                     modality: current.identity.modality
                 )]
+            }
+        }
+    }
+
+    public static func validate(_ overlay: EndpointCapabilityOverlayV1) throws {
+        try validate(overlay.offering)
+        guard !overlay.schemaEvidence.isEmpty else {
+            throw ModelCapabilityKnowledgeError.invalidEndpointConstraint("schema_evidence")
+        }
+        try validateEvidence(overlay.schemaEvidence)
+        try validateEvidence(overlay.restrictions)
+        try validateEndpointFields(
+            overlay.restrictions,
+            modality: overlay.offering.modality
+        )
+        for (field, constraint) in overlay.arrayConstraints {
+            try require(field, field: "array_constraint.field")
+            guard constraint.maxItems.map({ $0 >= 0 }) ?? true else {
+                throw ModelCapabilityKnowledgeError.invalidEndpointConstraint(field)
+            }
+            let definition = try registeredField(
+                field,
+                type: .integer,
+                modality: overlay.offering.modality
+            )
+            guard definition.endpointMergePolicy == .maximum else {
+                throw ModelCapabilityKnowledgeError.invalidEndpointMergePolicy(field)
             }
         }
     }
