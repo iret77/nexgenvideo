@@ -183,7 +183,7 @@ struct HardStepIntakeTests {
     @Test("a step naming an unsupported attachAs is dropped, its siblings survive")
     func dropsUnknownKind() throws {
         let json = """
-        {"phases": [{"phase": "p", "steps": [
+        {"schema": "hardsteps/1.0", "phases": [{"phase": "p", "steps": [
           {"id": "future", "attachAs": "hologram", "title": "Hologram"},
           {"id": "keep", "attachAs": "lyrics", "title": "Lyrics"}
         ]}]}
@@ -210,7 +210,7 @@ struct HardStepIntakeTests {
     func findsManifestInAssembledPack() throws {
         let bundle = try makeDataRoot().appendingPathComponent("musicvideo.ngvpack", isDirectory: true)
         let json = """
-        {"phases": [{"phase": "analysis", "steps": [
+        {"schema": "hardsteps/1.0", "phases": [{"phase": "analysis", "steps": [
           {"id": "analysis.song", "attachAs": "song", "title": "Track",
            "required": true, "accept": ["audio"]}
         ]}]}

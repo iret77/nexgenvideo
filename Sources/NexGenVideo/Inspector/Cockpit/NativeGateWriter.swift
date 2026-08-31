@@ -211,13 +211,11 @@ enum NativeGateWriter {
                 executionCoordinator: executionCoordinator
             )
         }
-        let registry = try resolvedRegistry(
+        let resolved = try resolvedRegistryContext(
             projectDir: projectDir,
             declaredPack: declaredPack
         )
-        let order = PhaseOrder.merged(
-            packPlacements: registry.phasePlacements
-        )
+        let order = try PhaseContractRuntime.order(activePack: resolved.name)
         try mutate(projectDir: projectDir) { gates in
             let current = order.first {
                 !gates.get($0).approved
@@ -264,17 +262,17 @@ enum NativeGateWriter {
         phase: String,
         resolved: NativeGateResolvedRegistry
     ) throws -> NativeGateApprovalCheckContext {
+        let phaseAccess = try PipelinePhaseAccess.prepare(packName: resolved.name)
         return NativeGateApprovalCheckContext(
             dataRoot: dataRoot,
             phase: phase,
-            order: PhaseOrder.merged(
-                packPlacements: resolved.registry.phasePlacements
-            ),
-            phaseAccess: try PipelinePhaseAccess.prepare(
-                packName: resolved.name,
+            order: phaseAccess.order,
+            phaseAccess: phaseAccess,
+            requirement: try PhaseContractRuntime.gateRequirement(
+                activePack: resolved.name,
+                phase: phase,
                 registry: resolved.registry
-            ),
-            requirement: resolved.registry.gateRequirements[phase]
+            )
         )
     }
 
@@ -300,9 +298,7 @@ enum NativeGateWriter {
     }
 
     /// Reset `phase` and every following phase to unapproved. Port of `gates.rewind_to` /
-    /// MCP `rewind`. The order is the merged pipeline (core + the active pack's phases at their
-    /// declared placement, via `PhaseOrder.merged`) so a pack gate like `analysis` is rewindable and
-    /// resets the correct downstream span.
+    /// MCP `rewind`. The active pack contract supplies the exact downstream span.
     static func rewind(
         projectDir: URL,
         targetPhase: String,
@@ -313,13 +309,11 @@ enum NativeGateWriter {
             projectDir: projectDir,
             executionCoordinator: executionCoordinator
         )
-        let registry = try resolvedRegistry(
+        let resolved = try resolvedRegistryContext(
             projectDir: projectDir,
             declaredPack: declaredPack
         )
-        let order = PhaseOrder.merged(
-            packPlacements: registry.phasePlacements
-        )
+        let order = try PhaseContractRuntime.order(activePack: resolved.name)
         try mutate(projectDir: projectDir) { gates in
             _ = try GatesOperations.rewindTo(&gates, target: targetPhase, order: order)
         }
@@ -402,16 +396,6 @@ enum NativeGateWriter {
         } catch {
             return .blocked(error.localizedDescription)
         }
-    }
-
-    nonisolated private static func resolvedRegistry(
-        projectDir: URL,
-        declaredPack: String?
-    ) throws -> EngineRegistry {
-        try resolvedRegistryContext(
-            projectDir: projectDir,
-            declaredPack: declaredPack
-        ).registry
     }
 
     nonisolated private static func resolvedRegistryContext(

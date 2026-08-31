@@ -10,7 +10,7 @@ struct HardStep: Equatable, Sendable, Identifiable {
 
     /// The intake kinds `AgentService.submitDialog` already routes deterministically. A step naming
     /// anything else is dropped at decode time — a newer pack degrades, never crashes an older host.
-    enum Kind: String, Sendable, CaseIterable {
+    enum Kind: String, Sendable, CaseIterable, Hashable {
         case script, character, location, style, song, lyrics
     }
 
@@ -47,9 +47,19 @@ struct HardStepManifest: Sendable, Equatable {
     /// Filename inside the pack's resource dir, alongside `phases/`.
     static let resourceName = "hardsteps.json"
 
+    let schema: String
+    let declaredPhases: [String]
     private let byPhase: [String: [HardStep]]
 
-    init(steps: [HardStep]) {
+    init(
+        schema: String = "hardsteps/1.0",
+        steps: [HardStep],
+        declaredPhases: [String]? = nil
+    ) {
+        self.schema = schema
+        self.declaredPhases = declaredPhases ?? steps.reduce(into: [String]()) { result, step in
+            if !result.contains(step.phase) { result.append(step.phase) }
+        }
         var grouped: [String: [HardStep]] = [:]
         for step in steps { grouped[step.phase, default: []].append(step) }
         byPhase = grouped
@@ -67,13 +77,18 @@ struct HardStepManifest: Sendable, Equatable {
 
     static func decode(_ data: Data) throws -> HardStepManifest {
         let file = try JSONDecoder().decode(File.self, from: data)
-        return HardStepManifest(steps: file.phases.compactMap(\.value).flatMap { phase in
-            phase.steps.compactMap(\.value).compactMap { $0.step(phase: phase.phase) }
-        })
+        let phases = file.phases.compactMap(\.value)
+        return HardStepManifest(
+            schema: file.schema,
+            steps: phases.flatMap { phase in
+                phase.steps.compactMap(\.value).compactMap { $0.step(phase: phase.phase) }
+            },
+            declaredPhases: phases.map(\.phase)
+        )
     }
 
-    /// Read the manifest out of a pack's resource dir. A pack without one, or with an unreadable or
-    /// malformed one, yields nil — the pipeline then runs exactly as it did before hard steps existed.
+    /// Read the manifest out of a pack's resource dir. Missing or malformed data yields nil so the
+    /// phase-contract loader can reject the pack before its code is loaded.
     static func load(packResourceDir: URL) -> HardStepManifest? {
         let url = packResourceDir.appendingPathComponent(resourceName)
         guard let data = try? Data(contentsOf: url) else { return nil }
@@ -139,6 +154,7 @@ struct HardStepManifest: Sendable, Equatable {
     }
 
     private struct File: Decodable {
+        let schema: String
         let phases: [Lenient<Phase>]
     }
 

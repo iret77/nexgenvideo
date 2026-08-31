@@ -265,6 +265,7 @@ final class ToolExecutor {
         case .writeStoryboard:      return try writeStoryboardTool(editor, args)
         case .writeBible:           return try writeBibleTool(editor, args)
         case .writeShotlist:        return try writeShotlistTool(editor, args)
+        case .writePhaseExtension:  return try writePhaseExtensionTool(editor, args)
         case .getPattern:           return try getPatternTool(editor, args)
         case .initProject:          return try initProjectTool(editor, args)
         case .approveGate:          return try await approveGateTool(editor, args, origin: origin)

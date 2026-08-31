@@ -4,6 +4,8 @@ import re
 import sys
 from pathlib import Path
 
+import validate_pipeline_contract as validate_pipeline_contract_module
+
 
 ROOT = Path(__file__).resolve().parent.parent
 KNOWN_ATTACH_AS = {"song", "lyrics", "script", "character", "location", "style"}
@@ -725,6 +727,16 @@ def validate_hardsteps() -> None:
         fail("lyrics and every creative-material hard step must remain optional")
 
 
+def validate_pipeline_contract() -> None:
+    try:
+        validate_pipeline_contract_module.validate_pack_manifest(
+            ROOT / "plugins/musicvideo.json",
+            ROOT,
+        )
+    except validate_pipeline_contract_module.PipelineContractValidationError as error:
+        fail(f"musicvideo pipeline contract is invalid: {error}")
+
+
 def validate_agent_guidance() -> None:
     try:
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -1008,6 +1020,7 @@ def main() -> None:
     version = sys.argv[1]
     validate_changelog(version)
     validate_hardsteps()
+    validate_pipeline_contract()
     validate_agent_guidance()
     validate_engine_registry_abi()
     validate_engine_boundary_abi()
@@ -1015,7 +1028,7 @@ def main() -> None:
     validate_plugin_version(version, Path(sys.argv[2]))
     print(
         f"Release preflight passed for {version}: "
-        "changelog + agent guidance + engine ABI + pack intake/version + release assets"
+        "changelog + agent guidance + engine ABI + pack intake/pipeline/version + release assets"
     )
 
 

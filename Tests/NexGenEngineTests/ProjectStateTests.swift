@@ -82,7 +82,7 @@ struct ProjectStateTests {
 
     // MARK: - pack phases merge at their declared placement (deliberate deviation from Python append-order)
 
-    @Test("a pack phase is merged in at its declared placement, deduped")
+    @Test("a pack phase is merged in at its declared placement and core shadowing is rejected")
     func packPhaseAtDeclaredPlacement() throws {
         let dataRoot = try scaffold(mode: .beat)
         defer { cleanup(dataRoot) }
@@ -92,11 +92,38 @@ struct ProjectStateTests {
         )
         let order = snap.phases.map(\.phase)
         #expect(order == ["project_init", "analysis"] + coreGatePhases.dropFirst())  // inserted, not appended
-        // A pack phase equal to a core name is not duplicated (position is left to the core order).
-        let deduped = try ProjectStateBuilder.buildSnapshot(
-            dataRoot: dataRoot, packPlacements: [PhasePlacement(phase: "render", after: "project_init")]
-        )
-        #expect(deduped.phases.map(\.phase) == coreGatePhases)
+        #expect(throws: PhaseOrder.ResolutionError.shadowsCorePhase("render")) {
+            try ProjectStateBuilder.buildSnapshot(
+                dataRoot: dataRoot,
+                packPlacements: [
+                    PhasePlacement(phase: "render", after: "project_init"),
+                ]
+            )
+        }
+    }
+
+    @Test("legacy placements reject unknown and ambiguous predecessors")
+    func malformedLegacyPlacementsFailClosed() {
+        #expect(
+            throws: PhaseOrder.ResolutionError.unknownPredecessor(
+                phase: "extension",
+                predecessor: "missing"
+            )
+        ) {
+            try PhaseOrder.validatedMerged(
+                packPlacements: [
+                    PhasePlacement(phase: "extension", after: "missing"),
+                ]
+            )
+        }
+        #expect(throws: PhaseOrder.ResolutionError.ambiguousPredecessor("brief")) {
+            try PhaseOrder.validatedMerged(
+                packPlacements: [
+                    PhasePlacement(phase: "one", after: "brief"),
+                    PhasePlacement(phase: "two", after: "brief"),
+                ]
+            )
+        }
     }
 
     @Test("nil placement appends the pack phase after the core order")

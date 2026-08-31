@@ -149,7 +149,15 @@ enum PipelineAgentContract {
         phaseDocument: (String) -> String?
     ) -> [String] {
         var failures: [String] = []
-        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        let order: [String]
+        do {
+            order = try PhaseOrder.validatedMerged(
+                packPlacements: registry.phasePlacements
+            )
+        } catch {
+            failures.append("legacy phase placements are invalid: \(error)")
+            order = []
+        }
         if order != musicvideoPhases {
             failures.append(
                 "phase order is \(order.joined(separator: ", ")); expected "

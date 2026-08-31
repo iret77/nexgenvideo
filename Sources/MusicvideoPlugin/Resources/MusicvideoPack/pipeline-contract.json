@@ -1,0 +1,254 @@
+{
+  "schema": "pipeline-contract/v1",
+  "contractID": "musicvideo.pipeline.v1",
+  "packID": "musicvideo",
+  "resourceRoot": "MusicvideoPack",
+  "hardStepsManifestID": "hardsteps/1.0",
+  "display": {
+    "title": "Music Video"
+  },
+  "postPipelineCapabilities": [
+    "compile_prompt",
+    "generate_image",
+    "import_media"
+  ],
+  "phases": [
+    {
+      "id": "project_init",
+      "executionIndex": 0,
+      "dependencies": [],
+      "roles": ["intake", "canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.project_track",
+        "writer": "host.project_init_intake",
+        "gate": "registry.project_init"
+      },
+      "capabilities": {
+        "phaseBound": [],
+        "supporting": []
+      },
+      "instructions": "phases/project-init.md",
+      "display": { "label": "Project Init" }
+    },
+    {
+      "id": "analysis",
+      "executionIndex": 1,
+      "dependencies": ["project_init"],
+      "roles": ["deterministic_runner", "canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.analysis",
+        "writer": "host.analysis_writer",
+        "runner": "registry.analysis",
+        "gate": "registry.analysis",
+        "lineage": "registry.analysis",
+        "deterministicSteps": ["one_song_contract"]
+      },
+      "capabilities": {
+        "phaseBound": ["run_phase", "attach_song", "write_analysis_interpretation"],
+        "supporting": []
+      },
+      "instructions": "phases/analysis.md",
+      "display": { "label": "Audio Analysis" }
+    },
+    {
+      "id": "brief",
+      "executionIndex": 2,
+      "dependencies": ["analysis"],
+      "roles": ["intake", "canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.brief",
+        "writer": "host.brief_writer",
+        "gate": "registry.brief",
+        "lineage": "registry.brief"
+      },
+      "capabilities": {
+        "phaseBound": ["record_affect", "write_brief"],
+        "supporting": []
+      },
+      "instructions": "phases/brief.md",
+      "display": { "label": "Brief" }
+    },
+    {
+      "id": "production_design",
+      "executionIndex": 3,
+      "dependencies": ["brief"],
+      "roles": ["canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.production_design",
+        "writer": "host.production_design_writer",
+        "gate": "registry.production_design",
+        "lineage": "registry.production_design"
+      },
+      "capabilities": {
+        "phaseBound": ["write_production_design"],
+        "supporting": [
+          "compile_prompt",
+          "generate_image",
+          "import_media",
+          "upscale_media",
+          "copy_project_file",
+          "run_provider_tool"
+        ]
+      },
+      "instructions": "phases/production-design.md",
+      "display": { "label": "Production Design" }
+    },
+    {
+      "id": "treatment",
+      "executionIndex": 4,
+      "dependencies": ["production_design"],
+      "roles": ["canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.treatment",
+        "writer": "host.treatment_writer",
+        "gate": "registry.treatment",
+        "lineage": "registry.treatment"
+      },
+      "capabilities": {
+        "phaseBound": ["write_treatment"],
+        "supporting": []
+      },
+      "instructions": "phases/treatment.md",
+      "display": { "label": "Treatment" }
+    },
+    {
+      "id": "storyboard",
+      "executionIndex": 5,
+      "dependencies": ["treatment"],
+      "roles": ["canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.storyboard",
+        "writer": "host.storyboard_writer",
+        "gate": "registry.storyboard",
+        "lineage": "registry.storyboard"
+      },
+      "capabilities": {
+        "phaseBound": ["write_storyboard"],
+        "supporting": []
+      },
+      "instructions": "phases/storyboard.md",
+      "display": { "label": "Storyboard" }
+    },
+    {
+      "id": "bible",
+      "executionIndex": 6,
+      "dependencies": ["storyboard"],
+      "roles": ["canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.bible",
+        "writer": "host.bible_writer",
+        "gate": "registry.bible",
+        "lineage": "registry.bible"
+      },
+      "capabilities": {
+        "phaseBound": ["extract_scene3d_povs", "write_bible"],
+        "supporting": [
+          "compile_prompt",
+          "generate_image",
+          "import_media",
+          "upscale_media",
+          "copy_project_file",
+          "run_provider_tool",
+          "set_ledger_attribute",
+          "lock_ledger_attribute",
+          "remove_ledger_attribute"
+        ]
+      },
+      "instructions": "phases/bible.md",
+      "display": { "label": "Bible" }
+    },
+    {
+      "id": "shotlist",
+      "executionIndex": 7,
+      "dependencies": ["bible"],
+      "roles": ["canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.shotlist",
+        "writer": "host.shotlist_writer",
+        "gate": "registry.shotlist",
+        "lineage": "registry.shotlist"
+      },
+      "capabilities": {
+        "phaseBound": ["write_shotlist"],
+        "supporting": []
+      },
+      "instructions": "phases/shotlist.md",
+      "display": { "label": "Shot List" }
+    },
+    {
+      "id": "sanity",
+      "executionIndex": 8,
+      "dependencies": ["shotlist"],
+      "roles": ["canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.sanity_report",
+        "writer": "host.sanity_runner",
+        "gate": "registry.sanity",
+        "lineage": "registry.sanity"
+      },
+      "capabilities": {
+        "phaseBound": ["run_sanity"],
+        "supporting": []
+      },
+      "instructions": "phases/sanity.md",
+      "display": { "label": "Sanity Check" }
+    },
+    {
+      "id": "frames",
+      "executionIndex": 9,
+      "dependencies": ["sanity"],
+      "roles": ["deterministic_runner", "canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.frames_manifest",
+        "writer": "host.frames_writer",
+        "runner": "host.frames_runner",
+        "gate": "registry.frames",
+        "lineage": "registry.frames",
+        "deterministicSteps": ["prepare_frames_manifest"]
+      },
+      "capabilities": {
+        "phaseBound": ["run_phase", "next_render_shot", "record_render", "save_frame_audit"],
+        "supporting": [
+          "compile_prompt",
+          "generate_image",
+          "import_media",
+          "upscale_media",
+          "crop_to_aspect",
+          "set_ledger_attribute",
+          "lock_ledger_attribute",
+          "remove_ledger_attribute"
+        ]
+      },
+      "instructions": "phases/frame.md",
+      "display": { "label": "Frames" }
+    },
+    {
+      "id": "render",
+      "executionIndex": 10,
+      "dependencies": ["frames"],
+      "roles": ["deterministic_runner", "canonical_writer", "review_gate"],
+      "selectors": {
+        "artifact": "host.render_manifest",
+        "writer": "host.render_writer",
+        "runner": "host.render_runner",
+        "gate": "registry.render",
+        "lineage": "registry.render",
+        "deterministicSteps": ["prepare_final_render_manifest"]
+      },
+      "capabilities": {
+        "phaseBound": ["run_phase", "next_render_shot", "record_render", "assemble_timeline"],
+        "supporting": [
+          "compile_prompt",
+          "generate_video",
+          "generate_image",
+          "generate_audio",
+          "import_media",
+          "upscale_media",
+          "run_provider_tool"
+        ]
+      },
+      "instructions": "phases/render.md",
+      "display": { "label": "Render" }
+    }
+  ]
+}

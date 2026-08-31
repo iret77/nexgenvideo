@@ -24,15 +24,31 @@ public enum ProjectStateBuilder {
     }
 
     /// Aggregate ProjectMeta + Gates + render-manifest spend into a snapshot.
-    /// The phase order is the core order with the active pack's declared phases
-    /// merged in via `PhaseOrder.merged` (the single ordering helper used at
-    /// every surface). Spent is summed across every `renders/manifest-*.json` and
+    /// The legacy overload validates historical placements before constructing the order.
+    /// Spent is summed across every `renders/manifest-*.json` and
     /// rounded once to 2 dp, matching `costs.already_spent_in_project`.
     /// Port of `state.py::build_snapshot`.
     public static func buildSnapshot(
         dataRoot: URL, core: [String] = coreGatePhases, packPlacements: [PhasePlacement] = []
     ) throws -> ProjectState {
-        let order = PhaseOrder.merged(core: core, packPlacements: packPlacements)
+        let order = try PhaseOrder.validatedMerged(
+            core: core,
+            packPlacements: packPlacements
+        )
+        return try buildSnapshot(dataRoot: dataRoot, order: order)
+    }
+
+    public static func buildSnapshot(
+        dataRoot: URL,
+        order: [String]
+    ) throws -> ProjectState {
+        guard !order.isEmpty else {
+            throw GateBlocked("The pipeline phase order is empty.")
+        }
+        let order = try PhaseOrder.validatedMerged(
+            core: order,
+            packPlacements: []
+        )
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         let meta = try store.load(ProjectMeta.self, at: PipelineLayout.projectFile)
         let gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)

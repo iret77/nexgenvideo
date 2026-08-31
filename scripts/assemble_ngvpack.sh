@@ -13,9 +13,10 @@ set -euo pipefail
 #   [sign_identity]  Developer ID Application identity; omitted → ad-hoc ("-")
 #
 # The pack carries: Contents/MacOS/<id> (the plugin dylib, renamed), the SwiftPM
-# canonical resource tree in Contents/Resources/MusicvideoPack, and an
+# manifest-declared resource tree in Contents/Resources, and an
 # Info.plist with the NGV gate keys (NGVPackID / CFBundleShortVersionString /
-# NGVMinAppVersion / NGVEngineContract / NSPrincipalClass). The plugin dylib keeps its
+# NGVMinAppVersion / NGVEngineContract / NGVPipelineContractVersion /
+# NGVPackResourceRoot / NSPrincipalClass). The plugin dylib keeps its
 # @rpath/libNexGenEngine.dylib dependency — dyld dedups it onto the host's copy.
 
 MANIFEST="${1:?manifest.json required}"
@@ -25,6 +26,7 @@ SIGN_ID="${4:-}"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$MANIFEST" ] || { echo "!! manifest not found: $MANIFEST" >&2; exit 1; }
+python3 "$ROOT/scripts/validate_pipeline_contract.py" "$MANIFEST"
 
 # Read fields from the manifest (python3 ships on the macOS runner).
 read_field() { python3 -c "import json,sys;print(json.load(open('$MANIFEST'))['$1'])"; }
@@ -41,6 +43,8 @@ VERSION="$(read_field version)"
 PROJECT_SCHEMA="$(read_field projectSchema)"
 MIGRATES_FROM="$(python3 -c "import json;print(','.join(json.load(open('$MANIFEST')).get('migratesFrom',[])))")"
 MINAPP="$(read_field minAppVersion)"
+PIPELINE_CONTRACT_VERSION="$(read_field pipelineContractVersion)"
+RESOURCE_ROOT="$(read_field resourceRoot)"
 # Badge source, relative to the SwiftPM resource bundle (e.g. MusicvideoPack/badge.png).
 BADGE_SRC="$(read_optional badge)"
 
@@ -79,18 +83,20 @@ for candidate in \
     "$RES_BUNDLE" \
     "$RES_BUNDLE/Contents/Resources" \
     "$RES_BUNDLE/Resources"; do
-  if [ -f "$candidate/MusicvideoPack/hardsteps.json" ]; then
+  if [ -f "$candidate/$RESOURCE_ROOT/hardsteps.json" ] && \
+     [ -f "$candidate/$RESOURCE_ROOT/pipeline-contract.json" ]; then
     resource_roots+=("$candidate")
   fi
 done
 if [ "${#resource_roots[@]}" -ne 1 ]; then
-  echo "!! expected exactly one MusicvideoPack resource root in $RES_BUNDLE; found ${#resource_roots[@]}" >&2
+  echo "!! expected exactly one $RESOURCE_ROOT resource root in $RES_BUNDLE; found ${#resource_roots[@]}" >&2
   exit 1
 fi
 PACK_RESOURCE_ROOT="${resource_roots[0]}"
-cp -R "$PACK_RESOURCE_ROOT/MusicvideoPack" "$PACK/Contents/Resources/MusicvideoPack"
-if [ ! -f "$PACK/Contents/Resources/MusicvideoPack/hardsteps.json" ]; then
-  echo "!! failed to stage canonical MusicvideoPack resources" >&2
+cp -R "$PACK_RESOURCE_ROOT/$RESOURCE_ROOT" "$PACK/Contents/Resources/$RESOURCE_ROOT"
+if [ ! -f "$PACK/Contents/Resources/$RESOURCE_ROOT/hardsteps.json" ] || \
+   [ ! -f "$PACK/Contents/Resources/$RESOURCE_ROOT/pipeline-contract.json" ]; then
+  echo "!! failed to stage declarative resources for $RESOURCE_ROOT" >&2
   exit 1
 fi
 
@@ -106,6 +112,7 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$PACK/Contents/Ma
 NGV_ID="$ID" NGV_DISPLAY="$DISPLAY" NGV_TAGLINE="$TAGLINE" NGV_HEADLINE="$HEADLINE" \
 NGV_BENEFIT="$BENEFIT" NGV_VERSION="$VERSION" NGV_MINAPP="$MINAPP" NGV_PRINCIPAL="$PRINCIPAL" \
 NGV_PROJECT_SCHEMA="$PROJECT_SCHEMA" NGV_MIGRATES_FROM="$MIGRATES_FROM" NGV_CONTRACT="$CONTRACT" \
+NGV_PIPELINE_CONTRACT="$PIPELINE_CONTRACT_VERSION" NGV_RESOURCE_ROOT="$RESOURCE_ROOT" \
 python3 - "$PACK/Contents/Info.plist" <<'PY'
 import os, plistlib, sys
 info = {
@@ -125,6 +132,8 @@ info = {
     "NGVMigratesFrom": [value for value in os.environ["NGV_MIGRATES_FROM"].split(",") if value],
     "NGVMinAppVersion": os.environ["NGV_MINAPP"],
     "NGVEngineContract": int(os.environ["NGV_CONTRACT"]),
+    "NGVPipelineContractVersion": int(os.environ["NGV_PIPELINE_CONTRACT"]),
+    "NGVPackResourceRoot": os.environ["NGV_RESOURCE_ROOT"],
 }
 with open(sys.argv[1], "wb") as f:
     plistlib.dump(info, f)

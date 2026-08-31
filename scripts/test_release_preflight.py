@@ -4,6 +4,9 @@ import release_preflight
 
 
 class ReleasePreflightTests(unittest.TestCase):
+    def test_musicvideo_pipeline_contract_matches_release_source(self):
+        release_preflight.validate_pipeline_contract()
+
     def test_engine_registry_and_boundary_guards_match_current_source(self):
         release_preflight.validate_engine_registry_abi()
         release_preflight.validate_engine_boundary_abi()

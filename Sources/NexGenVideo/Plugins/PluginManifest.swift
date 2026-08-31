@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import NexGenEngine
 
@@ -25,6 +26,12 @@ struct PluginBundleInfo: Equatable {
     /// `NGVEngineContract` — the host↔pack binary contract the pack was BUILT against, stamped by
     /// `assemble_ngvpack.sh`. `0` = absent or unparseable, i.e. a pack that predates the check.
     let engineContract: Int
+    /// `NGVPipelineContractVersion` — 1 for packs that ship the declarative contract, 0 only for
+    /// exact published pack builds in the host compatibility table.
+    let pipelineContractVersion: Int
+    /// `NGVPackResourceRoot` — the declared directory under Contents/Resources that owns every
+    /// pipeline instruction, hard-step declaration, and extension schema.
+    let resourceRoot: String
     /// `NSPrincipalClass` — the `PackEntry` subclass the host instantiates.
     let principalClass: String
 
@@ -40,6 +47,8 @@ struct PluginBundleInfo: Equatable {
         static let migratesFrom = "NGVMigratesFrom"
         static let minAppVersion = "NGVMinAppVersion"
         static let engineContract = "NGVEngineContract"
+        static let pipelineContractVersion = "NGVPipelineContractVersion"
+        static let resourceRoot = "NGVPackResourceRoot"
         static let principalClass = "NSPrincipalClass"
     }
 
@@ -58,8 +67,20 @@ struct PluginBundleInfo: Equatable {
         minAppVersion = (plist[Key.minAppVersion] as? String) ?? ""
         // Only a genuine plist integer counts — a string ("2") or a missing key reads as 0 and is
         // refused, so an ambiguous stamp can never be mistaken for a matching contract.
-        engineContract = (plist[Key.engineContract] as? NSNumber)?.intValue ?? 0
+        engineContract = Self.plistInteger(plist[Key.engineContract]) ?? 0
+        pipelineContractVersion = Self.plistInteger(plist[Key.pipelineContractVersion]) ?? 0
+        resourceRoot = ((plist[Key.resourceRoot] as? String) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         principalClass = (plist[Key.principalClass] as? String) ?? ""
+    }
+
+    private static func plistInteger(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              !["f", "d"].contains(String(cString: number.objCType)) else {
+            return nil
+        }
+        return number.intValue
     }
 
     /// Read from a `.ngvpack` bundle URL's `Contents/Info.plist`. Nil when the

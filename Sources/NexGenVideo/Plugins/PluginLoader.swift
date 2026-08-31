@@ -287,14 +287,7 @@ enum PluginLoader {
                    id: newest.info.id,
                    version: newest.info.version
                ) == nil,
-               PluginGate.evaluate(
-                   info: newest.info,
-                   appVersion: appVersion
-               ) == nil,
-               PluginSignature.verify(
-                   bundleURL: newest.url,
-                   host: host
-               ) == nil {
+               isUsable(newest, appVersion: appVersion, host: host) {
                 record = self.record(
                     newest.info,
                     bundleURL: newest.url,
@@ -362,6 +355,28 @@ enum PluginLoader {
             return record(info, bundleURL: bundleURL, state: .incompatible(reason))
         }
 
+        let preparedContract: PreparedPhaseContractBundle
+        do {
+            preparedContract = try PhaseContractBundleLoader.prepare(
+                identity: PhaseContractBundleIdentity(
+                    id: info.id,
+                    version: info.version,
+                    engineContract: info.engineContract,
+                    pipelineContractVersion: info.pipelineContractVersion,
+                    resourceRoot: info.resourceRoot
+                ),
+                bundleURL: bundleURL
+            )
+        } catch {
+            return record(
+                info,
+                bundleURL: bundleURL,
+                state: .incompatible(
+                    .malformedMetadata(error.localizedDescription)
+                )
+            )
+        }
+
         if let reason = PluginSignature.verify(bundleURL: bundleURL, host: host) {
             return record(info, bundleURL: bundleURL, state: .incompatible(reason))
         }
@@ -415,7 +430,36 @@ enum PluginLoader {
             residentRecords[info.id] = rejected
             return rejected
         }
+        let resolvedContract: ResolvedPhaseContract
+        do {
+            let registry = EngineRegistry()
+            pack.register(registry)
+            resolvedContract = try PhaseContractResolver.resolve(
+                manifest: preparedContract.manifest,
+                packVersion: info.version,
+                engineContract: info.engineContract,
+                resourceRoot: preparedContract.resourceRoot,
+                hardSteps: preparedContract.hardSteps,
+                registry: registry,
+                historicalCompatibility: preparedContract.historicalCompatibility
+            )
+            try PhaseContractRuntime.validateLockedMusicvideoIfNeeded(
+                resolvedContract,
+                registry: registry
+            )
+        } catch {
+            let detail = error.localizedDescription
+            rejectRuntime(info, reason: detail)
+            let rejected = record(
+                info,
+                bundleURL: bundleURL,
+                state: .incompatible(.malformedMetadata(detail))
+            )
+            residentRecords[info.id] = rejected
+            return rejected
+        }
         PackCatalog.register(pack)
+        PhaseContractStore.register(resolvedContract)
         loadedVersions[info.id] = info.version
         clearRuntimeRejection(id: info.id, version: info.version)
         Log.plugins.notice("loaded pack \(pack.name) v\(info.version) from \(bundleURL.lastPathComponent)")
@@ -480,13 +524,25 @@ enum PluginLoader {
         appVersion: String?,
         host: PluginSignature.HostSigningState
     ) -> Bool {
-        PluginGate.evaluate(
+        guard PluginGate.evaluate(
             info: candidate.info,
             appVersion: appVersion
-        ) == nil && PluginSignature.verify(
+        ) == nil,
+        PluginSignature.verify(
             bundleURL: candidate.url,
             host: host
-        ) == nil
+        ) == nil else { return false }
+        let identity = PhaseContractBundleIdentity(
+            id: candidate.info.id,
+            version: candidate.info.version,
+            engineContract: candidate.info.engineContract,
+            pipelineContractVersion: candidate.info.pipelineContractVersion,
+            resourceRoot: candidate.info.resourceRoot
+        )
+        return (try? PhaseContractBundleLoader.prepare(
+            identity: identity,
+            bundleURL: candidate.url
+        )) != nil
     }
 
     private static func version(_ value: String) -> SemanticVersion {

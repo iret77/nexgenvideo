@@ -53,12 +53,9 @@ extension ToolExecutor {
         ProjectPluginSettings.activePlugin(projectURL: FrameInventory.projectHome(of: dataRoot))
     }
 
-    /// The merged pipeline order for a project — core phases with the active pack's declared gate
-    /// phases (e.g. musicvideo's `analysis` right after `project_init`) merged in at their placement.
-    /// Routes through `PhaseOrder.merged`, the single ordering helper every surface shares.
-    private func mergedPhaseOrder(dataRoot: URL) -> [String] {
-        let placements = PackCatalog.registry(activePack: activePluginFor(dataRoot: dataRoot)).phasePlacements
-        return PhaseOrder.merged(packPlacements: placements)
+    /// The active pack contract's pipeline order for a project.
+    private func mergedPhaseOrder(dataRoot: URL) throws -> [String] {
+        try PhaseContractRuntime.order(activePack: activePluginFor(dataRoot: dataRoot))
     }
 
     private func readGates(dataRoot: URL) throws -> Gates {
@@ -175,9 +172,13 @@ extension ToolExecutor {
         // truly projectless case (no arg, no open project) falls back to the bare core order.
         let order: [String]
         if args["project_dir"] != nil {
-            order = mergedPhaseOrder(dataRoot: try resolveDataRoot(args, editor: editor))
+            order = try mergedPhaseOrder(dataRoot: try resolveDataRoot(args, editor: editor))
         } else {
-            order = (try? resolveDataRoot(args, editor: editor)).map { mergedPhaseOrder(dataRoot: $0) } ?? coreGatePhases
+            if let root = try? resolveDataRoot(args, editor: editor) {
+                order = try mergedPhaseOrder(dataRoot: root)
+            } else {
+                order = coreGatePhases
+            }
         }
         return try jsonResult(order)
     }
@@ -863,9 +864,7 @@ extension ToolExecutor {
             )
             return try gateApprovalPendingResult(request, requestedPhase: phase)
         }
-        let order = PhaseOrder.merged(
-            packPlacements: registry.phasePlacements
-        )
+        let order = try PhaseContractRuntime.order(activePack: resolvedPack)
         let existing = try readGates(dataRoot: root)
         let current = order.first {
             !existing.get($0).approved
@@ -1024,9 +1023,7 @@ extension ToolExecutor {
         }
         // Rewind over the merged order (core + pack, at declared placement) so a pack phase like
         // `analysis` is a valid target and resets its correct downstream span.
-        let order = PhaseOrder.merged(
-            packPlacements: registry.phasePlacements
-        )
+        let order = try PhaseContractRuntime.order(activePack: resolvedPack)
         var reset: [String] = []
         _ = try mutateGates(dataRoot: root) { reset = try GatesOperations.rewindTo(&$0, target: target, order: order) }
         return try jsonResult(["target": target, "reset_phases": reset])
@@ -2390,7 +2387,11 @@ extension ToolExecutor {
         // real measured beats/downbeats — must be approved before rendered shots hit the timeline.
         let gates = try readGates(dataRoot: root)
         do {
-            try GateGuard.requireChain(gates, order: mergedPhaseOrder(dataRoot: root), through: "shotlist")
+            try GateGuard.requireChain(
+                gates,
+                order: try mergedPhaseOrder(dataRoot: root),
+                through: "shotlist"
+            )
         } catch let blocked as GateBlocked {
             throw ToolError(blocked.message)
         }

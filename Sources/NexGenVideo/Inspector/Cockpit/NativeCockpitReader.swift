@@ -32,23 +32,14 @@ enum NativeCockpitReader {
 
     // MARK: - Projectless kinds
 
-    /// `read.py` "phases": the ordered pipeline (JSON array of strings) — the core order with the
-    /// active pack's declared gate phases merged in at their placement (e.g. musicvideo's `analysis`
-    /// right after `project_init`). Deliberately deviates from the retired Python `mcp_server.phases()`
-    /// append-order; see `PhaseOrder.merged`.
+    /// `read.py` "phases": the active pack contract's ordered pipeline as a JSON string array.
     static func phasesJSON(activePack: String? = nil) throws -> Data {
-        try serialize(mergedPhaseOrder(activePack: activePack))
+        try serialize(try mergedPhaseOrder(activePack: activePack))
     }
 
-    /// The merged pipeline order for a project's active pack — the single ordering helper every
-    /// cockpit surface (phases, state, cost, rewind) routes through.
-    static func mergedPhaseOrder(activePack: String?) -> [String] {
-        PhaseOrder.merged(packPlacements: packPlacements(activePack: activePack))
-    }
-
-    /// The active pack's declared phase placements (position included), for the merged order.
-    static func packPlacements(activePack: String?) -> [PhasePlacement] {
-        PackCatalog.registry(activePack: activePack).phasePlacements
+    /// The pipeline order for a project's active pack.
+    static func mergedPhaseOrder(activePack: String?) throws -> [String] {
+        try PhaseContractRuntime.order(activePack: activePack)
     }
 
     /// `read.py` "contract": `{surfaces:[...], phases:{phase:{surface, task_class}}}`.
@@ -210,13 +201,13 @@ enum NativeCockpitReader {
     // MARK: - Project kinds
 
     /// `read.py` "state": `mcp_server.project_state()` → `ProjectState.model_dump()` (snake_case, no
-    /// aliasing). Phase order is the core order with the active pack's phases merged in at their
-    /// declared placement (see `PhaseOrder.merged`).
+    /// aliasing). Phase order comes from the active pack contract.
     static func stateJSON(dataRoot: URL, activePack: String? = nil) throws -> Data {
         let snapshot: ProjectStateBuilder.ProjectState
         do {
             snapshot = try ProjectStateBuilder.buildSnapshot(
-                dataRoot: dataRoot, packPlacements: packPlacements(activePack: activePack)
+                dataRoot: dataRoot,
+                order: try mergedPhaseOrder(activePack: activePack)
             )
         } catch {
             throw NativeError.notInitialized
@@ -390,7 +381,8 @@ enum NativeCockpitReader {
         let snapshot: ProjectStateBuilder.ProjectState
         do {
             snapshot = try ProjectStateBuilder.buildSnapshot(
-                dataRoot: dataRoot, packPlacements: packPlacements(activePack: activePack)
+                dataRoot: dataRoot,
+                order: try mergedPhaseOrder(activePack: activePack)
             )
         } catch {
             throw NativeError.notInitialized

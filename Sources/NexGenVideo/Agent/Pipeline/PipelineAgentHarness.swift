@@ -24,11 +24,9 @@ enum IntakePlanner {
 
 @MainActor
 enum PipelinePhaseAccess {
-    private static var manifestCache: [String: HardStepManifest] = [:]
-
     struct Prepared: Sendable {
         let packName: String?
-        let packPlacements: [PhasePlacement]
+        let contract: ResolvedPhaseContract?
         let order: [String]
         let manifest: HardStepManifest?
     }
@@ -50,56 +48,42 @@ enum PipelinePhaseAccess {
         guard let packName else {
             return Prepared(
                 packName: nil,
-                packPlacements: [],
-                order: [],
+                contract: nil,
+                order: coreGatePhases,
                 manifest: nil
             )
         }
-        let registry = PackCatalog.registry(activePack: packName)
-        return try prepare(
-            packName: packName,
-            registry: registry
-        )
+        return try prepare(packName: packName)
     }
 
-    static func prepare(
-        packName: String?,
-        registry: EngineRegistry
-    ) throws -> Prepared {
+    static func prepare(packName: String?) throws -> Prepared {
         guard let packName else {
             return Prepared(
                 packName: nil,
-                packPlacements: [],
-                order: [],
+                contract: nil,
+                order: coreGatePhases,
                 manifest: nil
             )
         }
-        guard let pack = PackCatalog.pack(named: packName) else {
+        guard PackCatalog.pack(named: packName) != nil else {
             throw GateBlocked(
                 "The \(packName) workflow contract is unavailable. Reopen the project before continuing."
             )
         }
-        let cacheKey = "\(pack.name)@\(pack.version)#\(PackCatalog.revision(named: pack.name))"
-        let manifest: HardStepManifest
-        if let cached = manifestCache[cacheKey] {
-            manifest = cached
-        } else {
-            guard let loaded = HardStepManifest.load(pack: pack) else {
-                throw GateBlocked(
-                    "The \(packName) workflow contract is unavailable. Reopen the project before continuing."
-                )
+        let contract: ResolvedPhaseContract
+        do {
+            guard let resolved = try PhaseContractRuntime.contract(activePack: packName) else {
+                throw PhaseContractError.unavailable(packName)
             }
-            manifestCache = manifestCache.filter {
-                !$0.key.hasPrefix("\(pack.name)@")
-            }
-            manifestCache[cacheKey] = loaded
-            manifest = loaded
+            contract = resolved
+        } catch {
+            throw GateBlocked(error.localizedDescription)
         }
         return Prepared(
             packName: packName,
-            packPlacements: registry.phasePlacements,
-            order: PhaseOrder.merged(packPlacements: registry.phasePlacements),
-            manifest: manifest
+            contract: contract,
+            order: contract.order,
+            manifest: contract.hardSteps
         )
     }
 
@@ -138,7 +122,7 @@ enum PipelinePhaseAccess {
         do {
             snapshot = try ProjectStateBuilder.buildSnapshot(
                 dataRoot: dataRoot,
-                packPlacements: prepared.packPlacements
+                order: prepared.order
             )
         } catch {
             throw GateBlocked(
@@ -182,6 +166,7 @@ final class PipelineAgentHarness {
         let dataRoot: URL
         let packName: String
         let pack: any Pack
+        let contract: ResolvedPhaseContract
         let manifest: HardStepManifest
         let snapshot: ProjectStateBuilder.ProjectState
 
@@ -193,9 +178,18 @@ final class PipelineAgentHarness {
                 approvedPhases: snapshot.phases.filter(\.approved).count,
                 totalPhases: snapshot.phases.count
             )
-            let prompt = pack.starters(for: progress).first?.prompt
+            var prompt = pack.starters(for: progress).first?.prompt
             guard let phase = snapshot.nextPhase else { return prompt }
-            guard let prompt else { return nil }
+            let instructions = try contract.instructions(for: phase)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let existing = prompt {
+                if !instructions.isEmpty, !existing.contains(instructions) {
+                    prompt = "\(existing)\n\nFollow these packaged instructions for the current phase:\n\n\(instructions)"
+                }
+            } else if !instructions.isEmpty {
+                prompt = instructions
+            }
+            guard var prompt else { return nil }
             let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
             let brief: Brief?
             if FileManager.default.fileExists(atPath: briefURL.path) {
@@ -227,8 +221,10 @@ final class PipelineAgentHarness {
                     activeIDs.contains($0.id)
                 }
             )
-            guard !guidance.isEmpty else { return prompt }
-            return "\(prompt)\n\nFollow these active core production profiles:\n\n\(guidance)"
+            if !guidance.isEmpty {
+                prompt += "\n\nFollow these active core production profiles:\n\n\(guidance)"
+            }
+            return prompt
         }
     }
 
@@ -326,7 +322,7 @@ final class PipelineAgentHarness {
             )
         }
         let registry = PackCatalog.registry(activePack: packName)
-        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        let order = context.contract.order
         let gates = try loadGates(dataRoot: dataRoot)
         do {
             try GateGuard.requirePriorApproved(gates, order: order, phase: phase)
@@ -335,7 +331,11 @@ final class PipelineAgentHarness {
                 try GateGuard.checkApprovable(
                     phase: prior,
                     dataRoot: dataRoot,
-                    requirement: registry.gateRequirements[prior]
+                    requirement: try PhaseContractRuntime.gateRequirement(
+                        activePack: packName,
+                        phase: prior,
+                        registry: registry
+                    )
                 )
             }
         } catch let blocked as GateBlocked {
@@ -497,7 +497,8 @@ final class PipelineAgentHarness {
             declaredPack: declaredPack
         )
         let registry = PackCatalog.registry(activePack: packName)
-        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        let contract = try PhaseContractRuntime.contract(activePack: packName)
+        let order = contract?.order ?? coreGatePhases
         let gates = try loadGates(dataRoot: dataRoot)
         do {
             try PipelinePhaseAccess.requireCurrentPhaseAndIntake(
@@ -505,12 +506,9 @@ final class PipelineAgentHarness {
                 dataRoot: dataRoot,
                 declaredPack: declaredPack
             )
-            if packName == "musicvideo",
-               let tool,
-               !PipelineAgentContract.allowsExecutableTool(
-                   tool,
-                   phase: phase
-               ) {
+            if let tool,
+               let contract,
+               !contract.allowsPhaseBound(tool, phase: phase) {
                 throw GateBlocked(
                     "\(tool.rawValue) is not part of the "
                         + "\(PhaseDisplay.label(phase)) phase contract."
@@ -522,7 +520,11 @@ final class PipelineAgentHarness {
                 try GateGuard.checkApprovable(
                     phase: prior,
                     dataRoot: dataRoot,
-                    requirement: registry.gateRequirements[prior]
+                    requirement: try PhaseContractRuntime.gateRequirement(
+                        activePack: packName,
+                        phase: prior,
+                        registry: registry
+                    )
                 )
             }
         } catch let blocked as GateBlocked {
@@ -541,28 +543,20 @@ final class PipelineAgentHarness {
         ) else { return nil }
         let context = try loadContext(dataRoot: dataRoot, packName: packName)
         guard let phase = context.phase else {
-            if packName == "musicvideo",
-               PipelineAgentContract.allowsPostPipelineUtilityTool(tool) {
+            if context.contract.allowsPostPipeline(tool) {
                 return nil
             }
-            if packName == "musicvideo" {
-                throw ToolError(
-                    "Every pipeline phase is approved. Explicitly rewind the phase "
-                        + "that owns this work before using \(tool.rawValue)."
-                )
-            }
-            return nil
+            throw ToolError(
+                "Every pipeline phase is approved. Explicitly rewind the phase "
+                    + "that owns this work before using \(tool.rawValue)."
+            )
         }
         try guardPhaseWork(
             phase: phase,
             dataRoot: dataRoot,
             declaredPack: declaredPack
         )
-        if packName == "musicvideo",
-           !PipelineAgentContract.allowsCurrentPhaseTool(
-               tool,
-               phase: phase
-           ) {
+        if !context.contract.allowsSupporting(tool, phase: phase) {
             throw ToolError(
                 "\(tool.rawValue) is not part of the \(PhaseDisplay.label(phase)) "
                     + "phase contract. Continue with that phase's registered tools."
@@ -655,14 +649,18 @@ final class PipelineAgentHarness {
             declaredPack: declaredPack
         )
         let registry = PackCatalog.registry(activePack: packName)
-        let order = PhaseOrder.merged(packPlacements: registry.phasePlacements)
+        let order = try PhaseContractRuntime.order(activePack: packName)
         guard let index = order.firstIndex(of: phase) else {
             throw ToolError("The pipeline has no registered phase named '\(phase)'.")
         }
         let lineageSnapshot: PhaseLineageSnapshot?
         let lineageFailure: String?
         if captureLineage,
-           let provider = registry.phaseLineageProviders[phase] {
+           let provider = try PhaseContractRuntime.lineageProvider(
+               activePack: packName,
+               phase: phase,
+               registry: registry
+           ) {
             do {
                 lineageSnapshot = try await Task.detached(priority: .utility) {
                     try provider(dataRoot)
@@ -724,13 +722,9 @@ final class PipelineAgentHarness {
                 "The \(packName) workflow is not loaded. Reopen the project before continuing."
             )
         }
-        let registry = PackCatalog.registry(activePack: packName)
         let prepared: PipelinePhaseAccess.Prepared
         do {
-            prepared = try PipelinePhaseAccess.prepare(
-                packName: packName,
-                registry: registry
-            )
+            prepared = try PipelinePhaseAccess.prepare(packName: packName)
         } catch {
             throw ToolError(error.localizedDescription)
         }
@@ -739,11 +733,16 @@ final class PipelineAgentHarness {
                 "The \(packName) workflow has no readable hard-step manifest."
             )
         }
+        guard let contract = prepared.contract else {
+            throw ToolError(
+                "The \(packName) workflow has no resolved phase contract."
+            )
+        }
         let snapshot: ProjectStateBuilder.ProjectState
         do {
             snapshot = try ProjectStateBuilder.buildSnapshot(
                 dataRoot: dataRoot,
-                packPlacements: prepared.packPlacements
+                order: prepared.order
             )
         } catch {
             throw ToolError(
@@ -754,6 +753,7 @@ final class PipelineAgentHarness {
             dataRoot: dataRoot,
             packName: packName,
             pack: pack,
+            contract: contract,
             manifest: manifest,
             snapshot: snapshot
         )

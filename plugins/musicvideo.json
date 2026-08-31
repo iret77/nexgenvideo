@@ -13,5 +13,7 @@
     "musicvideo/1.0.0"
   ],
   "minAppVersion": "1.4.6",
+  "pipelineContractVersion": 1,
+  "resourceRoot": "MusicvideoPack",
   "badge": "MusicvideoPack/badge.png"
 }

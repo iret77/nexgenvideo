@@ -85,6 +85,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case writeStoryboard = "write_storyboard"
     case writeBible = "write_bible"
     case writeShotlist = "write_shotlist"
+    case writePhaseExtension = "write_phase_extension"
 
     /// Filesystem writers that must dirty the live project before execution.
     var isDurableWrite: Bool {
@@ -96,7 +97,7 @@ enum ToolName: String, CaseIterable, Sendable {
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
              .writeAnalysisInterpretation,
              .writeProductionDesign, .writeTreatment, .writeStoryboard, .writeBible,
-             .writeShotlist, .cropToAspect, .assembleTimeline, .runSanity:
+             .writeShotlist, .writePhaseExtension, .cropToAspect, .assembleTimeline, .runSanity:
             return true
         default:
             return false
@@ -118,6 +119,9 @@ enum ToolName: String, CaseIterable, Sendable {
         case .writeStoryboard:            return "storyboard"
         case .writeBible:                 return "bible"
         case .writeShotlist:              return "shotlist"
+        case .writePhaseExtension:
+            let phase = (args["phase"] as? String)?.trimmingCharacters(in: .whitespaces)
+            return phase?.isEmpty == false ? phase : nil
         case .runSanity:                  return "sanity"
         case .extractScene3dPovs:         return "bible"
         case .saveFrameAudit:             return "frames"
@@ -157,7 +161,7 @@ enum ToolName: String, CaseIterable, Sendable {
             return phase == "frames" || phase == "final"
         case .writeAnalysisInterpretation, .writeBrief,
              .writeProductionDesign, .writeTreatment, .writeStoryboard,
-             .writeBible, .writeShotlist, .runSanity, .saveFrameAudit:
+             .writeBible, .writeShotlist, .writePhaseExtension, .runSanity, .saveFrameAudit:
             return true
         default:
             return false
@@ -1192,6 +1196,22 @@ enum ToolDefinitions {
             name: .writeShotlist,
             description: "Write the next validated shotlist version. Use this instead of authoring YAML. Supply only shots and notes: the host derives schema, project, mode, budget and the complete Song block from the approved Brief plus measured analysis. Every generated or AI-enhanced shot requires a production_plan with one primary action, one camera movement, renderability, declared risks, continuity locks, and a rescue cut for yellow/red risk; imported shots omit it. Narrative/hybrid planned shots also require narrative_beat. Approval requires complete song coverage, valid Storyboard section assignment, existing explicit references, and reference mode without keyframes or chaining.",
             inputSchema: PipelineArtifactWriteContract.shotlistSchema
+        ),
+        AgentTool(
+            name: .writePhaseExtension,
+            description: "Write the current format pack's schema-validated extension artifact. The phase contract chooses the project-local destination and JSON Schema; callers provide only the declared phase and payload. Unknown fields, invalid values, undeclared phases, and non-generic writers fail before any bytes change.",
+            inputSchema: objectSchema(
+                properties: [
+                    "phase": ["type": "string", "description": "Exact current phase id from list_phases."],
+                    "payload": [
+                        "type": "object",
+                        "additionalProperties": true,
+                        "description": "Artifact object validated against the pack-declared closed schema.",
+                    ],
+                    "project_dir": projectDirProperty,
+                ],
+                required: ["phase", "payload"]
+            )
         ),
         AgentTool(
             name: .initProject,
