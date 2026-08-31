@@ -11,7 +11,13 @@ ROOT = Path(__file__).resolve().parent.parent
 class RuntimeStagingTests(unittest.TestCase):
     @staticmethod
     def write_resource_fixture(source, newline="\n"):
-        entries = ("Fonts", "MCPB/nexgen.mcpb", "Images", "Changelog")
+        entries = (
+            "Fonts",
+            "MCPB/nexgen.mcpb",
+            "Images",
+            "Changelog",
+            "ModelCapabilities",
+        )
         (source / "AppResources.txt").parent.mkdir(parents=True, exist_ok=True)
         (source / "AppResources.txt").write_bytes(
             (newline.join(entries) + newline).encode()
@@ -85,7 +91,7 @@ class RuntimeStagingTests(unittest.TestCase):
                 check=True,
             )
 
-            for name in ("Fonts", "Images", "Changelog"):
+            for name in ("Fonts", "Images", "Changelog", "ModelCapabilities"):
                 self.assertEqual((destination / name / "marker").read_text(), name)
             self.assertEqual(
                 (destination / "nexgen.mcpb").read_text(), "MCPB/nexgen.mcpb"

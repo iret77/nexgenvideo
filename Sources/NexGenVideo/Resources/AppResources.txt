@@ -2,3 +2,4 @@ Fonts
 MCPB/nexgen.mcpb
 Images
 Changelog
+ModelCapabilities
