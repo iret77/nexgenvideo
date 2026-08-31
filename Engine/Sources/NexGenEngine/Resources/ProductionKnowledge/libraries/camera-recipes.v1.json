@@ -1,0 +1,131 @@
+{
+  "schemaVersion": "creative-library.v1",
+  "id": "camera-recipes",
+  "version": "1.0.0",
+  "applicability": {
+    "packIDs": [],
+    "phases": ["production_design", "treatment", "storyboard", "shotlist", "review"],
+    "intentTags": ["camera", "cinematography", "lighting", "visual-strategy"],
+    "activeProfileIDs": []
+  },
+  "entries": [
+    {
+      "id": "observational-distance",
+      "title": "Observational distance",
+      "applicability": {
+        "packIDs": [],
+        "phases": ["production_design", "storyboard", "shotlist"],
+        "intentTags": ["observational", "restrained"],
+        "activeProfileIDs": []
+      },
+      "inputs": [
+        {"role": "subject-boundary", "purpose": "State what the camera may observe without intervening.", "required": true}
+      ],
+      "outputIntent": "A restrained camera plan that lets blocking and duration carry the scene.",
+      "guidance": [
+        "Choose a stable vantage with meaningful foreground, middle ground, and exits.",
+        "Move only when a change in knowledge, power, or access earns the move.",
+        "Keep lighting motivated by the location and preserve its direction across coverage."
+      ],
+      "verifyCriteria": ["Every camera move corresponds to a story-state change.", "Coverage preserves the scene's spatial relationships."],
+      "incompatibilities": ["Decorative movement without a narrative trigger", "Coverage that repeatedly crosses the established axis"]
+    },
+    {
+      "id": "subjective-pressure",
+      "title": "Subjective pressure",
+      "applicability": {
+        "packIDs": [],
+        "phases": ["production_design", "storyboard", "shotlist"],
+        "intentTags": ["subjective", "pressure", "isolation"],
+        "activeProfileIDs": ["narrative_storytelling"]
+      },
+      "inputs": [
+        {"role": "point-of-view", "purpose": "Identify whose pressure or uncertainty organizes the image.", "required": true},
+        {"role": "pressure-source", "purpose": "Identify the visible or implied force closing in on that viewpoint.", "required": true}
+      ],
+      "outputIntent": "A point-of-view-led camera and light package that increases psychological pressure without losing legibility.",
+      "guidance": [
+        "Use controlled proximity, occlusion, or constrained headroom to bind the frame to the chosen viewpoint.",
+        "Let movement expose or deny information instead of merely adding instability.",
+        "Shape contrast around the pressure source while retaining enough environmental evidence to orient the viewer."
+      ],
+      "verifyCriteria": ["The dominant viewpoint is identifiable from framing and information access.", "Pressure grows through a measurable change in space, information, or light."],
+      "incompatibilities": ["Unmotivated instability", "Total spatial ambiguity that prevents the threat relationship from reading"]
+    },
+    {
+      "id": "geometric-control",
+      "title": "Geometric control",
+      "applicability": {
+        "packIDs": [],
+        "phases": ["production_design", "storyboard", "shotlist", "review"],
+        "intentTags": ["formal", "precision", "architecture"],
+        "activeProfileIDs": []
+      },
+      "inputs": [
+        {"role": "visual-order", "purpose": "Define the symmetry, repetition, or alignment that expresses control.", "required": true}
+      ],
+      "outputIntent": "A precise formal system in which deviations from visual order carry meaning.",
+      "guidance": [
+        "Establish a repeatable axis, horizon, and spacing system before breaking it.",
+        "Treat a framing deviation as an event tied to story or character change.",
+        "Use lighting zones to reinforce the composition rather than flattening its planes."
+      ],
+      "verifyCriteria": ["The baseline geometry can be stated and repeated.", "Every major deviation has a narrative purpose."],
+      "incompatibilities": ["Approximate symmetry presented as exact", "Arbitrary reframing that weakens the formal baseline"]
+    },
+    {
+      "id": "kinetic-clarity",
+      "title": "Kinetic clarity",
+      "applicability": {
+        "packIDs": [],
+        "phases": ["storyboard", "shotlist", "review"],
+        "intentTags": ["action", "kinetic", "movement"],
+        "activeProfileIDs": []
+      },
+      "inputs": [
+        {"role": "movement-vector", "purpose": "Declare the subject path and dominant screen direction.", "required": true},
+        {"role": "information-priority", "purpose": "Name what the viewer must track during the move.", "required": true}
+      ],
+      "outputIntent": "A dynamic camera plan that preserves geography and the action's information priority.",
+      "guidance": [
+        "Select a movement relationship to the subject before selecting ornamental camera motion.",
+        "Protect the dominant screen direction until an intentional reset establishes a new axis.",
+        "Reserve the strongest acceleration or scale change for the decisive beat."
+      ],
+      "verifyCriteria": ["The subject path and camera path are independently describable.", "The decisive beat remains readable at the movement peak."],
+      "incompatibilities": ["Competing subject and camera motion without a tracking priority", "Axis changes without a visible reset"]
+    },
+    {
+      "id": "soft-naturalism",
+      "title": "Soft naturalism",
+      "applicability": {
+        "packIDs": [],
+        "phases": ["production_design", "storyboard", "review"],
+        "intentTags": ["naturalism", "intimate", "soft-light"],
+        "activeProfileIDs": []
+      },
+      "inputs": [
+        {"role": "practical-source", "purpose": "Identify the plausible source that motivates exposure and direction.", "required": true}
+      ],
+      "outputIntent": "An intimate image system whose softness remains directional and continuous.",
+      "guidance": [
+        "Anchor soft light to a plausible window, sky, fixture, or reflected source.",
+        "Use gentle contrast and restrained camera proximity without erasing facial or spatial structure.",
+        "Carry source direction and ambient color relationships through coverage."
+      ],
+      "verifyCriteria": ["The dominant light direction remains identifiable.", "Softness does not remove the separation needed to read face, action, and space."],
+      "incompatibilities": ["Directionless fill", "Coverage with contradictory key direction"]
+    }
+  ],
+  "provenance": {
+    "sourceURL": "https://github.com/iret77/ai-film-production",
+    "sourceCommit": "d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2",
+    "sourceSections": ["references/director-recipes.md: Selection index", "references/director-recipes.md: DoP signatures", "references/director-recipes.md: Harmony map", "references/film-craft.md: Camera", "references/film-craft.md: Light"],
+    "adaptation": "Named-person imitations were removed. Rewritten as generic, composable camera and lighting strategies with explicit verification."
+  },
+  "license": {
+    "spdxIdentifier": "MIT",
+    "copyrightNotice": "Copyright (c) 2026 iret77",
+    "sourceURL": "https://github.com/iret77/ai-film-production/blob/d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2/LICENSE"
+  }
+}

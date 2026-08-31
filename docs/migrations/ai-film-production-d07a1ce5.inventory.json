@@ -1,0 +1,643 @@
+{
+  "schemaVersion": "source-corpus-inventory.v1",
+  "source": {
+    "repository": "https://github.com/iret77/ai-film-production",
+    "commit": "d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2",
+    "license": "MIT",
+    "copyrightNotice": "Copyright (c) 2026 iret77"
+  },
+  "policy": {
+    "runtimeMaterialIsAdapted": true,
+    "sourceFilesCopiedWholesale": false,
+    "providerModelFactsAllowedInKnowledge": false,
+    "classificationVocabulary": [
+      "core_profile",
+      "core_library",
+      "future_pack:<id>",
+      "musicvideo",
+      "project_template",
+      "omit"
+    ],
+    "batchVocabulary": ["v1", "follow_up", "external_live_source", "none"]
+  },
+  "files": [
+    {
+      "path": ".github/workflows/release.yml",
+      "gitBlob": "adf91aa67fa3bc44d75cf8d7d5eee9ea37099f2f",
+      "sha256": "a6722380d609deede9147e463c96403cfbb78bc214398ca15f68353f52ca8f7f",
+      "byteCount": 2831,
+      "lineCount": 76,
+      "containerDisposition": "inventory_only",
+      "sections": [
+        {
+          "sourceSections": ["whole file"],
+          "classification": "omit",
+          "batch": "none",
+          "target": "none",
+          "reason": "Source repository release automation is not production knowledge or NexGenVideo release configuration."
+        }
+      ]
+    },
+    {
+      "path": "LICENSE",
+      "gitBlob": "6f848c179698d7659e5274372eb29d4ee634cea0",
+      "sha256": "f303d9dd21d9d85d46b01095001baf21ea4eeb2d5662593e4044859acb4dda94",
+      "byteCount": 1063,
+      "lineCount": 21,
+      "containerDisposition": "inventory_only",
+      "sections": [
+        {
+          "sourceSections": ["whole file"],
+          "classification": "omit",
+          "batch": "none",
+          "target": "resource provenance and license metadata",
+          "reason": "The license text is not runtime guidance; its SPDX identifier, notice, source URL, and pinned commit are retained on every adapted resource."
+        }
+      ]
+    },
+    {
+      "path": "README.md",
+      "gitBlob": "59cdea4f8e2c6537c1fc6ed25dfe469f75a5bb78",
+      "sha256": "ca49b3d5ee98a734c8762ecc0e4e1f875b388680293cd4432f7eee4a7eeb0031",
+      "byteCount": 9669,
+      "lineCount": 116,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["The problem", "How it works", "Why you'd use it — and why you wouldn't", "Philosophy"],
+          "classification": "core_profile",
+          "batch": "v1",
+          "target": "generative_film and narrative_storytelling descriptors",
+          "reason": "Stable production principles are rewritten as guidance or host predicate intent without source-specific orchestration or numerical claims."
+        },
+        {
+          "sourceSections": ["document title and badges", "Quick start", "What's inside", "Where the rules come from", "Structure", "Versioning", "License"],
+          "classification": "omit",
+          "batch": "none",
+          "target": "none",
+          "reason": "Repository marketing, installation, navigation, release, and license wrappers are not runtime knowledge."
+        }
+      ]
+    },
+    {
+      "path": "SKILL.md",
+      "gitBlob": "935cd17ad22cfae224b3f73dc8b30cdc12a06788",
+      "sha256": "82f9ce5dc9caa91a3a61acd2311ee1b0c1286b9ed6000a44d2c391c1c077c20c",
+      "byteCount": 16530,
+      "lineCount": 94,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["front matter", "role, scope, and version", "Task routing — read exactly this, then act", "Reference files", "Feeding production experience back"],
+          "classification": "omit",
+          "batch": "none",
+          "target": "none",
+          "reason": "A foreign skill harness, source-specific routing, and feedback workflow cannot become NexGenVideo runtime instructions."
+        },
+        {
+          "sourceSections": ["The rules that always apply: stills-first, complexity, visible causality, renderability rescue, canon, and prompt-first diagnosis"],
+          "classification": "core_profile",
+          "batch": "v1",
+          "target": "generative_film descriptor",
+          "reason": "Only stable provider-neutral principles are adapted; hard durations, counts, modes, and platform behaviors are excluded."
+        },
+        {
+          "sourceSections": ["The rules that always apply: stylized 3D anchor"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "stylized-3d-animation library",
+          "reason": "The craft intent is generalized without a brand preset or provider-specific forcing recipe."
+        },
+        {
+          "sourceSections": ["The rules that always apply: production bible and multi-session state"],
+          "classification": "project_template",
+          "batch": "v1",
+          "target": "production-sheet-templates library",
+          "reason": "Useful state-sheet concepts supplement canonical NexGenVideo artifacts and do not create a parallel monolithic bible."
+        },
+        {
+          "sourceSections": ["The rules that always apply: provider counts, named modes, request syntax, and platform edit behavior", "Per-prompt checklist: route, references, write, and result handling"],
+          "classification": "omit",
+          "batch": "external_live_source",
+          "target": "live provider catalog, capability resolver, and prompt compiler contracts",
+          "reason": "Volatile provider/model facts and request syntax must come from verified live adapters, not Creative Knowledge."
+        },
+        {
+          "sourceSections": ["Per-prompt checklist: canon, lint, and delivery invariants", "Workflow"],
+          "classification": "core_profile",
+          "batch": "follow_up",
+          "target": "prompt compiler and phase-scoped profile integration",
+          "reason": "Stable portions require later selective phase injection and existing canonical artifact contracts."
+        }
+      ]
+    },
+    {
+      "path": "assets/hero.jpg",
+      "gitBlob": "5173db4b5998b2fdb39cff6fafffdcf53fa1b97c",
+      "sha256": "efd3733a16b6f04773e2c37dd28fa9d3f2ed9fa9e6bb7f8bfce922a40b5dc8e5",
+      "byteCount": 180731,
+      "lineCount": null,
+      "containerDisposition": "inventory_only",
+      "sections": [
+        {
+          "sourceSections": ["whole binary asset"],
+          "classification": "omit",
+          "batch": "none",
+          "target": "none",
+          "reason": "Repository illustration is neither a runtime reference asset nor production knowledge."
+        }
+      ]
+    },
+    {
+      "path": "references/director-recipes.md",
+      "gitBlob": "69c6788f378a3329d5e8eff9b31ef95bc3a417f2",
+      "sha256": "e4b8715e9bf58e69a30ff935557ac8dd1abcc79f1a06548af212de34edd741c6",
+      "byteCount": 48718,
+      "lineCount": 188,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["Selection index: brief → recipe", "unnumbered recipe body", "DoP signatures", "Harmony map"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "camera-recipes library",
+          "reason": "Named-person recipes are not copied. Reusable camera/light relationships are rewritten as generic strategies with verification and incompatibilities."
+        }
+      ]
+    },
+    {
+      "path": "references/film-craft.md",
+      "gitBlob": "ee4ff120f3a5510feab6754d5fc23b4867b37ebd",
+      "sha256": "03c24f23b7f6fe68a79a7dd4596ae639452dcf4f482003b19b26b2ba352cc4c6",
+      "byteCount": 12733,
+      "lineCount": 85,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["1. The one meta-rule"],
+          "classification": "core_profile",
+          "batch": "v1",
+          "target": "generative_film descriptor",
+          "reason": "The dominant-device principle is stable profile guidance."
+        },
+        {
+          "sourceSections": ["2. Composition", "3. Camera", "4. Editing", "5. Light", "6. Color", "7. Timing & pacing", "9. Combining the elements"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "film-craft-baseline and camera-recipes libraries",
+          "reason": "Provider-neutral craft is rewritten into applicable entries with explicit review criteria."
+        },
+        {
+          "sourceSections": ["8. Dramaturgy"],
+          "classification": "core_profile",
+          "batch": "v1",
+          "target": "narrative_storytelling descriptor",
+          "reason": "Causality and beat progression belong to narrative profile guidance and checks."
+        }
+      ]
+    },
+    {
+      "path": "references/genre-baselines.md",
+      "gitBlob": "635d2f45da349bbaa72dc1e88a038fad38c9f81c",
+      "sha256": "ab7c6dc5134930d43cab306adeac24ceceb1e4dde137b5b5ed10b85978107688",
+      "byteCount": 17973,
+      "lineCount": 54,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["Action", "Horror", "Comedy", "How to use a baseline"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "genre-baselines library",
+          "reason": "Initial V1 genre entry points are provider-neutral and independently verifiable."
+        },
+        {
+          "sourceSections": ["Spy / Espionage", "Thriller", "Crime / Krimi", "Drama", "Biopic", "Anime", "Family Animation"],
+          "classification": "core_library",
+          "batch": "follow_up",
+          "target": "genre-baselines library expansion",
+          "reason": "Potential core entries remain classified but are outside the initial V1 batch; brand shorthand must be generalized."
+        },
+        {
+          "sourceSections": ["Documentary (style)"],
+          "classification": "future_pack:documentary",
+          "batch": "follow_up",
+          "target": "documentary format pack",
+          "reason": "Documentary workflow and evidence responsibilities require a format-owned contract."
+        },
+        {
+          "sourceSections": ["Music Film / Musical"],
+          "classification": "musicvideo",
+          "batch": "follow_up",
+          "target": "Musicvideo pack knowledge",
+          "reason": "Music-driven structure remains owned by the existing Musicvideo pack and must not alter its graph in this batch."
+        },
+        {
+          "sourceSections": ["Commercial / Ad"],
+          "classification": "future_pack:commercial",
+          "batch": "follow_up",
+          "target": "commercial format pack",
+          "reason": "Commercial beat and disclosure behavior is format-specific."
+        }
+      ]
+    },
+    {
+      "path": "references/image-model-logic.md",
+      "gitBlob": "19f7655995568408d0880e467f370a7e2b748a32",
+      "sha256": "ff8dd1c2fdfeda03de531179b30809e5144f80e58b3b804478a5dadf5914330e",
+      "byteCount": 17350,
+      "lineCount": 103,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["24a. What a prompt actually is", "24b. The generator contract", "24c. Position control", "24d. Scale control", "24e. Count & multi-object", "24f. Negation & exclusion", "24g. Edits & locality", "24h. Quick reference"],
+          "classification": "omit",
+          "batch": "external_live_source",
+          "target": "prompt compiler, provider capability contracts, and live adapter verification",
+          "reason": "The file mixes useful prompting intent with model mechanics, request-channel behavior, and volatile capability claims; none belongs in Creative Knowledge."
+        }
+      ]
+    },
+    {
+      "path": "references/pixar-look.md",
+      "gitBlob": "32832dd05bfb365cb97f3fc6338ce2583c92f2d7",
+      "sha256": "2ef8761385ec2c50d945ec8df1b0a7bfb4817653ff919f09b362f6599d3efbb5",
+      "byteCount": 14335,
+      "lineCount": 115,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["1. Core philosophy", "2. Shape language", "3. Color", "4. Light", "5. Camera", "7. Prompt consequences", "8. The figure as style anchor"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "stylized-3d-animation library",
+          "reason": "Only generic animation craft is retained; brand and title imitation are removed."
+        },
+        {
+          "sourceSections": ["6. Case studies", "6a. Piper", "6b. La Luna", "6c. WALL-E"],
+          "classification": "core_library",
+          "batch": "follow_up",
+          "target": "generic stylized-animation case-pattern expansion",
+          "reason": "Any future entry must express a generic craft pattern without title-specific imitation."
+        },
+        {
+          "sourceSections": ["9. Style-forced environment stills without a figure"],
+          "classification": "omit",
+          "batch": "external_live_source",
+          "target": "prompt compiler and verified provider adapter",
+          "reason": "Named-model prompt recipes and inferred request behavior are volatile and cannot become Creative Knowledge."
+        }
+      ]
+    },
+    {
+      "path": "references/platforms-models.md",
+      "gitBlob": "83ab9a00ae80a728d2fb6e02bf4192728312a977",
+      "sha256": "9142cc4dc98b170356ff92db18de5eb66428a7347537258c372074c8489b1282",
+      "byteCount": 14604,
+      "lineCount": 67,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["13. Higgsfield Cinema Studio", "Settings reference", "CS platform", "Official prompt patterns", "21. Cross-model syntax profiles", "MiniMax profile", "Kling profile", "Veo profile", "Grok profile"],
+          "classification": "omit",
+          "batch": "external_live_source",
+          "target": "provider catalog, adapter capabilities, and live request-contract verification",
+          "reason": "The entire file is provider/model inventory, UI facts, limits, or request syntax and must remain live-adapter truth."
+        }
+      ]
+    },
+    {
+      "path": "references/post-audio-legal.md",
+      "gitBlob": "cd32febcaa627790b3ead1a493c5f6d04b9525ee",
+      "sha256": "888122fdc8d79036a5c143ced68d60f3c0242a090e19a77d99be4669581bba2e",
+      "byteCount": 10554,
+      "lineCount": 41,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["17. Post-production & delivery"],
+          "classification": "project_template",
+          "batch": "follow_up",
+          "target": "delivery and QC checklist resources",
+          "reason": "Delivery checklists depend on project output contracts and should not be always-on creative guidance."
+        },
+        {
+          "sourceSections": ["18. Audio post: generic sound, voice, and mix duties"],
+          "classification": "core_library",
+          "batch": "follow_up",
+          "target": "audio-post craft library",
+          "reason": "Generic audio craft can become selective knowledge after separating it from provider and format behavior."
+        },
+        {
+          "sourceSections": ["18. Audio post: music-driven synchronization and score responsibilities"],
+          "classification": "musicvideo",
+          "batch": "follow_up",
+          "target": "Musicvideo pack knowledge",
+          "reason": "Music-driven synchronization remains format-owned."
+        },
+        {
+          "sourceSections": ["19. Continuity supervision & sign-off templates"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "continuity-and-coverage and production-sheet-templates libraries",
+          "reason": "Continuity duties and sheet intent are stable, selective craft knowledge."
+        },
+        {
+          "sourceSections": ["20. Legal, licensing & disclosure"],
+          "classification": "project_template",
+          "batch": "follow_up",
+          "target": "format- and jurisdiction-aware delivery checklist",
+          "reason": "Legal and disclosure requirements require current external authority and project context, not static creative doctrine."
+        }
+      ]
+    },
+    {
+      "path": "references/production-bible.md",
+      "gitBlob": "2a04dab81d673e97951b0e09a6bf5aa89c73533c",
+      "sha256": "6cff7e78455766c8c0a8100a672398b0a63eff706b8243494e5455a04c4348a7",
+      "byteCount": 6683,
+      "lineCount": 78,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["22a. Rules", "22d. Why this exists"],
+          "classification": "core_profile",
+          "batch": "v1",
+          "target": "canonical-state guidance in generative_film",
+          "reason": "Stable canon and provenance principles are adapted to existing NexGenVideo phase artifacts."
+        },
+        {
+          "sourceSections": ["22b. Template", "Frame", "Style contract", "Asset registry", "Shot board", "Reroll budget", "Decision log", "Continuity log", "Handoff", "Archive"],
+          "classification": "project_template",
+          "batch": "v1",
+          "target": "production-sheet-templates library",
+          "reason": "Only sheet responsibilities are retained; no duplicate production-bible document or canonical writer is introduced."
+        },
+        {
+          "sourceSections": ["22c. Platform mapping"],
+          "classification": "omit",
+          "batch": "external_live_source",
+          "target": "live provider adapters and project asset registry",
+          "reason": "Provider-specific storage and upload semantics must be verified and owned by adapters."
+        }
+      ]
+    },
+    {
+      "path": "references/production-pipeline.md",
+      "gitBlob": "6d6fecdb9e2cdeadf55e799bfff63b0251d9e7a6",
+      "sha256": "456cf9bbfda0c4400dfcf80e42c2ec1faee5d1817cf4e707c059d0c8f4694c66",
+      "byteCount": 26416,
+      "lineCount": 120,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["1. Pipeline principles", "2. Script & treatment for generability", "10. QA & slop control"],
+          "classification": "core_profile",
+          "batch": "v1",
+          "target": "generative_film descriptor",
+          "reason": "Provider-neutral planning and review principles become scoped guidance or predicate intent."
+        },
+        {
+          "sourceSections": ["3. Characters", "Copy-ready sheet & board templates", "4. Locations & props"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "production-sheet-templates library",
+          "reason": "Asset-sheet responsibilities are rewritten to point at canonical project-local image evidence."
+        },
+        {
+          "sourceSections": ["5. Image model selection", "5b. Higgsfield UI object model", "11. Model choice inside the Seedance family", "Higgsfield tools for perspective"],
+          "classification": "omit",
+          "batch": "external_live_source",
+          "target": "provider catalog and live capability resolver",
+          "reason": "Model availability, provider UI, tools, and capabilities are volatile adapter truth."
+        },
+        {
+          "sourceSections": ["6. Video prompting basics", "8. Geometry inputs"],
+          "classification": "core_profile",
+          "batch": "follow_up",
+          "target": "PromptIR compiler and generation-route capability projection",
+          "reason": "Stable intent must be expressed through existing typed prompt and route contracts before profile injection."
+        },
+        {
+          "sourceSections": ["7. Dialogue scenes", "7b. Interview scenes", "9. Alternative production paths"],
+          "classification": "core_library",
+          "batch": "follow_up",
+          "target": "dialogue, interview, and rescue-pattern libraries",
+          "reason": "These are selective craft recipes, not always-on policy."
+        },
+        {
+          "sourceSections": ["16. Perspective changes & coverage"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "continuity-and-coverage library",
+          "reason": "The generic coverage intent is retained without provider tool or cost claims."
+        }
+      ]
+    },
+    {
+      "path": "references/renderability.md",
+      "gitBlob": "9078838b43a4c476ba6355146c884de79a049435",
+      "sha256": "d6a4e30d921ec6c5d3a7a3de61f2824f71785aa2450982390481fc6f61df9dff",
+      "byteCount": 7556,
+      "lineCount": 58,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["1. Green list", "2. Red/yellow list", "3. Rescue paths", "4. Format matrix", "5. Camera & cut rules", "5b. Lighting consistency"],
+          "classification": "core_profile",
+          "batch": "v1",
+          "target": "generative_film descriptor and continuity-and-coverage library",
+          "reason": "Risks are adapted as capability-dependent planning duties and rescue requirements, never hard universal durations or reference limits."
+        },
+        {
+          "sourceSections": ["6. Model quick profiles"],
+          "classification": "omit",
+          "batch": "external_live_source",
+          "target": "live provider catalog and route capability resolver",
+          "reason": "Model profiles and availability must be verified live."
+        }
+      ]
+    },
+    {
+      "path": "references/story-structures.md",
+      "gitBlob": "f3d6445d2ca8586cc14798a2daca3f15d1d8cae4",
+      "sha256": "848c92aa9093309fc6d494fde84f7513179fc535d40d00337e2acaa32e4c0b77",
+      "byteCount": 19308,
+      "lineCount": 82,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["23a. Story intake gate"],
+          "classification": "core_profile",
+          "batch": "v1",
+          "target": "narrative_storytelling descriptor",
+          "reason": "Story premise, protagonist, change, and ending-state duties are profile guidance."
+        },
+        {
+          "sourceSections": ["23b. Classic containers", "23c. Alternative containers", "23f. Choosing and mixing"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "story-containers library",
+          "reason": "Containers are selective options with applicability and verification, not mandatory pipeline order."
+        },
+        {
+          "sourceSections": ["23d. Format-specific containers: generic non-music formats", "23e. Masters' rules"],
+          "classification": "core_library",
+          "batch": "follow_up",
+          "target": "story-container expansion",
+          "reason": "Future entries must be generalized and avoid named-person imitation."
+        },
+        {
+          "sourceSections": ["23d. Format-specific containers: music video"],
+          "classification": "musicvideo",
+          "batch": "follow_up",
+          "target": "Musicvideo pack knowledge",
+          "reason": "Music-driven structure remains pack-owned."
+        },
+        {
+          "sourceSections": ["23d. Format-specific containers: commercial"],
+          "classification": "future_pack:commercial",
+          "batch": "follow_up",
+          "target": "commercial format pack",
+          "reason": "Commercial structure remains format-owned."
+        }
+      ]
+    },
+    {
+      "path": "references/style-control.md",
+      "gitBlob": "de117ee2e57aec163f4d224c335ea16462bd224d",
+      "sha256": "c544616529dc84576f34895491fefa4ac4c6ab273d3b93068ebeba7980ba24fb",
+      "byteCount": 29598,
+      "lineCount": 142,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["1. Style stack hierarchy", "7. Reference integration protocol: provider-neutral intent"],
+          "classification": "core_profile",
+          "batch": "v1",
+          "target": "generative_film descriptor",
+          "reason": "Stable style-decomposition and reference-role intent is retained without request syntax."
+        },
+        {
+          "sourceSections": ["2. GPT Image style mechanics", "stylized environment prompt template", "structured image-prompt patterns", "3. Nano Banana mechanics", "4. Soul Cinema & Seedream", "5. Video layer", "5b. Style control per video model", "7. Reference integration protocol: provider-specific mechanics"],
+          "classification": "omit",
+          "batch": "external_live_source",
+          "target": "prompt compiler, provider adapters, and live capability resolver",
+          "reason": "Named-model behavior, prompt syntax, and reference mechanics are volatile and excluded from Creative Knowledge."
+        },
+        {
+          "sourceSections": ["6. Style vocabularies", "6b. Non-animation styles", "Footage authenticity", "Era and film-stock looks", "Technical optics and special cameras"],
+          "classification": "core_library",
+          "batch": "follow_up",
+          "target": "generic visual-language libraries",
+          "reason": "Potential selective vocabularies require de-branding, applicability, inputs, verification, and incompatibilities."
+        }
+      ]
+    },
+    {
+      "path": "references/video-prompting.md",
+      "gitBlob": "4c224a9b3404196321945bbff3a6b638c0416c87",
+      "sha256": "0f062059f17df0b4a9043d6d2d11cf04967cf31c12505484ffe84716a3cb5a69",
+      "byteCount": 29729,
+      "lineCount": 173,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["12. Prompt block structure", "Block order", "Three placement rules", "12b. Reference tagging and audio syntax: provider-neutral roles", "12c. Quantification doctrine", "12d. Optics", "12e. Optical technique patterns", "12f. Special protocols", "14. Sequence prompting: provider-neutral sequence intent", "15. Style enforcement and reference integration"],
+          "classification": "core_profile",
+          "batch": "follow_up",
+          "target": "PromptIR compiler and phase-scoped profile injection",
+          "reason": "Stable intent must compile through typed prompt contracts and route capabilities; it is not copied as raw model prompts."
+        },
+        {
+          "sourceSections": ["12b. Reference tagging and audio syntax: provider-specific syntax", "12g. Adapting to other video models", "Official ByteDance guide additions", "Aggregator/community confirmations", "14b. Seedance production doctrine"],
+          "classification": "omit",
+          "batch": "external_live_source",
+          "target": "verified provider adapters and request contracts",
+          "reason": "Tags, limits, modes, provider syntax, and capability claims must be live adapter truth."
+        }
+      ]
+    },
+    {
+      "path": "references/worked-example.md",
+      "gitBlob": "0b326a1b09bf27d3f4b2cc63d4b95fa59331721f",
+      "sha256": "eaacfac8ba8eac2d787a7663bcf59445984b703df7a4c64d9473dd4f71340110",
+      "byteCount": 4248,
+      "lineCount": 48,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["1. Brief → shot plan", "2. Assets", "3. Take 1 prompt", "4. Take 2", "5. QA"],
+          "classification": "project_template",
+          "batch": "follow_up",
+          "target": "acceptance fixtures and format-owned examples",
+          "reason": "A source-specific spot and its provider syntax are not doctrine; only rewritten fixtures against NexGenVideo contracts may be retained later."
+        }
+      ]
+    },
+    {
+      "path": "references/workflows.md",
+      "gitBlob": "aa5b02a48e668fa45169f3684ad9536127d22ccf",
+      "sha256": "e662a0a9da1c75e5e04d484e2c755274954e99e6d34797b8ecc7d8dc00d4575b",
+      "byteCount": 8413,
+      "lineCount": 76,
+      "containerDisposition": "section_migration_only",
+      "sections": [
+        {
+          "sourceSections": ["W1 — New project", "W9 — Session open & close"],
+          "classification": "project_template",
+          "batch": "follow_up",
+          "target": "format-owned workflow templates and canonical-state integration",
+          "reason": "Workflow order belongs to host and format-pack contracts, not a Creative Knowledge entry."
+        },
+        {
+          "sourceSections": ["W2 — Asset & reference-pool build-out", "W3 — Produce one shot", "W4 — Build a scene/sequence", "W5 — Repair a faulty take", "W8 — A generation keeps failing"],
+          "classification": "core_profile",
+          "batch": "follow_up",
+          "target": "phase-scoped profile integration and route-aware recovery",
+          "reason": "Stable duties can inform existing phase execution only after provider syntax and foreign orchestration are removed."
+        },
+        {
+          "sourceSections": ["W6 — Get a new angle / coverage"],
+          "classification": "core_library",
+          "batch": "v1",
+          "target": "continuity-and-coverage library",
+          "reason": "Generic coverage planning is selective craft knowledge."
+        },
+        {
+          "sourceSections": ["W7 — Define & lock a style"],
+          "classification": "core_library",
+          "batch": "follow_up",
+          "target": "generic style-strategy library",
+          "reason": "Style strategy is selective knowledge; named-person/provider behavior must be excluded."
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "trackedFileCount": 20,
+    "classifiedFileCount": 20,
+    "classifiedSectionGroupCount": 56,
+    "unclassifiedFiles": [],
+    "unclassifiedSections": [],
+    "classificationCounts": {
+      "core_profile": 13,
+      "core_library": 17,
+      "future_pack:commercial": 2,
+      "future_pack:documentary": 1,
+      "musicvideo": 3,
+      "project_template": 6,
+      "omit": 14
+    },
+    "batchCounts": {
+      "v1": 21,
+      "follow_up": 21,
+      "external_live_source": 9,
+      "none": 5
+    },
+    "initialRuntimeTargets": {
+      "profiles": ["generative_film", "narrative_storytelling"],
+      "libraries": ["camera-recipes", "continuity-and-coverage", "film-craft-baseline", "genre-baselines", "production-sheet-templates", "story-containers", "stylized-3d-animation"]
+    }
+  }
+}

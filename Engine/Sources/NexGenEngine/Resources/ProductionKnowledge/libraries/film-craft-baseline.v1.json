@@ -1,0 +1,131 @@
+{
+  "schemaVersion": "creative-library.v1",
+  "id": "film-craft-baseline",
+  "version": "1.0.0",
+  "applicability": {
+    "packIDs": [],
+    "phases": ["production_design", "treatment", "storyboard", "shotlist", "review", "assembly"],
+    "intentTags": ["craft", "cinematography", "editing", "lighting", "color", "pacing"],
+    "activeProfileIDs": []
+  },
+  "entries": [
+    {
+      "id": "dominant-visual-device",
+      "title": "One dominant visual device",
+      "applicability": {"packIDs": [], "phases": ["production_design", "storyboard"], "intentTags": ["visual-strategy"], "activeProfileIDs": []},
+      "inputs": [
+        {"role": "audience_effect", "purpose": "The intended feeling and attention target.", "required": true},
+        {"role": "scene_turn", "purpose": "The change that the visual strategy must carry.", "required": true}
+      ],
+      "outputIntent": "Choose one visual device that carries the scene and keep other devices supportive.",
+      "guidance": [
+        "Translate the intended audience effect into one dominant choice in composition, camera, light, color, or rhythm.",
+        "Let that device change with the scene turn; avoid simultaneous unrelated changes that compete for attention."
+      ],
+      "verifyCriteria": [
+        "The dominant device is named and motivated by the scene.",
+        "Supporting choices do not compete with it."
+      ],
+      "incompatibilities": ["Multiple unrelated dominant devices in the same beat."]
+    },
+    {
+      "id": "motivated-camera",
+      "title": "Motivated camera grammar",
+      "applicability": {"packIDs": [], "phases": ["storyboard", "shotlist"], "intentTags": ["camera"], "activeProfileIDs": []},
+      "inputs": [
+        {"role": "subject_attention", "purpose": "What changes in the subject or audience attention.", "required": true},
+        {"role": "space", "purpose": "Known scene geography and blocking.", "required": true}
+      ],
+      "outputIntent": "Select camera position, distance, and movement that have a visible reason.",
+      "guidance": [
+        "Use distance to control intimacy and angle to control the subject's relationship to the world.",
+        "Move only when subject movement, attention, discovery, or emotional escalation motivates the move."
+      ],
+      "verifyCriteria": [
+        "The camera plan states why the camera is where it is.",
+        "Any move has one readable motivation and endpoint."
+      ],
+      "incompatibilities": ["Decorative movement with no beat-level motivation."]
+    },
+    {
+      "id": "cut-question-response",
+      "title": "Question-and-response editing",
+      "applicability": {"packIDs": [], "phases": ["storyboard", "assembly", "review"], "intentTags": ["editing"], "activeProfileIDs": []},
+      "inputs": [
+        {"role": "ordered_beats", "purpose": "Approved observable beats in intended order.", "required": true}
+      ],
+      "outputIntent": "Build a cut sequence in which each edit answers or sharpens the prior shot.",
+      "guidance": [
+        "Cut on action for continuity, on a look for discovery, and to a reaction when consequence carries the scene.",
+        "Remove a shot that neither answers an active question nor creates the next one."
+      ],
+      "verifyCriteria": [
+        "Every cut has a narrative, emotional, rhythmic, or attention function.",
+        "Reaction coverage is preserved where it carries the consequence."
+      ],
+      "incompatibilities": ["Coverage retained only because it was generated."]
+    },
+    {
+      "id": "motivated-light",
+      "title": "Motivated light with emotional purpose",
+      "applicability": {"packIDs": [], "phases": ["production_design", "storyboard", "review"], "intentTags": ["lighting"], "activeProfileIDs": []},
+      "inputs": [
+        {"role": "world_sources", "purpose": "Light sources that exist in the scene world.", "required": true},
+        {"role": "audience_effect", "purpose": "The emotional and attention purpose of the light.", "required": true}
+      ],
+      "outputIntent": "Define a coherent key, fill relationship, separation, and continuity state.",
+      "guidance": [
+        "Start from an in-world source and exaggerate it only in service of attention or emotion.",
+        "Record direction, quality, temperature, and continuity so adjacent material remains matchable."
+      ],
+      "verifyCriteria": [
+        "The key source is legible in the scene world.",
+        "Light direction and state remain coherent across coverage."
+      ],
+      "incompatibilities": ["Unexplained fill or direction changes between matching shots."]
+    },
+    {
+      "id": "color-as-arc",
+      "title": "Color as story arc",
+      "applicability": {"packIDs": [], "phases": ["production_design", "treatment", "assembly"], "intentTags": ["color"], "activeProfileIDs": []},
+      "inputs": [
+        {"role": "story_blocks", "purpose": "Approved sections or sequences and their emotional changes.", "required": true}
+      ],
+      "outputIntent": "Create a restrained palette progression whose changes correspond to story changes.",
+      "guidance": [
+        "Define temperature and saturation per block rather than treating color as isolated decoration.",
+        "Establish recurring accent meaning before transferring or reversing it."
+      ],
+      "verifyCriteria": [
+        "Every material palette shift has a story reason.",
+        "A recurring accent remains semantically consistent until deliberately changed."
+      ],
+      "incompatibilities": ["Unmotivated per-shot palette changes."]
+    },
+    {
+      "id": "pacing-through-duration",
+      "title": "Pacing through duration and processing",
+      "applicability": {"packIDs": [], "phases": ["treatment", "storyboard", "assembly", "review"], "intentTags": ["pacing"], "activeProfileIDs": []},
+      "inputs": [
+        {"role": "beat_weight", "purpose": "Relative emotional and informational weight of each beat.", "required": true}
+      ],
+      "outputIntent": "Allocate screen time so anticipation, action, and visible processing remain legible.",
+      "guidance": [
+        "Shorten duration as pressure rises and hold when the audience must absorb a peak or consequence.",
+        "Treat silence and stillness as authored beats, not empty time."
+      ],
+      "verifyCriteria": [
+        "The longest holds land on material attention or emotional work.",
+        "Heavy events receive visible processing before new information arrives."
+      ],
+      "incompatibilities": ["Uniform pacing that ignores beat weight."]
+    }
+  ],
+  "provenance": {
+    "sourceURL": "https://github.com/iret77/ai-film-production/tree/d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2",
+    "sourceCommit": "d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2",
+    "sourceSections": ["references/film-craft.md#2-composition", "references/film-craft.md#3-camera-position-angle-movement-lens", "references/film-craft.md#4-editing", "references/film-craft.md#5-light", "references/film-craft.md#6-color", "references/film-craft.md#7-timing-pacing", "references/film-craft.md#9-combining-the-elements-the-dop-conversation"],
+    "adaptation": "Rewritten as compact, format-neutral recipes with explicit inputs, output intent, and verification."
+  },
+  "license": {"spdxIdentifier": "MIT", "copyrightNotice": "Copyright (c) 2026 iret77", "sourceURL": "https://github.com/iret77/ai-film-production/blob/d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2/LICENSE"}
+}

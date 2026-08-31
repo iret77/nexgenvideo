@@ -180,6 +180,26 @@ RES_BUNDLE="$(dirname "$BIN")/NexGenVideo_NexGenVideo.bundle"
 "$ROOT/scripts/compile_metal_resources.sh" "$ROOT/Metal" "$RES_BUNDLE"
 "$ROOT/scripts/stage_app_resources.sh" "$RESOURCES" "$RES_BUNDLE" "$APP/Contents/Resources"
 
+ENGINE_RES_BUNDLE="$BIN_DIRECTORY/NexGenEngine_NexGenEngine.bundle"
+[ -d "$ENGINE_RES_BUNDLE" ] || {
+  echo "!! missing NexGenEngine resource bundle: $ENGINE_RES_BUNDLE" >&2
+  exit 1
+}
+engine_resource_roots=()
+for candidate in \
+    "$ENGINE_RES_BUNDLE" \
+    "$ENGINE_RES_BUNDLE/Contents/Resources" \
+    "$ENGINE_RES_BUNDLE/Resources"; do
+  if [ -f "$candidate/ProductionKnowledge/manifest.json" ]; then
+    engine_resource_roots+=("$candidate")
+  fi
+done
+[ "${#engine_resource_roots[@]}" -eq 1 ] || {
+  echo "!! expected exactly one ProductionKnowledge resource root in $ENGINE_RES_BUNDLE; found ${#engine_resource_roots[@]}" >&2
+  exit 1
+}
+cp -R "$ENGINE_RES_BUNDLE" "$APP/Contents/Resources/NexGenEngine_NexGenEngine.bundle"
+
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/NexGenVideo"
 touch "$APP"
 

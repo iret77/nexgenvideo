@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "production-knowledge-manifest.v1",
+  "resources": [
+    {
+      "kind": "profile",
+      "id": "generative_film",
+      "version": "1.0.0",
+      "path": "profiles/generative-film.v1.json",
+      "sha256": "a6872d77cc31f019bdf346c0751e11976f57e65c9786f9b46dc0ae0e33702f75"
+    },
+    {
+      "kind": "profile",
+      "id": "narrative_storytelling",
+      "version": "1.0.0",
+      "path": "profiles/narrative-storytelling.v1.json",
+      "sha256": "adbf603bc634b92b12327e0e78c228432feaac168d1f5f667200ba99d6cd9cf1"
+    },
+    {
+      "kind": "library",
+      "id": "camera-recipes",
+      "version": "1.0.0",
+      "path": "libraries/camera-recipes.v1.json",
+      "sha256": "ca5439d2051e0504bae4ea9318e7baf4d72b98ac22123479272d67701661706c"
+    },
+    {
+      "kind": "library",
+      "id": "continuity-and-coverage",
+      "version": "1.0.0",
+      "path": "libraries/continuity-and-coverage.v1.json",
+      "sha256": "634c643689954d736f2e5605c3b6474dfce809ffa5ef0449ec699d4031dd1f0c"
+    },
+    {
+      "kind": "library",
+      "id": "film-craft-baseline",
+      "version": "1.0.0",
+      "path": "libraries/film-craft-baseline.v1.json",
+      "sha256": "5bbec94d814b702545d5cc73d0ed7ea2a4a524d7ad90acf65e84aa100301c413"
+    },
+    {
+      "kind": "library",
+      "id": "genre-baselines",
+      "version": "1.0.0",
+      "path": "libraries/genre-baselines.v1.json",
+      "sha256": "7392524ce310daac793568bac7a84ec9b3aa74a6ec260a255ba969cf4a828926"
+    },
+    {
+      "kind": "library",
+      "id": "production-sheet-templates",
+      "version": "1.0.0",
+      "path": "libraries/production-sheet-templates.v1.json",
+      "sha256": "679dca678f048617639de44f66dbf377ebad7f32e7baddc78fad9b9d27bd343d"
+    },
+    {
+      "kind": "library",
+      "id": "story-containers",
+      "version": "1.0.0",
+      "path": "libraries/story-containers.v1.json",
+      "sha256": "0176c696d1030ffaa1a789caa5139324dd5956442a946c830b892df1fb549e76"
+    },
+    {
+      "kind": "library",
+      "id": "stylized-3d-animation",
+      "version": "1.0.0",
+      "path": "libraries/stylized-3d-animation.v1.json",
+      "sha256": "776ebb718464a75bd6cb5270164ca7bff840b3a996654f51f1b180a21ddbf56c"
+    }
+  ]
+}
