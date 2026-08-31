@@ -1311,6 +1311,13 @@ extension ToolExecutor {
         _ url: URL,
         source existingSource: CGImageSource? = nil
     ) -> String? {
+        if let dimensions = encodedPNGDimensions(url),
+           let reason = projectImageDimensionValidationFailure(
+               width: dimensions.width,
+               height: dimensions.height
+           ) {
+            return reason
+        }
         guard let source = existingSource ?? CGImageSourceCreateWithURL(
             url as CFURL,
             [kCGImageSourceShouldCache: false] as CFDictionary
@@ -1326,9 +1333,11 @@ extension ToolExecutor {
               width > 0, height > 0 else {
             return "has invalid image dimensions"
         }
-        guard width <= 16_384, height <= 16_384,
-              width <= 64_000_000 / height else {
-            return "exceeds the 16,384-pixel or 64-megapixel safety limit"
+        if let reason = projectImageDimensionValidationFailure(
+            width: width,
+            height: height
+        ) {
+            return reason
         }
         guard CGImageSourceCreateImageAtIndex(
             source,
@@ -1336,6 +1345,44 @@ extension ToolExecutor {
             [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
         ) != nil else {
             return "cannot be decoded as an image"
+        }
+        return nil
+    }
+
+    nonisolated private static func encodedPNGDimensions(
+        _ url: URL
+    ) -> (width: Int, height: Int)? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let header: Data
+        do {
+            header = try handle.read(upToCount: 24) ?? Data()
+        } catch {
+            return nil
+        }
+        guard header.count >= 24,
+              Array(header[0..<8]) == [137, 80, 78, 71, 13, 10, 26, 10],
+              Array(header[8..<16]) == [0, 0, 0, 13, 73, 72, 68, 82] else {
+            return nil
+        }
+        func integer(at offset: Int) -> Int {
+            (0..<4).reduce(0) {
+                ($0 << 8) | Int(header[offset + $1])
+            }
+        }
+        return (integer(at: 16), integer(at: 20))
+    }
+
+    nonisolated private static func projectImageDimensionValidationFailure(
+        width: Int,
+        height: Int
+    ) -> String? {
+        guard width > 0, height > 0 else {
+            return "has invalid image dimensions"
+        }
+        guard width <= 16_384, height <= 16_384,
+              width <= 64_000_000 / height else {
+            return "exceeds the 16,384-pixel or 64-megapixel safety limit"
         }
         return nil
     }

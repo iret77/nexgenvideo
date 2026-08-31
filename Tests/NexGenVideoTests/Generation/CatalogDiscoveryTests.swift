@@ -34,6 +34,27 @@ struct CatalogDiscoveryTests {
         ]
     }
 
+    private var mappableHiggsfieldGenerationSchema: Value {
+        .object([
+            "properties": .object([
+                "job_set_type": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+                "medias": .object([
+                    "type": .string("array"),
+                    "items": .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "value": .object(["type": .string("string")]),
+                            "role": .object(["type": .string("string")]),
+                        ]),
+                        "required": .array([.string("value"), .string("role")]),
+                    ]),
+                ]),
+            ]),
+            "required": .array([.string("job_set_type"), .string("prompt")]),
+        ])
+    }
+
     private var mappableHiggsfieldMediaUpload: [MCPProviderClient.DiscoveredTool] {
         [
             MCPProviderClient.DiscoveredTool(
@@ -74,6 +95,21 @@ struct CatalogDiscoveryTests {
         let items = range.map { #"{"id":"limit-\#($0)"}"# }.joined(separator: ",")
         let cursorField = cursor.map { ",\"next_page_token\":\"\($0)\"" } ?? ""
         return "{\"items\":[\(items)]\(cursorField),\"has_more\":\(hasMore)}"
+    }
+
+    @Test("Higgsfield job-set lifecycle proves an asynchronous media result path")
+    func higgsfieldJobSetLifecycleProvesResultPath() {
+        let generate = MCPProviderClient.DiscoveredTool(
+            name: "generate_image",
+            description: "Generate an image.",
+            inputSchema: mappableHiggsfieldGenerationSchema
+        )
+        let tools = [generate] + mappableHiggsfieldResultLifecycle
+
+        #expect(MCPGenerationExecutor.hasProvenResultPath(
+            generationTool: generate,
+            tools: tools
+        ))
     }
 
     actor AsyncGate {
@@ -1273,7 +1309,7 @@ struct CatalogDiscoveryTests {
             MCPProviderClient.DiscoveredTool(
                 name: "generate_video",
                 description: "Generate a video.",
-                inputSchema: .object([:])
+                inputSchema: mappableHiggsfieldGenerationSchema
             ),
             MCPProviderClient.DiscoveredTool(
                 name: "models_explore",
@@ -1372,7 +1408,7 @@ struct CatalogDiscoveryTests {
             MCPProviderClient.DiscoveredTool(
                 name: "generate_image",
                 description: "Generate an image.",
-                inputSchema: .object([:])
+                inputSchema: mappableHiggsfieldGenerationSchema
             ),
             MCPProviderClient.DiscoveredTool(
                 name: "models_explore",
