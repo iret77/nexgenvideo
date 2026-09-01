@@ -543,7 +543,10 @@ private enum ProductionKnowledgeClosedSchemaV1 {
     private static func validVersion(_ value: ProductionKnowledgeVersionV1, path: String) throws {
         let components = value.rawValue.split(separator: ".", omittingEmptySubsequences: false)
         guard components.count == 3,
-              components.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isASCIIWholeNumber) }) else {
+              components.allSatisfy({ component in
+                  !component.isEmpty
+                      && component.unicodeScalars.allSatisfy { (48...57).contains($0.value) }
+              }) else {
             throw invalid(path, "must be MAJOR.MINOR.PATCH with ASCII digits")
         }
     }
@@ -587,13 +590,5 @@ private enum ProductionKnowledgeClosedSchemaV1 {
 
     private static func invalid(_ path: String, _ reason: String) -> ProductionKnowledgeErrorV1 {
         .invalidValue(path: path, reason: reason)
-    }
-}
-
-private extension Character {
-    var isASCIIWholeNumber: Bool {
-        let scalars = String(self).unicodeScalars
-        return scalars.count == 1
-            && scalars.first.map { (48...57).contains($0.value) } == true
     }
 }
