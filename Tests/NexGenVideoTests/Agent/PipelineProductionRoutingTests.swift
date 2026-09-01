@@ -269,11 +269,30 @@ struct PipelineProductionRoutingTests {
 
     static func generationInput(
         requirement: ProductionRequirementV1,
-        modelID: String = "fixture-model"
+        modelID: String = "fixture-model",
+        projectID: String = "project-001",
+        shotID: String = "shot-001"
     ) -> GenerationInput {
-        let route = route(requirement: requirement, endpoint: modelID)
+        let durationSeconds = Int(
+            (requirement.duration?.preferredSeconds
+                ?? requirement.duration?.minimumSeconds
+                ?? requirement.duration?.maximumSeconds
+                ?? 5).rounded()
+        )
+        let aspectRatio = requirement.aspectRatio ?? "16:9"
+        let route = route(
+            requirement: requirement,
+            endpoint: modelID,
+            projectID: projectID,
+            shotID: shotID
+        )
         let plan = plan(route: route, bindings: [])
-        let offeringCapabilities = videoCapabilities()
+        let offeringCapabilities = videoCapabilities(
+            durations: [durationSeconds],
+            supportsNativeAudio: true,
+            resolutions: requirement.resolution.map { [$0] },
+            aspectRatios: [aspectRatio]
+        )
         let routeData = try! ReferencePlanCanonicalCodecV2.encode(route)
         let planData = try! ReferencePlanCanonicalCodecV2.encode(plan)
         let bindingsData = try! ReferencePlanCanonicalCodecV2.encode(
@@ -285,12 +304,12 @@ struct PipelineProductionRoutingTests {
         var input = GenerationInput(
             prompt: "Compiled prompt.",
             model: modelID,
-            duration: 5,
-            aspectRatio: "16:9",
-            resolution: "720p"
+            duration: durationSeconds,
+            aspectRatio: aspectRatio,
+            resolution: requirement.resolution
         )
-        input.videoDuration = .seconds(5)
-        input.generateAudio = true
+        input.videoDuration = .seconds(durationSeconds)
+        input.generateAudio = requirement.requiresOutputAudio
         input.productionRouting = ProductionGenerationRoutingProofV1(
             projectID: route.projectID,
             shotID: route.shotID,
@@ -322,7 +341,9 @@ struct PipelineProductionRoutingTests {
         requirement: ProductionRequirementV1,
         endpoint: String,
         endpointBackedFields: Bool = false,
-        inputSlotModeID: String = "image-to-video"
+        inputSlotModeID: String = "image-to-video",
+        projectID: String = "project-001",
+        shotID: String = "shot-001"
     ) -> ProductionRouteV1 {
         let evidence = CapabilityEvidenceV1(
             sourceTitle: "Fixture provider schema",
@@ -354,18 +375,46 @@ struct PipelineProductionRoutingTests {
                 evidence: endpointBackedFields ? [evidence] : []
             )
         }
+        let durationMinimum = requirement.duration?.minimumSeconds
+            ?? requirement.duration?.preferredSeconds
+            ?? requirement.duration?.maximumSeconds
+            ?? 5
+        let durationMaximum = requirement.duration?.maximumSeconds
+            ?? requirement.duration?.preferredSeconds
+            ?? requirement.duration?.minimumSeconds
+            ?? 5
+        let durationValues = Set([
+            requirement.duration?.preferredSeconds,
+            requirement.duration?.minimumSeconds,
+            requirement.duration?.maximumSeconds,
+        ].compactMap { seconds -> Int? in
+            guard let seconds, seconds.rounded() == seconds else { return nil }
+            return Int(seconds)
+        }).sorted()
         let profile = ResolvedCapabilityProfileV1(
             requestedIdentity: nil,
             resolvedIdentity: nil,
             defensiveProfileID: nil,
             researchNeeded: false,
             fields: ResolvedCapabilityFieldsV1(
+                integers: [
+                    CapabilityFieldIDV1.visibleCharacters:
+                        value(requirement.visibleEntityCount),
+                    CapabilityFieldIDV1.referenceImages: value(1),
+                    CapabilityFieldIDV1.referenceVideos: value(0),
+                    CapabilityFieldIDV1.referenceAudios: value(0),
+                    CapabilityFieldIDV1.totalReferences: value(1),
+                ],
                 decimals: [
-                    CapabilityFieldIDV1.durationMinimum: value(5.0),
-                    CapabilityFieldIDV1.durationMaximum: value(5.0),
+                    CapabilityFieldIDV1.durationMinimum: value(durationMinimum),
+                    CapabilityFieldIDV1.durationMaximum: value(durationMaximum),
                 ],
                 booleans: [
                     CapabilityFieldIDV1.nativeAudio: value(true),
+                    CapabilityFieldIDV1.firstFrame: value(true),
+                    CapabilityFieldIDV1.lastFrame: value(false),
+                    CapabilityFieldIDV1.sourceVideo:
+                        value(requirement.sourceVideoAssetID != nil),
                     CapabilityFieldIDV1.sourceVideoRequired:
                         ResolvedCapabilityValueV1(
                             value: false,
@@ -389,11 +438,14 @@ struct PipelineProductionRoutingTests {
                         ),
                 ],
                 strings: [
-                    CapabilityFieldIDV1.aspectRatios: value(["16:9"]),
-                    CapabilityFieldIDV1.resolutions: value(["720p"]),
+                    CapabilityFieldIDV1.modes: value(requirement.modeIDs),
+                    CapabilityFieldIDV1.aspectRatios:
+                        value(requirement.aspectRatio.map { [$0] } ?? []),
+                    CapabilityFieldIDV1.resolutions:
+                        value(requirement.resolution.map { [$0] } ?? []),
                 ],
                 integerLists: [
-                    CapabilityFieldIDV1.durationValues: value([5]),
+                    CapabilityFieldIDV1.durationValues: value(durationValues),
                 ]
             )
         )
@@ -443,9 +495,9 @@ struct PipelineProductionRoutingTests {
             candidate: candidate
         )
         return ProductionRouteV1(
-            id: "route-shot-001",
-            projectID: "project-001",
-            shotID: "shot-001",
+            id: "route-\(shotID)",
+            projectID: projectID,
+            shotID: shotID,
             offering: offering,
             capabilitySnapshot: ProductionRouteCapabilitySnapshotV1(
                 candidate: candidate
@@ -465,7 +517,17 @@ struct PipelineProductionRoutingTests {
         route: ProductionRouteV1,
         bindings: [ReferenceBindingV2]
     ) -> ReferencePlanV2 {
-        ReferencePlanV2(
+        let fields = route.capabilitySnapshot.capabilities.effective.fields
+        let imageCount = fields.integers[
+            CapabilityFieldIDV1.referenceImages
+        ]?.value ?? 0
+        let videoCount = fields.integers[
+            CapabilityFieldIDV1.referenceVideos
+        ]?.value ?? 0
+        let audioCount = fields.integers[
+            CapabilityFieldIDV1.referenceAudios
+        ]?.value ?? 0
+        return ReferencePlanV2(
             id: "reference-plan-shot-001",
             projectID: route.projectID,
             shotID: route.shotID,
@@ -482,11 +544,19 @@ struct PipelineProductionRoutingTests {
                 routeSHA256: route.routeSHA256
             ),
             budget: ReferencePlanBudgetV2(
-                imageCount: bindings.filter { $0.modality == .image }.count,
-                videoCount: bindings.filter { $0.modality == .video }.count,
-                audioCount: bindings.filter { $0.modality == .audio }.count,
+                imageCount: imageCount,
+                videoCount: videoCount,
+                audioCount: audioCount,
                 geometryCount: 0,
-                totalCount: bindings.count
+                totalCount: fields.integers[
+                    CapabilityFieldIDV1.totalReferences
+                ]?.value ?? imageCount + videoCount + audioCount,
+                combinedVideoSeconds: fields.decimals[
+                    CapabilityFieldIDV1.combinedVideoReferenceSeconds
+                ]?.value,
+                combinedAudioSeconds: fields.decimals[
+                    CapabilityFieldIDV1.combinedAudioReferenceSeconds
+                ]?.value
             ),
             bindings: bindings,
             optionalDrops: []
@@ -533,13 +603,15 @@ struct PipelineProductionRoutingTests {
 
     static func videoCapabilities(
         durations: [Int] = [5],
-        supportsNativeAudio: Bool = true
+        supportsNativeAudio: Bool = true,
+        resolutions: [String]? = ["720p"],
+        aspectRatios: [String] = ["16:9"]
     ) -> ResolvedVideoOfferingCapabilitiesV1 {
         ResolvedVideoOfferingCapabilitiesV1(
             videoCapabilities: VideoCaps(
                 durations: durations,
-                resolutions: ["720p"],
-                aspectRatios: ["16:9"],
+                resolutions: resolutions,
+                aspectRatios: aspectRatios,
                 supportsFirstFrame: true,
                 supportsLastFrame: false,
                 maxReferenceImages: 1,

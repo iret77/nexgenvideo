@@ -196,8 +196,13 @@ public struct ModelCapabilityResolver: Sendable {
                 semantics = .hardAPILimit
             } else if let maximum = constraint.maxItems {
                 guard let intrinsic else { continue }
-                effective = Swift.min(intrinsic.value, maximum)
-                semantics = maximum < intrinsic.value ? .hardAPILimit : intrinsic.semantics
+                if intrinsic.semantics == .defensiveDefault {
+                    effective = maximum
+                    semantics = .hardAPILimit
+                } else {
+                    effective = Swift.min(intrinsic.value, maximum)
+                    semantics = maximum < intrinsic.value ? .hardAPILimit : intrinsic.semantics
+                }
             } else {
                 continue
             }
@@ -496,12 +501,19 @@ public struct ModelCapabilityResolver: Sendable {
         var result = current
         for (key, restriction) in restrictions {
             guard let intrinsic = result[key] else { continue }
-            let effective = restriction.operation == .maximum
-                ? Swift.min(intrinsic.value, restriction.value)
-                : Swift.max(intrinsic.value, restriction.value)
+            let effective: Int
+            if intrinsic.semantics == .defensiveDefault {
+                effective = restriction.value
+            } else {
+                effective = restriction.operation == .maximum
+                    ? Swift.min(intrinsic.value, restriction.value)
+                    : Swift.max(intrinsic.value, restriction.value)
+            }
             result[key] = ResolvedCapabilityValueV1(
                 value: effective,
-                semantics: effective == intrinsic.value ? intrinsic.semantics : .hardAPILimit,
+                semantics: intrinsic.semantics == .defensiveDefault
+                    ? .hardAPILimit
+                    : effective == intrinsic.value ? intrinsic.semantics : .hardAPILimit,
                 origin: endpointOrigin(endpointID, prior: intrinsic.origin),
                 evidence: intrinsic.evidence + restriction.evidence
             )
@@ -517,12 +529,19 @@ public struct ModelCapabilityResolver: Sendable {
         var result = current
         for (key, restriction) in restrictions {
             guard let intrinsic = result[key] else { continue }
-            let effective = restriction.operation == .maximum
-                ? Swift.min(intrinsic.value, restriction.value)
-                : Swift.max(intrinsic.value, restriction.value)
+            let effective: Double
+            if intrinsic.semantics == .defensiveDefault {
+                effective = restriction.value
+            } else {
+                effective = restriction.operation == .maximum
+                    ? Swift.min(intrinsic.value, restriction.value)
+                    : Swift.max(intrinsic.value, restriction.value)
+            }
             result[key] = ResolvedCapabilityValueV1(
                 value: effective,
-                semantics: effective == intrinsic.value ? intrinsic.semantics : .hardAPILimit,
+                semantics: intrinsic.semantics == .defensiveDefault
+                    ? .hardAPILimit
+                    : effective == intrinsic.value ? intrinsic.semantics : .hardAPILimit,
                 origin: endpointOrigin(endpointID, prior: intrinsic.origin),
                 evidence: intrinsic.evidence + restriction.evidence
             )

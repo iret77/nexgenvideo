@@ -154,6 +154,36 @@ struct ModelCapabilityResolverTests {
         )
         #expect(ambiguous.requestedIdentity == nil)
         #expect(ambiguous.defensiveProfileID == "defensive.video.fixture-v1")
+
+        let offering = CapabilityOfferingIdentityV1(
+            providerID: "higgsfield",
+            offeringID: "generate_image/unknown",
+            endpointID: "generate_image",
+            catalogModelID: "unknown/image",
+            modality: .image
+        )
+        let endpointResolved = try resolver.resolveOffering(
+            offering,
+            lookup: CapabilityLookupV1(
+                modality: .image,
+                catalogModelID: "unknown/image"
+            ),
+            overlay: EndpointCapabilityOverlayV1(
+                offering: offering,
+                schemaEvidence: [evidence(kind: .providerSchema)],
+                arrayConstraints: [
+                    CapabilityFieldIDV1.imageReferences: EndpointArrayConstraintV1(
+                        isPresent: true,
+                        maxItems: 14
+                    ),
+                ]
+            )
+        )
+        #expect(
+            endpointResolved.effective.fields.integers[
+                CapabilityFieldIDV1.imageReferences
+            ]?.value == 14
+        )
     }
 
     @Test("the resolver introduces no global high or low capability clamp")

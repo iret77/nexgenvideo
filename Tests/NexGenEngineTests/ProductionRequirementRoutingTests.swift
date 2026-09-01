@@ -283,8 +283,11 @@ struct ProductionRequirementRoutingTests {
             ),
         ])
         defer { sourceVideo.remove() }
+        let sourceVideoAssetID = try #require(
+            sourceVideo.graph.assets.first?.id
+        )
         try ProductionRequirementResolverV1.validateBindings(
-            makeRequirement(sourceVideoAssetID: "asset-source-video"),
+            makeRequirement(sourceVideoAssetID: sourceVideoAssetID),
             demandSet: sourceVideo.demandSet
         )
 
@@ -839,17 +842,18 @@ struct ProductionRequirementRoutingTests {
             dataRoot: fixture.dataRoot
         )
 
-        let phase = "preview-predecessor-last-frame"
-        let proof = try loadRenderProofManifest(
-            dataRoot: fixture.dataRoot,
-            phase: phase
+        let asset = try #require(fixture.graph.assets.first)
+        let proofPath = try #require(asset.provenance.sourceProofPath)
+        let proofURL = fixture.dataRoot.appendingPathComponent(proofPath)
+        let proof = try JSONDecoder().decode(
+            RenderShotProvenanceProofV1.self,
+            from: Data(contentsOf: proofURL)
         )
-        let proofEntry = try #require(proof.entries["shot-000"])
+        let proofEntry = try #require(proof.renderProofEntry)
         let outputURL = fixture.dataRoot.appendingPathComponent(proofEntry.output)
         try Data("tampered-render".utf8).write(to: outputURL)
-        let assetID = try #require(fixture.graph.assets.first?.id)
         #expect(throws: AssetGraphValidationError.invalidProvenance(
-            assetID
+            asset.id
         )) {
             try AssetGraphValidatorV1.validateProjectFiles(
                 fixture.graph,
@@ -858,20 +862,81 @@ struct ProductionRequirementRoutingTests {
         }
         try Data("render-predecessor-last-frame".utf8).write(to: outputURL)
 
-        var manifest = try loadRenderManifest(
-            dataRoot: fixture.dataRoot,
-            phase: phase
+        let lastFrame = try #require(proof.lastFrame)
+        let divergentProof = RenderShotProvenanceProofV1(
+            project: proof.project,
+            phase: proof.phase,
+            shotID: proof.shotID,
+            renderEntry: proof.renderEntry,
+            renderProofEntry: proof.renderProofEntry,
+            routingProofEntry: proof.routingProofEntry,
+            frames: nil,
+            lastFrame: RenderLastFrameProofV1(
+                shotID: lastFrame.shotID,
+                phase: lastFrame.phase,
+                path: "inputs/not-the-current-last-frame.png",
+                sha256: lastFrame.sha256,
+                sourceOutput: lastFrame.sourceOutput,
+                sourceOutputSHA256: lastFrame.sourceOutputSHA256,
+                extractedAt: lastFrame.extractedAt
+            ),
+            outputs: proof.outputs,
+            dependencies: proof.dependencies
         )
-        var entry = try #require(manifest.entries["shot-000"])
-        entry.lastFramePath = "inputs/not-the-current-last-frame.png"
-        manifest.entries[entry.shotId] = entry
-        try saveRenderManifest(manifest, dataRoot: fixture.dataRoot)
+        let divergentData = try JSONEncoder().encode(divergentProof)
+        let divergentSHA256 = FileDigest.sha256(of: divergentData)
+        let divergentPath = RenderShotProvenanceProofV1.artifactPath(
+            phase: proof.phase,
+            shotID: proof.shotID,
+            sha256: divergentSHA256
+        )
+        let divergentURL = fixture.dataRoot.appendingPathComponent(divergentPath)
+        try FileManager.default.createDirectory(
+            at: divergentURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try divergentData.write(to: divergentURL)
+        let divergentAsset = try AssetGraphContentAddressV1.reidentified(
+            AssetGraphNodeV1(
+                id: "pending",
+                version: asset.version,
+                path: asset.path,
+                sha256: asset.sha256,
+                modality: asset.modality,
+                entityID: asset.entityID,
+                canonIDs: asset.canonIDs,
+                stateID: asset.stateID,
+                viewID: asset.viewID,
+                approval: asset.approval,
+                provenance: AssetProvenanceV1(
+                    kindID: asset.provenance.kindID,
+                    sourceAssetID: asset.provenance.sourceAssetID,
+                    modelID: asset.provenance.modelID,
+                    promptSHA256: asset.provenance.promptSHA256,
+                    sourceShotID: asset.provenance.sourceShotID,
+                    sourceRoleID: asset.provenance.sourceRoleID,
+                    sourceProofPath: divergentPath,
+                    sourceProofSHA256: divergentSHA256,
+                    recordedAt: asset.provenance.recordedAt
+                ),
+                allowedUseIDs: asset.allowedUseIDs,
+                durationSeconds: asset.durationSeconds
+            )
+        )
+        let divergentGraph = AssetGraphV1(
+            id: try AssetGraphContentAddressV1.graphID(
+                projectID: fixture.graph.projectID,
+                assets: [divergentAsset]
+            ),
+            projectID: fixture.graph.projectID,
+            assets: [divergentAsset]
+        )
 
         #expect(throws: AssetGraphValidationError.invalidProvenance(
-            assetID
+            divergentAsset.id
         )) {
             try AssetGraphValidatorV1.validateProjectFiles(
-                fixture.graph,
+                divergentGraph,
                 dataRoot: fixture.dataRoot
             )
         }
@@ -1112,85 +1177,77 @@ struct ProductionRequirementRoutingTests {
             var proofPath: String?
             var proofData: Data?
             if let sourceShotID = input.expectedSourceShotID {
-                let phase = "preview-\(input.id)"
+                let phase = "preview"
                 let outputPath = "inputs/\(input.id)-render.mp4"
                 let outputData = Data("render-\(input.id)".utf8)
                 try outputData.write(
                     to: dataRoot.appendingPathComponent(outputPath)
                 )
-                let proof = RenderProofManifest(
-                    project: "project-fixture",
-                    phase: phase,
-                    entries: [
-                        sourceShotID: RenderProofEntry(
-                            shotId: sourceShotID,
-                            output: outputPath,
-                            outputSha256: FileDigest.sha256(of: outputData),
-                            providerPrompt: "Compiled fixture prompt.",
-                            generationModel: "fixture-model"
-                        ),
-                    ]
-                )
-                try saveRenderProofManifest(proof, dataRoot: dataRoot)
-                var renderManifest = RenderManifest(
-                    project: proof.project,
-                    phase: phase
-                )
-                renderManifest.entries[sourceShotID] = RenderEntry(
+                let outputSHA256 = FileDigest.sha256(of: outputData)
+                let assetSHA256 = FileDigest.sha256(of: data)
+                let renderEntry = RenderEntry(
                     shotId: sourceShotID,
                     phase: phase,
                     status: .rendered,
                     output: outputPath,
+                    updatedAt: "2026-08-31T00:00:00Z",
                     lastFramePath: path
                 )
-                try saveRenderManifest(renderManifest, dataRoot: dataRoot)
-                proofPath = PipelineLayout.renderProofFile(phase: phase)
-                proofData = try Data(contentsOf: dataRoot.appendingPathComponent(proofPath!))
-                let renderPath = PipelineLayout.renderManifestFile(phase: phase)
-                let renderData = try Data(
-                    contentsOf: dataRoot.appendingPathComponent(renderPath)
+                let renderProof = RenderProofEntry(
+                    shotId: sourceShotID,
+                    output: outputPath,
+                    outputSha256: outputSHA256,
+                    providerPrompt: "Compiled fixture prompt.",
+                    generationModel: "fixture-model"
                 )
-                let routingPath = PipelineLayout.renderRoutingProofFile(phase: phase)
-                let routingData = Data("fixture-routing-\(input.id)".utf8)
-                try routingData.write(
-                    to: dataRoot.appendingPathComponent(routingPath)
-                )
-                let publication = RenderRecordPublicationV1(
-                    transactionID: "fixture-\(input.id)",
-                    project: proof.project,
+                let lastFrame = RenderLastFrameProofV1(
+                    shotID: sourceShotID,
                     phase: phase,
-                    renderManifest: RenderPublishedArtifactV1(
-                        path: renderPath,
-                        sha256: FileDigest.sha256(of: renderData)
-                    ),
-                    renderProof: RenderPublishedArtifactV1(
-                        path: proofPath!,
-                        sha256: FileDigest.sha256(of: proofData!)
-                    ),
-                    renderRoutingProof: RenderPublishedArtifactV1(
-                        path: routingPath,
-                        sha256: FileDigest.sha256(of: routingData)
-                    ),
-                    framesManifest: nil,
-                    lastFrames: [
-                        sourceShotID: RenderLastFrameProofV1(
-                            shotID: sourceShotID,
-                            phase: phase,
-                            path: path,
-                            sha256: FileDigest.sha256(of: data),
-                            sourceOutput: outputPath,
-                            sourceOutputSHA256: FileDigest.sha256(of: outputData),
-                            extractedAt: "2026-08-31T00:00:00Z"
-                        ),
-                    ],
-                    committedAt: "2026-08-31T00:00:00Z"
+                    path: path,
+                    sha256: assetSHA256,
+                    sourceOutput: outputPath,
+                    sourceOutputSHA256: outputSHA256,
+                    extractedAt: "2026-08-31T00:00:00Z"
                 )
-                let publicationData = try JSONEncoder().encode(publication)
-                try publicationData.write(
-                    to: dataRoot.appendingPathComponent(
-                        RenderRecordPublicationV1.artifactPath(phase: phase)
-                    )
+                let outputs = [
+                    RenderPublishedArtifactV1(
+                        path: outputPath,
+                        sha256: outputSHA256
+                    ),
+                    RenderPublishedArtifactV1(
+                        path: path,
+                        sha256: assetSHA256
+                    ),
+                ].sorted {
+                    if $0.path != $1.path { return $0.path < $1.path }
+                    return $0.sha256 < $1.sha256
+                }
+                let proof = RenderShotProvenanceProofV1(
+                    project: "project-fixture",
+                    phase: phase,
+                    shotID: sourceShotID,
+                    renderEntry: renderEntry,
+                    renderProofEntry: renderProof,
+                    routingProofEntry: Data("fixture-routing-\(input.id)".utf8),
+                    frames: nil,
+                    lastFrame: lastFrame,
+                    outputs: outputs
                 )
+                let encodedProof = try JSONEncoder().encode(proof)
+                let proofSHA256 = FileDigest.sha256(of: encodedProof)
+                let immutablePath = RenderShotProvenanceProofV1.artifactPath(
+                    phase: phase,
+                    shotID: sourceShotID,
+                    sha256: proofSHA256
+                )
+                let immutableURL = dataRoot.appendingPathComponent(immutablePath)
+                try FileManager.default.createDirectory(
+                    at: immutableURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try encodedProof.write(to: immutableURL)
+                proofPath = immutablePath
+                proofData = encodedProof
             }
             return try AssetGraphContentAddressV1.reidentified(AssetGraphNodeV1(
                 id: "pending",

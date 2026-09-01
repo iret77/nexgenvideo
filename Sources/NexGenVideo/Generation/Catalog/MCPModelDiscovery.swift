@@ -1337,6 +1337,14 @@ enum MCPModelDiscovery {
             )
         }
         if modality == .video {
+            if let maximum = constraintMaximum(model, mediaType: "total") {
+                integers[CapabilityFieldIDV1.totalReferences] =
+                    EndpointIntegerRestrictionV1(
+                        value: maximum,
+                        operation: .maximum,
+                        evidence: [evidence]
+                    )
+            }
             if let policy = productionInputPolicy(model, modality: modality) {
                 booleans[CapabilityFieldIDV1.sourceVideoRequired] =
                     EndpointBooleanRestrictionV1(
@@ -1479,14 +1487,16 @@ enum MCPModelDiscovery {
         inputPolicy: ProviderProductionInputPolicyV1
     ) -> VideoCaps {
         let roles = allowsLocalMedia ? mediaRoles(model) : []
+        let endpointTotalMaximum = constraintMaximum(model, mediaType: "total")
         let imageBounds = allowsLocalMedia
             ? mediaBounds(
                 model,
                 type: "image",
                 intrinsicMaximum: integerCapability(
                     capabilityProfile,
-                    field: CapabilityFieldIDV1.referenceImages
-                )
+                    field: CapabilityFieldIDV1.referenceImages,
+                    ignoringDefensive: endpointTotalMaximum != nil
+                ) ?? endpointTotalMaximum
             ) : .none
         let videoBounds = allowsLocalMedia
             ? mediaBounds(
@@ -1494,8 +1504,9 @@ enum MCPModelDiscovery {
                 type: "video",
                 intrinsicMaximum: integerCapability(
                     capabilityProfile,
-                    field: CapabilityFieldIDV1.referenceVideos
-                )
+                    field: CapabilityFieldIDV1.referenceVideos,
+                    ignoringDefensive: endpointTotalMaximum != nil
+                ) ?? endpointTotalMaximum
             ) : .none
         let audioBounds = allowsLocalMedia
             ? mediaBounds(
@@ -1503,17 +1514,18 @@ enum MCPModelDiscovery {
                 type: "audio",
                 intrinsicMaximum: integerCapability(
                     capabilityProfile,
-                    field: CapabilityFieldIDV1.referenceAudios
-                )
+                    field: CapabilityFieldIDV1.referenceAudios,
+                    ignoringDefensive: endpointTotalMaximum != nil
+                ) ?? endpointTotalMaximum
             ) : .none
         let derivedTotalMaximum = [imageBounds, videoBounds, audioBounds]
             .allSatisfy(\.isEffectivelyBounded)
             ? imageBounds.max + videoBounds.max + audioBounds.max
             : nil
-        let endpointTotalMaximum = constraintMaximum(model, mediaType: "total")
         let intrinsicTotalMaximum = integerCapability(
             capabilityProfile,
-            field: CapabilityFieldIDV1.totalReferences
+            field: CapabilityFieldIDV1.totalReferences,
+            ignoringDefensive: true
         )
         let hasReferenceArgument = imageBounds.declared
             || videoBounds.declared
@@ -1935,12 +1947,15 @@ enum MCPModelDiscovery {
 
     private static func integerCapability(
         _ profile: ResolvedCapabilityProfileV1?,
-        field: String
+        field: String,
+        ignoringDefensive: Bool = false
     ) -> Int? {
-        guard let value = profile?.fields.integers[field]?.value, value >= 0 else {
+        guard let capability = profile?.fields.integers[field],
+              !ignoringDefensive || capability.semantics != .defensiveDefault,
+              capability.value >= 0 else {
             return nil
         }
-        return value
+        return capability.value
     }
 
     private static func generationSchemaSupports(

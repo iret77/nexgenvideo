@@ -11,6 +11,7 @@ struct ToolDefinitionContractTests {
             "apply_effect.effects[].params": "number",
             "run_provider_tool.arguments": "string",
             "save_frame_audit.checks": "object",
+            "write_phase_extension.payload": "json",
         ]
         var failures: [String] = []
         var seenDynamicMaps: Set<String> = []
@@ -417,6 +418,7 @@ struct ToolDefinitionContractTests {
             .attachSong, .copyProjectFile, .extractScene3dPovs,
             .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
             .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
+            .writePhaseExtension, .nextRenderShot,
             .cropToAspect, .assembleTimeline, .runSanity,
         ]
 
@@ -473,7 +475,11 @@ struct ToolDefinitionContractTests {
         if schema["type"] as? String == "object" {
             if let additional = schema["additionalProperties"] as? Bool {
                 if additional {
-                    failures.append("\(path): additionalProperties must not be true")
+                    if dynamicMaps[path] == "json" {
+                        seenDynamicMaps.insert(path)
+                    } else {
+                        failures.append("\(path): additionalProperties must not be true")
+                    }
                 }
             } else if let additional = schema["additionalProperties"] as? [String: Any] {
                 guard let expectedType = dynamicMaps[path] else {

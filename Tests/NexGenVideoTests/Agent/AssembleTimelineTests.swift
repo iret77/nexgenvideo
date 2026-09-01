@@ -99,6 +99,23 @@ struct AssembleTimelineTests {
             input.promptShotFingerprint = try PromptCompiler.shotFingerprint(
                 shot
             )
+            input.productionRouting = PipelineProductionRoutingTests.generationInput(
+                requirement: ProductionRequirementV1(
+                    modalityID: CapabilityModalityV1.video.rawValue,
+                    modeIDs: ["text-to-video"],
+                    visibleEntityCount: 0,
+                    duration: RequestedDurationV1(
+                        preferredSeconds: 1,
+                        minimumSeconds: 1,
+                        maximumSeconds: 1
+                    ),
+                    aspectRatio: "16:9",
+                    requiresOutputAudio: false
+                ),
+                modelID: "video-model",
+                projectID: "demo",
+                shotID: shotId
+            ).productionRouting
             return input
         }
         harness.editor.mediaAssets.append(

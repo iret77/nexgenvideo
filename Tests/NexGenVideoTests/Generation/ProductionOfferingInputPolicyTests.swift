@@ -10,7 +10,7 @@ struct ProductionOfferingInputPolicyTests {
     func divergentProviderEndpointPolicies() throws {
         let resolver = try #require(CatalogCapabilityRuntime.resolver)
         var entry = try #require(FalModelRegistry.entries.first {
-            $0.id == "bytedance/seedance-2.5/image-to-video"
+            $0.id == "bytedance/seedance-2.5/text-to-video"
         })
         guard case .video(let baseCapabilities) = entry.uiCapabilities else {
             Issue.record("Expected video capabilities")
@@ -225,7 +225,7 @@ struct ProductionOfferingInputPolicyTests {
     @MainActor
     func executionUsesApprovedOfferingPolicy() throws {
         let entry = try #require(FalModelRegistry.entries.first {
-            $0.id == "bytedance/seedance-2.5/image-to-video"
+            $0.id == "bytedance/seedance-2.5/text-to-video"
         })
         let model = try #require(entry.videoModel)
         let textPolicy = ProviderProductionInputPolicyV1(

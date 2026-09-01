@@ -34,7 +34,11 @@ struct PipelineRenderRecordWriterTests {
             PipelineLayout.renderManifestFile(phase: "frames"),
             in: fixture.dataRoot
         )
-        let before = try Data(contentsOf: manifestURL)
+        let before = try? Data(contentsOf: manifestURL)
+        try Data("frame".utf8).write(
+            to: PipelineLayout.url("frame.png", in: fixture.dataRoot),
+            options: .atomic
+        )
         var manifest = RenderManifest(project: "demo", phase: "frames")
         record(
             &manifest,
@@ -83,13 +87,21 @@ struct PipelineRenderRecordWriterTests {
             )
         }
 
-        #expect(try Data(contentsOf: manifestURL) == before)
+        if let before {
+            #expect(try Data(contentsOf: manifestURL) == before)
+        } else {
+            #expect(!FileManager.default.fileExists(atPath: manifestURL.path))
+        }
     }
 
     @Test("Frames manifest and render ledger publish under one commit marker")
     func framesPublicationIsHashBound() throws {
         let fixture = try makeDataRoot()
         defer { try? FileManager.default.removeItem(at: fixture.cleanup) }
+        try Data("frame".utf8).write(
+            to: PipelineLayout.url("frame.png", in: fixture.dataRoot),
+            options: .atomic
+        )
         var manifest = RenderManifest(project: "demo", phase: "frames")
         record(
             &manifest,
@@ -173,6 +185,10 @@ struct PipelineRenderRecordWriterTests {
     func publicationFailureRollsBackAllArtifacts() throws {
         let fixture = try makeDataRoot()
         defer { try? FileManager.default.removeItem(at: fixture.cleanup) }
+        try Data("first".utf8).write(
+            to: PipelineLayout.url("first.png", in: fixture.dataRoot),
+            options: .atomic
+        )
         var initialManifest = RenderManifest(project: "demo", phase: "frames")
         record(
             &initialManifest,
@@ -250,6 +266,10 @@ struct PipelineRenderRecordWriterTests {
                     frames: [FrameEntry(role: "start", path: "second.png")]
                 ),
             ]
+        )
+        try Data("second".utf8).write(
+            to: PipelineLayout.url("second.png", in: fixture.dataRoot),
+            options: .atomic
         )
 
         #expect(throws: PipelineRenderRecordError.self) {
@@ -474,6 +494,10 @@ struct PipelineRenderRecordWriterTests {
     func phasePreparationReconcilesFramesTransactionally() throws {
         let fixture = try makeDataRoot()
         defer { try? FileManager.default.removeItem(at: fixture.cleanup) }
+        try Data("frame".utf8).write(
+            to: PipelineLayout.url("frame.png", in: fixture.dataRoot),
+            options: .atomic
+        )
         var manifest = RenderManifest(project: "demo", phase: "frames")
         record(
             &manifest,
@@ -649,7 +673,7 @@ struct PipelineRenderRecordWriterTests {
             options: .atomic
         )
         let outputSHA256 = FileDigest.sha256(of: outputData)
-        let shotID = "shot-001"
+        let shotID = "s001"
         var manifest = RenderManifest(project: "project-001", phase: "final")
         record(
             &manifest,
@@ -660,7 +684,9 @@ struct PipelineRenderRecordWriterTests {
         )
         let generation = try #require(
             PipelineProductionRoutingTests.generationInput(
-                requirement: PipelineProductionRoutingTests.requirement()
+                requirement: PipelineProductionRoutingTests.requirement(),
+                projectID: "project-001",
+                shotID: shotID
             ).productionRouting
         )
         let proof = RenderProofManifest(
@@ -1014,7 +1040,7 @@ struct PipelineRenderRecordWriterTests {
             .joined(separator: "/")
         let requirement = ProductionRequirementV1(
             modalityID: CapabilityModalityV1.video.rawValue,
-            modeIDs: ["image-to-video"],
+            modeIDs: [predecessor == nil ? "text-to-video" : "image-to-video"],
             visibleEntityCount: 0,
             requiresFirstFrame: predecessor != nil,
             duration: RequestedDurationV1(
@@ -1051,9 +1077,44 @@ struct PipelineRenderRecordWriterTests {
                 origin: origin,
                 evidence: []
             )
+        fields.integers[CapabilityFieldIDV1.referenceImages] =
+            ResolvedCapabilityValueV1(
+                value: 1,
+                semantics: .hardAPILimit,
+                origin: origin,
+                evidence: []
+            )
+        fields.integers[CapabilityFieldIDV1.referenceVideos] =
+            ResolvedCapabilityValueV1(
+                value: 0,
+                semantics: .hardAPILimit,
+                origin: origin,
+                evidence: []
+            )
+        fields.integers[CapabilityFieldIDV1.referenceAudios] =
+            ResolvedCapabilityValueV1(
+                value: 0,
+                semantics: .hardAPILimit,
+                origin: origin,
+                evidence: []
+            )
+        fields.integers[CapabilityFieldIDV1.totalReferences] =
+            ResolvedCapabilityValueV1(
+                value: 1,
+                semantics: .hardAPILimit,
+                origin: origin,
+                evidence: []
+            )
         fields.booleans[CapabilityFieldIDV1.firstFrame] =
             ResolvedCapabilityValueV1(
-                value: predecessor != nil,
+                value: true,
+                semantics: .hardAPILimit,
+                origin: origin,
+                evidence: []
+            )
+        fields.strings[CapabilityFieldIDV1.modes] =
+            ResolvedCapabilityValueV1(
+                value: ["image-to-video", "text-to-video"],
                 semantics: .hardAPILimit,
                 origin: origin,
                 evidence: []
@@ -1070,17 +1131,15 @@ struct PipelineRenderRecordWriterTests {
             intrinsic: profile,
             effective: profile
         )
-        let inputSlots: [ProductionInputSlotCapabilityV1] = predecessor == nil
-            ? []
-            : [ProductionInputSlotCapabilityV1(
-                id: CoreReferenceInputSlotIDV1.firstFrame,
-                modality: .image,
-                modeIDs: ["image-to-video"],
-                requestOrder: 0,
-                countsTowardModalityBudget: false,
-                countsTowardTotalBudget: false,
-                countsTowardCombinedDuration: false
-            )]
+        let inputSlots = [ProductionInputSlotCapabilityV1(
+            id: CoreReferenceInputSlotIDV1.firstFrame,
+            modality: .image,
+            modeIDs: ["image-to-video"],
+            requestOrder: 0,
+            countsTowardModalityBudget: false,
+            countsTowardTotalBudget: false,
+            countsTowardCombinedDuration: false
+        )]
         let candidate = ProductionRouteCandidateV1(
             capabilities: capabilities,
             providerActivated: true,
@@ -1188,11 +1247,11 @@ struct PipelineRenderRecordWriterTests {
                 routeSHA256: route.routeSHA256
             ),
             budget: ReferencePlanBudgetV2(
-                imageCount: 0,
+                imageCount: 1,
                 videoCount: 0,
                 audioCount: 0,
                 geometryCount: 0,
-                totalCount: 0
+                totalCount: 1
             ),
             bindings: bindings,
             optionalDrops: []
@@ -1270,7 +1329,7 @@ struct PipelineRenderRecordWriterTests {
             durationS: 8
         )
         let first = try Shot(
-            id: "shot-001",
+            id: "s001",
             section: "intro",
             timeStart: 0,
             timeEnd: 4,
@@ -1282,7 +1341,7 @@ struct PipelineRenderRecordWriterTests {
             keyframeStrategy: .start
         )
         let successor = try Shot(
-            id: "shot-002",
+            id: "s002",
             section: "verse",
             timeStart: 4,
             timeEnd: 8,

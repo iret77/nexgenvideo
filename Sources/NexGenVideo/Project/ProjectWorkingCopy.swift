@@ -327,20 +327,25 @@ enum ProjectWorkingCopy {
                 detail: "The project files couldn't be enumerated."
             )
         }
-        let prefix = source.path.hasSuffix("/") ? source.path : source.path + "/"
+        let canonicalSource = source.resolvingSymlinksInPath().standardizedFileURL
+        let prefix = canonicalSource.path.hasSuffix("/")
+            ? canonicalSource.path
+            : canonicalSource.path + "/"
         for case let item as URL in enumerator {
-            guard item.path.hasPrefix(prefix) else {
+            let values = try item.resourceValues(forKeys: Set(keys))
+            if values.isSymbolicLink == true {
+                let relativePath = item.lastPathComponent
+                throw PersistError.symbolicLink(path: relativePath)
+            }
+            let canonicalItem = item.resolvingSymlinksInPath().standardizedFileURL
+            guard canonicalItem.path.hasPrefix(prefix) else {
                 throw PersistError.readViewCloneUnavailable(
                     package: source.lastPathComponent,
                     detail: "A project path escaped the read-view clone."
                 )
             }
-            let relativePath = String(item.path.dropFirst(prefix.count))
+            let relativePath = String(canonicalItem.path.dropFirst(prefix.count))
             let target = destination.appendingPathComponent(relativePath)
-            let values = try item.resourceValues(forKeys: Set(keys))
-            if values.isSymbolicLink == true {
-                throw PersistError.symbolicLink(path: relativePath)
-            }
             if values.isDirectory == true {
                 try fm.createDirectory(at: target, withIntermediateDirectories: true)
                 continue

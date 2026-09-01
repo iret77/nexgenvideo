@@ -1,4 +1,5 @@
 import CryptoKit
+import CoreFoundation
 import Foundation
 import NexGenEngine
 
@@ -401,11 +402,12 @@ private enum AnySendable: Sendable, Equatable {
         switch value {
         case is NSNull:
             return .null
-        case let value as Bool:
-            return .bool(value)
         case let value as String:
             return .string(value)
         case let value as NSNumber:
+            if CFGetTypeID(value) == CFBooleanGetTypeID() {
+                return .bool(value.boolValue)
+            }
             let double = value.doubleValue
             if double.rounded() == double,
                double >= Double(Int64.min), double <= Double(Int64.max) {

@@ -42,7 +42,7 @@ enum FalUpscaleKind: Sendable {
 }
 
 struct FalModel: Sendable {
-    let entry: CatalogEntry
+    var entry: CatalogEntry
     var imageSize: FalImageSizeMode = .imageSizeEnum
     var imageRef: FalImageRefField = .none
     var imageSendsResolution = false
@@ -60,9 +60,11 @@ struct FalModel: Sendable {
 }
 
 enum FalModelRegistry {
-    static let models: [FalModel] = imageModels + videoModels + audioModels + upscaleModels
-    static let entries: [CatalogEntry] = models.map { model in
-        var e = model.entry
+    static let models: [FalModel] = (
+        imageModels + videoModels + audioModels + upscaleModels
+    ).map { model in
+        var resolved = model
+        var e = resolved.entry
         // ElevenLabs-family models are served BOTH directly by ElevenLabs and by fal's hosted
         // endpoint; everything else here is fal. Declared as data — the resolver routes on this.
         e.offers = e.id.hasPrefix("fal-ai/elevenlabs")
@@ -77,8 +79,10 @@ enum FalModelRegistry {
                     supportsNativeAudio: model.videoGeneratesAudio
                 )
             )]
-        return e
+        resolved.entry = e
+        return resolved
     }
+    static let entries: [CatalogEntry] = models.map(\.entry)
 
     private static let byId: [String: FalModel] =
         Dictionary(models.map { ($0.entry.id, $0) }, uniquingKeysWith: { a, _ in a })

@@ -81,12 +81,142 @@ struct WorkflowToolsTests {
         )
     }
 
-    private func prepareNativeSourceExecution(
-        dataRoot: URL,
-        chainedSuccessor: Bool = false
+    private func generatedExecutionShotInput(
+        id: String = "s001",
+        duration: Double = 12,
+        firstFrame: Bool = true
+    ) -> [String: Any] {
+        [
+            "id": id,
+            "source_mode": ExecutionSourceModeV1.generated.rawValue,
+            "start_state": [
+                "summary": "The shot begins.",
+                "entity_state_ids": [],
+            ],
+            "end_state": [
+                "summary": "The shot ends.",
+                "entity_state_ids": [],
+            ],
+            "blocking": [],
+            "timed_action_beats": [],
+            "acceptance": [[
+                "id": "accept-\(id)",
+                "requirement": "Keep the composition intact.",
+                "severity": "required",
+            ]],
+            "generation_requirement": [
+                "modality_id": CapabilityModalityV1.video.rawValue,
+                "mode_ids": [firstFrame ? "image-to-video" : "text-to-video"],
+                "duration": [
+                    "minimum_seconds": duration,
+                    "maximum_seconds": duration,
+                    "allows_automatic": false,
+                ],
+                "requires_output_audio": false,
+            ],
+            "core_inputs": firstFrame
+                ? ["first_frame_mode_id": "image-to-video"]
+                : [:],
+            "reference_demands": [],
+        ]
+    }
+
+    private func importedExecutionShotInput(id: String = "s001") -> [String: Any] {
+        [
+            "id": id,
+            "source_mode": ExecutionSourceModeV1.imported.rawValue,
+            "start_state": [
+                "summary": "The shot begins.",
+                "entity_state_ids": [],
+            ],
+            "end_state": [
+                "summary": "The shot ends.",
+                "entity_state_ids": [],
+            ],
+            "blocking": [],
+            "timed_action_beats": [],
+            "acceptance": [[
+                "id": "accept-\(id)",
+                "requirement": "Keep the composition intact.",
+                "severity": "required",
+            ]],
+            "primary_action": "The performer enters the yard.",
+            "camera": ["movement_id": "static"],
+            "continuity_locks": [],
+            "renderability": "green",
+            "risks": [],
+        ]
+    }
+
+    private func executionShotInput(_ shot: Shot) -> [String: Any] {
+        var result: [String: Any] = [
+            "id": shot.id,
+            "source_mode": shot.sourceMode.rawValue,
+            "start_state": [
+                "summary": "The shot begins.",
+                "entity_state_ids": [],
+            ],
+            "end_state": [
+                "summary": "The shot ends.",
+                "entity_state_ids": [],
+            ],
+            "blocking": [],
+            "timed_action_beats": [],
+            "acceptance": [[
+                "id": "accept-\(shot.id)",
+                "requirement": "Keep the composition intact.",
+                "severity": "required",
+            ]],
+        ]
+        switch shot.sourceMode {
+        case .generated, .aiEnhanced:
+            var coreInputs: [String: Any] = [:]
+            let modeIDs: [String]
+            if shot.sourceMode == .aiEnhanced {
+                modeIDs = ["video-to-video"]
+                coreInputs["source_video_mode_id"] = "video-to-video"
+            } else if shot.chainWithPreviousEnd {
+                modeIDs = ["image-to-video"]
+                coreInputs["predecessor_last_frame_mode_id"] = "image-to-video"
+            } else if shot.keyframeStrategy != .none {
+                modeIDs = ["image-to-video"]
+                coreInputs["first_frame_mode_id"] = "image-to-video"
+                if shot.keyframeStrategy == .startEnd {
+                    coreInputs["last_frame_mode_id"] = "image-to-video"
+                }
+            } else {
+                modeIDs = ["text-to-video"]
+            }
+            result["generation_requirement"] = [
+                "modality_id": CapabilityModalityV1.video.rawValue,
+                "mode_ids": modeIDs,
+                "duration": [
+                    "minimum_seconds": shot.durationS,
+                    "maximum_seconds": shot.durationS,
+                    "allows_automatic": false,
+                ],
+                "requires_output_audio": false,
+            ]
+            result["core_inputs"] = coreInputs
+            if shot.sourceMode == .generated {
+                result["reference_demands"] = []
+            }
+        case .imported:
+            result["primary_action"] = "The performer enters the yard."
+            result["camera"] = ["movement_id": "static"]
+            result["continuity_locks"] = []
+            result["renderability"] = "green"
+            result["risks"] = []
+        }
+        return result
+    }
+
+    private func publishExecutionShotlist(
+        _ shotlist: Shotlist,
+        dataRoot: URL
     ) throws -> [PipelineExecutionShotInput] {
-        let audioURL = dataRoot.appendingPathComponent("audio/song.wav")
-        let analysisURL = dataRoot.appendingPathComponent("analysis/song.json")
+        let audioURL = dataRoot.appendingPathComponent(shotlist.song.audioPath)
+        let analysisURL = dataRoot.appendingPathComponent(shotlist.song.analysisPath)
         for (url, bytes) in [
             (audioURL, Data("audio".utf8)),
             (analysisURL, Data("{}".utf8)),
@@ -112,7 +242,7 @@ struct WorkflowToolsTests {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         try store.save(
             try Brief(
-                project: "demo",
+                project: shotlist.project,
                 generated: "2026-08-31T00:00:00Z",
                 mission: .demo,
                 targetPlatform: "Test",
@@ -128,12 +258,30 @@ struct WorkflowToolsTests {
         )
         try store.save(
             try Bible(
-                project: "demo",
+                project: shotlist.project,
                 generated: "2026-08-31T00:00:00Z",
                 generator: "test"
             ),
             to: PipelineLayout.bibleFile
         )
+        let objects = shotlist.shots.map(executionShotInput)
+        let inputs = try JSONDecoder().decode(
+            [PipelineExecutionShotInput].self,
+            from: JSONSerialization.data(withJSONObject: objects, options: [.sortedKeys])
+        )
+        _ = try PipelineShotlistWriter.write(
+            shotlist,
+            executionInputs: inputs,
+            dataRoot: dataRoot,
+            declaredPack: nil
+        )
+        return inputs
+    }
+
+    private func prepareNativeSourceExecution(
+        dataRoot: URL,
+        chainedSuccessor: Bool = false
+    ) throws -> [PipelineExecutionShotInput] {
         let plan = try ShotProductionPlan(
             primaryAction: "Hold the composition.",
             cameraMovement: .static,
@@ -183,52 +331,7 @@ struct WorkflowToolsTests {
             generator: "test",
             shots: shots
         )
-        let objects: [[String: Any]] = shots.map { shot in
-            var coreInputs: [String: Any] = [:]
-            var modeIDs = ["text-to-video"]
-            if shot.chainWithPreviousEnd {
-                coreInputs["predecessor_last_frame_mode_id"] = "image-to-video"
-                modeIDs = ["image-to-video"]
-            }
-            return [
-                "id": shot.id,
-                "source_mode": ExecutionSourceModeV1.generated.rawValue,
-                "start_state": [
-                    "summary": "The shot begins.",
-                    "entity_state_ids": [],
-                ],
-                "end_state": [
-                    "summary": "The shot ends.",
-                    "entity_state_ids": [],
-                ],
-                "blocking": [],
-                "timed_action_beats": [],
-                "acceptance": [[
-                    "id": "accept-\(shot.id)",
-                    "requirement": "Keep the composition intact.",
-                    "severity": "required",
-                ]],
-                "generation_requirement": [
-                    "modality_id": CapabilityModalityV1.video.rawValue,
-                    "mode_ids": modeIDs,
-                    "duration": ["allows_automatic": true],
-                    "requires_output_audio": false,
-                ],
-                "core_inputs": coreInputs,
-                "reference_demands": [],
-            ]
-        }
-        let inputs = try JSONDecoder().decode(
-            [PipelineExecutionShotInput].self,
-            from: JSONSerialization.data(withJSONObject: objects, options: [.sortedKeys])
-        )
-        _ = try PipelineShotlistWriter.write(
-            shotlist,
-            executionInputs: inputs,
-            dataRoot: dataRoot,
-            declaredPack: nil
-        )
-        return inputs
+        return try publishExecutionShotlist(shotlist, dataRoot: dataRoot)
     }
 
     private func recursiveFileBytes(in root: URL) throws -> [String: Data] {
@@ -254,7 +357,8 @@ struct WorkflowToolsTests {
         dataRoot: URL,
         model: String = "video-model",
         sourceVideoAssetId: String? = nil,
-        shotId: String = "s001"
+        shotId: String = "s001",
+        currentRouting: PipelineProductionRouteSelection? = nil
     ) throws {
         try Data(id.utf8).write(to: url)
         let shot = try #require(
@@ -266,17 +370,85 @@ struct WorkflowToolsTests {
             .joined(separator: ". ")
         let prompt = "Compiled provider prompt for \(id)."
             + (requirements.isEmpty ? "" : " \(requirements)")
+        let selectedModel = currentRouting?.modelID ?? model
+        let selectedRequirement = currentRouting?.requirement
+        let duration = Int(
+            (selectedRequirement?.duration?.preferredSeconds
+                ?? selectedRequirement?.duration?.minimumSeconds
+                ?? selectedRequirement?.duration?.maximumSeconds
+                ?? 4).rounded()
+        )
         var input = GenerationInput(
             prompt: prompt,
-            model: model,
-            duration: 4,
-            aspectRatio: "16:9"
+            model: selectedModel,
+            duration: duration,
+            aspectRatio: selectedRequirement?.aspectRatio ?? "16:9",
+            resolution: selectedRequirement?.resolution
         )
-        input.sourceVideoAssetId = sourceVideoAssetId
+        input.videoDuration = .seconds(duration)
+        input.generateAudio = selectedRequirement?.requiresOutputAudio ?? false
         input.promptShotId = shotId
         input.promptProjectKey = dataRoot.standardizedFileURL
             .resolvingSymlinksInPath().path
         input.promptShotFingerprint = try PromptCompiler.shotFingerprint(shot)
+        if let currentRouting {
+            let (proof, submitted) = try currentRoutingProof(
+                currentRouting,
+                harness: harness,
+                dataRoot: dataRoot
+            )
+            let grouped = Dictionary(
+                grouping: submitted,
+                by: { ProductionIdentifierNormalizerV1.canonical($0.semanticJobID) }
+            )
+            input.sourceVideoAssetId = grouped[
+                CoreReferenceSemanticJobIDV1.sourceVideo
+            ]?.first?.mediaAssetID
+            input.startFrameAssetId = (
+                grouped[CoreReferenceSemanticJobIDV1.predecessorLastFrame]
+                    ?? grouped[CoreReferenceSemanticJobIDV1.firstFrame]
+            )?.first?.mediaAssetID
+            input.endFrameAssetId = grouped[
+                CoreReferenceSemanticJobIDV1.lastFrame
+            ]?.first?.mediaAssetID
+            let ordinary = submitted.filter {
+                ![
+                    CoreReferenceSemanticJobIDV1.sourceVideo,
+                    CoreReferenceSemanticJobIDV1.firstFrame,
+                    CoreReferenceSemanticJobIDV1.predecessorLastFrame,
+                    CoreReferenceSemanticJobIDV1.lastFrame,
+                ].contains(ProductionIdentifierNormalizerV1.canonical($0.semanticJobID))
+            }
+            input.referenceImageAssetIds = ordinary.filter {
+                $0.modalityID == AssetPhysicalModalityV1.image.rawValue
+            }.map(\.mediaAssetID)
+            input.referenceVideoAssetIds = ordinary.filter {
+                $0.modalityID == AssetPhysicalModalityV1.video.rawValue
+            }.map(\.mediaAssetID)
+            input.referenceAudioAssetIds = ordinary.filter {
+                $0.modalityID == AssetPhysicalModalityV1.audio.rawValue
+            }.map(\.mediaAssetID)
+            input.productionRouting = proof
+        } else {
+            input.sourceVideoAssetId = sourceVideoAssetId
+            input.productionRouting = PipelineProductionRoutingTests.generationInput(
+                requirement: ProductionRequirementV1(
+                    modalityID: CapabilityModalityV1.video.rawValue,
+                    modeIDs: ["text-to-video"],
+                    visibleEntityCount: 0,
+                    duration: RequestedDurationV1(
+                        preferredSeconds: 4,
+                        minimumSeconds: 4,
+                        maximumSeconds: 4
+                    ),
+                    aspectRatio: "16:9",
+                    requiresOutputAudio: false
+                ),
+                modelID: model,
+                projectID: "demo",
+                shotID: shotId
+            ).productionRouting
+        }
         harness.editor.mediaAssets.append(
             MediaAsset(
                 id: id,
@@ -286,6 +458,73 @@ struct WorkflowToolsTests {
                 generationInput: input
             )
         )
+    }
+
+    private func currentRoutingProof(
+        _ selection: PipelineProductionRouteSelection,
+        harness: ToolHarness,
+        dataRoot: URL
+    ) throws -> (
+        ProductionGenerationRoutingProofV1,
+        [ProductionGenerationRoutingBindingV1]
+    ) {
+        let offeringCapabilities = try #require(
+            selection.target.binding?.resolvedVideoCapabilities
+        )
+        let (assetGraph, demandSet, _) = try PipelineProductionInputsWriter.load(
+            shotID: selection.route.shotID,
+            dataRoot: dataRoot
+        )
+        let submitted = try selection.referencePlan.bindings.map { binding in
+            let plannedURL = try ProjectLocalFile.requireHash(
+                binding.sha256,
+                at: binding.path,
+                dataRoot: dataRoot
+            ).standardizedFileURL.resolvingSymlinksInPath()
+            let media = try #require(harness.editor.mediaAssets.first {
+                $0.url.standardizedFileURL.resolvingSymlinksInPath() == plannedURL
+            })
+            return ProductionGenerationRoutingBindingV1(
+                demandID: binding.demandID,
+                graphAssetID: binding.assetID,
+                graphAssetVersion: binding.assetVersion,
+                mediaAssetID: media.id,
+                path: binding.path,
+                sha256: binding.sha256,
+                modalityID: binding.modality.rawValue,
+                semanticJobID: binding.semanticJobID,
+                inputSlotID: binding.inputSlotID,
+                modeID: binding.modeID
+            )
+        }
+        let capabilitiesData = try ReferencePlanCanonicalCodecV2.encode(
+            offeringCapabilities
+        )
+        let proof = ProductionGenerationRoutingProofV1(
+            projectID: selection.route.projectID,
+            shotID: selection.route.shotID,
+            modelID: selection.modelID,
+            providerID: selection.target.provider.rawValue,
+            transportID: selection.target.transport.rawValue,
+            endpointID: selection.target.endpoint,
+            modelParam: selection.target.binding?.modelParam,
+            offeringID: selection.route.offering.offeringID,
+            requirement: selection.requirement,
+            route: selection.route,
+            referencePlan: selection.referencePlan,
+            routeArtifactSHA256: selection.routeArtifactSHA256,
+            requirementSHA256: selection.route.requirementSHA256,
+            capabilitiesSHA256: selection.route.capabilitiesSHA256,
+            routeSHA256: selection.route.routeSHA256,
+            referencePlanSHA256: selection.referencePlanSHA256,
+            orderedBindingsSHA256: selection.orderedBindingsSHA256,
+            orderedBindings: submitted,
+            offeringCapabilities: offeringCapabilities,
+            offeringCapabilitiesSHA256: FileDigest.sha256(of: capabilitiesData),
+            historicalAssetGraph: assetGraph,
+            historicalDemandSet: demandSet
+        )
+        return (proof, submitted)
     }
 
     private func addSourceVideo(
@@ -1337,6 +1576,12 @@ struct WorkflowToolsTests {
         let trusted = try activatePack("musicvideo", dataRoot: savedDataRoot)
         let package = FrameInventory.projectHome(of: savedDataRoot)
         try Fixtures.prepareProjectPackage(at: package)
+        let track = savedDataRoot.appendingPathComponent("audio/song.wav")
+        try FileManager.default.createDirectory(
+            at: track.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("track".utf8).write(to: track)
         h.editor.projectURL = package
         defer {
             h.editor.releaseWorkingCopy()
@@ -1405,7 +1650,7 @@ struct WorkflowToolsTests {
             "target_phase": "project_init",
         ])
         #expect(agentResult.isError)
-        #expect(ToolHarness.textOf(agentResult).contains("isn't wired"))
+        #expect(ToolHarness.textOf(agentResult).contains("isn't the pack code active"))
         #expect(try Data(contentsOf: gatesURL) == gatesBefore)
 
         let agentStateResult = await h.runRaw("set_gate_state", args: [
@@ -1414,7 +1659,7 @@ struct WorkflowToolsTests {
             "state": "needs_revision",
         ])
         #expect(agentStateResult.isError)
-        #expect(ToolHarness.textOf(agentStateResult).contains("isn't wired"))
+        #expect(ToolHarness.textOf(agentStateResult).contains("isn't the pack code active"))
         #expect(try Data(contentsOf: gatesURL) == gatesBefore)
 
         #expect(throws: NativeGateWriter.WriteError.self) {
@@ -1950,11 +2195,13 @@ struct WorkflowToolsTests {
                 "blocking_anchors": [],
             ],
         ]
+        let generatedExecution = generatedExecutionShotInput()
         var missingPlanShot = shot
         missingPlanShot.removeValue(forKey: "production_plan")
         let missingPlan = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [missingPlanShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(missingPlan.isError)
         #expect(ToolHarness.textOf(missingPlan).contains("production_plan"))
@@ -1969,6 +2216,7 @@ struct WorkflowToolsTests {
         let missingBeat = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [invalidShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(missingBeat.isError)
         #expect(ToolHarness.textOf(missingBeat).contains("narrative_beat"))
@@ -1985,6 +2233,7 @@ struct WorkflowToolsTests {
         let oversized = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [oversizedShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(oversized.isError)
         #expect(
@@ -2011,6 +2260,7 @@ struct WorkflowToolsTests {
         let unanchored = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [unanchoredShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(unanchored.isError)
         #expect(ToolHarness.textOf(unanchored).contains("required pattern"))
@@ -2034,6 +2284,7 @@ struct WorkflowToolsTests {
         let directionOnly = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [directionOnlyShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(directionOnly.isError)
         #expect(ToolHarness.textOf(directionOnly).contains("required pattern"))
@@ -2051,6 +2302,7 @@ struct WorkflowToolsTests {
         let disguisedDirection = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [disguisedDirectionShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(disguisedDirection.isError)
         #expect(
@@ -2071,6 +2323,7 @@ struct WorkflowToolsTests {
         let undeclaredAnchor = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [undeclaredAnchorShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(undeclaredAnchor.isError)
         #expect(ToolHarness.textOf(undeclaredAnchor).contains("prop_refs or visible_zones"))
@@ -2094,6 +2347,7 @@ struct WorkflowToolsTests {
         let missingRelation = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [missingRelationShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(missingRelation.isError)
         #expect(ToolHarness.textOf(missingRelation).contains("expected at least 1 character"))
@@ -2101,6 +2355,7 @@ struct WorkflowToolsTests {
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [shot],
+            "execution_shots": [generatedExecution],
         ])
         let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(shotlist.project == "demo")
@@ -2113,6 +2368,7 @@ struct WorkflowToolsTests {
         let importedWithPlan = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [importedShot],
+            "execution_shots": [importedExecutionShotInput()],
         ])
         #expect(importedWithPlan.isError)
         #expect(ToolHarness.textOf(importedWithPlan).contains("production_plan"))
@@ -2122,6 +2378,7 @@ struct WorkflowToolsTests {
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [importedShot],
+            "execution_shots": [importedExecutionShotInput()],
         ])
         let importedShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(importedShotlist.shots.first?.sourceMode == .imported)
@@ -2671,50 +2928,9 @@ struct WorkflowToolsTests {
     func nextRenderShotResolvesChainStart() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        let song = try Song(
-            title: "Track",
-            audioPath: "audio/song.wav",
-            analysisPath: "analysis/song.json",
-            bpm: 120,
-            durationS: 8
-        )
-        let first = try Shot(
-            id: "s001",
-            section: "verse",
-            timeStart: 0,
-            timeEnd: 4,
-            durationS: 4,
-            type: .performance,
-            description: "Opening.",
-            visualPrompt: "A measured opening composition.",
-            mood: "restrained",
-            keyframeStrategy: .none
-        )
-        let chained = try Shot(
-            id: "s002",
-            section: "verse",
-            timeStart: 4,
-            timeEnd: 8,
-            durationS: 4,
-            type: .performance,
-            description: "Continue.",
-            visualPrompt: "The previous composition continues.",
-            mood: "restrained",
-            keyframeStrategy: .none,
-            seedanceInputMode: .keyframe,
-            chainWithPreviousEnd: true
-        )
-        _ = try saveShotlist(
-            try Shotlist(
-                schema_: shotlistSchemaVersion,
-                mode: .section,
-                project: "demo",
-                song: song,
-                generated: "2026-07-26T00:00:00Z",
-                generator: "test",
-                shots: [first, chained]
-            ),
-            to: dataRoot
+        _ = try prepareNativeSourceExecution(
+            dataRoot: dataRoot,
+            chainedSuccessor: true
         )
         let home = FrameInventory.projectHome(of: dataRoot)
         let firstVideo = home.appendingPathComponent("s001.mp4")
@@ -3107,7 +3323,10 @@ struct WorkflowToolsTests {
             rescueCut: "Cut to a profile reaction",
             continuityLocks: ["silver jacket"]
         )
-        _ = try saveShotlist(try minimalShotlist(productionPlan: plan), to: dataRoot)
+        _ = try publishExecutionShotlist(
+            try minimalShotlist(productionPlan: plan),
+            dataRoot: dataRoot
+        )
         let next = try await h.runOK("next_render_shot", args: ["project_dir": dataRoot.path, "phase": "preview"]) as? [String: Any]
         #expect(next?["done"] as? Bool == false)
         #expect(next?["shot_id"] as? String == "s001")
@@ -3122,13 +3341,21 @@ struct WorkflowToolsTests {
     /// A 3-shot shotlist: s001 imported, s002 generated, s003 ai_enhanced.
     private func hybridShotlist() throws -> Shotlist {
         func shot(_ id: String, _ start: Double, _ mode: SourceMode) throws -> Shot {
-            try Shot(
+            let productionPlan = mode == .imported
+                ? nil
+                : try ShotProductionPlan(
+                    primaryAction: "Hold the composition.",
+                    cameraMovement: .static,
+                    renderability: .green
+                )
+            return try Shot(
                 id: id, section: "verse", timeStart: start, timeEnd: start + 4.0, durationS: 4.0,
                 type: .performance, sourceMode: mode, description: "d",
                 visualPrompt: "p", mood: "m", keyframeStrategy: .none,
                 sourcePath: mode == .aiEnhanced
                     ? "media/s003-source.mp4"
-                    : nil
+                    : nil,
+                productionPlan: productionPlan
             )
         }
         let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 12.0)
@@ -3147,13 +3374,16 @@ struct WorkflowToolsTests {
     func nextRenderShotSkipsLiveAction() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try saveShotlist(try hybridShotlist(), to: dataRoot)
         let dir = dataRoot.path
         let home = FrameInventory.projectHome(of: dataRoot)
         try addSourceVideo(
             "s003-source",
             at: home.appendingPathComponent("media/s003-source.mp4"),
             to: h
+        )
+        _ = try publishExecutionShotlist(
+            try hybridShotlist(),
+            dataRoot: dataRoot
         )
         try addGeneratedVideo(
             "s002-video",
@@ -3162,16 +3392,6 @@ struct WorkflowToolsTests {
             dataRoot: dataRoot,
             shotId: "s002"
         )
-        try addGeneratedVideo(
-            "s003-video",
-            at: home.appendingPathComponent("s003.mp4"),
-            to: h,
-            dataRoot: dataRoot,
-            model: "runway/aleph2",
-            sourceVideoAssetId: "s003-source",
-            shotId: "s003"
-        )
-
         // s001 is imported → skipped; the first render shot is the generated s002.
         let first = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
         #expect(first?["shot_id"] as? String == "s002")
@@ -3187,6 +3407,18 @@ struct WorkflowToolsTests {
         #expect(second?["source_mode"] as? String == "ai_enhanced")
         #expect(second?["source_video_media_ref"] as? String == "s003-source")
         #expect(second?["source_video_path"] as? String == "media/s003-source.mp4")
+        let currentRouting = try PipelineProductionRouting.requireCurrent(
+            shotID: "s003",
+            dataRoot: dataRoot
+        )
+        try addGeneratedVideo(
+            "s003-video",
+            at: home.appendingPathComponent("s003.mp4"),
+            to: h,
+            dataRoot: dataRoot,
+            shotId: "s003",
+            currentRouting: currentRouting
+        )
 
         // Record s003 → done. s001 (imported) never appears, so the queue is empty.
         _ = try await h.runOK("record_render", args: [
@@ -3201,15 +3433,20 @@ struct WorkflowToolsTests {
     func nextRenderShotRejectsEnhancedSourceSymlinkEscape() async throws {
         let (h, dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try saveShotlist(try hybridShotlist(), to: dataRoot)
         let home = FrameInventory.projectHome(of: dataRoot)
         let outside = cleanup.appendingPathComponent("outside.mp4")
         try Data("outside".utf8).write(to: outside)
         let source = home.appendingPathComponent("media/s003-source.mp4")
-        try FileManager.default.createDirectory(
-            at: source.deletingLastPathComponent(),
-            withIntermediateDirectories: true
+        try addSourceVideo(
+            "s003-source",
+            at: source,
+            to: h
         )
+        _ = try publishExecutionShotlist(
+            try hybridShotlist(),
+            dataRoot: dataRoot
+        )
+        try FileManager.default.removeItem(at: source)
         try FileManager.default.createSymbolicLink(
             at: source,
             withDestinationURL: outside
@@ -3304,6 +3541,7 @@ struct WorkflowToolsTests {
         let result = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [shot],
+            "execution_shots": [generatedExecutionShotInput(firstFrame: false)],
         ])
 
         #expect(result.isError)
