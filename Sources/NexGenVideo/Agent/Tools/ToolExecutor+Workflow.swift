@@ -1713,7 +1713,7 @@ extension ToolExecutor {
         }
         return zip(routing.orderedBindings, actual).allSatisfy { pair in
             let (binding, input) = pair
-            binding.sha256 == input.sha256
+            return binding.sha256 == input.sha256
                 && sameCurrentRenderInputPath(
                     binding.path,
                     input.path,

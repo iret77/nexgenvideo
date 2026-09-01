@@ -11,7 +11,7 @@ enum PhaseDisplay {
         if let declared = PhaseContractRuntime.displayLabel(for: id) {
             return declared
         }
-        switch id {
+        return switch id {
         case "project_init": String(localized: "phase.project_init", defaultValue: "Project Init", comment: "Pipeline phase")
         case "brief": String(localized: "phase.brief", defaultValue: "Brief", comment: "Pipeline phase")
         case "analysis": String(localized: "phase.analysis", defaultValue: "Audio Analysis", comment: "Pipeline phase")
