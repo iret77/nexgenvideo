@@ -231,9 +231,9 @@ class ModelCapabilityCorpusTests(unittest.TestCase):
                         self.assertGreaterEqual(evidence["confidence"], 0)
                         self.assertLessEqual(evidence["confidence"], 1)
 
-    def test_defensive_numeric_policy_is_data_and_still_pending(self):
+    def test_confirmed_defensive_numeric_policy_is_data(self):
         defaults = self.corpus["defensive_defaults"]
-        self.assertEqual(defaults["owner_confirmation"], "pending")
+        self.assertEqual(defaults["owner_confirmation"], "confirmed")
         self.assertEqual(
             defaults["table"],
             {
