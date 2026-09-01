@@ -229,13 +229,14 @@ struct AgentPanelView: View {
     }
 
     private var transcriptOwnsTerminalError: Bool {
-        guard let activity = transcriptTurns
+        let terminalActivity = transcriptTurns
             .flatMap(\.items)
             .compactMap { item -> AgentActivity? in
                 guard case .activity(let activity) = item else { return nil }
                 return activity
             }
-            .last else { return false }
+            .last
+        guard let activity = terminalActivity else { return false }
         return activity.steps.contains { toolResults[$0.id]?.isError == true }
     }
 

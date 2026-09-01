@@ -1000,24 +1000,27 @@ enum PipelineProductionRouting {
                 CoreReferenceSemanticJobIDV1.lastFrame,
             ].contains(ProductionIdentifierNormalizerV1.canonical($0.semanticJobID))
         }
+        let sourceVideoMatches = proof.requirement.sourceVideoAssetID.map {
+            sourceVideo?.assetID == $0
+        } ?? (sourceVideo == nil)
+        let videoDurationFits = referencePlan.budget.combinedVideoSeconds.map {
+            videoSeconds <= $0
+        } ?? true
+        let audioDurationFits = referencePlan.budget.combinedAudioSeconds.map {
+            audioSeconds <= $0
+        } ?? true
         guard Set(proof.requirement.referenceDemandIDs).isSubset(of: accounted),
               Set(proof.requirement.identityLockAssetIDs).isSubset(of: boundAssetIDs),
               proof.requirement.requiresFirstFrame == hasFirstFrame,
               proof.requirement.requiresLastFrame == hasLastFrame,
-              proof.requirement.sourceVideoAssetID.map {
-                  sourceVideo?.assetID == $0
-              } ?? (sourceVideo == nil),
+              sourceVideoMatches,
               imageCount <= referencePlan.budget.imageCount,
               videoCount <= referencePlan.budget.videoCount,
               audioCount <= referencePlan.budget.audioCount,
               geometryCount <= referencePlan.budget.geometryCount,
               totalCount <= referencePlan.budget.totalCount,
-              referencePlan.budget.combinedVideoSeconds.map {
-                  videoSeconds <= $0
-              } ?? true,
-              referencePlan.budget.combinedAudioSeconds.map {
-                  audioSeconds <= $0
-              } ?? true,
+              videoDurationFits,
+              audioDurationFits,
               exactOfferingSupports(
                   referencePlan: referencePlan,
                   requirement: proof.requirement,
@@ -1444,18 +1447,20 @@ enum PipelineProductionRouting {
         audioCount: Int,
         geometryCount: Int
     ) -> Bool {
+        let supportsAspectRatio = requirement.aspectRatio.map {
+            capabilities.aspectRatios.isEmpty
+                || capabilities.aspectRatios.contains($0)
+        } ?? true
+        let supportsResolution = requirement.resolution.map {
+            capabilities.resolutions?.contains($0) ?? true
+        } ?? true
         guard capabilities.contractViolation == nil,
               exactDurationSupports(
                   requirement.duration,
                   capabilities: capabilities.durationCapabilities
               ),
-              requirement.aspectRatio.map {
-                  capabilities.aspectRatios.isEmpty
-                      || capabilities.aspectRatios.contains($0)
-              } ?? true,
-              requirement.resolution.map {
-                  capabilities.resolutions?.contains($0) ?? true
-              } ?? true,
+              supportsAspectRatio,
+              supportsResolution,
               !requirement.requiresOutputAudio || capabilities.supportsNativeAudio,
               sourceCount <= 1,
               startCount <= 1,
