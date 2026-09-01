@@ -432,9 +432,10 @@ struct ProductionOfferingInputPolicyTests {
     @Test("source-video offering enforces its required image at the shared boundary")
     @MainActor
     func sourceVideoRequiredImageIsCentralized() throws {
-        let model = try #require(FalModelRegistry.entries.first {
+        let entry = try #require(FalModelRegistry.entries.first {
             $0.id == "bytedance/seedance-2.5/image-to-video"
-        }).videoModel
+        })
+        let model = try #require(entry.videoModel)
         let policy = ProviderProductionInputPolicyV1(
             requiresSourceVideo: true,
             framesCountTowardImageReferenceLimit: false,

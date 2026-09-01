@@ -846,7 +846,7 @@ enum HistoricalPhaseContractCompatibility {
                 .init(phase: "analysis", kinds: [.song, .lyrics]),
             ],
             detachedGatePhases: ["cover"],
-            missingGatePhases: ["project_init"]
+            missingGatePhases: ["project_init", "sanity"]
         ),
         modernEntry("0.0.16", engineContract: 4, nestedResources: true, hasCoverGate: true),
         modernEntry("0.1.0", engineContract: 5, nestedResources: true, hasCoverGate: true),
