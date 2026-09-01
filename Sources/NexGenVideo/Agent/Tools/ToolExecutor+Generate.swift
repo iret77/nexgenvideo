@@ -1597,9 +1597,11 @@ extension ToolExecutor {
         let credits = CostEstimator.imageCost(
             model: model, resolution: resolution, quality: quality, numImages: 1)
         let originalModelId = model.id
-        let exactImageOptions: (@MainActor () -> [SpendOption])? = isMarble
-            ? nil
-            : {
+        let exactImageOptions: (@MainActor () -> [SpendOption])?
+        if isMarble {
+            exactImageOptions = nil
+        } else {
+            exactImageOptions = {
                 self.availableImageSpendOptions(
                     preferredModelID: model.id,
                     aspectRatio: aspectRatio,
@@ -1608,6 +1610,7 @@ extension ToolExecutor {
                     referenceCount: refs.count
                 )
             }
+        }
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate image",

@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 struct ToolError: LocalizedError, Sendable {
     let message: String
