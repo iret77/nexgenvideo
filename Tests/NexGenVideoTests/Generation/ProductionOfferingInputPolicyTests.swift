@@ -224,9 +224,10 @@ struct ProductionOfferingInputPolicyTests {
     @Test("video submission and dispatch reject a different offering policy")
     @MainActor
     func executionUsesApprovedOfferingPolicy() throws {
-        let model = try #require(FalModelRegistry.entries.first {
+        let entry = try #require(FalModelRegistry.entries.first {
             $0.id == "bytedance/seedance-2.5/image-to-video"
-        }).videoModel
+        })
+        let model = try #require(entry.videoModel)
         let textPolicy = ProviderProductionInputPolicyV1(
             requiresSourceVideo: false,
             framesCountTowardImageReferenceLimit: true,
