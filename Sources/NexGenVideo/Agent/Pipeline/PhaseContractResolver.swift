@@ -344,11 +344,30 @@ enum PhaseContractResolver {
                 "post-pipeline capabilities include a tool without a current-phase host guard"
             )
         }
+        let historicalDetachedGatePhases: Set<String>
+        if historicalCompatibility {
+            let key = HistoricalPhaseContractCompatibility.Key(
+                id: manifest.packID,
+                version: packVersion,
+                engineContract: engineContract
+            )
+            guard let phases = HistoricalPhaseContractCompatibility.detachedGatePhases(for: key) else {
+                throw PhaseContractError.unsupportedHistoricalPack(
+                    id: manifest.packID,
+                    version: packVersion,
+                    engineContract: engineContract
+                )
+            }
+            historicalDetachedGatePhases = phases
+        } else {
+            historicalDetachedGatePhases = []
+        }
         try validateRegistryCoverage(
             manifest: manifest,
             registry: registry,
             allowsHistoricalLineageGap: historicalCompatibility && engineContract == 2,
-            allowsHistoricalArtifactInventoryGap: historicalCompatibility
+            allowsHistoricalArtifactInventoryGap: historicalCompatibility,
+            historicalDetachedGatePhases: historicalDetachedGatePhases
         )
 
         return ResolvedPhaseContract(
@@ -633,7 +652,8 @@ enum PhaseContractResolver {
         manifest: PackPipelineManifest,
         registry: EngineRegistry,
         allowsHistoricalLineageGap: Bool,
-        allowsHistoricalArtifactInventoryGap: Bool
+        allowsHistoricalArtifactInventoryGap: Bool,
+        historicalDetachedGatePhases: Set<String>
     ) throws {
         let phases = Set(manifest.phases.map(\.id))
         let registeredRunnerPhases = Set(registry.phases.keys)
@@ -650,7 +670,8 @@ enum PhaseContractResolver {
         let selectedGatePhases = Set(manifest.phases.compactMap { phase in
             phase.selectors.gate.hasPrefix("registry.") ? phase.id : nil
         })
-        guard registeredGatePhases == selectedGatePhases else {
+        guard registeredGatePhases
+                == selectedGatePhases.union(historicalDetachedGatePhases) else {
             throw PhaseContractError.registryMismatch(
                 "manifest and registry gate selectors differ"
             )
@@ -799,6 +820,7 @@ enum HistoricalPhaseContractCompatibility {
         let engineContract: Int
         let resourceRoot: String
         let intake: [IntakeExpectation]
+        let detachedGatePhases: Set<String>
     }
 
     // Exact published tuples; missing or altered metadata never selects a nearby contract.
@@ -810,14 +832,15 @@ enum HistoricalPhaseContractCompatibility {
             intake: [
                 .init(phase: "project_init", kinds: [.script, .character, .location, .style]),
                 .init(phase: "analysis", kinds: [.song, .lyrics]),
-            ]
+            ],
+            detachedGatePhases: ["cover"]
         ),
-        modernEntry("0.0.16", engineContract: 4, nestedResources: true),
-        modernEntry("0.1.0", engineContract: 5, nestedResources: true),
-        modernEntry("0.2.0", engineContract: 8),
-        modernEntry("0.3.0", engineContract: 8),
-        modernEntry("0.4.0", engineContract: 8),
-        modernEntry("0.4.1", engineContract: 8),
+        modernEntry("0.0.16", engineContract: 4, nestedResources: true, hasCoverGate: true),
+        modernEntry("0.1.0", engineContract: 5, nestedResources: true, hasCoverGate: true),
+        modernEntry("0.2.0", engineContract: 8, hasCoverGate: true),
+        modernEntry("0.3.0", engineContract: 8, hasCoverGate: true),
+        modernEntry("0.4.0", engineContract: 8, hasCoverGate: true),
+        modernEntry("0.4.1", engineContract: 8, hasCoverGate: true),
         modernEntry("0.4.2", engineContract: 8),
         modernEntry("0.4.3", engineContract: 8),
         modernEntry("0.4.4", engineContract: 8),
@@ -841,6 +864,10 @@ enum HistoricalPhaseContractCompatibility {
         entry(for: key)?.intake
     }
 
+    static func detachedGatePhases(for key: Key) -> Set<String>? {
+        entry(for: key)?.detachedGatePhases
+    }
+
     private static func entry(for key: Key) -> Entry? {
         guard key.id == "musicvideo" else { return nil }
         return musicvideoVersions.first {
@@ -851,7 +878,8 @@ enum HistoricalPhaseContractCompatibility {
     private static func modernEntry(
         _ version: String,
         engineContract: Int,
-        nestedResources: Bool = false
+        nestedResources: Bool = false,
+        hasCoverGate: Bool = false
     ) -> Entry {
         Entry(
             version: version,
@@ -862,7 +890,8 @@ enum HistoricalPhaseContractCompatibility {
             intake: [
                 .init(phase: "project_init", kinds: [.song, .lyrics]),
                 .init(phase: "brief", kinds: [.script, .character, .location, .style]),
-            ]
+            ],
+            detachedGatePhases: hasCoverGate ? ["cover"] : []
         )
     }
 
