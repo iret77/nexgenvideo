@@ -2,9 +2,136 @@ import AppKit
 import NexGenEngine
 import SwiftUI
 
+struct AgentTranscriptTurnView: View {
+    let turn: AgentTranscriptTurn
+    let toolResults: [String: ToolRunResult]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            ForEach(turn.items) { item in
+                switch item {
+                case .userIntent(let intent):
+                    AgentUserIntentView(text: intent.text)
+                case .assistantResult(let message):
+                    AgentMessageView(message: message, toolResults: toolResults)
+                case .activity(let activity):
+                    AgentActivityView(activity: activity, toolResults: toolResults)
+                case .receipts(let group):
+                    AgentReceiptGroupView(group: group)
+                case .notice(let notice):
+                    DialogNoticeView(text: notice.text)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct AgentUserIntentView: View {
+    let text: String
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: AppTheme.Spacing.xxl)
+            Text(text)
+                .font(.system(size: AppTheme.FontSize.md))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .lineSpacing(AppTheme.Spacing.xxs)
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.smMd)
+                .background(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                        .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint))
+                )
+                .textSelection(.enabled)
+        }
+    }
+}
+
+private struct AgentReceiptGroupView: View {
+    let group: AgentReceiptGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            if let phase = group.phase {
+                Text(PhaseDisplay.label(phase).uppercased())
+                    .font(.system(
+                        size: AppTheme.FontSize.xxs,
+                        weight: AppTheme.FontWeight.semibold
+                    ))
+                    .tracking(AppTheme.Tracking.wide)
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+            }
+            ForEach(group.receipts) { receipt in
+                AgentReceiptView(receipt: receipt)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct AgentReceiptView: View {
+    let receipt: AgentTranscriptReceipt
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+            Image(systemName: symbol)
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(color)
+                .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
+            Text(summary)
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .accessibilityLabel(summary)
+    }
+
+    private var summary: String {
+        switch receipt.content {
+        case .choice(let record):
+            return record.summary
+        case .workflow(let record):
+            let details = [record.detail] + record.attachmentNames.map { Optional($0) }
+            let suffix = details.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+            return suffix.isEmpty
+                ? "\(record.title) — \(outcomeLabel(record.outcome))"
+                : "\(record.title) — \(outcomeLabel(record.outcome)) · \(suffix)"
+        }
+    }
+
+    private var symbol: String {
+        switch receipt.content {
+        case .choice: "checkmark.circle.fill"
+        case .workflow(let record): record.symbol
+        }
+    }
+
+    private var color: Color {
+        switch receipt.content {
+        case .choice: AppTheme.Text.tertiaryColor
+        case .workflow(let record):
+            record.outcome == .skipped
+                ? AppTheme.Text.tertiaryColor
+                : AppTheme.Status.successColor
+        }
+    }
+
+    private func outcomeLabel(_ outcome: AgentWorkflowRecord.Outcome) -> String {
+        switch outcome {
+        case .attached: "Attached"
+        case .provided: "Provided"
+        case .skipped: "Skipped"
+        case .completed: "Done"
+        }
+    }
+}
+
 struct AgentMessageView: View {
     let message: AgentMessage
     let toolResults: [String: ToolRunResult]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {
@@ -106,7 +233,10 @@ struct AgentMessageView: View {
             }
         }
         .onHover { isHovering = $0 }
-        .animation(.easeOut(duration: AppTheme.Anim.hover), value: isHovering)
+        .animation(
+            reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover),
+            value: isHovering
+        )
     }
 
     /// Blocks from a show_blocks tool-use payload, nil when the JSON or the strict

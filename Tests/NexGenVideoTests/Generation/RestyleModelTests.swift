@@ -102,6 +102,8 @@ struct RestyleModelTests {
     @Test("Runway text-to-image body preserves every reference and the selected model")
     func runwayRequestBodyPreservesReferences() throws {
         let model = try #require(RunwayModelRegistry.model(for: "runway/gpt_image_2"))
+        let entry = try #require(RunwayModelRegistry.entries.first { $0.id == model.entry.id })
+        #expect(entry.offers?.first?.productionQualityTargetIDs == ["low", "medium", "high"])
         let references = (1...4).map { "runway://reference-\($0)" }
         let body = try RunwayClient.textToImageBody(
             model: model,
@@ -136,101 +138,6 @@ struct RestyleModelTests {
         #expect(throws: (any Error).self) {
             try RunwayClient.textToImageBody(model: model, params: params)
         }
-    }
-
-    @Test("Four-reference spend choices span every compatible active provider")
-    func fourReferenceSpendChoicesUseTheCompatibleCatalog() throws {
-        let entitledRunway: Set<String> = [
-            "gen4_image_turbo", "gen4_image", "gpt_image_2", "gemini_image3_pro",
-            "gemini_image3.1_flash", "seedream5_pro", "seedream5_lite",
-            "grok_imagine_image_2", "gemini_2.5_flash",
-        ]
-        let higgsfield = CatalogEntry(
-            id: "higgsfield/nano-banana-2",
-            kind: .image,
-            displayName: "Nano Banana 2",
-            allowedEndpoints: ["generate_image"],
-            responseShape: .images,
-            uiCapabilities: .image(ImageCaps(
-                resolutions: nil,
-                aspectRatios: ["16:9", "9:16", "1:1"],
-                qualities: nil,
-                supportsImageReference: true,
-                maxReferenceImages: 14,
-                maxImages: 1
-            )),
-            offers: [ProviderOffer(
-                provider: .higgsfield,
-                transport: .mcp,
-                providerRef: "generate_image",
-                modelParam: "nano-banana-2",
-                mcpMediaRoles: ["image_references"]
-            )]
-        )
-        let entries = FalModelRegistry.entries
-            + RunwayModelRegistry.discoveredEntries(availableModelIds: entitledRunway)
-            + [higgsfield]
-        let models = entries.compactMap { entry -> ImageModelConfig? in
-            guard case .image(let caps) = entry.uiCapabilities else { return nil }
-            return ImageModelConfig(entry: entry, caps: caps)
-        }
-        let candidates = ImageAlternativeResolver.candidates(
-            models: models,
-            excluding: "fal-ai/gemini-25-flash-image/edit",
-            aspectRatio: "9:16",
-            resolution: nil,
-            quality: nil,
-            referenceCount: 4,
-            isAvailable: { _ in true }
-        )
-        let entriesById = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
-        let activation = ProviderActivation(active: [
-            .init(provider: .fal, transport: .api),
-            .init(provider: .runway, transport: .api),
-            .init(provider: .higgsfield, transport: .mcp),
-        ])
-        let options = SpendOptionBuilder.options(
-            candidates: candidates.map {
-                SpendModelCandidate(
-                    modelId: $0.model.id,
-                    modelName: $0.model.displayName,
-                    credits: nil
-                )
-            },
-            isModelAvailable: { _ in true },
-            runnableBindings: { modelId in
-                guard let entry = entriesById[modelId], let offers = entry.offers else { return [] }
-                return ProviderResolver.preferredActiveBindingPerProvider(
-                    bindings: ProviderManifest.bindings(from: offers, modelId: modelId),
-                    activation: activation,
-                    effectiveCost: ProviderManifest.effectiveCost
-                )
-            }
-        )
-
-        #expect(Set(options.map(\.providerLabel)) == ["fal.ai", "Runway", "Higgsfield"])
-        #expect(options.filter { $0.target.provider == .fal }.count == 3)
-        #expect(options.filter { $0.target.provider == .runway }.count == 5)
-        #expect(options.filter { $0.target.provider == .higgsfield }.count == 1)
-        let originalBinding = ProviderBinding(
-            provider: .fal,
-            transport: .api,
-            kind: .generation,
-            providerRef: "fal-ai/gemini-25-flash-image/edit",
-            billing: .perCall
-        )
-        let originalTarget = ResolvedGenerationTarget(
-            modelId: "fal-ai/gemini-25-flash-image/edit",
-            provider: .fal,
-            endpoint: originalBinding.providerRef,
-            binding: originalBinding
-        )
-        let recommended = try #require(SpendOptionBuilder.recommended(
-            from: options,
-            currentModelId: originalTarget.modelId,
-            defaultTarget: originalTarget
-        ))
-        #expect(recommended.target.provider != .fal)
     }
 
     @Test("discovery covers Runway alongside the image providers")

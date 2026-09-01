@@ -69,6 +69,42 @@ struct PromptCompilerTests {
         ))
     }
 
+    @Test func rememberedPromptTracksTheExactOfferingCompositionMode() async throws {
+        let original = try await PromptCompiler.compile(
+            intent: "apply a flat cel-shaded western treatment",
+            modelId: "shared-video",
+            modality: .video,
+            editor: nil,
+            preserveCompositionOverride: false
+        )
+        #expect(PromptCompiler.rememberedCompositionModeMatches(
+            token: original.token,
+            text: original.text,
+            modelId: "shared-video",
+            preserveComposition: false
+        ))
+        #expect(!PromptCompiler.rememberedCompositionModeMatches(
+            token: original.token,
+            text: original.text,
+            modelId: "shared-video",
+            preserveComposition: true
+        ))
+
+        let adapted = try await PromptCompiler.recompile(
+            token: original.token,
+            text: original.text,
+            for: "shared-video",
+            editor: nil,
+            preserveCompositionOverride: true
+        )
+        #expect(PromptCompiler.rememberedCompositionModeMatches(
+            token: adapted.token,
+            text: adapted.text,
+            modelId: "shared-video",
+            preserveComposition: true
+        ))
+    }
+
     @Test func tokenIsBoundToProjectShotAndPlanFingerprint() {
         let first = PromptBinding(
             projectKey: "/project-a/pipeline",

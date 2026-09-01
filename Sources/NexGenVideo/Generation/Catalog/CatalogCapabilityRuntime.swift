@@ -8,17 +8,9 @@ enum CatalogCapabilityRuntimeError: Error {
 
 enum CatalogCapabilityRuntime {
     private static let loadResult: Result<ModelCapabilityResolver, Error> = Result {
-        guard let directory = Bundle.module.url(
-            forResource: "ModelCapabilities",
-            withExtension: nil
-        ) else {
-            throw CatalogCapabilityRuntimeError.missingResource
-        }
-        let data = try Data(
-            contentsOf: directory.appendingPathComponent("model-capabilities.v1.json")
-        )
+        let corpus = try BundledModelCapabilityCorpus.load()
         return try ModelCapabilityResolver(
-            knowledgeBase: ModelCapabilityKnowledgeBaseCodec.decode(data)
+            knowledgeBase: corpus.productionKnowledgeBase()
         )
     }
 

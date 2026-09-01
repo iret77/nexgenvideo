@@ -1,8 +1,15 @@
 import SwiftUI
 
+struct ChatHistoryCue {
+    let symbol: String
+    let color: Color
+    let label: String
+}
+
 struct ChatHistoryList: View {
     let sessions: [ChatSession]
     let currentId: UUID?
+    let currentCue: ChatHistoryCue?
     let onSelect: (UUID) -> Void
     let onDelete: (UUID) -> Void
 
@@ -38,18 +45,33 @@ struct ChatHistoryList: View {
     private func row(session: ChatSession) -> some View {
         let isCurrent = session.id == currentId
         return HStack(spacing: AppTheme.Spacing.smMd) {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                HStack(spacing: AppTheme.Spacing.xs) {
-                    Text(session.title)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: isCurrent ? .semibold : .regular))
-                        .foregroundStyle(AppTheme.Text.primaryColor)
-                        .lineLimit(1)
+            Button { onSelect(session.id) } label: {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
+                        Text(session.title)
+                            .font(.system(size: AppTheme.FontSize.xs, weight: isCurrent ? .semibold : .regular))
+                            .foregroundStyle(AppTheme.Text.primaryColor)
+                            .lineLimit(1)
+                        Text(Self.formatter.localizedString(for: session.updatedAt, relativeTo: Date()))
+                            .font(.system(size: AppTheme.FontSize.xxs))
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                    }
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    if isCurrent, let currentCue {
+                        Image(systemName: currentCue.symbol)
+                            .foregroundStyle(currentCue.color)
+                            .accessibilityLabel(currentCue.label)
+                    }
                 }
-                Text(Self.formatter.localizedString(for: session.updatedAt, relativeTo: Date()))
-                    .font(.system(size: AppTheme.FontSize.xxs))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
-            Spacer()
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .accessibilityLabel(
+                [session.title, isCurrent ? "Current" : nil, isCurrent ? currentCue?.label : nil]
+                    .compactMap { $0 }
+                    .joined(separator: ", ")
+            )
             if !isCurrent {
                 Button { onDelete(session.id) } label: {
                     Image(systemName: "trash")
@@ -64,7 +86,5 @@ struct ChatHistoryList: View {
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.sm)
         .background(isCurrent ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted) : AppTheme.Background.clearColor)
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect(session.id) }
     }
 }

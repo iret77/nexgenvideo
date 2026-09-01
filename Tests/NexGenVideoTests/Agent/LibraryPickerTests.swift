@@ -186,6 +186,24 @@ struct LibraryPickerTests {
             "already assigned as lyrics"
         ) == true)
     }
+
+    @Test("dialog library results are searchable and height bounded")
+    func dialogLibraryIsBounded() throws {
+        let source = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift"
+        )
+        let start = try #require(source.range(
+            of: "private func libraryPicker"
+        ))
+        let end = try #require(source.range(
+            of: "@MainActor",
+            range: start.upperBound..<source.endIndex
+        ))
+        let picker = source[start.lowerBound..<end.lowerBound]
+
+        #expect(picker.contains("showsSearch: true"))
+        #expect(picker.contains("scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight"))
+    }
 }
 
 @MainActor

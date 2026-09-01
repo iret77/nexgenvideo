@@ -99,6 +99,8 @@ enum ToolName: String, CaseIterable, Sendable {
              .writeProductionDesign, .writeTreatment, .writeStoryboard, .writeBible,
              .writeShotlist, .writePhaseExtension, .cropToAspect, .assembleTimeline, .runSanity:
             return true
+        case .nextRenderShot:
+            return true
         default:
             return false
         }
@@ -303,7 +305,7 @@ enum ToolDefinitions {
                         "type": "array",
                         "minItems": 1,
                         "maxItems": AgentBlocks.maxBlocks,
-                        "description": "1–\(AgentBlocks.maxBlocks) blocks, rendered top to bottom.",
+                        "description": "1–\(AgentBlocks.maxBlocks) blocks in the bounded result grammar: optional headline first, one status, up to two key-value groups, prose, optional callout last.",
                         "items": showBlocksItemSchema,
                     ],
                 ],
@@ -715,9 +717,9 @@ enum ToolDefinitions {
                     "endFrameMediaRef": ["type": "string", "description": "Media asset ID to use as the last frame (supported by some models)"],
                     "sourceVideoMediaRef": ["type": "string", "description": "Media asset ID of a source video. For an AI-enhanced pipeline shot this must be the exact source_video_media_ref returned by next_render_shot; the host rejects substitutions before generation."],
                     "sourceClipId": ["type": "string", "description": "Optional. Clip id (from get_timeline) referencing sourceVideoMediaRef. When set and the clip is trimmed, only the clip's visible range is sent to the model, not the full source — matches the UI's 'Use trimmed portion only'."],
-                    "referenceImageMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of image references. Covers both reference-to-video generation (Seedance, Kling V3/O3 elements, Grok — refer as @Image1/@Element1 in prompt) and the single-image ref used by video-to-video edit models (Kling V3 Motion Control). See list_models maxReferenceImages for per-model cap."],
-                    "referenceVideoMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of video references (Seedance only). Refer to them as @Video1, @Video2. See maxReferenceVideos and maxCombinedVideoRefSeconds."],
-                    "referenceAudioMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of audio references (Seedance only). Refer to them as @Audio1, @Audio2. See maxReferenceAudios and maxCombinedAudioRefSeconds."],
+                    "referenceImageMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of image references. See the selected runnable offering in list_models for its exact maxReferenceImages and input mode."],
+                    "referenceVideoMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of video references. See the selected runnable offering in list_models for its exact maximum and combined-duration limit."],
+                    "referenceAudioMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of audio references. See the selected runnable offering in list_models for its exact maximum and combined-duration limit."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
                 required: ["prompt", "shotId"]
@@ -1194,7 +1196,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .writeShotlist,
-            description: "Write the next validated shotlist version. Use this instead of authoring YAML. Supply only shots and notes: the host derives schema, project, mode, budget and the complete Song block from the approved Brief plus measured analysis. Every generated or AI-enhanced shot requires a production_plan with one primary action, one camera movement, renderability, declared risks, continuity locks, and a rescue cut for yellow/red risk; imported shots omit it. Narrative/hybrid planned shots also require narrative_beat. Approval requires complete song coverage, valid Storyboard section assignment, existing explicit references, and reference mode without keyframes or chaining.",
+            description: "Write the next validated Shot List and its complete format-neutral execution plan as one transaction. Use this instead of authoring YAML or execution JSON. Supply `shots`, matching `execution_shots`, and optional notes: both arrays must have identical order, ids, and source modes. The host derives schema, project, mode, budget, Song, source bindings, visible-entity count, aspect ratio, resolution, keyframe requirements, hashes, and provenance. Generated and AI-enhanced shots carry exact generation requirements; imported shots carry complete directorial execution semantics without a generation requirement. Every reference must already be a real project-local file. If any Shot List, execution-plan, AssetGraph, Demand Set, or lineage check fails, no new version is committed.",
             inputSchema: PipelineArtifactWriteContract.shotlistSchema
         ),
         AgentTool(
@@ -1314,7 +1316,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .nextRenderShot,
-            description: "The next shot artifact to render for `phase`, in shotlist order. Read-only.\n\nFor `frames`, completion is role-aware against the authoritative Frames manifest: a `start_end` shot is returned once with `role=start` and again with `role=end`; missing files or provider-prompt provenance make that role pending again. For video phases, the phase render manifest determines completion per shot. Returns the shot's structured generation context, or `{phase, shot_id:null, done:true}` only when every required artifact exists. A missing, unreadable, or corrupt source artifact is an error. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "The next shot artifact to render for `phase`, in shotlist order. WRITES the exact provider route and ordered ReferencePlan for a pending video shot.\n\nFor `frames`, completion is role-aware against the authoritative Frames manifest: a `start_end` shot is returned once with `role=start` and again with `role=end`; missing files or provider-prompt provenance make that role pending again. For video phases, the phase render manifest plus immutable routing provenance determine completion per shot. Returns the shot's structured generation context, or `{phase, shot_id:null, done:true}` only when every required artifact exists. A missing, unreadable, or corrupt source artifact is an error. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1576,23 +1578,38 @@ enum ToolDefinitions {
                     "type": "string",
                     "enum": ["headline", "text", "status", "keyvalue", "callout"],
                 ],
-                "text": ["type": "string"],
+                "text": [
+                    "type": "string",
+                    "maxLength": AgentBlocks.maxValueLength,
+                ],
                 "symbol": ["type": "string"],
-                "body": ["type": "string"],
+                "body": [
+                    "type": "string",
+                    "maxLength": AgentBlocks.maxBodyLength,
+                ],
                 "badges": [
                     "type": "array",
                     "minItems": 1,
                     "maxItems": AgentBlocks.maxBadges,
                     "items": objectSchema(
                         properties: [
-                            "label": ["type": "string"],
-                            "value": ["type": "string"],
+                            "label": [
+                                "type": "string",
+                                "maxLength": AgentBlocks.maxLabelLength,
+                            ],
+                            "value": [
+                                "type": "string",
+                                "maxLength": AgentBlocks.maxValueLength,
+                            ],
                             "symbol": ["type": "string"],
                         ],
                         required: ["label", "value"]
                     ),
                 ],
-                "title": ["type": "string"],
+                "title": [
+                    "type": "string",
+                    "maxLength": AgentBlocks.maxHeadlineLength,
+                ],
                 "rows": [
                     "type": "array",
                     "minItems": 1,
@@ -1601,7 +1618,10 @@ enum ToolDefinitions {
                         "type": "array",
                         "minItems": 2,
                         "maxItems": 2,
-                        "items": ["type": "string"],
+                        "items": [
+                            "type": "string",
+                            "maxLength": AgentBlocks.maxValueLength,
+                        ],
                     ],
                 ],
                 "tone": [
@@ -1611,7 +1631,7 @@ enum ToolDefinitions {
             ],
             required: ["type"]
         )
-        schema["description"] = "Exactly one supported block shape; the executor enforces its type-specific required fields."
+        schema["description"] = "Exactly one supported block shape; the executor enforces type-specific required fields, length limits, and result ordering."
         return schema
     }
 

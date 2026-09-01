@@ -11,6 +11,33 @@ struct ProviderResolverTests {
         ProviderBinding(provider: p, transport: t, kind: kind, providerRef: ref, billing: billing)
     }
 
+    private func videoCapabilities(
+        policy: ProviderProductionInputPolicyV1,
+        supportsNativeAudio: Bool = false
+    ) -> ResolvedVideoOfferingCapabilitiesV1 {
+        ResolvedVideoOfferingCapabilitiesV1(
+            videoCapabilities: VideoCaps(
+                durations: [5],
+                resolutions: nil,
+                aspectRatios: ["16:9"],
+                supportsFirstFrame: false,
+                supportsLastFrame: false,
+                maxReferenceImages: 0,
+                maxReferenceVideos: 0,
+                maxReferenceAudios: 0,
+                maxTotalReferences: 0,
+                maxCombinedVideoRefSeconds: nil,
+                maxCombinedAudioRefSeconds: nil,
+                framesAndReferencesExclusive: false,
+                referenceTagNoun: "image",
+                requiresSourceVideo: policy.requiresSourceVideo,
+                requiresReferenceImage: false
+            ),
+            inputPolicy: policy,
+            supportsNativeAudio: supportsNativeAudio
+        )
+    }
+
     @Test func cheapestActivatedBindingWins() {
         let cheap = binding(.fal, .api, "fal-ai/seedance", .perCall)
         let pricey = binding(.higgsfield, .api, "hf/seedance", .perCall)
@@ -97,5 +124,224 @@ struct ProviderResolverTests {
         )
 
         #expect(options == [falAPI, runwayMCP])
+    }
+
+    @Test func compatibilityIsAppliedBeforeCollapsingSiblingEndpoints() {
+        let textPolicy = ProviderProductionInputPolicyV1(
+            requiresSourceVideo: false,
+            framesCountTowardImageReferenceLimit: false,
+            framesCountTowardTotalReferenceLimit: false
+        )
+        let editPolicy = ProviderProductionInputPolicyV1(
+            requiresSourceVideo: true,
+            framesCountTowardImageReferenceLimit: false,
+            framesCountTowardTotalReferenceLimit: false
+        )
+        let text = ProviderBinding(
+            provider: .runway,
+            transport: .api,
+            kind: .generation,
+            providerRef: "runway/text",
+            billing: .perCall,
+            costPerCall: 1,
+            productionInputPolicy: textPolicy,
+            resolvedVideoCapabilities: videoCapabilities(policy: textPolicy)
+        )
+        let edit = ProviderBinding(
+            provider: .runway,
+            transport: .api,
+            kind: .generation,
+            providerRef: "runway/edit",
+            billing: .perCall,
+            costPerCall: 2,
+            productionInputPolicy: editPolicy,
+            resolvedVideoCapabilities: videoCapabilities(policy: editPolicy)
+        )
+        let activation = ProviderActivation(active: [
+            .init(provider: .runway, transport: .api),
+        ])
+
+        let options = ProviderResolver.preferredActiveBindingPerProvider(
+            bindings: [text, edit],
+            activation: activation,
+            effectiveCost: ProviderManifest.effectiveCost,
+            isCompatible: {
+                $0.resolvedVideoCapabilities?.inputPolicy.requiresSourceVideo == true
+            }
+        )
+
+        #expect(options == [edit])
+    }
+
+    @Test func exactOutputCompatibilityIsAppliedBeforeCollapsingSiblingEndpoints() {
+        let policy = ProviderProductionInputPolicyV1(
+            requiresSourceVideo: false,
+            framesCountTowardImageReferenceLimit: false,
+            framesCountTowardTotalReferenceLimit: false
+        )
+        let incompatible = ProviderBinding(
+            provider: .runway,
+            transport: .api,
+            kind: .generation,
+            providerRef: "runway/ten-second-portrait",
+            billing: .perCall,
+            costPerCall: 1,
+            productionInputPolicy: policy,
+            resolvedVideoCapabilities: ResolvedVideoOfferingCapabilitiesV1(
+                videoCapabilities: VideoCaps(
+                    durations: [10],
+                    resolutions: ["1080p"],
+                    aspectRatios: ["9:16"],
+                    supportsFirstFrame: false,
+                    supportsLastFrame: false,
+                    maxReferenceImages: 0,
+                    maxReferenceVideos: 0,
+                    maxReferenceAudios: 0,
+                    maxTotalReferences: 0,
+                    maxCombinedVideoRefSeconds: nil,
+                    maxCombinedAudioRefSeconds: nil,
+                    framesAndReferencesExclusive: false,
+                    referenceTagNoun: "image",
+                    requiresSourceVideo: false,
+                    requiresReferenceImage: false
+                ),
+                inputPolicy: policy,
+                supportsNativeAudio: false
+            )
+        )
+        let compatible = ProviderBinding(
+            provider: .runway,
+            transport: .api,
+            kind: .generation,
+            providerRef: "runway/five-second-landscape",
+            billing: .perCall,
+            costPerCall: 2,
+            productionInputPolicy: policy,
+            resolvedVideoCapabilities: videoCapabilities(policy: policy)
+        )
+        let activation = ProviderActivation(active: [
+            .init(provider: .runway, transport: .api),
+        ])
+
+        let options = ProviderResolver.preferredActiveBindingPerProvider(
+            bindings: [incompatible, compatible],
+            activation: activation,
+            effectiveCost: ProviderManifest.effectiveCost,
+            isCompatible: { binding in
+                GenerationService.videoBindingIsCompatible(
+                    binding,
+                    requiringSourceVideo: false,
+                    matchingCapabilities: {
+                        $0.validate(
+                            duration: .seconds(5),
+                            aspectRatio: "16:9",
+                            resolution: nil,
+                            generateAudio: false,
+                            displayName: "Shared model"
+                        ) == nil
+                    }
+                )
+            }
+        )
+
+        #expect(options == [compatible])
+    }
+
+    @Test func nativeAudioCompatibilityIsAppliedBeforeCollapsingSiblingEndpoints() {
+        let policy = ProviderProductionInputPolicyV1(
+            requiresSourceVideo: false,
+            framesCountTowardImageReferenceLimit: false,
+            framesCountTowardTotalReferenceLimit: false
+        )
+        func endpoint(_ reference: String, cost: Double, nativeAudio: Bool) -> ProviderBinding {
+            ProviderBinding(
+                provider: .runway,
+                transport: .api,
+                kind: .generation,
+                providerRef: reference,
+                billing: .perCall,
+                costPerCall: cost,
+                productionInputPolicy: policy,
+                resolvedVideoCapabilities: videoCapabilities(
+                    policy: policy,
+                    supportsNativeAudio: nativeAudio
+                )
+            )
+        }
+        let silent = endpoint("runway/silent", cost: 1, nativeAudio: false)
+        let nativeAudio = endpoint("runway/native-audio", cost: 2, nativeAudio: true)
+        let activation = ProviderActivation(active: [
+            .init(provider: .runway, transport: .api),
+        ])
+
+        let options = ProviderResolver.preferredActiveBindingPerProvider(
+            bindings: [silent, nativeAudio],
+            activation: activation,
+            effectiveCost: ProviderManifest.effectiveCost,
+            isCompatible: { binding in
+                GenerationService.videoBindingIsCompatible(
+                    binding,
+                    requiringSourceVideo: false,
+                    matchingCapabilities: {
+                        $0.validate(
+                            duration: .seconds(5),
+                            aspectRatio: "16:9",
+                            resolution: nil,
+                            generateAudio: true,
+                            displayName: "Shared model"
+                        ) == nil
+                    }
+                )
+            }
+        )
+
+        #expect(options == [nativeAudio])
+    }
+
+    @Test func initialPromptPreservationFailsOpenForDivergentSiblingEndpoints() {
+        let textPolicy = ProviderProductionInputPolicyV1(
+            requiresSourceVideo: false,
+            framesCountTowardImageReferenceLimit: false,
+            framesCountTowardTotalReferenceLimit: false
+        )
+        let editPolicy = ProviderProductionInputPolicyV1(
+            requiresSourceVideo: true,
+            framesCountTowardImageReferenceLimit: false,
+            framesCountTowardTotalReferenceLimit: false
+        )
+        let text = ProviderBinding(
+            provider: .runway,
+            transport: .api,
+            kind: .generation,
+            providerRef: "runway/text",
+            billing: .perCall,
+            productionInputPolicy: textPolicy,
+            resolvedVideoCapabilities: videoCapabilities(policy: textPolicy)
+        )
+        let edit = ProviderBinding(
+            provider: .runway,
+            transport: .mcp,
+            kind: .generation,
+            providerRef: "runway/edit",
+            billing: .subscription,
+            productionInputPolicy: editPolicy,
+            resolvedVideoCapabilities: videoCapabilities(policy: editPolicy)
+        )
+        let both = ProviderActivation(active: [
+            .init(provider: .runway, transport: .api),
+            .init(provider: .runway, transport: .mcp),
+        ])
+        let editOnly = ProviderActivation(active: [
+            .init(provider: .runway, transport: .mcp),
+        ])
+
+        #expect(!PromptCompiler.preservesComposition(
+            bindings: [text, edit],
+            activation: both
+        ))
+        #expect(PromptCompiler.preservesComposition(
+            bindings: [text, edit],
+            activation: editOnly
+        ))
     }
 }

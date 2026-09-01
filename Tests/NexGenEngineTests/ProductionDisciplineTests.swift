@@ -96,8 +96,8 @@ struct ProductionDisciplineTests {
         #expect(try productionRenderabilityCheck(ctx).isEmpty)
     }
 
-    @Test("generated long takes and crowded shots fail deterministically")
-    func renderabilityErrors() throws {
+    @Test("generated duration and visibility limits belong to route capabilities")
+    func routeOwnsGeneratedLimits() throws {
         let shot = try Self.shot(
             end: 13,
             characters: ["a", "b", "c"],
@@ -107,12 +107,11 @@ struct ProductionDisciplineTests {
             shotlist: try Self.shotlist([shot]),
             productionProfileIDs: [.generativeFilm]
         )
-        let codes = Set(try productionRenderabilityCheck(ctx).map(\.code))
-        #expect(codes == ["TOO_MANY_VISIBLE_CHARACTERS", "LONG_TAKE_RISK_UNDECLARED"])
+        #expect(try productionRenderabilityCheck(ctx).isEmpty)
     }
 
-    @Test("ensemble members count toward the generated-shot visibility limit")
-    func ensembleMemberCount() throws {
+    @Test("ensemble size does not impose a global generated-shot limit")
+    func ensembleSizeIsRouteSpecific() throws {
         let ensemble = try Ensemble(
             id: "trio",
             name: "Trio",
@@ -135,10 +134,7 @@ struct ProductionDisciplineTests {
             bible: bible,
             productionProfileIDs: [.generativeFilm]
         )
-        #expect(
-            try productionRenderabilityCheck(ctx).map(\.code)
-                == ["TOO_MANY_VISIBLE_CHARACTERS"]
-        )
+        #expect(try productionRenderabilityCheck(ctx).isEmpty)
     }
 
     @Test("declared long takes carry a rescue cut")

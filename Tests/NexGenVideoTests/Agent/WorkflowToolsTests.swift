@@ -32,12 +32,23 @@ struct WorkflowToolsTests {
     /// Mark the given data root's project package (parent of `pipeline`) active with `pack` by writing
     /// its `ngv.json` — the same file `ProjectPluginSettings` reads. Proves the pack resolves from the
     /// project HOME, not the data root.
-    private func activatePack(_ pack: String, dataRoot: URL) throws {
+    @discardableResult
+    private func activatePack(
+        _ pack: String,
+        dataRoot: URL
+    ) throws -> ProjectPackBinding {
         // Packs load at runtime — register the loadable musicvideo pack (idempotent)
         // the way the host's PluginLoader does, so the workflow tools resolve it.
         PackCatalog.register(MusicvideoPack())
         let home = FrameInventory.projectHome(of: dataRoot)
-        try ProjectPluginSettings.setActivePlugin(pack, projectURL: home)
+        let loaded = try #require(PackCatalog.pack(named: pack))
+        let binding = try #require(ProjectPackBinding(
+            id: pack,
+            version: loaded.version,
+            projectSchema: "\(pack)/2.0.0"
+        ))
+        try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
+        return binding
     }
 
     private func recordAnalysisLineage(dataRoot: URL) throws {
@@ -68,6 +79,172 @@ struct WorkflowToolsTests {
             schema_: shotlistSchemaVersion, mode: .section, project: project, song: song,
             generated: "2026-01-01", generator: generator, shots: [shot]
         )
+    }
+
+    private func prepareNativeSourceExecution(
+        dataRoot: URL,
+        chainedSuccessor: Bool = false
+    ) throws -> [PipelineExecutionShotInput] {
+        let audioURL = dataRoot.appendingPathComponent("audio/song.wav")
+        let analysisURL = dataRoot.appendingPathComponent("analysis/song.json")
+        for (url, bytes) in [
+            (audioURL, Data("audio".utf8)),
+            (analysisURL, Data("{}".utf8)),
+            (
+                PipelineLayout.url(PipelineLayout.productionDesignFile, in: dataRoot),
+                Data("production design".utf8)
+            ),
+            (
+                PipelineLayout.url(PipelineLayout.treatmentCurrentFile, in: dataRoot),
+                Data("treatment".utf8)
+            ),
+            (
+                PipelineLayout.url(PipelineLayout.storyboardCurrentFile, in: dataRoot),
+                Data("storyboard".utf8)
+            ),
+        ] {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try bytes.write(to: url, options: .atomic)
+        }
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        try store.save(
+            try Brief(
+                project: "demo",
+                generated: "2026-08-31T00:00:00Z",
+                mission: .demo,
+                targetPlatform: "Test",
+                aspectRatio: .landscape16x9,
+                projectMode: Mode.section.rawValue,
+                conceptType: .abstract,
+                visualMedium: .animation2d,
+                visualMediumNotes: "Flat 2D animation",
+                figures: .none,
+                lyricsIntegration: .metaphorical
+            ),
+            to: PipelineLayout.briefFile
+        )
+        try store.save(
+            try Bible(
+                project: "demo",
+                generated: "2026-08-31T00:00:00Z",
+                generator: "test"
+            ),
+            to: PipelineLayout.bibleFile
+        )
+        let plan = try ShotProductionPlan(
+            primaryAction: "Hold the composition.",
+            cameraMovement: .static,
+            renderability: .green
+        )
+        let shots = try [
+            Shot(
+                id: "s001",
+                section: "one",
+                timeStart: 0,
+                timeEnd: 4,
+                durationS: 4,
+                type: .performance,
+                description: "First shot",
+                visualPrompt: "First frame",
+                mood: "calm",
+                keyframeStrategy: .none,
+                productionPlan: plan
+            ),
+            Shot(
+                id: "s002",
+                section: "two",
+                timeStart: 4,
+                timeEnd: 8,
+                durationS: 4,
+                type: .performance,
+                description: "Second shot",
+                visualPrompt: "Second frame",
+                mood: "calm",
+                keyframeStrategy: .none,
+                chainWithPreviousEnd: chainedSuccessor,
+                productionPlan: plan
+            ),
+        ]
+        let shotlist = try Shotlist(
+            schema_: shotlistSchemaVersion,
+            mode: .section,
+            project: "demo",
+            song: try Song(
+                title: "Song",
+                audioPath: "audio/song.wav",
+                analysisPath: "analysis/song.json",
+                bpm: 120,
+                durationS: 8
+            ),
+            generated: "2026-08-31T00:00:00Z",
+            generator: "test",
+            shots: shots
+        )
+        let objects: [[String: Any]] = shots.map { shot in
+            var coreInputs: [String: Any] = [:]
+            var modeIDs = ["text-to-video"]
+            if shot.chainWithPreviousEnd {
+                coreInputs["predecessor_last_frame_mode_id"] = "image-to-video"
+                modeIDs = ["image-to-video"]
+            }
+            return [
+                "id": shot.id,
+                "source_mode": ExecutionSourceModeV1.generated.rawValue,
+                "start_state": [
+                    "summary": "The shot begins.",
+                    "entity_state_ids": [],
+                ],
+                "end_state": [
+                    "summary": "The shot ends.",
+                    "entity_state_ids": [],
+                ],
+                "blocking": [],
+                "timed_action_beats": [],
+                "acceptance": [[
+                    "id": "accept-\(shot.id)",
+                    "requirement": "Keep the composition intact.",
+                    "severity": "required",
+                ]],
+                "generation_requirement": [
+                    "modality_id": CapabilityModalityV1.video.rawValue,
+                    "mode_ids": modeIDs,
+                    "duration": ["allows_automatic": true],
+                    "requires_output_audio": false,
+                ],
+                "core_inputs": coreInputs,
+                "reference_demands": [],
+            ]
+        }
+        let inputs = try JSONDecoder().decode(
+            [PipelineExecutionShotInput].self,
+            from: JSONSerialization.data(withJSONObject: objects, options: [.sortedKeys])
+        )
+        _ = try PipelineShotlistWriter.write(
+            shotlist,
+            executionInputs: inputs,
+            dataRoot: dataRoot,
+            declaredPack: nil
+        )
+        return inputs
+    }
+
+    private func recursiveFileBytes(in root: URL) throws -> [String: Data] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ) else { return [:] }
+        var result: [String: Data] = [:]
+        for case let url as URL in enumerator {
+            guard try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                continue
+            }
+            let path = String(url.path.dropFirst(root.path.count + 1))
+            result[path] = try Data(contentsOf: url)
+        }
+        return result
     }
 
     private func addGeneratedVideo(
@@ -633,7 +810,7 @@ struct WorkflowToolsTests {
     func analysisGateHardBlocked() async throws {
         let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
         try FileManager.default.createDirectory(
             at: dataRoot.appendingPathComponent("audio"),
             withIntermediateDirectories: true
@@ -658,6 +835,7 @@ struct WorkflowToolsTests {
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "analysis",
             declaredPack: "musicvideo",
+            declaredBinding: binding,
             executionCoordinator: h.editor.pipelinePhaseRunCoordinator
         ).approval
         #expect(!nativeReadiness.isReady)
@@ -667,6 +845,7 @@ struct WorkflowToolsTests {
                 projectDir: FrameInventory.projectHome(of: dataRoot),
                 phase: "analysis",
                 declaredPack: "musicvideo",
+                declaredBinding: binding,
                 executionCoordinator: h.editor.pipelinePhaseRunCoordinator
             )
             Issue.record("Native approval ignored its blocked readiness")
@@ -717,6 +896,7 @@ struct WorkflowToolsTests {
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "analysis",
             declaredPack: "musicvideo",
+            declaredBinding: binding,
             executionCoordinator: h.editor.pipelinePhaseRunCoordinator
         ).approval
         #expect(ready.isReady)
@@ -727,7 +907,7 @@ struct WorkflowToolsTests {
     func gateMutationBlockedDuringPhaseRun() async throws {
         let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&gates, phase: "project_init")
@@ -757,7 +937,8 @@ struct WorkflowToolsTests {
         try await h.editor.pipelineAgentHarness.recordPhaseMutation(
             phase: "analysis",
             dataRoot: dataRoot,
-            declaredPack: "musicvideo"
+            declaredPack: "musicvideo",
+            declaredBinding: binding
         )
         let latch = PhaseRunnerLatch()
         async let phaseRun = h.editor.pipelinePhaseRunCoordinator.run(
@@ -782,10 +963,32 @@ struct WorkflowToolsTests {
         )
         #expect(h.editor.agentService.pendingGateApproval == nil)
 
+        let stateBlocked = await h.runRaw("set_gate_state", args: [
+            "project_dir": dataRoot.path,
+            "phase": "analysis",
+            "state": "needs_revision",
+        ])
+        #expect(stateBlocked.isError)
+        #expect(
+            ToolHarness.textOf(stateBlocked)
+                .contains("while analysis is running")
+        )
+
+        let rewindBlocked = await h.runRaw("rewind", args: [
+            "project_dir": dataRoot.path,
+            "target_phase": "project_init",
+        ])
+        #expect(rewindBlocked.isError)
+        #expect(
+            ToolHarness.textOf(rewindBlocked)
+                .contains("while analysis is running")
+        )
+
         let nativeReadiness = await NativeGateWriter.controlReadiness(
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "analysis",
             declaredPack: "musicvideo",
+            declaredBinding: binding,
             executionCoordinator: h.editor.pipelinePhaseRunCoordinator
         ).approval
         #expect(!nativeReadiness.isReady)
@@ -821,6 +1024,7 @@ struct WorkflowToolsTests {
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "analysis",
             declaredPack: "musicvideo",
+            declaredBinding: binding,
             executionCoordinator: h.editor.pipelinePhaseRunCoordinator
         )
         #expect(settledReadiness.mutations.isReady)
@@ -856,7 +1060,6 @@ struct WorkflowToolsTests {
             .appendingPathComponent("brief-intake-\(UUID().uuidString)", isDirectory: true)
         let package = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
         try Fixtures.prepareProjectPackage(at: package)
-        try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
         PackCatalog.register(MusicvideoPack())
         let packageDataRoot = try ProjectScaffold.initProject(
             home: package,
@@ -864,6 +1067,7 @@ struct WorkflowToolsTests {
             mode: .beat,
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
+        _ = try activatePack("musicvideo", dataRoot: packageDataRoot)
 
         let store = YAMLArtifactStore(dataRoot: packageDataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
@@ -1075,6 +1279,98 @@ struct WorkflowToolsTests {
         #expect(mismatch.isError)
         #expect(ToolHarness.textOf(mismatch).contains("musicvideo"))
         #expect(ToolHarness.textOf(mismatch).contains("other"))
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+    }
+
+    @Test("same-ID pack schema changes block agent and native gate mutations byte-exactly")
+    func gateMutationsRejectSameIDPackSchemaChange() async throws {
+        let (h, savedDataRoot, cleanup) = try scaffold()
+        let trusted = try activatePack("musicvideo", dataRoot: savedDataRoot)
+        let package = FrameInventory.projectHome(of: savedDataRoot)
+        try Fixtures.prepareProjectPackage(at: package)
+        h.editor.projectURL = package
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(h.editor.workingRoot)
+        let workingDataRoot = try #require(
+            DataRootResolver.dataRoot(of: workingHome)
+        )
+        let gatesURL = PipelineLayout.url(
+            PipelineLayout.gatesFile,
+            in: workingDataRoot
+        )
+        let gatesBefore = try Data(contentsOf: gatesURL)
+        let sibling = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: trusted.version,
+            projectSchema: "musicvideo/2.0.1"
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            sibling,
+            projectURL: workingHome
+        )
+
+        let agentResult = await h.runRaw("rewind", args: [
+            "project_dir": workingDataRoot.path,
+            "target_phase": "project_init",
+        ])
+        #expect(agentResult.isError)
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+
+        #expect(throws: NativeGateWriter.WriteError.self) {
+            try NativeGateWriter.rewind(
+                projectDir: workingHome,
+                targetPhase: "project_init",
+                declaredPack: trusted.id,
+                declaredBinding: trusted,
+                executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+            )
+        }
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+    }
+
+    @Test("gate approval rechecks the exact pack binding before the click writes")
+    func deferredGateApprovalRejectsBindingChange() async throws {
+        let (h, savedDataRoot, cleanup) = try scaffold()
+        let trusted = try activatePack("musicvideo", dataRoot: savedDataRoot)
+        let package = FrameInventory.projectHome(of: savedDataRoot)
+        try Fixtures.prepareProjectPackage(at: package)
+        h.editor.projectURL = package
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(h.editor.workingRoot)
+        let workingDataRoot = try #require(
+            DataRootResolver.dataRoot(of: workingHome)
+        )
+        let gatesURL = PipelineLayout.url(
+            PipelineLayout.gatesFile,
+            in: workingDataRoot
+        )
+        let gatesBefore = try Data(contentsOf: gatesURL)
+        let pending = await h.runRaw("approve_gate", args: [
+            "project_dir": workingDataRoot.path,
+            "phase": "project_init",
+        ])
+        #expect(!pending.isError)
+        #expect(h.editor.agentService.pendingGateApproval?.declaredBinding == trusted)
+
+        let sibling = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: "0.4.5",
+            projectSchema: trusted.projectSchema
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            sibling,
+            projectURL: workingHome
+        )
+        let result = try #require(
+            await h.editor.agentService.resolveGate(.approved)
+        )
+        #expect(result.isError)
         #expect(try Data(contentsOf: gatesURL) == gatesBefore)
     }
 
@@ -1924,15 +2220,8 @@ struct WorkflowToolsTests {
         let workingDataRoot = try #require(
             DataRootResolver.dataRoot(of: workingHome)
         )
-        let plan = try ShotProductionPlan(
-            primaryAction: "The subject crosses the doorway.",
-            cameraMovement: .static,
-            renderability: .green,
-            continuityLocks: []
-        )
-        _ = try saveShotlist(
-            try minimalShotlist(productionPlan: plan),
-            to: workingDataRoot
+        let initialInputs = try prepareNativeSourceExecution(
+            dataRoot: workingDataRoot
         )
         let store = YAMLArtifactStore(dataRoot: workingDataRoot)
         var gates = try store.load(
@@ -1943,6 +2232,7 @@ struct WorkflowToolsTests {
             GatesOperations.approve(&gates, phase: phase)
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
+        let unchangedInput = initialInputs[1]
 
         let changed = await harness.editor.setShotSourceMode(
             shotId: "s001",
@@ -1968,13 +2258,98 @@ struct WorkflowToolsTests {
             )
         )
         #expect(latestShotlistVersion(dataRoot: workingDataRoot) == 2)
+        try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(
+            dataRoot: workingDataRoot
+        )
+        let (executionPlan, context) = try PipelineExecutionPlanWriter.load(
+            dataRoot: workingDataRoot
+        )
+        #expect(executionPlan.shots.map(\.sourceMode) == [.imported, .generated])
+        #expect(context.artifacts.contains {
+            $0.role == PipelineExecutionShotInputStore.artifactRole
+                && $0.path == PipelineLayout.executionShotInputsFile
+        })
+        let storedInputs = try PipelineExecutionShotInputStore.loadCurrent(
+            dataRoot: workingDataRoot
+        ).executionShots
+        #expect(storedInputs[0].sourceMode == .imported)
+        #expect(storedInputs[1] == unchangedInput)
+        let productionInputs = try PipelineProductionInputsWriter.load(
+            shotID: "s002",
+            dataRoot: workingDataRoot
+        )
+        #expect(productionInputs.1.shotID == "s002")
+        #expect(productionInputs.2.shotID == "s002")
+        #expect(!FileManager.default.fileExists(
+            atPath: PipelineLayout.url(
+                PipelineLayout.referenceDemandSetFile(shotID: "s001"),
+                in: workingDataRoot
+            ).path
+        ))
+        #expect(!FileManager.default.fileExists(
+            atPath: PipelineLayout.url(
+                PipelineLayout.productionInputTemplateFile(shotID: "s001"),
+                in: workingDataRoot
+            ).path
+        ))
 
+        let beforeFailure = try recursiveFileBytes(in: workingHome)
         let invalidEnhancement = await harness.editor.setShotSourceMode(
             shotId: "s001",
             to: .aiEnhanced
         )
         #expect(!invalidEnhancement)
         #expect(latestShotlistVersion(dataRoot: workingDataRoot) == 2)
+        #expect(try recursiveFileBytes(in: workingHome) == beforeFailure)
+    }
+
+    @Test("native source edit preserves a successor's exact chain binding")
+    func nativeShotSourceEditRejectsChainRetargeting() async throws {
+        let cleanup = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "shot-source-chain-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let package = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
+        try Fixtures.prepareProjectPackage(at: package)
+        let packageDataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "demo",
+            mode: .beat
+        )
+        _ = try prepareNativeSourceExecution(
+            dataRoot: packageDataRoot,
+            chainedSuccessor: true
+        )
+
+        let harness = ToolHarness()
+        harness.editor.projectURL = package
+        defer {
+            harness.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(harness.editor.workingRoot)
+        let workingDataRoot = try #require(DataRootResolver.dataRoot(of: workingHome))
+        let store = YAMLArtifactStore(dataRoot: workingDataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in coreGatePhases.prefix(while: { $0 != "shotlist" }) {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let before = try recursiveFileBytes(in: workingHome)
+
+        let changed = await harness.editor.setShotSourceMode(
+            shotId: "s001",
+            to: .imported
+        )
+
+        #expect(!changed)
+        #expect(try recursiveFileBytes(in: workingHome) == before)
+        try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(
+            dataRoot: workingDataRoot
+        )
+        let shotlist = try #require(try loadShotlist(dataRoot: workingDataRoot))
+        #expect(ChainContinuity.chainPredecessor(shotlist, shotId: "s002") == "s001")
     }
 
     @Test("shotlist writes fail closed when declared pack state is unreadable")
@@ -1991,6 +2366,32 @@ struct WorkflowToolsTests {
                 try minimalShotlist(),
                 dataRoot: dataRoot,
                 declaredPack: "musicvideo"
+            )
+        }
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
+    }
+
+    @Test("shotlist writer rejects a same-ID version change before writing")
+    func shotlistWriteRejectsSameIDPackVersionChange() throws {
+        let (_, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let trusted = try activatePack("musicvideo", dataRoot: dataRoot)
+        let sibling = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: "0.4.5",
+            projectSchema: trusted.projectSchema
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            sibling,
+            projectURL: FrameInventory.projectHome(of: dataRoot)
+        )
+
+        #expect(throws: ToolError.self) {
+            _ = try PipelineShotlistWriter.write(
+                try minimalShotlist(),
+                dataRoot: dataRoot,
+                declaredPack: trusted.id,
+                declaredBinding: trusted
             )
         }
         #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
@@ -3213,7 +3614,7 @@ struct WorkflowToolsTests {
         )
 
         #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("artifact-write contract"))
+        #expect(ToolHarness.textOf(result).contains("not pinned to an exact version"))
         #expect(try Data(contentsOf: analysisURL) == before)
     }
 
@@ -3234,6 +3635,29 @@ struct WorkflowToolsTests {
         #expect(result.isError)
         #expect(ToolHarness.textOf(result).contains("one_song_contract"))
         #expect(ToolHarness.textOf(result).contains("audio/"))
+    }
+
+    @Test("run_phase rejects a mismatched exact pack before deterministic work")
+    func runPhaseRejectsMismatchedPackVersion() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let trusted = try activatePack("musicvideo", dataRoot: dataRoot)
+        let sibling = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: "0.4.5",
+            projectSchema: trusted.projectSchema
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            sibling,
+            projectURL: FrameInventory.projectHome(of: dataRoot)
+        )
+
+        let result = await h.runRaw(
+            "run_phase",
+            args: ["project_dir": dataRoot.path, "phase": "analysis"]
+        )
+        #expect(result.isError)
+        #expect(!ToolHarness.textOf(result).contains("one_song_contract"))
     }
 
     // MARK: - attach_song

@@ -198,20 +198,27 @@ struct GenerationView: View {
     private var isPromptEmpty: Bool { trimmedPrompt.isEmpty }
 
     private var canSubmit: Bool {
-        if selectedType == .video && videoModel.requiresSourceVideo {
+        if selectedType == .video && selectedVideoCapabilities == nil { return false }
+        if selectedType == .video && selectedVideoInputPolicy?.requiresSourceVideo == true {
             guard sourceVideo != nil else { return false }
-            if videoModel.requiresReferenceImage && imageReferences.isEmpty { return false }
-            if !videoModel.supportsReferences && isPromptEmpty { return false }
+            if selectedVideoCapabilities?.requiresReferenceImage == true,
+               imageReferences.isEmpty { return false }
+            if selectedVideoCapabilities?.supportsReferences == false,
+               isPromptEmpty { return false }
             return true
         }
-        if selectedType == .video && videoModel.framesAndReferencesExclusive
+        if selectedType == .video
+            && selectedVideoCapabilities?.framesAndReferencesExclusive == true
             && framesRefsMode == .reference && refImages.isEmpty
             && refVideos.isEmpty && refAudios.isEmpty {
             return false
         }
-        if selectedType == .video && videoModel.requiresReferenceImage {
-            if videoModel.supportsFirstFrame, firstFrame == nil { return false }
-            if !videoModel.supportsFirstFrame, refImages.isEmpty { return false }
+        if selectedType == .video,
+           selectedVideoCapabilities?.requiresReferenceImage == true {
+            if selectedVideoCapabilities?.supportsFirstFrame == true,
+               firstFrame == nil { return false }
+            if selectedVideoCapabilities?.supportsFirstFrame == false,
+               refImages.isEmpty { return false }
         }
         if selectedType == .audio {
             if audioModel.inputs.contains(.video) {
@@ -228,41 +235,62 @@ struct GenerationView: View {
     }
 
     private var allRefs: [MediaAsset] { refImages + refVideos + refAudios }
+    private var selectedVideoCapabilities: ResolvedVideoOfferingCapabilitiesV1? {
+        guard selectedType == .video else { return nil }
+        return videoTarget(for: videoModel).binding?.resolvedVideoCapabilities
+    }
+    private var selectedVideoInputPolicy: ProviderProductionInputPolicyV1? {
+        selectedVideoCapabilities?.inputPolicy
+    }
+
+    private func videoTarget(for model: VideoModelConfig) -> ResolvedGenerationTarget {
+        GenerationService.dispatchTarget(
+            modelId: model.id,
+            requiringSourceVideo: sourceVideo != nil
+        )
+    }
     private var selectedFrameCount: Int {
         return videoInputAssets(for: videoModel).frames.count
     }
     private var framesInImageLimit: Int {
-        videoModel.framesCountTowardImageReferenceLimit ? selectedFrameCount : 0
+        selectedVideoInputPolicy?.framesCountTowardImageReferenceLimit == true
+            ? selectedFrameCount : 0
     }
     private var framesInTotalLimit: Int {
-        videoModel.framesCountTowardTotalReferenceLimit ? selectedFrameCount : 0
+        selectedVideoInputPolicy?.framesCountTowardTotalReferenceLimit == true
+            ? selectedFrameCount : 0
     }
     private var totalRefCount: Int { allRefs.count + framesInTotalLimit }
 
     private var isRefCapReached: Bool {
-        if let total = videoModel.maxTotalReferences, totalRefCount >= total { return true }
-        let imageLimit = videoModel.maxReferenceImages(
+        guard let capabilities = selectedVideoCapabilities else { return true }
+        if let total = capabilities.maxTotalReferences, totalRefCount >= total { return true }
+        let imageLimit = capabilities.maxReferenceImages(
             hasVideoReference: !refVideos.isEmpty
         )
         let imgFull = imageLimit == 0 || refImages.count + framesInImageLimit >= imageLimit
-        let vidFull = videoModel.maxReferenceVideos == 0 || refVideos.count >= videoModel.maxReferenceVideos
-        let audFull = videoModel.maxReferenceAudios == 0 || refAudios.count >= videoModel.maxReferenceAudios
+        let vidFull = capabilities.maxReferenceVideos == 0
+            || refVideos.count >= capabilities.maxReferenceVideos
+        let audFull = capabilities.maxReferenceAudios == 0
+            || refAudios.count >= capabilities.maxReferenceAudios
         return imgFull && vidFull && audFull
     }
 
     private var showsRefSections: Bool {
-        guard selectedType == .video, videoModel.supportsReferences else { return false }
-        if videoModel.requiresSourceVideo { return false }
-        if videoModel.framesAndReferencesExclusive {
+        guard selectedType == .video,
+              selectedVideoInputPolicy?.requiresSourceVideo == false,
+              selectedVideoCapabilities?.supportsReferences == true else { return false }
+        if selectedVideoCapabilities?.framesAndReferencesExclusive == true {
             return framesRefsMode == .reference
         }
         return true
     }
 
     private var showsFrameStrip: Bool {
-        guard selectedType == .video, videoModel.supportsFirstFrame else { return false }
-        if videoModel.requiresSourceVideo { return false }
-        if videoModel.framesAndReferencesExclusive {
+        guard selectedType == .video,
+              selectedVideoInputPolicy?.requiresSourceVideo == false,
+              selectedVideoCapabilities?.supportsFirstFrame == true else { return false }
+        if selectedVideoCapabilities?.framesAndReferencesExclusive == true {
             return framesRefsMode == .firstLast
         }
         return true
@@ -270,7 +298,11 @@ struct GenerationView: View {
 
     private var hasAnySettings: Bool {
         switch selectedType {
-        case .video: return !videoModel.durationOptions.isEmpty || !videoModel.aspectRatios.isEmpty || videoModel.resolutions != nil || videoModel.audioDiscountRate != nil
+        case .video:
+            return !(selectedVideoCapabilities?.durationCapabilities.options ?? []).isEmpty
+                || !(selectedVideoCapabilities?.aspectRatios ?? []).isEmpty
+                || selectedVideoCapabilities?.resolutions != nil
+                || videoModel.audioDiscountRate != nil
         case .image: return !imageModel.aspectRatios.isEmpty || imageModel.resolutions != nil || imageModel.qualities != nil || imageModel.maxImages > 1
         case .audio: return audioModel.supportsInstrumental || audioModel.durations != nil
         }
@@ -294,7 +326,7 @@ struct GenerationView: View {
 
     private var currentAspectRatios: [String] {
         switch selectedType {
-        case .video: videoModel.aspectRatios
+        case .video: selectedVideoCapabilities?.aspectRatios ?? []
         case .image: imageModel.aspectRatios
         case .audio: []
         }
@@ -302,7 +334,7 @@ struct GenerationView: View {
 
     private var currentResolutions: [String]? {
         switch selectedType {
-        case .video: videoModel.resolutions
+        case .video: selectedVideoCapabilities?.resolutions
         case .image: imageModel.resolutions
         case .audio: nil
         }
@@ -321,11 +353,14 @@ struct GenerationView: View {
     }
 
     private var supportsAudioToggle: Bool {
-        selectedType == .video && videoModel.audioDiscountRate != nil
+        selectedType == .video
+            && selectedVideoCapabilities?.supportsNativeAudio == true
+            && videoModel.audioDiscountRate != nil
     }
 
     private var effectiveGenerateAudio: Bool {
-        supportsAudioToggle ? generateAudio : true
+        guard selectedVideoCapabilities?.supportsNativeAudio == true else { return false }
+        return supportsAudioToggle ? generateAudio : true
     }
 
     /// Duration the cost estimate charges on for audio — video span for scoring
@@ -374,8 +409,9 @@ struct GenerationView: View {
     }
 
     private var effectiveVideoSeconds: Int {
-        guard videoModel.requiresSourceVideo else {
-            return selectedDuration.seconds ?? videoModel.durationCapabilities.maximumSeconds ?? 0
+        guard selectedVideoInputPolicy?.requiresSourceVideo == true else {
+            return selectedDuration.seconds
+                ?? selectedVideoCapabilities?.durationCapabilities.maximumSeconds ?? 0
         }
         if let trim = editor.pendingEditTrimmedSource,
            let sv = sourceVideo,
@@ -653,7 +689,7 @@ struct GenerationView: View {
             guard !isPopulatingPanel else { return }
             if selectedType == .video {
                 resetSettings()
-                if !videoModel.requiresSourceVideo {
+                if selectedVideoInputPolicy?.requiresSourceVideo != true {
                     sourceVideo = nil
                 }
                 framesRefsMode = .firstLast
@@ -674,9 +710,9 @@ struct GenerationView: View {
 
     @ViewBuilder
     private var referencesContent: some View {
-        if selectedType == .video && videoModel.requiresSourceVideo {
+        if selectedType == .video && selectedVideoInputPolicy?.requiresSourceVideo == true {
             editVideoStrip
-        } else if selectedType == .video {
+        } else if selectedType == .video && selectedVideoInputPolicy != nil {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 if showsFrameStrip { videoFrameStrip }
                 if showsRefSections { videoReferenceSections }
@@ -954,7 +990,7 @@ struct GenerationView: View {
         HStack(spacing: AppTheme.Spacing.xs) {
             frameSlot(label: "First Frame", asset: firstFrame, isTargeted: $firstFrameTargeted,
                       onDrop: { firstFrame = $0 }, onClear: { firstFrame = nil })
-            if videoModel.supportsLastFrame {
+            if selectedVideoCapabilities?.supportsLastFrame == true {
                 frameSlot(label: "Last Frame", asset: lastFrame, isTargeted: $lastFrameTargeted,
                           onDrop: { lastFrame = $0 }, onClear: { lastFrame = nil })
             }
@@ -1046,11 +1082,12 @@ struct GenerationView: View {
     }
 
     private func refCap(for type: ClipType) -> Int {
+        guard let capabilities = selectedVideoCapabilities else { return 0 }
         switch type {
         case .image:
-            videoModel.maxReferenceImages(hasVideoReference: !refVideos.isEmpty)
-        case .video: videoModel.maxReferenceVideos
-        case .audio: videoModel.maxReferenceAudios
+            capabilities.maxReferenceImages(hasVideoReference: !refVideos.isEmpty)
+        case .video: capabilities.maxReferenceVideos
+        case .audio: capabilities.maxReferenceAudios
         case .text, .lottie, .document: 0
         }
     }
@@ -1083,7 +1120,15 @@ struct GenerationView: View {
             flashDropError("\(asset.name) is already a reference")
             return
         }
-        var selection = videoInputAssets(for: videoModel)
+        guard let capabilities = videoTarget(for: videoModel).binding?
+                .resolvedVideoCapabilities else {
+            flashDropError("No runnable provider endpoint has a verified video input contract.")
+            return
+        }
+        var selection = videoInputAssets(
+            for: videoModel,
+            offeringCapabilities: capabilities
+        )
         switch asset.type {
         case .image: selection.imageRefs.append(asset)
         case .video: selection.videoRefs.append(asset)
@@ -1093,7 +1138,10 @@ struct GenerationView: View {
             flashDropError("\(videoModel.displayName) only accepts \(supported) references.")
             return
         }
-        if let err = selection.validate(for: videoModel) {
+        if let err = selection.validate(
+            for: videoModel,
+            offeringCapabilities: capabilities
+        ) {
             flashDropError(err)
             return
         }
@@ -1151,7 +1199,7 @@ struct GenerationView: View {
 
     private var refCounterLabel: String {
         let total = totalRefCount
-        if let cap = videoModel.maxTotalReferences {
+        if let cap = selectedVideoCapabilities?.maxTotalReferences {
             let shortLabel: (ClipType) -> String = { switch $0 { case .image: "img"; case .video: "vid"; case .audio: "aud"; case .text: "txt"; case .lottie: "lot"; case .document: "doc" } }
             var parts = ClipType.allCases
                 .filter { refCap(for: $0) > 0 }
@@ -1320,7 +1368,7 @@ struct GenerationView: View {
                 onDrop: { sourceVideo = $0 },
                 onClear: { sourceVideo = nil }
             )
-            if videoModel.supportsReferences {
+            if selectedVideoCapabilities?.supportsReferences == true {
                 frameSlot(
                     label: "Reference Image",
                     asset: imageReferences.first,
@@ -1388,7 +1436,8 @@ struct GenerationView: View {
     // MARK: - Type picker
 
     private var showsFramesRefsPicker: Bool {
-        selectedType == .video && videoModel.framesAndReferencesExclusive
+        selectedType == .video
+            && selectedVideoCapabilities?.framesAndReferencesExclusive == true
     }
 
     private var typeTabs: some View {
@@ -1502,10 +1551,13 @@ struct GenerationView: View {
 
     private var settingsPopoverContent: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            if selectedType == .video, !videoModel.durationOptions.isEmpty {
+            if selectedType == .video,
+               let durationOptions = selectedVideoCapabilities?
+                    .durationCapabilities.options,
+               !durationOptions.isEmpty {
                 settingsPicker(
                     "Duration", selection: $selectedDuration,
-                    options: videoModel.durationOptions
+                    options: durationOptions
                 ) { $0.displayLabel }
             }
             if selectedType == .audio, let durations = audioModel.durations {
@@ -1585,10 +1637,25 @@ struct GenerationView: View {
     // MARK: - Actions
 
     private func videoInputAssets(for model: VideoModelConfig) -> VideoGenerationSubmission.InputAssets {
-        if model.requiresSourceVideo {
+        guard let capabilities = videoTarget(for: model).binding?
+                .resolvedVideoCapabilities else {
+            return VideoGenerationSubmission.InputAssets()
+        }
+        return videoInputAssets(for: model, offeringCapabilities: capabilities)
+    }
+
+    private func videoInputAssets(
+        for model: VideoModelConfig,
+        offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1
+    ) -> VideoGenerationSubmission.InputAssets {
+        let inputPolicy = offeringCapabilities.inputPolicy
+        if inputPolicy.requiresSourceVideo {
             return VideoGenerationSubmission.InputAssets(
                 sourceVideo: sourceVideo,
-                imageRefs: model.supportsReferences ? Array(imageReferences.prefix(1)) : []
+                imageRefs: offeringCapabilities.supportsReferences
+                    ? Array(imageReferences.prefix(
+                        offeringCapabilities.maxReferenceImages
+                    )) : []
             )
         }
 
@@ -1608,18 +1675,37 @@ struct GenerationView: View {
     private func preflightValidation(audioDuration: Int) -> String? {
         switch selectedType {
         case .video:
-            let inputAssets = videoInputAssets(for: videoModel)
+            guard let capabilities = videoTarget(for: videoModel)
+                    .binding?.resolvedVideoCapabilities else {
+                return "No runnable provider endpoint has a verified video input contract."
+            }
+            let inputPolicy = capabilities.inputPolicy
+            let inputAssets = videoInputAssets(
+                for: videoModel,
+                offeringCapabilities: capabilities
+            )
             let modelError: String?
-            if videoModel.requiresSourceVideo {
-                modelError = videoModel.validate(duration: 0, aspectRatio: "", resolution: nil)
+            if inputPolicy.requiresSourceVideo {
+                modelError = capabilities.validate(
+                    duration: .seconds(effectiveVideoSeconds),
+                    aspectRatio: selectedAspectRatio,
+                    resolution: effectiveResolution,
+                    generateAudio: effectiveGenerateAudio,
+                    displayName: videoModel.displayName
+                )
             } else {
-                modelError = videoModel.validate(
+                modelError = capabilities.validate(
                     duration: selectedDuration,
                     aspectRatio: selectedAspectRatio,
-                    resolution: effectiveResolution
+                    resolution: effectiveResolution,
+                    generateAudio: effectiveGenerateAudio,
+                    displayName: videoModel.displayName
                 )
             }
-            return modelError ?? inputAssets.validate(for: videoModel)
+            return modelError ?? inputAssets.validate(
+                for: videoModel,
+                offeringCapabilities: capabilities
+            )
         case .image:
             let quality = imageModel.qualities != nil ? selectedQuality : nil
             let imageCount = imageModel.maxImages > 1
@@ -1682,7 +1768,18 @@ struct GenerationView: View {
         let request: GenerationRequest
         switch selectedType {
         case .video:
-            request = buildVideoRequest(intent: rawIntent, replacementClipId: replacementClipId)
+            guard let videoRequest = buildVideoRequest(
+                intent: rawIntent,
+                replacementClipId: replacementClipId
+            ) else {
+                editor.pendingEditReplacementClipId = replacementClipId
+                editor.pendingEditAudioPlacement = pendingAudioPlacement
+                flashDropError(
+                    "No runnable provider endpoint has a verified video input contract."
+                )
+                return
+            }
+            request = videoRequest
         case .image:
             request = buildImageRequest(intent: rawIntent, replacementClipId: replacementClipId)
         case .audio:
@@ -1718,7 +1815,12 @@ struct GenerationView: View {
 
     /// Base `GenerationInput` shared by the three type builders — carries the compiled prompt plus the
     /// panel's structured options. `intent` rides along so a later rerun recompiles against the ledger.
-    private func baseGenInput(compiledPrompt: String, audioDuration: Int, imageCount: Int) -> GenerationInput {
+    private func baseGenInput(
+        compiledPrompt: String,
+        audioDuration: Int,
+        imageCount: Int,
+        videoInputPolicy: ProviderProductionInputPolicyV1? = nil
+    ) -> GenerationInput {
         var genInput = GenerationInput(
             prompt: compiledPrompt,
             intent: prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : prompt,
@@ -1735,10 +1837,10 @@ struct GenerationView: View {
                 ? styleInstructions : nil,
             instrumental: selectedType == .audio && audioModel.supportsInstrumental
                 ? instrumental : nil,
-            generateAudio: supportsAudioToggle ? generateAudio : nil
+            generateAudio: selectedType == .video ? effectiveGenerateAudio : nil
         )
         if selectedType == .video {
-            genInput.videoDuration = videoModel.requiresSourceVideo
+            genInput.videoDuration = videoInputPolicy?.requiresSourceVideo == true
                 ? .seconds(effectiveVideoSeconds)
                 : selectedDuration
         }
@@ -1756,18 +1858,29 @@ struct GenerationView: View {
         return .mediaLibrary(folderId: folderId)
     }
 
-    private func buildVideoRequest(intent: String, replacementClipId: String?) -> GenerationRequest {
+    private func buildVideoRequest(
+        intent: String,
+        replacementClipId: String?
+    ) -> GenerationRequest? {
         let model = videoModel
-        let inputAssets = videoInputAssets(for: model)
+        let target = videoTarget(for: model)
+        guard let capabilities = target.binding?.resolvedVideoCapabilities else {
+            return nil
+        }
+        let inputPolicy = capabilities.inputPolicy
+        let inputAssets = videoInputAssets(
+            for: model,
+            offeringCapabilities: capabilities
+        )
         let trimmedSource: TrimmedSource? = {
-            guard model.requiresSourceVideo,
+            guard inputPolicy.requiresSourceVideo,
                   let trim = editor.pendingEditTrimmedSource,
                   let sv = sourceVideo,
                   trim.sourceURL == sv.url else { return nil }
             return trim
         }()
         let placeholderDuration: Double
-        if model.requiresSourceVideo {
+        if inputPolicy.requiresSourceVideo {
             if let trim = trimmedSource, trim.hasTrim {
                 placeholderDuration = trim.durationSeconds
             } else {
@@ -1777,7 +1890,7 @@ struct GenerationView: View {
             placeholderDuration = Double(effectiveVideoSeconds)
         }
         let folderId = editFolderId ?? (
-            model.requiresSourceVideo
+            inputPolicy.requiresSourceVideo
                 ? (inputAssets.sourceVideo?.folderId ?? inputAssets.imageRefs.last?.folderId)
                 : inputAssets.textToVideoReferences.last?.folderId
         ) ?? editor.mediaPanelCurrentFolderId
@@ -1789,10 +1902,18 @@ struct GenerationView: View {
                 replacementClipId: replacementClipId, folderId: folderId,
                 resetTrim: trimmedSource?.hasTrim == true),
             origin: .panel,
+            target: target,
             submission: .video(make: { compiled in
                 VideoGenerationSubmission.make(
-                    genInput: baseGenInput(compiledPrompt: compiled, audioDuration: 0, imageCount: 1),
-                    model: model, inputAssets: inputAssets,
+                    genInput: baseGenInput(
+                        compiledPrompt: compiled,
+                        audioDuration: 0,
+                        imageCount: 1,
+                        videoInputPolicy: inputPolicy
+                    ),
+                    model: model,
+                    offeringCapabilities: capabilities,
+                    inputAssets: inputAssets,
                     placeholderDuration: placeholderDuration,
                     trimmedSourceOverride: trimmedSource,
                     folderId: folderId, generateAudio: generateAudioFlag)
@@ -1918,22 +2039,31 @@ struct GenerationView: View {
 
         switch selectedType {
         case .video:
-            if videoModel.requiresSourceVideo {
-                sourceVideo = primary.first
-                if videoModel.supportsReferences, primary.count > 1 {
+            let semanticSource = stored.sourceVideoAssetId.flatMap(lookup)
+            let legacySource = primary.first.flatMap { $0.type == .video ? $0 : nil }
+            if let selectedSource = semanticSource ?? legacySource,
+               GenerationService.dispatchTarget(
+                    modelId: videoModel.id,
+                    requiringSourceVideo: true
+               ).binding?.resolvedVideoCapabilities?
+                    .inputPolicy.requiresSourceVideo == true {
+                sourceVideo = selectedSource
+                if selectedVideoCapabilities?.supportsReferences == true,
+                   primary.count > 1 {
                     imageReferences = [primary[1]]
                 }
-            } else {
-                if videoModel.supportsFirstFrame {
+            } else if selectedVideoInputPolicy?.requiresSourceVideo == false {
+                if selectedVideoCapabilities?.supportsFirstFrame == true {
                     firstFrame = primary.first
-                    if videoModel.supportsLastFrame, primary.count > 1 {
+                    if selectedVideoCapabilities?.supportsLastFrame == true,
+                       primary.count > 1 {
                         lastFrame = primary[1]
                     }
                 }
                 refImages = (stored.referenceImageAssetIds ?? []).compactMap(lookup)
                 refVideos = (stored.referenceVideoAssetIds ?? []).compactMap(lookup)
                 refAudios = (stored.referenceAudioAssetIds ?? []).compactMap(lookup)
-                if videoModel.framesAndReferencesExclusive {
+                if selectedVideoCapabilities?.framesAndReferencesExclusive == true {
                     framesRefsMode = (!refImages.isEmpty || !refVideos.isEmpty || !refAudios.isEmpty)
                         ? .reference : .firstLast
                 } else {
@@ -1972,8 +2102,10 @@ struct GenerationView: View {
         if let qualities = currentQualities, !qualities.contains(selectedQuality) {
             selectedQuality = qualities.last ?? "high"
         }
-        if selectedType == .video, !videoModel.durationCapabilities.accepts(selectedDuration) {
-            selectedDuration = videoModel.durationCapabilities.defaultValue
+        if selectedType == .video,
+           let durationCapabilities = selectedVideoCapabilities?.durationCapabilities,
+           !durationCapabilities.accepts(selectedDuration) {
+            selectedDuration = durationCapabilities.defaultValue
         }
         if selectedType == .video { generateAudio = true }
         if selectedType == .image {

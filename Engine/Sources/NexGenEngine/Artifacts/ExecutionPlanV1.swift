@@ -294,6 +294,8 @@ public struct GenerationRequirementV1: Codable, Sendable, Equatable {
     }
 }
 
+public typealias ProductionRequirementV1 = GenerationRequirementV1
+
 public struct ExecutionShotV1: Codable, Sendable, Equatable {
     public let id: String
     public let sourceMode: ExecutionSourceModeV1

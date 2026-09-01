@@ -4,16 +4,14 @@ import UniformTypeIdentifiers
 
 struct AgentInputBox<LeadingTools: View>: View {
     @Environment(EditorViewModel.self) var editor
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var draft: String
     @Binding var mentions: [AgentMention]
     let isSending: Bool
     let canSend: Bool
-    /// While a dialog card (or spend approval) is open above the composer, the composer is the second,
-    /// competing input surface — so it's locked. One active input at a time: answer the card first.
-    let blocked: Bool
-    let blockedHint: String
     let onSend: () -> Void
     let onCancel: () -> Void
+    let onFocusChange: (Bool) -> Void
     let leadingTools: LeadingTools
 
     init(
@@ -21,20 +19,18 @@ struct AgentInputBox<LeadingTools: View>: View {
         mentions: Binding<[AgentMention]>,
         isSending: Bool,
         canSend: Bool,
-        blocked: Bool = false,
-        blockedHint: String = "",
         onSend: @escaping () -> Void,
         onCancel: @escaping () -> Void,
+        onFocusChange: @escaping (Bool) -> Void,
         @ViewBuilder leadingTools: () -> LeadingTools
     ) {
         self._draft = draft
         self._mentions = mentions
         self.isSending = isSending
         self.canSend = canSend
-        self.blocked = blocked
-        self.blockedHint = blockedHint
         self.onSend = onSend
         self.onCancel = onCancel
+        self.onFocusChange = onFocusChange
         self.leadingTools = leadingTools()
     }
 
@@ -76,7 +72,7 @@ struct AgentInputBox<LeadingTools: View>: View {
         VStack(spacing: AppTheme.Spacing.none) {
             textField
                 .popover(isPresented: Binding(
-                    get: { showMentionPicker && !blocked },
+                    get: { showMentionPicker },
                     set: { if !$0 { mentionQuery = nil } }
                 ), attachmentAnchor: .point(.topLeading), arrowEdge: .top) {
                     MentionPopover(
@@ -106,18 +102,12 @@ struct AgentInputBox<LeadingTools: View>: View {
         .overlay(alignment: .top) { resizeHandle }
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: focused)
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isDropTargeted)
-        .onDrop(of: [.fileURL], isTargeted: blocked ? nil : $isDropTargeted, perform: handleDrop)
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop)
         .onChange(of: editor.agentService.focusInputRequestTick) { _, _ in
             Task { @MainActor in focused = true }
         }
-        // A dialog card opened above: the composer is locked, so drop the mention popover and clear
-        // any hover-drop highlight — no second input surface competes with the card.
-        .onChange(of: blocked) { _, isBlocked in
-            if isBlocked {
-                mentionQuery = nil
-                isDropTargeted = false
-                showReferencePicker = false
-            }
+        .onChange(of: focused) { _, value in
+            onFocusChange(value)
         }
         .alert("Couldn't attach media", isPresented: Binding(
             get: { attachmentError != nil },
@@ -165,8 +155,6 @@ struct AgentInputBox<LeadingTools: View>: View {
                 .padding(.bottom, AppTheme.Spacing.xs)
                 .focused($focused)
                 .frame(height: clampedComposerHeight)
-                .disabled(blocked)
-                .opacity(blocked ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
                 .onChange(of: draft) { old, new in
                     updateMentionQuery(from: new)
                     if !old.isEmpty && new.isEmpty {
@@ -187,8 +175,7 @@ struct AgentInputBox<LeadingTools: View>: View {
                 }
 
             if draft.isEmpty {
-                Text(blocked ? (blockedHint.isEmpty ? "Answer the card above to continue" : blockedHint)
-                             : "Ask, or type @ to reference media")
+                Text("Ask, or type @ to reference media")
                     .font(.system(size: AppTheme.FontSize.md))
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .padding(.horizontal, AppTheme.Spacing.lgXl)
@@ -230,7 +217,7 @@ struct AgentInputBox<LeadingTools: View>: View {
             .tint(AppTheme.Text.secondaryColor)
             .glassEffectID("sendStop", in: sendStopNamespace)
             .help("Stop")
-            .transition(.scale.combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
         } else {
             Button(action: onSend) {
                 Image(systemName: "arrow.up")
@@ -242,9 +229,9 @@ struct AgentInputBox<LeadingTools: View>: View {
             .controlSize(.regular)
             .tint(AppTheme.Accent.primary)
             .glassEffectID("sendStop", in: sendStopNamespace)
-            .disabled(!canSend || blocked)
-            .opacity(canSend && !blocked ? AppTheme.Opacity.opaque : AppTheme.Opacity.strong)
-            .transition(.scale.combined(with: .opacity))
+            .disabled(!canSend)
+            .opacity(canSend ? AppTheme.Opacity.opaque : AppTheme.Opacity.strong)
+            .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
         }
     }
 
@@ -278,8 +265,6 @@ struct AgentInputBox<LeadingTools: View>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .focusable(false)
-        .disabled(blocked)
-        .opacity(blocked ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help("Attach media")
         .popover(isPresented: $showReferencePicker, arrowEdge: .bottom) {
             LibraryAssetPicker(
@@ -425,7 +410,6 @@ struct AgentInputBox<LeadingTools: View>: View {
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard !blocked else { return false }  // locked while a dialog card owns the input
         var handled = false
         for provider in providers where provider.canLoadObject(ofClass: URL.self) {
             handled = true

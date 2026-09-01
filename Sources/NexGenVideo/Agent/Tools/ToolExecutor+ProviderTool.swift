@@ -88,6 +88,10 @@ extension ToolExecutor {
                     approval,
                     origin: origin,
                     editor: editor,
+                    pipelineScope: try spendPipelineScope(
+                        tool: .runProviderTool,
+                        editor: editor
+                    ),
                     cancel: release,
                     execute: { editor, _ in
                         guard let approvedClient = await ProviderMCP.client(for: provider) else {

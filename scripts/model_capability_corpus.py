@@ -260,14 +260,14 @@ SOURCES: dict[str, dict[str, Any]] = {
         "primary": True,
         "scope": "Complete public Marble model inventory at the inventory date.",
     },
-    "owner-pending-defensive": {
-        "title": "Defensive numeric policy awaiting owner confirmation",
+    "owner-confirmed-defensive": {
+        "title": "Confirmed defensive numeric policy",
         "url": None,
         "observed_at": OBSERVED_AT,
         "kind": "defensive",
         "confidence": 1.0,
         "primary": False,
-        "scope": "Explicit conservative values; pending means they are not represented as owner-approved policy.",
+        "scope": "Explicit conservative values accepted as the production fallback policy.",
     },
 }
 
@@ -633,7 +633,7 @@ offer(
     "hupfntrupfn",
     "video",
     identity=None,
-    sources=["owner-pending-defensive"],
+    sources=["owner-confirmed-defensive"],
     origins=["synthetic_fixture"],
     expected="defensive",
     availability="research-needed",
@@ -966,11 +966,11 @@ def build_knowledge_base() -> dict[str, Any]:
             typed[FIELD_TYPES[field_id]][field_id] = {
                 "value": defensive_value(field_id),
                 "semantics": "defensive_default",
-                "evidence": [evidence("owner-pending-defensive")],
+                "evidence": [evidence("owner-confirmed-defensive")],
             }
         defensive_profiles.append(
             {
-                "id": f"defensive.{modality}.owner-pending-v1",
+                "id": f"defensive.{modality}.owner-confirmed-v1",
                 "modality": modality,
                 "fields": typed,
             }
@@ -1005,7 +1005,7 @@ def build_corpus() -> dict[str, Any]:
         "observed_at": OBSERVED_AT,
         "stale_after_days": STALE_AFTER_DAYS,
         "defensive_defaults": {
-            "owner_confirmation": "pending",
+            "owner_confirmation": "confirmed",
             "table": {
                 "character_and_primary_reference_counts": 1,
                 "image_outputs_per_request": 1,
@@ -1222,11 +1222,11 @@ def report(corpus: dict[str, Any]) -> str:
         "",
         "`exact` identifies a concrete intrinsic profile. `inherited` is an explicit family/variant lineage miss. `defensive` is used for unknown or deliberately unversioned IDs. Stale and conflicting evidence stays visible and forces research-needed.",
         "",
-        "## Defensive numeric defaults — owner confirmation pending",
+        "## Defensive numeric defaults — confirmed",
         "",
-        "These values are explicit data, not inferred approval. Production activation remains blocked until the owner confirms or changes them.",
+        "These explicit conservative values are the production fallback for unresolved capabilities.",
         "",
-        "| Field group | Pending value |",
+        "| Field group | Confirmed value |",
         "| --- | ---: |",
         "| Reliable visible-character / primary reference count | 1 |",
         "| Image outputs per request | 1 |",

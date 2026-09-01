@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import NexGenVideo
@@ -53,6 +54,81 @@ struct ProviderManifestTests {
         let direct = ProviderBinding(provider: .elevenlabs, transport: .api, kind: .generation, providerRef: "x", billing: .perCall)
         let hosted = ProviderBinding(provider: .fal, transport: .api, kind: .generation, providerRef: "x", billing: .perCall)
         #expect(ProviderManifest.effectiveCost(direct) < ProviderManifest.effectiveCost(hosted))
+    }
+
+    @Test func providerOfferPersistsProductionMetadata() throws {
+        guard let entry = FalModelRegistry.entries.first(where: {
+            $0.id == "fal-ai/veo3"
+        }), case .video(let videoCapabilities) = entry.uiCapabilities else {
+            Issue.record("Expected video capabilities")
+            return
+        }
+        let inputPolicy = ProviderProductionInputPolicyV1(
+            requiresSourceVideo: true,
+            framesCountTowardImageReferenceLimit: false,
+            framesCountTowardTotalReferenceLimit: true
+        )
+        let expected = ProviderOffer(
+            provider: .fal,
+            providerRef: "fal/exact-endpoint",
+            productionQualityTargetIDs: ["high"],
+            productionInputPolicy: inputPolicy,
+            resolvedVideoCapabilities: ResolvedVideoOfferingCapabilitiesV1(
+                videoCapabilities: videoCapabilities,
+                inputPolicy: inputPolicy,
+                supportsNativeAudio: true
+            )
+        )
+
+        let data = try JSONEncoder().encode(expected)
+        let decoded = try JSONDecoder().decode(ProviderOffer.self, from: data)
+
+        #expect(decoded == expected)
+        #expect(decoded.productionQualityTargetIDs == ["high"])
+        #expect(decoded.productionInputPolicy?.requiresSourceVideo == true)
+        #expect(
+            decoded.productionInputPolicy?.framesCountTowardImageReferenceLimit == false
+        )
+        #expect(
+            decoded.productionInputPolicy?.framesCountTowardTotalReferenceLimit == true
+        )
+        #expect(
+            ProviderManifest.bindings(from: [decoded], modelId: "logical").first?
+                .productionInputPolicy == expected.productionInputPolicy
+        )
+        #expect(
+            ProviderManifest.bindings(from: [decoded], modelId: "logical").first?
+                .resolvedVideoCapabilities == expected.resolvedVideoCapabilities
+        )
+    }
+
+    @Test func everyBootstrapVideoOfferCarriesAnExactContract() {
+        for entry in ModelCatalog.bootstrapEntries where entry.kind == .video {
+            guard case .video(let videoCapabilities) = entry.uiCapabilities else {
+                Issue.record("Expected video capabilities for \(entry.id)")
+                continue
+            }
+            let offers = entry.offers ?? []
+            #expect(!offers.isEmpty)
+            for offer in offers {
+                #expect(offer.productionInputPolicy != nil)
+                #expect(offer.resolvedVideoCapabilities?.schemaVersion == 1)
+                #expect(offer.resolvedVideoCapabilities?.contractViolation == nil)
+                #expect(
+                    offer.resolvedVideoCapabilities?.inputPolicy
+                        == offer.productionInputPolicy
+                )
+                let supportsNativeAudio = offer.provider == .fal
+                    && FalModelRegistry.model(for: entry.id)?.videoGeneratesAudio == true
+                #expect(offer.resolvedVideoCapabilities == offer.productionInputPolicy.map {
+                    ResolvedVideoOfferingCapabilitiesV1(
+                        videoCapabilities: videoCapabilities,
+                        inputPolicy: $0,
+                        supportsNativeAudio: supportsNativeAudio
+                    )
+                })
+            }
+        }
     }
 
     @Test func elevenlabsResolvesDirectWhenActivatedElseFalHosted() {

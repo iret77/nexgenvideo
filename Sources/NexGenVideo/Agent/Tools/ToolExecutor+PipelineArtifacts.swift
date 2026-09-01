@@ -7,11 +7,16 @@ extension ToolExecutor {
         _ args: [String: Any]
     ) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
+        let declaration = try mutationPackDeclaration(
+            editor,
+            dataRoot: root
+        )
         let resolvedPack: String?
         do {
-            resolvedPack = try ProjectPluginSettings.resolvedPlugin(
+            resolvedPack = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: root),
-                declaredPack: editor.declaredPluginName
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
             )
         } catch {
             throw ToolError(error.localizedDescription)
@@ -485,16 +490,72 @@ extension ToolExecutor {
             as: Shotlist.self,
             label: "shot list"
         )
-        let url = try PipelineShotlistWriter.write(
-            shotlist,
-            dataRoot: root,
-            declaredPack: editor.declaredPluginName
+        guard let executionObjects = args["execution_shots"] as? [[String: Any]] else {
+            throw ToolError("execution_shots is required and must cover every shot exactly once.")
+        }
+        let executionInputs: [PipelineExecutionShotInput]
+        do {
+            let data = try JSONSerialization.data(
+                withJSONObject: executionObjects,
+                options: [.sortedKeys]
+            )
+            executionInputs = try JSONDecoder().decode(
+                [PipelineExecutionShotInput].self,
+                from: data
+            )
+        } catch {
+            throw ToolError("The execution plan input is invalid: \(error.localizedDescription)")
+        }
+        let declaration = try mutationPackDeclaration(
+            editor,
+            dataRoot: root
         )
+        let projectHome = FrameInventory.projectHome(of: root)
+        let workingHome = editor.workingRoot?
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let marksWorkingCopyDirty = editor.openWorkingCopyKey != nil
+            && workingHome == projectHome.standardizedFileURL.resolvingSymlinksInPath()
+        let written = try ProjectWorkingCopy.transactProject(
+            at: projectHome,
+            markDirty: marksWorkingCopyDirty,
+            validateCurrent: { currentHome in
+                _ = try ProjectPackGate.requireMutation(
+                    projectURL: currentHome,
+                    declaredPack: declaration.packName,
+                    declaredBinding: declaration.binding
+                )
+            }
+        ) { stagingHome in
+            guard let stagingRoot = DataRootResolver.dataRoot(of: stagingHome) else {
+                throw ToolError(
+                    "The staged project pipeline is unavailable. Reopen the project before writing."
+                )
+            }
+            let url = try PipelineShotlistWriter.write(
+                shotlist,
+                executionInputs: executionInputs,
+                dataRoot: stagingRoot,
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
+            try PipelinePhaseMutationRecorder.record(
+                phase: "shotlist",
+                dataRoot: stagingRoot,
+                captureLineage: true,
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
+            return (
+                path: relativePath(url, dataRoot: stagingRoot),
+                version: latestShotlistVersion(dataRoot: stagingRoot) ?? 0
+            )
+        }
         return try jsonResult([
             "written": true,
-            "version": latestShotlistVersion(dataRoot: root) ?? 0,
-            "path": relativePath(url, dataRoot: root),
+            "version": written.version,
+            "path": written.path,
             "shots": shotlist.shots.count,
+            "execution_plan": PipelineLayout.executionPlanFile,
             "mode": shotlist.mode.rawValue,
             "duration_s": shotlist.song.durationS,
             "bpm": shotlist.song.bpm,

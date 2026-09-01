@@ -49,6 +49,15 @@ struct GenerationControllerTests {
               locked: true
         """
 
+    private static var videoCapabilities: ResolvedVideoOfferingCapabilitiesV1 {
+        guard let capabilities = FalModelRegistry.entries.first(where: {
+            $0.id == "fal-ai/veo3"
+        })?.offers?.first?.resolvedVideoCapabilities else {
+            preconditionFailure("Missing exact fal-ai/veo3 capability fixture")
+        }
+        return capabilities
+    }
+
     private func stubEditor(projectURL: URL?) -> EditorViewModel {
         let editor = EditorViewModel()
         editor.projectURL = projectURL
@@ -70,7 +79,8 @@ struct GenerationControllerTests {
                         prompt: compiled, duration: 5, aspectRatio: "16:9", resolution: nil,
                         sourceVideoURL: nil, startFrameURL: nil, endFrameURL: nil,
                         referenceImageURLs: [], generateAudio: true)) },
-                    snapshotRefs: nil, preprocessRef: nil)
+                    snapshotRefs: nil, preprocessRef: nil,
+                    resolvedVideoCapabilities: Self.videoCapabilities)
             }))
     }
 
@@ -159,7 +169,8 @@ struct GenerationControllerTests {
                         prompt: compiled, duration: 5, aspectRatio: "16:9", resolution: nil,
                         sourceVideoURL: nil, startFrameURL: nil, endFrameURL: nil,
                         referenceImageURLs: [], generateAudio: true)) },
-                    snapshotRefs: nil, preprocessRef: nil)
+                    snapshotRefs: nil, preprocessRef: nil,
+                    resolvedVideoCapabilities: Self.videoCapabilities)
             }))
         let result = await GenerationController.submit(request, editor: editor)
         guard case .success = result else {
@@ -186,7 +197,8 @@ struct GenerationControllerTests {
                         prompt: compiled, duration: 5, aspectRatio: "16:9", resolution: nil,
                         sourceVideoURL: nil, startFrameURL: nil, endFrameURL: nil,
                         referenceImageURLs: [], generateAudio: true)) },
-                    snapshotRefs: nil, preprocessRef: nil)
+                    snapshotRefs: nil, preprocessRef: nil,
+                    resolvedVideoCapabilities: Self.videoCapabilities)
             }))
         let result = await GenerationController.submit(request, editor: editor)
         guard case .failure(.gate) = result else {

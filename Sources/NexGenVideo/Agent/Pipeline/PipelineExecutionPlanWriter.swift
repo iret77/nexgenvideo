@@ -8,12 +8,22 @@ enum PipelineExecutionPlanError: Error, Sendable, Equatable {
     case persistedArtifactInvalid(String)
     case projectMetadataInvalid(String)
     case projectMetadataMismatch(expected: String, actual: String)
+    case shotlistReferenceMismatch
     case publicationFailed(String)
     case publicationRollbackFailed(String)
     case unsafePublicationPath(String)
 }
 
 enum PipelineExecutionPlanWriter {
+    static let shotlistArtifactRole = "core.shotlist"
+    static let lineagePhaseID = "shotlist.execution-plan"
+
+    struct Snapshot {
+        let context: Data?
+        let plan: Data?
+        let publication: Data?
+    }
+
     private struct Publication: Codable, Equatable {
         static let schemaVersion = "execution-plan-publication/v1"
 
@@ -74,6 +84,106 @@ enum PipelineExecutionPlanWriter {
             throw GateBlocked(
                 "The execution plan is missing, incomplete, stale, or no longer matches "
                     + "its project-local inputs. Rebuild it through the canonical writer."
+            )
+        }
+    }
+
+    static func requireCurrentShotlistBinding(dataRoot: URL) throws {
+        let (plan, context) = try load(dataRoot: dataRoot)
+        guard let version = latestShotlistVersion(dataRoot: dataRoot) else {
+            throw PipelineExecutionPlanError.shotlistReferenceMismatch
+        }
+        let path = PipelineLayout.shotlistVersionFile(version)
+        let references = context.artifacts.filter {
+            $0.role == shotlistArtifactRole
+        }
+        let inputReferences = context.artifacts.filter {
+            $0.role == PipelineExecutionShotInputStore.artifactRole
+        }
+        let storedInputs = try PipelineExecutionShotInputStore.loadCurrent(
+            dataRoot: dataRoot
+        ).executionShots
+        guard references.count == 1,
+              references[0].path == path,
+              inputReferences.count == 1,
+              inputReferences[0].id == PipelineExecutionShotInputStore.artifactID,
+              inputReferences[0].path == PipelineLayout.executionShotInputsFile,
+              let shotlist = try loadShotlist(dataRoot: dataRoot),
+              shotlist.project == plan.projectID,
+              shotlist.shots.map(\.id) == plan.shots.map(\.id),
+              storedInputs.map(\.id) == plan.shots.map(\.id),
+              zip(shotlist.shots, plan.shots).allSatisfy({ pair in
+                  switch (pair.0.sourceMode, pair.1.sourceMode) {
+                  case (.generated, .generated), (.imported, .imported),
+                       (.aiEnhanced, .aiEnhanced):
+                      return true
+                  default:
+                      return false
+                  }
+              }),
+              zip(storedInputs, plan.shots).allSatisfy({ pair in
+                  pair.0.sourceMode == pair.1.sourceMode
+              }) else {
+            throw PipelineExecutionPlanError.shotlistReferenceMismatch
+        }
+        _ = try ProjectLocalFile.requireHash(
+            references[0].sha256,
+            at: path,
+            dataRoot: dataRoot
+        )
+        _ = try ProjectLocalFile.requireHash(
+            inputReferences[0].sha256,
+            at: PipelineLayout.executionShotInputsFile,
+            dataRoot: dataRoot
+        )
+    }
+
+    static func snapshot(dataRoot: URL) throws -> Snapshot {
+        Snapshot(
+            context: try existingBytes(
+                at: PipelineLayout.url(PipelineLayout.creativeContextFile, in: dataRoot)
+            ),
+            plan: try existingBytes(
+                at: PipelineLayout.url(PipelineLayout.executionPlanFile, in: dataRoot)
+            ),
+            publication: try existingBytes(
+                at: PipelineLayout.url(
+                    ExecutionPlanV1.publicationArtifactPath,
+                    in: dataRoot
+                )
+            )
+        )
+    }
+
+    static func restore(_ snapshot: Snapshot, dataRoot: URL) throws {
+        let entries: [(Data?, URL)] = [
+            (
+                snapshot.context,
+                PipelineLayout.url(PipelineLayout.creativeContextFile, in: dataRoot)
+            ),
+            (
+                snapshot.plan,
+                PipelineLayout.url(PipelineLayout.executionPlanFile, in: dataRoot)
+            ),
+            (
+                snapshot.publication,
+                PipelineLayout.url(
+                    ExecutionPlanV1.publicationArtifactPath,
+                    in: dataRoot
+                )
+            ),
+        ]
+        var failures: [String] = []
+        for (data, url) in entries {
+            do {
+                try restore(data, at: url)
+            } catch {
+                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        guard failures.isEmpty else {
+            throw PipelineExecutionPlanError.publicationRollbackFailed(
+                failures.joined(separator: "; ")
             )
         }
     }

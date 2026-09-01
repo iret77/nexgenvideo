@@ -159,6 +159,14 @@ public struct MusicvideoPack: Pack {
                 dataRoot: $0
             )
         }
+        if MusicvideoPipelineLineage.executionInputPhases.contains(phase) {
+            registry.registerPhaseArtifactProvider(phase) {
+                try MusicvideoPipelineLineage.artifactPaths(
+                    phase: phase,
+                    dataRoot: $0
+                )
+            }
+        }
         registry.registerGateRequirement(phase) {
             try check($0)
             try MusicvideoPipelineLineage.requireCurrent(

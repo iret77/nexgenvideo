@@ -586,4 +586,38 @@ struct GateApprovalTests {
         let projectInit = phases.first { $0["phase"] as? String == "project_init" }
         #expect(projectInit?["state"] as? String == "approved")
     }
+
+    @Test("approval click keeps its card open when pipeline mutation owns the project")
+    func approvalClickWaitsForPipelineMutation() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let args: [String: Any] = [
+            "project_dir": dataRoot.path,
+            "phase": "project_init",
+        ]
+        let pending = await h.executor.execute(name: "approve_gate", args: args)
+        #expect(!pending.isError)
+        #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
+
+        let competingMutation = try #require(
+            h.editor.pipelinePhaseRunCoordinator.beginMutation(
+                projectRoot: dataRoot,
+                label: "record_render"
+            )
+        )
+        let blockedResult = await h.editor.agentService.resolveGate(.approved)
+        let blocked = try #require(blockedResult)
+        #expect(blocked.isError)
+        #expect(ToolHarness.textOf(blocked).contains("record_render"))
+        #expect(h.editor.agentService.pendingGateApproval?.phase == "project_init")
+
+        h.editor.pipelinePhaseRunCoordinator.endMutation(
+            projectRoot: dataRoot,
+            id: competingMutation
+        )
+        let approvedResult = await h.editor.agentService.resolveGate(.approved)
+        let approved = try #require(approvedResult)
+        #expect(!approved.isError)
+        #expect(h.editor.agentService.pendingGateApproval == nil)
+    }
 }

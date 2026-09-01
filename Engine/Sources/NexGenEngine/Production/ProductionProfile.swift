@@ -60,7 +60,9 @@ public enum StandardProductionProfiles {
 }
 
 public enum ProductionDiscipline {
+    @available(*, deprecated, message: "Resolve visible-character capacity from the selected route")
     public static let maximumGeneratedVisibleCharacters = 2
+    @available(*, deprecated, message: "Resolve duration capacity from the selected route")
     public static let normalGeneratedShotMaximumDuration = 12.0
 
     public static func requiresProductionPlan(_ shot: Shot) -> Bool {
@@ -81,6 +83,7 @@ public enum ProductionDiscipline {
         }
     }
 
+    @available(*, deprecated, message: "Revalidate ProductionRequirementV1 against a selected route")
     public static func hasTooManyVisibleCharacters(
         _ shot: Shot,
         bible: Bible? = nil
@@ -90,6 +93,7 @@ public enum ProductionDiscipline {
                 > maximumGeneratedVisibleCharacters
     }
 
+    @available(*, deprecated, message: "Revalidate ProductionRequirementV1 against a selected route")
     public static func hasUndeclaredLongTake(_ shot: Shot) -> Bool {
         guard shot.sourceMode == .generated,
               shot.durationS > normalGeneratedShotMaximumDuration,
@@ -183,7 +187,7 @@ public enum ProductionProfileGuidance {
             """
         case "storyboard":
             return """
-            Keep each generated step to one primary subject action and one camera movement, with no more than two visible characters. Every character_blocking.set_anchor must exactly name one of that step's visible_zones or prop_request entries; put its spatial relation in character_blocking.relation_to_set. Make entrances, exits, and screen direction explicit in the storyboard fields and notes accepted by the writer.
+            Keep each generated step to one primary subject action and one coherent camera movement. Preserve every required visible entity and reference demand in structured fields; route selection determines whether a concrete offering can fulfill them. Every character_blocking.set_anchor must exactly name one of that step's visible_zones or prop_request entries; put its spatial relation in character_blocking.relation_to_set. Make entrances, exits, and screen direction explicit in the storyboard fields and notes accepted by the writer.
             """
         case "bible":
             return """
@@ -191,11 +195,11 @@ public enum ProductionProfileGuidance {
             """
         case "shotlist":
             return """
-            Give every generated or AI-enhanced shot a production_plan; imported shots omit it. Generated shots should normally last 4–12 seconds, contain one primary action, one camera movement, and at most two visible characters. Every production_plan.blocking_anchors value must exactly name one of that shot's visible_zones or prop_refs entries. Keep visual_prompt to one present-tense sentence describing only the concrete frame-zero subject state: identity, pose, weight, gaze, hands, and impending movement vector. Camera, composition, blocking anchors, continuity, and action stay in their structured fields. Rate renderability green/yellow/red; explicitly assess readable in-frame text, mirrors/reflections, fine hand actions, close eating/drinking, dense face crowds, continuous fights, physics showcases, vehicle mechanics, identity drift, non-English lip sync, long takes, aggressive camera moves, and complex interactions. Add a rescue cut for every yellow/red shot, and record continuity locks plus match-action cues.
+            Give every generated or AI-enhanced shot a production_plan; imported shots omit it. Preserve the requested duration, visible entities, identity locks, reference jobs, mode, resolution, aspect ratio, and audio intent without reducing them to a lowest-common-denominator model. Keep one primary action and one coherent camera movement. Every production_plan.blocking_anchors value must exactly name one of that shot's visible_zones or prop_refs entries. Keep visual_prompt to one present-tense sentence describing only the concrete frame-zero subject state: identity, pose, weight, gaze, hands, and impending movement vector. Camera, composition, blocking anchors, continuity, and action stay in their structured fields. Rate renderability green/yellow/red; explicitly assess readable in-frame text, mirrors/reflections, fine hand actions, close eating/drinking, dense face crowds, continuous fights, physics showcases, vehicle mechanics, identity drift, lip sync, duration, camera movement, and complex interactions. Add a rescue cut for every yellow/red shot, and record continuity locks plus match-action cues.
             """
         case "sanity":
             return """
-            Treat missing required production plans, generated-shot undeclared long takes or excessive visible characters, and yellow/red shots without rescue cuts as production defects. Resolve them in the owning artifact instead of explaining them away in prose.
+            Treat missing required production plans and yellow/red shots without rescue cuts as production defects. Revalidate the exact ProductionRequirement against the selected route; report structured capability deficits instead of dropping entities, references, modes, or duration. Resolve defects in the owning artifact instead of explaining them away in prose.
             """
         case "frames":
             return """

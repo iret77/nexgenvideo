@@ -1,4 +1,6 @@
 import Foundation
+import MusicvideoPlugin
+import NexGenEngine
 import Testing
 
 @testable import NexGenVideo
@@ -36,6 +38,58 @@ struct ProjectPackBindingTests {
             ProjectPluginSettings.bindingResolution(projectURL: project)
                 == .bound(binding)
         )
+    }
+
+    @Test func mutationGuardRejectsSameIDSiblingBindings() throws {
+        PackCatalog.register(MusicvideoPack())
+        let project = try directory()
+        defer { try? FileManager.default.removeItem(at: project) }
+        let trusted = try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: MusicvideoPack().version,
+            projectSchema: "musicvideo/2.0.0"
+        ))
+        try ProjectPluginSettings.setActivePlugin(trusted, projectURL: project)
+
+        #expect(try ProjectPackGate.requireMutation(
+            projectURL: project,
+            declaredPack: trusted.id,
+            declaredBinding: trusted
+        ) == trusted.id)
+
+        let siblingVersion = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: "0.4.5",
+            projectSchema: trusted.projectSchema
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            siblingVersion,
+            projectURL: project
+        )
+        #expect(throws: GateBlocked.self) {
+            _ = try ProjectPackGate.requireMutation(
+                projectURL: project,
+                declaredPack: trusted.id,
+                declaredBinding: trusted
+            )
+        }
+
+        let siblingSchema = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: trusted.version,
+            projectSchema: "musicvideo/2.0.1"
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            siblingSchema,
+            projectURL: project
+        )
+        #expect(throws: GateBlocked.self) {
+            _ = try ProjectPackGate.requireMutation(
+                projectURL: project,
+                declaredPack: trusted.id,
+                declaredBinding: trusted
+            )
+        }
     }
 
     @Test func idOnlyProjectsRemainExplicitlyLegacy() throws {

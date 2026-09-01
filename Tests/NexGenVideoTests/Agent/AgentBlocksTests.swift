@@ -67,4 +67,40 @@ struct AgentBlocksTests {
                             count: AgentBlocks.maxBlocks + 1)
         #expect(throws: ToolError.self) { _ = try blocks(tooMany) }
     }
+
+    @Test func enforcesBoundedResultGrammar() {
+        #expect(throws: ToolError.self) {
+            _ = try blocks([
+                ["type": "text", "body": "Result"],
+                ["type": "headline", "text": "Late headline"],
+            ])
+        }
+        #expect(throws: ToolError.self) {
+            _ = try blocks([
+                ["type": "callout", "tone": "info", "text": "Not last"],
+                ["type": "text", "body": "Result"],
+            ])
+        }
+        #expect(throws: ToolError.self) {
+            _ = try blocks([
+                ["type": "status", "badges": [["label": "One", "value": "Done"]]],
+                ["type": "status", "badges": [["label": "Two", "value": "Done"]]],
+            ])
+        }
+    }
+
+    @Test func rejectsUnboundedRichText() {
+        #expect(throws: ToolError.self) {
+            _ = try blocks([[
+                "type": "text",
+                "body": String(repeating: "x", count: AgentBlocks.maxBodyLength + 1),
+            ]])
+        }
+        #expect(throws: ToolError.self) {
+            _ = try blocks([[
+                "type": "keyvalue",
+                "rows": [["", "value"]],
+            ]])
+        }
+    }
 }

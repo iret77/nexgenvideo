@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import MCP
 
+@testable import NexGenEngine
 @testable import NexGenVideo
 
 /// The pure Tool→CatalogEntry mapping + the gate invariant for runtime MCP model discovery (#163).
@@ -34,10 +35,12 @@ struct MCPModelDiscoveryTests {
        "parameters":[{"name":"resolution","type":"string","default":"720p","options":["480p","720p","1080p","4k"]},
                      {"name":"generate_audio","type":"bool","default":false}],
        "medias":[{"name":"medias","type":"image","roles":["image","start_image","end_image"]}],
+       "constraints":["Start_image and end_image do not count toward the image reference limit.","Start_image and end_image do not count toward the total across image + video references."],
        "aspect_ratios":["auto","21:9","16:9","9:16"],"tags":["cinematic","premium"],"duration_range":{"min":4,"max":15}},
       {"id":"cinematic_studio_video","name":"Cinema Studio Video","provider_name":"Higgsfield",
        "description":"Solid cinematic","output_type":"video",
        "medias":[{"name":"medias","type":"image","roles":["image","start_image","end_image"]}],
+       "constraints":["Start_image and end_image do not count toward the image reference limit.","Start_image and end_image do not count toward the total across image + video references."],
        "aspect_ratios":["1:1","16:9","9:16"],"tags":["cinematic"],"durations":[5,10]}
     ],"has_more":true,"next_page_token":"4"}
     """#
@@ -685,6 +688,110 @@ struct MCPModelDiscoveryTests {
         #expect(caps2.durations == [5, 10])
     }
 
+    @Test @MainActor func discoveredCapabilityIdentityMatchesItsCatalogOffer() throws {
+        let resolver = try #require(CatalogCapabilityRuntime.resolver)
+        let parsed = MCPModelDiscovery.parseListing(
+            #"{"items":[{"id":"nano_banana_2","name":"Nano Banana 2","output_type":"image","parameters":[{"name":"quality","options":["draft","master"]}]}]}"#
+        )
+        let tools: [MCPModelDiscovery.Modality: String] = [
+            .image: "generate_image",
+        ]
+        let schema: Value = .object([
+            "properties": .object([
+                "job_set_type": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+                "quality": .object(["type": .string("string")]),
+            ]),
+            "required": .array([.string("job_set_type"), .string("prompt")]),
+        ])
+        let capabilities = try MCPModelDiscovery.resolveOfferingCapabilities(
+            models: parsed.items,
+            toolsByModality: tools,
+            provider: .higgsfield,
+            resolver: resolver,
+            observedAt: "2026-08-31T00:00:00Z"
+        )
+        let entries = MCPModelDiscovery.catalogEntries(
+            models: parsed.items,
+            toolsByModality: tools,
+            toolSchemasByModality: [.image: schema],
+            resolvedCapabilities: capabilities,
+            provider: .higgsfield
+        )
+        let entry = try #require(entries.first)
+        let offer = try #require(entry.offers?.first)
+        let capability = try #require(entry.resolvedOfferingCapabilities?.first)
+
+        #expect(capability.offering.offeringID == CatalogOfferingIdentity.id(
+            offer: offer,
+            modelID: entry.id
+        ))
+        #expect(capability.offering.catalogModelID == entry.id)
+
+        ModelCatalog.shared.applyDiscovered(entries, for: .higgsfield)
+        defer { ModelCatalog.shared.setDiscovered([:]) }
+        let candidate = try #require(
+            ModelCatalog.shared.productionRouteCandidates().first {
+                $0.modelID == entry.id
+                    && $0.candidate.capabilities.offering.providerID
+                        == GenerationProvider.higgsfield.rawValue
+            }
+        )
+        #expect(candidate.target?.provider == .higgsfield)
+        #expect(candidate.target?.binding?.transport == .mcp)
+        #expect(candidate.candidate.qualityTargetIDs == ["draft", "master"])
+        #expect(candidate.candidate.satisfiedProductionProfileRequirementIDs.isEmpty)
+    }
+
+    @Test func oneInvalidCapabilityOverlayDoesNotDiscardValidModels() throws {
+        let resolver = try #require(CatalogCapabilityRuntime.resolver)
+        let parsed = MCPModelDiscovery.parseListing(
+            #"{"items":[{"id":"valid-video","output_type":"video","duration_range":{"min":1,"max":5}},{"id":"invalid-video","output_type":"video","duration_range":{"min":-1,"max":5}}]}"#
+        )
+
+        let resolution = MCPModelDiscovery.resolveOfferingCapabilitiesResult(
+            models: parsed.items,
+            toolsByModality: [.video: "generate_video"],
+            provider: .higgsfield,
+            resolver: resolver,
+            observedAt: "2026-08-31T00:00:00Z"
+        )
+
+        #expect(Set(resolution.capabilities.keys) == Set(["valid-video"]))
+        #expect(resolution.diagnostics == [MCPModelDiscovery.ModelDiagnostic(
+            modelID: "invalid-video",
+            kind: .capabilityResolutionFailed
+        )])
+        let mapping = MCPModelDiscovery.catalogEntriesResult(
+            models: parsed.items.filter { resolution.capabilities[$0.id] != nil },
+            toolsByModality: [.video: "generate_video"],
+            resolvedCapabilities: resolution.capabilities,
+            provider: .higgsfield
+        )
+        #expect(mapping.entries.map(\.id) == ["valid-video"])
+    }
+
+    @Test func missingFrameAccountingPolicyIsNotAProductionOffering() throws {
+        let resolver = try #require(CatalogCapabilityRuntime.resolver)
+        let parsed = MCPModelDiscovery.parseListing(
+            #"{"items":[{"id":"unknown-accounting","output_type":"video","medias":[{"name":"medias","type":"image","roles":["image","start_image","end_image"]}]}]}"#
+        )
+
+        let resolution = MCPModelDiscovery.resolveOfferingCapabilitiesResult(
+            models: parsed.items,
+            toolsByModality: [.video: "generate_video"],
+            provider: .higgsfield,
+            resolver: resolver,
+            observedAt: "2026-08-31T00:00:00Z"
+        )
+
+        #expect(resolution.capabilities.isEmpty)
+        #expect(resolution.diagnostics == [MCPModelDiscovery.ModelDiagnostic(
+            modelID: "unknown-accounting",
+            kind: .capabilityResolutionFailed
+        )])
+    }
+
     @Test func seedance25DiscoveryPreservesRangeAndAuto() {
         let listing = #"""
         {"items":[{"id":"seedance_2_5","name":"Seedance 2.5","output_type":"video",
@@ -704,6 +811,53 @@ struct MCPModelDiscoveryTests {
         #expect(caps.duration.range == .init(min: 4, max: 30))
         #expect(caps.duration.supportsAuto)
         #expect(entry.offers?.first?.modelParam == "seedance_2_5")
+    }
+
+    @Test func discoveredVideoOfferPreservesExactNativeAudioCapability() throws {
+        let listing = #"{"items":[{"id":"native_audio_video","output_type":"video","durations":[5],"aspect_ratios":["16:9"]}]}"#
+        let (models, _) = MCPModelDiscovery.parseListing(listing)
+        let offering = CapabilityOfferingIdentityV1(
+            providerID: GenerationProvider.higgsfield.rawValue,
+            offeringID: "higgsfield/generate_video/native_audio_video",
+            endpointID: "generate_video",
+            catalogModelID: "native_audio_video",
+            modality: .video
+        )
+        let origin = ResolvedCapabilityOriginV1(
+            kind: .endpointOverlay,
+            profileID: offering.offeringID,
+            endpointID: offering.endpointID
+        )
+        let profile = ResolvedCapabilityProfileV1(
+            requestedIdentity: nil,
+            resolvedIdentity: nil,
+            defensiveProfileID: nil,
+            researchNeeded: false,
+            fields: ResolvedCapabilityFieldsV1(booleans: [
+                CapabilityFieldIDV1.nativeAudio: ResolvedCapabilityValueV1(
+                    value: true,
+                    semantics: .supportedValue,
+                    origin: origin,
+                    evidence: []
+                ),
+            ])
+        )
+        let capabilities = ResolvedOfferingCapabilityProfileV1(
+            offering: offering,
+            intrinsic: profile,
+            effective: profile
+        )
+
+        let entries = MCPModelDiscovery.catalogEntries(
+            models: models,
+            toolsByModality: [.video: "generate_video"],
+            resolvedCapabilities: ["native_audio_video": capabilities],
+            provider: .higgsfield
+        )
+        let exact = try #require(entries.first?.offers?.first?
+            .resolvedVideoCapabilities)
+
+        #expect(exact.supportsNativeAudio)
     }
 
     @Test func audioModelInfersCategoryFromTags() {
@@ -762,14 +916,66 @@ struct MCPModelDiscoveryTests {
             "required": .array([.string("params")]),
         ])
 
-        let entries = MCPModelDiscovery.catalogEntries(
+        let result = MCPModelDiscovery.catalogEntriesResult(
             models: models,
             toolsByModality: [.video: "generate_video"],
             toolSchemasByModality: [.video: schema],
             provider: .higgsfield
         )
 
-        #expect(entries.isEmpty)
+        #expect(result.entries.isEmpty)
+        #expect(result.diagnostics.map(\.kind).allSatisfy {
+            $0 == .generationSchemaIncompatible
+        })
+    }
+
+    @Test func schemaIncompatibleModelDoesNotDiscardCompatibleSibling() {
+        let listing = #"{"items":[{"id":"compatible","output_type":"image"},{"id":"needs-media","output_type":"image","medias":[{"name":"medias","type":"image","roles":["image"]}]}]}"#
+        let (models, _) = MCPModelDiscovery.parseListing(listing)
+        let schema: Value = .object([
+            "properties": .object([
+                "job_set_type": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+            ]),
+            "required": .array([.string("job_set_type"), .string("prompt")]),
+        ])
+
+        let result = MCPModelDiscovery.catalogEntriesResult(
+            models: models,
+            toolsByModality: [.image: "generate_image"],
+            toolSchemasByModality: [.image: schema],
+            allowsLocalMedia: true,
+            provider: .higgsfield
+        )
+
+        #expect(result.entries.map(\.id) == ["compatible"])
+        #expect(result.diagnostics == [MCPModelDiscovery.ModelDiagnostic(
+            modelID: "needs-media",
+            kind: .generationSchemaIncompatible
+        )])
+    }
+
+    @Test func unmappedOptionalQualityDoesNotDiscardModel() {
+        let listing = #"{"items":[{"id":"quality-model","output_type":"image","parameters":[{"name":"quality","options":["draft","master"]}]}]}"#
+        let (models, _) = MCPModelDiscovery.parseListing(listing)
+        let schema: Value = .object([
+            "properties": .object([
+                "job_set_type": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+            ]),
+            "required": .array([.string("job_set_type"), .string("prompt")]),
+        ])
+
+        let result = MCPModelDiscovery.catalogEntriesResult(
+            models: models,
+            toolsByModality: [.image: "generate_image"],
+            toolSchemasByModality: [.image: schema],
+            provider: .higgsfield
+        )
+
+        #expect(result.entries.map(\.id) == ["quality-model"])
+        #expect(result.entries.first?.offers?.first?.productionQualityTargetIDs == nil)
+        #expect(result.diagnostics.isEmpty)
     }
 
     @Test func referenceCapabilitiesRequireProviderMediaUploadTools() {

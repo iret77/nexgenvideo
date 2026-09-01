@@ -173,7 +173,8 @@ public struct ModelCapabilityResolver: Sendable {
         fields.booleans = restrictBooleans(
             fields.booleans,
             with: overlay.restrictions.booleans,
-            endpointID: endpointID
+            endpointID: endpointID,
+            fallbackOrigin: fallbackOrigin(profile)
         )
         fields.strings = restrictStrings(
             fields.strings,
@@ -532,16 +533,33 @@ public struct ModelCapabilityResolver: Sendable {
     private func restrictBooleans(
         _ current: [String: ResolvedCapabilityValueV1<Bool>],
         with restrictions: [String: EndpointBooleanRestrictionV1],
-        endpointID: String
+        endpointID: String,
+        fallbackOrigin: ResolvedCapabilityOriginV1
     ) -> [String: ResolvedCapabilityValueV1<Bool>] {
         var result = current
         for (key, restriction) in restrictions {
-            guard let intrinsic = result[key] else { continue }
+            let intrinsic = result[key]
+            guard let definition = CapabilityFieldRegistryV1.byID[key],
+                  intrinsic != nil || !definition.requiresDefensiveDefault else {
+                continue
+            }
+            let effective: Bool
+            switch definition.endpointMergePolicy {
+            case .booleanAnd:
+                effective = (intrinsic?.value ?? true) && restriction.value
+            case .endpointOverride:
+                effective = restriction.value
+            default:
+                continue
+            }
             result[key] = ResolvedCapabilityValueV1(
-                value: intrinsic.value && restriction.value,
+                value: effective,
                 semantics: .hardAPILimit,
-                origin: endpointOrigin(endpointID, prior: intrinsic.origin),
-                evidence: intrinsic.evidence + restriction.evidence
+                origin: endpointOrigin(
+                    endpointID,
+                    prior: intrinsic?.origin ?? fallbackOrigin
+                ),
+                evidence: (intrinsic?.evidence ?? []) + restriction.evidence
             )
         }
         return result
@@ -765,7 +783,8 @@ public struct ModelCapabilityResolver: Sendable {
         }
         for field in restrictions.booleans.keys {
             let definition = try registeredField(field, type: .boolean, modality: modality)
-            guard definition.endpointMergePolicy == .booleanAnd else {
+            guard definition.endpointMergePolicy == .booleanAnd
+                    || definition.endpointMergePolicy == .endpointOverride else {
                 throw ModelCapabilityKnowledgeError.invalidEndpointMergePolicy(field)
             }
         }

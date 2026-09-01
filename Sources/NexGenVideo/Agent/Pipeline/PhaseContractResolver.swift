@@ -7,6 +7,7 @@ struct ResolvedPhaseContract: Sendable {
         let phaseBoundCapabilities: Set<ToolName>
         let supportingCapabilities: Set<ToolName>
         let nativeLineageProvider: EngineRegistry.PhaseLineageProvider?
+        let nativeArtifactProvider: EngineRegistry.PhaseArtifactProvider?
         let nativeLineageRequiresRecord: Bool
     }
 
@@ -327,6 +328,7 @@ enum PhaseContractResolver {
                     phaseBoundCapabilities: phaseBound,
                     supportingCapabilities: supporting,
                     nativeLineageProvider: nativeLineageProvider,
+                    nativeArtifactProvider: registry.phaseArtifactProviders[phase.id],
                     nativeLineageRequiresRecord: nativeLineageRequiresRecord
                 )
             )
@@ -345,7 +347,8 @@ enum PhaseContractResolver {
         try validateRegistryCoverage(
             manifest: manifest,
             registry: registry,
-            allowsHistoricalLineageGap: historicalCompatibility && engineContract == 2
+            allowsHistoricalLineageGap: historicalCompatibility && engineContract == 2,
+            allowsHistoricalArtifactInventoryGap: historicalCompatibility
         )
 
         return ResolvedPhaseContract(
@@ -431,12 +434,12 @@ enum PhaseContractResolver {
                     "\(phase.id) is missing an artifact, writer, or gate selector"
                 )
             }
-            if index > 0,
-               phase.selectors.lineage == nil,
-               !allowsMissingLineage {
-                throw PhaseContractError.malformed(
-                    "\(phase.id) has no lineage selector"
-                )
+            if phase.selectors.lineage == nil, !allowsMissingLineage {
+                guard index == 0, phase.id == "project_init" else {
+                    throw PhaseContractError.malformed(
+                        "\(phase.id) has no lineage selector"
+                    )
+                }
             }
             let hasRunnerRole = phase.roles.contains(.deterministicRunner)
             guard hasRunnerRole == (phase.selectors.runner != nil) else {
@@ -629,7 +632,8 @@ enum PhaseContractResolver {
     private static func validateRegistryCoverage(
         manifest: PackPipelineManifest,
         registry: EngineRegistry,
-        allowsHistoricalLineageGap: Bool
+        allowsHistoricalLineageGap: Bool,
+        allowsHistoricalArtifactInventoryGap: Bool
     ) throws {
         let phases = Set(manifest.phases.map(\.id))
         let registeredRunnerPhases = Set(registry.phases.keys)
@@ -665,6 +669,27 @@ enum PhaseContractResolver {
         } else if registeredLineagePhases != selectedLineagePhases {
             throw PhaseContractError.registryMismatch(
                 "manifest and registry lineage selectors differ"
+            )
+        }
+        let registeredArtifactPhases = Set(registry.phaseArtifactProviders.keys)
+        let shotlistIndex = manifest.phases.firstIndex { $0.id == "shotlist" }
+        let selectedArtifactPhases = Set(shotlistIndex.map { index in
+            manifest.phases[..<index].compactMap { phase in
+                phase.selectors.lineage?.hasPrefix("registry.") == true
+                    && phase.extensionArtifact == nil
+                    ? phase.id
+                    : nil
+            }
+        } ?? [])
+        if allowsHistoricalArtifactInventoryGap {
+            guard registeredArtifactPhases.isSubset(of: selectedArtifactPhases) else {
+                throw PhaseContractError.registryMismatch(
+                    "historical registry artifact inventories name unknown phases"
+                )
+            }
+        } else if registeredArtifactPhases != selectedArtifactPhases {
+            throw PhaseContractError.registryMismatch(
+                "manifest and registry artifact inventories differ"
             )
         }
         guard Set(registry.deterministicSteps.map(\.phase)).isSubset(of: phases) else {

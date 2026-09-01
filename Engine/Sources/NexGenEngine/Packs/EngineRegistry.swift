@@ -111,6 +111,9 @@ public final class EngineRegistry: @unchecked Sendable {
     /// The active pack's single declarative cockpit surface.
     public private(set) var declarativeCockpitSurface: DeclarativeCockpitSurface?
 
+    /// Exact project-local files owned by each phase, for cumulative execution lineage.
+    public private(set) var phaseArtifactProviders: [String: PhaseArtifactProvider] = [:]
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -125,6 +128,9 @@ public final class EngineRegistry: @unchecked Sendable {
 
     public typealias PhaseLineageProvider =
         @Sendable (URL) throws -> PhaseLineageSnapshot
+
+    public typealias PhaseArtifactProvider =
+        @Sendable (URL) throws -> [String]
 
     /// A named, engine-run step pinned to a phase (#174). `run` executes the deterministic operation
     /// against the data root; throwing blocks the phase with the error's message.
@@ -237,6 +243,13 @@ public final class EngineRegistry: @unchecked Sendable {
         _ provider: @escaping PhaseLineageProvider
     ) {
         phaseLineageProviders[phase] = provider
+    }
+
+    public func registerPhaseArtifactProvider(
+        _ phase: String,
+        _ provider: @escaping PhaseArtifactProvider
+    ) {
+        phaseArtifactProviders[phase] = provider
     }
 
     public func registerProjectSchemaMigration(

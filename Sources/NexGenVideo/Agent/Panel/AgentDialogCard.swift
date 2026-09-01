@@ -222,7 +222,12 @@ struct AgentDialogCard: View {
                     .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
-                LibraryAssetPicker(assets: picks) { addPicked($0.url, intake) }
+                LibraryAssetPicker(
+                    assets: picks,
+                    showsSearch: true,
+                    showsTypeTabs: Set(picks.map(\.type.rawValue)).count > 1,
+                    scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight
+                ) { addPicked($0.url, intake) }
             }
         }
     }

@@ -11,11 +11,11 @@ The report is generated offline from the checked-in corpus; web access is not pa
 
 `exact` identifies a concrete intrinsic profile. `inherited` is an explicit family/variant lineage miss. `defensive` is used for unknown or deliberately unversioned IDs. Stale and conflicting evidence stays visible and forces research-needed.
 
-## Defensive numeric defaults — owner confirmation pending
+## Defensive numeric defaults — confirmed
 
-These values are explicit data, not inferred approval. Production activation remains blocked until the owner confirms or changes them.
+These explicit conservative values are the production fallback for unresolved capabilities.
 
-| Field group | Pending value |
+| Field group | Confirmed value |
 | --- | ---: |
 | Reliable visible-character / primary reference count | 1 |
 | Image outputs per request | 1 |

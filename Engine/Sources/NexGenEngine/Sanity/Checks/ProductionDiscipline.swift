@@ -16,27 +16,6 @@ public func productionRenderabilityCheck(_ ctx: AuditContext) throws -> [Finding
             continue
         }
 
-        if ProductionDiscipline.hasTooManyVisibleCharacters(
-            shot,
-            bible: ctx.bible
-        ) {
-            findings.append(Finding(
-                level: .error,
-                code: "TOO_MANY_VISIBLE_CHARACTERS",
-                shotId: shot.id,
-                message: "Generated shots may contain at most two visible characters; split this beat into simpler shots."
-            ))
-        }
-
-        if ProductionDiscipline.hasUndeclaredLongTake(shot) {
-            findings.append(Finding(
-                level: .error,
-                code: "LONG_TAKE_RISK_UNDECLARED",
-                shotId: shot.id,
-                message: "Generated shots over 12 seconds must declare long_take and provide a rescue cut."
-            ))
-        }
-
         if ProductionDiscipline.hasUnanchoredCharacterBlocking(shot) {
             findings.append(Finding(
                 level: .error,

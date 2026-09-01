@@ -401,8 +401,8 @@ struct CatalogDiscoveryTests {
     }
 
     @MainActor
-    @Test("A partially decoded MCP model page is never publishable")
-    func partiallyDecodedModelPageIsIncomplete() async {
+    @Test("One incompatible MCP model does not withhold valid siblings")
+    func incompatibleModelPayloadIsIsolated() async {
         let tools = [
             MCPProviderClient.DiscoveredTool(
                 name: "generate_image",
@@ -417,21 +417,28 @@ struct CatalogDiscoveryTests {
         ] + mappableHiggsfieldResultLifecycle
         let client = StubClient(
             tools: tools,
-            listing: #"{"items":[{"id":"kept","output_type":"image"},{"id":7,"output_type":"image"}]}"#
+            pages: [
+                [#"{"items":[{"id":"kept","output_type":"image"},{"id":7,"output_type":"image"}],"next_page_token":"page-2"}"#],
+                [#"{"items":[{"id":"also-kept","output_type":"image"}],"has_more":false}"#],
+            ]
         )
 
         let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
 
-        #expect(result.entries.map(\.id) == ["kept"])
-        #expect(!result.modelListingIsComplete)
+        #expect(result.entries.map(\.id) == ["kept", "also-kept"])
+        #expect(result.modelListingIsComplete)
+        #expect(result.modelDiagnostics == [MCPModelDiscovery.ModelDiagnostic(
+            modelID: nil,
+            kind: .payloadIncompatible
+        )])
         #expect(CatalogDiscovery.mcpListingPublicationDecision(
             listingIsComplete: result.modelListingIsComplete,
             retainedModelCount: 0
-        ) == .withholdIncompleteFirstRefresh)
+        ) == .publish)
         #expect(CatalogDiscovery.mcpListingPublicationDecision(
             listingIsComplete: result.modelListingIsComplete,
             retainedModelCount: 4
-        ) == .preserveLastKnownGood)
+        ) == .publish)
     }
 
     @MainActor
@@ -1008,6 +1015,46 @@ struct CatalogDiscoveryTests {
         #expect(secondSnapshot.detailCalls == 13)
         #expect(thirdSnapshot.detailCalls == 15)
         #expect(fourthSnapshot.detailCalls == 27)
+
+        let imageModels = first.compactMap { entry -> ImageModelConfig? in
+            guard case .image(let capabilities) = entry.uiCapabilities else { return nil }
+            return ImageModelConfig(entry: entry, caps: capabilities)
+        }
+        let offersByModelID = Dictionary(uniqueKeysWithValues: first.map { entry in
+            (entry.id, entry.offers ?? ProviderManifest.defaultOffers(forModelId: entry.id))
+        })
+        let discovered = [GenerationProvider.higgsfield: first]
+        let discovery = [
+            GenerationProvider.higgsfield: ProviderDiscoveryState.stale(
+                modelCount: first.count,
+                message: "Some model details could not be refreshed. Try again later."
+            ),
+        ]
+        let candidates = ModelCatalog.compatibleImageOfferings(
+            models: imageModels,
+            offersByModelID: offersByModelID,
+            preferredModelID: imageModels.first?.id ?? "",
+            aspectRatio: "9:16",
+            resolution: nil,
+            quality: nil,
+            referenceCount: 0,
+            activation: ProviderActivation(active: [
+                .init(provider: .higgsfield, transport: .mcp),
+            ]),
+            isEnabled: { _ in true },
+            offeringIsVerified: { modelID, binding in
+                ModelCatalog.imageOfferingIsVerified(
+                    modelID: modelID,
+                    binding: binding,
+                    discoveredByProvider: discovered,
+                    providerDiscovery: discovery
+                )
+            }
+        )
+
+        #expect(imageModels.count == 12)
+        #expect(candidates.count == 12)
+        #expect(candidates.allSatisfy { $0.target.provider == .higgsfield })
         CatalogDiscovery.invalidateDetailCache()
     }
 
@@ -1326,12 +1373,12 @@ struct CatalogDiscoveryTests {
             listing: #"{"items":[{"id":"seedance_2_0","name":"Seedance 2.0","output_type":"video"},{"id":"cinematic_studio_video_3_5","name":"Cinematic Studio 3.5","output_type":"video"},{"id":"gemini_omni","name":"Gemini Omni","output_type":"video"}]}"#,
             detailPayloads: [
                 "seedance_2_0": [
-                    #"{"id":"seedance_2_0","output_type":"video","constraints":["At most 9 image references are allowed (counting start_image and end_image).","At most 3 video_references are allowed.","At most 3 audio_references are allowed.","At most 12 reference files are allowed in total across images, videos, and audios."],"medias":[{"name":"medias","type":"image","roles":["image","start_image","end_image"]}]}"#,
+                    #"{"id":"seedance_2_0","output_type":"video","constraints":["At most 9 image references are allowed (counting start_image and end_image).","At most 3 video_references are allowed.","At most 3 audio_references are allowed.","At most 12 reference files are allowed in total across images, videos, and audios, including start_image and end_image."],"medias":[{"name":"medias","type":"image","roles":["image","start_image","end_image"]}]}"#,
                     #"{"id":"seedance_2_0","output_type":"video","medias":[{"name":"medias","type":"video","roles":["video"]}]}"#,
                     #"{"id":"seedance_2_0","output_type":"video","medias":[{"name":"medias","type":"audio","roles":["audio"]}]}"#,
                 ],
                 "cinematic_studio_video_3_5": [
-                    #"{"id":"cinematic_studio_video_3_5","output_type":"video","constraints":["At most 15 media references are allowed in total (image_references + start_image + end_image + video_references + audio_references)."],"medias":[{"name":"medias","type":"image","roles":["image","start_image","end_image"]},{"name":"medias","type":"video","roles":["video"]},{"name":"medias","type":"audio","roles":["audio"]}]}"#,
+                    #"{"id":"cinematic_studio_video_3_5","output_type":"video","constraints":["Start_image and end_image do not count toward the image reference limit.","At most 15 media references are allowed in total (image_references + start_image + end_image + video_references + audio_references)."],"medias":[{"name":"medias","type":"image","roles":["image","start_image","end_image"]},{"name":"medias","type":"video","roles":["video"]},{"name":"medias","type":"audio","roles":["audio"]}]}"#,
                 ],
                 "gemini_omni": [
                     #"{"id":"gemini_omni","output_type":"video","constraints":["At most 1 video_references entry is allowed.","When a video reference is provided, at most 5 image_references are allowed.","At most 7 image_references are allowed."],"medias":[{"name":"medias","type":"image","roles":["image"]},{"name":"medias","type":"video","roles":["video"]}]}"#,
@@ -1354,6 +1401,24 @@ struct CatalogDiscoveryTests {
         #expect(caps.maxTotalReferences == 12)
         #expect(caps.framesCountTowardImageReferenceLimit)
         #expect(caps.framesCountTowardTotalReferenceLimit)
+        let inputPolicy = try #require(entry.offers?.first?.productionInputPolicy)
+        let offeringCapabilities = try #require(
+            entry.offers?.first?.resolvedVideoCapabilities
+        )
+        #expect(!inputPolicy.requiresSourceVideo)
+        #expect(inputPolicy.framesCountTowardImageReferenceLimit)
+        #expect(inputPolicy.framesCountTowardTotalReferenceLimit)
+        let resolved = try #require(entry.resolvedOfferingCapabilities?.first)
+        #expect(
+            resolved.effective.fields.booleans[
+                CapabilityFieldIDV1.framesCountTowardImageReferenceLimit
+            ]?.origin.kind == .endpointOverlay
+        )
+        #expect(
+            resolved.effective.fields.booleans[
+                CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit
+            ]?.value == true
+        )
 
         let model = VideoModelConfig(entry: entry, caps: caps)
         func asset(_ id: String, _ type: ClipType) -> MediaAsset {
@@ -1370,11 +1435,17 @@ struct CatalogDiscoveryTests {
         #expect(VideoGenerationSubmission.InputAssets(
             frames: frames,
             imageRefs: validImages
-        ).validate(for: model) == nil)
+        ).validate(
+            for: model,
+            offeringCapabilities: offeringCapabilities
+        ) == nil)
         #expect(VideoGenerationSubmission.InputAssets(
             frames: frames,
             imageRefs: excessImages
-        ).validate(for: model) != nil)
+        ).validate(
+            for: model,
+            offeringCapabilities: offeringCapabilities
+        ) != nil)
 
         let cinematicEntry = try #require(entries.first {
             $0.id == "cinematic_studio_video_3_5"
@@ -1395,14 +1466,23 @@ struct CatalogDiscoveryTests {
         #expect(geminiCaps.maxReferenceImages == 7)
         #expect(geminiCaps.maxReferenceImagesWhenVideoPresent == 5)
         let geminiModel = VideoModelConfig(entry: geminiEntry, caps: geminiCaps)
+        let geminiOfferingCapabilities = try #require(
+            geminiEntry.offers?.first?.resolvedVideoCapabilities
+        )
         let sixImages = (0..<6).map { asset("gemini-image-\($0).png", .image) }
         #expect(VideoGenerationSubmission.InputAssets(
             imageRefs: sixImages
-        ).validate(for: geminiModel) == nil)
+        ).validate(
+            for: geminiModel,
+            offeringCapabilities: geminiOfferingCapabilities
+        ) == nil)
         #expect(VideoGenerationSubmission.InputAssets(
             imageRefs: sixImages,
             videoRefs: [asset("gemini-video.mp4", .video)]
-        ).validate(for: geminiModel) != nil)
+        ).validate(
+            for: geminiModel,
+            offeringCapabilities: geminiOfferingCapabilities
+        ) != nil)
     }
 
     @MainActor

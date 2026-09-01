@@ -124,6 +124,57 @@ enum EditSubmitter {
         return assets
     }
 
+    static func videoInputAssets(
+        _ input: GenerationInput,
+        editor: EditorViewModel
+    ) throws -> VideoGenerationSubmission.InputAssets {
+        let primary = try referenceAssets(input.imageURLAssetIds, editor: editor)
+        let source: MediaAsset?
+        if let sourceID = input.sourceVideoAssetId {
+            guard let resolved = editor.mediaAssets.first(where: { $0.id == sourceID }) else {
+                throw RerunError.missingSource
+            }
+            source = resolved
+        } else if primary.first?.type == .video {
+            source = primary.first
+        } else {
+            source = nil
+        }
+
+        let explicitFrameIDs = [input.startFrameAssetId, input.endFrameAssetId]
+            .compactMap { $0 }
+        let frames: [MediaAsset]
+        if !explicitFrameIDs.isEmpty {
+            frames = try referenceAssets(explicitFrameIDs, editor: editor)
+        } else if source == nil {
+            frames = primary
+        } else {
+            frames = []
+        }
+
+        var imageRefs = try referenceAssets(
+            input.referenceImageAssetIds,
+            editor: editor
+        )
+        if let source,
+           input.referenceImageAssetIds == nil {
+            imageRefs = primary.filter { $0.id != source.id }
+        }
+        return VideoGenerationSubmission.InputAssets(
+            sourceVideo: source,
+            frames: frames,
+            imageRefs: imageRefs,
+            videoRefs: try referenceAssets(
+                input.referenceVideoAssetIds,
+                editor: editor
+            ),
+            audioRefs: try referenceAssets(
+                input.referenceAudioAssetIds,
+                editor: editor
+            )
+        )
+    }
+
     @discardableResult
     static func rerun(
         asset: MediaAsset,
@@ -150,86 +201,91 @@ enum EditSubmitter {
         let preUploaded = gen.imageURLs
 
         if case .video(let videoModel)? = modelKind {
-            if let err = videoModel.validate(
-                duration: gen.duration, aspectRatio: gen.aspectRatio, resolution: gen.resolution
+            let inputAssets = try videoInputAssets(gen, editor: editor)
+            let primaryDurableIDs = Set(
+                (gen.imageURLAssetIds ?? [])
+                    + [gen.sourceVideoAssetId, gen.startFrameAssetId, gen.endFrameAssetId]
+                        .compactMap { $0 }
+            )
+            let hasUnprovenRemoteInput = (gen.imageURLs?.count ?? 0)
+                    > primaryDurableIDs.count
+                || (gen.referenceImageURLs?.count ?? 0)
+                    > (gen.referenceImageAssetIds?.count ?? 0)
+                || (gen.referenceVideoURLs?.count ?? 0)
+                    > (gen.referenceVideoAssetIds?.count ?? 0)
+                || (gen.referenceAudioURLs?.count ?? 0)
+                    > (gen.referenceAudioAssetIds?.count ?? 0)
+            guard !hasUnprovenRemoteInput else {
+                throw RerunError.invalid(
+                    "Cannot rerun: the original video input roles were not recorded."
+                )
+            }
+            let requiresSourceVideo = inputAssets.sourceVideo != nil
+            let videoDuration = gen.videoDuration ?? .seconds(gen.duration)
+            let generateAudio = gen.generateAudio ?? false
+            let target = GenerationService.dispatchTarget(
+                modelId: modelId,
+                requiringSourceVideo: requiresSourceVideo,
+                matchingVideoCapabilities: { capabilities in
+                    capabilities.validate(
+                        duration: videoDuration,
+                        aspectRatio: gen.aspectRatio,
+                        resolution: gen.resolution,
+                        generateAudio: generateAudio,
+                        displayName: videoModel.displayName
+                    ) == nil && inputAssets.validate(
+                        for: videoModel,
+                        offeringCapabilities: capabilities
+                    ) == nil
+                }
+            )
+            guard let offeringCapabilities = target.binding?
+                    .resolvedVideoCapabilities else {
+                throw RerunError.invalid(
+                    "No runnable provider endpoint accepts the recorded video outputs and inputs."
+                )
+            }
+            if let err = offeringCapabilities.validate(
+                duration: videoDuration,
+                aspectRatio: gen.aspectRatio,
+                resolution: gen.resolution,
+                generateAudio: generateAudio,
+                displayName: videoModel.displayName
+            ) ?? inputAssets.validate(
+                for: videoModel,
+                offeringCapabilities: offeringCapabilities
             ) {
                 throw RerunError.invalid(err)
             }
-            if videoModel.requiresSourceVideo {
-                guard let source = preUploaded?.first else { throw RerunError.missingSource }
-                let imageRefs = Array((preUploaded ?? []).dropFirst())
-                let params = VideoGenerationParams(
-                    prompt: gen.prompt,
-                    duration: gen.duration,
-                    aspectRatio: gen.aspectRatio,
-                    resolution: gen.resolution,
-                    sourceVideoURL: source,
-                    startFrameURL: nil,
-                    endFrameURL: nil,
-                    referenceImageURLs: imageRefs,
-                    generateAudio: gen.generateAudio ?? true
-                )
-                let authorization = try await authorizeRerun(
-                    gen: gen,
-                    modality: .video,
-                    durationSeconds: Double(max(1, gen.duration)),
-                    generateAudio: params.generateAudio,
-                    editor: editor,
-                    quoteLoader: quoteLoader
-                )
-                return editor.generationService.generate(
-                    genInput: gen,
-                    assetType: .video,
-                    placeholderDuration: asset.duration > 0 ? asset.duration : Double(max(1, gen.duration)),
-                    references: [],
-                    preUploadedURLs: preUploaded,
-                    name: rerunName(for: asset),
-                    folderId: asset.folderId,
-                    buildParams: { _ in .video(params) },
-                    fileExtension: "mp4",
-                    projectURL: editor.workingRoot,
-                    editor: editor,
-                    authorization: authorization,
-                    onComplete: onComplete,
-                    onFailure: onFailure
-                )
-            }
-            let params = VideoGenerationParams(
-                prompt: gen.prompt,
-                duration: gen.duration,
-                aspectRatio: gen.aspectRatio,
-                resolution: gen.resolution,
-                sourceVideoURL: nil,
-                startFrameURL: preUploaded?.first,
-                endFrameURL: (preUploaded?.count ?? 0) > 1 ? preUploaded?[1] : nil,
-                referenceImageURLs: gen.referenceImageURLs ?? [],
-                referenceVideoURLs: gen.referenceVideoURLs ?? [],
-                referenceAudioURLs: gen.referenceAudioURLs ?? [],
-                generateAudio: gen.generateAudio ?? true
-            )
+            gen.imageURLs = nil
+            gen.referenceImageURLs = nil
+            gen.referenceVideoURLs = nil
+            gen.referenceAudioURLs = nil
+            gen.videoDuration = videoDuration
+            let billedSeconds = videoDuration.seconds ?? max(1, gen.duration)
             let authorization = try await authorizeRerun(
                 gen: gen,
                 modality: .video,
-                durationSeconds: Double(max(1, gen.duration)),
-                generateAudio: params.generateAudio,
+                durationSeconds: Double(max(1, billedSeconds)),
+                generateAudio: generateAudio,
                 editor: editor,
-                quoteLoader: quoteLoader
+                quoteLoader: quoteLoader,
+                target: target
             )
-            let bundled = (preUploaded ?? [])
-                + (gen.referenceImageURLs ?? [])
-                + (gen.referenceVideoURLs ?? [])
-                + (gen.referenceAudioURLs ?? [])
-            return editor.generationService.generate(
+            let submission = VideoGenerationSubmission.make(
                 genInput: gen,
-                assetType: .video,
-                placeholderDuration: Double(max(1, gen.duration)),
-                references: [],
-                preUploadedURLs: bundled.isEmpty ? nil : bundled,
+                model: videoModel,
+                offeringCapabilities: offeringCapabilities,
+                inputAssets: inputAssets,
+                placeholderDuration: asset.duration > 0
+                    ? asset.duration
+                    : Double(max(1, billedSeconds)),
                 name: rerunName(for: asset),
                 folderId: asset.folderId,
-                buildParams: { _ in .video(params) },
-                snapshotRefs: { _, _ in },
-                fileExtension: "mp4",
+                generateAudio: generateAudio
+            )
+            return submission.submit(
+                service: editor.generationService,
                 projectURL: editor.workingRoot,
                 editor: editor,
                 authorization: authorization,
@@ -385,7 +441,8 @@ enum EditSubmitter {
         outputCount: Int = 1,
         generateAudio: Bool? = nil,
         editor: EditorViewModel,
-        quoteLoader: GenerationBudgetGuard.QuoteLoader
+        quoteLoader: GenerationBudgetGuard.QuoteLoader,
+        target: ResolvedGenerationTarget? = nil
     ) async throws -> GenerationAuthorization {
         do {
             return try await GenerationBudgetGuard.authorize(
@@ -399,7 +456,7 @@ enum EditSubmitter {
                     promptCharacterCount: gen.prompt.count,
                     generateAudio: generateAudio
                 ),
-                target: GenerationService.dispatchTarget(modelId: gen.model),
+                target: target ?? GenerationService.dispatchTarget(modelId: gen.model),
                 editor: editor,
                 quoteLoader: quoteLoader
             )
@@ -442,7 +499,14 @@ enum EditSubmitter {
         let modelId: String
         switch asset.type {
         case .video:
-            guard let m = VideoModelConfig.allModels.first(where: { $0.requiresSourceVideo }) else { return nil }
+            guard let m = VideoModelConfig.allModels.first(where: {
+                GenerationService.dispatchTarget(
+                    modelId: $0.id,
+                    requiringSourceVideo: true
+                ).binding?
+                    .resolvedVideoCapabilities?
+                    .inputPolicy.requiresSourceVideo == true
+            }) else { return nil }
             modelId = m.id
         case .image:
             guard let m = ImageModelConfig.nanoBananaPro else { return nil }
@@ -451,6 +515,7 @@ enum EditSubmitter {
             return nil
         }
         var stored = GenerationInput(prompt: "", model: modelId, duration: 0, aspectRatio: "", resolution: nil)
+        if asset.type == .video { stored.sourceVideoAssetId = asset.id }
         stored.imageURLAssetIds = [asset.id]
         return stored
     }
@@ -458,7 +523,15 @@ enum EditSubmitter {
     /// GenerationInput for Create Video — uses the image as a first frame or as a reference.
     static func createVideoSeed(for asset: MediaAsset, asReference: Bool) -> GenerationInput? {
         guard let model = VideoModelConfig.allModels.first(where: {
-            !$0.requiresSourceVideo && (asReference ? $0.supportsReferences : $0.supportsFirstFrame)
+                let capabilities = GenerationService.dispatchTarget(
+                    modelId: $0.id,
+                    requiringSourceVideo: false
+                ).binding?
+                    .resolvedVideoCapabilities
+                return capabilities?.inputPolicy.requiresSourceVideo == false
+                    && (asReference
+                        ? capabilities?.supportsReferences == true
+                        : capabilities?.supportsFirstFrame == true)
         }) else { return nil }
         var stored = GenerationInput(prompt: "", model: model.id, duration: 0, aspectRatio: "", resolution: nil)
         if asReference { stored.referenceImageAssetIds = [asset.id] } else { stored.imageURLAssetIds = [asset.id] }

@@ -33,6 +33,22 @@ struct ExecutionPlanV1Tests {
         #expect(!text.localizedCaseInsensitiveContains("provider"))
     }
 
+    @Test("an imported shot may be planned before its source footage exists")
+    func importedPlanWithoutSourceAsset() throws {
+        let shot = ExecutionShotV1(
+            id: "shot-001",
+            sourceMode: .imported,
+            startState: ExecutionStateV1(summary: "The take starts on the empty doorway."),
+            endState: ExecutionStateV1(summary: "The performer holds on the mark."),
+            primaryAction: "The performer enters and stops on the mark.",
+            camera: ExecutionCameraPlanV1(movementID: "core.static"),
+            renderability: .green,
+            acceptance: [criterion()]
+        )
+
+        try ExecutionPlanValidator.validate(makePlan(shots: [shot]))
+    }
+
     @Test("generated and enhanced shots declare requirements while imported shots do not")
     func sourceModeOwnership() throws {
         let requirement = GenerationRequirementV1(
@@ -69,6 +85,60 @@ struct ExecutionPlanV1Tests {
         )
         #expect(throws: ExecutionPlanValidationError.invalidSourceBinding(shotID: "shot-001")) {
             try ExecutionPlanValidator.validate(makePlan(shots: [invalid]))
+        }
+    }
+
+    @Test("timed beats stay inside the preferred shot duration")
+    func timedBeatsUsePreferredDuration() throws {
+        let shot = ExecutionShotV1(
+            id: "shot-001",
+            sourceMode: .generated,
+            startState: ExecutionStateV1(summary: "The shot begins."),
+            endState: ExecutionStateV1(summary: "The shot ends."),
+            primaryAction: "The performer turns toward camera.",
+            camera: ExecutionCameraPlanV1(movementID: "core.static"),
+            timedActionBeats: [
+                TimedActionBeatV1(timeSeconds: 5, action: "Complete the turn."),
+            ],
+            renderability: .green,
+            acceptance: [criterion()],
+            generationRequirement: GenerationRequirementV1(
+                modalityID: "video",
+                modeIDs: ["text-to-video"],
+                visibleEntityCount: 1,
+                duration: RequestedDurationV1(
+                    preferredSeconds: 4,
+                    maximumSeconds: 10
+                )
+            )
+        )
+
+        #expect(throws: ExecutionPlanValidationError.invalidTimedBeat(
+            shotID: "shot-001"
+        )) {
+            try ExecutionPlanValidator.validate(makePlan(shots: [shot]))
+        }
+    }
+
+    @Test("execution blocking identifiers are canonically unique")
+    func canonicalBlockingIDs() throws {
+        let shot = ExecutionShotV1(
+            id: "shot-001",
+            sourceMode: .imported,
+            startState: ExecutionStateV1(summary: "The shot begins."),
+            endState: ExecutionStateV1(summary: "The shot ends."),
+            primaryAction: "The performers hold their marks.",
+            camera: ExecutionCameraPlanV1(movementID: "core.static"),
+            blocking: [
+                ExecutionBlockingV1(entityID: "Claude_Mouse", relation: "left"),
+                ExecutionBlockingV1(entityID: " claude-mouse ", relation: "right"),
+            ],
+            renderability: .green,
+            acceptance: [criterion()]
+        )
+
+        #expect(throws: ExecutionPlanValidationError.duplicateID(" claude-mouse ")) {
+            try ExecutionPlanValidator.validate(makePlan(shots: [shot]))
         }
     }
 
@@ -241,13 +311,13 @@ struct ExecutionPlanV1Tests {
         }
     }
 
-    @Test("reference demands resolve to exact media in the creative context")
+    @Test("reference demands resolve through the asset graph instead of context media")
     func referenceDemandBinding() throws {
         let requirement = GenerationRequirementV1(
             modalityID: "video",
             modeIDs: ["reference-to-video"],
             visibleEntityCount: 1,
-            referenceDemandIDs: ["look-reference-001"]
+            referenceDemandIDs: ["look-demand-001"]
         )
         let shot = ExecutionShotV1(
             id: "shot-001",
@@ -260,40 +330,117 @@ struct ExecutionPlanV1Tests {
             acceptance: [criterion()],
             generationRequirement: requirement
         )
-        let matching = ProjectCreativeContextV1(
+        let context = ProjectCreativeContextV1(
             projectID: "project-001",
-            artifacts: [],
-            media: [
-                ProjectMediaReferenceV1(
-                    id: "look-reference-001",
-                    role: "reference.look",
-                    path: "import/look.png",
-                    sha256: digest
-                ),
-            ]
+            artifacts: []
         )
         let plan = makePlan(
             shots: [shot],
             contextSHA256: FileDigest.sha256(
-                of: try ExecutionPlanCanonicalCodec.encode(matching)
+                of: try ExecutionPlanCanonicalCodec.encode(context)
             )
         )
-        try ExecutionPlanValidator.validate(plan, against: matching)
+        let asset = try AssetGraphContentAddressV1.reidentified(AssetGraphNodeV1(
+            id: "pending",
+            version: 1,
+            path: "import/look.png",
+            sha256: digest,
+            modality: .image,
+            approval: .approved,
+            provenance: AssetProvenanceV1(
+                kindID: "fixture.import",
+                recordedAt: "2026-08-31T00:00:00Z"
+            ),
+            allowedUseIDs: ["look.identity"]
+        ))
+        let graph = AssetGraphV1(
+            id: try AssetGraphContentAddressV1.graphID(
+                projectID: "project-001",
+                assets: [asset]
+            ),
+            projectID: "project-001",
+            assets: [asset]
+        )
+        let graphData = try AssetGraphCanonicalCodecV1.encode(graph)
+        let demandSet = ReferenceDemandSetV1(
+            id: "reference-demands-shot-001",
+            projectID: "project-001",
+            shotID: "shot-001",
+            assetGraph: CanonicalArtifactReferenceV1(
+                id: graph.id,
+                role: AssetGraphV1.artifactRole,
+                path: PipelineLayout.assetGraphFile,
+                sha256: FileDigest.sha256(of: graphData)
+            ),
+            demands: [
+                ReferenceDemandV1(
+                    id: "look-demand-001",
+                    assetID: asset.id,
+                    modality: .image,
+                    semanticJobID: "look.identity",
+                    isRequired: true,
+                    priority: 100,
+                    inputSlotID: "reference.image",
+                    modeID: "reference-to-video"
+                ),
+            ]
+        )
 
-        let missing = ProjectCreativeContextV1(projectID: "project-001", artifacts: [])
-        let missingPlan = makePlan(
-            shots: [shot],
-            contextSHA256: FileDigest.sha256(
-                of: try ExecutionPlanCanonicalCodec.encode(missing)
+        try ExecutionPlanValidator.validate(plan, against: context)
+        try ExecutionPlanValidator.validate(
+            plan,
+            against: context,
+            assetGraph: graph,
+            referenceDemandSetsByShotID: ["shot-001": demandSet]
+        )
+        let futureShot = ExecutionShotV1(
+            id: "shot-002",
+            sourceMode: .generated,
+            startState: ExecutionStateV1(summary: "The next shot begins."),
+            endState: ExecutionStateV1(summary: "The next shot ends."),
+            primaryAction: "The performer exits frame.",
+            camera: ExecutionCameraPlanV1(movementID: "core.static"),
+            renderability: .green,
+            acceptance: [criterion()],
+            generationRequirement: GenerationRequirementV1(
+                modalityID: "video",
+                modeIDs: ["text-to-video"],
+                visibleEntityCount: 1
             )
         )
+        let sequentialPlan = makePlan(
+            shots: [shot, futureShot],
+            contextSHA256: FileDigest.sha256(
+                of: try ExecutionPlanCanonicalCodec.encode(context)
+            )
+        )
+        try ExecutionPlanValidator.validate(
+            sequentialPlan,
+            against: context,
+            assetGraph: graph,
+            demandSet: demandSet,
+            forShotID: "shot-001"
+        )
+        #expect(throws: (any Error).self) {
+            try ExecutionPlanValidator.validate(
+                sequentialPlan,
+                against: context,
+                assetGraph: graph,
+                referenceDemandSetsByShotID: ["shot-001": demandSet]
+            )
+        }
+
         #expect(
-            throws: ExecutionPlanValidationError.unknownMediaReference(
-                shotID: "shot-001",
-                assetID: "look-reference-001"
+            throws: ExecutionPlanValidationError.invalidGenerationRequirement(
+                shotID: "shot-001"
             )
         ) {
-            try ExecutionPlanValidator.validate(missingPlan, against: missing)
+            try ExecutionPlanValidator.validate(
+                plan,
+                against: context,
+                assetGraph: graph,
+                referenceDemandSetsByShotID: [:]
+            )
         }
     }
 

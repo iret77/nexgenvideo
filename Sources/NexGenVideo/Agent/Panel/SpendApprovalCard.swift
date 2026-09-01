@@ -55,16 +55,11 @@ struct SpendApprovalCard: View {
     }
 
     private var providerIssues: [String] {
-        approval.providerScope.compactMap { provider in
-            switch ModelCatalog.shared.providerDiscovery[provider] {
-            case .actionRequired(let message), .unavailable(let message):
-                return "\(provider.displayName): \(message)"
-            case .stale(_, let message):
-                return "\(provider.displayName): \(message)"
-            case .inactive, .checking, .ready, .none:
-                return nil
-            }
-        }
+        SpendApprovalProviderDiagnostics.messages(
+            providerScope: approval.providerScope,
+            availableOptions: availableOptions,
+            discovery: ModelCatalog.shared.providerDiscovery
+        )
     }
 
     var body: some View {
@@ -236,5 +231,33 @@ struct SpendApprovalCard: View {
 
     private func displayName(_ option: SpendOption) -> String {
         AgentDialog.limitedChoiceDisplayLabel(option.modelName)
+    }
+}
+
+enum SpendApprovalProviderDiagnostics {
+    static func messages(
+        providerScope: [GenerationProvider],
+        availableOptions: [SpendOption],
+        discovery: [GenerationProvider: ProviderDiscoveryState]
+    ) -> [String] {
+        providerScope.compactMap { provider in
+            let hasOption = availableOptions.contains {
+                $0.target.provider == provider
+            }
+            switch discovery[provider] {
+            case .actionRequired(let message), .unavailable(let message):
+                return "\(provider.displayName): \(message)"
+            case .stale(_, let message):
+                return "\(provider.displayName): \(message)"
+            case .checking where !hasOption:
+                return "\(provider.displayName): Refreshing available models."
+            case .ready where !hasOption:
+                return "\(provider.displayName): No model supports this request."
+            case .inactive, .none where !hasOption:
+                return "\(provider.displayName): No runnable model was discovered."
+            case .inactive, .checking, .ready, .none:
+                return nil
+            }
+        }
     }
 }

@@ -43,6 +43,24 @@ enum GenerationProvider: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
+    var supportsGenericImageGeneration: Bool {
+        switch self {
+        case .fal, .runway, .google, .higgsfield, .openart:
+            return true
+        case .elevenlabs, .marble, .ace:
+            return false
+        }
+    }
+
+    var requiresLiveImageCatalogDiscovery: Bool {
+        switch self {
+        case .fal, .runway, .google:
+            return true
+        case .higgsfield, .elevenlabs, .marble, .openart, .ace:
+            return false
+        }
+    }
+
     var keysURL: URL {
         switch self {
         case .fal: return URL(string: "https://fal.ai/dashboard/keys")!

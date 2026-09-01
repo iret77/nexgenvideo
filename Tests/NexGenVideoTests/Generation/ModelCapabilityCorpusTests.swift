@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Bundled model capability corpus")
 struct ModelCapabilityCorpusTests {
-    @Test("the versioned corpus is bundled, complete, and not production-approved")
+    @Test("the versioned corpus is bundled, complete, and production-approved")
     func bundledCorpusContract() throws {
         let document = try BundledModelCapabilityCorpus.load()
 
@@ -16,7 +16,7 @@ struct ModelCapabilityCorpusTests {
         #expect(document.inventory.filter { !$0.fixture }.count == 85)
         #expect(document.knowledgeBase.profiles.count == 59)
         #expect(document.knowledgeBase.aliases.count == 191)
-        #expect(document.defensiveDefaults.ownerConfirmation == "pending")
+        #expect(document.defensiveDefaults.ownerConfirmation == "confirmed")
         #expect(document.defensiveDefaults.table.characterAndPrimaryReferenceCounts == 1)
         #expect(document.defensiveDefaults.table.imageOutputsPerRequest == 1)
         #expect(document.defensiveDefaults.table.otherIntegerCounts == 0)
@@ -24,9 +24,9 @@ struct ModelCapabilityCorpusTests {
         #expect(document.defensiveDefaults.table.durationMaximumSeconds == 30)
         #expect(document.defensiveDefaults.table.booleans == false)
         #expect(document.defensiveDefaults.table.sets.isEmpty)
-        #expect(throws: ModelCapabilityCorpusError.ownerConfirmationPending) {
-            try document.productionKnowledgeBase()
-        }
+        #expect(try document.productionKnowledgeBase() == document.knowledgeBase)
+        #expect(CatalogCapabilityRuntime.resolver != nil)
+        #expect(CatalogCapabilityRuntime.loadError == nil)
     }
 
     @Test("Seedance 2.5 keeps hard API limits separate from reliable capacity")
@@ -142,7 +142,7 @@ struct ModelCapabilityCorpusTests {
         )
         #expect(future.researchNeeded)
         #expect(unknown.resolvedIdentity == nil)
-        #expect(unknown.defensiveProfileID == "defensive.video.owner-pending-v1")
+        #expect(unknown.defensiveProfileID == "defensive.video.owner-confirmed-v1")
         #expect(unknown.fields.integers[CapabilityFieldIDV1.referenceImages]?.value == 1)
         #expect(unknown.researchNeeded)
     }

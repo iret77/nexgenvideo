@@ -1,0 +1,506 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>UI-Spec — Calm, task-oriented Agent</title>
+<meta name="ui-spec-viewports" content="240x1050,400x1050,640x1050,1180x1100">
+<style>
+  :root {
+    color-scheme: dark;
+    --base: #0a0a0a;
+    --surface: #161616;
+    --raised: #1e1e1e;
+    --prominent: #2c2c2c;
+    --border: rgba(255,255,255,.12);
+    --border-strong: rgba(255,255,255,.18);
+    --text: rgba(255,255,255,1);
+    --text-2: rgba(255,255,255,.80);
+    --text-3: rgba(255,255,255,.62);
+    --muted: rgba(255,255,255,.34);
+    --accent: #f5efe4;
+    --time: #f29933;
+    --success: #4fb85f;
+    --warning: #e89c3e;
+    --error: #e54f4f;
+    --s1: 2px;
+    --s2: 4px;
+    --s3: 6px;
+    --s4: 8px;
+    --s5: 10px;
+    --s6: 12px;
+    --s7: 14px;
+    --s8: 20px;
+    --r1: 6px;
+    --r2: 10px;
+    --r3: 14px;
+    --hair: .5px;
+    --f1: 9px;
+    --f2: 10px;
+    --f3: 11px;
+    --f4: 13px;
+    --f5: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #080808;
+    color: var(--text-2);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #spec {
+    width: min(1120px, calc(100% - 32px));
+    margin: 28px auto;
+    padding: 24px 28px;
+    border: var(--hair) solid var(--border-strong);
+    border-radius: var(--r2);
+    background: #111;
+  }
+  h1 { margin: 0 0 var(--s3); color: var(--text); font-size: 23px; font-weight: 600; }
+  h2 { margin: 24px 0 var(--s4); color: var(--text); font-size: var(--f5); }
+  h3 { margin: 16px 0 var(--s3); color: var(--text-2); font-size: var(--f4); }
+  p, li { max-width: 92ch; }
+  ul { margin: var(--s3) 0; padding-left: 20px; }
+  li { margin: var(--s2) 0; }
+  code { color: #d9c7ae; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--f3); }
+  th, td { padding: var(--s4); border-bottom: var(--hair) solid var(--border); text-align: left; vertical-align: top; }
+  th { color: var(--text); font-weight: 600; }
+  .contract { color: var(--text-3); }
+
+  #mockups {
+    min-height: 1050px;
+    padding: 30px max(0px, calc((100vw - 680px) / 2)) 64px;
+    background: radial-gradient(circle at 60% 0%, #25221f 0%, #0a0a0a 44%);
+  }
+  .agent-shell {
+    width: min(640px, 100vw);
+    height: 990px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    overflow: hidden;
+    background: var(--base);
+    border: var(--hair) solid var(--border-strong);
+    border-radius: var(--r2);
+    box-shadow: 0 18px 55px rgba(0,0,0,.55);
+  }
+  .conversation-bar {
+    min-height: 38px;
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s2) var(--s4);
+    color: var(--text-3);
+    background: var(--raised);
+    border-bottom: var(--hair) solid var(--border);
+  }
+  .conversation-title {
+    min-width: 0;
+    color: var(--text);
+    font-size: var(--f3);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  button, .button {
+    min-height: 26px;
+    padding: 0 var(--s4);
+    border: var(--hair) solid var(--border);
+    border-radius: 999px;
+    background: var(--prominent);
+    color: var(--text-2);
+    font: 600 var(--f2) inherit;
+    white-space: nowrap;
+  }
+  button.primary { background: var(--accent); color: var(--base); border-color: transparent; }
+  button.danger { color: #ffaaaa; }
+  button:disabled { color: var(--muted); background: var(--raised); opacity: .6; }
+  .attention { color: var(--warning); }
+
+  .transcript {
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--s6) clamp(10px, 3vw, 20px) var(--s4);
+    scrollbar-width: none;
+  }
+  .transcript::-webkit-scrollbar { display: none; }
+  .history-summary {
+    margin-bottom: var(--s8);
+    color: var(--muted);
+    font-size: var(--f2);
+  }
+  .history-line {
+    min-height: 20px;
+    display: flex;
+    align-items: baseline;
+    gap: var(--s3);
+    border-bottom: var(--hair) solid rgba(255,255,255,.045);
+  }
+  .history-line strong { color: var(--text-3); font-weight: 500; }
+  .history-line span { margin-left: auto; color: var(--muted); }
+  .turn {
+    margin: 0 0 var(--s8);
+    padding-bottom: var(--s8);
+    border-bottom: var(--hair) solid rgba(255,255,255,.07);
+  }
+  .turn:last-child { border-bottom: 0; margin-bottom: 0; }
+  .user-intent {
+    width: fit-content;
+    max-width: 88%;
+    margin: 0 0 var(--s6) auto;
+    padding: var(--s4) var(--s7);
+    border-radius: var(--r3);
+    background: rgba(255,255,255,.08);
+    color: var(--text);
+    font-size: var(--f4);
+  }
+  .assistant-result { color: var(--text-2); font-size: var(--f4); }
+  .assistant-result h4 { margin: 0 0 var(--s3); color: var(--text); font-size: var(--f5); }
+  .activity, .receipt, .notice {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s3);
+    margin-top: var(--s4);
+    color: var(--text-3);
+    font-size: var(--f2);
+  }
+  .activity .chevron, .receipt .chevron { color: var(--muted); }
+  .activity.running { color: var(--text-2); }
+  .spinner { color: var(--time); }
+  .receipt-group {
+    margin-top: var(--s5);
+    padding-left: var(--s4);
+    border-left: 2px solid rgba(255,255,255,.10);
+  }
+  .receipt { margin-top: var(--s2); }
+  .receipt .outcome { color: var(--text-2); font-weight: 600; }
+  .notice { color: var(--warning); }
+  .notice.error { color: #ff9c9c; }
+  .result-document {
+    margin-top: var(--s5);
+    padding: var(--s6);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r2);
+    background: var(--surface);
+  }
+  .result-document h4 { margin-bottom: var(--s5); }
+  .badge-row { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s4) 0; }
+  .badge {
+    padding: var(--s1) var(--s3);
+    border-radius: 999px;
+    background: var(--raised);
+    color: var(--text-3);
+    font-size: var(--f1);
+  }
+  .kv { display: grid; grid-template-columns: minmax(70px, .35fr) 1fr; gap: var(--s2) var(--s4); font-size: var(--f2); }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; color: var(--text-2); }
+  .media-result {
+    height: 86px;
+    margin-top: var(--s5);
+    display: grid;
+    place-items: center;
+    border-radius: var(--r1);
+    color: var(--text-3);
+    background: linear-gradient(135deg, #3b2a47, #b55b35 55%, #15151b);
+  }
+  .phase-progress {
+    margin-top: var(--s5);
+    padding: var(--s5);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r2);
+    background: var(--surface);
+  }
+  .phase-head { display: flex; gap: var(--s4); align-items: baseline; color: var(--text); font-size: var(--f3); font-weight: 600; }
+  .phase-head span { margin-left: auto; color: var(--text-3); font-size: var(--f2); font-weight: 400; }
+  .progress { height: 4px; margin-top: var(--s4); border-radius: 99px; overflow: hidden; background: var(--prominent); }
+  .progress i { display: block; width: 62%; height: 100%; background: var(--time); }
+  .phase-next { margin-top: var(--s3); color: var(--muted); font-size: var(--f1); }
+
+  .live-status {
+    min-height: 31px;
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--s3) var(--s6);
+    border-top: var(--hair) solid var(--border);
+    background: var(--surface);
+    color: var(--text-3);
+    font-size: var(--f2);
+  }
+  .live-status strong { color: var(--text-2); font-weight: 600; }
+  .live-status .latest { margin-left: auto; }
+
+  .composer-dock {
+    padding: var(--s4) var(--s5) var(--s5);
+    background: var(--base);
+  }
+  .composer {
+    min-height: 84px;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r3);
+    background: var(--surface);
+  }
+  .composer-placeholder { padding: var(--s6); color: var(--muted); }
+  .composer-tools { display: flex; align-items: center; gap: var(--s3); padding: var(--s3); border-top: var(--hair) solid var(--border); }
+  .composer-tools .send { margin-left: auto; }
+  .decision {
+    max-height: 280px;
+    overflow: auto;
+    padding: var(--s6);
+    border: var(--hair) solid rgba(242,153,51,.42);
+    border-radius: var(--r2);
+    background: var(--surface);
+  }
+  .decision-head { display: flex; gap: var(--s3); align-items: center; color: var(--text); font-size: var(--f3); font-weight: 600; }
+  .decision-head .step { margin-left: auto; color: var(--muted); font-size: var(--f1); font-weight: 500; }
+  .decision p { margin: var(--s3) 0 var(--s5); color: var(--text-3); font-size: var(--f2); }
+  .decision-actions { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: center; }
+  .decision-actions .primary { margin-left: auto; }
+  .select-row { display: grid; grid-template-columns: auto minmax(0,1fr); gap: var(--s4); margin: var(--s4) 0; font-size: var(--f2); }
+  .select-row label { color: var(--muted); }
+  .select-row strong { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .decision-error { margin: var(--s4) 0; color: #ffaaaa; font-size: var(--f2); }
+
+  .state-matrix {
+    width: min(1120px, calc(100% - 32px));
+    margin: 34px auto 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--s6);
+  }
+  .state-card {
+    min-height: 130px;
+    padding: var(--s6);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r2);
+    background: var(--surface);
+  }
+  .state-card h3 { margin-top: 0; }
+  .state-card p { color: var(--text-3); font-size: var(--f2); }
+  .mini-status { display: flex; gap: var(--s3); align-items: center; color: var(--text-2); font-size: var(--f2); }
+  .mini-actions { display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s4); }
+  .conversation-list { margin-top: var(--s4); }
+  .conversation-row { display: flex; gap: var(--s3); padding: var(--s3) 0; border-bottom: var(--hair) solid var(--border); font-size: var(--f2); }
+  .conversation-row span { margin-left: auto; color: var(--muted); }
+
+  @media (max-width: 700px) {
+    #spec { width: calc(100% - 16px); margin: 8px auto; padding: 14px; }
+    #spec table { display: block; overflow-x: auto; }
+    #mockups { padding: 0; }
+    .agent-shell { height: 1050px; border-radius: 0; border-left: 0; border-right: 0; }
+    .state-matrix { grid-template-columns: 1fr; width: calc(100% - 16px); }
+  }
+  @media (max-width: 300px) {
+    .conversation-bar { grid-template-columns: auto auto minmax(0,1fr) auto; }
+    .transcript { padding-left: var(--s5); padding-right: var(--s5); }
+    .decision-actions .primary { margin-left: 0; }
+    .kv { grid-template-columns: 1fr; }
+    .kv dd { margin-bottom: var(--s2); }
+  }
+</style>
+
+<section id="spec">
+  <h1>Calm, task-oriented Agent</h1>
+  <p>This is the normative information architecture and visual grammar for the NexGenVideo Agent.
+    Conversation content is primary, current work is secondary, and utility chrome is tertiary. A
+    user task and everything it produces form one stable turn.</p>
+
+  <h2>Surface ownership</h2>
+  <table>
+    <tr><th>Information or action</th><th>Single owner</th><th>Normative treatment</th></tr>
+    <tr><td>Current conversation and switching</td><td>Conversation bar</td><td>One labeled History navigator, labeled Workflows when available, and labeled New. No open-tab strip plus History.</td></tr>
+    <tr><td>Authored intent and assistant result</td><td>Transcript turn</td><td>Primary reading order. A hidden kickoff has no visible user row.</td></tr>
+    <tr><td>Current/completed technical work</td><td>Owning transcript turn</td><td>One activity line; one labeled disclosure contains steps, arguments, results, and errors.</td></tr>
+    <tr><td>Deterministic running phase detail</td><td>Owning tool-call position</td><td>Expanded progress until completion, then the normal collapsed activity line.</td></tr>
+    <tr><td>Workflow/choice audit history</td><td>Owning transcript turn</td><td>Compact non-interactive receipts, grouped by phase. Never authored-user prose.</td></tr>
+    <tr><td>Current high-level state</td><td>Persistent live status</td><td>One compact line: availability, working, action required, failed, or ready. No repeated detail.</td></tr>
+    <tr><td>Composition or required decision</td><td>Composer Dock</td><td>Exactly one mutually exclusive dock state. Draft, references, height, and focus survive decisions.</td></tr>
+    <tr><td>Visual selection and artifact truth</td><td>Timeline, Review, Bible, Media, Pipeline</td><td>The Agent references canonical surfaces; it never duplicates their interactive content.</td></tr>
+    <tr><td>Recoverable detail and CTA</td><td>Nearest corrective owner</td><td>Detailed error appears once. Live status may say Failed without repeating the message.</td></tr>
+  </table>
+
+  <h2>Turn anatomy and rhythm</h2>
+  <ul>
+    <li>A turn contains authored user intent when present, assistant prose or one result document,
+      one current/completed activity summary, and its durable receipts.</li>
+    <li>Intra-turn spacing uses 4–12 pt roles. Inter-turn spacing is 20 pt plus a quiet divider.
+      Consecutive receipts within one phase use 2–4 pt and one group rail.</li>
+    <li>Completed activity is collapsed by default. Current work may expand only at the owning
+      tool-call position. Disclosures never nest.</li>
+    <li>Streaming replaces the current result/activity in place using stable identity. It does not
+      append status rows or move a reader who is pinned away from the bottom.</li>
+    <li>Plain assistant prose has no card chrome. Structured content uses one bounded result document,
+      never an arbitrary peer-card stack or duplicated Markdown.</li>
+  </ul>
+
+  <h2>Result, activity, receipt, and notice grammar</h2>
+  <table>
+    <tr><th>Role</th><th>Content</th><th>Hierarchy</th><th>Interaction</th></tr>
+    <tr><td>Activity</td><td>Host operation label + state</td><td>Quiet line; one spinner maximum while current</td><td>One Details disclosure</td></tr>
+    <tr><td>Result</td><td>Prose or bounded headline/status/key-value/callout/media document</td><td>One primary container per turn</td><td>Copy and canonical result actions</td></tr>
+    <tr><td>Receipt</td><td>Attached, Provided, Skipped, Done, Failed, Needs action</td><td>Text + symbol first; color secondary</td><td>Non-interactive history</td></tr>
+    <tr><td>Notice</td><td>User-relevant warning, failure, or recovery</td><td>Shown only at the corrective owner</td><td>At most one corrective CTA</td></tr>
+  </table>
+
+  <h2>Composer Dock state machine</h2>
+  <p><code>composing | clarification | workflow-intake | gate-approval | spend-approval |
+    submitting | recoverable-error</code>. Exactly one state renders. A decision has a labeled primary
+    action and distinct Skip, Done, Clear item, Not yet, Decline, Approve, Generate, and Cancel actions.
+    Required fields expose a disabled reason. Decision content is bounded to 280 pt with one internal
+    scroll region; the transcript never gains a nested scroll view.</p>
+
+  <h2>Status precedence</h2>
+  <p><code>authentication/unavailable → terminal failure → cancellable generation → phase run →
+    submitting decision → action required → streaming/activity → backend checking → ready</code>.
+    Detailed errors stay in the Dock or owning turn. A visible decision owns “Action required” and
+    suppresses the separate status line. A visible running activity owns “Working.” Ready is one compact line.</p>
+
+  <h2>Conversation chrome and utilities</h2>
+  <ul>
+    <li>The bar shows labeled History, labeled New, and labeled Workflows when available. History contains
+      every saved/open conversation, search, running/action-required cues, switch, close, and explicit delete.</li>
+    <li>Workflows and backend/model information live one disclosure deep and appear directly only when
+      they affect the current task or decision. Attach/import/reference remain one paperclip menu.</li>
+    <li>Latest is an in-flow labeled action only while the reader is away from the bottom. It relays a
+      scroll request by state and never overlays or resizes the transcript.</li>
+  </ul>
+
+  <h2>Responsive, keyboard, motion, and accessibility</h2>
+  <ul>
+    <li><strong>240 pt:</strong> History, Workflows, and New remain labeled. Result
+      key-value rows stack. Decision actions wrap without hiding the primary action.</li>
+    <li><strong>400 pt:</strong> the full conversation bar fits; result documents keep a two-column
+      key-value grid. <strong>640 pt:</strong> prose remains capped at the shared chat-column width.</li>
+    <li>Reading order is conversation bar → turns (intent, result, activity, receipts) → live status →
+      Dock. VoiceOver groups each turn and each dock state as one landmark with state and primary action.</li>
+    <li>Keyboard: ⌘N New; ⌘⇧H History; Esc cancels only when allowed; Return submits only in composing;
+      Tab traverses one coherent dock; destructive Delete is never the Close action.</li>
+    <li>State always has text and symbol, not color alone. Text contrast follows AppTheme. Reduce Motion
+      uses opacity only; no scale/move transition shifts the transcript/Dock boundary.</li>
+    <li>The observed transcript ScrollView, bar, status, and Dock are persistent acyclic in-flow
+      siblings. No shared ZStack, overlay, scroll-edge effect, geometry callback, or nested transcript scroll.</li>
+  </ul>
+
+  <h2>Type and spacing hierarchy</h2>
+  <table>
+    <tr><th>Role</th><th>AppTheme role</th><th>Spacing</th></tr>
+    <tr><td>User intent / assistant result</td><td>FontSize.md, primary/secondary text</td><td>12 pt within content; 20 pt between turns</td></tr>
+    <tr><td>Result title</td><td>FontSize.mdLg, semibold</td><td>10 pt to result body</td></tr>
+    <tr><td>Activity / receipt / status</td><td>FontSize.xs or xxs, medium</td><td>4–8 pt; receipt groups 2–4 pt</td></tr>
+    <tr><td>Chrome / metadata</td><td>FontSize.xs/xxs, tertiary/muted</td><td>4–8 pt</td></tr>
+    <tr><td>Dock</td><td>Shared dialog/composer controls</td><td>10–14 pt shell, 6–8 pt controls</td></tr>
+  </table>
+
+  <h2>Preserved locked contracts</h2>
+  <ul class="contract">
+    <li>#96: decisions are Composer Dock states, visual candidates stay on canonical canvases, and
+      transcript history is compact/non-interactive. MCP Apps never introduce transcript widgets.</li>
+    <li>#135: rich output remains schema validated with bounded enums, required fields,
+      <code>additionalProperties: false</code>, and a legacy compatibility projection.</li>
+    <li><code>pipeline-phase-progress.html</code> remains the running phase treatment;
+      <code>repeatable-intake.html</code> retains explicit numbered item, Skip, Done, Clear, and gating.</li>
+    <li>Pipeline remains the canonical workflow overview. Host intake remains durable history and
+      never becomes a fake user message. No provider, prompt, pack, pipeline, or artifact semantics change.</li>
+  </ul>
+</section>
+
+<section id="mockups" aria-label="Agent surface stress scenario">
+  <div class="agent-shell">
+    <header class="conversation-bar">
+      <button>History</button>
+      <button>Workflows</button>
+      <span aria-hidden="true"></span>
+      <button>New</button>
+    </header>
+
+    <main class="transcript" aria-label="Conversation">
+      <div class="history-summary" aria-label="Thirty completed turns">
+        <div class="history-line"><strong>1 · Project setup</strong><span>Done</span></div>
+        <div class="history-line"><strong>2 · Track intake</strong><span>Attached</span></div>
+        <div class="history-line"><strong>3 · Lyrics intake</strong><span>Skipped</span></div>
+        <div class="history-line"><strong>4 · Audio analysis</strong><span>Approved</span></div>
+        <div class="history-line"><strong>5 · Affect review</strong><span>Provided</span></div>
+        <div class="history-line"><strong>6 · Brief draft</strong><span>Done</span></div>
+        <div class="history-line"><strong>7 · Brief revision</strong><span>Approved</span></div>
+        <div class="history-line"><strong>8 · Character intake</strong><span>2 attached</span></div>
+        <div class="history-line"><strong>9 · Location intake</strong><span>2 attached</span></div>
+        <div class="history-line"><strong>10 · Style references</strong><span>4 attached</span></div>
+        <div class="history-line"><strong>11 · Color script</strong><span>Provided</span></div>
+        <div class="history-line"><strong>12 · Lighting anchor</strong><span>Failed</span></div>
+        <div class="history-line"><strong>13 · Provider recovery</strong><span>Done</span></div>
+        <div class="history-line"><strong>14 · Lighting anchor retry</strong><span>Generated</span></div>
+        <div class="history-line"><strong>15 · Production Design</strong><span>Approved</span></div>
+        <div class="history-line"><strong>16 · Treatment</strong><span>Drafted</span></div>
+        <div class="history-line"><strong>17 · Treatment notes</strong><span>Provided</span></div>
+        <div class="history-line"><strong>18 · Treatment revision</strong><span>Approved</span></div>
+        <div class="history-line"><strong>19 · Storyboard</strong><span>Drafted</span></div>
+        <div class="history-line"><strong>20 · Storyboard review</strong><span>Approved</span></div>
+        <div class="history-line"><strong>21 · Bible sheets</strong><span>Generated</span></div>
+        <div class="history-line"><strong>22 · Bible review</strong><span>Approved</span></div>
+        <div class="history-line"><strong>23 · Shot List</strong><span>Written</span></div>
+        <div class="history-line"><strong>24 · Sanity Check</strong><span>Needs action</span></div>
+        <div class="history-line"><strong>25 · Rescue cuts</strong><span>Added</span></div>
+        <div class="history-line"><strong>26 · Sanity retry</strong><span>Passed</span></div>
+        <div class="history-line"><strong>27 · Frames batch 1</strong><span>Generated</span></div>
+        <div class="history-line"><strong>28 · Frame review</strong><span>2 approved</span></div>
+        <div class="history-line"><strong>29 · Frame correction</strong><span>Generated</span></div>
+        <div class="history-line"><strong>30 · Frames batch 2</strong><span>Ready</span></div>
+      </div>
+
+      <article class="turn" aria-label="User turn: revise the lighting anchor">
+        <div class="user-intent">Keep the flat cel shading. Make the lighting anchor high noon, not sunset.</div>
+        <div class="assistant-result">
+          <h4>Lighting anchor corrected</h4>
+          <p>The new anchor keeps the approved palette and hard-edged shadows while moving the key light overhead.</p>
+          <div class="result-document">
+            <div class="badge-row"><span class="badge">Image</span><span class="badge">Nano Banana Pro</span><span class="badge">2K · 9:16</span></div>
+            <dl class="kv"><dt>Prompt</dt><dd>Compiled and policy-checked</dd><dt>References</dt><dd>4 approved style sheets</dd><dt>Provenance</dt><dd>Provider, model, and exact prompt retained</dd></dl>
+            <div class="media-result">Generated lighting anchor · Open in Review</div>
+          </div>
+        </div>
+        <div class="activity"><span>✓</span><strong>Generated and staged one image</strong><span class="chevron">Details ›</span></div>
+        <div class="receipt-group" aria-label="Production Design receipts">
+          <div class="receipt"><span>◉</span><span class="outcome">Provided</span> Color script · 8 sections</div>
+          <div class="receipt"><span>✓</span><span class="outcome">Attached</span> claude_mouse_character_sheet_final_v7.png</div>
+          <div class="receipt"><span>⊘</span><span class="outcome">Skipped</span> Additional prepared locations</div>
+        </div>
+      </article>
+
+      <article class="turn" aria-label="Current running turn">
+        <div class="assistant-result"><h4>Preparing the next frame batch</h4><p>The approved anchor is now part of the exact reference plan for Shot 031.</p></div>
+        <div class="phase-progress">
+          <div class="phase-head">Frames · Shot 031 <span>5 of 8</span></div>
+          <div class="activity running"><span class="spinner">◌</span> Auditing compiled prompt and references</div>
+          <div class="progress"><i></i></div>
+          <div class="phase-next">Next: Submit the approved provider route</div>
+        </div>
+      </article>
+    </main>
+
+    <div class="live-status"><span class="spinner">◌</span><strong>Working</strong><span>Frames phase</span><button class="latest">Latest</button></div>
+
+    <footer class="composer-dock">
+      <section class="decision" aria-label="Spend approval decision">
+        <div class="decision-head">Approve image generation <span class="step">Action required</span></div>
+        <p>Generate the Shot 031 frame using the compiled prompt and four approved references.</p>
+        <div class="select-row"><label>Provider</label><strong>Higgsfield</strong><label>Model</label><strong>Nano Banana Pro (Gemini 3 Pro Image)</strong><label>Cost</label><strong>≈ €0.16</strong></div>
+        <div class="decision-actions"><button>Decline</button><button class="primary">Generate image</button></div>
+      </section>
+    </footer>
+  </div>
+</section>
+
+<section class="state-matrix" aria-label="Required state matrix">
+  <div class="state-card"><h3>Empty / ready</h3><div class="mini-status">✓ <strong>Ready</strong></div><p>One compact status line. The composer is the only input surface; contextual starters sit in the transcript empty state.</p><div class="mini-actions"><button>New</button><button>History</button><button>Workflows</button></div></div>
+  <div class="state-card"><h3>Clarification</h3><div class="mini-status attention">! <strong>Action required</strong></div><p>The Dock replaces composition with choice chips and one scoped text field. Draft and references remain stored.</p><div class="mini-actions"><button>Not now</button><button class="primary">Continue</button></div></div>
+  <div class="state-card"><h3>Repeatable intake</h3><div class="mini-status attention">! <strong>Prepared character 2</strong></div><p>Searchable, bounded Library picker. Attach requires a name and image; empty follow-up exposes Done.</p><div class="mini-actions"><button>Clear item</button><button disabled>Done</button><button class="primary">Attach</button></div></div>
+  <div class="state-card"><h3>Gate approval</h3><div class="mini-status attention">! <strong>Action required</strong></div><p>Review remains on the canonical surface. The Dock owns one approval explanation and action set.</p><div class="mini-actions"><button>Not yet</button><button class="primary">Approve Production Design</button></div></div>
+  <div class="state-card"><h3>Paid generation</h3><div class="mini-status"><span class="spinner">◌</span><strong>Generating</strong></div><p>After approval the Dock returns to composition. Cancellation stays visible once in live status until the run settles.</p><div class="mini-actions"><button class="danger">Cancel generation</button></div></div>
+  <div class="state-card"><h3>Recoverable failure</h3><div class="mini-status">! <strong>Failed</strong></div><p>The detailed provider message and Retry appear once at the owning result. Status does not repeat it.</p><div class="mini-actions"><button>Show details</button><button class="primary">Retry</button></div></div>
+  <div class="state-card"><h3>Backend states</h3><div class="mini-status"><span class="spinner">◌</span><strong>Checking Agent</strong></div><p>Checking, authentication required, unavailable, and terminal failure share one precedence model.</p><div class="mini-actions"><button class="primary">Open Agent Settings</button></div></div>
+  <div class="state-card"><h3>Scrolled away</h3><div class="mini-status">… <strong>Working</strong><button style="margin-left:auto">Latest</button></div><p>Latest is labeled, in flow, and shown only while useful. New tokens do not move the reading position.</p></div>
+  <div class="state-card"><h3>History navigator</h3><p>One searchable navigator replaces open tabs plus a second History control.</p><div class="conversation-list"><div class="conversation-row"><strong>Claude Mouse</strong><span>Current</span></div><div class="conversation-row"><strong>Desert plate correction</strong><span class="attention">Action required</span></div><div class="conversation-row"><strong>Frame audit</strong><span>Running</span></div></div></div>
+</section>

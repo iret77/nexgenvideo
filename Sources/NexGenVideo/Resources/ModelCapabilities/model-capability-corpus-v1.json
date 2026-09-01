@@ -1,6 +1,6 @@
 {
   "defensive_defaults": {
-    "owner_confirmation": "pending",
+    "owner_confirmation": "confirmed",
     "table": {
       "booleans": false,
       "character_and_primary_reference_counts": 1,
@@ -1657,7 +1657,7 @@
       "provider_model_id": "hupfntrupfn",
       "provider_qualified_alias": "fixture::hupfntrupfn",
       "source_ids": [
-        "owner-pending-defensive"
+        "owner-confirmed-defensive"
       ]
     },
     {
@@ -3412,7 +3412,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3425,7 +3425,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3438,7 +3438,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3451,7 +3451,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3464,7 +3464,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3477,7 +3477,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3490,7 +3490,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3503,7 +3503,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3518,7 +3518,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3531,7 +3531,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3544,7 +3544,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3557,7 +3557,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3572,7 +3572,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3585,7 +3585,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3600,7 +3600,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3613,7 +3613,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3626,7 +3626,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3639,7 +3639,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3652,7 +3652,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3665,7 +3665,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3680,7 +3680,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3693,7 +3693,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3706,7 +3706,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3719,7 +3719,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3732,7 +3732,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3745,7 +3745,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3754,7 +3754,7 @@
             }
           }
         },
-        "id": "defensive.video.owner-pending-v1",
+        "id": "defensive.video.owner-confirmed-v1",
         "modality": "video"
       },
       {
@@ -3766,7 +3766,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3779,7 +3779,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3792,7 +3792,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3805,7 +3805,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3818,7 +3818,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3835,7 +3835,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3848,7 +3848,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3861,7 +3861,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3874,7 +3874,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3889,7 +3889,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3902,7 +3902,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3915,7 +3915,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3928,7 +3928,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3941,7 +3941,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3954,7 +3954,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3967,7 +3967,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -3976,7 +3976,7 @@
             }
           }
         },
-        "id": "defensive.image.owner-pending-v1",
+        "id": "defensive.image.owner-confirmed-v1",
         "modality": "image"
       },
       {
@@ -3988,7 +3988,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4001,7 +4001,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4014,7 +4014,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4027,7 +4027,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4040,7 +4040,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4053,7 +4053,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4066,7 +4066,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4079,7 +4079,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4094,7 +4094,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4107,7 +4107,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4123,7 +4123,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4138,7 +4138,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4151,7 +4151,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4164,7 +4164,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4177,7 +4177,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4190,7 +4190,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4203,7 +4203,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4216,7 +4216,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4225,7 +4225,7 @@
             }
           }
         },
-        "id": "defensive.audio.owner-pending-v1",
+        "id": "defensive.audio.owner-confirmed-v1",
         "modality": "audio"
       },
       {
@@ -4237,7 +4237,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4250,7 +4250,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4263,7 +4263,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4276,7 +4276,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4289,7 +4289,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4302,7 +4302,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4315,7 +4315,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4328,7 +4328,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4343,7 +4343,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4356,7 +4356,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4372,7 +4372,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4387,7 +4387,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4400,7 +4400,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4413,7 +4413,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4426,7 +4426,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4439,7 +4439,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4452,7 +4452,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4465,7 +4465,7 @@
                   "confidence": 1.0,
                   "kind": "defensive",
                   "observed_at": "2026-08-31",
-                  "source_title": "Defensive numeric policy awaiting owner confirmation",
+                  "source_title": "Confirmed defensive numeric policy",
                   "source_url": null
                 }
               ],
@@ -4474,7 +4474,7 @@
             }
           }
         },
-        "id": "defensive.music.owner-pending-v1",
+        "id": "defensive.music.owner-confirmed-v1",
         "modality": "music"
       }
     ],
@@ -11033,12 +11033,12 @@
     },
     {
       "confidence": 1.0,
-      "id": "owner-pending-defensive",
+      "id": "owner-confirmed-defensive",
       "kind": "defensive",
       "observed_at": "2026-08-31",
       "primary": false,
-      "scope": "Explicit conservative values; pending means they are not represented as owner-approved policy.",
-      "title": "Defensive numeric policy awaiting owner confirmation",
+      "scope": "Explicit conservative values accepted as the production fallback policy.",
+      "title": "Confirmed defensive numeric policy",
       "url": null
     },
     {

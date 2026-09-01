@@ -646,7 +646,9 @@ final class AgentService {
                 from: src,
                 dataRoot: dataRoot,
                 replace: true,
-                originalFilename: filename
+                originalFilename: filename,
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding
             )
             let routing: String
             if let next = editor.projectState?.nextPhaseName, next != "analysis" {
@@ -1237,8 +1239,15 @@ final class AgentService {
 
     private struct PendingSpendOperation {
         let origin: ToolCallOrigin
+        let acquirePipelineMutation: @MainActor () throws -> SpendPipelineMutationLease?
         let execute: @MainActor (SpendOption) async throws -> ToolResult
         let cancel: @MainActor () -> Void
+    }
+
+    private struct SpendPipelineMutationLease {
+        let coordinator: PipelinePhaseRunCoordinator
+        let dataRoot: URL
+        let id: UUID
     }
 
     struct SpendRunStatus: Equatable, Sendable {
@@ -1273,6 +1282,7 @@ final class AgentService {
         _ approval: SpendApproval,
         origin: ToolCallOrigin,
         editor: EditorViewModel,
+        pipelineScope: SpendPipelineScope? = nil,
         refresh: (@MainActor () -> SpendApproval)? = nil,
         cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
         execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
@@ -1299,11 +1309,88 @@ final class AgentService {
                 "An approved generation is already running. Wait for it to finish or cancel it before starting another paid request."
             )
         }
+        if pipelineScope == nil,
+           let workingRoot = editor.workingRoot,
+           DataRootResolver.dataRoot(of: workingRoot) != nil {
+            throw ToolError(
+                "The paid pipeline operation has no project execution scope. Start it again from its generation tool."
+            )
+        }
         editor.agentPanelVisible = true
         spendApprovalError = nil
         spendApprovalRefresh = refresh
         pendingSpendOperation = PendingSpendOperation(
             origin: origin,
+            acquirePipelineMutation: { [weak editor] in
+                guard let pipelineScope else { return nil }
+                guard let editor else {
+                    throw ToolError(
+                        "The project closed before the approved operation could start."
+                    )
+                }
+                let expectedRoot = pipelineScope.dataRoot.standardizedFileURL
+                    .resolvingSymlinksInPath()
+                guard let workingRoot = editor.workingRoot,
+                      let currentDataRoot = DataRootResolver.dataRoot(of: workingRoot),
+                      currentDataRoot.standardizedFileURL.resolvingSymlinksInPath()
+                        == expectedRoot else {
+                    throw ToolError(
+                        "The project changed while the spend approval was open. Review the request and try again."
+                    )
+                }
+                guard editor.declaredPluginName == pipelineScope.declaredPack,
+                      editor.declaredPluginBinding == pipelineScope.declaredBinding else {
+                    throw ToolError(
+                        "The project format changed while the spend approval was open. Review the request and try again."
+                    )
+                }
+                let projectHome = FrameInventory.projectHome(of: expectedRoot)
+                guard ProjectPluginSettings.bindingResolution(projectURL: projectHome)
+                        == pipelineScope.bindingResolution else {
+                    throw ToolError(
+                        "The project format binding changed while the spend approval was open. Review the request and try again."
+                    )
+                }
+                do {
+                    _ = try ProjectPackGate.requireLiveMutation(
+                        projectURL: projectHome,
+                        declaredPack: pipelineScope.declaredPack,
+                        declaredBinding: pipelineScope.declaredBinding
+                    )
+                } catch {
+                    throw ToolError(
+                        "The project format binding changed while the spend approval was open: "
+                            + error.localizedDescription
+                    )
+                }
+                let currentPhase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
+                    tool: pipelineScope.tool,
+                    dataRoot: expectedRoot,
+                    declaredPack: pipelineScope.declaredPack,
+                    declaredBinding: pipelineScope.declaredBinding
+                )
+                guard currentPhase == pipelineScope.phase else {
+                    throw ToolError(
+                        "The pipeline phase changed while the spend approval was open. Review the request and try again."
+                    )
+                }
+                guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(
+                    projectRoot: expectedRoot,
+                    label: pipelineScope.phase ?? approval.actionLabel
+                ) else {
+                    let active = editor.pipelinePhaseRunCoordinator.runningPhase(
+                        projectRoot: expectedRoot
+                    ) ?? "pipeline work"
+                    throw ToolError(
+                        "Can't start the approved operation while \(active) is running. Wait for it to finish."
+                    )
+                }
+                return SpendPipelineMutationLease(
+                    coordinator: editor.pipelinePhaseRunCoordinator,
+                    dataRoot: expectedRoot,
+                    id: id
+                )
+            },
             execute: { [weak editor] option in
                 guard let editor else {
                     throw ToolError("The project closed before the approved operation could start.")
@@ -1343,6 +1430,13 @@ final class AgentService {
             spendApprovalError = "The approved operation is no longer available. Decline it and try again."
             return
         }
+        let pipelineLease: SpendPipelineMutationLease?
+        do {
+            pipelineLease = try operation.acquirePipelineMutation()
+        } catch {
+            spendApprovalError = error.localizedDescription
+            return
+        }
         pendingSpendApproval = nil
         spendApprovalRefresh = nil
         pendingSpendOperation = nil
@@ -1356,12 +1450,21 @@ final class AgentService {
             cancellationRequested: false
         )
         runningSpendCancel = operation.cancel
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
+        let task = Task { @MainActor [weak self, pipelineLease] in
+            guard let self else {
+                if let pipelineLease {
+                    pipelineLease.coordinator.endMutation(
+                        projectRoot: pipelineLease.dataRoot,
+                        id: pipelineLease.id
+                    )
+                }
+                return
+            }
             await self.executeApprovedSpend(
                 approvalID: approval.id,
                 option: option,
-                operation: operation
+                operation: operation,
+                pipelineLease: pipelineLease
             )
         }
         runningSpendTask = task
@@ -1370,8 +1473,17 @@ final class AgentService {
     private func executeApprovedSpend(
         approvalID: String,
         option: SpendOption,
-        operation: PendingSpendOperation
+        operation: PendingSpendOperation,
+        pipelineLease: SpendPipelineMutationLease?
     ) async {
+        defer {
+            if let pipelineLease {
+                pipelineLease.coordinator.endMutation(
+                    projectRoot: pipelineLease.dataRoot,
+                    id: pipelineLease.id
+                )
+            }
+        }
         guard runningSpendStatus?.id == approvalID else { return }
         if runningSpendStatus?.cancellationRequested == true || Task.isCancelled {
             let cancelled = ToolResult.error("Generation cancelled.")
@@ -1888,6 +2000,18 @@ final class AgentService {
     /// Bumped to ask the input field to take focus (e.g. after the plugin launcher inserts a command
     /// that still needs an argument). `AgentInputBox` observes this and focuses its editor.
     private(set) var focusInputRequestTick = 0
+    private var composerWantsFocus = false
+
+    func recordComposerFocus(_ focused: Bool) {
+        if focused || !isComposerBlocked {
+            composerWantsFocus = focused
+        }
+    }
+
+    func restoreComposerFocus() {
+        guard composerWantsFocus, !isComposerBlocked else { return }
+        focusInputRequestTick &+= 1
+    }
 
     /// Insert `text` into the input field and focus it — used by the plugin launcher for commands that
     /// still need an argument, so the user lands in the field ready to type rather than sending an
@@ -1897,6 +2021,7 @@ final class AgentService {
         draft = text
         mentions.removeAll()
         pendingFunction = nil
+        composerWantsFocus = true
         focusInputRequestTick &+= 1
     }
 

@@ -11,6 +11,33 @@ class ReleasePreflightTests(unittest.TestCase):
         release_preflight.validate_engine_registry_abi()
         release_preflight.validate_engine_boundary_abi()
 
+    def test_capability_registry_public_shapes_are_pinned(self):
+        self.assertEqual(
+            release_preflight.ENGINE_BOUNDARY_VALUE_LAYOUTS[
+                "CapabilityFieldDefinitionV1"
+            ]["members"],
+            [
+                "let id: String",
+                "let modalities: Set<CapabilityModalityV1>",
+                "let valueType: CapabilityFieldValueTypeV1",
+                "let endpointMergePolicy: CapabilityEndpointMergePolicyV1",
+                "let requiresDefensiveDefault: Bool",
+            ],
+        )
+        self.assertEqual(
+            release_preflight.ENGINE_BOUNDARY_ENUM_LAYOUTS[
+                "CapabilityEndpointMergePolicyV1"
+            ]["cases"],
+            [
+                "maximum",
+                "minimum",
+                'booleanAnd = "boolean_and"',
+                'endpointOverride = "endpoint_override"',
+                'setIntersection = "set_intersection"',
+                'intrinsicOnly = "intrinsic_only"',
+            ],
+        )
+
     def test_multiline_enum_associated_values_are_pinned(self):
         source = """
 public enum Example {

@@ -32,7 +32,9 @@ enum DirectImageDiscovery {
     ///
     /// Runway is entirely discovery-gated: only the account's own model list proves that a pinned id
     /// is currently entitled and runnable.
-    static let providers: [GenerationProvider] = [.fal, .google, .runway]
+    static let providers = GenerationProvider.allCases.filter(
+        \.requiresLiveImageCatalogDiscovery
+    )
 
     static func discover(_ provider: GenerationProvider) async -> Result {
         guard providers.contains(provider), let apiKey = ProviderKeychain.load(provider) else {

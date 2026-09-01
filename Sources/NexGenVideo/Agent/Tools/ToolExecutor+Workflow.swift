@@ -83,6 +83,10 @@ extension ToolExecutor {
 
     private func readRenderManifest(dataRoot: URL, phase: String) throws -> RenderManifest {
         do {
+            try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
+                dataRoot: dataRoot,
+                phase: phase
+            )
             return try loadRenderManifest(dataRoot: dataRoot, phase: phase)
         } catch {
             throw ToolError(
@@ -96,6 +100,10 @@ extension ToolExecutor {
         phase: String
     ) throws -> RenderProofManifest {
         do {
+            try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
+                dataRoot: dataRoot,
+                phase: phase
+            )
             let proof = try loadRenderProofManifest(
                 dataRoot: dataRoot,
                 phase: phase
@@ -117,6 +125,27 @@ extension ToolExecutor {
         } catch {
             throw ToolError(
                 "Couldn't read the \(phase) render provenance. Repair or restore "
+                    + "it before continuing: \(error)"
+            )
+        }
+    }
+
+    private func readRenderRoutingProof(
+        dataRoot: URL,
+        phase: String
+    ) throws -> PipelineRenderRoutingProofManifestV1 {
+        do {
+            try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
+                dataRoot: dataRoot,
+                phase: phase
+            )
+            return try PipelineRenderRoutingProofStore.load(
+                dataRoot: dataRoot,
+                phase: phase
+            )
+        } catch {
+            throw ToolError(
+                "Couldn't read the \(phase) render-routing provenance. Repair or restore "
                     + "it before continuing: \(error)"
             )
         }
@@ -514,8 +543,26 @@ extension ToolExecutor {
             throw ToolError("Unknown mode '\(modeRaw)'. Expected beat/phrase/section/multicam.")
         }
         let budget = args.double("budget_eur") ?? 50.0
+        let declaration = try mutationPackDeclaration(
+            editor,
+            projectURL: home
+        )
+        do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: home,
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
+        }
         let extraDirs = PackCatalog.projectDirs(activePack: editor.activePluginName)
         do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: home,
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
             let dataRoot = try ProjectScaffold.initProject(
                 home: home, name: name, mode: mode, budgetEur: budget, extraDirs: extraDirs
             )
@@ -789,13 +836,16 @@ extension ToolExecutor {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
         let notes = args.string("notes")
-        let declaredPack = editor.declaredPluginName
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        let declaredPack = declaration.packName
+        let declaredBinding = declaration.binding
         try requirePhaseIdle(editor, dataRoot: root)
         // Hard preconditions FIRST — never ask the user to approve something that can't be approved.
         try await enforceGateRequirement(
             phase: phase,
             dataRoot: root,
             declaredPack: declaredPack,
+            declaredBinding: declaredBinding,
             editor: editor
         )
         let request = try editor.agentService.requestGateApproval(
@@ -804,7 +854,8 @@ extension ToolExecutor {
                 notes: notes,
                 dataRoot: root,
                 action: .approve,
-                declaredPack: declaredPack
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
             ),
             origin: origin
         )
@@ -823,33 +874,46 @@ extension ToolExecutor {
             throw ToolError("Unknown state '\(stateRaw)'. Expected approved/approved_with_notes/needs_revision/pending.")
         }
         let notes = args.string("notes")
-        let declaredPack = editor.declaredPluginName
-        try requirePhaseIdle(editor, dataRoot: root)
-        let resolvedPack: String?
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        let declaredPack = declaration.packName
+        let declaredBinding = declaration.binding
+        let isApproval = GateApproval.isApproval(state)
+        let mutationID: UUID?
+        if isApproval {
+            try requirePhaseIdle(editor, dataRoot: root)
+            mutationID = nil
+        } else {
+            mutationID = try reservePipelineMutation(
+                label: "Update \(phase)",
+                dataRoot: root,
+                editor: editor
+            )
+        }
+        defer {
+            if let mutationID {
+                editor.pipelinePhaseRunCoordinator.endMutation(
+                    projectRoot: root,
+                    id: mutationID
+                )
+            }
+        }
         do {
-            resolvedPack = try ProjectPluginSettings.resolvedPlugin(
+            _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: root),
-                declaredPack: declaredPack
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
             )
         } catch {
             throw ToolError(error.localizedDescription)
         }
-        let registry = PackCatalog.registry(activePack: resolvedPack)
-        do {
-            try GateGuard.requireWiredPack(
-                declared: declaredPack,
-                resolved: resolvedPack,
-                registry: registry
-            )
-        } catch let blocked as GateBlocked {
-            throw ToolError(blocked.message)
-        }
+        let resolvedPack = declaredPack
         // Approving states defer their write to the durable user card.
-        if GateApproval.isApproval(state) {
+        if isApproval {
             try await enforceGateRequirement(
                 phase: phase,
                 dataRoot: root,
                 declaredPack: declaredPack,
+                declaredBinding: declaredBinding,
                 editor: editor
             )
             let request = try editor.agentService.requestGateApproval(
@@ -858,7 +922,8 @@ extension ToolExecutor {
                     notes: notes,
                     dataRoot: root,
                     action: .setState(state),
-                    declaredPack: declaredPack
+                    declaredPack: declaredPack,
+                    declaredBinding: declaredBinding
                 ),
                 origin: origin
             )
@@ -878,7 +943,11 @@ extension ToolExecutor {
         if let key = editor.openWorkingCopyKey {
             try ProjectWorkingCopy.markDirty(key: key)
         }
-        let gates = try mutateGates(dataRoot: root) {
+        let gates = try mutateGates(
+            dataRoot: root,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
+        ) {
             try GatesOperations.setStateAndInvalidateDownstream(
                 &$0,
                 phase: phase,
@@ -928,11 +997,32 @@ extension ToolExecutor {
         guard let root = approval.dataRoot else {
             throw ToolError("The approval request no longer identifies its project data root.")
         }
-        try requirePhaseIdle(editor, dataRoot: root)
+        let mutationID = try reservePipelineMutation(
+            label: "Approve \(approval.phase)",
+            dataRoot: root,
+            editor: editor
+        )
+        defer {
+            editor.pipelinePhaseRunCoordinator.endMutation(
+                projectRoot: root,
+                id: mutationID
+            )
+        }
+        let currentDeclaration = try mutationPackDeclaration(
+            editor,
+            dataRoot: root
+        )
+        guard currentDeclaration.packName == approval.declaredPack,
+              currentDeclaration.binding == approval.declaredBinding else {
+            throw ToolError(
+                "The project format changed while this approval was open. Review it again."
+            )
+        }
         do {
-            _ = try ProjectPluginSettings.resolvedPlugin(
+            _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: root),
-                declaredPack: approval.declaredPack
+                declaredPack: approval.declaredPack,
+                declaredBinding: approval.declaredBinding
             )
         } catch {
             throw ToolError(
@@ -944,12 +1034,18 @@ extension ToolExecutor {
             phase: approval.phase,
             dataRoot: root,
             declaredPack: approval.declaredPack,
-            editor: editor
+            declaredBinding: approval.declaredBinding,
+            editor: editor,
+            mutationID: mutationID
         )
         if let key = editor.openWorkingCopyKey {
             try ProjectWorkingCopy.markDirty(key: key)
         }
-        let gates = try mutateGates(dataRoot: root) { gates in
+        let gates = try mutateGates(
+            dataRoot: root,
+            declaredPack: approval.declaredPack,
+            declaredBinding: approval.declaredBinding
+        ) { gates in
             switch approval.action {
             case .approve:
                 GatesOperations.approve(&gates, phase: approval.phase, notes: approval.notes)
@@ -984,14 +1080,18 @@ extension ToolExecutor {
         phase: String,
         dataRoot: URL,
         declaredPack: String?,
-        editor: EditorViewModel
+        declaredBinding: ProjectPackBinding?,
+        editor: EditorViewModel,
+        mutationID: UUID? = nil
     ) async throws {
         do {
             try await NativeGateWriter.requireApprovalReady(
                 projectDir: FrameInventory.projectHome(of: dataRoot),
                 phase: phase,
                 declaredPack: declaredPack,
-                executionCoordinator: editor.pipelinePhaseRunCoordinator
+                declaredBinding: declaredBinding,
+                executionCoordinator: editor.pipelinePhaseRunCoordinator,
+                mutationID: mutationID
             )
         } catch {
             throw ToolError(error.localizedDescription)
@@ -1001,41 +1101,64 @@ extension ToolExecutor {
     func rewindTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let target = try args.requireString("target_phase")
-        try requirePhaseIdle(editor, dataRoot: root)
-        let resolvedPack: String?
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        let mutationID = try reservePipelineMutation(
+            label: "Rewind \(target)",
+            dataRoot: root,
+            editor: editor
+        )
+        defer {
+            editor.pipelinePhaseRunCoordinator.endMutation(
+                projectRoot: root,
+                id: mutationID
+            )
+        }
         do {
-            resolvedPack = try ProjectPluginSettings.resolvedPlugin(
+            _ = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: root),
-                declaredPack: editor.declaredPluginName
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
             )
         } catch {
             throw ToolError(error.localizedDescription)
         }
-        let registry = PackCatalog.registry(activePack: resolvedPack)
-        do {
-            try GateGuard.requireWiredPack(
-                declared: editor.declaredPluginName,
-                resolved: resolvedPack,
-                registry: registry
-            )
-        } catch let blocked as GateBlocked {
-            throw ToolError(blocked.message)
-        }
+        let resolvedPack = declaration.packName
         // Rewind over the merged order (core + pack, at declared placement) so a pack phase like
         // `analysis` is a valid target and resets its correct downstream span.
         let order = try PhaseContractRuntime.order(activePack: resolvedPack)
         var reset: [String] = []
-        _ = try mutateGates(dataRoot: root) { reset = try GatesOperations.rewindTo(&$0, target: target, order: order) }
+        _ = try mutateGates(
+            dataRoot: root,
+            declaredPack: declaration.packName,
+            declaredBinding: declaration.binding
+        ) {
+            reset = try GatesOperations.rewindTo(&$0, target: target, order: order)
+        }
         return try jsonResult(["target": target, "reset_phases": reset])
     }
 
     /// Load gates.yaml, apply `body`, save, and return the mutated gates. Same store/layout the
     /// NativeGateWriter uses.
-    private func mutateGates(dataRoot: URL, _ body: (inout Gates) throws -> Void) throws -> Gates {
+    private func mutateGates(
+        dataRoot: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding?,
+        _ body: (inout Gates) throws -> Void
+    ) throws -> Gates {
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: FrameInventory.projectHome(of: dataRoot),
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
             var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
             try body(&gates)
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: FrameInventory.projectHome(of: dataRoot),
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
             try store.save(gates, to: PipelineLayout.gatesFile)
             return gates
         } catch {
@@ -1151,6 +1274,11 @@ extension ToolExecutor {
     func nextRenderShotTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
+            dataRoot: root,
+            phase: phase
+        )
         guard let shotlist = try readShotlist(dataRoot: root) else {
             throw ToolError("No shotlist yet. Plan and approve the shots before rendering.")
         }
@@ -1160,6 +1288,9 @@ extension ToolExecutor {
         let renderProof = phase == "frames"
             ? nil
             : try readRenderProof(dataRoot: root, phase: phase)
+        let renderRoutingProof = phase == "frames"
+            ? nil
+            : try readRenderRoutingProof(dataRoot: root, phase: phase)
         let shot: Shot?
         let frameRole: String?
         if phase == "frames" {
@@ -1194,15 +1325,12 @@ extension ToolExecutor {
             }
             let ordered = shotlist.shots
                 .filter { $0.sourceMode != .imported }
-            let frames = try? loadFramesManifest(dataRoot: root)
             let pending = ordered.first {
                 !isCurrentVideoRender(
                     renderManifest.entries[$0.id],
                     proof: renderProof?.entries[$0.id],
+                    routingProof: renderRoutingProof?.entries[$0.id],
                     shot: $0,
-                    shotlist: shotlist,
-                    manifest: renderManifest,
-                    frames: frames,
                     dataRoot: root
                 )
             }
@@ -1213,6 +1341,68 @@ extension ToolExecutor {
             return try jsonResult(["phase": phase, "shot_id": NSNull(), "done": true])
         }
         let shotId = shot.id
+        let productionRouting: PipelineProductionRouteSelection?
+        if phase != "frames", shot.sourceMode != .imported {
+            await CatalogDiscovery.ensureCurrent()
+            do {
+                try await PipelineProductionInputsWriter.refresh(
+                    shotID: shotId,
+                    phase: phase,
+                    dataRoot: root,
+                    declaredPack: declaration.packName,
+                    declaredBinding: declaration.binding
+                )
+                productionRouting = try PipelineProductionRouting.resolveAndWrite(
+                    shotID: shotId,
+                    dataRoot: root,
+                    declaredPack: declaration.packName,
+                    declaredBinding: declaration.binding
+                )
+            } catch let error as PipelineProductionRoutingError {
+                switch error {
+                case .noMatchingRoute(let noMatch):
+                    let deficits = noMatch.evaluations.flatMap { evaluation in
+                        evaluation.deficits.map {
+                            "\(evaluation.candidate.capabilities.offering.offeringID):\($0.code.rawValue)"
+                        }
+                    }
+                    let recoveryActions = noMatch.recoveryActions.map(\.rawValue)
+                    throw ToolError(
+                        "No activated live provider route satisfies shot '\(shotId)' exactly. "
+                            + "Requirement: \(noMatch.requirementSHA256). "
+                            + "Deficits: \(deficits.joined(separator: ", ")). "
+                            + "Recovery actions: \(recoveryActions.joined(separator: ", ")). "
+                            + "Do not reduce the requirement without the user's decision."
+                    )
+                case .requiredInputsUnsupported(let failure):
+                    let deficits = failure.deficits.map {
+                        "\($0.demandID ?? "unknown"):\($0.code.rawValue)"
+                    }
+                    throw ToolError(
+                        "The selected route cannot bind every required input for shot '\(shotId)'. "
+                            + "Deficits: \(deficits.joined(separator: ", "))."
+                    )
+                case .providerAdapterUnsupported(let offerings):
+                    throw ToolError(
+                        "The live provider offerings match shot '\(shotId)' on paper, but their "
+                            + "installed request adapters cannot preserve the exact requirement "
+                            + "and ordered inputs: "
+                            + offerings.map(\.offeringID).joined(separator: ", ")
+                            + ". Refresh provider capabilities or choose a fully supported route."
+                    )
+                default:
+                    throw ToolError(
+                        "The production route for shot '\(shotId)' is missing or stale: \(error)."
+                    )
+                }
+            } catch {
+                throw ToolError(
+                    "The production route for shot '\(shotId)' could not be resolved: \(error)."
+                )
+            }
+        } else {
+            productionRouting = nil
+        }
 
         var body: [String: Any] = [
             "phase": phase,
@@ -1224,6 +1414,85 @@ extension ToolExecutor {
             "camera": shot.cameraSetup.map { $0.promptProse() as Any } ?? NSNull(),
             "chain_with_previous_end": shot.chainWithPreviousEnd,
         ]
+        if let productionRouting {
+            body["generation_model"] = productionRouting.modelID
+            body["production_route"] = [
+                "provider_id": productionRouting.route.offering.providerID,
+                "offering_id": productionRouting.route.offering.offeringID,
+                "endpoint_id": productionRouting.route.offering.endpointID,
+                "requirement_sha256": productionRouting.route.requirementSHA256,
+                "capabilities_sha256": productionRouting.route.capabilitiesSHA256,
+                "route_sha256": productionRouting.route.routeSHA256,
+                "reference_plan_path": PipelineLayout.referencePlanFile(shotID: shotId),
+            ]
+            var exactInputs: [[String: Any]] = []
+            var referenceImages: [[String: Any]] = []
+            var referenceVideos: [[String: Any]] = []
+            var referenceAudio: [[String: Any]] = []
+            for binding in productionRouting.referencePlan.bindings {
+                guard let asset = await resolveRenderedAsset(
+                    binding.path,
+                    editor: editor,
+                    dataRoot: root
+                ) else {
+                    throw ToolError(
+                        "Required reference '\(binding.demandID)' is no longer resolvable at "
+                            + "\(binding.path). Rebuild the AssetGraph and route before rendering."
+                    )
+                }
+                let item: [String: Any] = [
+                    "demand_id": binding.demandID,
+                    "asset_id": binding.assetID,
+                    "asset_version": binding.assetVersion,
+                    "media_ref": asset.id,
+                    "path": binding.path,
+                    "sha256": binding.sha256,
+                    "modality": binding.modality.rawValue,
+                    "semantic_job_id": binding.semanticJobID,
+                    "input_slot_id": binding.inputSlotID,
+                    "mode_id": binding.modeID,
+                    "required": binding.isRequired,
+                ]
+                exactInputs.append(item)
+                switch binding.semanticJobID {
+                case CoreReferenceSemanticJobIDV1.firstFrame:
+                    body["start_frame_media_ref"] = asset.id
+                case CoreReferenceSemanticJobIDV1.predecessorLastFrame:
+                    body["chain_start_frame_media_ref"] = asset.id
+                    body["chain_start_frame_path"] = binding.path
+                case CoreReferenceSemanticJobIDV1.lastFrame:
+                    body["end_frame_media_ref"] = asset.id
+                case CoreReferenceSemanticJobIDV1.sourceVideo:
+                    body["source_video_media_ref"] = asset.id
+                    body["source_video_path"] = binding.path
+                default:
+                    switch binding.modality {
+                    case .image: referenceImages.append(item)
+                    case .video: referenceVideos.append(item)
+                    case .audio: referenceAudio.append(item)
+                    case .geometry: break
+                    }
+                }
+            }
+            body["reference_plan"] = exactInputs
+            body["reference_plan_sha256"] = FileDigest.sha256(
+                of: try ReferencePlanCanonicalCodecV2.encode(
+                    productionRouting.referencePlan
+                )
+            )
+            if !referenceImages.isEmpty { body["reference_images"] = referenceImages }
+            if !referenceVideos.isEmpty { body["reference_videos"] = referenceVideos }
+            if !referenceAudio.isEmpty { body["reference_audio"] = referenceAudio }
+            if !productionRouting.referencePlan.optionalDrops.isEmpty {
+                body["optional_reference_drops"] = productionRouting.referencePlan.optionalDrops.map {
+                    [
+                        "demand_id": $0.demandID,
+                        "reason": $0.reason.rawValue,
+                        "detail": $0.detail,
+                    ]
+                }
+            }
+        }
         if let plan = shot.productionPlan {
             body["production_plan"] = [
                 "primary_action": plan.primaryAction,
@@ -1244,7 +1513,9 @@ extension ToolExecutor {
             ]
         }
         if let frameRole { body["role"] = frameRole }
-        if phase != "frames", shot.sourceMode == .aiEnhanced {
+        if productionRouting == nil,
+           phase != "frames",
+           shot.sourceMode == .aiEnhanced {
             guard let sourcePath = shot.sourcePath,
                   let source = await resolveRenderedAsset(
                       sourcePath,
@@ -1287,7 +1558,8 @@ extension ToolExecutor {
         // #196: when this shot chains off its predecessor, hand the agent the predecessor's extracted
         // last frame (recorded by record_render) as the start-frame condition — pass it straight to the
         // generate tool's startFrameMediaRef. Absent until the predecessor has rendered.
-        if phase != "frames",
+        if productionRouting == nil,
+           phase != "frames",
            shot.chainWithPreviousEnd,
            let predId = ChainContinuity.chainPredecessor(shotlist, shotId: shotId),
            let lastFrame = renderManifest?.entries[predId]?.lastFramePath,
@@ -1299,7 +1571,8 @@ extension ToolExecutor {
         // plus inherited identity-anchor frames stacked on top (multi-shot character consistency). Each
         // planned ref is resolved to a media_ref the agent passes straight to the generate tool's
         // referenceImageMediaRefs, so the ported planner drives the render instead of the agent guessing.
-        if shot.sourceMode == .generated,
+        if productionRouting == nil,
+           shot.sourceMode == .generated,
            let plan = PackCatalog.registry(activePack: activePluginFor(dataRoot: root))
             .referencePlanProvider?.planReferences(dataRoot: root, shotId: shotId) {
             var refImages: [[String: Any]] = []
@@ -1323,18 +1596,22 @@ extension ToolExecutor {
     private func isCurrentVideoRender(
         _ entry: RenderEntry?,
         proof: RenderProofEntry?,
+        routingProof: PipelineRenderRoutingProofEntryV1?,
         shot: Shot,
-        shotlist: Shotlist,
-        manifest: RenderManifest,
-        frames: FramesManifest?,
         dataRoot: URL
     ) -> Bool {
         guard let entry,
               let proof,
+              let routingProof,
               entry.status == .rendered,
               let output = entry.output,
               entry.shotId == proof.shotId,
+              entry.shotId == routingProof.shotID,
               output == proof.output,
+              output == routingProof.output,
+              proof.outputSha256 == routingProof.outputSHA256,
+              proof.generationModel == routingProof.generation.modelID,
+              routingProof.generation.shotID == shot.id,
               let url = renderedFileURL(output, dataRoot: dataRoot),
               ProjectMediaExtensions.videos.contains(
                   url.pathExtension.lowercased()
@@ -1357,115 +1634,92 @@ extension ToolExecutor {
               (try? FileDigest.sha256(of: url)) == proof.outputSha256 else {
             return false
         }
-        let inputsAreCurrent = [
-            proof.sourceVideo,
-            proof.startFrame,
-            proof.endFrame,
-        ].compactMap { $0 }.allSatisfy {
-            isCurrentRenderInput($0, dataRoot: dataRoot)
-        }
-            && (
-                proof.referenceImages
-                    + proof.referenceVideos
-                    + proof.referenceAudio
-            ).allSatisfy {
-                isCurrentRenderInput($0, dataRoot: dataRoot)
-            }
-        guard inputsAreCurrent,
-              proof.referenceVideos.isEmpty,
-              proof.referenceAudio.isEmpty else {
+        guard (try? PipelineProductionRouting.validateHistoricalProof(
+            routingProof.generation,
+            dataRoot: dataRoot
+        )) != nil else {
             return false
         }
-        if shot.sourceMode == .aiEnhanced {
-            guard let sourcePath = shot.sourcePath,
-                  let source = proof.sourceVideo else {
-                return false
-            }
-            return sameCurrentRenderInputPath(
-                source.path,
-                sourcePath,
-                dataRoot: dataRoot
-            )
-                && proof.startFrame == nil
-                && proof.endFrame == nil
-                && proof.referenceImages.isEmpty
-        }
-        guard proof.sourceVideo == nil else { return false }
-        if shot.seedanceInputMode == .reference {
-            guard proof.startFrame == nil,
-                  proof.endFrame == nil,
-                  let plan = PackCatalog.registry(
-                    activePack: activePluginFor(dataRoot: dataRoot)
-                  ).referencePlanProvider?.planReferences(
-                    dataRoot: dataRoot,
-                    shotId: shot.id
-                  ) else {
-                return false
-            }
-            return exactCurrentRenderReferences(
-                proof.referenceImages,
-                expected: plan.refs.map(\.path),
-                dataRoot: dataRoot
-            )
-        }
-        guard proof.referenceImages.isEmpty else { return false }
-        let expectedStart: String?
-        if shot.chainWithPreviousEnd {
-            guard let predecessor = ChainContinuity.chainPredecessor(
-                shotlist,
-                shotId: shot.id
-            ) else {
-                return false
-            }
-            expectedStart = manifest.entries[predecessor]?.lastFramePath
-        } else {
-            expectedStart = frames?.shot(shot.id)?.frames.first {
-                $0.role == "start"
-            }?.path
-        }
-        let expectedEnd = frames?.shot(shot.id)?.frames.first {
-            $0.role == "end"
-        }?.path
-        switch shot.keyframeStrategy {
-        case .none:
-            if shot.chainWithPreviousEnd {
-                guard let expectedStart,
-                      let actualStart = proof.startFrame else {
+        return exactCurrentRenderRoutingInputs(
+            routingProof.generation,
+            proof: proof,
+            dataRoot: dataRoot
+        )
+    }
+
+    private func exactCurrentRenderRoutingInputs(
+        _ routing: ProductionGenerationRoutingProofV1,
+        proof: RenderProofEntry,
+        dataRoot: URL
+    ) -> Bool {
+        var sourceUsed = false
+        var startUsed = false
+        var endUsed = false
+        var imageIndex = 0
+        var videoIndex = 0
+        var audioIndex = 0
+        var actual: [RenderInputProof] = []
+
+        for binding in routing.orderedBindings {
+            let input: RenderInputProof?
+            switch binding.semanticJobID {
+            case CoreReferenceSemanticJobIDV1.sourceVideo:
+                guard !sourceUsed else { return false }
+                sourceUsed = true
+                input = proof.sourceVideo
+            case CoreReferenceSemanticJobIDV1.firstFrame,
+                 CoreReferenceSemanticJobIDV1.predecessorLastFrame:
+                guard !startUsed else { return false }
+                startUsed = true
+                input = proof.startFrame
+            case CoreReferenceSemanticJobIDV1.lastFrame:
+                guard !endUsed else { return false }
+                endUsed = true
+                input = proof.endFrame
+            default:
+                switch binding.modalityID {
+                case AssetPhysicalModalityV1.image.rawValue:
+                    input = proof.referenceImages.indices.contains(imageIndex)
+                        ? proof.referenceImages[imageIndex]
+                        : nil
+                    imageIndex += 1
+                case AssetPhysicalModalityV1.video.rawValue:
+                    input = proof.referenceVideos.indices.contains(videoIndex)
+                        ? proof.referenceVideos[videoIndex]
+                        : nil
+                    videoIndex += 1
+                case AssetPhysicalModalityV1.audio.rawValue:
+                    input = proof.referenceAudio.indices.contains(audioIndex)
+                        ? proof.referenceAudio[audioIndex]
+                        : nil
+                    audioIndex += 1
+                case AssetPhysicalModalityV1.geometry.rawValue:
+                    return false
+                default:
                     return false
                 }
-                return sameCurrentRenderInputPath(
-                    actualStart.path,
-                    expectedStart,
+            }
+            guard let input else { return false }
+            actual.append(input)
+        }
+        guard sourceUsed == (proof.sourceVideo != nil),
+              startUsed == (proof.startFrame != nil),
+              endUsed == (proof.endFrame != nil),
+              imageIndex == proof.referenceImages.count,
+              videoIndex == proof.referenceVideos.count,
+              audioIndex == proof.referenceAudio.count,
+              actual.count == routing.orderedBindings.count else {
+            return false
+        }
+        return zip(routing.orderedBindings, actual).allSatisfy { pair in
+            let (binding, input) = pair
+            binding.sha256 == input.sha256
+                && sameCurrentRenderInputPath(
+                    binding.path,
+                    input.path,
                     dataRoot: dataRoot
-                ) && proof.endFrame == nil
-            }
-            return proof.startFrame == nil && proof.endFrame == nil
-        case .start:
-            guard let expectedStart,
-                  let actualStart = proof.startFrame else {
-                return false
-            }
-            return sameCurrentRenderInputPath(
-                actualStart.path,
-                expectedStart,
-                dataRoot: dataRoot
-            ) && proof.endFrame == nil
-        case .startEnd:
-            guard let expectedStart,
-                  let expectedEnd,
-                  let actualStart = proof.startFrame,
-                  let actualEnd = proof.endFrame else {
-                return false
-            }
-            return sameCurrentRenderInputPath(
-                actualStart.path,
-                expectedStart,
-                dataRoot: dataRoot
-            ) && sameCurrentRenderInputPath(
-                actualEnd.path,
-                expectedEnd,
-                dataRoot: dataRoot
-            )
+                )
+                && isCurrentRenderInput(input, dataRoot: dataRoot)
         }
     }
 
@@ -1528,29 +1782,17 @@ extension ToolExecutor {
         return left == right
     }
 
-    private func exactCurrentRenderReferences(
-        _ actual: [RenderInputProof],
-        expected: [String],
-        dataRoot: URL
-    ) -> Bool {
-        guard Set(actual.map(\.path)).count == actual.count,
-              actual.count == expected.count else {
-            return false
-        }
-        return expected.allSatisfy { expectedPath in
-            actual.contains {
-                sameCurrentRenderInputPath(
-                    $0.path,
-                    expectedPath,
-                    dataRoot: dataRoot
-                )
-            }
-        }
-    }
-
     func recordRenderTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = try args.requireString("phase")
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        let mutationSnapshot = try PipelineRenderRecordWriter.loadMutationSnapshot(
+            dataRoot: root,
+            phase: phase,
+            declaredPack: declaration.packName,
+            declaredBinding: declaration.binding
+        )
+        let expectedPublication = mutationSnapshot.publication
         let shotId = try args.requireString("shot_id")
         var output = args.string("output")
         let costEur = args.double("cost_eur") ?? 0.0
@@ -1626,15 +1868,14 @@ extension ToolExecutor {
                     asset: asset,
                     role: args.string("role"),
                     shotlist: shotlist,
-                    editor: editor,
+                    existing: mutationSnapshot.framesManifest,
                     dataRoot: root
                 )
             }
         }
-        var manifest = try readRenderManifest(dataRoot: root, phase: phase)
-        var proof = phase == "frames"
-            ? nil
-            : try readRenderProof(dataRoot: root, phase: phase)
+        var manifest = mutationSnapshot.manifest
+        var proof = mutationSnapshot.proof
+        var routingProof = mutationSnapshot.routingProof
         record(&manifest, shotId: shotId, output: output, costEur: costEur, status: status, phase: phase)
         // #231: stamp what this render was ACTUALLY conditioned on, so `plan_adherence` can audit it
         // against what `next_render_shot` planned. Read off the submitted GenerationInput — the record
@@ -1653,50 +1894,94 @@ extension ToolExecutor {
                 dataRoot: root
             )
             proof?.entries[shotId] = entryProof
+            if phase != "frames" {
+                guard let generationRouting = completedAsset.generationInput?.productionRouting else {
+                    throw ToolError(
+                        "The rendered video has no exact production-routing provenance."
+                    )
+                }
+                do {
+                    try PipelineProductionRouting.validateHistoricalProof(
+                        generationRouting,
+                        dataRoot: root
+                    )
+                } catch {
+                    throw ToolError(
+                        "The rendered video's production route or ReferencePlan is stale: \(error)."
+                    )
+                }
+                guard exactCurrentRenderRoutingInputs(
+                    generationRouting,
+                    proof: entryProof,
+                    dataRoot: root
+                ) else {
+                    throw ToolError(
+                        "The rendered video's actual inputs do not match the exact ordered "
+                            + "ReferencePlan submission."
+                    )
+                }
+                routingProof?.entries[shotId] = PipelineRenderRoutingProofEntryV1(
+                    shotID: shotId,
+                    output: output,
+                    outputSHA256: entryProof.outputSha256,
+                    generation: generationRouting
+                )
+            }
         } else {
             proof?.entries.removeValue(forKey: shotId)
+            routingProof?.entries.removeValue(forKey: shotId)
         }
-        do {
-            try saveRenderManifest(manifest, dataRoot: root)
-        } catch {
-            throw ToolError("Couldn't save render manifest: \(error)")
-        }
-        if let proof {
-            do {
-                try saveRenderProofManifest(proof, dataRoot: root)
-            } catch {
-                throw ToolError("Couldn't save render provenance: \(error)")
+        if phase == "frames", updatedFrames == nil {
+            guard let existingFrames = mutationSnapshot.framesManifest else {
+                throw ToolError("The Frames manifest is unavailable.")
             }
+            var reconciled = try existingFrames.reconciled(with: shotlist)
+            reconciled.shots.removeAll { $0.shotId == shotId }
+            updatedFrames = reconciled
         }
-        if let updatedFrames {
-            do {
-                try saveFramesManifest(updatedFrames, dataRoot: root)
-            } catch {
-                try? await editor.pipelineAgentHarness.recordPhaseMutation(
-                    phase: "frames",
-                    dataRoot: root,
-                    captureLineage: false,
-                    declaredPack: editor.declaredPluginName
-                )
-                throw ToolError(
-                    "The shot render was recorded, but the authoritative Frames "
-                        + "manifest could not be saved: \(error)"
-                )
-            }
-        }
-        // #196: if the shot immediately after this one chains off it (`chain_with_previous_end`), extract
-        // this clip's last frame now and record it on the entry — `next_render_shot` feeds it as the
-        // successor's start frame. Best-effort — never fail the render record over it.
+        let preparedLastFrame: PipelineRenderRecordWriter.PreparedLastFrame?
         if phase != "frames",
            status == .rendered,
-           let output,
-           !output.isEmpty {
-            await recordChainLastFrame(
+           ChainContinuity.needsLastFrame(shotlist, shotId: shotId) {
+            guard let completedAsset,
+                  let output,
+                  let entryProof = proof?.entries[shotId] else {
+                throw ToolError(
+                    "The required chained last frame has no exact source render proof."
+                )
+            }
+            preparedLastFrame = try await prepareRequiredChainLastFrame(
                 shotId: shotId,
-                output: completedAsset?.id ?? output,
+                output: output,
+                asset: completedAsset,
+                proof: entryProof,
                 phase: phase,
-                editor: editor,
                 dataRoot: root
+            )
+            guard var entry = manifest.entries[shotId] else {
+                throw ToolError("The render manifest lost shot '\(shotId)'.")
+            }
+            entry.lastFramePath = preparedLastFrame?.proof.path
+            manifest.entries[shotId] = entry
+        } else {
+            preparedLastFrame = nil
+        }
+        do {
+            try PipelineRenderRecordWriter.publish(
+                manifest: manifest,
+                proof: proof,
+                routingProof: routingProof,
+                framesManifest: updatedFrames,
+                replacingShotID: shotId,
+                preparedLastFrame: preparedLastFrame,
+                expectedPublicationTransactionID: expectedPublication?.transactionID,
+                dataRoot: root,
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
+        } catch {
+            throw ToolError(
+                "Nothing was recorded because the render transaction failed: \(error.localizedDescription)"
             )
         }
         let entry = manifest.entries[shotId]
@@ -1727,9 +2012,9 @@ extension ToolExecutor {
         let proof = phase == "frames"
             ? nil
             : try readRenderProof(dataRoot: root, phase: phase)
-        let frames = phase == "frames"
+        let routingProof = phase == "frames"
             ? nil
-            : try? loadFramesManifest(dataRoot: root)
+            : try readRenderRoutingProof(dataRoot: root, phase: phase)
         var entries: [String: Any] = [:]
         for (sid, e) in manifest.entries {
             let entryProof = proof?.entries[sid]
@@ -1739,10 +2024,8 @@ extension ToolExecutor {
                     isCurrentVideoRender(
                         e,
                         proof: entryProof,
+                        routingProof: routingProof?.entries[sid],
                         shot: $0,
-                        shotlist: shotlist!,
-                        manifest: manifest,
-                        frames: frames,
                         dataRoot: root
                     )
                 } ?? false
@@ -1773,10 +2056,8 @@ extension ToolExecutor {
                     isCurrentVideoRender(
                         entry,
                         proof: proof?.entries[shotID],
+                        routingProof: routingProof?.entries[shotID],
                         shot: $0,
-                        shotlist: shotlist!,
-                        manifest: manifest,
-                        frames: frames,
                         dataRoot: root
                     )
                 } ?? false
@@ -1804,6 +2085,10 @@ extension ToolExecutor {
 
     func getFramesManifestTool(_ editor: EditorViewModel, _ args: [String: Any]) throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
+        try PipelineRenderRecordWriter.requireCurrentPublicationIfPresent(
+            dataRoot: root,
+            phase: "frames"
+        )
         let url = PipelineLayout.url(PipelineLayout.framesManifestFile, in: root)
         guard FileManager.default.fileExists(atPath: url.path) else {
             return try jsonResult(["exists": false, "shots": []])
@@ -2381,6 +2666,7 @@ extension ToolExecutor {
     func assembleTimelineTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
         let phase = args.string("phase") ?? "final"
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
 
         // Hard gate (terminal backstop): no assembly on an unapproved plan. Every phase up to and
         // including shotlist — which, for musicvideo, includes the analysis gate that itself requires
@@ -2451,6 +2737,11 @@ extension ToolExecutor {
         var songPlacedNow = false
         var songAlreadyPresent = false
         try editor.withTimelineSwap(actionName: "Assemble Timeline (Agent)") {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: FrameInventory.projectHome(of: root),
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
             // Dedicated assembly video track — reused across runs, cleared before each rebuild.
             let videoTrackId = ensureAssemblyTrack(editor, existingId: sidecar.videoTrackId, type: .video)
             sidecar.videoTrackId = videoTrackId
@@ -2501,6 +2792,11 @@ extension ToolExecutor {
                     }
                 }
             }
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: FrameInventory.projectHome(of: root),
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
             try saveAssemblySidecar(sidecar, dataRoot: root)
         }
 
@@ -2603,7 +2899,7 @@ extension ToolExecutor {
         asset: MediaAsset,
         role requestedRole: String?,
         shotlist: Shotlist,
-        editor: EditorViewModel,
+        existing: FramesManifest?,
         dataRoot: URL
     ) throws -> FramesManifest {
         guard shot.sourceMode == .generated,
@@ -2643,27 +2939,14 @@ extension ToolExecutor {
             approved: false,
             providerPrompt: gi.prompt,
             multiRefHints: [])
-        let manifestURL = PipelineLayout.url(PipelineLayout.framesManifestFile, in: dataRoot)
-        var existing: FramesManifest
-        if FileManager.default.fileExists(atPath: manifestURL.path) {
-            do {
-                existing = try loadFramesManifest(dataRoot: dataRoot)
-            } catch {
-                throw ToolError(
-                    "Couldn't read frames/manifest.json. Repair or restore it "
-                        + "before recording another frame: \(error)"
-                )
-            }
-        } else {
-            existing = FramesManifest(
+        let current = existing ?? FramesManifest(
                 project: FrameInventory.projectName(of: dataRoot)
                     ?? shotlist.project,
                 generated: currentTimestamp()
             )
-        }
         let reconciled: FramesManifest
         do {
-            reconciled = try existing.reconciled(with: shotlist)
+            reconciled = try current.reconciled(with: shotlist)
         } catch {
             throw ToolError(
                 "Couldn't reconcile the Frames manifest with the current "
@@ -2824,8 +3107,20 @@ extension ToolExecutor {
             entry.startFramePath = startFrame?.path
             entry.referencePaths = referenceImages.map(\.path)
         } else {
-            switch VideoModelConfig.allModels.first(where: { $0.id == gi.model }) {
-            case .some(let model) where model.requiresSourceVideo:
+            let legacySource = imageURLIds.first.flatMap { id in
+                editor.mediaAssets.first(where: { $0.id == id })
+            }?.type == .video
+            let videoCapabilities = VideoModelConfig.allModels
+                .first { $0.id == gi.model }
+                .flatMap { _ in
+                    GenerationService.dispatchTarget(
+                        modelId: gi.model,
+                        requiringSourceVideo: legacySource
+                    ).binding?.resolvedVideoCapabilities
+                }
+            switch videoCapabilities {
+            case .some(let capabilities)
+                where capabilities.inputPolicy.requiresSourceVideo:
                 entry.startFramePath = nil
                 let inputs = try inputProofs(
                     imageURLIds,
@@ -2880,32 +3175,71 @@ extension ToolExecutor {
         )
     }
 
-    /// #196 — when the next shot in render order chains off this one, extract this rendered clip's last
-    /// frame to a durable PNG beside the clip and stamp its project-home-relative path onto the render
-    /// entry (`last_frame_path`). `next_render_shot` then hands that frame to the successor as its start
-    /// frame. Silent on any miss (no shotlist, no successor chain, non-video output, extraction failure):
-    /// continuity is an enhancement, never a reason to fail a recorded render.
-    private func recordChainLastFrame(shotId: String, output: String, phase: String, editor: EditorViewModel, dataRoot: URL) async {
-        guard let shotlist = (try? loadShotlist(dataRoot: dataRoot)) ?? nil,
-              ChainContinuity.needsLastFrame(shotlist, shotId: shotId),
-              let asset = await resolveRenderedAsset(
-                output,
-                editor: editor,
-                dataRoot: dataRoot
-              ) else { return }
-        let dest = asset.url.deletingPathExtension().appendingPathExtension("last_frame.png")
+    private func prepareRequiredChainLastFrame(
+        shotId: String,
+        output: String,
+        asset: MediaAsset,
+        proof: RenderProofEntry,
+        phase: String,
+        dataRoot: URL
+    ) async throws -> PipelineRenderRecordWriter.PreparedLastFrame {
+        let sourceSHA256: String
         do {
-            try await LastFrameExtractor.extractLastFrame(video: asset.url, dest: dest)
+            sourceSHA256 = try FileDigest.sha256(of: asset.url)
         } catch {
-            return
+            throw ToolError(
+                "The chained render source could not be fingerprinted: \(error.localizedDescription)"
+            )
         }
+        guard proof.shotId == shotId,
+              proof.output == output,
+              proof.outputSha256 == sourceSHA256 else {
+            throw ToolError(
+                "The chained last frame cannot be bound to the exact rendered source."
+            )
+        }
+        let temporaryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ngv-last-frame-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+        do {
+            try await LastFrameExtractor.extractLastFrame(
+                video: asset.url,
+                dest: temporaryURL
+            )
+        } catch {
+            throw ToolError(
+                "The successor requires this clip's last frame, but extraction failed: "
+                    + error.localizedDescription
+            )
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: temporaryURL)
+        } catch {
+            throw ToolError(
+                "The extracted last frame could not be read: \(error.localizedDescription)"
+            )
+        }
+        guard !data.isEmpty else {
+            throw ToolError("The required chained last frame is empty.")
+        }
+        let destination = asset.url.deletingPathExtension()
+            .appendingPathExtension("last_frame.png")
         let home = FrameInventory.projectHome(of: dataRoot)
-        let rel = FrameInventory.relativePath(of: dest, to: home)
-        guard var manifest = try? loadRenderManifest(dataRoot: dataRoot, phase: phase),
-              var entry = manifest.entries[shotId] else { return }
-        entry.lastFramePath = rel
-        manifest.entries[shotId] = entry
-        try? saveRenderManifest(manifest, dataRoot: dataRoot)
+        let relative = FrameInventory.relativePath(of: destination, to: home)
+        let frameProof = RenderLastFrameProofV1(
+            shotID: shotId,
+            phase: phase,
+            path: relative,
+            sha256: FileDigest.sha256(of: data),
+            sourceOutput: output,
+            sourceOutputSHA256: proof.outputSha256,
+            extractedAt: currentTimestamp()
+        )
+        return PipelineRenderRecordWriter.PreparedLastFrame(
+            proof: frameProof,
+            data: data
+        )
     }
 
     func resolveRenderedAsset(
@@ -3091,18 +3425,60 @@ extension ToolExecutor {
     func runPhaseTool(_ editor: EditorViewModel, _ args: [String: Any]) async throws -> ToolResult {
         let phase = try args.requireString("phase")
         let root = try resolveDataRoot(args, editor: editor)
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
+        let declaredPack = declaration.packName
+        let declaredBinding = declaration.binding
+        let resolvedPack: String?
+        do {
+            resolvedPack = try ProjectPackGate.requireLiveMutation(
+                projectURL: FrameInventory.projectHome(of: root),
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
+        }
 
         // The pack follows the TARGET project (an explicit project_dir may point elsewhere);
         // ngv.json is the write-through source the editor property mirrors anyway. It lives in the
         // project PACKAGE (parent of `pipeline`), not the data root — resolve the home first.
-        let registry = PackCatalog.registry(activePack: activePluginFor(dataRoot: root))
+        let registry = PackCatalog.registry(activePack: resolvedPack)
         AudioAnalysisRuntime.configure(registry)
 
         // #174: run the phase's engine-pinned deterministic steps FIRST — load-bearing operations the
         // agent can neither skip nor improvise (file intake into the right dir, the one-song contract,
         // the assembly hand-off). A step that throws blocks the phase with its actionable message.
         let steps = registry.deterministicSteps(forPhase: phase)
+        let preparationArtifactPhase: String?
+        if steps.contains(where: { $0.id == "prepare_frames_manifest" }) {
+            preparationArtifactPhase = "frames"
+        } else if steps.contains(where: { $0.id == "prepare_final_render_manifest" }) {
+            preparationArtifactPhase = "final"
+        } else {
+            preparationArtifactPhase = nil
+        }
         let runDeterministicSteps: @Sendable (URL) throws -> Void = { dataRoot in
+            if let preparationArtifactPhase {
+                guard let shotlist = try loadShotlist(dataRoot: dataRoot) else {
+                    throw PipelinePhaseBlocked(
+                        "\(phase) blocked by host preparation: the approved Shot List is missing."
+                    )
+                }
+                do {
+                    try PipelineRenderRecordWriter.reconcilePhasePreparation(
+                        shotlist: shotlist,
+                        phase: preparationArtifactPhase,
+                        dataRoot: dataRoot,
+                        declaredPack: declaredPack,
+                        declaredBinding: declaredBinding
+                    )
+                } catch {
+                    throw PipelinePhaseBlocked(
+                        "\(phase) blocked by host render-record preparation: "
+                            + error.localizedDescription
+                    )
+                }
+            }
             for step in steps {
                 do {
                     try step.run(dataRoot)
@@ -3130,15 +3506,71 @@ extension ToolExecutor {
             .first?
             .lastPathComponent
         let coordinatedRunner: EngineRegistry.PhaseRunner = { dataRoot in
-            try runDeterministicSteps(dataRoot)
-            try runner?(dataRoot)
+            try ProjectWorkingCopy.transactPipeline(
+                at: dataRoot,
+                validateCurrent: { projectHome in
+                    _ = try ProjectPackGate.requireMutation(
+                        projectURL: projectHome,
+                        declaredPack: declaredPack,
+                        declaredBinding: declaredBinding
+                    )
+                }
+            ) { stagingRoot in
+                _ = try ProjectPackGate.requireMutation(
+                    projectURL: FrameInventory.projectHome(of: stagingRoot),
+                    declaredPack: declaredPack,
+                    declaredBinding: declaredBinding
+                )
+                try runDeterministicSteps(stagingRoot)
+                _ = try ProjectPackGate.requireMutation(
+                    projectURL: FrameInventory.projectHome(of: stagingRoot),
+                    declaredPack: declaredPack,
+                    declaredBinding: declaredBinding
+                )
+                try runner?(stagingRoot)
+                try PipelinePhaseMutationRecorder.record(
+                    phase: phase,
+                    dataRoot: stagingRoot,
+                    captureLineage: true,
+                    declaredPack: declaredPack,
+                    declaredBinding: declaredBinding
+                )
+            }
         }
         let coordinatedProgressRunner: EngineRegistry.ProgressPhaseRunner?
         if runner != nil,
            let progressRunner = registry.progressPhaseRunners[phase] {
             coordinatedProgressRunner = { dataRoot, progress in
-                try runDeterministicSteps(dataRoot)
-                try progressRunner(dataRoot, progress)
+                try ProjectWorkingCopy.transactPipeline(
+                    at: dataRoot,
+                    validateCurrent: { projectHome in
+                        _ = try ProjectPackGate.requireMutation(
+                            projectURL: projectHome,
+                            declaredPack: declaredPack,
+                            declaredBinding: declaredBinding
+                        )
+                    }
+                ) { stagingRoot in
+                    _ = try ProjectPackGate.requireMutation(
+                        projectURL: FrameInventory.projectHome(of: stagingRoot),
+                        declaredPack: declaredPack,
+                        declaredBinding: declaredBinding
+                    )
+                    try runDeterministicSteps(stagingRoot)
+                    _ = try ProjectPackGate.requireMutation(
+                        projectURL: FrameInventory.projectHome(of: stagingRoot),
+                        declaredPack: declaredPack,
+                        declaredBinding: declaredBinding
+                    )
+                    try progressRunner(stagingRoot, progress)
+                    try PipelinePhaseMutationRecorder.record(
+                        phase: phase,
+                        dataRoot: stagingRoot,
+                        captureLineage: true,
+                        declaredPack: declaredPack,
+                        declaredBinding: declaredBinding
+                    )
+                }
             }
         } else {
             coordinatedProgressRunner = nil
@@ -3151,12 +3583,6 @@ extension ToolExecutor {
             progressRunner: coordinatedProgressRunner,
             state: editor.pipelinePhaseExecution,
             settleOnce: {
-                try await editor.pipelineAgentHarness.recordPhaseMutation(
-                    phase: phase,
-                    dataRoot: root,
-                    captureLineage: true,
-                    declaredPack: editor.declaredPluginName
-                )
                 await editor.refreshEngineState()
             }
         )
@@ -3244,6 +3670,7 @@ extension ToolExecutor {
         _ args: [String: Any]
     ) async throws -> ToolResult {
         let root = try resolveDataRoot(args, editor: editor)
+        let declaration = try mutationPackDeclaration(editor, dataRoot: root)
 
         let mediaRef = args.string("media")
         let path = args.string("path")
@@ -3292,7 +3719,9 @@ extension ToolExecutor {
                 from: sourceURL,
                 dataRoot: root,
                 replace: replace,
-                originalFilename: originalFilename
+                originalFilename: originalFilename,
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
             )
         } catch {
             throw ToolError(error.localizedDescription)

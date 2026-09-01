@@ -33,14 +33,16 @@ enum PipelinePhaseAccess {
 
     static func prepare(
         dataRoot: URL,
-        declaredPack: String? = nil
+        declaredPack: String? = nil,
+        declaredBinding: ProjectPackBinding? = nil
     ) throws -> Prepared {
         let projectURL = FrameInventory.projectHome(of: dataRoot)
         let packName: String?
         do {
-            packName = try ProjectPluginSettings.resolvedPlugin(
+            packName = try ProjectPackGate.requireLiveMutation(
                 projectURL: projectURL,
-                declaredPack: declaredPack
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
             )
         } catch {
             throw GateBlocked(error.localizedDescription)
@@ -90,14 +92,16 @@ enum PipelinePhaseAccess {
     static func requireCurrentPhaseAndIntake(
         _ phase: String,
         dataRoot: URL,
-        declaredPack: String? = nil
+        declaredPack: String? = nil,
+        declaredBinding: ProjectPackBinding? = nil
     ) throws {
         try requireCurrentPhaseAndIntake(
             phase,
             dataRoot: dataRoot,
             prepared: prepare(
                 dataRoot: dataRoot,
-                declaredPack: declaredPack
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
             )
         )
     }
@@ -302,7 +306,8 @@ final class PipelineAgentHarness {
         }
         guard let packName = try resolvedPack(
             dataRoot: dataRoot,
-            declaredPack: editor.declaredPluginName
+            declaredPack: editor.declaredPluginName,
+            declaredBinding: editor.declaredPluginBinding
         ) else {
             throw ToolError("The workflow contract is unavailable. Reopen the project and try again.")
         }
@@ -378,7 +383,8 @@ final class PipelineAgentHarness {
         do {
             guard let packName = try resolvedPack(
                 dataRoot: dataRoot,
-                declaredPack: editor.declaredPluginName
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding
             ) else {
                 return Reconciliation(
                     isReady: true,
@@ -420,6 +426,11 @@ final class PipelineAgentHarness {
                 }
             } else {
                 do {
+                    _ = try ProjectPackGate.requireLiveMutation(
+                        projectURL: FrameInventory.projectHome(of: dataRoot),
+                        declaredPack: editor.declaredPluginName,
+                        declaredBinding: editor.declaredPluginBinding
+                    )
                     if let key = editor.openWorkingCopyKey {
                         try ProjectWorkingCopy.markDirty(key: key)
                     }
@@ -490,11 +501,13 @@ final class PipelineAgentHarness {
         tool: ToolName? = nil,
         phase: String,
         dataRoot: URL,
-        declaredPack: String? = nil
+        declaredPack: String? = nil,
+        declaredBinding: ProjectPackBinding? = nil
     ) throws {
         let packName = try resolvedPack(
             dataRoot: dataRoot,
-            declaredPack: declaredPack
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
         )
         let registry = PackCatalog.registry(activePack: packName)
         let contract = try PhaseContractRuntime.contract(activePack: packName)
@@ -504,7 +517,8 @@ final class PipelineAgentHarness {
             try PipelinePhaseAccess.requireCurrentPhaseAndIntake(
                 phase,
                 dataRoot: dataRoot,
-                declaredPack: declaredPack
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
             )
             if let tool,
                let contract,
@@ -535,11 +549,13 @@ final class PipelineAgentHarness {
     func guardCurrentPhaseWork(
         tool: ToolName,
         dataRoot: URL,
-        declaredPack: String? = nil
+        declaredPack: String? = nil,
+        declaredBinding: ProjectPackBinding? = nil
     ) throws -> String? {
         guard let packName = try resolvedPack(
             dataRoot: dataRoot,
-            declaredPack: declaredPack
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
         ) else { return nil }
         let context = try loadContext(dataRoot: dataRoot, packName: packName)
         guard let phase = context.phase else {
@@ -554,7 +570,8 @@ final class PipelineAgentHarness {
         try guardPhaseWork(
             phase: phase,
             dataRoot: dataRoot,
-            declaredPack: declaredPack
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
         )
         if !context.contract.allowsSupporting(tool, phase: phase) {
             throw ToolError(
@@ -568,7 +585,9 @@ final class PipelineAgentHarness {
     func agentPrompt(dataRoot: URL) throws -> String? {
         guard let packName = try resolvedPack(
             dataRoot: dataRoot,
-            declaredPack: nil
+            declaredPack: nil,
+            declaredBinding: nil,
+            requireMutationBinding: false
         ) else { return nil }
         return try loadContext(
             dataRoot: dataRoot,
@@ -585,7 +604,8 @@ final class PipelineAgentHarness {
         }),
         let packName = try resolvedPack(
             dataRoot: dataRoot,
-            declaredPack: editor.declaredPluginName
+            declaredPack: editor.declaredPluginName,
+            declaredBinding: editor.declaredPluginBinding
         ) else { return }
         let context = try loadContext(dataRoot: dataRoot, packName: packName)
         guard let phase = context.phase else {
@@ -620,7 +640,8 @@ final class PipelineAgentHarness {
             try guardPhaseWork(
                 phase: phase,
                 dataRoot: dataRoot,
-                declaredPack: editor.declaredPluginName
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding
             )
             if let running = editor.pipelinePhaseRunCoordinator.runningPhase(
                 projectRoot: dataRoot
@@ -642,78 +663,18 @@ final class PipelineAgentHarness {
         phase: String,
         dataRoot: URL,
         captureLineage: Bool = true,
-        declaredPack: String? = nil
+        declaredPack: String? = nil,
+        declaredBinding: ProjectPackBinding? = nil
     ) async throws {
-        let packName = try resolvedPack(
-            dataRoot: dataRoot,
-            declaredPack: declaredPack
-        )
-        let registry = PackCatalog.registry(activePack: packName)
-        let order = try PhaseContractRuntime.order(activePack: packName)
-        guard let index = order.firstIndex(of: phase) else {
-            throw ToolError("The pipeline has no registered phase named '\(phase)'.")
-        }
-        let lineageSnapshot: PhaseLineageSnapshot?
-        let lineageFailure: String?
-        if captureLineage,
-           let provider = try PhaseContractRuntime.lineageProvider(
-               activePack: packName,
-               phase: phase,
-               registry: registry
-           ) {
-            do {
-                lineageSnapshot = try await Task.detached(priority: .utility) {
-                    try provider(dataRoot)
-                }.value
-                lineageFailure = nil
-            } catch {
-                lineageSnapshot = nil
-                lineageFailure = error.localizedDescription
-            }
-        } else {
-            lineageSnapshot = nil
-            lineageFailure = nil
-        }
-        let store = YAMLArtifactStore(dataRoot: dataRoot)
-        var gates = try loadGates(dataRoot: dataRoot)
-        let affected = order[index...]
-        if affected.contains(where: {
-            let gate = gates.get($0)
-            return gate.state != .pending || gate.notes != nil
-        }) {
-            do {
-                _ = try GatesOperations.rewindTo(
-                    &gates,
-                    target: phase,
-                    order: order
-                )
-                try store.save(gates, to: PipelineLayout.gatesFile)
-            } catch {
-                throw ToolError(
-                    "The artifact changed, but its gate chain could not be invalidated: \(error)"
-                )
-            }
-        }
-        if let lineageFailure {
-            throw ToolError(
-                "The artifact changed, but its verified input lineage could not "
-                    + "be recorded: \(lineageFailure)"
+        try await Task.detached(priority: .utility) {
+            try PipelinePhaseMutationRecorder.record(
+                phase: phase,
+                dataRoot: dataRoot,
+                captureLineage: captureLineage,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
             )
-        }
-        if let lineageSnapshot {
-            do {
-                try PipelineLineageStore.record(
-                    phase: phase,
-                    snapshot: lineageSnapshot,
-                    dataRoot: dataRoot
-                )
-            } catch {
-                throw ToolError(
-                    "The artifact changed, but its verified input lineage could not "
-                        + "be recorded: \(error)"
-                )
-            }
-        }
+        }.value
     }
 
     private func loadContext(dataRoot: URL, packName: String) throws -> Context {
@@ -774,9 +735,18 @@ final class PipelineAgentHarness {
 
     private func resolvedPack(
         dataRoot: URL,
-        declaredPack: String?
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding?,
+        requireMutationBinding: Bool = true
     ) throws -> String? {
         do {
+            if requireMutationBinding {
+                return try ProjectPackGate.requireLiveMutation(
+                    projectURL: FrameInventory.projectHome(of: dataRoot),
+                    declaredPack: declaredPack,
+                    declaredBinding: declaredBinding
+                )
+            }
             return try ProjectPluginSettings.resolvedPlugin(
                 projectURL: FrameInventory.projectHome(of: dataRoot),
                 declaredPack: declaredPack

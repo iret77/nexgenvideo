@@ -23,13 +23,14 @@ struct AgentTranscriptProjectionTests {
         ])
         let final = AgentMessage(role: .assistant, blocks: [.text("The package is not release-ready.")])
 
-        let entries = AgentTranscriptProjection.entries(
+        let turns = AgentTranscriptProjection.turns(
             messages: [user, first, firstResult, second, secondResult, final],
             isStreaming: false
         )
 
-        #expect(entries.count == 3)
-        guard case .activity(let activity) = entries[1] else {
+        #expect(turns.count == 1)
+        #expect(turns[0].items.count == 3)
+        guard case .activity(let activity) = turns[0].items[1] else {
             Issue.record("the middle row must be the consolidated activity")
             return
         }
@@ -46,7 +47,7 @@ struct AgentTranscriptProjectionTests {
             .text("First status"),
             .toolUse(id: "t1", name: "Read", inputJSON: "{}"),
         ])
-        let initial = AgentTranscriptProjection.entries(messages: [user, first], isStreaming: true)
+        let initial = AgentTranscriptProjection.turns(messages: [user, first], isStreaming: true)
 
         let result = AgentMessage(role: .user, blocks: [
             .toolResult(toolUseId: "t1", content: [.text("ok")], isError: false),
@@ -55,13 +56,13 @@ struct AgentTranscriptProjectionTests {
             .text("Second status"),
             .toolUse(id: "t2", name: "Grep", inputJSON: "{}"),
         ])
-        let updated = AgentTranscriptProjection.entries(
+        let updated = AgentTranscriptProjection.turns(
             messages: [user, first, result, second],
             isStreaming: true
         )
 
-        let initialActivity = initial.compactMap(\.activity).first
-        let updatedActivity = updated.compactMap(\.activity).first
+        let initialActivity = initial.flatMap(\.items).compactMap(\.activity).first
+        let updatedActivity = updated.flatMap(\.items).compactMap(\.activity).first
         #expect(initialActivity?.id == user.id)
         #expect(updatedActivity?.id == user.id)
         #expect(updatedActivity?.currentStatus == "Second status")
@@ -77,10 +78,10 @@ struct AgentTranscriptProjectionTests {
             ),
         ])
 
-        let entries = AgentTranscriptProjection.entries(messages: [assistant], isStreaming: false)
+        let turns = AgentTranscriptProjection.turns(messages: [assistant], isStreaming: false)
 
-        #expect(entries.count == 1)
-        guard case .message(let message) = entries[0] else {
+        #expect(turns.count == 1)
+        guard case .assistantResult(let message)? = turns[0].items.first else {
             Issue.record("show_blocks must remain a transcript message")
             return
         }
@@ -95,10 +96,10 @@ struct AgentTranscriptProjectionTests {
             .toolUse(id: "t1", name: "get_project_state", inputJSON: "{}"),
         ])
 
-        let entries = AgentTranscriptProjection.entries(messages: [kickoff, work], isStreaming: true)
+        let turns = AgentTranscriptProjection.turns(messages: [kickoff, work], isStreaming: true)
 
-        #expect(entries.count == 1)
-        guard case .activity(let activity) = entries[0] else {
+        #expect(turns.count == 1)
+        guard case .activity(let activity)? = turns[0].items.first else {
             Issue.record("hidden kickoff should leave only its activity")
             return
         }
@@ -124,21 +125,53 @@ struct AgentTranscriptProjectionTests {
             )
         )
 
-        let entries = AgentTranscriptProjection.entries(
+        let turns = AgentTranscriptProjection.turns(
             messages: [message],
             isStreaming: false
         )
 
-        #expect(entries.count == 1)
-        guard case .message(let projected) = entries[0] else {
-            Issue.record("workflow record must remain a transcript message")
+        #expect(turns.count == 1)
+        guard case .receipts(let group)? = turns[0].items.first else {
+            Issue.record("workflow record must become a compact receipt")
             return
         }
-        #expect(projected.userPresentation?.workflowRecord == record)
+        #expect(group.receipts.count == 1)
+        guard case .workflow(let projected) = group.receipts[0].content else {
+            Issue.record("workflow receipt content is missing")
+            return
+        }
+        #expect(projected == record)
+    }
+
+    @Test("host records do not become user intents")
+    func hostRecordsAreNotAuthoredTurns() {
+        let choice = AgentChoiceRecord(
+            selections: [.init(label: "Lighting anchor", values: ["Generate"])],
+            attachmentNames: [],
+            confirmed: false
+        )
+        let message = AgentMessage(
+            role: .user,
+            blocks: [.text("internal control command")],
+            userPresentation: .init(
+                choiceRecord: choice,
+                typedText: nil,
+                notice: "Saved"
+            )
+        )
+
+        let turns = AgentTranscriptProjection.turns(messages: [message], isStreaming: false)
+
+        #expect(turns.count == 1)
+        #expect(turns[0].items.count == 2)
+        #expect(!turns[0].items.contains(where: {
+            if case .userIntent = $0 { return true }
+            return false
+        }))
     }
 }
 
-private extension AgentTranscriptEntry {
+private extension AgentTranscriptItem {
     var activity: AgentActivity? {
         guard case .activity(let activity) = self else { return nil }
         return activity

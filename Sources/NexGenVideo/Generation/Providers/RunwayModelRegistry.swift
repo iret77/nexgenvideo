@@ -4,6 +4,7 @@ struct RunwayImageRequestSpec: Sendable {
     let ratios: [String: String]
     let sendsOutputCount: Bool
     let sendsQuality: Bool
+    let productionQualityTargetIDs: [String]
 }
 
 struct RunwayModel: Sendable {
@@ -140,7 +141,25 @@ enum RunwayModelRegistry {
 
     private static func entryWithOffer(_ model: RunwayModel) -> CatalogEntry {
         var entry = model.entry
-        entry.offers = [ProviderOffer(provider: .runway, providerRef: entry.id)]
+        let qualityTargetIDs = model.imageRequest?.productionQualityTargetIDs
+        entry.offers = [ProviderOffer(
+            provider: .runway,
+            providerRef: entry.id,
+            productionQualityTargetIDs: qualityTargetIDs?.isEmpty == false ? qualityTargetIDs : nil,
+            productionInputPolicy: {
+                guard case .video(let capabilities) = entry.uiCapabilities else { return nil }
+                return ProviderProductionInputPolicyV1(
+                    videoCapabilities: capabilities
+                )
+            }(),
+            resolvedVideoCapabilities: {
+                guard case .video(let capabilities) = entry.uiCapabilities else { return nil }
+                return ResolvedVideoOfferingCapabilitiesV1(
+                    videoCapabilities: capabilities,
+                    supportsNativeAudio: false
+                )
+            }()
+        )]
         return entry
     }
 
@@ -259,7 +278,8 @@ enum RunwayModelRegistry {
             imageRequest: RunwayImageRequestSpec(
                 ratios: ratios,
                 sendsOutputCount: maxImages > 1,
-                sendsQuality: qualities != nil
+                sendsQuality: qualities != nil,
+                productionQualityTargetIDs: qualities ?? []
             )
         )
     }

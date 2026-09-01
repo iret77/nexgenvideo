@@ -29,6 +29,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
     let dataRoot: URL?
     let action: Action
     let declaredPack: String?
+    let declaredBinding: ProjectPackBinding?
     /// Set only for an in-app turn that can be resumed automatically.
     let sessionId: UUID?
 
@@ -38,6 +39,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         dataRoot: URL? = nil,
         action: Action = .approve,
         declaredPack: String? = nil,
+        declaredBinding: ProjectPackBinding? = nil,
         sessionId: UUID? = nil,
         id: String = UUID().uuidString
     ) {
@@ -48,6 +50,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
         self.dataRoot = dataRoot
         self.action = action
         self.declaredPack = declaredPack
+        self.declaredBinding = declaredBinding
         self.sessionId = sessionId
     }
 
@@ -58,6 +61,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             dataRoot: dataRoot,
             action: action,
             declaredPack: declaredPack,
+            declaredBinding: declaredBinding,
             sessionId: sessionId,
             id: id
         )
@@ -69,6 +73,7 @@ struct GateApproval: Identifiable, Equatable, Sendable {
             && dataRoot == other.dataRoot
             && action == other.action
             && declaredPack == other.declaredPack
+            && declaredBinding == other.declaredBinding
             && sessionId == other.sessionId
     }
 

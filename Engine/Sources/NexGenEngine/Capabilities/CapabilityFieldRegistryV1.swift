@@ -12,6 +12,7 @@ public enum CapabilityEndpointMergePolicyV1: String, Codable, Sendable, Equatabl
     case maximum
     case minimum
     case booleanAnd = "boolean_and"
+    case endpointOverride = "endpoint_override"
     case setIntersection = "set_intersection"
     case intrinsicOnly = "intrinsic_only"
 }
@@ -71,6 +72,27 @@ public enum CapabilityFieldRegistryV1 {
         field(CapabilityFieldIDV1.firstFrame, [.video], .boolean, .booleanAnd),
         field(CapabilityFieldIDV1.lastFrame, [.video], .boolean, .booleanAnd),
         field(CapabilityFieldIDV1.sourceVideo, [.video], .boolean, .booleanAnd),
+        field(
+            CapabilityFieldIDV1.sourceVideoRequired,
+            [.video],
+            .boolean,
+            .endpointOverride,
+            requiresDefensiveDefault: false
+        ),
+        field(
+            CapabilityFieldIDV1.framesCountTowardImageReferenceLimit,
+            [.video],
+            .boolean,
+            .endpointOverride,
+            requiresDefensiveDefault: false
+        ),
+        field(
+            CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit,
+            [.video],
+            .boolean,
+            .endpointOverride,
+            requiresDefensiveDefault: false
+        ),
         field(CapabilityFieldIDV1.edit, [.video], .boolean, .booleanAnd),
         field(CapabilityFieldIDV1.extend, [.video], .boolean, .booleanAnd),
         field(CapabilityFieldIDV1.durationMinimum, [.video], .decimal, .minimum),
@@ -120,13 +142,15 @@ public enum CapabilityFieldRegistryV1 {
         _ id: String,
         _ modalities: Set<CapabilityModalityV1>,
         _ valueType: CapabilityFieldValueTypeV1,
-        _ mergePolicy: CapabilityEndpointMergePolicyV1
+        _ mergePolicy: CapabilityEndpointMergePolicyV1,
+        requiresDefensiveDefault: Bool = true
     ) -> CapabilityFieldDefinitionV1 {
         CapabilityFieldDefinitionV1(
             id: id,
             modalities: modalities,
             valueType: valueType,
-            endpointMergePolicy: mergePolicy
+            endpointMergePolicy: mergePolicy,
+            requiresDefensiveDefault: requiresDefensiveDefault
         )
     }
 }

@@ -56,6 +56,7 @@ struct FalModel: Sendable {
     var audioMode: FalAudioMode = .tts
     var upscaleKind: FalUpscaleKind? = nil
     var videoFirstLastFrames: Bool = false
+    var productionQualityTargetIDs: [String] = []
 }
 
 enum FalModelRegistry {
@@ -66,7 +67,16 @@ enum FalModelRegistry {
         // endpoint; everything else here is fal. Declared as data — the resolver routes on this.
         e.offers = e.id.hasPrefix("fal-ai/elevenlabs")
             ? [ProviderOffer(provider: .elevenlabs, providerRef: e.id), ProviderOffer(provider: .fal, providerRef: e.id)]
-            : [ProviderOffer(provider: .fal, providerRef: e.id)]
+            : [ProviderOffer(
+                provider: .fal,
+                providerRef: e.id,
+                productionQualityTargetIDs: productionQualityTargets(for: model),
+                productionInputPolicy: productionInputPolicy(for: e),
+                resolvedVideoCapabilities: resolvedVideoCapabilities(
+                    for: e,
+                    supportsNativeAudio: model.videoGeneratesAudio
+                )
+            )]
         return e
     }
 
@@ -168,7 +178,8 @@ enum FalModelRegistry {
             ),
             imageSize: size,
             imageSendsResolution: resolutions != nil,
-            imageSendsQuality: qualities != nil
+            imageSendsQuality: qualities != nil,
+            productionQualityTargetIDs: qualities ?? []
         )
     }
 
@@ -190,7 +201,8 @@ enum FalModelRegistry {
             ),
             imageSize: size, imageRef: ref,
             imageSendsResolution: resolutions != nil,
-            imageSendsQuality: qualities != nil
+            imageSendsQuality: qualities != nil,
+            productionQualityTargetIDs: qualities ?? []
         )
     }
 
@@ -210,9 +222,36 @@ enum FalModelRegistry {
                 let liveEndpoint = aliases.first(where: availableModelIds.contains)
                 guard let liveEndpoint else { return nil }
                 var entry = model.entry
-                entry.offers = [ProviderOffer(provider: .fal, providerRef: liveEndpoint)]
+                entry.offers = [ProviderOffer(
+                    provider: .fal,
+                    providerRef: liveEndpoint,
+                    productionQualityTargetIDs: productionQualityTargets(for: model),
+                    productionInputPolicy: productionInputPolicy(for: entry)
+                )]
                 return entry
             }
+    }
+
+    private static func productionQualityTargets(for model: FalModel) -> [String]? {
+        model.productionQualityTargetIDs.isEmpty ? nil : model.productionQualityTargetIDs
+    }
+
+    private static func productionInputPolicy(
+        for entry: CatalogEntry
+    ) -> ProviderProductionInputPolicyV1? {
+        guard case .video(let capabilities) = entry.uiCapabilities else { return nil }
+        return ProviderProductionInputPolicyV1(videoCapabilities: capabilities)
+    }
+
+    private static func resolvedVideoCapabilities(
+        for entry: CatalogEntry,
+        supportsNativeAudio: Bool
+    ) -> ResolvedVideoOfferingCapabilitiesV1? {
+        guard case .video(let capabilities) = entry.uiCapabilities else { return nil }
+        return ResolvedVideoOfferingCapabilitiesV1(
+            videoCapabilities: capabilities,
+            supportsNativeAudio: supportsNativeAudio
+        )
     }
 
     // MARK: - Video (text-to-video)

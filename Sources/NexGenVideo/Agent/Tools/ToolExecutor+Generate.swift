@@ -121,7 +121,325 @@ final class ProductionDesignReferenceStaging {
     }
 }
 
+private struct ProductionVideoGenerationInputs {
+    let assets: VideoGenerationSubmission.InputAssets
+    let routingProof: ProductionGenerationRoutingProofV1
+    let offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1
+}
+
 extension ToolExecutor {
+    private func currentProductionRouting(
+        editor: EditorViewModel,
+        args: [String: Any]
+    ) throws -> (selection: PipelineProductionRouteSelection, dataRoot: URL)? {
+        let shotID = try args.requireString("shotId")
+        guard shotID != "none" else { return nil }
+        guard let workingRoot = editor.workingRoot,
+              let dataRoot = DataRootResolver.dataRoot(of: workingRoot) else {
+            throw ToolError(
+                "Shot-bound generation requires an open project with a pipeline data root."
+            )
+        }
+        do {
+            return (
+                try PipelineProductionRouting.requireCurrent(
+                    shotID: shotID,
+                    dataRoot: dataRoot
+                ),
+                dataRoot
+            )
+        } catch {
+            throw ToolError(
+                "The production route for shot '\(shotID)' is missing or stale. "
+                    + "Call next_render_shot again before compiling or generating: \(error)."
+            )
+        }
+    }
+
+    private func productionVideoInputs(
+        selection: PipelineProductionRouteSelection,
+        editor: EditorViewModel,
+        dataRoot: URL
+    ) async throws -> ProductionVideoGenerationInputs {
+        guard let offeringCapabilities = selection.target.binding?
+            .resolvedVideoCapabilities else {
+            throw ToolError(
+                "The selected provider endpoint has no versioned video capability contract."
+            )
+        }
+        let inputPolicy = offeringCapabilities.inputPolicy
+        var sourceVideo: MediaAsset?
+        var startFrame: MediaAsset?
+        var endFrame: MediaAsset?
+        var imageReferences: [MediaAsset] = []
+        var videoReferences: [MediaAsset] = []
+        var audioReferences: [MediaAsset] = []
+        var proofs: [ProductionGenerationRoutingBindingV1] = []
+
+        for binding in selection.referencePlan.bindings {
+            guard let asset = await resolveRenderedAsset(
+                binding.path,
+                editor: editor,
+                dataRoot: dataRoot
+            ) else {
+                throw ToolError(
+                    "Planned input '\(binding.demandID)' is no longer available as project media."
+                )
+            }
+            let plannedURL = try ProjectLocalFile.requireHash(
+                binding.sha256,
+                at: binding.path,
+                dataRoot: dataRoot
+            ).standardizedFileURL.resolvingSymlinksInPath()
+            let actualURL = asset.url.standardizedFileURL.resolvingSymlinksInPath()
+            guard actualURL == plannedURL else {
+                throw ToolError(
+                    "Planned input '\(binding.demandID)' resolves to different media bytes."
+                )
+            }
+            let expectedType: ClipType
+            switch binding.modality {
+            case .image: expectedType = .image
+            case .video: expectedType = .video
+            case .audio: expectedType = .audio
+            case .geometry:
+                throw ToolError(
+                    "The selected provider submission does not implement geometry input slot "
+                        + "'\(binding.inputSlotID)'."
+                )
+            }
+            guard asset.type == expectedType else {
+                throw ToolError(
+                    "Planned input '\(binding.demandID)' must be \(expectedType.rawValue) media."
+                )
+            }
+            proofs.append(ProductionGenerationRoutingBindingV1(
+                demandID: binding.demandID,
+                graphAssetID: binding.assetID,
+                graphAssetVersion: binding.assetVersion,
+                mediaAssetID: asset.id,
+                path: binding.path,
+                sha256: binding.sha256,
+                modalityID: binding.modality.rawValue,
+                semanticJobID: binding.semanticJobID,
+                inputSlotID: binding.inputSlotID,
+                modeID: binding.modeID
+            ))
+            switch binding.semanticJobID {
+            case CoreReferenceSemanticJobIDV1.sourceVideo:
+                guard sourceVideo == nil else {
+                    throw ToolError("The reference plan contains more than one source video.")
+                }
+                sourceVideo = asset
+            case CoreReferenceSemanticJobIDV1.firstFrame,
+                 CoreReferenceSemanticJobIDV1.predecessorLastFrame:
+                guard startFrame == nil else {
+                    throw ToolError("The reference plan contains more than one start frame.")
+                }
+                startFrame = asset
+            case CoreReferenceSemanticJobIDV1.lastFrame:
+                guard endFrame == nil else {
+                    throw ToolError("The reference plan contains more than one end frame.")
+                }
+                endFrame = asset
+            default:
+                switch binding.modality {
+                case .image: imageReferences.append(asset)
+                case .video: videoReferences.append(asset)
+                case .audio: audioReferences.append(asset)
+                case .geometry: break
+                }
+            }
+        }
+        if endFrame != nil, startFrame == nil {
+            throw ToolError("The reference plan has an end frame without a start frame.")
+        }
+        let frames = [startFrame, endFrame].compactMap { $0 }
+        let assets = VideoGenerationSubmission.InputAssets(
+            sourceVideo: sourceVideo,
+            frames: frames,
+            imageRefs: imageReferences,
+            videoRefs: videoReferences,
+            audioRefs: audioReferences
+        )
+        guard (sourceVideo != nil) == inputPolicy.requiresSourceVideo else {
+            throw ToolError(
+                "The provider source-video policy does not match the ReferencePlan."
+            )
+        }
+        let submittedOrder = inputPolicy.requiresSourceVideo
+            ? assets.editReferences.map(\.id)
+            : assets.textToVideoReferences.map(\.id)
+        guard submittedOrder == proofs.map(\.mediaAssetID) else {
+            throw ToolError(
+                "The provider submission cannot preserve the ReferencePlan's exact input order."
+            )
+        }
+        let historicalInputs = try PipelineProductionInputsWriter.load(
+            shotID: selection.route.shotID,
+            dataRoot: dataRoot
+        )
+        let (historicalAssetGraph, historicalDemandSet, _) = historicalInputs
+        let demandData = try AssetGraphCanonicalCodecV1.encode(
+            historicalDemandSet
+        )
+        let assetsByID = Dictionary(
+            uniqueKeysWithValues: historicalAssetGraph.assets.map { ($0.id, $0) }
+        )
+        let demandsByID = Dictionary(
+            uniqueKeysWithValues: historicalDemandSet.demands.map { ($0.id, $0) }
+        )
+        guard historicalAssetGraph.projectID == selection.route.projectID,
+              historicalDemandSet.projectID == selection.route.projectID,
+              historicalDemandSet.shotID == selection.route.shotID,
+              selection.referencePlan.demandSet.id == historicalDemandSet.id,
+              selection.referencePlan.demandSet.sha256
+                == FileDigest.sha256(of: demandData),
+              selection.referencePlan.bindings.allSatisfy({ binding in
+                  guard let demand = demandsByID[binding.demandID],
+                        let asset = assetsByID[binding.assetID] else { return false }
+                  return binding == ReferenceBindingV2(demand: demand, asset: asset)
+              }) else {
+            throw ToolError(
+                "The production inputs changed after the ReferencePlan was selected."
+            )
+        }
+        let offeringCapabilitiesData = try ReferencePlanCanonicalCodecV2.encode(
+            offeringCapabilities
+        )
+        let proof = ProductionGenerationRoutingProofV1(
+            projectID: selection.route.projectID,
+            shotID: selection.route.shotID,
+            modelID: selection.modelID,
+            providerID: selection.target.provider.rawValue,
+            transportID: selection.target.transport.rawValue,
+            endpointID: selection.target.endpoint,
+            modelParam: selection.target.binding?.modelParam,
+            offeringID: selection.route.offering.offeringID,
+            requirement: selection.requirement,
+            route: selection.route,
+            referencePlan: selection.referencePlan,
+            routeArtifactSHA256: selection.routeArtifactSHA256,
+            requirementSHA256: selection.route.requirementSHA256,
+            capabilitiesSHA256: selection.route.capabilitiesSHA256,
+            routeSHA256: selection.route.routeSHA256,
+            referencePlanSHA256: selection.referencePlanSHA256,
+            orderedBindingsSHA256: selection.orderedBindingsSHA256,
+            orderedBindings: proofs,
+            offeringCapabilities: offeringCapabilities,
+            offeringCapabilitiesSHA256: FileDigest.sha256(
+                of: offeringCapabilitiesData
+            ),
+            historicalAssetGraph: historicalAssetGraph,
+            historicalDemandSet: historicalDemandSet
+        )
+        return ProductionVideoGenerationInputs(
+            assets: assets,
+            routingProof: proof,
+            offeringCapabilities: offeringCapabilities
+        )
+    }
+
+    private static func validateProductionArguments(
+        _ args: [String: Any],
+        against inputAssets: VideoGenerationSubmission.InputAssets
+    ) throws {
+        guard args.string("sourceVideoMediaRef") == inputAssets.sourceVideo?.id,
+              args.string("startFrameMediaRef") == inputAssets.frames.first?.id,
+              args.string("endFrameMediaRef") == inputAssets.frames.dropFirst().first?.id,
+              args.stringArray("referenceImageMediaRefs") == inputAssets.imageRefs.map(\.id),
+              args.stringArray("referenceVideoMediaRefs") == inputAssets.videoRefs.map(\.id),
+              args.stringArray("referenceAudioMediaRefs") == inputAssets.audioRefs.map(\.id) else {
+            throw ToolError(
+                "The submitted generation inputs do not exactly match next_render_shot's "
+                    + "ordered ReferencePlan. Use its media_ref values without adding, removing, "
+                    + "substituting, or reordering them."
+            )
+        }
+    }
+
+    private static func validateProductionOutput(
+        duration: VideoDuration,
+        aspectRatio: String,
+        resolution: String?,
+        requirement: ProductionRequirementV1
+    ) throws {
+        if let requested = requirement.duration {
+            switch duration {
+            case .automatic:
+                guard requested.allowsAutomatic else {
+                    throw ToolError(
+                        "The ProductionRequirement does not allow automatic duration."
+                    )
+                }
+            case .seconds(let seconds):
+                let value = Double(seconds)
+                guard requested.preferredSeconds.map({ $0 == value }) ?? true,
+                      requested.minimumSeconds.map({ value >= $0 }) ?? true,
+                      requested.maximumSeconds.map({ value <= $0 }) ?? true else {
+                    throw ToolError(
+                        "The submitted duration does not match the ProductionRequirement."
+                    )
+                }
+            }
+        }
+        if let expected = requirement.aspectRatio,
+           expected.caseInsensitiveCompare(aspectRatio) != .orderedSame {
+            throw ToolError(
+                "The submitted aspect ratio '\(aspectRatio)' does not match the "
+                    + "ProductionRequirement '\(expected)'."
+            )
+        }
+        if let expected = requirement.resolution,
+           expected.caseInsensitiveCompare(resolution ?? "") != .orderedSame {
+            throw ToolError(
+                "The submitted resolution '\(resolution ?? "none")' does not match the "
+                    + "ProductionRequirement '\(expected)'."
+            )
+        }
+    }
+
+    private func productionSpendOptions(
+        shotID: String,
+        dataRoot: URL,
+        durationSeconds: Int,
+        resolution: String?
+    ) -> [SpendOption] {
+        guard let selections = try? PipelineProductionRouting.resolveOptions(
+            shotID: shotID,
+            dataRoot: dataRoot
+        ) else { return [] }
+        return selections.compactMap { selection in
+            guard let offeringCapabilities = selection.target.binding?
+                    .resolvedVideoCapabilities,
+                  let model = VideoModelConfig.allModels.first(where: {
+                $0.id == selection.modelID
+            }) else { return nil }
+            let requirementDuration: VideoDuration = selection.requirement.duration?
+                .preferredSeconds.map { .seconds(Int($0)) }
+                ?? .seconds(durationSeconds)
+            guard offeringCapabilities.validate(
+                duration: requirementDuration,
+                aspectRatio: selection.requirement.aspectRatio ?? "",
+                resolution: selection.requirement.resolution,
+                generateAudio: selection.requirement.requiresOutputAudio,
+                displayName: model.displayName
+            ) == nil else { return nil }
+            return SpendOption(
+                modelId: model.id,
+                modelName: model.displayName,
+                target: selection.target,
+                credits: CostEstimator.videoCost(
+                    model: model,
+                    durationSeconds: durationSeconds,
+                    resolution: resolution,
+                    generateAudio: selection.requirement.requiresOutputAudio
+                ),
+                requiresCatalogAvailability: true
+            )
+        }
+    }
+
     func generate(
         _ editor: EditorViewModel,
         _ args: [String: Any],
@@ -131,23 +449,60 @@ extension ToolExecutor {
         let prompt = try args.requireString("prompt")
         switch type {
         case .video:
-            guard let modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? VideoModelConfig.allModels.first?.id else {
+            let productionRouting = try currentProductionRouting(
+                editor: editor,
+                args: args
+            )
+            let requestedModelID = args.string("model").map {
+                ModelCatalog.shared.internalId(forLogical: $0)
+            }
+            if let productionRouting,
+               let requestedModelID,
+               requestedModelID != productionRouting.selection.modelID {
+                throw ToolError(
+                    "Pipeline shot generation must start with next_render_shot's exact "
+                        + "generation_model '\(productionRouting.selection.modelID)'."
+                )
+            }
+            guard let modelId = productionRouting?.selection.modelID
+                ?? requestedModelID
+                ?? VideoModelConfig.allModels.first?.id else {
                 throw ToolError("Model catalog not loaded yet. Try again in a moment.")
             }
             guard let model = VideoModelConfig.allModels.first(where: { $0.id == modelId }) else {
                 throw ToolError("Unknown model '\(modelId)'. Available: \(VideoModelConfig.allModels.map(\.id).joined(separator: ", "))")
             }
+            let initialTarget = productionRouting?.selection.target
+                ?? GenerationService.dispatchTarget(
+                    modelId: model.id,
+                    requiringSourceVideo: args.string("sourceVideoMediaRef") != nil
+                )
+            guard let offeringCapabilities = initialTarget.binding?
+                    .resolvedVideoCapabilities else {
+                throw ToolError(
+                    "The selected provider endpoint has no versioned video capability contract."
+                )
+            }
+            let inputPolicy = offeringCapabilities.inputPolicy
             try await enforceVideoShotSourceContract(
                 editor: editor,
                 args: args,
-                model: model
+                requiresSourceVideo: inputPolicy.requiresSourceVideo
             )
-            return model.requiresSourceVideo
+            return inputPolicy.requiresSourceVideo
                 ? try await generateVideoEdit(
-                    editor, args, prompt: prompt, model: model, origin: origin
+                    editor, args, prompt: prompt, model: model,
+                    offeringCapabilities: offeringCapabilities,
+                    initialTarget: initialTarget,
+                    productionRouting: productionRouting,
+                    origin: origin
                 )
                 : try await generateVideoText(
-                    editor, args, prompt: prompt, model: model, origin: origin
+                    editor, args, prompt: prompt, model: model,
+                    offeringCapabilities: offeringCapabilities,
+                    initialTarget: initialTarget,
+                    productionRouting: productionRouting,
+                    origin: origin
                 )
         case .image:
             try enforceImageShotSourceContract(editor: editor, args: args)
@@ -185,7 +540,7 @@ extension ToolExecutor {
     private func enforceVideoShotSourceContract(
         editor: EditorViewModel,
         args: [String: Any],
-        model: VideoModelConfig
+        requiresSourceVideo: Bool
     ) async throws {
         let shotId = try args.requireString("shotId")
         guard shotId != "none" else { return }
@@ -216,7 +571,7 @@ extension ToolExecutor {
         }
         try Self.validateVideoShotSourceContract(
             sourceMode: shot.sourceMode,
-            modelRequiresSourceVideo: model.requiresSourceVideo,
+            modelRequiresSourceVideo: requiresSourceVideo,
             submittedSourceId: submittedSourceId,
             expectedSourceId: expectedSourceId
         )
@@ -322,6 +677,7 @@ extension ToolExecutor {
     private static func agentPrompt(
         _ args: [String: Any],
         prompt: String,
+        modality: PromptComposer.Modality,
         editor: EditorViewModel
     ) throws -> (
         precompiled: (text: String, token: String, binding: PromptBinding)?,
@@ -346,7 +702,8 @@ extension ToolExecutor {
         }
         let binding = try PromptCompiler.currentBinding(
             editor: editor,
-            shotId: shotId
+            shotId: shotId,
+            modality: modality
         )
         return ((
             text: prompt,
@@ -361,14 +718,22 @@ extension ToolExecutor {
     private func withSpendApproval(
         _ editor: EditorViewModel, currentModelId: String, currentModelName: String,
         credits: Int?, actionLabel: String,
+        pipelineTool: ToolName,
         origin: ToolCallOrigin,
         currentIsCompatible: Bool = true,
         noCompatibleModelReason: String? = nil,
         alternatives: @escaping @MainActor () -> [SpendModelCandidate],
+        exactOptions: (@MainActor () -> [SpendOption])? = nil,
+        recommendedTarget: ResolvedGenerationTarget? = nil,
+        targetIsCompatible: @escaping @MainActor (ResolvedGenerationTarget) -> Bool = { _ in true },
+        diagnosticProviderScope: @escaping @MainActor () -> [GenerationProvider] = { [] },
         cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
         execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
     ) async throws -> ToolResult {
         func currentOptions() -> [SpendOption] {
+            if let exactOptions {
+                return exactOptions().filter { targetIsCompatible($0.target) }
+            }
             let current = currentIsCompatible ? [SpendModelCandidate(
                 modelId: currentModelId, modelName: currentModelName, credits: credits
             )] : []
@@ -377,11 +742,24 @@ extension ToolExecutor {
                 isModelAvailable: {
                     ModelRegistry.exists(id: $0) && ModelPreferences.shared.isEnabled($0)
                 },
-                runnableBindings: ProviderManifest.runnableBindingsByProvider
-            )
+                runnableBindings: { modelID in
+                    ProviderManifest.runnableBindingsByProvider(
+                        forModelId: modelID,
+                        matching: { binding in
+                            targetIsCompatible(ResolvedGenerationTarget(
+                                modelId: modelID,
+                                provider: binding.provider,
+                                endpoint: binding.providerRef,
+                                binding: binding
+                            ))
+                        }
+                    )
+                }
+            ).filter { targetIsCompatible($0.target) }
         }
         let options = currentOptions()
-        let defaultTarget = GenerationService.dispatchTarget(modelId: currentModelId)
+        let defaultTarget = recommendedTarget
+            ?? GenerationService.dispatchTarget(modelId: currentModelId)
         guard let recommended = SpendOptionBuilder.recommended(
             from: options,
             currentModelId: currentModelId,
@@ -402,13 +780,16 @@ extension ToolExecutor {
         }
         let approvalID = UUID().uuidString
         var providerScope = Set(options.map(\.target.provider))
+        providerScope.formUnion(diagnosticProviderScope())
         func makeApproval() -> SpendApproval {
             let latest = currentOptions()
             providerScope.formUnion(latest.map(\.target.provider))
+            providerScope.formUnion(diagnosticProviderScope())
             let latestRecommended = SpendOptionBuilder.recommended(
                 from: latest,
                 currentModelId: currentModelId,
-                defaultTarget: GenerationService.dispatchTarget(modelId: currentModelId)
+                defaultTarget: recommendedTarget
+                    ?? GenerationService.dispatchTarget(modelId: currentModelId)
             )
             let ordered = latestRecommended.map { option in
                 [option] + latest.filter { $0.id != option.id }
@@ -427,10 +808,19 @@ extension ToolExecutor {
             makeApproval(),
             origin: origin,
             editor: editor,
+            pipelineScope: try spendPipelineScope(
+                tool: pipelineTool,
+                editor: editor
+            ),
             refresh: makeApproval,
             cancel: cancel,
             execute: execute
         )
+    }
+
+    @MainActor
+    private func activeImageProviderScope() -> [GenerationProvider] {
+        ModelCatalog.shared.activeImageProviderScope()
     }
 
     @MainActor
@@ -440,21 +830,32 @@ extension ToolExecutor {
         duration: Int,
         resolution: String?,
         requiresSource: Bool,
+        generateAudio: Bool,
         isCompatible: (VideoModelConfig) -> Bool
     ) -> [SpendModelCandidate] {
         guard let current = currentCredits else { return [] }
         return VideoModelConfig.allModels
             .filter {
                 $0.id != modelId
-                    && $0.requiresSourceVideo == requiresSource
                     && ModelPreferences.shared.isEnabled($0.id)
                     && GenerationProvider.canRun(modelId: $0.id)
+                    && ProviderManifest.runnableBindingsByProvider(
+                        forModelId: $0.id,
+                        matching: { binding in
+                            guard let capabilities = binding.resolvedVideoCapabilities else {
+                                return false
+                            }
+                            return capabilities.inputPolicy.requiresSourceVideo == requiresSource
+                                && (!generateAudio || capabilities.supportsNativeAudio)
+                        }
+                    ).isEmpty == false
                     && isCompatible($0)
             }
             .compactMap { m -> SpendModelCandidate? in
                 guard let c = CostEstimator.videoCost(
                     model: m, durationSeconds: duration,
-                    resolution: resolution ?? m.resolutions?.first, generateAudio: true),
+                    resolution: resolution ?? m.resolutions?.first,
+                    generateAudio: generateAudio),
                     c < current else { return nil }
                 return SpendModelCandidate(
                     modelId: m.id,
@@ -467,39 +868,64 @@ extension ToolExecutor {
     }
 
     @MainActor
-    private func availableImageAlternatives(
-        than modelId: String,
+    private func availableImageOfferings(
+        preferredModelID: String,
         aspectRatio: String,
         resolution: String?,
         quality: String?,
         referenceCount: Int
-    ) -> [SpendModelCandidate] {
-        ImageAlternativeResolver.candidates(
-            models: ImageModelConfig.allModels,
-            excluding: modelId,
+    ) -> [CatalogImageOfferingCandidate] {
+        ModelCatalog.shared.compatibleImageOfferings(
+            preferredModelID: preferredModelID,
             aspectRatio: aspectRatio,
             resolution: resolution,
             quality: quality,
-            referenceCount: referenceCount,
-            isAvailable: {
-                !MarbleModelRegistry.isMarbleModel($0.id)
-                    && ModelPreferences.shared.isEnabled($0.id)
-                    && GenerationProvider.canRun(modelId: $0.id)
-            }
+            referenceCount: referenceCount
         )
-            .map { candidate in
-                let model = candidate.model
-                return SpendModelCandidate(
-                    modelId: model.id,
-                    modelName: model.displayName,
-                    credits: CostEstimator.imageCost(
-                        model: model,
-                        resolution: candidate.resolution,
-                        quality: candidate.quality,
-                        numImages: 1
-                    )
-                )
-            }
+    }
+
+    private func availableImageSpendOptions(
+        preferredModelID: String,
+        aspectRatio: String,
+        resolution: String?,
+        quality: String?,
+        referenceCount: Int
+    ) -> [SpendOption] {
+        availableImageOfferings(
+            preferredModelID: preferredModelID,
+            aspectRatio: aspectRatio,
+            resolution: resolution,
+            quality: quality,
+            referenceCount: referenceCount
+        ).map { candidate in
+            SpendOption(
+                modelId: candidate.model.id,
+                modelName: candidate.model.displayName,
+                target: candidate.target,
+                credits: CostEstimator.imageCost(
+                    model: candidate.model,
+                    resolution: candidate.resolution,
+                    quality: candidate.quality,
+                    numImages: 1
+                ),
+                requiresCatalogAvailability: true
+            )
+        }
+    }
+
+    private static func sameImageOffering(
+        _ candidate: CatalogImageOfferingCandidate,
+        as target: ResolvedGenerationTarget
+    ) -> Bool {
+        guard let candidateBinding = candidate.target.binding,
+              let targetBinding = target.binding else { return false }
+        return candidate.model.id == target.modelId
+            && candidateBinding.provider == targetBinding.provider
+            && candidateBinding.transport == targetBinding.transport
+            && candidateBinding.kind == targetBinding.kind
+            && candidateBinding.providerRef == targetBinding.providerRef
+            && candidateBinding.modelParam == targetBinding.modelParam
+            && candidateBinding.mcpMediaRoles == targetBinding.mcpMediaRoles
     }
 
     @MainActor
@@ -507,14 +933,37 @@ extension ToolExecutor {
         _ precompiled: (text: String, token: String, binding: PromptBinding)?,
         originalModelId: String,
         approvedModelId: String,
+        approvedTarget: ResolvedGenerationTarget? = nil,
         editor: EditorViewModel
     ) async throws -> (text: String, token: String, binding: PromptBinding)? {
-        guard approvedModelId != originalModelId, let precompiled else { return precompiled }
+        guard let precompiled else { return nil }
+        let currentBinding = try PromptCompiler.currentBinding(
+            editor: editor,
+            shotId: precompiled.binding.shotId,
+            modality: PromptCompiler.modalityForModel(approvedModelId)
+        )
+        let preserveComposition = approvedTarget?.binding?
+            .resolvedVideoCapabilities?.inputPolicy.requiresSourceVideo
+        let compositionModeMatches = preserveComposition.map {
+            PromptCompiler.rememberedCompositionModeMatches(
+                token: precompiled.token,
+                text: precompiled.text,
+                modelId: approvedModelId,
+                preserveComposition: $0
+            )
+        } ?? true
+        guard approvedModelId != originalModelId
+                || currentBinding != precompiled.binding
+                || !compositionModeMatches else {
+            return precompiled
+        }
         let compiled = try await PromptCompiler.recompile(
             token: precompiled.token,
             text: precompiled.text,
             for: approvedModelId,
-            editor: editor
+            editor: editor,
+            allowCurrentRoutingChange: true,
+            preserveCompositionOverride: preserveComposition
         )
         return (compiled.text, compiled.token, compiled.binding)
     }
@@ -522,6 +971,12 @@ extension ToolExecutor {
     private func generateVideoEdit(
         _ editor: EditorViewModel, _ args: [String: Any],
         prompt: String, model modelIn: VideoModelConfig,
+        offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1,
+        initialTarget: ResolvedGenerationTarget,
+        productionRouting: (
+            selection: PipelineProductionRouteSelection,
+            dataRoot: URL
+        )?,
         origin: ToolCallOrigin
     ) async throws -> ToolResult {
         let model = modelIn
@@ -530,9 +985,16 @@ extension ToolExecutor {
         }
         let sourceAsset = try asset(sourceRef, editor: editor, label: "Source video")
         let trimmed = try trimmedSource(args, editor: editor, source: sourceAsset)
+        if productionRouting != nil, trimmed != nil {
+            throw ToolError(
+                "Pipeline source-video routing requires the exact source asset; a clip trim "
+                    + "is not part of the ProductionRequirement."
+            )
+        }
         let (precompiled, raw) = try Self.agentPrompt(
             args,
             prompt: prompt,
+            modality: .video,
             editor: editor
         )
 
@@ -541,78 +1003,225 @@ extension ToolExecutor {
             imageRefs.append(try asset(id, editor: editor, label: "Reference image"))
         }
 
-        let inputAssets = VideoGenerationSubmission.InputAssets(sourceVideo: sourceAsset, imageRefs: imageRefs)
-        if let error = model.validate(duration: 0, aspectRatio: "", resolution: nil)
-            ?? inputAssets.validate(for: model) {
+        let submittedInputAssets = VideoGenerationSubmission.InputAssets(
+            sourceVideo: sourceAsset,
+            imageRefs: imageRefs
+        )
+        let routedInputs: ProductionVideoGenerationInputs?
+        if let productionRouting {
+            let resolvedInputs = try await productionVideoInputs(
+                selection: productionRouting.selection,
+                editor: editor,
+                dataRoot: productionRouting.dataRoot
+            )
+            try Self.validateProductionArguments(
+                args,
+                against: resolvedInputs.assets
+            )
+            routedInputs = resolvedInputs
+        } else {
+            routedInputs = nil
+        }
+        let inputAssets = routedInputs?.assets ?? submittedInputAssets
+        let editSeconds = Int((trimmed?.durationSeconds ?? sourceAsset.duration).rounded())
+        let editDuration = VideoDuration.seconds(editSeconds)
+        let editAspectRatio = productionRouting?.selection.requirement.aspectRatio
+            ?? args.string("aspectRatio") ?? ""
+        let editResolution = productionRouting?.selection.requirement.resolution
+            ?? args.string("resolution")
+        if let productionRouting {
+            try Self.validateProductionOutput(
+                duration: editDuration,
+                aspectRatio: editAspectRatio,
+                resolution: editResolution,
+                requirement: productionRouting.selection.requirement
+            )
+        }
+        let initialCapabilities = routedInputs?.offeringCapabilities
+            ?? offeringCapabilities
+        let requestedGenerateAudio = productionRouting?.selection.requirement
+            .requiresOutputAudio ?? initialCapabilities.supportsNativeAudio
+        if let error = initialCapabilities.validate(
+            duration: editDuration,
+            aspectRatio: editAspectRatio,
+            resolution: editResolution,
+            generateAudio: requestedGenerateAudio,
+            displayName: model.displayName
+        ) ?? inputAssets.validate(
+            for: model,
+            offeringCapabilities: initialCapabilities
+        ) {
             throw ToolError(error)
         }
-        let editSeconds = Int((trimmed?.durationSeconds ?? sourceAsset.duration).rounded())
         let editCredits = CostEstimator.videoCost(
-            model: model, durationSeconds: editSeconds, resolution: nil, generateAudio: true)
+            model: model,
+            durationSeconds: editSeconds,
+            resolution: editResolution,
+            generateAudio: requestedGenerateAudio
+        )
         let originalModelId = model.id
+        let exactOptions: (@MainActor () -> [SpendOption])?
+        if let productionRouting {
+            exactOptions = {
+                self.productionSpendOptions(
+                    shotID: productionRouting.selection.route.shotID,
+                    dataRoot: productionRouting.dataRoot,
+                    durationSeconds: editSeconds,
+                    resolution: editResolution
+                )
+            }
+        } else {
+            exactOptions = nil
+        }
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: editCredits, actionLabel: "Generate edit",
+            pipelineTool: .generateVideo,
             origin: origin,
             alternatives: { self.cheaperVideoAlternatives(
                 than: model.id,
                 currentCredits: editCredits,
                 duration: editSeconds,
-                resolution: nil,
+                resolution: editResolution,
                 requiresSource: true,
-                isCompatible: { candidate in
-                    candidate.validate(duration: 0, aspectRatio: "", resolution: nil) == nil
-                        && inputAssets.validate(for: candidate) == nil
-                }
+                generateAudio: requestedGenerateAudio,
+                isCompatible: { _ in true }
             ) },
+            exactOptions: exactOptions,
+            recommendedTarget: initialTarget,
+            targetIsCompatible: { target in
+                guard let capabilities = target.binding?.resolvedVideoCapabilities,
+                      capabilities.inputPolicy.requiresSourceVideo else { return false }
+                guard let candidate = VideoModelConfig.allModels.first(where: {
+                    $0.id == target.modelId
+                }) else { return false }
+                return inputAssets.validate(
+                    for: candidate,
+                    offeringCapabilities: capabilities
+                ) == nil && capabilities.validate(
+                    duration: editDuration,
+                    aspectRatio: editAspectRatio,
+                    resolution: editResolution,
+                    generateAudio: requestedGenerateAudio,
+                    displayName: candidate.displayName
+                ) == nil
+            },
             execute: { editor, approved in
-                var selectedModel = model
-                if approved.modelId != selectedModel.id,
-                   let swapped = VideoModelConfig.allModels.first(where: {
-                       $0.id == approved.modelId
-                   }) {
-                    selectedModel = swapped
+                let selectedRouting: PipelineProductionRouteSelection?
+                let selectedInputs: ProductionVideoGenerationInputs?
+                if let productionRouting {
+                    let declaration = try self.mutationPackDeclaration(
+                        editor,
+                        dataRoot: productionRouting.dataRoot
+                    )
+                    let resolvedRouting = try PipelineProductionRouting.resolveAndWrite(
+                        shotID: productionRouting.selection.route.shotID,
+                        dataRoot: productionRouting.dataRoot,
+                        target: approved.target,
+                        declaredPack: declaration.packName,
+                        declaredBinding: declaration.binding
+                    )
+                    selectedRouting = resolvedRouting
+                    selectedInputs = try await self.productionVideoInputs(
+                        selection: resolvedRouting,
+                        editor: editor,
+                        dataRoot: productionRouting.dataRoot
+                    )
+                } else {
+                    selectedRouting = nil
+                    selectedInputs = nil
                 }
-                let finalModel = selectedModel
+                guard let finalModel = VideoModelConfig.allModels.first(where: {
+                    $0.id == approved.modelId
+                }) else {
+                    throw ToolError("The approved video model is no longer available.")
+                }
+                guard let finalCapabilities = approved.target.binding?
+                        .resolvedVideoCapabilities,
+                      finalCapabilities.inputPolicy.requiresSourceVideo,
+                      selectedInputs.map({
+                          $0.offeringCapabilities == finalCapabilities
+                      }) ?? true else {
+                    throw ToolError(
+                        "The approved provider endpoint no longer matches the source-video request."
+                    )
+                }
+                let finalInputAssets = selectedInputs?.assets ?? inputAssets
+                guard let finalSourceAsset = finalInputAssets.sourceVideo else {
+                    throw ToolError("The approved route no longer has its required source video.")
+                }
                 let approvedPrompt = try await self.promptForApprovedModel(
                     precompiled,
                     originalModelId: originalModelId,
                     approvedModelId: finalModel.id,
+                    approvedTarget: approved.target,
                     editor: editor
                 )
                 let name = args.string("name")
-                let folderId = sourceAsset.folderId
-                let placeholderDuration = trimmed?.durationSeconds
-                    ?? (sourceAsset.duration > 0 ? sourceAsset.duration : 5)
+                let folderId = finalSourceAsset.folderId
+                let finalTrimmed = selectedRouting == nil ? trimmed : nil
+                let placeholderDuration = finalTrimmed?.durationSeconds
+                    ?? (finalSourceAsset.duration > 0 ? finalSourceAsset.duration : 5)
+                let finalDuration = VideoDuration.seconds(
+                    Int((finalTrimmed?.durationSeconds ?? finalSourceAsset.duration).rounded())
+                )
+                let finalSeconds = finalDuration.seconds ?? 0
+                let finalAspectRatio = selectedRouting?.requirement.aspectRatio
+                    ?? editAspectRatio
+                let finalResolution = selectedRouting?.requirement.resolution
+                    ?? editResolution
+                if let selectedRouting {
+                    try Self.validateProductionOutput(
+                        duration: finalDuration,
+                        aspectRatio: finalAspectRatio,
+                        resolution: finalResolution,
+                        requirement: selectedRouting.requirement
+                    )
+                }
                 let request = GenerationRequest(
                     modality: .video, modelId: finalModel.id, intent: prompt,
+                    aspectRatio: finalAspectRatio,
+                    durationSeconds: Double(finalSeconds),
                     placement: .mediaLibrary(folderId: folderId), origin: .agentTool,
                     target: approved.target,
                     precompiled: approvedPrompt, rawPrompt: raw,
                     submission: .video(make: { compiled in
                         var genInput = GenerationInput(
                             prompt: compiled, model: finalModel.id,
-                            duration: Int(sourceAsset.duration.rounded()),
-                            aspectRatio: "", resolution: nil)
+                            duration: finalSeconds,
+                            aspectRatio: finalAspectRatio,
+                            resolution: finalResolution)
+                        genInput.videoDuration = finalDuration
                         genInput.promptShotId = approvedPrompt?.binding.shotId
                         genInput.promptProjectKey = approvedPrompt?.binding.projectKey
                         genInput.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
+                        genInput.productionRouting = selectedInputs?.routingProof
                         return VideoGenerationSubmission.make(
-                            genInput: genInput, model: finalModel, inputAssets: inputAssets,
+                            genInput: genInput, model: finalModel,
+                            offeringCapabilities: finalCapabilities,
+                            inputAssets: finalInputAssets,
                             placeholderDuration: placeholderDuration,
-                            trimmedSourceOverride: trimmed,
-                            name: name, folderId: folderId, generateAudio: true)
+                            trimmedSourceOverride: finalTrimmed,
+                            name: name, folderId: folderId,
+                            generateAudio: requestedGenerateAudio)
                     }))
                 return try await self.routeThroughController(
                     request, editor: editor,
                     preflight: {
-                        if let err = finalModel.validate(
-                            duration: 0, aspectRatio: "", resolution: nil
+                        if let err = finalCapabilities.validate(
+                            duration: finalDuration,
+                            aspectRatio: finalAspectRatio,
+                            resolution: finalResolution,
+                            generateAudio: requestedGenerateAudio,
+                            displayName: finalModel.displayName
                         ) { return err }
-                        return inputAssets.validate(for: finalModel)
+                        return finalInputAssets.validate(
+                            for: finalModel,
+                            offeringCapabilities: finalCapabilities
+                        )
                     },
                     success: {
-                        "Edit completed. Asset ID: \($0). Model: \(finalModel.displayName), source: \(sourceAsset.name)"
+                        "Edit completed. Asset ID: \($0). Model: \(finalModel.displayName), source: \(finalSourceAsset.name)"
                     })
             }
         )
@@ -621,6 +1230,12 @@ extension ToolExecutor {
     private func generateVideoText(
         _ editor: EditorViewModel, _ args: [String: Any],
         prompt: String, model modelIn: VideoModelConfig,
+        offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1,
+        initialTarget: ResolvedGenerationTarget,
+        productionRouting: (
+            selection: PipelineProductionRouteSelection,
+            dataRoot: URL
+        )?,
         origin: ToolCallOrigin
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
@@ -635,14 +1250,18 @@ extension ToolExecutor {
         } else if let seconds = args.int("duration") {
             duration = .seconds(seconds)
         } else {
-            duration = model.durationCapabilities.defaultValue
+            duration = offeringCapabilities.durationCapabilities.defaultValue
         }
-        let billedDuration = duration.seconds ?? model.durationCapabilities.maximumSeconds ?? 0
-        let aspectRatio = args.string("aspectRatio") ?? model.aspectRatios.first ?? ""
-        let resolution = args.string("resolution") ?? model.resolutions?.first
+        let billedDuration = duration.seconds
+            ?? offeringCapabilities.durationCapabilities.maximumSeconds ?? 0
+        let aspectRatio = args.string("aspectRatio")
+            ?? offeringCapabilities.aspectRatios.first ?? ""
+        let resolution = args.string("resolution")
+            ?? offeringCapabilities.resolutions?.first
         let (precompiled, raw) = try Self.agentPrompt(
             args,
             prompt: prompt,
+            modality: .video,
             editor: editor
         )
 
@@ -662,30 +1281,75 @@ extension ToolExecutor {
         let imageRefs = try refs("referenceImageMediaRefs", label: "Image reference")
         let videoRefs = try refs("referenceVideoMediaRefs", label: "Video reference")
         let audioRefs = try refs("referenceAudioMediaRefs", label: "Audio reference")
-        let inputAssets = VideoGenerationSubmission.InputAssets(
+        let submittedInputAssets = VideoGenerationSubmission.InputAssets(
             frames: frameSlots,
             imageRefs: imageRefs,
             videoRefs: videoRefs,
             audioRefs: audioRefs
         )
-        let imageRefCount = imageRefs.count
-        let videoRefCount = videoRefs.count
-        let audioRefCount = audioRefs.count
-        let totalRefs = inputAssets.totalRefCount
-        if let error = model.validate(
+        let routedInputs: ProductionVideoGenerationInputs?
+        if let productionRouting {
+            try Self.validateProductionOutput(
+                duration: duration,
+                aspectRatio: aspectRatio,
+                resolution: resolution,
+                requirement: productionRouting.selection.requirement
+            )
+            let resolvedInputs = try await productionVideoInputs(
+                selection: productionRouting.selection,
+                editor: editor,
+                dataRoot: productionRouting.dataRoot
+            )
+            try Self.validateProductionArguments(
+                args,
+                against: resolvedInputs.assets
+            )
+            routedInputs = resolvedInputs
+        } else {
+            routedInputs = nil
+        }
+        let inputAssets = routedInputs?.assets ?? submittedInputAssets
+        let initialCapabilities = routedInputs?.offeringCapabilities
+            ?? offeringCapabilities
+        let requestedGenerateAudio = productionRouting?.selection.requirement
+            .requiresOutputAudio ?? initialCapabilities.supportsNativeAudio
+        if let error = initialCapabilities.validate(
             duration: duration,
             aspectRatio: aspectRatio,
-            resolution: resolution
-        ) ?? inputAssets.validate(for: model) {
+            resolution: resolution,
+            generateAudio: requestedGenerateAudio,
+            displayName: model.displayName
+        ) ?? inputAssets.validate(
+            for: model,
+            offeringCapabilities: initialCapabilities
+        ) {
             throw ToolError(error)
         }
 
         let credits = CostEstimator.videoCost(
-            model: model, durationSeconds: billedDuration, resolution: resolution, generateAudio: true)
+            model: model,
+            durationSeconds: billedDuration,
+            resolution: resolution,
+            generateAudio: requestedGenerateAudio
+        )
         let originalModelId = model.id
+        let exactOptions: (@MainActor () -> [SpendOption])?
+        if let productionRouting {
+            exactOptions = {
+                self.productionSpendOptions(
+                    shotID: productionRouting.selection.route.shotID,
+                    dataRoot: productionRouting.dataRoot,
+                    durationSeconds: billedDuration,
+                    resolution: resolution
+                )
+            }
+        } else {
+            exactOptions = nil
+        }
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate video",
+            pipelineTool: .generateVideo,
             origin: origin,
             alternatives: { self.cheaperVideoAlternatives(
                 than: model.id,
@@ -693,58 +1357,119 @@ extension ToolExecutor {
                 duration: billedDuration,
                 resolution: resolution,
                 requiresSource: false,
-                isCompatible: { candidate in
-                    let candidateDuration = candidate.durationCapabilities.accepts(duration)
-                        ? duration
-                        : candidate.durationCapabilities.defaultValue
-                    let candidateAspect = candidate.aspectRatios.contains(aspectRatio)
-                        ? aspectRatio
-                        : (candidate.aspectRatios.first ?? aspectRatio)
-                    let candidateResolution = candidate.resolutions.map { allowed in
-                        resolution.flatMap { allowed.contains($0) ? $0 : nil } ?? allowed.first
-                    } ?? resolution
-                    return candidate.validate(
-                        duration: candidateDuration,
-                        aspectRatio: candidateAspect,
-                        resolution: candidateResolution
-                    ) == nil && inputAssets.validate(for: candidate) == nil
-                }
+                generateAudio: requestedGenerateAudio,
+                isCompatible: { _ in true }
             ) },
+            exactOptions: exactOptions,
+            recommendedTarget: initialTarget,
+            targetIsCompatible: { target in
+                guard let capabilities = target.binding?.resolvedVideoCapabilities,
+                      !capabilities.inputPolicy.requiresSourceVideo else { return false }
+                guard productionRouting == nil else { return true }
+                guard let candidate = VideoModelConfig.allModels.first(where: {
+                    $0.id == target.modelId
+                }) else { return false }
+                let candidateDuration = capabilities.durationCapabilities.accepts(duration)
+                    ? duration
+                    : capabilities.durationCapabilities.defaultValue
+                let candidateAspect = capabilities.aspectRatios.contains(aspectRatio)
+                    ? aspectRatio
+                    : (capabilities.aspectRatios.first ?? aspectRatio)
+                let candidateResolution = capabilities.resolutions.map { allowed in
+                    resolution.flatMap { allowed.contains($0) ? $0 : nil }
+                        ?? allowed.first
+                } ?? resolution
+                return inputAssets.validate(
+                    for: candidate,
+                    offeringCapabilities: capabilities
+                ) == nil && capabilities.validate(
+                    duration: candidateDuration,
+                    aspectRatio: candidateAspect,
+                    resolution: candidateResolution,
+                    generateAudio: requestedGenerateAudio,
+                    displayName: candidate.displayName
+                ) == nil
+            },
             execute: { editor, approved in
-                var selectedModel = model
+                let selectedRouting: PipelineProductionRouteSelection?
+                let selectedInputs: ProductionVideoGenerationInputs?
+                if let productionRouting {
+                    let declaration = try self.mutationPackDeclaration(
+                        editor,
+                        dataRoot: productionRouting.dataRoot
+                    )
+                    let resolvedRouting = try PipelineProductionRouting.resolveAndWrite(
+                        shotID: productionRouting.selection.route.shotID,
+                        dataRoot: productionRouting.dataRoot,
+                        target: approved.target,
+                        declaredPack: declaration.packName,
+                        declaredBinding: declaration.binding
+                    )
+                    selectedRouting = resolvedRouting
+                    selectedInputs = try await self.productionVideoInputs(
+                        selection: resolvedRouting,
+                        editor: editor,
+                        dataRoot: productionRouting.dataRoot
+                    )
+                } else {
+                    selectedRouting = nil
+                    selectedInputs = nil
+                }
+                guard let selectedModel = VideoModelConfig.allModels.first(where: {
+                    $0.id == approved.modelId
+                }) else {
+                    throw ToolError("The approved video model is no longer available.")
+                }
+                guard let finalCapabilities = approved.target.binding?
+                        .resolvedVideoCapabilities,
+                      !finalCapabilities.inputPolicy.requiresSourceVideo,
+                      selectedInputs.map({
+                          $0.offeringCapabilities == finalCapabilities
+                      }) ?? true else {
+                    throw ToolError(
+                        "The approved provider endpoint no longer matches the video input request."
+                    )
+                }
                 var selectedDuration = duration
                 var selectedBilledDuration = billedDuration
                 var selectedAspectRatio = aspectRatio
                 var selectedResolution = resolution
-                if approved.modelId != selectedModel.id,
-                   let swapped = VideoModelConfig.allModels.first(where: {
-                       $0.id == approved.modelId
-                   }) {
-                    selectedModel = swapped
-                    if !swapped.durationCapabilities.accepts(selectedDuration) {
-                        selectedDuration = swapped.durationCapabilities.defaultValue
+                if selectedRouting == nil {
+                    if !finalCapabilities.durationCapabilities.accepts(selectedDuration) {
+                        selectedDuration = finalCapabilities.durationCapabilities.defaultValue
                         selectedBilledDuration = selectedDuration.seconds
-                            ?? swapped.durationCapabilities.maximumSeconds ?? 0
+                            ?? finalCapabilities.durationCapabilities.maximumSeconds ?? 0
                     }
-                    if !swapped.aspectRatios.contains(selectedAspectRatio) {
-                        selectedAspectRatio = swapped.aspectRatios.first ?? selectedAspectRatio
+                    if !finalCapabilities.aspectRatios.contains(selectedAspectRatio) {
+                        selectedAspectRatio = finalCapabilities.aspectRatios.first
+                            ?? selectedAspectRatio
                     }
-                    if let allowed = swapped.resolutions,
+                    if let allowed = finalCapabilities.resolutions,
                        let selected = selectedResolution,
                        !allowed.contains(selected) {
                         selectedResolution = allowed.first
                     }
                 }
+                if let selectedRouting {
+                    try Self.validateProductionOutput(
+                        duration: selectedDuration,
+                        aspectRatio: selectedAspectRatio,
+                        resolution: selectedResolution,
+                        requirement: selectedRouting.requirement
+                    )
+                }
+                let finalInputAssets = selectedInputs?.assets ?? inputAssets
                 let approvedPrompt = try await self.promptForApprovedModel(
                     precompiled,
                     originalModelId: originalModelId,
                     approvedModelId: selectedModel.id,
+                    approvedTarget: approved.target,
                     editor: editor
                 )
                 let folderId = try self.resolveFolderId(
                     args,
                     editor: editor,
-                    fallbackReferences: inputAssets.textToVideoReferences
+                    fallbackReferences: finalInputAssets.textToVideoReferences
                 )
                 let name = args.string("name")
                 let finalModel = selectedModel
@@ -768,23 +1493,34 @@ extension ToolExecutor {
                         genInput.promptShotId = approvedPrompt?.binding.shotId
                         genInput.promptProjectKey = approvedPrompt?.binding.projectKey
                         genInput.promptShotFingerprint = approvedPrompt?.binding.shotFingerprint
+                        genInput.productionRouting = selectedInputs?.routingProof
                         return VideoGenerationSubmission.make(
-                            genInput: genInput, model: finalModel, inputAssets: inputAssets,
+                            genInput: genInput, model: finalModel,
+                            offeringCapabilities: finalCapabilities,
+                            inputAssets: finalInputAssets,
                             placeholderDuration: Double(max(1, finalBilledDuration)),
-                            name: name, folderId: folderId, generateAudio: true)
+                            name: name, folderId: folderId,
+                            generateAudio: requestedGenerateAudio)
                     }))
-                let refSummary = totalRefs > 0
-                    ? ", refs: \(imageRefCount)img/\(videoRefCount)vid/\(audioRefCount)aud"
+                let refSummary = finalInputAssets.totalRefCount > 0
+                    ? ", refs: \(finalInputAssets.imageRefs.count)img/"
+                        + "\(finalInputAssets.videoRefs.count)vid/"
+                        + "\(finalInputAssets.audioRefs.count)aud"
                     : ""
                 return try await self.routeThroughController(
                     request, editor: editor,
                     preflight: {
-                        if let err = finalModel.validate(
+                        if let err = finalCapabilities.validate(
                             duration: finalDuration,
                             aspectRatio: finalAspectRatio,
-                            resolution: finalResolution
+                            resolution: finalResolution,
+                            generateAudio: requestedGenerateAudio,
+                            displayName: finalModel.displayName
                         ) { return err }
-                        return inputAssets.validate(for: finalModel)
+                        return finalInputAssets.validate(
+                            for: finalModel,
+                            offeringCapabilities: finalCapabilities
+                        )
                     },
                     success: {
                         "Generation completed. Asset ID: \($0). Model: \(finalModel.displayName), duration: \(finalDuration.displayLabel), aspect: \(finalAspectRatio)\(refSummary)"
@@ -798,6 +1534,7 @@ extension ToolExecutor {
         origin: ToolCallOrigin
     ) async throws -> ToolResult {
         guard !prompt.isEmpty else { throw ToolError("Empty prompt") }
+        await CatalogDiscovery.ensureCurrent()
         guard let modelId = args.string("model").map({ ModelCatalog.shared.internalId(forLogical: $0) }) ?? ImageModelConfig.allModels.first?.id else {
             throw ToolError("Model catalog not loaded yet. Try again in a moment.")
         }
@@ -810,6 +1547,7 @@ extension ToolExecutor {
         let (precompiled, raw) = try Self.agentPrompt(
             args,
             prompt: prompt,
+            modality: .image,
             editor: editor
         )
         let refIds = args.stringArray("referenceMediaRefs")
@@ -859,21 +1597,27 @@ extension ToolExecutor {
         let credits = CostEstimator.imageCost(
             model: model, resolution: resolution, quality: quality, numImages: 1)
         let originalModelId = model.id
-        return try await withSpendApproval(
-            editor, currentModelId: model.id, currentModelName: model.displayName,
-            credits: credits, actionLabel: "Generate image",
-            origin: origin,
-            currentIsCompatible: currentValidation == nil,
-            noCompatibleModelReason: currentValidation,
-            alternatives: {
-                isMarble ? [] : self.availableImageAlternatives(
-                    than: model.id,
+        let exactImageOptions: (@MainActor () -> [SpendOption])? = isMarble
+            ? nil
+            : {
+                self.availableImageSpendOptions(
+                    preferredModelID: model.id,
                     aspectRatio: aspectRatio,
                     resolution: resolution,
                     quality: quality,
                     referenceCount: refs.count
                 )
-            },
+            }
+        return try await withSpendApproval(
+            editor, currentModelId: model.id, currentModelName: model.displayName,
+            credits: credits, actionLabel: "Generate image",
+            pipelineTool: .generateImage,
+            origin: origin,
+            currentIsCompatible: currentValidation == nil,
+            noCompatibleModelReason: currentValidation,
+            alternatives: { [] },
+            exactOptions: exactImageOptions,
+            diagnosticProviderScope: { self.activeImageProviderScope() },
             execute: { editor, approved in
                 var verifiedProductionDesignRoot: URL?
                 if let productionDesignSnapshot {
@@ -903,31 +1647,30 @@ extension ToolExecutor {
 
                 let submit: @MainActor ([MediaAsset]) async throws -> ToolResult = {
                     generationReferences in
-                    var selectedModel = model
-                    var selectedModelID = modelId
-                    var selectedAspectRatio = aspectRatio
-                    var selectedResolution = resolution
-                    var selectedQuality = quality
-                    if approved.modelId != selectedModel.id,
-                       let swapped = ImageModelConfig.allModels.first(where: {
-                           $0.id == approved.modelId
-                       }) {
-                        selectedModel = swapped
-                        selectedModelID = swapped.id
-                        if !swapped.aspectRatios.contains(selectedAspectRatio) {
-                            selectedAspectRatio = swapped.aspectRatios.first ?? selectedAspectRatio
+                    let selectedOffering: CatalogImageOfferingCandidate?
+                    if isMarble {
+                        selectedOffering = nil
+                    } else {
+                        selectedOffering = self.availableImageOfferings(
+                            preferredModelID: model.id,
+                            aspectRatio: aspectRatio,
+                            resolution: resolution,
+                            quality: quality,
+                            referenceCount: generationReferences.count
+                        ).first {
+                            Self.sameImageOffering($0, as: approved.target)
                         }
-                        if let allowed = swapped.resolutions,
-                           let selected = selectedResolution,
-                           !allowed.contains(selected) {
-                            selectedResolution = allowed.first
-                        }
-                        if let allowed = swapped.qualities,
-                           let selected = selectedQuality,
-                           !allowed.contains(selected) {
-                            selectedQuality = allowed.last
+                        guard selectedOffering != nil else {
+                            throw ToolError(
+                                "The approved image offering is no longer live or compatible. Review the refreshed provider and model choices."
+                            )
                         }
                     }
+                    let selectedModel = selectedOffering?.model ?? model
+                    let selectedModelID = selectedModel.id
+                    let selectedAspectRatio = selectedOffering?.aspectRatio ?? aspectRatio
+                    let selectedResolution = selectedOffering?.resolution ?? resolution
+                    let selectedQuality = selectedOffering?.quality ?? quality
                     let approvedPrompt = try await self.promptForApprovedModel(
                         precompiled,
                         originalModelId: originalModelId,
@@ -1532,6 +2275,7 @@ extension ToolExecutor {
         let (precompiled, raw) = try Self.agentPrompt(
             args,
             prompt: prompt,
+            modality: .audio,
             editor: editor
         )
 
@@ -1587,6 +2331,7 @@ extension ToolExecutor {
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: audioCredits, actionLabel: "Generate \(model.category.label)",
+            pipelineTool: .generateAudio,
             origin: origin,
             alternatives: { [] },
             cancel: { _ in
@@ -1644,6 +2389,7 @@ extension ToolExecutor {
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: CostEstimator.upscaleCost(model: model, durationSeconds: upSeconds),
             actionLabel: "Upscale",
+            pipelineTool: .upscaleMedia,
             origin: origin,
             alternatives: { [] },
             execute: { editor, approved in
@@ -1775,42 +2521,86 @@ extension ToolExecutor {
         return .ok(json)
     }
 
-    nonisolated static func videoModelInfo(_ m: VideoModelConfig, includeType: Bool = false) -> [String: Any] {
+    static func videoModelInfo(
+        _ m: VideoModelConfig,
+        includeType: Bool = false
+    ) -> [String: Any] {
+        let activation = ProviderActivation.current()
+        let bindings = ProviderManifest.bindings(forModelId: m.id)
+            .filter { binding in
+                guard activation.isActive(binding.provider, binding.transport),
+                      binding.kind == .generation,
+                      let capabilities = binding.resolvedVideoCapabilities,
+                      capabilities.contractViolation == nil else {
+                    return false
+                }
+                return binding.productionInputPolicy == capabilities.inputPolicy
+            }
+            .sorted {
+                ($0.provider.rawValue, $0.transport.rawValue, $0.providerRef,
+                 $0.modelParam ?? "")
+                    < ($1.provider.rawValue, $1.transport.rawValue, $1.providerRef,
+                       $1.modelParam ?? "")
+            }
         var info: [String: Any] = [
             "id": m.id, "displayName": m.displayName,
-            "durations": m.durations, "aspectRatios": m.aspectRatios,
-            "supportsFirstFrame": m.supportsFirstFrame,
-            "supportsLastFrame": m.supportsLastFrame,
-            "supportsReferences": m.supportsReferences,
+            "offerings": bindings.compactMap(videoOfferingInfo),
         ]
-        var duration: [String: Any] = [
-            "discrete": m.durationCapabilities.discrete,
-            "supportsAuto": m.durationCapabilities.supportsAuto,
-        ]
-        if let range = m.durationCapabilities.range {
-            duration["range"] = ["min": range.min, "max": range.max]
-        }
-        info["duration"] = duration
         if includeType { info["type"] = "video" }
-        if let r = m.resolutions { info["resolutions"] = r }
-        if m.supportsReferences {
-            if m.maxReferenceImages > 0 { info["maxReferenceImages"] = m.maxReferenceImages }
-            if m.maxReferenceVideos > 0 { info["maxReferenceVideos"] = m.maxReferenceVideos }
-            if m.maxReferenceAudios > 0 { info["maxReferenceAudios"] = m.maxReferenceAudios }
-            if let total = m.maxTotalReferences { info["maxTotalReferences"] = total }
-            if let conditional = m.maxReferenceImagesWhenVideoPresent {
-                info["maxReferenceImagesWhenVideoPresent"] = conditional
-            }
-            if let s = m.maxCombinedVideoRefSeconds { info["maxCombinedVideoRefSeconds"] = Int(s) }
-            if let s = m.maxCombinedAudioRefSeconds { info["maxCombinedAudioRefSeconds"] = Int(s) }
-            if m.framesAndReferencesExclusive { info["framesAndReferencesExclusive"] = true }
-            if m.framesCountTowardImageReferenceLimit {
-                info["framesCountTowardImageReferenceLimit"] = true
-            }
-            if m.framesCountTowardTotalReferenceLimit {
-                info["framesCountTowardTotalReferenceLimit"] = true
-            }
-            info["referenceTagNoun"] = m.referenceTagNoun
+        return info
+    }
+
+    private static func videoOfferingInfo(
+        _ binding: ProviderBinding
+    ) -> [String: Any]? {
+        guard let capabilities = binding.resolvedVideoCapabilities else {
+            return nil
+        }
+        guard capabilities.contractViolation == nil else { return nil }
+        var duration: [String: Any] = [
+            "discrete": capabilities.durationValues,
+            "supportsAuto": capabilities.supportsAutomaticDuration,
+        ]
+        if let minimum = capabilities.durationMinimum,
+           let maximum = capabilities.durationMaximum {
+            duration["range"] = ["min": minimum, "max": maximum]
+        }
+        var info: [String: Any] = [
+            "provider": binding.provider.rawValue,
+            "transport": binding.transport.rawValue,
+            "endpoint": binding.providerRef,
+            "requiresSourceVideo": capabilities.inputPolicy.requiresSourceVideo,
+            "duration": duration,
+            "aspectRatios": capabilities.aspectRatios,
+            "supportsNativeAudio": capabilities.supportsNativeAudio,
+            "supportsFirstFrame": capabilities.supportsFirstFrame,
+            "supportsLastFrame": capabilities.supportsLastFrame,
+            "supportsReferences": capabilities.supportsReferences,
+            "maxReferenceImages": capabilities.maxReferenceImages,
+            "maxReferenceVideos": capabilities.maxReferenceVideos,
+            "maxReferenceAudios": capabilities.maxReferenceAudios,
+            "framesCountTowardImageReferenceLimit": capabilities.inputPolicy
+                .framesCountTowardImageReferenceLimit,
+            "framesCountTowardTotalReferenceLimit": capabilities.inputPolicy
+                .framesCountTowardTotalReferenceLimit,
+            "framesAndReferencesExclusive": capabilities.framesAndReferencesExclusive,
+            "requiresReferenceImage": capabilities.requiresReferenceImage,
+        ]
+        if let modelParam = binding.modelParam { info["providerModel"] = modelParam }
+        if let resolutions = capabilities.resolutions {
+            info["resolutions"] = resolutions
+        }
+        if let maximum = capabilities.maxTotalReferences {
+            info["maxTotalReferences"] = maximum
+        }
+        if let maximum = capabilities.maxReferenceImagesWhenVideoPresent {
+            info["maxReferenceImagesWhenVideoPresent"] = maximum
+        }
+        if let seconds = capabilities.maxCombinedVideoReferenceSeconds {
+            info["maxCombinedVideoRefSeconds"] = seconds
+        }
+        if let seconds = capabilities.maxCombinedAudioReferenceSeconds {
+            info["maxCombinedAudioRefSeconds"] = seconds
         }
         return info
     }

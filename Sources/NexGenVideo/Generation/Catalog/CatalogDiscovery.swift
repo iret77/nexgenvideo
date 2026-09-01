@@ -29,6 +29,7 @@ enum CatalogDiscovery {
         let entries: [CatalogEntry]
         let modelListingIsComplete: Bool
         let detailEnrichmentIsComplete: Bool
+        let modelDiagnostics: [MCPModelDiscovery.ModelDiagnostic]
     }
 
     enum MCPListingPublicationDecision: Equatable, Sendable {
@@ -40,6 +41,7 @@ enum CatalogDiscovery {
     private struct EnumerationResult: Sendable {
         let models: [MCPModelDiscovery.ModelItem]
         let isComplete: Bool
+        let diagnostics: [MCPModelDiscovery.ModelDiagnostic]
     }
 
     private struct EnrichmentResult: Sendable {
@@ -219,7 +221,8 @@ enum CatalogDiscovery {
                 var mcpResult = MCPDiscoveryResult(
                     entries: [],
                     modelListingIsComplete: true,
-                    detailEnrichmentIsComplete: true
+                    detailEnrichmentIsComplete: true,
+                    modelDiagnostics: []
                 )
                 if mcpConfigured {
                     mcpResult = await discoverResult(provider)
@@ -371,7 +374,8 @@ enum CatalogDiscovery {
             return MCPDiscoveryResult(
                 entries: [],
                 modelListingIsComplete: false,
-                detailEnrichmentIsComplete: false
+                detailEnrichmentIsComplete: false,
+                modelDiagnostics: []
             )
         }
         return await discoverResult(provider, client: client)
@@ -409,12 +413,14 @@ enum CatalogDiscovery {
                 return MCPDiscoveryResult(
                     entries: [],
                     modelListingIsComplete: true,
-                    detailEnrichmentIsComplete: true
+                    detailEnrichmentIsComplete: true,
+                    modelDiagnostics: []
                 )
             }
             var entries: [CatalogEntry] = []
             var modelListingIsComplete = true
             var detailEnrichmentIsComplete = true
+            var modelDiagnostics: [MCPModelDiscovery.ModelDiagnostic] = []
             var usedModelCatalog = false
             // Some providers advertise the selected model as a free-form field and expose the full
             // catalog through a separate tool; enumerate it before mapping the generation schema.
@@ -442,25 +448,33 @@ enum CatalogDiscovery {
                 }
                 modelListingIsComplete = enumeration.isComplete
                 detailEnrichmentIsComplete = enrichment.isComplete
+                modelDiagnostics.append(contentsOf: enumeration.diagnostics)
                 let schemas = Dictionary(uniqueKeysWithValues: toolsByModality.compactMap { modality, name in
                     tools.first(where: { $0.name == name }).map { (modality, $0.inputSchema) }
                 })
                 guard let capabilityResolver else {
                     throw CatalogCapabilityRuntimeError.unavailable
                 }
-                let capabilities = try MCPModelDiscovery.resolveOfferingCapabilities(
+                let capabilityResult = MCPModelDiscovery.resolveOfferingCapabilitiesResult(
                     models: enrichment.models,
                     toolsByModality: toolsByModality,
                     provider: provider,
                     resolver: capabilityResolver,
                     observedAt: CatalogCapabilityRuntime.observationTimestamp()
                 )
-                entries = MCPModelDiscovery.catalogEntries(
-                    models: enrichment.models, toolsByModality: toolsByModality,
+                modelDiagnostics.append(contentsOf: capabilityResult.diagnostics)
+                let capabilityModelIDs = Set(capabilityResult.capabilities.keys)
+                let mapping = MCPModelDiscovery.catalogEntriesResult(
+                    models: enrichment.models.filter {
+                        capabilityModelIDs.contains($0.id)
+                    },
+                    toolsByModality: toolsByModality,
                     toolSchemasByModality: schemas,
                     allowsLocalMedia: MCPMediaUpload.supportsUploadContract(tools),
-                    resolvedCapabilities: capabilities,
+                    resolvedCapabilities: capabilityResult.capabilities,
                     provider: provider)
+                entries = mapping.entries
+                modelDiagnostics.append(contentsOf: mapping.diagnostics)
             }
             if entries.isEmpty, !usedModelCatalog {
                 let usableGenerationTools = tools.filter { tool in
@@ -472,10 +486,17 @@ enum CatalogDiscovery {
                 )
             }
             await client.disconnect()
+            for diagnostic in modelDiagnostics {
+                let modelID = diagnostic.modelID ?? "unknown"
+                Log.generation.notice(
+                    "catalog model skipped provider=\(provider.rawValue) model=\(modelID) reason=\(diagnostic.kind.rawValue)"
+                )
+            }
             return MCPDiscoveryResult(
                 entries: entries,
                 modelListingIsComplete: modelListingIsComplete,
-                detailEnrichmentIsComplete: detailEnrichmentIsComplete
+                detailEnrichmentIsComplete: detailEnrichmentIsComplete,
+                modelDiagnostics: modelDiagnostics
             )
         } catch {
             await client.disconnect()
@@ -483,7 +504,8 @@ enum CatalogDiscovery {
             return MCPDiscoveryResult(
                 entries: [],
                 modelListingIsComplete: false,
-                detailEnrichmentIsComplete: false
+                detailEnrichmentIsComplete: false,
+                modelDiagnostics: []
             )
         }
     }
@@ -500,6 +522,7 @@ enum CatalogDiscovery {
         var all: [MCPModelDiscovery.ModelItem] = []
         var indexByModelID: [String: Int] = [:]
         var isComplete = true
+        var diagnostics: [MCPModelDiscovery.ModelDiagnostic] = []
         modalityLoop: for modality in modalities where modality != .upscale {
             guard all.count < maxModelsPerProvider else {
                 isComplete = false
@@ -536,22 +559,21 @@ enum CatalogDiscovery {
                     )
                 }
                 let catalogPayloads = parsed.filter(\.isCatalogPayload)
+                diagnostics.append(contentsOf: catalogPayloads.flatMap(\.modelDiagnostics))
                 if catalogPayloads.isEmpty {
                     isComplete = false
                     Log.generation.notice(
                         "catalog listing returned no decodable catalog payload provider=\(provider.rawValue) modality=\(modality.rawValue)"
                     )
-                } else if catalogPayloads.contains(where: {
-                    !$0.structuralAndDecodeIsComplete
-                }) {
+                } else if catalogPayloads.contains(where: { !$0.structuralIsComplete }) {
                     isComplete = false
                     Log.generation.notice(
-                        "catalog listing was only partially decoded provider=\(provider.rawValue) modality=\(modality.rawValue)"
+                        "catalog listing was structurally incomplete provider=\(provider.rawValue) modality=\(modality.rawValue)"
                     )
                 }
                 let items = catalogPayloads.flatMap(\.items)
                 let pageIsStructurallyComplete = !catalogPayloads.isEmpty
-                    && catalogPayloads.allSatisfy(\.structuralAndDecodeIsComplete)
+                    && catalogPayloads.allSatisfy(\.structuralIsComplete)
                 let pagination = MCPModelDiscovery.PaginationEvidence.aggregating(
                     catalogPayloads.map(\.pagination)
                 )
@@ -613,7 +635,11 @@ enum CatalogDiscovery {
                 if all.count >= maxModelsPerProvider { break modalityLoop }
             }
         }
-        return EnumerationResult(models: all, isComplete: isComplete)
+        return EnumerationResult(
+            models: all,
+            isComplete: isComplete,
+            diagnostics: diagnostics
+        )
     }
 
     private static func enrichMediaContracts(

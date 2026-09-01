@@ -189,6 +189,11 @@ public enum CapabilityFieldIDV1 {
     public static let firstFrame = "video.first_frame"
     public static let lastFrame = "video.last_frame"
     public static let sourceVideo = "video.source_video"
+    public static let sourceVideoRequired = "video.source_video_required"
+    public static let framesCountTowardImageReferenceLimit =
+        "video.frames_count_toward_image_reference_limit"
+    public static let framesCountTowardTotalReferenceLimit =
+        "video.frames_count_toward_total_reference_limit"
     public static let edit = "video.edit"
     public static let extend = "video.extend"
     public static let durationMinimum = "video.duration_minimum_seconds"

@@ -243,6 +243,80 @@ struct ModelCapabilityResolverTests {
         }
     }
 
+    @Test("endpoint-only input policies resolve without a global defensive fallback")
+    func endpointOnlyInputPolicies() throws {
+        let resolver = try ModelCapabilityResolver(knowledgeBase: makeKnowledgeBase())
+        let lookup = CapabilityLookupV1(
+            modality: .video,
+            catalogModelID: "fal/seedance-reference"
+        )
+        let offering = offering(
+            provider: "fal",
+            offer: "fal/exact-input-policy",
+            model: "fal/seedance-reference"
+        )
+        let endpointEvidence = evidence(kind: .providerSchema)
+        let resolved = try resolver.resolveOffering(
+            offering,
+            lookup: lookup,
+            overlay: EndpointCapabilityOverlayV1(
+                offering: offering,
+                schemaEvidence: [endpointEvidence],
+                restrictions: EndpointCapabilityRestrictionsV1(booleans: [
+                    CapabilityFieldIDV1.sourceVideoRequired:
+                        EndpointBooleanRestrictionV1(
+                            value: true,
+                            evidence: [endpointEvidence]
+                        ),
+                    CapabilityFieldIDV1.framesCountTowardImageReferenceLimit:
+                        EndpointBooleanRestrictionV1(
+                            value: false,
+                            evidence: [endpointEvidence]
+                        ),
+                    CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit:
+                        EndpointBooleanRestrictionV1(
+                            value: true,
+                            evidence: [endpointEvidence]
+                        ),
+                ])
+            )
+        )
+
+        let intrinsicFields = resolved.intrinsic.fields.booleans
+        #expect(intrinsicFields[CapabilityFieldIDV1.sourceVideoRequired]?.value == false)
+        #expect(
+            intrinsicFields[CapabilityFieldIDV1.framesCountTowardImageReferenceLimit]?.value
+                == true
+        )
+        #expect(
+            intrinsicFields[CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit]?.value
+                == false
+        )
+        let fields = resolved.effective.fields.booleans
+        #expect(fields[CapabilityFieldIDV1.sourceVideoRequired]?.value == true)
+        #expect(
+            fields[CapabilityFieldIDV1.framesCountTowardImageReferenceLimit]?.value == false
+        )
+        #expect(
+            fields[CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit]?.value == true
+        )
+        #expect(
+            fields[CapabilityFieldIDV1.sourceVideoRequired]?.origin.kind == .endpointOverlay
+        )
+        #expect(
+            fields[CapabilityFieldIDV1.sourceVideoRequired]?.origin.endpointID
+                == offering.endpointID
+        )
+        #expect(
+            fields[CapabilityFieldIDV1.framesCountTowardImageReferenceLimit]?.origin.kind
+                == .endpointOverlay
+        )
+        #expect(
+            fields[CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit]?.origin.endpointID
+                == offering.endpointID
+        )
+    }
+
     @Test("defensive profiles are complete, registered, and correctly typed")
     func defensiveFieldRegistryIsClosed() {
         var incomplete = makeKnowledgeBase()
@@ -378,6 +452,14 @@ struct ModelCapabilityResolverTests {
                     fields: CapabilityFieldsV1(
                         integers: [
                             CapabilityFieldIDV1.referenceImages: field(50),
+                        ],
+                        booleans: [
+                            CapabilityFieldIDV1.sourceVideoRequired:
+                                booleanField(false),
+                            CapabilityFieldIDV1.framesCountTowardImageReferenceLimit:
+                                booleanField(true),
+                            CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit:
+                                booleanField(false),
                         ]
                     )
                 ),
@@ -489,6 +571,14 @@ struct ModelCapabilityResolverTests {
         EvidencedCapabilityFieldV1(
             value: value,
             semantics: .hardAPILimit,
+            evidence: [evidence(kind: .providerSchema)]
+        )
+    }
+
+    private func booleanField(_ value: Bool) -> EvidencedCapabilityFieldV1<Bool> {
+        EvidencedCapabilityFieldV1(
+            value: value,
+            semantics: .supportedValue,
             evidence: [evidence(kind: .providerSchema)]
         )
     }

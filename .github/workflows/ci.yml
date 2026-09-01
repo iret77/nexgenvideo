@@ -79,6 +79,17 @@ jobs:
       - name: Verify private fixture bundle tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
+      - name: Render Agent UI specification
+        run: python3 scripts/render_agent_chat_spec.py --output "$RUNNER_TEMP/agent-chat-spec"
+
+      - name: Upload Agent UI render evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-chat-spec-${{ github.run_id }}
+          path: ${{ runner.temp }}/agent-chat-spec
+          if-no-files-found: error
+          retention-days: 14
+
   build_test:
     name: Build & Test
     needs: [classify_changes, source_gate]

@@ -33,6 +33,10 @@ enum GenerationBudgetGuard {
             }
             return GenerationAuthorization(transactionId: nil, target: target, estimate: nil)
         }
+        let mutationScope = try GenerationProjectMutationScope(
+            projectHome: workingRoot,
+            editor: editor
+        )
 
         let estimate: GenerationMoney?
         let pricingFailure: String?
@@ -51,6 +55,7 @@ enum GenerationBudgetGuard {
                 "The project changed while pricing this request. Retry generation in the active project."
             )
         }
+        try mutationScope.requireCurrent(editor: editor)
         let stop = try budgetStop(in: workingRoot)
         var log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
         let existingSpend = try verifiedSpend(
@@ -82,7 +87,8 @@ enum GenerationBudgetGuard {
         let authorization = GenerationAuthorization(
             transactionId: transactionId,
             target: target,
-            estimate: estimate
+            estimate: estimate,
+            projectMutationScope: mutationScope
         )
         try editor.recordSpendEvent(
             authorization: authorization,
@@ -121,6 +127,10 @@ enum GenerationBudgetGuard {
             }
             return GenerationAuthorization(transactionId: nil, target: target, estimate: nil)
         }
+        let mutationScope = try GenerationProjectMutationScope(
+            projectHome: workingRoot,
+            editor: editor
+        )
 
         let stop = try budgetStop(in: workingRoot)
         var log = try loadGenerationLog(from: workingRoot) ?? editor.generationLog
@@ -139,7 +149,8 @@ enum GenerationBudgetGuard {
         let authorization = GenerationAuthorization(
             transactionId: UUID().uuidString,
             target: target,
-            estimate: nil
+            estimate: nil,
+            projectMutationScope: mutationScope
         )
         editor.generationLog = log
         try editor.recordSpendEvent(

@@ -35,8 +35,9 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "artifactWriteRequirements",
     "musicUnderstandingAnalyzer",
     "declarativeCockpitSurface",
+    "phaseArtifactProviders",
 ]
-ENGINE_BOUNDARY_LAYOUT_CONTRACT = 8
+ENGINE_BOUNDARY_LAYOUT_CONTRACT = 9
 ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 2
 ENGINE_AUDIO_BOUNDARY_FILES = [
     "Engine/Sources/NexGenEngine/Audio/PCM.swift",
@@ -70,6 +71,18 @@ ENGINE_BOUNDARY_LAYOUTS = {
     },
 }
 ENGINE_BOUNDARY_VALUE_LAYOUTS = {
+    "CapabilityFieldDefinitionV1": {
+        "path": "Engine/Sources/NexGenEngine/Capabilities/CapabilityFieldRegistryV1.swift",
+        "start": "public struct CapabilityFieldDefinitionV1: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "let id: String",
+            "let modalities: Set<CapabilityModalityV1>",
+            "let valueType: CapabilityFieldValueTypeV1",
+            "let endpointMergePolicy: CapabilityEndpointMergePolicyV1",
+            "let requiresDefensiveDefault: Bool",
+        ],
+    },
     "PCMBuffer": {
         "path": "Engine/Sources/NexGenEngine/Audio/PCM.swift",
         "start": "public struct PCMBuffer: Sendable, Equatable {",
@@ -357,6 +370,19 @@ ENGINE_BOUNDARY_VALUE_LAYOUTS = {
     },
 }
 ENGINE_BOUNDARY_ENUM_LAYOUTS = {
+    "CapabilityEndpointMergePolicyV1": {
+        "path": "Engine/Sources/NexGenEngine/Capabilities/CapabilityFieldRegistryV1.swift",
+        "start": "public enum CapabilityEndpointMergePolicyV1: String, Codable, Sendable, Equatable {",
+        "end": "public struct CapabilityFieldDefinitionV1:",
+        "cases": [
+            "maximum",
+            "minimum",
+            "booleanAnd = \"boolean_and\"",
+            "endpointOverride = \"endpoint_override\"",
+            "setIntersection = \"set_intersection\"",
+            "intrinsicOnly = \"intrinsic_only\"",
+        ],
+    },
     "KnownTextAlignmentTimingMethod": {
         "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
         "start": "public enum KnownTextAlignmentTimingMethod: String, Codable, Sendable, Equatable {",

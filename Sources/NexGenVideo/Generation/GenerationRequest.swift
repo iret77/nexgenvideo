@@ -291,7 +291,9 @@ enum GenerationController {
                 aspectRatio: request.aspectRatio,
                 durationSeconds: request.durationSeconds,
                 projectDir: editor.workingRoot,
-                preserveComposition: PromptCompiler.preservesComposition(modelId: request.modelId))
+                preserveComposition: request.target.binding?
+                    .resolvedVideoCapabilities?
+                    .inputPolicy.requiresSourceVideo == true)
             return (composition.text, composition.notes)
         } catch let e as PromptComposer.ComposeError {
             throw GenerationRequestError.compile(e.errorDescription ?? "Prompt compilation failed.")

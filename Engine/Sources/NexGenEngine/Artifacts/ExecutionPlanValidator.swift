@@ -129,17 +129,134 @@ public enum ExecutionPlanValidator {
             if let sourceAssetID = shot.sourceAssetID {
                 requiredMediaIDs.append(sourceAssetID)
             }
-            if let requirement = shot.generationRequirement {
-                requiredMediaIDs.append(contentsOf: requirement.identityLockAssetIDs)
-                requiredMediaIDs.append(contentsOf: requirement.referenceDemandIDs)
-                if let sourceVideoAssetID = requirement.sourceVideoAssetID {
-                    requiredMediaIDs.append(sourceVideoAssetID)
-                }
-            }
             for assetID in requiredMediaIDs where !mediaIDs.contains(assetID) {
                 throw ExecutionPlanValidationError.unknownMediaReference(
                     shotID: shot.id,
                     assetID: assetID
+                )
+            }
+        }
+    }
+
+    public static func validate(
+        _ plan: ExecutionPlanV1,
+        against context: ProjectCreativeContextV1,
+        assetGraph: AssetGraphV1,
+        demandSet: ReferenceDemandSetV1,
+        forShotID shotID: String
+    ) throws {
+        try validate(plan, against: context)
+        guard plan.projectID == assetGraph.projectID else {
+            throw ExecutionPlanValidationError.projectMismatch(
+                plan: plan.projectID,
+                context: assetGraph.projectID
+            )
+        }
+        try AssetGraphValidatorV1.validate(assetGraph)
+        guard let shotIndex = plan.shots.firstIndex(where: { $0.id == shotID }),
+              plan.shots[shotIndex].generationRequirement != nil,
+              demandSet.shotID == shotID else {
+            throw ExecutionPlanValidationError.invalidGenerationRequirement(
+                shotID: shotID
+            )
+        }
+        try validateProductionInputs(
+            shotIndex: shotIndex,
+            plan: plan,
+            assetGraph: assetGraph,
+            demandSet: demandSet
+        )
+    }
+
+    public static func validate(
+        _ plan: ExecutionPlanV1,
+        against context: ProjectCreativeContextV1,
+        assetGraph: AssetGraphV1,
+        referenceDemandSetsByShotID: [String: ReferenceDemandSetV1]
+    ) throws {
+        try validate(plan, against: context)
+        guard plan.projectID == assetGraph.projectID else {
+            throw ExecutionPlanValidationError.projectMismatch(
+                plan: plan.projectID,
+                context: assetGraph.projectID
+            )
+        }
+        try AssetGraphValidatorV1.validate(assetGraph)
+        for (shotIndex, shot) in plan.shots.enumerated() {
+            guard shot.generationRequirement != nil else {
+                if referenceDemandSetsByShotID[shot.id] != nil {
+                    throw ExecutionPlanValidationError.invalidGenerationRequirement(
+                        shotID: shot.id
+                    )
+                }
+                continue
+            }
+            guard let demandSet = referenceDemandSetsByShotID[shot.id] else {
+                throw ExecutionPlanValidationError.invalidGenerationRequirement(shotID: shot.id)
+            }
+            try validateProductionInputs(
+                shotIndex: shotIndex,
+                plan: plan,
+                assetGraph: assetGraph,
+                demandSet: demandSet
+            )
+        }
+        let planShotIDs = Set(plan.shots.map(\.id))
+        guard Set(referenceDemandSetsByShotID.keys).isSubset(of: planShotIDs) else {
+            throw ExecutionPlanValidationError.invalidGenerationRequirement(shotID: "unknown")
+        }
+    }
+
+    private static func validateProductionInputs(
+        shotIndex: Int,
+        plan: ExecutionPlanV1,
+        assetGraph: AssetGraphV1,
+        demandSet: ReferenceDemandSetV1
+    ) throws {
+        let shot = plan.shots[shotIndex]
+        guard let requirement = shot.generationRequirement,
+              demandSet.shotID == shot.id else {
+            throw ExecutionPlanValidationError.invalidGenerationRequirement(
+                shotID: shot.id
+            )
+        }
+        let immediatePredecessorShotID = ChainContinuity.executionPredecessor(
+            plan,
+            shotID: shot.id
+        )
+        try AssetGraphValidatorV1.validate(
+            demandSet,
+            against: assetGraph,
+            immediatePredecessorShotID: immediatePredecessorShotID
+        )
+        do {
+            try ProductionRequirementResolverV1.validateBindings(
+                requirement,
+                demandSet: demandSet
+            )
+        } catch {
+            throw ExecutionPlanValidationError.invalidGenerationRequirement(
+                shotID: shot.id
+            )
+        }
+        let assetsByID = Dictionary(
+            uniqueKeysWithValues: assetGraph.assets.map { ($0.id, $0) }
+        )
+        for assetID in requirement.identityLockAssetIDs {
+            guard assetsByID[assetID]?.approval == .approved else {
+                throw ExecutionPlanValidationError.unknownMediaReference(
+                    shotID: shot.id,
+                    assetID: assetID
+                )
+            }
+        }
+        if let sourceVideoAssetID = requirement.sourceVideoAssetID {
+            guard let source = assetsByID[sourceVideoAssetID],
+                  source.approval == .approved,
+                  source.modality == .video else {
+                throw ExecutionPlanValidationError.unknownMediaReference(
+                    shotID: shot.id,
+                    assetID: sourceVideoAssetID
                 )
             }
         }
@@ -177,7 +294,7 @@ public enum ExecutionPlanValidator {
             try require(criterion.requirement, field: "shot.acceptance.requirement")
             try require(criterion.severity, field: "shot.acceptance.severity")
         }
-        try validateUnique(shot.blocking.map(\.entityID), field: "shot.blocking")
+        try validateUniqueCanonical(shot.blocking.map(\.entityID), field: "shot.blocking")
         for blocking in shot.blocking {
             try require(blocking.relation, field: "shot.blocking.relation")
             try requireOptional(blocking.anchorAssetID, field: "shot.blocking.anchor_asset_id")
@@ -197,7 +314,8 @@ public enum ExecutionPlanValidator {
                 throw ExecutionPlanValidationError.invalidSourceBinding(shotID: shot.id)
             }
         case .imported:
-            guard nonEmpty(shot.sourceAssetID), shot.generationRequirement == nil else {
+            guard shot.sourceAssetID == nil || nonEmpty(shot.sourceAssetID),
+                  shot.generationRequirement == nil else {
                 throw ExecutionPlanValidationError.invalidSourceBinding(shotID: shot.id)
             }
         }
@@ -209,7 +327,7 @@ public enum ExecutionPlanValidator {
                     "shot.generation_requirement.mode_ids"
                 )
             }
-            try validateUniqueNonEmpty(
+            try validateUniqueCanonical(
                 requirement.modeIDs,
                 field: "shot.generation_requirement.mode_ids"
             )
@@ -274,15 +392,16 @@ public enum ExecutionPlanValidator {
             }
         }
 
+        let timedBeatMaximum = shot.generationRequirement?.duration.flatMap {
+            $0.preferredSeconds ?? $0.maximumSeconds
+        }
         var previous = -Double.infinity
         for (index, beat) in shot.timedActionBeats.enumerated() {
             try require(beat.action, field: "shot.timed_action_beats.action")
             guard beat.timeSeconds.isFinite,
                   beat.timeSeconds >= 0,
                   index == 0 || beat.timeSeconds > previous,
-                  shot.generationRequirement?.duration?.maximumSeconds.map({
-                      beat.timeSeconds <= $0
-                  }) ?? true else {
+                  timedBeatMaximum.map({ beat.timeSeconds <= $0 }) ?? true else {
                 throw ExecutionPlanValidationError.invalidTimedBeat(shotID: shot.id)
             }
             previous = beat.timeSeconds
@@ -390,6 +509,17 @@ public enum ExecutionPlanValidator {
         for id in ids {
             try require(id, field: "\(field).id")
             guard seen.insert(id).inserted else {
+                throw ExecutionPlanValidationError.duplicateID(id)
+            }
+        }
+    }
+
+    private static func validateUniqueCanonical(_ ids: [String], field: String) throws {
+        var seen = Set<String>()
+        for id in ids {
+            try require(id, field: "\(field).id")
+            let canonical = ProductionIdentifierNormalizerV1.canonical(id)
+            guard seen.insert(canonical).inserted else {
                 throw ExecutionPlanValidationError.duplicateID(id)
             }
         }

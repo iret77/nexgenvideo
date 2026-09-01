@@ -7,6 +7,16 @@ import Testing
 @MainActor
 @Suite("Pipeline agent contract")
 struct PipelineAgentContractTests {
+    private var binding: ProjectPackBinding {
+        get throws {
+            try #require(ProjectPackBinding(
+                id: "musicvideo",
+                version: MusicvideoPack().version,
+                projectSchema: "musicvideo/2.0.0"
+            ))
+        }
+    }
+
     private func scaffold() throws -> (URL, URL) {
         let cleanup = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -20,10 +30,10 @@ struct PipelineAgentContractTests {
             mode: .beat,
             extraDirs: ["audio", "lyrics", "analysis"]
         )
-        let settings = try JSONSerialization.data(
-            withJSONObject: ["activePlugin": "musicvideo"]
+        try ProjectPluginSettings.setActivePlugin(
+            binding,
+            projectURL: home
         )
-        try settings.write(to: home.appendingPathComponent("ngv.json"))
         return (dataRoot, cleanup)
     }
 
@@ -135,12 +145,16 @@ struct PipelineAgentContractTests {
 
         #expect(try harness.guardCurrentPhaseWork(
             tool: .generateImage,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            declaredPack: "musicvideo",
+            declaredBinding: try binding
         ) == nil)
         do {
             _ = try harness.guardCurrentPhaseWork(
                 tool: .generateVideo,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
             Issue.record("generate_video unexpectedly passed the post-pipeline utility boundary")
         } catch let error as ToolError {
@@ -170,7 +184,9 @@ struct PipelineAgentContractTests {
         do {
             try harness.guardCurrentPhaseWork(
                 tool: .generateImage,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
             Issue.record("generate_image unexpectedly passed Project Init")
         } catch let error as ToolError {
@@ -203,7 +219,9 @@ struct PipelineAgentContractTests {
         do {
             try PipelineAgentHarness().guardPhaseWork(
                 phase: "analysis",
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
             Issue.record("analysis unexpectedly ran before Project Init approval")
         } catch let error as ToolError {
@@ -237,7 +255,9 @@ struct PipelineAgentContractTests {
             try PipelineAgentHarness().guardPhaseWork(
                 tool: .runPhase,
                 phase: "project_init",
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
             Issue.record("run_phase unexpectedly passed Project Init")
         } catch let error as ToolError {
@@ -258,7 +278,9 @@ struct PipelineAgentContractTests {
         do {
             try PipelineAgentHarness().guardPhaseWork(
                 phase: "invented_phase",
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
             Issue.record("unknown phase unexpectedly passed")
         } catch let error as ToolError {
@@ -280,7 +302,8 @@ struct PipelineAgentContractTests {
             try harness.guardPhaseWork(
                 phase: "project_init",
                 dataRoot: dataRoot,
-                declaredPack: "musicvideo"
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
             Issue.record("phase work unexpectedly ignored unreadable format settings")
         } catch let error as ToolError {
@@ -291,7 +314,8 @@ struct PipelineAgentContractTests {
             _ = try harness.guardCurrentPhaseWork(
                 tool: .generateImage,
                 dataRoot: dataRoot,
-                declaredPack: "musicvideo"
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
             Issue.record("current-phase work unexpectedly ignored unreadable format settings")
         } catch let error as ToolError {
@@ -303,7 +327,8 @@ struct PipelineAgentContractTests {
             try harness.guardPhaseWork(
                 phase: "project_init",
                 dataRoot: dataRoot,
-                declaredPack: "musicvideo"
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
             Issue.record("phase work unexpectedly ignored missing format settings")
         } catch let error as ToolError {
@@ -313,6 +338,7 @@ struct PipelineAgentContractTests {
 
     @Test("the canonical shot-list writer rejects contradictory chain state before versioning")
     func shotlistWriterEnforcesChainContract() throws {
+        PackCatalog.register(MusicvideoPack())
         let (dataRoot, cleanup) = try scaffold()
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let first = try Shot(
@@ -361,7 +387,8 @@ struct PipelineAgentContractTests {
         _ = try PipelineShotlistWriter.write(
             shotlist,
             dataRoot: dataRoot,
-            declaredPack: nil
+            declaredPack: "musicvideo",
+            declaredBinding: try binding
         )
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
 
@@ -370,7 +397,8 @@ struct PipelineAgentContractTests {
             _ = try PipelineShotlistWriter.write(
                 shotlist,
                 dataRoot: dataRoot,
-                declaredPack: nil
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
         }
         #expect(latestShotlistVersion(dataRoot: dataRoot) == 1)
@@ -398,7 +426,9 @@ struct PipelineAgentContractTests {
         do {
             _ = try PipelineAgentHarness().guardCurrentPhaseWork(
                 tool: .generateVideo,
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
             Issue.record("generate_video unexpectedly passed a complete pipeline")
         } catch let error as ToolError {
@@ -421,7 +451,12 @@ struct PipelineAgentContractTests {
         try store.save(gates, to: PipelineLayout.gatesFile)
 
         let harness = PipelineAgentHarness()
-        try await harness.recordPhaseMutation(phase: "storyboard", dataRoot: dataRoot)
+        try await harness.recordPhaseMutation(
+            phase: "storyboard",
+            dataRoot: dataRoot,
+            declaredPack: "musicvideo",
+            declaredBinding: try binding
+        )
 
         let updated = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         let boundary = try #require(order.firstIndex(of: "storyboard"))
@@ -467,7 +502,9 @@ struct PipelineAgentContractTests {
         await #expect(throws: ToolError.self) {
             try await PipelineAgentHarness().recordPhaseMutation(
                 phase: "storyboard",
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
         }
 
@@ -545,7 +582,9 @@ struct PipelineAgentContractTests {
         #expect(throws: ToolError.self) {
             try PipelineAgentHarness().guardPhaseWork(
                 phase: "brief",
-                dataRoot: dataRoot
+                dataRoot: dataRoot,
+                declaredPack: "musicvideo",
+                declaredBinding: try binding
             )
         }
     }

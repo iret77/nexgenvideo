@@ -99,9 +99,10 @@ enum PipelineArtifactWriteContract {
         [
             "project_dir": projectDir,
             "shots": array(shot, minimum: 1),
+            "execution_shots": array(executionShot, minimum: 1),
             "notes": string,
         ],
-        required: ["shots"]
+        required: ["shots", "execution_shots"]
     ) }
 
     private static var string: [String: Any] { ["type": "string"] }
@@ -350,6 +351,226 @@ enum PipelineArtifactWriteContract {
             ],
         ]
     }
+
+    private static var executionShot: [String: Any] {
+        [
+            "anyOf": [
+                generatedExecutionShot,
+                aiEnhancedExecutionShot,
+                importedExecutionShot,
+            ],
+        ]
+    }
+
+    private static var generatedExecutionShot: [String: Any] {
+        object(
+            executionShotCommonProperties.merging([
+                "source_mode": enumeration([ExecutionSourceModeV1.generated.rawValue]),
+                "camera_placement": nonEmptyString,
+                "camera_endpoint": nonEmptyString,
+                "generation_requirement": executionGenerationRequirement,
+                "core_inputs": generatedCoreInputs,
+                "reference_demands": array(executionReferenceDemand),
+            ]) { _, new in new },
+            required: executionShotCommonRequired + [
+                "generation_requirement",
+                "core_inputs",
+                "reference_demands",
+            ]
+        )
+    }
+
+    private static var aiEnhancedExecutionShot: [String: Any] {
+        object(
+            executionShotCommonProperties.merging([
+                "source_mode": enumeration([ExecutionSourceModeV1.aiEnhanced.rawValue]),
+                "camera_placement": nonEmptyString,
+                "camera_endpoint": nonEmptyString,
+                "generation_requirement": executionGenerationRequirement,
+                "core_inputs": aiEnhancedCoreInputs,
+                "reference_demands": array(executionReferenceDemand, maximum: 0),
+            ]) { _, new in new },
+            required: executionShotCommonRequired + [
+                "generation_requirement",
+                "core_inputs",
+            ]
+        )
+    }
+
+    private static var importedExecutionShot: [String: Any] {
+        object(
+            executionShotCommonProperties.merging([
+                "source_mode": enumeration([ExecutionSourceModeV1.imported.rawValue]),
+                "primary_action": nonEmptyString,
+                "camera": executionCamera,
+                "continuity_locks": stringArray,
+                "transition_intent": nonEmptyString,
+                "renderability": enumeration([
+                    ExecutionRenderabilityV1.green.rawValue,
+                    ExecutionRenderabilityV1.yellow.rawValue,
+                    ExecutionRenderabilityV1.red.rawValue,
+                ]),
+                "risks": stringArray,
+                "rescue": nonEmptyString,
+            ]) { _, new in new },
+            required: executionShotCommonRequired + [
+                "primary_action",
+                "camera",
+                "continuity_locks",
+                "renderability",
+                "risks",
+            ]
+        )
+    }
+
+    private static var executionShotCommonProperties: [String: [String: Any]] {
+        [
+            "id": nonEmptyString,
+            "source_mode": enumeration(ExecutionSourceModeV1.allCases.map(\.rawValue)),
+            "start_state": executionState,
+            "end_state": executionState,
+            "blocking": array(executionBlocking),
+            "timed_action_beats": array(executionTimedActionBeat),
+            "acceptance": array(executionAcceptance, minimum: 1),
+        ]
+    }
+
+    private static var executionShotCommonRequired: [String] {
+        [
+            "id",
+            "source_mode",
+            "start_state",
+            "end_state",
+            "blocking",
+            "timed_action_beats",
+            "acceptance",
+        ]
+    }
+
+    private static var executionState: [String: Any] { object(
+        [
+            "summary": nonEmptyString,
+            "entity_state_ids": stringArray,
+            "spatial_state": nonEmptyString,
+        ],
+        required: ["summary", "entity_state_ids"]
+    ) }
+
+    private static var executionBlocking: [String: Any] { object(
+        [
+            "entity_id": nonEmptyString,
+            "anchor_demand_id": nonEmptyString,
+            "performance": nonEmptyString,
+        ],
+        required: ["entity_id", "performance"]
+    ) }
+
+    private static var executionTimedActionBeat: [String: Any] { object(
+        [
+            "time_seconds": ["type": "number", "minimum": 0],
+            "action": nonEmptyString,
+        ],
+        required: ["time_seconds", "action"]
+    ) }
+
+    private static var executionAcceptance: [String: Any] { object(
+        [
+            "id": nonEmptyString,
+            "requirement": nonEmptyString,
+            "severity": nonEmptyString,
+        ],
+        required: ["id", "requirement", "severity"]
+    ) }
+
+    private static var executionCamera: [String: Any] { object(
+        [
+            "movement_id": nonEmptyString,
+            "movement_detail": nonEmptyString,
+            "framing_id": nonEmptyString,
+            "placement": nonEmptyString,
+            "endpoint": nonEmptyString,
+        ],
+        required: ["movement_id"]
+    ) }
+
+    private static var executionGenerationRequirement: [String: Any] { object(
+        [
+            "modality_id": enumeration([CapabilityModalityV1.video.rawValue]),
+            "mode_ids": array(nonEmptyString, minimum: 1),
+            "duration": executionDuration,
+            "requires_output_audio": boolean,
+            "quality_target": nonEmptyString,
+            "maximum_cost": ["type": "number", "minimum": 0],
+            "maximum_latency_seconds": ["type": "number", "exclusiveMinimum": 0],
+        ],
+        required: [
+            "modality_id",
+            "mode_ids",
+            "duration",
+            "requires_output_audio",
+        ]
+    ) }
+
+    private static var executionDuration: [String: Any] { object(
+        [
+            "minimum_seconds": ["type": "number", "exclusiveMinimum": 0],
+            "maximum_seconds": ["type": "number", "exclusiveMinimum": 0],
+            "allows_automatic": boolean,
+        ],
+        required: ["allows_automatic"]
+    ) }
+
+    private static var generatedCoreInputs: [String: Any] { object([
+        "first_frame_mode_id": nonEmptyString,
+        "last_frame_mode_id": nonEmptyString,
+        "predecessor_last_frame_mode_id": nonEmptyString,
+        "audio_timing_mode_id": nonEmptyString,
+    ]) }
+
+    private static var aiEnhancedCoreInputs: [String: Any] { object(
+        [
+            "first_frame_mode_id": nonEmptyString,
+            "last_frame_mode_id": nonEmptyString,
+            "predecessor_last_frame_mode_id": nonEmptyString,
+            "source_video_mode_id": nonEmptyString,
+            "audio_timing_mode_id": nonEmptyString,
+        ],
+        required: ["source_video_mode_id"]
+    ) }
+
+    private static var executionReferenceDemand: [String: Any] { object(
+        [
+            "id": nonEmptyString,
+            "asset_path": nonEmptyString,
+            "modality": enumeration(AssetPhysicalModalityV1.allCases.map(\.rawValue)),
+            "semantic_job_id": nonEmptyString,
+            "is_required": boolean,
+            "priority": ["type": "integer", "minimum": 0],
+            "preservation_scope_ids": stringArray,
+            "exclusion_demand_ids": stringArray,
+            "input_slot_id": nonEmptyString,
+            "mode_id": nonEmptyString,
+            "identity_lock": boolean,
+            "entity_id": nonEmptyString,
+            "canon_ids": stringArray,
+            "state_id": nonEmptyString,
+            "view_id": nonEmptyString,
+        ],
+        required: [
+            "id",
+            "asset_path",
+            "modality",
+            "semantic_job_id",
+            "is_required",
+            "priority",
+            "preservation_scope_ids",
+            "exclusion_demand_ids",
+            "input_slot_id",
+            "mode_id",
+            "identity_lock",
+            "canon_ids",
+        ]
+    ) }
 
     private static func shotVariant(
         sourceMode: SourceMode,

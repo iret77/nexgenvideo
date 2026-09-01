@@ -11,6 +11,11 @@ struct VideoGenerationSubmission {
     let buildParams: ([String]) -> BackendGenerationParams
     let snapshotRefs: (@Sendable (inout GenerationInput, [String]) -> Void)?
     let preprocessRef: (@Sendable (Int, MediaAsset) async throws -> URL?)?
+    let resolvedVideoCapabilities: ResolvedVideoOfferingCapabilitiesV1
+
+    var inputPolicy: ProviderProductionInputPolicyV1 {
+        resolvedVideoCapabilities.inputPolicy
+    }
 
     @MainActor
     @discardableResult
@@ -33,6 +38,7 @@ struct VideoGenerationSubmission {
             buildParams: buildParams,
             snapshotRefs: snapshotRefs,
             preprocessRef: preprocessRef,
+            resolvedVideoCapabilities: resolvedVideoCapabilities,
             fileExtension: "mp4",
             projectURL: projectURL,
             editor: editor,
@@ -46,6 +52,7 @@ struct VideoGenerationSubmission {
     static func make(
         genInput baseInput: GenerationInput,
         model: VideoModelConfig,
+        offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1,
         inputAssets: InputAssets = InputAssets(),
         placeholderDuration: Double,
         trimmedSourceOverride: TrimmedSource? = nil,
@@ -54,7 +61,9 @@ struct VideoGenerationSubmission {
         generateAudio: Bool
     ) -> VideoGenerationSubmission {
         var genInput = baseInput
-        if model.requiresSourceVideo {
+        let inputPolicy = offeringCapabilities.inputPolicy
+        genInput.generateAudio = generateAudio
+        if inputPolicy.requiresSourceVideo {
             let references = inputAssets.editReferences
             genInput.imageURLAssetIds = assetIds(references)
             genInput.sourceVideoAssetId = inputAssets.sourceVideo?.id
@@ -81,7 +90,8 @@ struct VideoGenerationSubmission {
                     ))
                 },
                 snapshotRefs: nil,
-                preprocessRef: nil
+                preprocessRef: nil,
+                resolvedVideoCapabilities: offeringCapabilities
             )
         }
 
@@ -104,7 +114,7 @@ struct VideoGenerationSubmission {
             audioRefCount: audioRefCount
         )
         let preprocessRef: (@Sendable (Int, MediaAsset) async throws -> URL?)?
-        if inputAssets.videoRefs.isEmpty {
+        if inputAssets.videoRefs.isEmpty || genInput.productionRouting != nil {
             preprocessRef = nil
         } else {
             preprocessRef = { _, asset in
@@ -137,7 +147,8 @@ struct VideoGenerationSubmission {
                 return .video(params)
             },
             snapshotRefs: snapshotRefs,
-            preprocessRef: preprocessRef
+            preprocessRef: preprocessRef,
+            resolvedVideoCapabilities: offeringCapabilities
         )
     }
 
@@ -169,15 +180,28 @@ struct VideoGenerationSubmission {
         }
 
         @MainActor
-        func validate(for model: VideoModelConfig) -> String? {
-            if model.requiresSourceVideo {
-                return validateEditReferences(for: model)
+        func validate(
+            for model: VideoModelConfig,
+            offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1
+        ) -> String? {
+            let inputPolicy = offeringCapabilities.inputPolicy
+            if inputPolicy.requiresSourceVideo {
+                return validateEditReferences(
+                    for: model,
+                    offeringCapabilities: offeringCapabilities
+                )
             }
-            return validateTextToVideoReferences(for: model)
+            return validateTextToVideoReferences(
+                for: model,
+                offeringCapabilities: offeringCapabilities
+            )
         }
 
         @MainActor
-        private func validateEditReferences(for model: VideoModelConfig) -> String? {
+        private func validateEditReferences(
+            for model: VideoModelConfig,
+            offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1
+        ) -> String? {
             guard let sourceVideo else {
                 return "Model '\(model.id)' requires a source video."
             }
@@ -187,11 +211,18 @@ struct VideoGenerationSubmission {
             if !frames.isEmpty || !videoRefs.isEmpty || !audioRefs.isEmpty {
                 return "\(model.displayName) only accepts a source video and image references"
             }
-            if !model.supportsReferences, !imageRefs.isEmpty {
+            if !offeringCapabilities.supportsReferences, !imageRefs.isEmpty {
                 return "\(model.displayName) does not accept image references"
             }
-            if imageRefs.count > model.maxReferenceImages {
-                return "\(model.displayName) accepts at most \(model.maxReferenceImages) image reference(s)"
+            if offeringCapabilities.requiresReferenceImage, imageRefs.isEmpty {
+                return "\(model.displayName) requires an image reference"
+            }
+            if imageRefs.count > offeringCapabilities.maxReferenceImages {
+                return "\(model.displayName) accepts at most \(offeringCapabilities.maxReferenceImages) image reference(s)"
+            }
+            if let totalCap = offeringCapabilities.maxTotalReferences,
+               imageRefs.count > totalCap {
+                return "\(model.displayName) accepts at most \(totalCap) references total"
             }
             return validateTypes([
                 (imageRefs, .image, "referenceImageMediaRefs")
@@ -199,12 +230,16 @@ struct VideoGenerationSubmission {
         }
 
         @MainActor
-        private func validateTextToVideoReferences(for model: VideoModelConfig) -> String? {
-            let framesInImageLimit = model.framesCountTowardImageReferenceLimit
+        private func validateTextToVideoReferences(
+            for model: VideoModelConfig,
+            offeringCapabilities: ResolvedVideoOfferingCapabilitiesV1
+        ) -> String? {
+            let inputPolicy = offeringCapabilities.inputPolicy
+            let framesInImageLimit = inputPolicy.framesCountTowardImageReferenceLimit
                 ? frames.count : 0
-            let framesInTotalLimit = model.framesCountTowardTotalReferenceLimit
+            let framesInTotalLimit = inputPolicy.framesCountTowardTotalReferenceLimit
                 ? frames.count : 0
-            let imageLimit = model.maxReferenceImages(
+            let imageLimit = offeringCapabilities.maxReferenceImages(
                 hasVideoReference: !videoRefs.isEmpty
             )
             if sourceVideo != nil {
@@ -213,16 +248,20 @@ struct VideoGenerationSubmission {
             if frames.count > 2 {
                 return "\(model.displayName) accepts at most 2 frame references"
             }
-            if !frames.isEmpty, !model.supportsFirstFrame {
+            if !frames.isEmpty, !offeringCapabilities.supportsFirstFrame {
                 return "\(model.displayName) does not accept frame references"
             }
-            if frames.count > 1, !model.supportsLastFrame {
+            if frames.count > 1, !offeringCapabilities.supportsLastFrame {
                 return "\(model.displayName) does not accept a last frame"
             }
-            if model.requiresReferenceImage, frames.isEmpty, imageRefs.isEmpty {
+            if offeringCapabilities.requiresReferenceImage,
+               frames.isEmpty,
+               imageRefs.isEmpty {
                 return "\(model.displayName) requires a start frame"
             }
-            if model.framesAndReferencesExclusive, !frames.isEmpty, !allRefs.isEmpty {
+            if offeringCapabilities.framesAndReferencesExclusive,
+               !frames.isEmpty,
+               !allRefs.isEmpty {
                 return "\(model.displayName) uses frames OR references, not both. Clear one side."
             }
             if imageRefs.count + framesInImageLimit > imageLimit {
@@ -231,21 +270,21 @@ struct VideoGenerationSubmission {
                     : "image references"
                 return "\(model.displayName) accepts at most \(imageLimit) \(inputName)"
             }
-            if videoRefs.count > model.maxReferenceVideos {
-                return "\(model.displayName) accepts at most \(model.maxReferenceVideos) video references"
+            if videoRefs.count > offeringCapabilities.maxReferenceVideos {
+                return "\(model.displayName) accepts at most \(offeringCapabilities.maxReferenceVideos) video references"
             }
-            if audioRefs.count > model.maxReferenceAudios {
-                return "\(model.displayName) accepts at most \(model.maxReferenceAudios) audio references"
+            if audioRefs.count > offeringCapabilities.maxReferenceAudios {
+                return "\(model.displayName) accepts at most \(offeringCapabilities.maxReferenceAudios) audio references"
             }
-            if let totalCap = model.maxTotalReferences,
+            if let totalCap = offeringCapabilities.maxTotalReferences,
                totalRefCount + framesInTotalLimit > totalCap {
                 return "\(model.displayName) accepts at most \(totalCap) references total"
             }
-            if let cap = model.maxCombinedVideoRefSeconds,
+            if let cap = offeringCapabilities.maxCombinedVideoReferenceSeconds,
                videoRefs.reduce(0, { $0 + $1.duration }) > cap {
                 return "Combined video reference duration exceeds \(Int(cap))s"
             }
-            if let cap = model.maxCombinedAudioRefSeconds,
+            if let cap = offeringCapabilities.maxCombinedAudioReferenceSeconds,
                audioRefs.reduce(0, { $0 + $1.duration }) > cap {
                 return "Combined audio reference duration exceeds \(Int(cap))s"
             }

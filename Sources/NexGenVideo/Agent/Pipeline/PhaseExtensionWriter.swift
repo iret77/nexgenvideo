@@ -673,11 +673,16 @@ extension ToolExecutor {
               let payload = args["payload"] as? [String: Any] else {
             throw ToolError("phase and payload are required.")
         }
+        let declaration = try mutationPackDeclaration(
+            editor,
+            dataRoot: dataRoot
+        )
         let packName: String?
         do {
-            packName = try ProjectPluginSettings.resolvedPlugin(
+            packName = try ProjectPackGate.requireLiveMutation(
                 projectURL: FrameInventory.projectHome(of: dataRoot),
-                declaredPack: editor.declaredPluginName
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
             )
         } catch {
             throw ToolError(error.localizedDescription)
@@ -685,6 +690,15 @@ extension ToolExecutor {
         guard let contract = try PhaseContractRuntime.contract(activePack: packName),
               contract.allowsPhaseBound(.writePhaseExtension, phase: phase) else {
             throw ToolError("The active workflow does not grant write_phase_extension to \(phase).")
+        }
+        do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: FrameInventory.projectHome(of: dataRoot),
+                declaredPack: declaration.packName,
+                declaredBinding: declaration.binding
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
         }
         let destination = try GenericPhaseExtensionWriter.write(
             contract: contract,
