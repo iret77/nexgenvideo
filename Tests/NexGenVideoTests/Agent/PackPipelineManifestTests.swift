@@ -579,6 +579,7 @@ struct PackPipelineManifestTests {
             .init(phase: "analysis", kinds: [.song, .lyrics]),
         ])
         #expect(HistoricalPhaseContractCompatibility.detachedGatePhases(for: nested) == ["cover"])
+        #expect(HistoricalPhaseContractCompatibility.missingGatePhases(for: nested) == ["project_init"])
         let legacyManifest = try #require(
             HistoricalPhaseContractCompatibility.manifest(for: nested)
         )
@@ -616,7 +617,7 @@ struct PackPipelineManifestTests {
             phase: "analysis",
             summary: "One track"
         ) { _ in }
-        for phase in PipelineAgentContract.musicvideoPhases {
+        for phase in PipelineAgentContract.musicvideoPhases where phase != "project_init" {
             legacyRegistry.registerGateRequirement(phase) { _ in }
         }
         legacyRegistry.registerGateRequirement("cover") { _ in }

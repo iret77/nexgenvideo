@@ -9,6 +9,23 @@ import Testing
 @Suite("Library asset picker")
 struct LibraryPickerTests {
 
+    private func sourceFile(_ path: String) throws -> String {
+        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        while root.path != "/",
+              !FileManager.default.fileExists(
+                atPath: root.appendingPathComponent("Package.swift").path
+              ) {
+            root.deleteLastPathComponent()
+        }
+        try #require(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("Package.swift").path
+        ))
+        return try String(
+            contentsOf: root.appendingPathComponent(path),
+            encoding: .utf8
+        )
+    }
+
     private func intake(_ accept: [String]) -> AgentDialog.FileIntake {
         AgentDialog.FileIntake(accept: accept, prompt: nil, allowsMultiple: false,
                                attachAs: nil, namePrompt: nil, required: false)
