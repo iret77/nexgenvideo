@@ -366,15 +366,20 @@ private extension CapabilityEvidenceV1 {
 
 enum BundledModelCapabilityCorpus {
     static func load() throws -> ModelCapabilityCorpusDocument {
-        for bundle in [Bundle.main, Bundle.module] {
-            if let url = bundle.url(
-                forResource: "model-capability-corpus-v1",
-                withExtension: "json",
-                subdirectory: "ModelCapabilities"
-            ) {
-                return try ModelCapabilityCorpusDocument.decode(Data(contentsOf: url))
-            }
+        if let url = corpusURL(in: Bundle.main) {
+            return try ModelCapabilityCorpusDocument.decode(Data(contentsOf: url))
+        }
+        if let url = corpusURL(in: Bundle.module) {
+            return try ModelCapabilityCorpusDocument.decode(Data(contentsOf: url))
         }
         throw ModelCapabilityCorpusError.resourceNotFound
+    }
+
+    private static func corpusURL(in bundle: Bundle) -> URL? {
+        bundle.url(
+            forResource: "model-capability-corpus-v1",
+            withExtension: "json",
+            subdirectory: "ModelCapabilities"
+        )
     }
 }

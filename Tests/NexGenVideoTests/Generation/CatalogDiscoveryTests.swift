@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import NexGenEngine
 import Testing
 
 @testable import NexGenVideo
