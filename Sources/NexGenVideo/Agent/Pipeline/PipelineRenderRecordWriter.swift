@@ -170,11 +170,15 @@ enum PipelineRenderRecordWriter {
                     "A render update must identify its replaced shot."
                 )
             }
-            var updated = previousPublication?.lastFrames
-                ?? (try rejectLegacyLastFrames(
+            var updated: [String: RenderLastFrameProofV1]
+            if let previousPublication {
+                updated = previousPublication.lastFrames
+            } else {
+                updated = try rejectLegacyLastFrames(
                     manifest: manifest,
                     excludingShotID: replacingShotID
-                ))
+                )
+            }
             updated.removeValue(forKey: replacingShotID)
             if let preparedLastFrame {
                 updated[replacingShotID] = preparedLastFrame.proof

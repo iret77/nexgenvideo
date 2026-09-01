@@ -1283,10 +1283,10 @@ enum PhaseContractRuntime {
     }
 
     static func displayLabel(for phase: String) -> String? {
-        let matches = PhaseContractStore.all().compactMap {
-            guard let pack = PackCatalog.pack(named: $0.packID),
-                  pack.version == $0.packVersion else { return nil }
-            return $0.phase(phase)?.declaration.display?.label
+        let matches: [String] = PhaseContractStore.all().compactMap { contract -> String? in
+            guard let pack = PackCatalog.pack(named: contract.packID),
+                  pack.version == contract.packVersion else { return nil }
+            return contract.phase(phase)?.declaration.display?.label
         }
         return Set(matches).count == 1 ? matches.first : nil
     }
