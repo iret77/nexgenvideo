@@ -1,506 +1,1806 @@
 <!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
-<title>UI-Spec — Calm, task-oriented Agent</title>
-<meta name="ui-spec-viewports" content="240x1050,400x1050,640x1050,1180x1100">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI-Spec — Agent chat</title>
+<meta name="ui-spec-viewports" content="1680x1100,1440x1000">
 <style>
   :root {
     color-scheme: dark;
-    --base: #0a0a0a;
-    --surface: #161616;
-    --raised: #1e1e1e;
-    --prominent: #2c2c2c;
-    --border: rgba(255,255,255,.12);
-    --border-strong: rgba(255,255,255,.18);
-    --text: rgba(255,255,255,1);
-    --text-2: rgba(255,255,255,.80);
-    --text-3: rgba(255,255,255,.62);
-    --muted: rgba(255,255,255,.34);
-    --accent: #f5efe4;
-    --time: #f29933;
-    --success: #4fb85f;
-    --warning: #e89c3e;
-    --error: #e54f4f;
-    --s1: 2px;
-    --s2: 4px;
-    --s3: 6px;
-    --s4: 8px;
-    --s5: 10px;
-    --s6: 12px;
-    --s7: 14px;
-    --s8: 20px;
-    --r1: 6px;
-    --r2: 10px;
-    --r3: 14px;
-    --hair: .5px;
-    --f1: 9px;
-    --f2: 10px;
-    --f3: 11px;
-    --f4: 13px;
-    --f5: 14px;
+    --page: #090a0c;
+    --base: #101114;
+    --surface: #17191d;
+    --raised: #1e2126;
+    --prominent: #292d33;
+    --field: #111317;
+    --border: rgba(255, 255, 255, .14);
+    --border-strong: rgba(255, 255, 255, .23);
+    --text: rgba(255, 255, 255, 1);
+    --text-2: rgba(255, 255, 255, .80);
+    --text-3: rgba(255, 255, 255, .62);
+    --muted: rgba(255, 255, 255, .34);
+    --accent: #f2a044;
+    --accent-dim: rgba(242, 160, 68, .13);
+    --success: #58bf69;
+    --warning: #e6ad45;
+    --error: #e26059;
+    --info: #75a9ef;
+    --s-xxs: 3px;
+    --s-xs: 5px;
+    --s-sm: 7px;
+    --s-sm-md: 9px;
+    --s-md: 11px;
+    --s-md-lg: 13px;
+    --s-lg: 15px;
+    --s-lg-xl: 17px;
+    --s-xl: 21px;
+    --s-xl-xxl: 25px;
+    --s-xxl: 30px;
+    --r-xs: 4px;
+    --r-sm: 6px;
+    --r-md: 9px;
+    --r-lg: 12px;
+    --hair: 1px;
+    --f-micro: 9px;
+    --f-xxs: 10px;
+    --f-xs: 11px;
+    --f-sm: 12px;
+    --f-md: 13px;
+    --f-lg: 15px;
   }
+
   * { box-sizing: border-box; }
-  body {
+
+  html, body {
     margin: 0;
-    background: #080808;
+    background: var(--page);
     color: var(--text-2);
-    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    font: 400 var(--f-md)/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   }
+
+  body { padding: var(--s-xxl); }
+
+  .doc {
+    width: min(100%, 1460px);
+    margin: 0 auto;
+  }
+
   #spec {
-    width: min(1120px, calc(100% - 32px));
-    margin: 28px auto;
-    padding: 24px 28px;
-    border: var(--hair) solid var(--border-strong);
-    border-radius: var(--r2);
-    background: #111;
+    padding: var(--s-xl-xxl) var(--s-xxl);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-lg);
+    background: #121318;
   }
-  h1 { margin: 0 0 var(--s3); color: var(--text); font-size: 23px; font-weight: 600; }
-  h2 { margin: 24px 0 var(--s4); color: var(--text); font-size: var(--f5); }
-  h3 { margin: 16px 0 var(--s3); color: var(--text-2); font-size: var(--f4); }
-  p, li { max-width: 92ch; }
-  ul { margin: var(--s3) 0; padding-left: 20px; }
-  li { margin: var(--s2) 0; }
-  code { color: #d9c7ae; }
-  table { width: 100%; border-collapse: collapse; font-size: var(--f3); }
-  th, td { padding: var(--s4); border-bottom: var(--hair) solid var(--border); text-align: left; vertical-align: top; }
-  th { color: var(--text); font-weight: 600; }
-  .contract { color: var(--text-3); }
+
+  h1 {
+    margin: 0 0 var(--s-sm);
+    color: var(--text);
+    font-size: 25px;
+    font-weight: 600;
+    letter-spacing: -.02em;
+  }
+
+  h2 {
+    margin: var(--s-xxl) 0 var(--s-sm-md);
+    padding-bottom: var(--s-sm);
+    border-bottom: var(--hair) solid var(--border);
+    color: var(--text);
+    font-size: var(--f-lg);
+    font-weight: 600;
+  }
+
+  h3 {
+    margin: var(--s-xl) 0 var(--s-xs);
+    color: var(--text);
+    font-size: var(--f-md);
+    font-weight: 600;
+  }
+
+  p, li { max-width: 96ch; }
+  p { margin: var(--s-xs) 0; }
+  ul, ol { margin: var(--s-xs) 0; padding-left: var(--s-xl); }
+  li { margin: var(--s-xs) 0; }
+  strong { color: var(--text); }
+
+  code {
+    padding: 1px var(--s-xs);
+    border-radius: var(--r-xs);
+    color: #efc494;
+    background: rgba(255, 255, 255, .05);
+    font: 500 var(--f-xs)/1.4 "SF Mono", ui-monospace, monospace;
+  }
+
+  .lead {
+    max-width: 88ch;
+    color: var(--text);
+    font-size: var(--f-lg);
+  }
+
+  .callout {
+    margin-top: var(--s-md-lg);
+    padding: var(--s-md-lg) var(--s-lg);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 var(--r-sm) var(--r-sm) 0;
+    color: var(--text-2);
+    background: var(--accent-dim);
+  }
+
+  .tree {
+    max-width: 720px;
+    margin: var(--s-md) 0;
+    padding: var(--s-md-lg) var(--s-lg);
+    overflow: auto;
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--text-2);
+    background: var(--field);
+    font: 500 var(--f-sm)/1.55 "SF Mono", ui-monospace, monospace;
+  }
+
+  .spec-table {
+    width: 100%;
+    margin-top: var(--s-sm);
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .spec-table th,
+  .spec-table td {
+    padding: var(--s-sm-md) var(--s-md);
+    border-bottom: var(--hair) solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .spec-table th {
+    color: var(--text-3);
+    font-size: var(--f-xs);
+    font-weight: 600;
+  }
+
+  .spec-table td:first-child {
+    width: 19%;
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .spec-table.compact td:first-child { width: 14%; }
+
+  .contract-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-md);
+    margin-top: var(--s-md);
+  }
+
+  .contract-card {
+    padding: var(--s-md-lg);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface);
+  }
+
+  .contract-card b {
+    display: block;
+    margin-bottom: var(--s-xs);
+    color: var(--text);
+  }
 
   #mockups {
-    min-height: 1050px;
-    padding: 30px max(0px, calc((100vw - 680px) / 2)) 64px;
-    background: radial-gradient(circle at 60% 0%, #25221f 0%, #0a0a0a 44%);
+    margin-top: 46px;
+    padding: var(--s-xl-xxl);
+    border-radius: var(--r-lg);
+    background:
+      radial-gradient(circle at 70% 0%, rgba(242, 160, 68, .12), transparent 30%),
+      #0d0e11;
   }
-  .agent-shell {
-    width: min(640px, 100vw);
-    height: 990px;
-    margin: 0 auto;
+
+  .mockups-head {
+    max-width: 1000px;
+    margin-bottom: var(--s-xl);
+  }
+
+  .mockups-head h2 {
+    margin-top: 0;
+    border: 0;
+    font-size: 20px;
+  }
+
+  .state-index {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-xs);
+    margin-top: var(--s-md);
+  }
+
+  .state-index a {
+    padding: var(--s-xs) var(--s-sm-md);
+    border: var(--hair) solid var(--border);
+    border-radius: 999px;
+    color: var(--text-2);
+    background: var(--surface);
+    text-decoration: none;
+    font-size: var(--f-xs);
+  }
+
+  .mock-state {
+    padding: var(--s-xl) 0 var(--s-xxl);
+    border-top: var(--hair) solid var(--border);
+  }
+
+  .mock-state:first-child { border-top: 0; }
+
+  .state-heading {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-sm-md);
+    margin: 0 0 var(--s-xs);
+    color: var(--text);
+    font-size: var(--f-lg);
+    font-weight: 600;
+  }
+
+  .state-number {
+    color: var(--accent);
+    font: 600 var(--f-xs)/1 "SF Mono", ui-monospace, monospace;
+  }
+
+  .state-description {
+    max-width: 100ch;
+    margin-bottom: var(--s-md-lg);
+    color: var(--text-3);
+    font-size: var(--f-sm);
+  }
+
+  .viewport-grid {
+    display: grid;
+    grid-template-columns: 240px 400px 640px;
+    gap: var(--s-lg);
+    align-items: start;
+    width: max-content;
+  }
+
+  .viewport-sample { min-width: 0; }
+
+  .viewport-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: var(--s-xs);
+    color: var(--text-3);
+    font-size: var(--f-xxs);
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+
+  .agent-panel {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto auto;
+    height: 680px;
     overflow: hidden;
-    background: var(--base);
     border: var(--hair) solid var(--border-strong);
-    border-radius: var(--r2);
-    box-shadow: 0 18px 55px rgba(0,0,0,.55);
+    border-radius: var(--r-lg);
+    background: var(--base);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
   }
+
   .conversation-bar {
-    min-height: 38px;
     display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--s-xs);
     align-items: center;
-    gap: var(--s2);
-    padding: var(--s2) var(--s4);
-    color: var(--text-3);
-    background: var(--raised);
+    min-height: 40px;
+    padding: var(--s-xs) var(--s-sm);
     border-bottom: var(--hair) solid var(--border);
+    background: var(--surface);
   }
+
   .conversation-title {
     min-width: 0;
+    padding: var(--s-xs) var(--s-sm);
+    overflow: hidden;
     color: var(--text);
-    font-size: var(--f3);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--f-sm);
     font-weight: 600;
+  }
+
+  .conversation-title .chevron {
+    margin-left: var(--s-xs);
+    color: var(--text-3);
+    font-size: var(--f-xxs);
+  }
+
+  .bar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--s-xxs);
+  }
+
+  .bar-action {
+    min-width: 0;
+    padding: var(--s-xs) var(--s-sm);
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+    background: transparent;
+    white-space: nowrap;
+    font-size: var(--f-xxs);
+    font-weight: 600;
+  }
+
+  .bar-action.latest {
+    color: var(--text);
+    background: var(--prominent);
+  }
+
+  .bar-action.latest.reserved {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .w240 .conversation-bar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    padding: var(--s-xs);
+  }
+
+  .w240 .bar-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .w240 .bar-action {
+    padding-inline: var(--s-xs);
+    text-align: center;
+  }
+
+  .transcript {
+    min-height: 0;
+    overflow: auto;
+    padding: var(--s-md) var(--s-md-lg);
+    scrollbar-gutter: stable;
+  }
+
+  .w240 .transcript { padding-inline: var(--s-sm-md); }
+
+  .turn {
+    display: grid;
+    gap: var(--s-sm);
+    margin-bottom: var(--s-xl);
+  }
+
+  .turn:last-child { margin-bottom: 0; }
+
+  .intent {
+    justify-self: end;
+    width: min(86%, 470px);
+    padding: var(--s-sm-md) var(--s-md);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--text);
+    background: var(--prominent);
+  }
+
+  .intent-label,
+  .result-label {
+    display: block;
+    margin-bottom: var(--s-xxs);
+    color: var(--text-3);
+    font-size: var(--f-micro);
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+
+  .intent p,
+  .result p,
+  .notice p {
+    margin: 0;
+  }
+
+  .result {
+    color: var(--text-2);
+  }
+
+  .result strong { color: var(--text); }
+
+  .structured-result {
+    display: grid;
+    gap: var(--s-sm-md);
+    padding: var(--s-md-lg);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface);
+  }
+
+  .structured-title {
+    color: var(--text);
+    font-size: var(--f-md);
+    font-weight: 600;
+  }
+
+  .badge-row,
+  .key-values,
+  .artifact-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-xs);
+  }
+
+  .badge {
+    padding: var(--s-xxs) var(--s-sm);
+    border-radius: 999px;
+    color: var(--text-2);
+    background: var(--prominent);
+    font-size: var(--f-xxs);
+  }
+
+  .badge.ok { color: #a9deb1; }
+
+  .key-value {
+    flex: 1 1 120px;
+    min-width: 0;
+    padding-top: var(--s-xs);
+    border-top: var(--hair) solid var(--border);
+  }
+
+  .key {
+    color: var(--text-3);
+    font-size: var(--f-micro);
+    text-transform: uppercase;
+  }
+
+  .value {
+    margin-top: var(--s-xxs);
+    overflow: hidden;
+    color: var(--text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--f-xs);
+  }
+
+  .media-result {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: var(--s-sm-md);
+    align-items: center;
+    padding-top: var(--s-sm-md);
+    border-top: var(--hair) solid var(--border);
+  }
+
+  .media-thumb {
+    aspect-ratio: 16 / 10;
+    border-radius: var(--r-sm);
+    background:
+      linear-gradient(145deg, rgba(242, 160, 68, .58), transparent 42%),
+      linear-gradient(25deg, #24314b, #78544c);
+  }
+
+  .media-name {
+    overflow: hidden;
+    color: var(--text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--f-xs);
+  }
+
+  .media-meta {
+    margin-top: var(--s-xxs);
+    color: var(--text-3);
+    font-size: var(--f-micro);
+  }
+
+  .text-action {
+    color: var(--text-2);
+    font-size: var(--f-xxs);
+    font-weight: 600;
+  }
+
+  .activity {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--s-sm);
+    align-items: center;
+    min-height: 30px;
+    padding: var(--s-xs) var(--s-sm);
+    border-radius: var(--r-sm);
+    color: var(--text-3);
+    background: rgba(255, 255, 255, .035);
+    font-size: var(--f-xs);
+  }
+
+  .activity-symbol {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .activity-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  button, .button {
-    min-height: 26px;
-    padding: 0 var(--s4);
-    border: var(--hair) solid var(--border);
-    border-radius: 999px;
-    background: var(--prominent);
-    color: var(--text-2);
-    font: 600 var(--f2) inherit;
+
+  .activity-state {
+    color: var(--text-3);
+    font-size: var(--f-micro);
     white-space: nowrap;
   }
-  button.primary { background: var(--accent); color: var(--base); border-color: transparent; }
-  button.danger { color: #ffaaaa; }
-  button:disabled { color: var(--muted); background: var(--raised); opacity: .6; }
-  .attention { color: var(--warning); }
 
-  .transcript {
-    min-height: 0;
-    overflow-y: auto;
-    padding: var(--s6) clamp(10px, 3vw, 20px) var(--s4);
-    scrollbar-width: none;
-  }
-  .transcript::-webkit-scrollbar { display: none; }
-  .history-summary {
-    margin-bottom: var(--s8);
-    color: var(--muted);
-    font-size: var(--f2);
-  }
-  .history-line {
-    min-height: 20px;
-    display: flex;
-    align-items: baseline;
-    gap: var(--s3);
-    border-bottom: var(--hair) solid rgba(255,255,255,.045);
-  }
-  .history-line strong { color: var(--text-3); font-weight: 500; }
-  .history-line span { margin-left: auto; color: var(--muted); }
-  .turn {
-    margin: 0 0 var(--s8);
-    padding-bottom: var(--s8);
-    border-bottom: var(--hair) solid rgba(255,255,255,.07);
-  }
-  .turn:last-child { border-bottom: 0; margin-bottom: 0; }
-  .user-intent {
-    width: fit-content;
-    max-width: 88%;
-    margin: 0 0 var(--s6) auto;
-    padding: var(--s4) var(--s7);
-    border-radius: var(--r3);
-    background: rgba(255,255,255,.08);
-    color: var(--text);
-    font-size: var(--f4);
-  }
-  .assistant-result { color: var(--text-2); font-size: var(--f4); }
-  .assistant-result h4 { margin: 0 0 var(--s3); color: var(--text); font-size: var(--f5); }
-  .activity, .receipt, .notice {
-    display: flex;
-    align-items: baseline;
-    gap: var(--s3);
-    margin-top: var(--s4);
-    color: var(--text-3);
-    font-size: var(--f2);
-  }
-  .activity .chevron, .receipt .chevron { color: var(--muted); }
-  .activity.running { color: var(--text-2); }
-  .spinner { color: var(--time); }
-  .receipt-group {
-    margin-top: var(--s5);
-    padding-left: var(--s4);
-    border-left: 2px solid rgba(255,255,255,.10);
-  }
-  .receipt { margin-top: var(--s2); }
-  .receipt .outcome { color: var(--text-2); font-weight: 600; }
-  .notice { color: var(--warning); }
-  .notice.error { color: #ff9c9c; }
-  .result-document {
-    margin-top: var(--s5);
-    padding: var(--s6);
+  .pipeline-progress {
+    display: grid;
+    gap: var(--s-sm-md);
+    padding: var(--s-md);
     border: var(--hair) solid var(--border);
-    border-radius: var(--r2);
+    border-radius: var(--r-md);
     background: var(--surface);
   }
-  .result-document h4 { margin-bottom: var(--s5); }
-  .badge-row { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s4) 0; }
-  .badge {
-    padding: var(--s1) var(--s3);
-    border-radius: 999px;
-    background: var(--raised);
-    color: var(--text-3);
-    font-size: var(--f1);
+
+  .progress-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--s-sm);
+    align-items: center;
   }
-  .kv { display: grid; grid-template-columns: minmax(70px, .35fr) 1fr; gap: var(--s2) var(--s4); font-size: var(--f2); }
-  .kv dt { color: var(--muted); }
-  .kv dd { margin: 0; color: var(--text-2); }
-  .media-result {
-    height: 86px;
-    margin-top: var(--s5);
+
+  .progress-symbol {
     display: grid;
     place-items: center;
-    border-radius: var(--r1);
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    color: var(--accent);
+    background: var(--accent-dim);
+  }
+
+  .progress-title {
+    color: var(--text);
+    font-size: var(--f-sm);
+    font-weight: 600;
+  }
+
+  .filename {
+    overflow: hidden;
     color: var(--text-3);
-    background: linear-gradient(135deg, #3b2a47, #b55b35 55%, #15151b);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--f-micro);
   }
-  .phase-progress {
-    margin-top: var(--s5);
-    padding: var(--s5);
-    border: var(--hair) solid var(--border);
-    border-radius: var(--r2);
-    background: var(--surface);
+
+  .progress-count {
+    color: var(--text-3);
+    font-size: var(--f-xxs);
+    font-variant-numeric: tabular-nums;
   }
-  .phase-head { display: flex; gap: var(--s4); align-items: baseline; color: var(--text); font-size: var(--f3); font-weight: 600; }
-  .phase-head span { margin-left: auto; color: var(--text-3); font-size: var(--f2); font-weight: 400; }
-  .progress { height: 4px; margin-top: var(--s4); border-radius: 99px; overflow: hidden; background: var(--prominent); }
-  .progress i { display: block; width: 62%; height: 100%; background: var(--time); }
-  .phase-next { margin-top: var(--s3); color: var(--muted); font-size: var(--f1); }
+
+  .stage-name {
+    color: var(--text-2);
+    font-size: var(--f-xs);
+    font-weight: 600;
+  }
+
+  .stage-detail,
+  .next-stage {
+    color: var(--text-3);
+    font-size: var(--f-micro);
+  }
+
+  .progress-track {
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--prominent);
+  }
+
+  .progress-fill {
+    display: block;
+    width: 43%;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+  }
+
+  .receipt-group {
+    display: grid;
+    gap: var(--s-xxs);
+    padding-left: var(--s-sm);
+    border-left: 2px solid var(--border-strong);
+    color: var(--text-3);
+    font-size: var(--f-xxs);
+  }
+
+  .receipt {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--s-xs);
+    align-items: baseline;
+  }
+
+  .receipt-symbol { color: var(--text-2); }
+  .receipt strong { color: var(--text-2); font-weight: 600; }
+
+  .notice {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--s-sm);
+    padding: var(--s-sm-md);
+    border-left: 3px solid var(--error);
+    border-radius: 0 var(--r-sm) var(--r-sm) 0;
+    color: var(--text-2);
+    background: rgba(226, 96, 89, .08);
+    font-size: var(--f-xs);
+  }
+
+  .notice-title {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .notice-action {
+    display: inline-block;
+    margin-top: var(--s-xs);
+    color: var(--text);
+    font-weight: 600;
+  }
 
   .live-status {
-    min-height: 31px;
-    display: flex;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--s-sm);
     align-items: center;
-    gap: var(--s3);
-    padding: var(--s3) var(--s6);
+    min-height: 31px;
+    padding: var(--s-xs) var(--s-md);
     border-top: var(--hair) solid var(--border);
-    background: var(--surface);
     color: var(--text-3);
-    font-size: var(--f2);
+    background: var(--surface);
+    font-size: var(--f-xxs);
   }
-  .live-status strong { color: var(--text-2); font-weight: 600; }
-  .live-status .latest { margin-left: auto; }
 
-  .composer-dock {
-    padding: var(--s4) var(--s5) var(--s5);
+  .status-symbol {
+    width: 12px;
+    color: var(--text-2);
+    text-align: center;
+    font-weight: 700;
+  }
+
+  .status-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .status-action {
+    color: var(--text);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .dock {
+    padding: var(--s-sm-md) var(--s-md);
+    border-top: var(--hair) solid var(--border);
     background: var(--base);
   }
+
   .composer {
-    min-height: 84px;
     display: grid;
-    grid-template-rows: 1fr auto;
-    border: var(--hair) solid var(--border);
-    border-radius: var(--r3);
-    background: var(--surface);
+    gap: var(--s-sm-md);
+    min-height: 82px;
+    padding: var(--s-sm-md);
+    border: var(--hair) solid var(--border-strong);
+    border-radius: var(--r-md);
+    background: var(--field);
   }
-  .composer-placeholder { padding: var(--s6); color: var(--muted); }
-  .composer-tools { display: flex; align-items: center; gap: var(--s3); padding: var(--s3); border-top: var(--hair) solid var(--border); }
-  .composer-tools .send { margin-left: auto; }
+
+  .composer-placeholder {
+    min-height: 32px;
+    color: var(--muted);
+    font-size: var(--f-xs);
+  }
+
+  .composer-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--s-xs);
+  }
+
+  .tool-label {
+    color: var(--text-3);
+    font-size: var(--f-xxs);
+    font-weight: 600;
+  }
+
+  .send {
+    margin-left: auto;
+    padding: var(--s-xs) var(--s-sm-md);
+    border-radius: 999px;
+    color: #181512;
+    background: #f4eee5;
+    font-size: var(--f-xxs);
+    font-weight: 700;
+  }
+
+  .send.disabled {
+    color: var(--muted);
+    background: var(--prominent);
+    opacity: .6;
+  }
+
   .decision {
-    max-height: 280px;
-    overflow: auto;
-    padding: var(--s6);
-    border: var(--hair) solid rgba(242,153,51,.42);
-    border-radius: var(--r2);
-    background: var(--surface);
-  }
-  .decision-head { display: flex; gap: var(--s3); align-items: center; color: var(--text); font-size: var(--f3); font-weight: 600; }
-  .decision-head .step { margin-left: auto; color: var(--muted); font-size: var(--f1); font-weight: 500; }
-  .decision p { margin: var(--s3) 0 var(--s5); color: var(--text-3); font-size: var(--f2); }
-  .decision-actions { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: center; }
-  .decision-actions .primary { margin-left: auto; }
-  .select-row { display: grid; grid-template-columns: auto minmax(0,1fr); gap: var(--s4); margin: var(--s4) 0; font-size: var(--f2); }
-  .select-row label { color: var(--muted); }
-  .select-row strong { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .decision-error { margin: var(--s4) 0; color: #ffaaaa; font-size: var(--f2); }
-
-  .state-matrix {
-    width: min(1120px, calc(100% - 32px));
-    margin: 34px auto 0;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--s6);
+    gap: var(--s-sm-md);
+    max-height: 286px;
+    overflow: hidden;
+    padding: var(--s-md);
+    border: var(--hair) solid rgba(242, 160, 68, .35);
+    border-radius: var(--r-md);
+    background: var(--raised);
   }
-  .state-card {
-    min-height: 130px;
-    padding: var(--s6);
-    border: var(--hair) solid var(--border);
-    border-radius: var(--r2);
-    background: var(--surface);
-  }
-  .state-card h3 { margin-top: 0; }
-  .state-card p { color: var(--text-3); font-size: var(--f2); }
-  .mini-status { display: flex; gap: var(--s3); align-items: center; color: var(--text-2); font-size: var(--f2); }
-  .mini-actions { display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s4); }
-  .conversation-list { margin-top: var(--s4); }
-  .conversation-row { display: flex; gap: var(--s3); padding: var(--s3) 0; border-bottom: var(--hair) solid var(--border); font-size: var(--f2); }
-  .conversation-row span { margin-left: auto; color: var(--muted); }
 
-  @media (max-width: 700px) {
-    #spec { width: calc(100% - 16px); margin: 8px auto; padding: 14px; }
-    #spec table { display: block; overflow-x: auto; }
-    #mockups { padding: 0; }
-    .agent-shell { height: 1050px; border-radius: 0; border-left: 0; border-right: 0; }
-    .state-matrix { grid-template-columns: 1fr; width: calc(100% - 16px); }
+  .decision-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--s-sm);
+    align-items: center;
   }
-  @media (max-width: 300px) {
-    .conversation-bar { grid-template-columns: auto auto minmax(0,1fr) auto; }
-    .transcript { padding-left: var(--s5); padding-right: var(--s5); }
-    .decision-actions .primary { margin-left: 0; }
-    .kv { grid-template-columns: 1fr; }
-    .kv dd { margin-bottom: var(--s2); }
+
+  .decision-symbol { color: var(--accent); }
+
+  .decision-title {
+    overflow: hidden;
+    color: var(--text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--f-sm);
+    font-weight: 600;
+  }
+
+  .decision-scroll {
+    min-height: 0;
+    overflow: auto;
+    color: var(--text-3);
+    font-size: var(--f-xs);
+    scrollbar-gutter: stable;
+  }
+
+  .decision-copy { margin: 0; }
+
+  .decision-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--s-xs);
+  }
+
+  .button {
+    padding: var(--s-xs) var(--s-md);
+    border: var(--hair) solid var(--border);
+    border-radius: 999px;
+    color: var(--text-2);
+    background: var(--prominent);
+    font-size: var(--f-xxs);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .button.primary {
+    border-color: transparent;
+    color: #181512;
+    background: #f4eee5;
+  }
+
+  .button.disabled {
+    color: var(--muted);
+    background: var(--prominent);
+    opacity: .6;
+  }
+
+  .field {
+    min-height: 30px;
+    margin-top: var(--s-xs);
+    padding: var(--s-sm);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-sm);
+    color: var(--muted);
+    background: var(--field);
+  }
+
+  .field.filled { color: var(--text); }
+
+  .drop-target {
+    display: grid;
+    place-items: center;
+    min-height: 52px;
+    margin-top: var(--s-xs);
+    padding: var(--s-sm);
+    border: var(--hair) dashed rgba(242, 160, 68, .45);
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+    background: var(--accent-dim);
+    text-align: center;
+  }
+
+  .library-search {
+    margin-top: var(--s-sm);
+    padding: var(--s-xs) var(--s-sm);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-sm);
+    color: var(--muted);
+    background: var(--field);
+  }
+
+  .asset-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-xs);
+    max-height: 68px;
+    margin-top: var(--s-xs);
+    overflow: auto;
+  }
+
+  .asset {
+    display: grid;
+    grid-template-columns: 25px minmax(0, 1fr);
+    gap: var(--s-xs);
+    align-items: center;
+    min-width: 0;
+    padding: var(--s-xs);
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+    background: rgba(255, 255, 255, .035);
+  }
+
+  .asset-thumb {
+    width: 25px;
+    height: 25px;
+    border-radius: var(--r-xs);
+    background: linear-gradient(145deg, #765843, #2d3f55);
+  }
+
+  .asset-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--f-micro);
+  }
+
+  .file-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--s-xs);
+    align-items: center;
+    margin-top: var(--s-xs);
+    padding: var(--s-xs) var(--s-sm);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+  }
+
+  .file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .recovery {
+    display: grid;
+    gap: var(--s-sm);
+    padding: var(--s-md);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--raised);
+  }
+
+  .recovery-title { color: var(--text); font-weight: 600; }
+  .recovery-copy { color: var(--text-3); font-size: var(--f-xs); }
+
+  .conversation-popover {
+    margin-bottom: var(--s-md);
+    overflow: hidden;
+    border: var(--hair) solid var(--border-strong);
+    border-radius: var(--r-md);
+    background: var(--raised);
+  }
+
+  .switch-search {
+    margin: var(--s-sm);
+    padding: var(--s-xs) var(--s-sm);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-sm);
+    color: var(--muted);
+    background: var(--field);
+    font-size: var(--f-xxs);
+  }
+
+  .conversation-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--s-sm);
+    align-items: center;
+    min-height: 34px;
+    padding: var(--s-xs) var(--s-sm);
+    border-top: var(--hair) solid var(--border);
+  }
+
+  .conversation-row.current { background: var(--accent-dim); }
+  .conversation-state { color: var(--text-3); font-size: var(--f-micro); }
+  .conversation-state.attention { color: var(--warning); font-weight: 600; }
+  .conversation-state.running { color: var(--info); font-weight: 600; }
+
+  .empty-state {
+    display: grid;
+    place-items: center;
+    min-height: 190px;
+    text-align: center;
+    color: var(--text-3);
+  }
+
+  .empty-title {
+    color: var(--text);
+    font-size: var(--f-sm);
+    font-weight: 600;
+  }
+
+  .starter-list {
+    display: grid;
+    gap: var(--s-xs);
+    margin-top: var(--s-sm);
+  }
+
+  .starter {
+    padding: var(--s-sm);
+    border: var(--hair) solid var(--border);
+    border-radius: var(--r-sm);
+    color: var(--text-2);
+    background: var(--surface);
+    text-align: left;
+    font-size: var(--f-xxs);
+  }
+
+  .w240 .intent { width: 94%; }
+  .w240 .structured-result { padding: var(--s-sm-md); }
+  .w240 .key-values { display: grid; }
+  .w240 .media-result { grid-template-columns: 54px minmax(0, 1fr); }
+  .w240 .activity { grid-template-columns: auto minmax(0, 1fr); }
+  .w240 .activity-state { grid-column: 2; }
+  .w240 .progress-head { grid-template-columns: auto minmax(0, 1fr); }
+  .w240 .progress-count { grid-column: 2; }
+  .w240 .live-status { padding-inline: var(--s-sm-md); }
+  .w240 .dock { padding: var(--s-sm); }
+  .w240 .composer-tools { flex-wrap: wrap; }
+  .w240 .send { margin-left: auto; }
+  .w240 .decision { max-height: 318px; padding: var(--s-sm-md); }
+  .w240 .asset-list { grid-template-columns: minmax(0, 1fr); }
+  .w240 .decision-actions { justify-content: stretch; }
+  .w240 .decision-actions .button { flex: 1 1 auto; text-align: center; }
+
+  .w640 .transcript { padding-inline: var(--s-xl); }
+  .w640 .dock { padding-inline: var(--s-xl); }
+
+  .stress .turn {
+    gap: var(--s-xs);
+    margin-bottom: var(--s-md-lg);
+  }
+
+  .stress .intent,
+  .stress .result {
+    font-size: var(--f-xs);
+  }
+
+  .stress-marker {
+    margin-bottom: var(--s-md);
+    color: var(--text-3);
+    font-size: var(--f-micro);
+    text-align: center;
+  }
+
+  .capture #spec,
+  .capture .mockups-head,
+  .capture .mock-state:not(.capture-target) {
+    display: none;
+  }
+
+  .capture {
+    padding: var(--s-lg);
+  }
+
+  .capture #mockups {
+    margin: 0;
+    padding: var(--s-lg);
+  }
+
+  .capture .mock-state {
+    padding: 0;
+    border: 0;
+  }
+
+  .capture .state-description { margin-bottom: var(--s-sm); }
+
+  .noscript {
+    padding: var(--s-lg);
+    border: var(--hair) solid var(--error);
+    color: var(--text);
+    background: rgba(226, 96, 89, .08);
+  }
+
+  @media (max-width: 1500px) {
+    body { padding: var(--s-lg); }
+    #mockups { overflow-x: auto; }
+  }
+
+  @media (max-width: 760px) {
+    #spec { padding: var(--s-lg); }
+    .contract-grid { grid-template-columns: minmax(0, 1fr); }
+    .spec-table { table-layout: auto; }
+    .spec-table th,
+    .spec-table td { padding-inline: var(--s-xs); }
   }
 </style>
+</head>
+<body>
+<main class="doc">
+  <section id="spec">
+    <h1>Calm, task-oriented Agent chat</h1>
+    <p class="lead">Binding information architecture, state ownership, visual grammar and responsive
+      behavior for the canonical NexGenVideo Agent panel.</p>
+    <p>This contract reorganizes existing chat capabilities. It does not add a second Pipeline,
+      change workflow semantics, turn chat into the application spine, or move artifact truth into
+      the transcript.</p>
 
-<section id="spec">
-  <h1>Calm, task-oriented Agent</h1>
-  <p>This is the normative information architecture and visual grammar for the NexGenVideo Agent.
-    Conversation content is primary, current work is secondary, and utility chrome is tertiary. A
-    user task and everything it produces form one stable turn.</p>
+    <div class="callout"><strong>Approval gate.</strong> Implementation of issues #428–#432 begins
+      only after this document is explicitly accepted. Later intentional UI changes update this
+      artifact in the same change.</div>
 
-  <h2>Surface ownership</h2>
-  <table>
-    <tr><th>Information or action</th><th>Single owner</th><th>Normative treatment</th></tr>
-    <tr><td>Current conversation and switching</td><td>Conversation bar</td><td>One labeled History navigator, labeled Workflows when available, and labeled New. No open-tab strip plus History.</td></tr>
-    <tr><td>Authored intent and assistant result</td><td>Transcript turn</td><td>Primary reading order. A hidden kickoff has no visible user row.</td></tr>
-    <tr><td>Current/completed technical work</td><td>Owning transcript turn</td><td>One activity line; one labeled disclosure contains steps, arguments, results, and errors.</td></tr>
-    <tr><td>Deterministic running phase detail</td><td>Owning tool-call position</td><td>Expanded progress until completion, then the normal collapsed activity line.</td></tr>
-    <tr><td>Workflow/choice audit history</td><td>Owning transcript turn</td><td>Compact non-interactive receipts, grouped by phase. Never authored-user prose.</td></tr>
-    <tr><td>Current high-level state</td><td>Persistent live status</td><td>One compact line: availability, working, action required, failed, or ready. No repeated detail.</td></tr>
-    <tr><td>Composition or required decision</td><td>Composer Dock</td><td>Exactly one mutually exclusive dock state. Draft, references, height, and focus survive decisions.</td></tr>
-    <tr><td>Visual selection and artifact truth</td><td>Timeline, Review, Bible, Media, Pipeline</td><td>The Agent references canonical surfaces; it never duplicates their interactive content.</td></tr>
-    <tr><td>Recoverable detail and CTA</td><td>Nearest corrective owner</td><td>Detailed error appears once. Live status may say Failed without repeating the message.</td></tr>
-  </table>
+    <h2>Canonical hierarchy</h2>
+    <pre class="tree">Agent panel
+├── Conversation Bar
+├── Transcript
+│   └── Turn
+│       ├── User intent (optional for hidden host kickoff)
+│       ├── Assistant result
+│       ├── Activity
+│       └── Receipts and notices
+├── Live Status
+└── Composer Dock
+    └── Composer OR exactly one active decision/recovery state</pre>
 
-  <h2>Turn anatomy and rhythm</h2>
-  <ul>
-    <li>A turn contains authored user intent when present, assistant prose or one result document,
-      one current/completed activity summary, and its durable receipts.</li>
-    <li>Intra-turn spacing uses 4–12 pt roles. Inter-turn spacing is 20 pt plus a quiet divider.
-      Consecutive receipts within one phase use 2–4 pt and one group rail.</li>
-    <li>Completed activity is collapsed by default. Current work may expand only at the owning
-      tool-call position. Disclosures never nest.</li>
-    <li>Streaming replaces the current result/activity in place using stable identity. It does not
-      append status rows or move a reader who is pinned away from the bottom.</li>
-    <li>Plain assistant prose has no card chrome. Structured content uses one bounded result document,
-      never an arbitrary peer-card stack or duplicated Markdown.</li>
-  </ul>
+    <p>The four panel regions are persistent, in-flow siblings. The observed Transcript scroll view
+      never shares a <code>ZStack</code>, overlay, scroll-edge effect or alignment container with the
+      Conversation Bar, Live Status, Latest action or Composer Dock.</p>
 
-  <h2>Result, activity, receipt, and notice grammar</h2>
-  <table>
-    <tr><th>Role</th><th>Content</th><th>Hierarchy</th><th>Interaction</th></tr>
-    <tr><td>Activity</td><td>Host operation label + state</td><td>Quiet line; one spinner maximum while current</td><td>One Details disclosure</td></tr>
-    <tr><td>Result</td><td>Prose or bounded headline/status/key-value/callout/media document</td><td>One primary container per turn</td><td>Copy and canonical result actions</td></tr>
-    <tr><td>Receipt</td><td>Attached, Provided, Skipped, Done, Failed, Needs action</td><td>Text + symbol first; color secondary</td><td>Non-interactive history</td></tr>
-    <tr><td>Notice</td><td>User-relevant warning, failure, or recovery</td><td>Shown only at the corrective owner</td><td>At most one corrective CTA</td></tr>
-  </table>
+    <table class="spec-table">
+      <tr><th>Region</th><th>Owns</th><th>Must not own</th></tr>
+      <tr><td>Conversation Bar</td><td>Current conversation identity, switching, New, Latest and one
+        More menu.</td><td>Workflow progress, decisions, backend errors, tabs plus a second history
+        model.</td></tr>
+      <tr><td>Transcript</td><td>Durable turns, the current tool call, runner progress, completed
+        activity, results, receipts and turn-specific notices.</td><td>Pending approval controls,
+        visual-choice boards, a duplicate Pipeline or a global readiness banner.</td></tr>
+      <tr><td>Live Status</td><td>One terse current high-level state and the Cancel action for a paid
+        generation that continues independently.</td><td>Tool detail already in the transcript,
+        decision instructions, repeated errors or idle explanation.</td></tr>
+      <tr><td>Composer Dock</td><td>Free composer, one current host decision, or one backend-recovery
+        action.</td><td>A disabled composer underneath another decision card or controls for a
+        different conversation.</td></tr>
+    </table>
 
-  <h2>Composer Dock state machine</h2>
-  <p><code>composing | clarification | workflow-intake | gate-approval | spend-approval |
-    submitting | recoverable-error</code>. Exactly one state renders. A decision has a labeled primary
-    action and distinct Skip, Done, Clear item, Not yet, Decline, Approve, Generate, and Cancel actions.
-    Required fields expose a disabled reason. Decision content is bounded to 280 pt with one internal
-    scroll region; the transcript never gains a nested scroll view.</p>
+    <h2>Turn semantics and reading order</h2>
+    <ul>
+      <li>A turn is an explicit semantic projection with a stable identity. A message role alone is
+        not a turn boundary.</li>
+      <li>A visible user-authored request becomes <strong>User intent</strong>. Host-authored kickoff
+        text stays hidden and may anchor a system-origin turn with no false user row.</li>
+      <li>Workflow records, attachments, skips and approvals are <strong>Receipts</strong>. They never
+        render as user-authored turns even when their storage carrier has a user role.</li>
+      <li>New events carry a host correlation identity such as turn ID plus phase/job identity.
+        Legacy transcripts project deterministically: visible user prose begins a turn; hidden
+        kickoff begins a system-origin turn; a workflow receipt attaches to the preceding correlated
+        turn; an orphan assistant result becomes a system-origin turn rather than invented intent.</li>
+      <li>Completed visual and VoiceOver order is User intent → Assistant result → Activity summary →
+        Receipts → Notices. While no result exists, active Activity follows intent immediately; when
+        the result arrives it is inserted before the same stable activity identity.</li>
+      <li>Turns use spacing and typography for hierarchy. They are not universal nested cards.</li>
+    </ul>
 
-  <h2>Status precedence</h2>
-  <p><code>authentication/unavailable → terminal failure → cancellable generation → phase run →
-    submitting decision → action required → streaming/activity → backend checking → ready</code>.
-    Detailed errors stay in the Dock or owning turn. A visible decision owns “Action required” and
-    suppresses the separate status line. A visible running activity owns “Working.” Ready is one compact line.</p>
+    <h2>Four transcript families</h2>
+    <table class="spec-table">
+      <tr><th>Family</th><th>Normative treatment</th></tr>
+      <tr><td>Activity</td><td>One quiet summary row. One disclosure reveals a flat ordered list of
+        steps, arguments and results. There is no disclosure inside another disclosure. Host tool
+        presentation and runner events supply labels; model prose does not become operational
+        status.</td></tr>
+      <tr><td>Result</td><td>One logical assistant result per turn. Plain prose stays unframed.
+        Structured content forms one bounded document surface, not one card per block. Generated
+        media, provenance and durable Copy/Open/Reveal actions belong to this result.</td></tr>
+      <tr><td>Receipt</td><td>Compact, non-interactive host history grouped by turn or phase.
+        Attached, provided, skipped, completed, failed and needs-action use explicit words and
+        non-color symbols. A green checkmark is not the universal meaning.</td></tr>
+      <tr><td>Notice</td><td>A turn-bound interruption or failure with one owner and, when available,
+        one recovery action. Agent-facing gate refusals are translated; tool names and artifact paths
+        are not exposed unchanged.</td></tr>
+    </table>
 
-  <h2>Conversation chrome and utilities</h2>
-  <ul>
-    <li>The bar shows labeled History, labeled New, and labeled Workflows when available. History contains
-      every saved/open conversation, search, running/action-required cues, switch, close, and explicit delete.</li>
-    <li>Workflows and backend/model information live one disclosure deep and appear directly only when
-      they affect the current task or decision. Attach/import/reference remain one paperclip menu.</li>
-    <li>Latest is an in-flow labeled action only while the reader is away from the bottom. It relays a
-      scroll request by state and never overlays or resizes the transcript.</li>
-  </ul>
+    <h2>Structured results and #135 compatibility</h2>
+    <ul>
+      <li><code>show_blocks</code> remains the single schema-validated rich-result tool. Plain prose
+        remains valid and is never heuristically converted into native blocks.</li>
+      <li>New output uses a versioned, bounded document shape with fixed slots: optional headline,
+        body text, status badges, key-value groups, optional callout and generated artifacts. Each
+        slot has a declared maximum. Model-authored symbols and arbitrary block order are excluded.</li>
+      <li>Every variant declares enums, required fields and
+        <code>additionalProperties: false</code>. Invalid current-version input returns a tool error
+        and presents no partial rich UI.</li>
+      <li>Prose and valid structured data in one turn are folded into one Result. A second
+        <code>show_blocks</code> call cannot create a second primary result.</li>
+      <li>Versionless saved payloads use a dedicated legacy decoder and remain visually stable.
+        Tightening the current decoder must not erase saved rich results.</li>
+      <li>New output has no <code>phases-ref</code>. Pipeline is the canonical phase surface. If a
+        legacy saved payload contains that type, it becomes one compact non-interactive Pipeline
+        reference/open action, never a phase rail.</li>
+      <li>Transcript actions may copy, open or reveal durable artifacts. Approval, selection and
+        clarification controls remain in the Dock or their canonical artifact surface.</li>
+    </ul>
 
-  <h2>Responsive, keyboard, motion, and accessibility</h2>
-  <ul>
-    <li><strong>240 pt:</strong> History, Workflows, and New remain labeled. Result
-      key-value rows stack. Decision actions wrap without hiding the primary action.</li>
-    <li><strong>400 pt:</strong> the full conversation bar fits; result documents keep a two-column
-      key-value grid. <strong>640 pt:</strong> prose remains capped at the shared chat-column width.</li>
-    <li>Reading order is conversation bar → turns (intent, result, activity, receipts) → live status →
-      Dock. VoiceOver groups each turn and each dock state as one landmark with state and primary action.</li>
-    <li>Keyboard: ⌘N New; ⌘⇧H History; Esc cancels only when allowed; Return submits only in composing;
-      Tab traverses one coherent dock; destructive Delete is never the Close action.</li>
-    <li>State always has text and symbol, not color alone. Text contrast follows AppTheme. Reduce Motion
-      uses opacity only; no scale/move transition shifts the transcript/Dock boundary.</li>
-    <li>The observed transcript ScrollView, bar, status, and Dock are persistent acyclic in-flow
-      siblings. No shared ZStack, overlay, scroll-edge effect, geometry callback, or nested transcript scroll.</li>
-  </ul>
+    <h2>Composer Dock and #96 compatibility</h2>
+    <p>#96 keeps three roles in three places: pending control in the Dock, visual choices on canonical
+      application surfaces, and history as a compact non-interactive Receipt.</p>
 
-  <h2>Type and spacing hierarchy</h2>
-  <table>
-    <tr><th>Role</th><th>AppTheme role</th><th>Spacing</th></tr>
-    <tr><td>User intent / assistant result</td><td>FontSize.md, primary/secondary text</td><td>12 pt within content; 20 pt between turns</td></tr>
-    <tr><td>Result title</td><td>FontSize.mdLg, semibold</td><td>10 pt to result body</td></tr>
-    <tr><td>Activity / receipt / status</td><td>FontSize.xs or xxs, medium</td><td>4–8 pt; receipt groups 2–4 pt</td></tr>
-    <tr><td>Chrome / metadata</td><td>FontSize.xs/xxs, tertiary/muted</td><td>4–8 pt</td></tr>
-    <tr><td>Dock</td><td>Shared dialog/composer controls</td><td>10–14 pt shell, 6–8 pt controls</td></tr>
-  </table>
+    <table class="spec-table">
+      <tr><th>Dock state</th><th>Rule</th></tr>
+      <tr><td>Committing</td><td>The current decision remains visible with its controls disabled and
+        a specific committing label. Conversation switching is unavailable until the host mutation
+        settles.</td></tr>
+      <tr><td>Decision</td><td>Clarification, file intake, gate and spend approval replace the
+        composer. Exactly one can be active. It belongs to the selected conversation and cannot be
+        answered from another.</td></tr>
+      <tr><td>Recovery</td><td>When no decision is pending and the backend cannot run, one compact
+        recovery surface replaces the composer and owns the sole Agent Settings action.</td></tr>
+      <tr><td>Composer</td><td>Default. Draft, mentions, staged function, height and focus are owned
+        per conversation. Switching restores that conversation's state; it never carries a stale
+        draft or staged function into another chat.</td></tr>
+    </table>
 
-  <h2>Preserved locked contracts</h2>
-  <ul class="contract">
-    <li>#96: decisions are Composer Dock states, visual candidates stay on canonical canvases, and
-      transcript history is compact/non-interactive. MCP Apps never introduce transcript widgets.</li>
-    <li>#135: rich output remains schema validated with bounded enums, required fields,
-      <code>additionalProperties: false</code>, and a legacy compatibility projection.</li>
-    <li><code>pipeline-phase-progress.html</code> remains the running phase treatment;
-      <code>repeatable-intake.html</code> retains explicit numbered item, Skip, Done, Clear, and gating.</li>
-    <li>Pipeline remains the canonical workflow overview. Host intake remains durable history and
-      never becomes a fake user message. No provider, prompt, pack, pipeline, or artifact semantics change.</li>
-  </ul>
-</section>
+    <ul>
+      <li>A text-bearing decision reuses the dock editor behavior with a decision-local binding. The
+        conversation draft remains untouched and returns with its height and focus after completion,
+        cancellation or Escape when cancellation is allowed.</li>
+      <li>Decision content has an <code>AppTheme</code> maximum height and one internal scroll view.
+        The Transcript remains a separate sibling scroll view.</li>
+      <li>Library results inside intake are bounded and searchable. The intake drop target remains a
+        leaf SwiftUI drop target; no parent SwiftUI <code>.onDrop</code> spans nested targets.</li>
+      <li>Streaming may replace Send with Stop. A detached paid generation does not take over the
+        Dock; its concise state and Cancel remain in Live Status, so composing stays available.</li>
+      <li>Raw prompts never reach a content model. Dock submissions use the existing prompt engine
+        and schema-validated tool contracts.</li>
+    </ul>
 
-<section id="mockups" aria-label="Agent surface stress scenario">
-  <div class="agent-shell">
-    <header class="conversation-bar">
-      <button>History</button>
-      <button>Workflows</button>
-      <span aria-hidden="true"></span>
-      <button>New</button>
+    <h3>Repeatable optional intake</h3>
+    <ul>
+      <li>The title numbers exactly one current item. Every shown file belongs to that item.</li>
+      <li>Attach is enabled only after every required field is present: a usable name and at least one
+        accepted image.</li>
+      <li>The first empty item has visible Skip. After one attached item, the next empty item has
+        visible Done. Neither action is overloaded onto Attach.</li>
+      <li>A partial item disables completion and dismissal and exposes Clear item. Clearing restores
+        the correct empty first/next state.</li>
+      <li>Disabled buttons use shared muted text, non-accented background, reduced opacity and no
+        hover response.</li>
+    </ul>
+
+    <h2>Live state and error ownership</h2>
+    <table class="spec-table">
+      <tr><th>Condition</th><th>Transcript</th><th>Live Status</th><th>Dock</th></tr>
+      <tr><td>Idle</td><td>History only.</td><td><strong>Ready</strong>, one line.</td><td>Composer.</td></tr>
+      <tr><td>Tool call</td><td>Active Activity at the call position.</td><td><strong>Working</strong>,
+        no repeated operation or second spinner.</td><td>Composer with Stop while the backend cannot
+        accept a second turn.</td></tr>
+      <tr><td>Pipeline phase</td><td>Canonical runner progress at <code>run_phase</code>.</td><td>
+        <strong>Working</strong>.</td><td>Composer/Stop; no Pipeline detail.</td></tr>
+      <tr><td>Decision</td><td>No interactive duplicate.</td><td><strong>Action required</strong>.</td>
+        <td>Full decision, validation and actions.</td></tr>
+      <tr><td>Decision error</td><td>None.</td><td><strong>Action required</strong>.</td><td>Specific
+        inline error and recovery.</td></tr>
+      <tr><td>Turn failure</td><td>Notice on the affected turn with the only Retry when supported.</td>
+        <td><strong>Stopped</strong>.</td><td>Composer.</td></tr>
+      <tr><td>Backend unavailable</td><td>No duplicate setup notice.</td><td><strong>Agent
+        unavailable</strong>.</td><td>Recovery copy plus the only Open Agent Settings action.</td></tr>
+      <tr><td>Paid generation</td><td>Result/notice when it settles.</td><td>Generation label,
+        provider/model summary and Cancel.</td><td>Composer stays available.</td></tr>
+    </table>
+
+    <h2>Pipeline progress contract</h2>
+    <ul>
+      <li>An active <code>run_phase</code> specializes its Activity into one compact,
+        always-expanded progress element at that tool call's transcript position.</li>
+      <li>It names phase, original user-facing source filename, current runner stage, completed/total
+        declared stages and next stage. Storage hashes never appear.</li>
+      <li>Only runner-emitted stage boundaries advance progress. There is no invented percentage,
+        ETA or fake completion animation.</li>
+      <li>The canonical Pipeline panel only marks the phase Running. It never duplicates detailed
+        progress. All project gate mutations stay unavailable while the runner is active.</li>
+      <li>Completion collapses to the normal Activity summary. Failure remains a concise failed
+        Activity whose one disclosure contains technical detail.</li>
+    </ul>
+
+    <h2>Conversation Bar and session ownership</h2>
+    <ul>
+      <li>There is one conversation model: a title/menu control opens a bounded searchable switcher.
+        There is no horizontal tab strip plus History popover.</li>
+      <li>The bar contains a flexible current title, visible New, reserved in-flow Latest and visible
+        More. More contains Workflows in exactly one place and Close conversation.</li>
+      <li>Close removes a conversation from the open set but keeps its history. Delete is a targeted,
+        confirmed action in the switcher; it is never a synonym for Close.</li>
+      <li>Full titles and timestamps appear in the switcher. The bar truncates in the middle only when
+        space requires it; a fixed character prefix is not the title model.</li>
+      <li>Running, Needs action and Unread result are service-owned states keyed by session ID, shown
+        with text plus a symbol. They are not inferred by the view from saved message prose and are
+        not persisted as durable transcript truth.</li>
+      <li>A pending decision remains bound to its owner conversation. Switching may reveal another
+        conversation's own Dock, but can never show or resolve the first decision there.</li>
+      <li>Latest occupies a permanent in-flow slot. It appears by opacity/hit-testing only when the
+        user is away from the bottom, and relays a state request to the Transcript. It never overlays
+        or captures the scroll view.</li>
+    </ul>
+
+    <h2>Responsive contract</h2>
+    <table class="spec-table compact">
+      <tr><th>Width</th><th>Conversation Bar</th><th>Transcript and Dock</th></tr>
+      <tr><td>240</td><td>Two in-flow rows: full-width flexible title, then equal Latest/New/More
+        slots. No icon-only required action.</td><td>Single-column result fields, compact media,
+        wrapped dock tools, one-item library rows. Decision body scrolls inside its bounded height.</td></tr>
+      <tr><td>400</td><td>One row when localized labels fit; title yields first and uses middle
+        truncation.</td><td>Default turn measure. Two-column library results. All decision actions
+        remain visible without horizontal scrolling.</td></tr>
+      <tr><td>640</td><td>One row with a generous current-title region. The switcher remains a bounded
+        popover, not a second sidebar.</td><td>Transcript content retains a readable maximum measure;
+        extra width becomes inset, not denser cards or a different component.</td></tr>
+    </table>
+
+    <p>At every width, the panel remains Conversation Bar → Transcript → Live Status → Dock. Responsive
+      behavior may wrap within a region; it may not move a region into an overlay or produce a second
+      implementation.</p>
+
+    <h2>Accessibility</h2>
+    <table class="spec-table">
+      <tr><th>Element</th><th>Semantics and reading behavior</th></tr>
+      <tr><td>Conversation Bar</td><td>The current title is a button named “Switch conversation,
+        [full title]”. New, Latest and More retain visible labels and matching accessibility names.
+        Switcher rows announce title, relative update time and textual state.</td></tr>
+      <tr><td>Turn</td><td>One contained accessibility group. Order is User request, Result, Activity,
+        Receipts, Notices. A hidden kickoff contributes no “User” announcement.</td></tr>
+      <tr><td>Activity</td><td>One disclosure button announces label, Running/Completed/Failed and
+        expanded state. Runner stage announcements occur only at declared boundaries.</td></tr>
+      <tr><td>Result</td><td>Structured headings, lists and key/value pairs expose native semantics.
+        Generated media receives host-authored accessible description and filename. Durable actions
+        state their target.</td></tr>
+      <tr><td>Receipt</td><td>Static text, never a button. Outcome is spoken explicitly; color and
+        symbol are redundant cues.</td></tr>
+      <tr><td>Live Status</td><td>Polite live region for state changes, not every streamed token.
+        Repeated transcript detail is excluded.</td></tr>
+      <tr><td>Dock decision</td><td>Labeled group with heading and instructions. Focus enters the first
+        incomplete required field or primary choice, then returns to the restored composer/control.
+        Blocking validation errors are announced once.</td></tr>
+    </table>
+
+    <h2>Keyboard contract</h2>
+    <table class="spec-table">
+      <tr><th>Context</th><th>Keys</th><th>Result</th></tr>
+      <tr><td>Conversation menu</td><td>Space/Return, arrows, Escape</td><td>Open, move through the
+        bounded list, select, or close without changing conversation.</td></tr>
+      <tr><td>Transcript</td><td>Tab / Shift-Tab</td><td>Move only through actual disclosures and
+        durable result actions. Receipts are skipped because they are not controls.</td></tr>
+      <tr><td>Composer</td><td>Return; Shift-Return</td><td>Send only when enabled; insert newline.
+        Return never bypasses a pending decision or sends a stale draft.</td></tr>
+      <tr><td>Mention picker</td><td>Up/Down, Return, Escape, Tab/Shift-Tab</td><td>Preserve existing
+        highlight, pick, close and category-cycle behavior.</td></tr>
+      <tr><td>Cancellable decision</td><td>Escape</td><td>Perform its visible cancel/Not yet action.
+        A non-dismissible or partial repeatable item does nothing and keeps focus in the Dock.</td></tr>
+      <tr><td>Streaming/generation</td><td>Tab then Space/Return</td><td>Activate the visible Stop or
+        Cancel control. This spec introduces no hidden global shortcut.</td></tr>
+    </table>
+
+    <h2>Motion and scroll stability</h2>
+    <table class="spec-table">
+      <tr><th>Change</th><th>Motion rule</th></tr>
+      <tr><td>Latest visibility</td><td>Opacity only in its reserved slot; no width or height change.</td></tr>
+      <tr><td>Dock state</td><td>Replace content without animating panel height. Long decisions scroll
+        inside the fixed maximum. Restore composer focus after layout settles.</td></tr>
+      <tr><td>Activity progress</td><td>Update the existing row/card identity. Stage progress may use
+        the shared short animation; Reduce Motion updates immediately.</td></tr>
+      <tr><td>Transcript streaming</td><td>When pinned to latest, follow appended content. When the
+        user is away, preserve position and show Latest. A geometry callback may update pin state but
+        may not animate, insert, remove or resize an overlay/accessory.</td></tr>
+      <tr><td>Reduce Motion</td><td>No indeterminate decorative motion, bouncing, sliding or animated
+        reordering. Standard progress semantics and static state symbols remain.</td></tr>
+    </table>
+
+    <h2>Implementation constraints</h2>
+    <ul>
+      <li>Native implementation uses only <code>AppTheme</code> spacing, type, weight, radius, border,
+        opacity, icon size, shadow, color and animation constants. Add turn spacing, receipt spacing,
+        decision maximum height and conversation geometry tokens before use; do not hardcode them.</li>
+      <li>Disabled controls use the shared button style and do not retain active contrast or hover.</li>
+      <li>Agent-visible copy follows the actual app interface localization. OS locale, project content,
+        filenames, lyrics and prior generated prose never switch it.</li>
+      <li>Header, observed Transcript, Live Status and Dock are persistent in-flow siblings. No
+        scroll-geometry callback owns view insertion, animation or secondary-layer alignment.</li>
+      <li>The exact current session/runtime, paperclip, mentions, drop, paste, send, stop, drafts,
+        staged function and Pipeline runner contracts remain functional.</li>
+      <li>Every visible control performs exactly the named action. Symbols shown in mockups are
+        approximate; the native host owns SF Symbol selection and accessible text.</li>
+    </ul>
+
+    <h2>Acceptance criteria</h2>
+    <ul>
+      <li>Every mockup state below renders the complete four-region panel at 240, 400 and 640 points.</li>
+      <li>Short and long plain-prose results retain the same unframed Result grammar and readable
+        measure; content length never selects a second visual dialect.</li>
+      <li>A 34-turn conversation remains scannable, keeps stable turn identity, preserves the user's
+        scroll position and exposes a labeled Latest action without overlay.</li>
+      <li>No host receipt or hidden kickoff appears as user-authored intent.</li>
+      <li>At most one primary Result, one active Activity summary and one decision Dock are visible
+        per turn/panel state.</li>
+      <li>Every duplicated state has one owner according to the ownership matrix.</li>
+      <li>Pending decisions, drafts, mentions and staged functions cannot cross conversation identity.</li>
+      <li>The repeatable intake first-empty, partial and post-attachment empty states satisfy every
+        locked action rule at all three widths.</li>
+      <li>Pipeline progress answers phase, original file, current stage, count and next stage without
+        expanding anything or cloning Pipeline.</li>
+      <li>Keyboard and VoiceOver traversal follow the tables above; Reduce Motion changes no information.</li>
+    </ul>
+  </section>
+
+  <section id="mockups">
+    <header class="mockups-head">
+      <h2>Full-surface state matrix</h2>
+      <p>Each state uses the same complete Agent panel at 240, 400 and 640 points. The page contains
+        no external assets; JavaScript only instantiates the static repeated matrix and supports
+        isolated screenshot capture through <code>?capture=state-id</code>.</p>
+      <nav class="state-index" id="state-index" aria-label="Mockup states"></nav>
     </header>
+    <noscript><div class="noscript">Enable JavaScript to instantiate the self-contained mockup matrix.</div></noscript>
+    <div id="state-grid"></div>
+  </section>
+</main>
 
-    <main class="transcript" aria-label="Conversation">
-      <div class="history-summary" aria-label="Thirty completed turns">
-        <div class="history-line"><strong>1 · Project setup</strong><span>Done</span></div>
-        <div class="history-line"><strong>2 · Track intake</strong><span>Attached</span></div>
-        <div class="history-line"><strong>3 · Lyrics intake</strong><span>Skipped</span></div>
-        <div class="history-line"><strong>4 · Audio analysis</strong><span>Approved</span></div>
-        <div class="history-line"><strong>5 · Affect review</strong><span>Provided</span></div>
-        <div class="history-line"><strong>6 · Brief draft</strong><span>Done</span></div>
-        <div class="history-line"><strong>7 · Brief revision</strong><span>Approved</span></div>
-        <div class="history-line"><strong>8 · Character intake</strong><span>2 attached</span></div>
-        <div class="history-line"><strong>9 · Location intake</strong><span>2 attached</span></div>
-        <div class="history-line"><strong>10 · Style references</strong><span>4 attached</span></div>
-        <div class="history-line"><strong>11 · Color script</strong><span>Provided</span></div>
-        <div class="history-line"><strong>12 · Lighting anchor</strong><span>Failed</span></div>
-        <div class="history-line"><strong>13 · Provider recovery</strong><span>Done</span></div>
-        <div class="history-line"><strong>14 · Lighting anchor retry</strong><span>Generated</span></div>
-        <div class="history-line"><strong>15 · Production Design</strong><span>Approved</span></div>
-        <div class="history-line"><strong>16 · Treatment</strong><span>Drafted</span></div>
-        <div class="history-line"><strong>17 · Treatment notes</strong><span>Provided</span></div>
-        <div class="history-line"><strong>18 · Treatment revision</strong><span>Approved</span></div>
-        <div class="history-line"><strong>19 · Storyboard</strong><span>Drafted</span></div>
-        <div class="history-line"><strong>20 · Storyboard review</strong><span>Approved</span></div>
-        <div class="history-line"><strong>21 · Bible sheets</strong><span>Generated</span></div>
-        <div class="history-line"><strong>22 · Bible review</strong><span>Approved</span></div>
-        <div class="history-line"><strong>23 · Shot List</strong><span>Written</span></div>
-        <div class="history-line"><strong>24 · Sanity Check</strong><span>Needs action</span></div>
-        <div class="history-line"><strong>25 · Rescue cuts</strong><span>Added</span></div>
-        <div class="history-line"><strong>26 · Sanity retry</strong><span>Passed</span></div>
-        <div class="history-line"><strong>27 · Frames batch 1</strong><span>Generated</span></div>
-        <div class="history-line"><strong>28 · Frame review</strong><span>2 approved</span></div>
-        <div class="history-line"><strong>29 · Frame correction</strong><span>Generated</span></div>
-        <div class="history-line"><strong>30 · Frames batch 2</strong><span>Ready</span></div>
-      </div>
+<script>
+  (function () {
+    "use strict";
 
-      <article class="turn" aria-label="User turn: revise the lighting anchor">
-        <div class="user-intent">Keep the flat cel shading. Make the lighting anchor high noon, not sunset.</div>
-        <div class="assistant-result">
-          <h4>Lighting anchor corrected</h4>
-          <p>The new anchor keeps the approved palette and hard-edged shadows while moving the key light overhead.</p>
-          <div class="result-document">
-            <div class="badge-row"><span class="badge">Image</span><span class="badge">Nano Banana Pro</span><span class="badge">2K · 9:16</span></div>
-            <dl class="kv"><dt>Prompt</dt><dd>Compiled and policy-checked</dd><dt>References</dt><dd>4 approved style sheets</dd><dt>Provenance</dt><dd>Provider, model, and exact prompt retained</dd></dl>
-            <div class="media-result">Generated lighting anchor · Open in Review</div>
-          </div>
-        </div>
-        <div class="activity"><span>✓</span><strong>Generated and staged one image</strong><span class="chevron">Details ›</span></div>
-        <div class="receipt-group" aria-label="Production Design receipts">
-          <div class="receipt"><span>◉</span><span class="outcome">Provided</span> Color script · 8 sections</div>
-          <div class="receipt"><span>✓</span><span class="outcome">Attached</span> claude_mouse_character_sheet_final_v7.png</div>
-          <div class="receipt"><span>⊘</span><span class="outcome">Skipped</span> Additional prepared locations</div>
-        </div>
-      </article>
+    function intent(text) {
+      return "<div class='intent'><span class='intent-label'>You</span><p>" + text + "</p></div>";
+    }
 
-      <article class="turn" aria-label="Current running turn">
-        <div class="assistant-result"><h4>Preparing the next frame batch</h4><p>The approved anchor is now part of the exact reference plan for Shot 031.</p></div>
-        <div class="phase-progress">
-          <div class="phase-head">Frames · Shot 031 <span>5 of 8</span></div>
-          <div class="activity running"><span class="spinner">◌</span> Auditing compiled prompt and references</div>
-          <div class="progress"><i></i></div>
-          <div class="phase-next">Next: Submit the approved provider route</div>
-        </div>
-      </article>
-    </main>
+    function prose(text) {
+      return "<div class='result'><span class='result-label'>Result</span><p>" + text + "</p></div>";
+    }
 
-    <div class="live-status"><span class="spinner">◌</span><strong>Working</strong><span>Frames phase</span><button class="latest">Latest</button></div>
+    function activity(title, state, symbol) {
+      return "<div class='activity' role='button' aria-expanded='false'>" +
+        "<span class='activity-symbol'>" + (symbol || "◇") + "</span>" +
+        "<span class='activity-title'>" + title + "</span>" +
+        "<span class='activity-state'>" + state + " &nbsp;›</span></div>";
+    }
 
-    <footer class="composer-dock">
-      <section class="decision" aria-label="Spend approval decision">
-        <div class="decision-head">Approve image generation <span class="step">Action required</span></div>
-        <p>Generate the Shot 031 frame using the compiled prompt and four approved references.</p>
-        <div class="select-row"><label>Provider</label><strong>Higgsfield</strong><label>Model</label><strong>Nano Banana Pro (Gemini 3 Pro Image)</strong><label>Cost</label><strong>≈ €0.16</strong></div>
-        <div class="decision-actions"><button>Decline</button><button class="primary">Generate image</button></div>
-      </section>
-    </footer>
-  </div>
-</section>
+    function receipt(items) {
+      var rows = items.map(function (item) {
+        return "<div class='receipt'><span class='receipt-symbol'>" + item[0] + "</span>" +
+          "<span><strong>" + item[1] + "</strong>" + (item[2] ? " · " + item[2] : "") + "</span></div>";
+      }).join("");
+      return "<div class='receipt-group' aria-label='Workflow receipts'>" + rows + "</div>";
+    }
 
-<section class="state-matrix" aria-label="Required state matrix">
-  <div class="state-card"><h3>Empty / ready</h3><div class="mini-status">✓ <strong>Ready</strong></div><p>One compact status line. The composer is the only input surface; contextual starters sit in the transcript empty state.</p><div class="mini-actions"><button>New</button><button>History</button><button>Workflows</button></div></div>
-  <div class="state-card"><h3>Clarification</h3><div class="mini-status attention">! <strong>Action required</strong></div><p>The Dock replaces composition with choice chips and one scoped text field. Draft and references remain stored.</p><div class="mini-actions"><button>Not now</button><button class="primary">Continue</button></div></div>
-  <div class="state-card"><h3>Repeatable intake</h3><div class="mini-status attention">! <strong>Prepared character 2</strong></div><p>Searchable, bounded Library picker. Attach requires a name and image; empty follow-up exposes Done.</p><div class="mini-actions"><button>Clear item</button><button disabled>Done</button><button class="primary">Attach</button></div></div>
-  <div class="state-card"><h3>Gate approval</h3><div class="mini-status attention">! <strong>Action required</strong></div><p>Review remains on the canonical surface. The Dock owns one approval explanation and action set.</p><div class="mini-actions"><button>Not yet</button><button class="primary">Approve Production Design</button></div></div>
-  <div class="state-card"><h3>Paid generation</h3><div class="mini-status"><span class="spinner">◌</span><strong>Generating</strong></div><p>After approval the Dock returns to composition. Cancellation stays visible once in live status until the run settles.</p><div class="mini-actions"><button class="danger">Cancel generation</button></div></div>
-  <div class="state-card"><h3>Recoverable failure</h3><div class="mini-status">! <strong>Failed</strong></div><p>The detailed provider message and Retry appear once at the owning result. Status does not repeat it.</p><div class="mini-actions"><button>Show details</button><button class="primary">Retry</button></div></div>
-  <div class="state-card"><h3>Backend states</h3><div class="mini-status"><span class="spinner">◌</span><strong>Checking Agent</strong></div><p>Checking, authentication required, unavailable, and terminal failure share one precedence model.</p><div class="mini-actions"><button class="primary">Open Agent Settings</button></div></div>
-  <div class="state-card"><h3>Scrolled away</h3><div class="mini-status">… <strong>Working</strong><button style="margin-left:auto">Latest</button></div><p>Latest is labeled, in flow, and shown only while useful. New tokens do not move the reading position.</p></div>
-  <div class="state-card"><h3>History navigator</h3><p>One searchable navigator replaces open tabs plus a second History control.</p><div class="conversation-list"><div class="conversation-row"><strong>Claude Mouse</strong><span>Current</span></div><div class="conversation-row"><strong>Desert plate correction</strong><span class="attention">Action required</span></div><div class="conversation-row"><strong>Frame audit</strong><span>Running</span></div></div></div>
-</section>
+    function notice(title, body, action) {
+      return "<div class='notice'><span>!</span><div><div class='notice-title'>" + title + "</div>" +
+        "<p>" + body + "</p>" + (action ? "<span class='notice-action'>" + action + "</span>" : "") +
+        "</div></div>";
+    }
+
+    function turn(parts, extraClass) {
+      return "<section class='turn" + (extraClass ? " " + extraClass : "") +
+        "' aria-label='Conversation turn'>" + parts.join("") + "</section>";
+    }
+
+    function structuredResult() {
+      return "<div class='structured-result'>" +
+        "<div><span class='result-label'>Result</span><div class='structured-title'>Rooftop sequence prepared</div></div>" +
+        "<p>The treatment now holds a restrained nocturnal performance with one continuous visual rule.</p>" +
+        "<div class='badge-row'><span class='badge ok'>Ready for review</span><span class='badge'>4 shots</span></div>" +
+        "<div class='key-values'><div class='key-value'><div class='key'>Duration</div><div class='value'>18 seconds</div></div>" +
+        "<div class='key-value'><div class='key'>Look</div><div class='value'>Cold sodium haze</div></div></div>" +
+        "<div class='media-result'><div class='media-thumb' role='img' aria-label='Generated rooftop reference frame'></div>" +
+        "<div><div class='media-name'>rooftop-reference-01.png</div><div class='media-meta'>Generated reference · provenance recorded</div>" +
+        "<div class='artifact-actions'><span class='text-action'>Open</span><span class='text-action'>Reveal</span></div></div></div>" +
+        "</div>";
+    }
+
+    function longProseResult() {
+      return "<div class='result'><span class='result-label'>Result</span>" +
+        "<p><strong>The current treatment is coherent, but the transition into the final refrain needs one deliberate bridge.</strong></p>" +
+        "<p style='margin-top:9px'>The first two sections establish distance through wide negative space. The performance then moves closer without changing location, wardrobe or the approved sodium-haze look. That progression is readable and should remain locked.</p>" +
+        "<p style='margin-top:9px'>Before the final refrain, hold one medium profile long enough for the vocal pause to register. Then cut to the existing wide rooftop frame on the measured downbeat. This uses the approved analysis rather than inventing a new timing structure.</p>" +
+        "<ul style='margin:9px 0 0;padding-left:18px'><li>Preserve the red jacket and rooftop.</li>" +
+        "<li>Use the measured section boundary.</li><li>Do not add a new generated location.</li></ul></div>";
+    }
+
+    function pipelineProgress() {
+      return "<div class='pipeline-progress' aria-label='Audio Analysis running, stage 3 of 7'>" +
+        "<div class='progress-head'><span class='progress-symbol'>♫</span><div><div class='progress-title'>Audio Analysis</div>" +
+        "<div class='filename'>Die_unwahrscheinlich_lange_Originalaufnahme_vom_Nachtkonzert.wav</div></div>" +
+        "<div class='progress-count'>3 of 7</div></div>" +
+        "<div><div class='stage-name'>Resolving tempo and beat grid</div>" +
+        "<div class='stage-detail'>Validating the measured rhythm grid for the track.</div></div>" +
+        "<div class='progress-track'><span class='progress-fill'></span></div>" +
+        "<div class='next-stage'>Next: Detect key and chords</div></div>";
+    }
+
+    function composer(mode) {
+      var sending = mode === "sending";
+      return "<div class='dock'><div class='composer'>" +
+        "<div class='composer-placeholder'>" + (sending ? "Add a note while the current turn finishes…" : "Message Agent…") + "</div>" +
+        "<div class='composer-tools'><span class='tool-label'>Attach</span><span class='tool-label'>@ Reference</span>" +
+        "<span class='tool-label'>Opus</span><span class='send" + (sending ? "" : " disabled") + "'>" +
+        (sending ? "Stop" : "Send") + "</span></div></div></div>";
+    }
+
+    function gateDecision() {
+      return "<div class='dock'><div class='decision' aria-label='Approve Production Design'>" +
+        "<div class='decision-head'><span class='decision-symbol'>◇</span><div class='decision-title'>Approve Production Design</div></div>" +
+        "<div class='decision-scroll'><p class='decision-copy'>The canonical document passed its structural gate. Approve it to continue to Treatment.</p></div>" +
+        "<div class='decision-actions'><span class='button'>Not yet</span><span class='button primary'>Approve</span></div>" +
+        "</div></div>";
+    }
+
+    function intakeDecision(kind) {
+      var isFirst = kind === "intake-first";
+      var isPartial = kind === "intake-partial";
+      var title = isFirst ? "Prepared character 1" : "Prepared character 2";
+      var content = "<div class='dock'><div class='decision intake' aria-label='" + title + "'>" +
+        "<div class='decision-head'><span class='decision-symbol'>▣</span><div class='decision-title'>" + title + "</div></div>" +
+        "<div class='decision-scroll'><p class='decision-copy'>" +
+        (isFirst ? "Reference images become the Bible anchor for this character." :
+          "Add references for another character, or finish adding characters.") + "</p>" +
+        "<div class='field" + (isPartial ? " filled" : "") + "'>" + (isPartial ? "AI Cat" : "Character name") + "</div>";
+
+      if (isPartial) {
+        content += "<div class='file-row'><span>▧</span><span class='file-name'>ai-cat-reference-profile.png</span><span>Remove</span></div>" +
+          "<div class='text-action' style='margin-top:7px'>Add another image…</div>";
+      } else {
+        content += "<div class='drop-target'>Drop the reference images · Choose…</div>" +
+          "<div class='library-search'>Search your library</div><div class='asset-list'>" +
+          "<div class='asset'><span class='asset-thumb'></span><span class='asset-name'>AI Cat portrait.png</span></div>" +
+          "<div class='asset'><span class='asset-thumb'></span><span class='asset-name'>Claude Mouse reference.png</span></div></div>";
+      }
+
+      content += "</div><div class='decision-actions'>";
+      if (isFirst) {
+        content += "<span class='button'>Skip</span><span class='button primary disabled'>Attach</span>";
+      } else if (isPartial) {
+        content += "<span class='button'>Clear item</span><span class='button disabled'>Done</span><span class='button primary'>Attach</span>";
+      } else {
+        content += "<span class='button'>Done</span><span class='button primary disabled'>Attach</span>";
+      }
+      return content + "</div></div></div>";
+    }
+
+    function recoveryDock() {
+      return "<div class='dock'><div class='recovery'>" +
+        "<div class='recovery-title'>Connect the Agent</div>" +
+        "<div class='recovery-copy'>Sign in to Claude Code or configure an Anthropic API key.</div>" +
+        "<div><span class='button primary'>Open Agent Settings</span></div></div></div>";
+    }
+
+    function status(kind) {
+      var map = {
+        ready: ["●", "Ready", ""],
+        working: ["◇", "Working", ""],
+        action: ["!", "Action required", ""],
+        stopped: ["!", "Stopped", ""],
+        unavailable: ["!", "Agent unavailable", ""],
+        generation: ["◇", "Generation in progress · Veo via fal.ai", "Cancel"]
+      };
+      var value = map[kind] || map.ready;
+      return "<div class='live-status' role='status'><span class='status-symbol'>" + value[0] + "</span>" +
+        "<span class='status-title'>" + value[1] + "</span>" +
+        (value[2] ? "<span class='status-action'>" + value[2] + "</span>" : "<span></span>") + "</div>";
+    }
+
+    function emptyTranscript() {
+      return "<div class='empty-state'><div><div class='empty-title'>What do you want to make?</div>" +
+        "<div class='starter-list'><div class='starter'>Start the active format workflow</div>" +
+        "<div class='starter'>Organize the imported media</div><div class='starter'>Review the current project</div></div></div></div>";
+    }
+
+    function conversationSwitcher() {
+      return "<div class='conversation-popover' aria-label='Conversation switcher'>" +
+        "<div class='switch-search'>Search conversations</div>" +
+        "<div class='conversation-row current'><span>●</span><span>Rooftop performance treatment</span><span class='conversation-state'>Current</span></div>" +
+        "<div class='conversation-row'><span>!</span><span>Production Design approval</span><span class='conversation-state attention'>Needs action</span></div>" +
+        "<div class='conversation-row'><span>◇</span><span>Audio analysis and beat grid</span><span class='conversation-state running'>Running</span></div>" +
+        "<div class='conversation-row'><span>○</span><span>Imported media organization</span><span class='conversation-state'>12 min</span></div>" +
+        "</div>";
+    }
+
+    function stressTranscript() {
+      var prompts = [
+        "Keep the performance restrained and preserve the red jacket.",
+        "Use the second composition, but cool the practical lights.",
+        "Check the current treatment against the approved analysis.",
+        "Show which references are already attached.",
+        "Carry that visual rule into the next four shots.",
+        "Do not change the rooftop location.",
+        "Prepare a concise review summary."
+      ];
+      var answers = [
+        "The direction is recorded on the treatment and the locked wardrobe remains unchanged.",
+        "The selected composition now uses cooler practical light while preserving the approved framing.",
+        "The treatment follows the measured section boundaries and does not invent timing.",
+        "Two character references and one location reference are attached.",
+        "The same restraint is applied to the next four planned shots.",
+        "The rooftop remains the canonical location.",
+        "The current artifacts are ready for review."
+      ];
+      var out = "<div class='stress-marker'>34 durable turns · viewing earlier history</div>";
+      var i;
+      for (i = 1; i <= 34; i += 1) {
+        var parts = [intent(prompts[(i - 1) % prompts.length]), prose(answers[(i - 1) % answers.length])];
+        if (i % 6 === 0) {
+          parts.push(receipt([["◇", "Treatment updated", "Turn " + i], ["↗", "Reference retained", "rooftop-location.png"]]));
+        }
+        out += turn(parts);
+      }
+      return out;
+    }
+
+    var states = [
+      {
+        id: "empty",
+        title: "Empty conversation",
+        description: "The panel is ready without a second readiness notice or empty transcript chrome.",
+        transcript: emptyTranscript,
+        status: "ready",
+        dock: function () { return composer("idle"); },
+        latest: false,
+        conversation: "New conversation"
+      },
+      {
+        id: "prose",
+        title: "Plain prose result",
+        description: "Short conversational output stays unframed inside one semantic turn.",
+        transcript: function () {
+          return turn([intent("Make the current rooftop scene feel lonelier without changing the location."),
+            prose("I updated the treatment direction to isolate the performer through wider negative space. The rooftop, wardrobe and approved nocturnal look remain locked."),
+            receipt([["◇", "Treatment updated", "creative direction retained"]])]);
+        },
+        status: "ready",
+        dock: function () { return composer("idle"); },
+        latest: false,
+        conversation: "Rooftop direction"
+      },
+      {
+        id: "activity",
+        title: "Activity in progress",
+        description: "One host-labeled activity owns current tool work; Live Status says only Working.",
+        transcript: function () {
+          return turn([intent("Organize the imported references by their intended role."),
+            activity("Organizing imported media", "Running", "◇")]);
+        },
+        status: "working",
+        dock: function () { return composer("sending"); },
+        latest: false,
+        conversation: "Imported media"
+      },
+      {
+        id: "long-prose",
+        title: "Long plain-prose result",
+        description: "A longer answer keeps the same unframed grammar, readable measure and semantic result identity.",
+        transcript: function () {
+          return turn([intent("Review the treatment and identify the one change that would make the final refrain land."),
+            longProseResult()]);
+        },
+        status: "ready",
+        dock: function () { return composer("idle"); },
+        latest: function (width) { return width === 240; },
+        conversation: "Treatment review"
+      },
+      {
+        id: "structured",
+        title: "Structured result with generated media",
+        description: "One bounded result document contains summary, fields, media, provenance and durable actions.",
+        transcript: function () {
+          return turn([intent("Prepare the rooftop sequence for review."), structuredResult(),
+            activity("Updated Treatment and reference plan", "Completed", "✓"),
+            receipt([["✓", "Treatment written", "treatment.md"], ["↗", "Reference generated", "rooftop-reference-01.png"]])]);
+        },
+        status: "ready",
+        dock: function () { return composer("idle"); },
+        latest: function (width) { return width === 240; },
+        conversation: "Rooftop performance treatment"
+      },
+      {
+        id: "decision",
+        title: "Pending gate decision",
+        description: "The decision replaces the composer; no interactive approval appears in the transcript.",
+        transcript: function () {
+          return turn([intent("Finish Production Design."),
+            prose("Production Design passed its structural gate and is ready for your decision."),
+            activity("Validated Production Design", "Completed", "✓")]);
+        },
+        status: "action",
+        dock: gateDecision,
+        latest: false,
+        conversation: "Production Design approval"
+      },
+      {
+        id: "intake-first",
+        title: "Repeatable intake · first empty item",
+        description: "Skip is explicit and Attach is unmistakably disabled until name plus image are present.",
+        transcript: function () {
+          return turn([prose("Attach prepared character material, or skip this optional step.")]);
+        },
+        status: "action",
+        dock: function () { return intakeDecision("intake-first"); },
+        latest: false,
+        conversation: "Prepared characters"
+      },
+      {
+        id: "intake-partial",
+        title: "Repeatable intake · partial next item",
+        description: "Clear item is visible; Done is disabled while the current item contains draft material.",
+        transcript: function () {
+          return turn([prose("Mara was attached. Add another prepared character, or finish when the next item is empty."),
+            receipt([["↗", "Character attached", "Mara · 2 images"]])]);
+        },
+        status: "action",
+        dock: function () { return intakeDecision("intake-partial"); },
+        latest: false,
+        conversation: "Prepared characters"
+      },
+      {
+        id: "intake-next",
+        title: "Repeatable intake · empty item after one attachment",
+        description: "Done explicitly completes the optional step without creating an empty item.",
+        transcript: function () {
+          return turn([prose("Mara was attached. Add another prepared character, or choose Done."),
+            receipt([["↗", "Character attached", "Mara · 2 images"]])]);
+        },
+        status: "action",
+        dock: function () { return intakeDecision("intake-next"); },
+        latest: false,
+        conversation: "Prepared characters"
+      },
+      {
+        id: "pipeline",
+        title: "Active Pipeline phase",
+        description: "Runner-emitted progress stays at the run_phase call; the status strip does not repeat it.",
+        transcript: function () {
+          return turn([intent("Start Audio Analysis for the assigned track."), pipelineProgress()]);
+        },
+        status: "working",
+        dock: function () { return composer("sending"); },
+        latest: false,
+        conversation: "Audio analysis and beat grid"
+      },
+      {
+        id: "failed",
+        title: "Failed turn",
+        description: "The affected turn owns specific failure and Retry; Live Status remains a terse Stopped state.",
+        transcript: function () {
+          return turn([intent("Continue from the completed host action."),
+            activity("Resuming the agent", "Failed", "!"),
+            notice("The agent did not resume", "The host action completed, but the conversation could not continue.", "Retry")]);
+        },
+        status: "stopped",
+        dock: function () { return composer("idle"); },
+        latest: false,
+        conversation: "Treatment follow-up"
+      },
+      {
+        id: "backend",
+        title: "Backend unavailable",
+        description: "One recovery Dock owns setup copy and the only Agent Settings action.",
+        transcript: function () {
+          return turn([prose("Your saved conversation remains available.")]);
+        },
+        status: "unavailable",
+        dock: recoveryDock,
+        latest: false,
+        conversation: "Rooftop direction"
+      },
+      {
+        id: "conversations",
+        title: "Multiple conversations with attention",
+        description: "One switcher model exposes full titles and service-owned textual attention states.",
+        transcript: function () {
+          return conversationSwitcher() + turn([intent("Summarize the current treatment."),
+            prose("The rooftop sequence is restrained, nocturnal and ready for review.")]);
+        },
+        status: "ready",
+        dock: function () { return composer("idle"); },
+        latest: false,
+        conversation: "Rooftop performance treatment",
+        switcher: true
+      },
+      {
+        id: "stress",
+        title: "34-turn stress conversation",
+        description: "Actual scrollable DOM contains 34 turns. The user is pinned away from the bottom, so Latest appears in its reserved slot.",
+        transcript: stressTranscript,
+        status: "ready",
+        dock: function () { return composer("idle"); },
+        latest: true,
+        conversation: "Rooftop performance treatment — continuity and approved visual constraints",
+        stress: true
+      }
+    ];
+
+    function displayedConversationTitle(title, width) {
+      var limit = width === 240 ? 22 : width === 400 ? 30 : 48;
+      if (title.length <= limit) { return title; }
+      var remaining = limit - 1;
+      var leading = Math.ceil(remaining / 2);
+      var trailing = Math.floor(remaining / 2);
+      var leadingText = title.slice(0, leading).replace(/\s+\S*$/, "").trim();
+      var trailingText = title.slice(title.length - trailing).replace(/^\S*\s+/, "").trim();
+      if (leadingText.length < 4) { leadingText = title.slice(0, leading).trim(); }
+      if (trailingText.length < 4) { trailingText = title.slice(title.length - trailing).trim(); }
+      return leadingText + "…" + trailingText;
+    }
+
+    function conversationBar(state, width) {
+      var shownTitle = displayedConversationTitle(state.conversation, width);
+      var showLatest = typeof state.latest === "function" ? state.latest(width) : state.latest;
+      return "<header class='conversation-bar' aria-label='Conversation Bar'>" +
+        "<div class='conversation-title' title='" + state.conversation + "'>◇ " + shownTitle +
+        "<span class='chevron'>⌄</span></div><div class='bar-actions'>" +
+        "<span class='bar-action latest" + (showLatest ? "" : " reserved") + "'>↓ Latest</span>" +
+        "<span class='bar-action'>＋ New</span><span class='bar-action'>••• More</span></div></header>";
+    }
+
+    function panel(state, width) {
+      var widthClass = "w" + width;
+      var extra = state.stress ? " stress" : "";
+      return "<article class='agent-panel " + widthClass + extra + "' data-state='" + state.id +
+        "' aria-label='" + width + " point Agent panel, " + state.title + "' inert>" +
+        conversationBar(state, width) +
+        "<div class='transcript' aria-label='Transcript'>" + state.transcript() + "</div>" +
+        status(state.status) + state.dock() + "</article>";
+    }
+
+    function stateMarkup(state, index) {
+      var widths = [240, 400, 640];
+      var samples = widths.map(function (width) {
+        return "<div class='viewport-sample'><div class='viewport-label'><span>Agent panel</span><span>" +
+          width + " pt</span></div>" + panel(state, width) + "</div>";
+      }).join("");
+      return "<section class='mock-state' id='state-" + state.id + "' data-state-section='" + state.id + "'>" +
+        "<h3 class='state-heading'><span class='state-number'>" + String(index + 1).padStart(2, "0") +
+        "</span>" + state.title + "</h3><p class='state-description'>" + state.description + "</p>" +
+        "<div class='viewport-grid'>" + samples + "</div></section>";
+    }
+
+    var grid = document.getElementById("state-grid");
+    var indexNode = document.getElementById("state-index");
+    grid.innerHTML = states.map(stateMarkup).join("");
+    indexNode.innerHTML = states.map(function (state) {
+      return "<a href='#state-" + state.id + "'>" + state.title + "</a>";
+    }).join("");
+
+    var capture = new URLSearchParams(window.location.search).get("capture");
+    if (capture) {
+      var target = document.querySelector("[data-state-section='" + capture + "']");
+      if (target) {
+        document.body.classList.add("capture");
+        target.classList.add("capture-target");
+      }
+    }
+
+    window.requestAnimationFrame(function () {
+      document.querySelectorAll(".stress .transcript").forEach(function (node) {
+        node.scrollTop = Math.floor(node.scrollHeight * .70);
+      });
+    });
+  }());
+</script>
+</body>
+</html>
