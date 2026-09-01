@@ -499,7 +499,7 @@ final class ModelCatalog {
     ) -> [CatalogImageOfferingCandidate] {
         let discovered = discoveredByProvider
         let discoveryStates = providerDiscovery
-        Self.compatibleImageOfferings(
+        return Self.compatibleImageOfferings(
             models: image,
             offersByModelID: offersById,
             preferredModelID: preferredModelID,
