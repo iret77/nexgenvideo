@@ -291,7 +291,7 @@ enum GenerationController {
                 aspectRatio: request.aspectRatio,
                 durationSeconds: request.durationSeconds,
                 projectDir: editor.workingRoot,
-                preserveComposition: request.target.binding?
+                preserveComposition: request.target?.binding?
                     .resolvedVideoCapabilities?
                     .inputPolicy.requiresSourceVideo == true)
             return (composition.text, composition.notes)

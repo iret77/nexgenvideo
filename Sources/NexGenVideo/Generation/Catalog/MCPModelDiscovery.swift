@@ -609,8 +609,8 @@ enum MCPModelDiscovery {
               let start = text[searchStart...].firstIndex(where: {
                 $0 == "{" || $0 == "["
               }) {
-            var expectedClosers: [Character] = []
-            var quote: Character?
+            var expectedClosers: [Swift.Character] = []
+            var quote: Swift.Character?
             var isEscaped = false
             var index = start
             var foundEnd = false
@@ -695,7 +695,7 @@ enum MCPModelDiscovery {
         aliases: [String]
     ) -> Bool {
         let aliases = Set(aliases.map { $0.lowercased() })
-        var quote: Character?
+        var quote: Swift.Character?
         var isEscaped = false
         var index = text.startIndex
         while index < text.endIndex {

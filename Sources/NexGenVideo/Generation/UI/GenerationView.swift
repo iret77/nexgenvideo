@@ -1083,7 +1083,7 @@ struct GenerationView: View {
 
     private func refCap(for type: ClipType) -> Int {
         guard let capabilities = selectedVideoCapabilities else { return 0 }
-        switch type {
+        return switch type {
         case .image:
             capabilities.maxReferenceImages(hasVideoReference: !refVideos.isEmpty)
         case .video: capabilities.maxReferenceVideos
