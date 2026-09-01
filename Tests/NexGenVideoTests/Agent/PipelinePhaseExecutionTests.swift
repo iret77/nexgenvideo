@@ -45,14 +45,13 @@ struct PipelinePhaseExecutionTests {
         let harness = ToolHarness(enforceHardGates: true)
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
-        let mutation = try #require(
-            harness.executor.reserveDurablePipelineMutation(
-                tool: .recordRender,
-                phase: "render",
-                dataRoot: root,
-                editor: harness.editor
-            )
+        let reservation = try harness.executor.reserveDurablePipelineMutation(
+            tool: .recordRender,
+            phase: "render",
+            dataRoot: root,
+            editor: harness.editor
         )
+        let mutation = try #require(reservation)
         #expect(
             harness.editor.pipelinePhaseRunCoordinator.holdsMutation(
                 projectRoot: root,

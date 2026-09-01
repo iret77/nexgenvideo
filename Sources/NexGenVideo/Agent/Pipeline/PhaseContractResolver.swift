@@ -853,7 +853,7 @@ enum HistoricalPhaseContractCompatibility {
         modernEntry("0.2.0", engineContract: 8, hasCoverGate: true),
         modernEntry("0.3.0", engineContract: 8, hasCoverGate: true),
         modernEntry("0.4.0", engineContract: 8, hasCoverGate: true),
-        modernEntry("0.4.1", engineContract: 8, hasCoverGate: true),
+        modernEntry("0.4.1", engineContract: 8),
         modernEntry("0.4.2", engineContract: 8),
         modernEntry("0.4.3", engineContract: 8),
         modernEntry("0.4.4", engineContract: 8),

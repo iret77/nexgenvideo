@@ -651,6 +651,16 @@ struct PackPipelineManifestTests {
             .init(phase: "project_init", kinds: [.song, .lyrics]),
             .init(phase: "brief", kinds: [.script, .character, .location, .style]),
         ])
+        #expect(HistoricalPhaseContractCompatibility.detachedGatePhases(for: .init(
+            id: "musicvideo",
+            version: "0.4.0",
+            engineContract: 8
+        )) == ["cover"])
+        #expect(HistoricalPhaseContractCompatibility.detachedGatePhases(for: .init(
+            id: "musicvideo",
+            version: "0.4.1",
+            engineContract: 8
+        )) == [])
         #expect(HistoricalPhaseContractCompatibility.manifest(for: .init(
             id: "musicvideo",
             version: "0.4.6",
