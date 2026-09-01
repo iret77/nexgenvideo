@@ -315,7 +315,7 @@ enum PipelineProductionInputsWriter {
         )
         var normalizedDemandSets = demandSets.map { demandSet in
             guard demandSet.shotID == shotID else { return demandSet }
-            ReferenceDemandSetV1(
+            return ReferenceDemandSetV1(
                 id: demandSet.id,
                 projectID: demandSet.projectID,
                 shotID: demandSet.shotID,
