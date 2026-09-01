@@ -347,7 +347,7 @@ enum MusicvideoPipelineLineage {
             return []
         }
         let manifest = try loadFramesManifest(dataRoot: dataRoot)
-        return manifest.shots
+        return try manifest.shots
             .flatMap(\.frames)
             .map { try projectFile($0.path, dataRoot: dataRoot) }
     }
