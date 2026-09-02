@@ -7,7 +7,7 @@ The report is generated offline from the checked-in corpus; web access is not pa
 
 | Offers | Non-fixture | Exact | Inherited | Defensive | Stale | Conflicting | Research-needed | Unclassified |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 87 | 85 | 75 | 1 | 11 | 3 | 7 | 87 | 0 |
+| 87 | 85 | 75 | 1 | 11 | 3 | 4 | 87 | 0 |
 
 `exact` identifies a concrete intrinsic profile. `inherited` is an explicit family/variant lineage miss. `defensive` is used for unknown or deliberately unversioned IDs. Stale and conflicting evidence stays visible and forces research-needed.
 
@@ -83,9 +83,9 @@ These explicit conservative values are the production fallback for unresolved ca
 | video | fal | `bytedance/seedance-2.0/image-to-video` | `bytedance/seedance-2.0/image-to-video` | `seedance/image-to-video/2.0` | exact | research-needed |
 | video | fal | `bytedance/seedance-2.0/reference-to-video` | `bytedance/seedance-2.0/reference-to-video` | `seedance/reference-to-video/2.0` | exact | research-needed |
 | video | fal | `bytedance/seedance-2.0/text-to-video` | `bytedance/seedance-2.0/text-to-video` | `seedance/text-to-video/2.0` | exact | research-needed |
-| video | fal | `bytedance/seedance-2.5/image-to-video` | `bytedance/seedance-2.5/image-to-video` | `seedance/image-to-video/2.5` | exact | conflict, research-needed |
-| video | fal | `bytedance/seedance-2.5/reference-to-video` | `bytedance/seedance-2.5/reference-to-video` | `seedance/reference-to-video/2.5` | exact | conflict, research-needed |
-| video | fal | `bytedance/seedance-2.5/text-to-video` | `bytedance/seedance-2.5/text-to-video` | `seedance/text-to-video/2.5` | exact | conflict, research-needed |
+| video | fal | `bytedance/seedance-2.5/image-to-video` | `bytedance/seedance-2.5/image-to-video` | `seedance/image-to-video/2.5` | exact | research-needed |
+| video | fal | `bytedance/seedance-2.5/reference-to-video` | `bytedance/seedance-2.5/reference-to-video` | `seedance/reference-to-video/2.5` | exact | research-needed |
+| video | fal | `bytedance/seedance-2.5/text-to-video` | `bytedance/seedance-2.5/text-to-video` | `seedance/text-to-video/2.5` | exact | research-needed |
 | video | fal | `fal-ai/bytedance/seedance/v1/pro/image-to-video` | `fal-ai/bytedance/seedance/v1/pro/image-to-video` | `seedance/image-to-video/1.0` | exact | research-needed |
 | video | fal | `fal-ai/bytedance/seedance/v1/pro/text-to-video` | `fal-ai/bytedance/seedance/v1/pro/text-to-video` | `seedance/text-to-video/1.0` | exact | research-needed |
 | video | fal | `fal-ai/kling-video/v2.5-turbo/pro/image-to-video` | `fal-ai/kling-video/v2.5-turbo/pro/image-to-video` | `kling/image-to-video/2.5-turbo-pro` | exact | research-needed |

@@ -724,10 +724,9 @@ for identity in [seedance25_text, seedance25_image, seedance25_ref]:
     put(
         identity,
         "common.resolutions",
-        ["480p", "720p", "1080p"],
+        ["480p", "720p"],
         "supported_set",
         SEEDANCE25,
-        conflict="The checked-in catalog listed 480p/720p; current text/image API docs also list 1080p.",
     )
     put(identity, "common.aspect_ratios", ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"], "supported_set", SEEDANCE25)
 

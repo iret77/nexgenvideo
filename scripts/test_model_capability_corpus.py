@@ -157,6 +157,10 @@ class ModelCapabilityCorpusTests(unittest.TestCase):
             field = self.field(profile, field_id)
             self.assertEqual(field["value"], expected)
             self.assertEqual(field["semantics"], "hard_api_limit")
+        self.assertEqual(
+            self.field(profile, "common.resolutions")["value"],
+            ["480p", "720p"],
+        )
         visible = self.field(profile, "video.visible_characters")
         self.assertEqual(visible["value"], 5)
         self.assertEqual(visible["semantics"], "reliable_capacity")
@@ -206,11 +210,11 @@ class ModelCapabilityCorpusTests(unittest.TestCase):
 
     def test_stale_and_conflicting_evidence_remain_visible(self):
         self.assertEqual(sum(row["stale"] for row in self.rows), 3)
-        self.assertEqual(sum(row["conflicting"] for row in self.rows), 7)
+        self.assertEqual(sum(row["conflicting"] for row in self.rows), 4)
         self.assertTrue(all(row["research_needed"] for row in self.rows if row["stale"] or row["conflicting"]))
         report = generator.REPORT_PATH.read_text(encoding="utf-8")
         self.assertIn("| Stale | Conflicting | Research-needed | Unclassified |", report)
-        self.assertIn("| 87 | 85 | 75 | 1 | 11 | 3 | 7 |", report)
+        self.assertIn("| 87 | 85 | 75 | 1 | 11 | 3 | 4 |", report)
 
     def test_field_evidence_is_primary_dated_and_confident(self):
         primary_titles = {
