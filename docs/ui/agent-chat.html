@@ -1970,11 +1970,11 @@
       }
     }
 
+    document.body.dataset.renderReady = "true";
     window.requestAnimationFrame(function () {
       document.querySelectorAll(".stress .transcript").forEach(function (node) {
         node.scrollTop = Math.floor(node.scrollHeight * .70);
       });
-      document.body.dataset.renderReady = "true";
     });
   }());
 </script>
