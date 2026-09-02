@@ -36,7 +36,10 @@ struct WorkflowToolsTests {
     }
 
     private func falProviderActivation() -> ProviderActivation {
-        ProviderActivation(active: [
+        if !ModelCatalog.shared.isLoaded {
+            ModelCatalog.shared.load(entries: ModelCatalog.launchEntries)
+        }
+        return ProviderActivation(active: [
             ProviderActivation.Key(provider: .fal, transport: .api),
         ])
     }
@@ -2083,6 +2086,7 @@ struct WorkflowToolsTests {
         )
         #expect(design.project == "demo")
         #expect(design.colorScript["intro"] == "Muted blue dawn.")
+        try recordLineage("production_design", dataRoot: dataRoot)
 
         _ = try await h.runOK("write_treatment", args: [
             "project_dir": dataRoot.path,
@@ -2093,6 +2097,7 @@ struct WorkflowToolsTests {
         let treatment = try TreatmentStore.load(dataRoot: dataRoot)
         #expect(treatment.meta.project == "demo")
         #expect(treatment.meta.version == 1)
+        try recordLineage("treatment", dataRoot: dataRoot)
 
         let storyboardSteps: [[String: Any]] = (1...4).map { index in
             [
@@ -2137,6 +2142,7 @@ struct WorkflowToolsTests {
             )
         )
         #expect(storyboard.sections.first?.steps.first?.framing == "wide")
+        try recordLineage("storyboard", dataRoot: dataRoot)
 
         let anchor = dataRoot.appendingPathComponent("bible/yard-wide.png")
         try FileManager.default.createDirectory(
@@ -2192,6 +2198,7 @@ struct WorkflowToolsTests {
         ])
         let bible = try #require(try loadBible(dataRoot: dataRoot))
         #expect(bible.locations.first?.sheets["wide"] == "bible/yard-wide.png")
+        try recordLineage("bible", dataRoot: dataRoot)
 
         let shot: [String: Any] = [
             "id": "s001",

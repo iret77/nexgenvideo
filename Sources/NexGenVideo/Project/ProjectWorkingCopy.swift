@@ -330,6 +330,30 @@ enum ProjectWorkingCopy {
         let canonicalSource = source.resolvingSymlinksInPath().standardizedFileURL
         let canonicalDestination = destination.resolvingSymlinksInPath()
             .standardizedFileURL
+        let sourceDescriptor = Darwin.open(
+            canonicalSource.path,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC
+        )
+        guard sourceDescriptor >= 0 else {
+            throw PersistError.readViewCloneUnavailable(
+                package: source.lastPathComponent,
+                detail: "The project directory couldn't be opened for cloning: "
+                    + String(cString: strerror(errno))
+            )
+        }
+        defer { _ = Darwin.close(sourceDescriptor) }
+        let destinationDescriptor = Darwin.open(
+            canonicalDestination.path,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC
+        )
+        guard destinationDescriptor >= 0 else {
+            throw PersistError.readViewCloneUnavailable(
+                package: source.lastPathComponent,
+                detail: "The staging directory couldn't be opened for cloning: "
+                    + String(cString: strerror(errno))
+            )
+        }
+        defer { _ = Darwin.close(destinationDescriptor) }
         let prefix = canonicalSource.path.hasSuffix("/")
             ? canonicalSource.path
             : canonicalSource.path + "/"
@@ -362,9 +386,15 @@ enum ProjectWorkingCopy {
                 at: target.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let status = canonicalItem.path.withCString { sourcePath in
-                target.path.withCString { targetPath in
-                    clonefile(sourcePath, targetPath, UInt32(CLONE_NOFOLLOW_ANY))
+            let status = relativePath.withCString { sourcePath in
+                relativePath.withCString { targetPath in
+                    clonefileat(
+                        sourceDescriptor,
+                        sourcePath,
+                        destinationDescriptor,
+                        targetPath,
+                        UInt32(CLONE_NOFOLLOW_ANY)
+                    )
                 }
             }
             guard status == 0 else {
