@@ -54,6 +54,166 @@ struct WorkflowToolsTests {
         )
     }
 
+    private func hybridRoutingDependencies() -> (
+        activation: ProviderActivation,
+        candidates: ProductionRouteCandidateProvider
+    ) {
+        let modelID = "fixture-video-edit"
+        let endpoint = "generate_video"
+        let videoCaps = VideoCaps(
+            durations: [4],
+            resolutions: ["1080p"],
+            aspectRatios: ["16:9"],
+            supportsFirstFrame: false,
+            supportsLastFrame: false,
+            maxReferenceImages: 0,
+            maxReferenceVideos: 0,
+            maxReferenceAudios: 0,
+            maxTotalReferences: 0,
+            maxCombinedVideoRefSeconds: nil,
+            maxCombinedAudioRefSeconds: nil,
+            framesAndReferencesExclusive: false,
+            referenceTagNoun: "video",
+            requiresSourceVideo: true,
+            requiresReferenceImage: false
+        )
+        let resolvedVideo = ResolvedVideoOfferingCapabilitiesV1(
+            videoCapabilities: videoCaps,
+            supportsNativeAudio: false
+        )
+        let offer = ProviderOffer(
+            provider: .higgsfield,
+            transport: .mcp,
+            providerRef: endpoint,
+            modelParam: modelID,
+            mcpMediaRoles: ["video"],
+            productionInputPolicy: resolvedVideo.inputPolicy,
+            resolvedVideoCapabilities: resolvedVideo
+        )
+        let offering = CatalogOfferingIdentity.make(
+            offer: offer,
+            modelID: modelID,
+            modality: .video
+        )
+        let evidence = CapabilityEvidenceV1(
+            sourceTitle: "Fixture MCP video-edit schema",
+            observedAt: "2026-08-31T00:00:00Z",
+            kind: .providerSchema,
+            confidence: 1
+        )
+        let exactOrigin = ResolvedCapabilityOriginV1(
+            kind: .exact,
+            profileID: "fixture-video-edit"
+        )
+        let endpointOrigin = ResolvedCapabilityOriginV1(
+            kind: .endpointOverlay,
+            profileID: "fixture-video-edit-endpoint",
+            endpointID: endpoint
+        )
+        func value<Value>(
+            _ value: Value,
+            semantics: CapabilityValueSemanticsV1 = .hardAPILimit,
+            origin: ResolvedCapabilityOriginV1
+        ) -> ResolvedCapabilityValueV1<Value>
+        where Value: Codable & Sendable & Equatable {
+            ResolvedCapabilityValueV1(
+                value: value,
+                semantics: semantics,
+                origin: origin,
+                evidence: [evidence]
+            )
+        }
+        func fields(origin: ResolvedCapabilityOriginV1) -> ResolvedCapabilityFieldsV1 {
+            ResolvedCapabilityFieldsV1(
+                integers: [
+                    CapabilityFieldIDV1.visibleCharacters: value(0, origin: origin),
+                    CapabilityFieldIDV1.referenceImages: value(0, origin: origin),
+                    CapabilityFieldIDV1.referenceVideos: value(0, origin: origin),
+                    CapabilityFieldIDV1.referenceAudios: value(0, origin: origin),
+                    CapabilityFieldIDV1.totalReferences: value(0, origin: origin),
+                ],
+                decimals: [
+                    CapabilityFieldIDV1.durationMinimum: value(4.0, origin: origin),
+                    CapabilityFieldIDV1.durationMaximum: value(4.0, origin: origin),
+                ],
+                booleans: [
+                    CapabilityFieldIDV1.nativeAudio: value(false, origin: origin),
+                    CapabilityFieldIDV1.firstFrame: value(false, origin: origin),
+                    CapabilityFieldIDV1.lastFrame: value(false, origin: origin),
+                    CapabilityFieldIDV1.sourceVideo: value(true, origin: origin),
+                    CapabilityFieldIDV1.sourceVideoRequired: value(true, origin: origin),
+                    CapabilityFieldIDV1.framesCountTowardImageReferenceLimit:
+                        value(false, origin: origin),
+                    CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit:
+                        value(false, origin: origin),
+                ],
+                strings: [
+                    CapabilityFieldIDV1.modes: value(
+                        ["video-to-video"],
+                        semantics: .supportedSet,
+                        origin: origin
+                    ),
+                    CapabilityFieldIDV1.aspectRatios: value(
+                        ["16:9"],
+                        semantics: .supportedSet,
+                        origin: origin
+                    ),
+                    CapabilityFieldIDV1.resolutions: value(
+                        ["1080p"],
+                        semantics: .supportedSet,
+                        origin: origin
+                    ),
+                ],
+                integerLists: [
+                    CapabilityFieldIDV1.durationValues: value(
+                        [4],
+                        semantics: .supportedSet,
+                        origin: origin
+                    ),
+                ]
+            )
+        }
+        let capability = ResolvedOfferingCapabilityProfileV1(
+            offering: offering,
+            intrinsic: ResolvedCapabilityProfileV1(
+                requestedIdentity: nil,
+                resolvedIdentity: nil,
+                defensiveProfileID: nil,
+                researchNeeded: false,
+                fields: fields(origin: exactOrigin)
+            ),
+            effective: ResolvedCapabilityProfileV1(
+                requestedIdentity: nil,
+                resolvedIdentity: nil,
+                defensiveProfileID: nil,
+                researchNeeded: false,
+                fields: fields(origin: endpointOrigin)
+            )
+        )
+        let editEntry = CatalogEntry(
+            id: modelID,
+            kind: .video,
+            displayName: "Fixture Video Edit",
+            allowedEndpoints: [endpoint],
+            responseShape: .video,
+            uiCapabilities: .video(videoCaps),
+            offers: [offer],
+            resolvedOfferingCapabilities: [capability]
+        )
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.launchEntries + [editEntry])
+        catalog.applyDiscovered([editEntry], for: .higgsfield)
+        catalog.setProviderDiscoveryState(.ready(modelCount: 1), for: .higgsfield)
+        let activation = ProviderActivation(active: [
+            ProviderActivation.Key(provider: .fal, transport: .api),
+            ProviderActivation.Key(provider: .higgsfield, transport: .mcp),
+        ])
+        return (
+            activation,
+            { catalog.productionRouteCandidates(activation: $0) }
+        )
+    }
+
     private func declineIntakeStep(
         _ id: String,
         pack: String = "musicvideo",
@@ -3025,36 +3185,52 @@ struct WorkflowToolsTests {
             phase: "preview",
             lastFramePath: "s001-last.png"
         )
-        try saveRenderManifest(manifest, dataRoot: dataRoot)
-        try saveRenderProofManifest(
-            RenderProofManifest(
-                project: "demo",
-                phase: "preview",
-                entries: [
-                    "s001": RenderProofEntry(
-                        shotId: "s001",
-                        output: "s001.mp4",
-                        outputSha256: outputSHA256,
-                        providerPrompt: generationInput.prompt,
-                        generationModel: generationInput.model
-                    ),
-                ]
-            ),
-            dataRoot: dataRoot
+        let proof = RenderProofManifest(
+            project: "demo",
+            phase: "preview",
+            entries: [
+                "s001": RenderProofEntry(
+                    shotId: "s001",
+                    output: "s001.mp4",
+                    outputSha256: outputSHA256,
+                    providerPrompt: generationInput.prompt,
+                    generationModel: generationInput.model
+                ),
+            ]
         )
-        try PipelineRenderRoutingProofStore.save(
-            PipelineRenderRoutingProofManifestV1(
-                project: "demo",
-                phase: "preview",
-                entries: [
-                    "s001": PipelineRenderRoutingProofEntryV1(
-                        shotID: "s001",
-                        output: "s001.mp4",
-                        outputSHA256: outputSHA256,
-                        generation: generationRouting
-                    ),
-                ]
+        let routingProof = PipelineRenderRoutingProofManifestV1(
+            project: "demo",
+            phase: "preview",
+            entries: [
+                "s001": PipelineRenderRoutingProofEntryV1(
+                    shotID: "s001",
+                    output: "s001.mp4",
+                    outputSHA256: outputSHA256,
+                    generation: generationRouting
+                ),
+            ]
+        )
+        let lastFrameData = try Data(contentsOf: lastFrame)
+        let lastFrameProof = RenderLastFrameProofV1(
+            shotID: "s001",
+            phase: "preview",
+            path: "s001-last.png",
+            sha256: FileDigest.sha256(of: lastFrameData),
+            sourceOutput: "s001.mp4",
+            sourceOutputSHA256: outputSHA256,
+            extractedAt: "2026-08-31T00:00:00+00:00"
+        )
+        _ = try PipelineRenderRecordWriter.publish(
+            manifest: manifest,
+            proof: proof,
+            routingProof: routingProof,
+            framesManifest: nil,
+            replacingShotID: "s001",
+            preparedLastFrame: .init(
+                proof: lastFrameProof,
+                data: lastFrameData
             ),
+            expectedPublicationTransactionID: nil,
             dataRoot: dataRoot
         )
 
@@ -3466,7 +3642,7 @@ struct WorkflowToolsTests {
 
     @Test("next_render_shot skips imported shots and returns ai_enhanced with its source_mode")
     func nextRenderShotSkipsLiveAction() async throws {
-        let routing = falRoutingDependencies()
+        let routing = hybridRoutingDependencies()
         let (h, dataRoot, cleanup) = try scaffold(
             providerActivation: { routing.activation },
             productionRouteCandidates: routing.candidates
