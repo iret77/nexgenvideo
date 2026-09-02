@@ -62,7 +62,7 @@ struct WorkflowToolsTests {
         let endpoint = "generate_video"
         let videoCaps = VideoCaps(
             durations: [4],
-            resolutions: ["1080p"],
+            resolutions: ["720p"],
             aspectRatios: ["16:9"],
             supportsFirstFrame: false,
             supportsLastFrame: false,
@@ -159,7 +159,7 @@ struct WorkflowToolsTests {
                         origin: origin
                     ),
                     CapabilityFieldIDV1.resolutions: value(
-                        ["1080p"],
+                        ["720p"],
                         semantics: .supportedSet,
                         origin: origin
                     ),
@@ -3666,7 +3666,8 @@ struct WorkflowToolsTests {
         )
         _ = try publishExecutionShotlist(
             try hybridShotlist(),
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            finalResolution: .res720p
         )
         // s001 is imported → skipped; the first render shot is the generated s002.
         let first = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
