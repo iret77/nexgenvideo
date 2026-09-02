@@ -41,7 +41,7 @@ struct AgentTranscriptProjectionTests {
         #expect(activity.statuses == ["Reading the storage contract", "Checking recovery behavior"])
         #expect(activity.steps.map(\.id) == ["t1", "t2"])
         #expect(activity.currentStatus == "Checking recovery behavior")
-        #expect(activity.operationLabel == "Grep")
+        #expect(activity.operationLabel == "Searching files")
         #expect(activity.isRunning == false)
     }
 
@@ -71,7 +71,7 @@ struct AgentTranscriptProjectionTests {
         #expect(initialActivity?.id == user.id)
         #expect(updatedActivity?.id == user.id)
         #expect(updatedActivity?.currentStatus == "Second status")
-        #expect(updatedActivity?.operationLabel == "Grep")
+        #expect(updatedActivity?.operationLabel == "Searching files")
     }
 
     @Test("show_blocks remains durable transcript content")

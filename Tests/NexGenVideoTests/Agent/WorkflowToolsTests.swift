@@ -413,7 +413,8 @@ struct WorkflowToolsTests {
 
     private func publishExecutionShotlist(
         _ shotlist: Shotlist,
-        dataRoot: URL
+        dataRoot: URL,
+        finalResolution: VideoResolution = .res1080p
     ) throws -> [PipelineExecutionShotInput] {
         let audioURL = dataRoot.appendingPathComponent(shotlist.song.audioPath)
         let analysisURL = dataRoot.appendingPathComponent(shotlist.song.analysisPath)
@@ -452,7 +453,8 @@ struct WorkflowToolsTests {
                 visualMedium: .animation2d,
                 visualMediumNotes: "Flat 2D animation",
                 figures: .none,
-                lyricsIntegration: .metaphorical
+                lyricsIntegration: .metaphorical,
+                finalResolution: finalResolution
             ),
             to: PipelineLayout.briefFile
         )
@@ -480,7 +482,8 @@ struct WorkflowToolsTests {
 
     private func prepareNativeSourceExecution(
         dataRoot: URL,
-        chainedSuccessor: Bool = false
+        chainedSuccessor: Bool = false,
+        finalResolution: VideoResolution = .res1080p
     ) throws -> [PipelineExecutionShotInput] {
         let plan = try ShotProductionPlan(
             primaryAction: "Hold the composition.",
@@ -531,7 +534,11 @@ struct WorkflowToolsTests {
             generator: "test",
             shots: shots
         )
-        return try publishExecutionShotlist(shotlist, dataRoot: dataRoot)
+        return try publishExecutionShotlist(
+            shotlist,
+            dataRoot: dataRoot,
+            finalResolution: finalResolution
+        )
     }
 
     private func recursiveFileBytes(in root: URL) throws -> [String: Data] {
@@ -3144,7 +3151,8 @@ struct WorkflowToolsTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         _ = try prepareNativeSourceExecution(
             dataRoot: dataRoot,
-            chainedSuccessor: true
+            chainedSuccessor: true,
+            finalResolution: .res720p
         )
         let home = FrameInventory.projectHome(of: dataRoot)
         let firstVideo = home.appendingPathComponent("s001.mp4")
@@ -3595,7 +3603,8 @@ struct WorkflowToolsTests {
                 keyframeStrategy: .none,
                 productionPlan: plan
             ),
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            finalResolution: .res720p
         )
         let next = try await h.runOK("next_render_shot", args: ["project_dir": dataRoot.path, "phase": "preview"]) as? [String: Any]
         #expect(next?["done"] as? Bool == false)

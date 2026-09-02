@@ -7570,19 +7570,17 @@
             "common.resolutions": {
               "evidence": [
                 {
-                  "confidence": 0.96,
-                  "conflict": "The checked-in catalog listed 480p/720p; current text/image API docs also list 1080p.",
-                  "kind": "documented_api",
-                  "observed_at": "2026-08-31",
-                  "source_title": "fal Seedance 2.5 endpoint documentation",
-                  "source_url": "https://fal.ai/models/bytedance/seedance-2.5/reference-to-video"
+                  "confidence": 0.99,
+                  "kind": "provider_schema",
+                  "observed_at": "2026-09-02",
+                  "source_title": "fal live model metadata: bytedance/seedance-2.5/image-to-video",
+                  "source_url": "https://api.fal.ai/v1/models?endpoint_id=bytedance%2Fseedance-2.5%2Fimage-to-video"
                 }
               ],
               "semantics": "supported_set",
               "value": [
                 "480p",
-                "720p",
-                "1080p"
+                "720p"
               ]
             }
           }
@@ -8148,19 +8146,17 @@
             "common.resolutions": {
               "evidence": [
                 {
-                  "confidence": 0.96,
-                  "conflict": "The checked-in catalog listed 480p/720p; current text/image API docs also list 1080p.",
+                  "confidence": 0.99,
                   "kind": "documented_api",
-                  "observed_at": "2026-08-31",
-                  "source_title": "fal Seedance 2.5 endpoint documentation",
+                  "observed_at": "2026-09-02",
+                  "source_title": "fal Seedance 2.5 reference endpoint schema",
                   "source_url": "https://fal.ai/models/bytedance/seedance-2.5/reference-to-video"
                 }
               ],
               "semantics": "supported_set",
               "value": [
                 "480p",
-                "720p",
-                "1080p"
+                "720p"
               ]
             }
           }
@@ -8552,19 +8548,17 @@
             "common.resolutions": {
               "evidence": [
                 {
-                  "confidence": 0.96,
-                  "conflict": "The checked-in catalog listed 480p/720p; current text/image API docs also list 1080p.",
-                  "kind": "documented_api",
-                  "observed_at": "2026-08-31",
-                  "source_title": "fal Seedance 2.5 endpoint documentation",
-                  "source_url": "https://fal.ai/models/bytedance/seedance-2.5/reference-to-video"
+                  "confidence": 0.99,
+                  "kind": "provider_schema",
+                  "observed_at": "2026-09-02",
+                  "source_title": "fal live model metadata: bytedance/seedance-2.5/text-to-video",
+                  "source_url": "https://api.fal.ai/v1/models?endpoint_id=bytedance%2Fseedance-2.5%2Ftext-to-video"
                 }
               ],
               "semantics": "supported_set",
               "value": [
                 "480p",
-                "720p",
-                "1080p"
+                "720p"
               ]
             }
           }

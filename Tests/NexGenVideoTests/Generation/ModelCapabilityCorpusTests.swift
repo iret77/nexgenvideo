@@ -55,6 +55,10 @@ struct ModelCapabilityCorpusTests {
             profile.fields.integers[CapabilityFieldIDV1.visibleCharacters]?.semantics
                 == .reliableCapacity
         )
+        #expect(
+            profile.fields.strings[CapabilityFieldIDV1.resolutions]?.value
+                == ["480p", "720p"]
+        )
     }
 
     @Test("MiniMax H3 preserves published reference capacity and leaves figures unknown")
