@@ -14,6 +14,9 @@ struct AgentActivity: Identifiable {
     let isRunning: Bool
 
     var currentStatus: String? { statuses.last }
+    var operationLabel: String {
+        steps.last.map { ToolRunPresentation.label(for: $0.name) } ?? "Working"
+    }
 }
 
 struct AgentUserIntent: Identifiable {
@@ -95,7 +98,7 @@ enum AgentTranscriptProjection {
         guard let first = messages.first else { return nil }
         let activity = makeActivity(messages, isRunning: isRunning)
         var intents: [AgentTranscriptItem] = []
-        var results: [AgentTranscriptItem] = []
+        var resultMessage: AgentMessage?
         var receipts: [AgentTranscriptItem] = []
         var notices: [AgentTranscriptItem] = []
 
@@ -133,14 +136,19 @@ enum AgentTranscriptProjection {
                     return isPersistentTool(block)
                 }
                 if !persistentBlocks.isEmpty {
-                    var persistent = message
-                    persistent.blocks = persistentBlocks
-                    results.append(.assistantResult(persistent))
+                    if resultMessage == nil {
+                        var persistent = message
+                        persistent.blocks = persistentBlocks
+                        resultMessage = persistent
+                    } else {
+                        resultMessage?.blocks.append(contentsOf: persistentBlocks)
+                    }
                 }
             }
         }
 
         let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
+        let results = resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
         let output = intents + results + activityItems + receipts + notices
         guard !output.isEmpty else { return nil }
         return AgentTranscriptTurn(id: first.id, items: output)

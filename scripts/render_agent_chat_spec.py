@@ -147,15 +147,17 @@ def browser_path() -> str:
     raise RuntimeError("Chrome or Chromium is required to render the Agent UI specification")
 
 
-def validate_capture_dom(content: str, state: str) -> None:
-    required = (
+def validate_capture_dom(content: str, state: str, reduce_motion: bool = False) -> None:
+    required = [
         f'data-capture-state="{state}"',
         'data-render-ready="true"',
         f'data-state-section="{state}"',
         'aria-label="240 point Agent panel',
         'aria-label="400 point Agent panel',
         'aria-label="640 point Agent panel',
-    )
+    ]
+    if reduce_motion:
+        required.append('data-reduce-motion="true"')
     missing = [marker for marker in required if marker not in content]
     if missing:
         raise RuntimeError(
@@ -163,7 +165,8 @@ def validate_capture_dom(content: str, state: str) -> None:
         )
 
 
-def rendered_dom(browser: str, url: str, state: str) -> None:
+def rendered_dom(browser: str, url: str, state: str, reduce_motion: bool = False) -> None:
+    motion_args = ["--force-prefers-reduced-motion"] if reduce_motion else []
     result = subprocess.run(
         [
             browser,
@@ -172,6 +175,7 @@ def rendered_dom(browser: str, url: str, state: str) -> None:
             "--no-sandbox",
             "--virtual-time-budget=1000",
             "--dump-dom",
+            *motion_args,
             url,
         ],
         check=True,
@@ -179,7 +183,7 @@ def rendered_dom(browser: str, url: str, state: str) -> None:
         text=True,
         timeout=45,
     )
-    validate_capture_dom(result.stdout, state)
+    validate_capture_dom(result.stdout, state, reduce_motion)
 
 
 def render(source: Path, output: Path) -> None:
@@ -192,10 +196,16 @@ def render(source: Path, output: Path) -> None:
             f"expected {STATES}, got {actual_states}"
         )
     width, height = CAPTURE_SIZE
-    for state in STATES:
-        destination = output / f"agent-chat-{state}-240-400-640.png"
-        url = source.resolve().as_uri() + f"?capture={state}"
-        rendered_dom(browser, url, state)
+    captures = [(state, False) for state in STATES] + [("stress", True)]
+    for state, reduce_motion in captures:
+        mode = "-reduced-motion" if reduce_motion else ""
+        destination = output / f"agent-chat-{state}{mode}-240-400-640.png"
+        query = f"?capture={state}"
+        if reduce_motion:
+            query += "&reduceMotion=1"
+        url = source.resolve().as_uri() + query
+        rendered_dom(browser, url, state, reduce_motion)
+        motion_args = ["--force-prefers-reduced-motion"] if reduce_motion else []
         subprocess.run(
             [
                 browser,
@@ -206,6 +216,7 @@ def render(source: Path, output: Path) -> None:
                 "--run-all-compositor-stages-before-draw",
                 "--virtual-time-budget=1000",
                 "--force-device-scale-factor=1",
+                *motion_args,
                 f"--window-size={width},{height}",
                 f"--screenshot={destination}",
                 url,

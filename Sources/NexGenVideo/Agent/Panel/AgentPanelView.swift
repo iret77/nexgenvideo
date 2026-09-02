@@ -287,7 +287,6 @@ struct AgentPanelView: View {
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
-        .focusable(false)
         .disabled(service.isComposerBlocked || service.isStreaming)
         .accessibilityLabel("New conversation")
     }
@@ -303,7 +302,6 @@ struct AgentPanelView: View {
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
-        .focusable(false)
         .opacity(isUserPinnedAway ? AppTheme.Opacity.opaque : AppTheme.Opacity.transparent)
         .allowsHitTesting(isUserPinnedAway)
         .accessibilityHidden(!isUserPinnedAway)
@@ -334,7 +332,6 @@ struct AgentPanelView: View {
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
-        .focusable(false)
         .popover(isPresented: $showUtilities, arrowEdge: .top) {
             PluginLauncherPopover(
                 plugins: pluginLauncherAvailable ? discoveredPlugins : [],
@@ -388,7 +385,6 @@ struct AgentPanelView: View {
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
-        .focusable(false)
         .accessibilityLabel("Switch conversation, \(currentConversationTitle)")
         .accessibilityValue(currentConversationCue?.label ?? "Current")
         .popover(isPresented: Binding(
@@ -469,16 +465,7 @@ struct AgentPanelView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-        }
-    }
-
-    @ViewBuilder
-    private var byokIndicator: some View {
-        if service.backend == .anthropicAPI && service.hasApiKey {
-            Text("using API key")
-                .font(.system(size: AppTheme.FontSize.xs).italic())
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .help("Streaming through your Anthropic API key (BYOK)")
+            .help("Model for this conversation · Anthropic API key")
         }
     }
 
@@ -784,7 +771,7 @@ struct AgentPanelView: View {
                     FunctionPill(title: fn.title, systemImage: fn.systemImage) {
                         service.pendingFunction = nil
                     }
-                    Spacer(minLength: 0)
+                    Spacer(minLength: AppTheme.Spacing.none)
                 }
             }
             AgentInputBox(
@@ -799,7 +786,6 @@ struct AgentPanelView: View {
                 onFocusChange: { service.recordComposerFocus($0, for: sessionID) }
             ) {
                 modelPicker
-                byokIndicator
             }
             .id(sessionID)
         }
@@ -891,7 +877,6 @@ private struct AgentStarterPromptButton: View {
             )
         }
         .buttonStyle(.plain)
-        .focusable(false)
         .help("Add function")
     }
 }
@@ -916,7 +901,6 @@ private struct FunctionPill: View {
                     .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.bold))
             }
             .buttonStyle(.plain)
-            .focusable(false)
             .help("Remove function")
         }
         .foregroundStyle(AppTheme.Accent.primary)

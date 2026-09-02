@@ -298,18 +298,22 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showBlocks,
-            description: "Present status, reports, and summaries as NATIVE UI in the transcript — headlines, badge rows, key-value boxes, callouts — instead of markdown walls. USE THIS whenever you report state (project status, brief fields, cost, phase results); plain chat text is for genuine conversation only and never gets rich rendering. Interaction stays with show_dialog — show_blocks displays, it never asks. Strictly validated: unknown block types, unknown keys, or empty required fields are rejected with the exact violation; fix and re-call.",
+            description: "Present one bounded native result document in the transcript instead of a Markdown wall. USE THIS whenever you report state (project status, brief fields, cost, phase results); plain chat text is for genuine conversation only. Interaction stays with show_dialog. Supply version 1 and fixed slot order: optional headline, optional body text, optional status, up to two key-value groups, optional callout. Unknown fields, arbitrary symbols, repeated slots, and invalid ordering are rejected with the exact violation; fix and re-call.",
             inputSchema: objectSchema(
                 properties: [
+                    "version": [
+                        "type": "string",
+                        "enum": [AgentBlocks.currentVersion],
+                    ],
                     "blocks": [
                         "type": "array",
                         "minItems": 1,
                         "maxItems": AgentBlocks.maxBlocks,
-                        "description": "1–\(AgentBlocks.maxBlocks) blocks in the bounded result grammar: optional headline first, one status, up to two key-value groups, prose, optional callout last.",
+                        "description": "Fixed slot order: optional headline, optional body text, optional status, up to two key-value groups, optional callout.",
                         "items": showBlocksItemSchema,
                     ],
                 ],
-                required: ["blocks"]
+                required: ["version", "blocks"]
             )
         ),
         AgentTool(
@@ -1571,69 +1575,93 @@ enum ToolDefinitions {
         ]
     }
 
-    private static var showBlocksItemSchema: [String: Any] {
-        var schema = objectSchema(
-            properties: [
-                "type": [
-                    "type": "string",
-                    "enum": ["headline", "text", "status", "keyvalue", "callout"],
+    private static var showBlocksItemSchema: [String: Any] { [
+        "description": "Exactly one closed block shape in the fixed result-document grammar.",
+        "anyOf": [
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["headline"]],
+                    "text": [
+                        "type": "string",
+                        "maxLength": AgentBlocks.maxHeadlineLength,
+                    ],
                 ],
-                "text": [
-                    "type": "string",
-                    "maxLength": AgentBlocks.maxValueLength,
+                required: ["type", "text"]
+            ),
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["text"]],
+                    "body": [
+                        "type": "string",
+                        "maxLength": AgentBlocks.maxBodyLength,
+                    ],
                 ],
-                "symbol": ["type": "string"],
-                "body": [
-                    "type": "string",
-                    "maxLength": AgentBlocks.maxBodyLength,
-                ],
-                "badges": [
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": AgentBlocks.maxBadges,
-                    "items": objectSchema(
-                        properties: [
-                            "label": [
-                                "type": "string",
-                                "maxLength": AgentBlocks.maxLabelLength,
+                required: ["type", "body"]
+            ),
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["status"]],
+                    "badges": [
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": AgentBlocks.maxBadges,
+                        "items": objectSchema(
+                            properties: [
+                                "label": [
+                                    "type": "string",
+                                    "maxLength": AgentBlocks.maxLabelLength,
+                                ],
+                                "value": [
+                                    "type": "string",
+                                    "maxLength": AgentBlocks.maxValueLength,
+                                ],
                             ],
-                            "value": [
+                            required: ["label", "value"]
+                        ),
+                    ],
+                ],
+                required: ["type", "badges"]
+            ),
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["keyvalue"]],
+                    "title": [
+                        "type": "string",
+                        "maxLength": AgentBlocks.maxHeadlineLength,
+                    ],
+                    "rows": [
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": AgentBlocks.maxRows,
+                        "items": [
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "items": [
                                 "type": "string",
                                 "maxLength": AgentBlocks.maxValueLength,
                             ],
-                            "symbol": ["type": "string"],
-                        ],
-                        required: ["label", "value"]
-                    ),
-                ],
-                "title": [
-                    "type": "string",
-                    "maxLength": AgentBlocks.maxHeadlineLength,
-                ],
-                "rows": [
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": AgentBlocks.maxRows,
-                    "items": [
-                        "type": "array",
-                        "minItems": 2,
-                        "maxItems": 2,
-                        "items": [
-                            "type": "string",
-                            "maxLength": AgentBlocks.maxValueLength,
                         ],
                     ],
                 ],
-                "tone": [
-                    "type": "string",
-                    "enum": AgentBlock.CalloutTone.allCases.map(\.rawValue),
+                required: ["type", "rows"]
+            ),
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["callout"]],
+                    "tone": [
+                        "type": "string",
+                        "enum": AgentBlock.CalloutTone.allCases.map(\.rawValue),
+                    ],
+                    "text": [
+                        "type": "string",
+                        "maxLength": AgentBlocks.maxValueLength,
+                    ],
                 ],
-            ],
-            required: ["type"]
-        )
-        schema["description"] = "Exactly one supported block shape; the executor enforces type-specific required fields, length limits, and result ordering."
-        return schema
-    }
+                required: ["type", "tone", "text"]
+            ),
+        ],
+    ] }
 
     /// Shared `project_dir` property schema for the pipeline tools (optional — defaults to the open
     /// project's pipeline dir when omitted).

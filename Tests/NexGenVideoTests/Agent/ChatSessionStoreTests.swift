@@ -162,6 +162,46 @@ struct ChatSessionStoreTests {
         #expect(!service.composerShouldFocus)
     }
 
+    @Test("a dock decision leaves the owning conversation composer state unchanged")
+    @MainActor
+    func composerStateSurvivesDecisionRoundTrip() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.newChat()
+        let originalHeight = service.composerHeight
+        defer { service.composerHeight = originalHeight }
+        let mention = AgentMention(
+            displayName: "Look-reference",
+            mediaRef: "look-reference",
+            type: .image
+        )
+        let height = Double(AppTheme.ComponentSize.agentComposerMinHeight)
+            + Double(AppTheme.Spacing.xl)
+        service.draft = "Keep this draft @Look-reference"
+        service.mentions = [mention]
+        service.composerHeight = height
+        service.recordComposerFocus(true)
+
+        let dialog = AgentDialog(
+            id: "decision-round-trip",
+            title: "Choose the treatment",
+            symbol: "questionmark",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        )
+        try service.presentDialog(dialog)
+        #expect(service.isComposerBlocked)
+        service.abandonDialog()
+
+        #expect(!service.isComposerBlocked)
+        #expect(service.draft == "Keep this draft @Look-reference")
+        #expect(service.mentions == [mention])
+        #expect(service.composerHeight == height)
+        #expect(service.composerShouldFocus)
+    }
+
     @Test("conversation attention is keyed to the owning session")
     @MainActor
     func sessionAttentionIsScoped() async throws {

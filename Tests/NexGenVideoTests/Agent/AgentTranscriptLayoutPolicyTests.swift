@@ -167,6 +167,25 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(!streamingIcon.contains("ProgressView"))
     }
 
+    @Test func completedActivityUsesOneDisclosureWithFlatTechnicalDetail() throws {
+        let source = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift"
+        )
+        let start = try #require(source.range(of: "struct AgentActivityView"))
+        let end = try #require(source.range(
+            of: "private struct ToolRunRow",
+            range: start.upperBound..<source.endIndex
+        ))
+        let activity = source[start.lowerBound..<end.lowerBound]
+
+        #expect(activity.contains("activity.operationLabel"))
+        #expect(activity.contains("ToolRunDetail("))
+        #expect(!activity.contains("ToolRunRow("))
+        #expect(activity.contains("accessibilityReduceMotion"))
+        #expect(activity.contains("Hide technical details"))
+        #expect(activity.contains("Show technical details"))
+    }
+
     @Test func composerIsAbsentWhileAHostDecisionIsOpen() throws {
         let panel = try agentPanelSource()
         let input = try sourceFile(
@@ -208,6 +227,7 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(header.contains(".truncationMode(.middle)"))
         #expect(header.contains(".opacity(isUserPinnedAway"))
         #expect(!header.contains("ForEach(service.openSessions)"))
+        #expect(!header.contains(".focusable(false)"))
         #expect(!panel.contains("ChatTabView"))
 
         let history = try sourceFile(
@@ -219,8 +239,11 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(history.contains("Search conversations"))
         #expect(history.contains(".confirmationDialog("))
         #expect(history.contains("cue.label"))
+        #expect(history.contains("session.title, updated"))
+        #expect(!history.contains(".focusable(false)"))
         #expect(utilities.contains("Close conversation"))
         #expect(utilities.contains("Search workflows"))
+        #expect(!utilities.contains(".focusable(false)"))
     }
 
     @Test func dialogChoiceChipsUseBoundedCompactTitles() throws {

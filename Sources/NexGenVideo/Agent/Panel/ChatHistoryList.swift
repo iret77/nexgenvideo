@@ -94,6 +94,7 @@ struct ChatHistoryList: View {
     private func row(session: ChatSession) -> some View {
         let isCurrent = session.id == currentId
         let cue = cuesBySessionID[session.id]
+        let updated = Self.formatter.localizedString(for: session.updatedAt, relativeTo: Date())
         return HStack(spacing: AppTheme.Spacing.smMd) {
             Button { onSelect(session.id) } label: {
                 HStack(spacing: AppTheme.Spacing.sm) {
@@ -104,7 +105,7 @@ struct ChatHistoryList: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                         HStack(spacing: AppTheme.Spacing.xs) {
-                            Text(Self.formatter.localizedString(for: session.updatedAt, relativeTo: Date()))
+                            Text(updated)
                             if let cue {
                                 Label(cue.label, systemImage: cue.symbol)
                                     .foregroundStyle(cue.color)
@@ -125,7 +126,7 @@ struct ChatHistoryList: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .accessibilityLabel(
-                [session.title, isCurrent ? "Current" : nil, cue?.label]
+                [session.title, updated, isCurrent ? "Current" : nil, cue?.label]
                     .compactMap { $0 }
                     .joined(separator: ", ")
             )
@@ -136,7 +137,6 @@ struct ChatHistoryList: View {
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
             .buttonStyle(.plain)
-            .focusable(false)
             .disabled(!canSwitch)
             .accessibilityLabel("Delete \(session.title)")
         }

@@ -169,7 +169,7 @@ private struct PluginCommandRow: View {
                             .lineLimit(2)
                     }
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: AppTheme.Spacing.none)
                 Image(systemName: command.requiresArgument ? "pencil.line" : "arrow.up")
                     .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                     .foregroundStyle(hovering ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
@@ -184,7 +184,6 @@ private struct PluginCommandRow: View {
             )
         }
         .buttonStyle(.plain)
-        .focusable(false)
         .onHover { hovering = $0 }
         .help(command.requiresArgument
             ? "Insert \(command.command) and fill in the argument"

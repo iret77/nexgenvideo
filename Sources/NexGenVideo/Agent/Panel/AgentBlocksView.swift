@@ -11,7 +11,21 @@ struct AgentBlocksView: View {
                 blockView(block)
             }
         }
+        .padding(AppTheme.Spacing.mdLg)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .fill(AppTheme.Background.raisedColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .strokeBorder(
+                    AppTheme.Border.subtleColor,
+                    lineWidth: AppTheme.BorderWidth.hairline
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Structured result")
     }
 
     @ViewBuilder
@@ -60,17 +74,11 @@ struct AgentBlocksView: View {
                             .foregroundStyle(AppTheme.Text.secondaryColor)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
+                        Spacer(minLength: AppTheme.Spacing.none)
                     }
                 }
             }
-            .padding(AppTheme.Spacing.mdLg)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: AppTheme.Radius.md).fill(AppTheme.Background.raisedColor))
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                    .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
-            )
 
         case .callout(let tone, let text):
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
@@ -128,4 +136,3 @@ struct AgentBlocksView: View {
         }
     }
 }
-

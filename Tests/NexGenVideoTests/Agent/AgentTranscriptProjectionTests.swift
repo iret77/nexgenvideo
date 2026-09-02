@@ -41,6 +41,7 @@ struct AgentTranscriptProjectionTests {
         #expect(activity.statuses == ["Reading the storage contract", "Checking recovery behavior"])
         #expect(activity.steps.map(\.id) == ["t1", "t2"])
         #expect(activity.currentStatus == "Checking recovery behavior")
+        #expect(activity.operationLabel == "Grep")
         #expect(activity.isRunning == false)
     }
 
@@ -70,6 +71,7 @@ struct AgentTranscriptProjectionTests {
         #expect(initialActivity?.id == user.id)
         #expect(updatedActivity?.id == user.id)
         #expect(updatedActivity?.currentStatus == "Second status")
+        #expect(updatedActivity?.operationLabel == "Grep")
     }
 
     @Test("show_blocks remains durable transcript content")
@@ -78,7 +80,7 @@ struct AgentTranscriptProjectionTests {
             .toolUse(
                 id: "show",
                 name: ToolName.showBlocks.rawValue,
-                inputJSON: #"{"blocks":[{"type":"text","text":"Ready"}]}"#
+                inputJSON: #"{"version":"1","blocks":[{"type":"text","body":"Ready"}]}"#
             ),
         ])
 
@@ -213,6 +215,129 @@ struct AgentTranscriptProjectionTests {
             if case .userIntent = $0 { return true }
             return false
         }))
+    }
+
+    @Test("plain streaming prose remains the turn's single primary result")
+    func plainStreamingResult() {
+        let user = AgentMessage(role: .user, blocks: [.text("Summarize the cut.")])
+        let partial = AgentMessage(role: .assistant, blocks: [.text("The opening is clear")])
+
+        let turns = AgentTranscriptProjection.turns(
+            messages: [user, partial],
+            isStreaming: true
+        )
+
+        #expect(turns.count == 1)
+        #expect(turns[0].items.count == 2)
+        guard case .assistantResult(let result) = turns[0].items[1] else {
+            Issue.record("streaming prose must remain a primary result")
+            return
+        }
+        #expect(result.id == partial.id)
+        #expect(result.blocks.count == 1)
+    }
+
+    @Test("assistant prose and rich output fold into one result")
+    func richOutputUsesOneResult() {
+        let user = AgentMessage(role: .user, blocks: [.text("Report the project state.")])
+        let prose = AgentMessage(role: .assistant, blocks: [.text("The cut is ready.")])
+        let rich = AgentMessage(role: .assistant, blocks: [
+            .toolUse(
+                id: "report",
+                name: ToolName.showBlocks.rawValue,
+                inputJSON: #"{"version":"1","blocks":[{"type":"status","badges":[{"label":"Cut","value":"Ready"}]}]}"#
+            ),
+        ])
+
+        let turns = AgentTranscriptProjection.turns(
+            messages: [user, prose, rich],
+            isStreaming: false
+        )
+
+        #expect(turns.count == 1)
+        #expect(turns[0].items.count == 2)
+        guard case .assistantResult(let result) = turns[0].items[1] else {
+            Issue.record("the turn must contain one primary result")
+            return
+        }
+        #expect(result.id == prose.id)
+        #expect(result.blocks.count == 2)
+    }
+
+    @Test("consecutive workflow receipts from one phase form one durable group")
+    func groupsWorkflowReceiptsByPhase() {
+        let first = AgentMessage(
+            role: .user,
+            blocks: [],
+            userPresentation: .init(
+                choiceRecord: nil,
+                typedText: nil,
+                workflowRecord: .init(
+                    title: "Prepared character 1",
+                    symbol: "person",
+                    phase: "brief",
+                    detail: "Claude Mouse",
+                    attachmentNames: ["claude-front.png"],
+                    outcome: .attached
+                )
+            )
+        )
+        let second = AgentMessage(
+            role: .user,
+            blocks: [],
+            userPresentation: .init(
+                choiceRecord: nil,
+                typedText: nil,
+                workflowRecord: .init(
+                    title: "Prepared character 2",
+                    symbol: "person",
+                    phase: "brief",
+                    detail: "AI Cat",
+                    attachmentNames: [],
+                    outcome: .skipped
+                )
+            )
+        )
+
+        let turns = AgentTranscriptProjection.turns(
+            messages: [first, second],
+            isStreaming: false
+        )
+
+        #expect(turns.count == 1)
+        #expect(turns[0].items.count == 1)
+        guard case .receipts(let group) = turns[0].items[0] else {
+            Issue.record("workflow records must remain receipts")
+            return
+        }
+        #expect(group.phase == "brief")
+        #expect(group.receipts.count == 2)
+    }
+
+    @Test("versionless saved rich output preserves its stored result order")
+    func legacySavedResultOrdering() {
+        let rich = AgentMessage(role: .assistant, blocks: [
+            .toolUse(
+                id: "legacy",
+                name: ToolName.showBlocks.rawValue,
+                inputJSON: #"{"blocks":[{"type":"text","body":"Saved report"}]}"#
+            ),
+        ])
+        let prose = AgentMessage(role: .assistant, blocks: [.text("Saved conclusion")])
+
+        let turns = AgentTranscriptProjection.turns(
+            messages: [rich, prose],
+            isStreaming: false
+        )
+
+        #expect(turns.count == 1)
+        #expect(turns[0].items.count == 1)
+        guard case .assistantResult(let result) = turns[0].items[0] else {
+            Issue.record("legacy content must remain a readable result")
+            return
+        }
+        #expect(result.id == rich.id)
+        #expect(result.blocks.count == 2)
     }
 }
 

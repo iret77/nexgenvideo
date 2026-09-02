@@ -1058,6 +1058,15 @@
     .spec-table th,
     .spec-table td { padding-inline: var(--s-xs); }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      scroll-behavior: auto !important;
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+    }
+  }
 </style>
 </head>
 <body>
@@ -1945,7 +1954,11 @@
       return "<a href='#state-" + state.id + "'>" + state.title + "</a>";
     }).join("");
 
-    var capture = new URLSearchParams(window.location.search).get("capture");
+    var captureParams = new URLSearchParams(window.location.search);
+    var capture = captureParams.get("capture");
+    if (captureParams.get("reduceMotion") === "1") {
+      document.body.dataset.reduceMotion = "true";
+    }
     if (capture) {
       var target = document.querySelector("[data-state-section='" + capture + "']");
       if (target) {

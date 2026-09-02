@@ -201,7 +201,7 @@ struct AgentInputBox<LeadingTools: View>: View {
             HStack(spacing: AppTheme.Spacing.md) {
                 attachButton
                 leadingTools
-                Spacer(minLength: 0)
+                Spacer(minLength: AppTheme.Spacing.none)
                 GlassEffectContainer(spacing: AppTheme.Spacing.xs) {
                     sendStopButton
                 }

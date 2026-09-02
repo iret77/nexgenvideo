@@ -37,7 +37,8 @@ enum AgentBlock: Equatable, Sendable {
 
 enum AgentBlocks {
 
-    static let maxBlocks = 7
+    static let currentVersion = "1"
+    static let maxBlocks = 6
     static let maxBadges = 4
     static let maxRows = 8
     static let maxHeadlineLength = 120
@@ -51,6 +52,16 @@ enum AgentBlocks {
     /// Strict parse of the `show_blocks` args. Throws `ToolError` with the exact violation —
     /// the error IS the enforcement loop (the model reads it and re-calls correctly).
     static func parse(_ args: [String: Any]) throws -> [AgentBlock] {
+        let allowedRootKeys: Set<String> = ["version", "blocks"]
+        let unknownRootKeys = Set(args.keys).subtracting(allowedRootKeys)
+        guard unknownRootKeys.isEmpty else {
+            throw ToolError(
+                "show_blocks: unknown root keys \(unknownRootKeys.sorted()) — allowed: \(allowedRootKeys.sorted())."
+            )
+        }
+        guard args["version"] as? String == currentVersion else {
+            throw ToolError("show_blocks: 'version' must be '\(currentVersion)'.")
+        }
         guard let raw = args["blocks"] as? [[String: Any]], !raw.isEmpty else {
             throw ToolError("show_blocks: 'blocks' must be a non-empty array of block objects.")
         }
@@ -65,7 +76,7 @@ enum AgentBlocks {
     }
 
     static func parseForRendering(_ args: [String: Any]) -> [AgentBlock]? {
-        if let current = try? parse(args) { return current }
+        if args["version"] != nil { return try? parse(args) }
         return try? parseLegacy(args)
     }
 
@@ -201,14 +212,14 @@ enum AgentBlocks {
         }
         switch type {
         case "headline":
-            try allowKeys(dict, ["type", "text", "symbol"], index: index)
+            try allowKeys(dict, ["type", "text"], index: index)
             return .headline(text: try requiredText(
                 dict,
                 "text",
                 index: index,
                 maxLength: maxHeadlineLength
             ),
-                             symbol: dict["symbol"] as? String)
+                             symbol: nil)
         case "text":
             try allowKeys(dict, ["type", "body"], index: index)
             return .text(body: try requiredText(
@@ -224,7 +235,7 @@ enum AgentBlocks {
                 throw ToolError("show_blocks: blocks[\(index)].badges must hold 1–\(maxBadges) badge objects.")
             }
             let badges = try rawBadges.enumerated().map { badgeIndex, badge in
-                try allowKeys(badge, ["label", "value", "symbol"], index: index)
+                try allowKeys(badge, ["label", "value"], index: index)
                 return AgentBlock.Badge(
                     label: try requiredText(
                         badge,
@@ -240,7 +251,7 @@ enum AgentBlocks {
                         element: "badges[\(badgeIndex)]",
                         maxLength: maxValueLength
                     ),
-                    symbol: badge["symbol"] as? String
+                    symbol: nil
                 )
             }
             return .status(badges: badges)
@@ -335,6 +346,13 @@ enum AgentBlocks {
         guard statusCount <= 1 else {
             throw ToolError("show_blocks: at most one status block is allowed.")
         }
+        let textCount = blocks.filter {
+            if case .text = $0 { return true }
+            return false
+        }.count
+        guard textCount <= 1 else {
+            throw ToolError("show_blocks: at most one body text block is allowed.")
+        }
         let keyValueCount = blocks.filter {
             if case .keyValue = $0 { return true }
             return false
@@ -349,6 +367,22 @@ enum AgentBlocks {
         guard calloutIndices.count <= 1,
               calloutIndices.first.map({ $0 == blocks.count - 1 }) ?? true else {
             throw ToolError("show_blocks: callout is optional, unique, and must be the last block.")
+        }
+        let ranks = blocks.map { block -> Int in
+            switch block {
+            case .headline: 0
+            case .text: 1
+            case .status: 2
+            case .keyValue: 3
+            case .callout: 4
+            }
+        }
+        guard zip(ranks, ranks.dropFirst()).allSatisfy({ pair in
+            pair.0 <= pair.1
+        }) else {
+            throw ToolError(
+                "show_blocks: blocks must use fixed slot order headline, text, status, key-value, callout."
+            )
         }
     }
 

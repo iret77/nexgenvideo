@@ -71,6 +71,25 @@ class AgentChatSpecRendererTests(unittest.TestCase):
                 state,
             )
 
+    def test_reduce_motion_capture_requires_an_explicit_dom_marker(self):
+        state = "stress"
+        content = (
+            '<body data-capture-state="stress" data-render-ready="true" '
+            'data-reduce-motion="true">'
+            '<section data-state-section="stress">'
+            '<article aria-label="240 point Agent panel, Stress"></article>'
+            '<article aria-label="400 point Agent panel, Stress"></article>'
+            '<article aria-label="640 point Agent panel, Stress"></article>'
+            "</section></body>"
+        )
+        render_agent_chat_spec.validate_capture_dom(content, state, True)
+        with self.assertRaisesRegex(RuntimeError, "did not reach"):
+            render_agent_chat_spec.validate_capture_dom(
+                content.replace('data-reduce-motion="true"', ""),
+                state,
+                True,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
