@@ -328,6 +328,8 @@ enum ProjectWorkingCopy {
             )
         }
         let canonicalSource = source.resolvingSymlinksInPath().standardizedFileURL
+        let canonicalDestination = destination.resolvingSymlinksInPath()
+            .standardizedFileURL
         let prefix = canonicalSource.path.hasSuffix("/")
             ? canonicalSource.path
             : canonicalSource.path + "/"
@@ -345,7 +347,7 @@ enum ProjectWorkingCopy {
                 )
             }
             let relativePath = String(canonicalItem.path.dropFirst(prefix.count))
-            let target = destination.appendingPathComponent(relativePath)
+            let target = canonicalDestination.appendingPathComponent(relativePath)
             if values.isDirectory == true {
                 try fm.createDirectory(at: target, withIntermediateDirectories: true)
                 continue
@@ -360,7 +362,7 @@ enum ProjectWorkingCopy {
                 at: target.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            let status = item.path.withCString { sourcePath in
+            let status = canonicalItem.path.withCString { sourcePath in
                 target.path.withCString { targetPath in
                     clonefile(sourcePath, targetPath, UInt32(CLONE_NOFOLLOW_ANY))
                 }

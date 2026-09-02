@@ -1355,6 +1355,7 @@ extension ToolExecutor {
                 productionRouting = try PipelineProductionRouting.resolveAndWrite(
                     shotID: shotId,
                     dataRoot: root,
+                    activation: providerActivation(),
                     declaredPack: declaration.packName,
                     declaredBinding: declaration.binding
                 )
@@ -1395,6 +1396,17 @@ extension ToolExecutor {
                         "The production route for shot '\(shotId)' is missing or stale: \(error)."
                     )
                 }
+            } catch PipelineExecutionPlanError.referencedFileInvalid(let path) {
+                if shot.sourceMode == .aiEnhanced {
+                    throw ToolError(
+                        "Shot '\(shotId)' has no current project-local source video at '\(path)'. "
+                            + "Restore the declared source or rewind the Shot List."
+                    )
+                }
+                throw ToolError(
+                    "The production route for shot '\(shotId)' could not be resolved: "
+                        + "the referenced file at '\(path)' is invalid."
+                )
             } catch {
                 throw ToolError(
                     "The production route for shot '\(shotId)' could not be resolved: \(error)."

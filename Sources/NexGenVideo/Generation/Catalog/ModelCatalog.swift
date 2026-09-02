@@ -700,8 +700,9 @@ final class ModelCatalog {
             || binding.provider.requiresLiveImageCatalogDiscovery
     }
 
-    func productionRouteCandidates() -> [CatalogProductionRouteCandidate] {
-        let activation = ProviderActivation.current()
+    func productionRouteCandidates(
+        activation: ProviderActivation = .current()
+    ) -> [CatalogProductionRouteCandidate] {
         let discovered = discoveredByProvider
         let discoveryStates = providerDiscovery
         return offeringCapabilitiesByModelID.keys.sorted().flatMap { modelID in

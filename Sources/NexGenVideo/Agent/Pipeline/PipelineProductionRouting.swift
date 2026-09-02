@@ -55,12 +55,14 @@ enum PipelineProductionRouting {
     static func resolveAndWrite(
         shotID: String,
         dataRoot: URL,
+        activation: ProviderActivation = .current(),
         declaredPack: String? = nil,
         declaredBinding: ProjectPackBinding? = nil
     ) throws -> PipelineProductionRouteSelection {
         guard let selection = try resolveOptions(
             shotID: shotID,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            activation: activation
         ).first else {
             throw PipelineProductionRoutingError.selectedCatalogModelMissing
         }
@@ -78,12 +80,14 @@ enum PipelineProductionRouting {
         shotID: String,
         dataRoot: URL,
         target: ResolvedGenerationTarget,
+        activation: ProviderActivation = .current(),
         declaredPack: String? = nil,
         declaredBinding: ProjectPackBinding? = nil
     ) throws -> PipelineProductionRouteSelection {
         guard let selection = try resolveOptions(
             shotID: shotID,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            activation: activation
         ).first(where: { $0.target == target }) else {
             throw PipelineProductionRoutingError.selectedCatalogModelMissing
         }
@@ -99,10 +103,13 @@ enum PipelineProductionRouting {
 
     static func resolveOptions(
         shotID: String,
-        dataRoot: URL
+        dataRoot: URL,
+        activation: ProviderActivation = .current()
     ) throws -> [PipelineProductionRouteSelection] {
         let dependencies = try loadDependencies(shotID: shotID, dataRoot: dataRoot)
-        let records = ModelCatalog.shared.productionRouteCandidates()
+        let records = ModelCatalog.shared.productionRouteCandidates(
+            activation: activation
+        )
         let matches = try ProductionRequirementResolverV1.matchingRoutes(
             requirement: dependencies.requirement,
             demandSet: dependencies.demandSet,
@@ -182,7 +189,8 @@ enum PipelineProductionRouting {
 
     static func requireCurrent(
         shotID: String,
-        dataRoot: URL
+        dataRoot: URL,
+        activation: ProviderActivation = .current()
     ) throws -> PipelineProductionRouteSelection {
         let dependencies = try loadDependencies(shotID: shotID, dataRoot: dataRoot)
         let directory = routingDirectory(shotID: shotID, dataRoot: dataRoot)
@@ -212,7 +220,9 @@ enum PipelineProductionRouting {
                 )
             }
             let route = try JSONDecoder().decode(ProductionRouteV1.self, from: routeData)
-            let records = ModelCatalog.shared.productionRouteCandidates()
+            let records = ModelCatalog.shared.productionRouteCandidates(
+                activation: activation
+            )
             guard let record = records.first(where: {
                 $0.candidate.capabilities.offering == route.offering
                     && ProductionRouteCapabilitySnapshotV1(candidate: $0.candidate)

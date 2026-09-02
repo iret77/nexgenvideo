@@ -12,6 +12,7 @@ struct ToolError: LocalizedError, Sendable {
 @MainActor
 final class ToolExecutor {
     private let editorProvider: () -> EditorViewModel?
+    let providerActivation: () -> ProviderActivation
     var editor: EditorViewModel? { editorProvider() }
 
     /// The hard gate refuses a phase's work tool until every earlier gate is approved. ON by default so
@@ -19,14 +20,24 @@ final class ToolExecutor {
     /// isolation opt out (they scaffold minimal state and don't walk the gate chain).
     private let enforceHardGates: Bool
 
-    init(editor: EditorViewModel, enforceHardGates: Bool = true) {
+    init(
+        editor: EditorViewModel,
+        enforceHardGates: Bool = true,
+        providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() }
+    ) {
         self.editorProvider = { [weak editor] in editor }
         self.enforceHardGates = enforceHardGates
+        self.providerActivation = providerActivation
     }
 
-    init(editorProvider: @escaping () -> EditorViewModel?, enforceHardGates: Bool = true) {
+    init(
+        editorProvider: @escaping () -> EditorViewModel?,
+        enforceHardGates: Bool = true,
+        providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() }
+    ) {
         self.editorProvider = editorProvider
         self.enforceHardGates = enforceHardGates
+        self.providerActivation = providerActivation
     }
 
     private var agentUndoStack: [String] = []
