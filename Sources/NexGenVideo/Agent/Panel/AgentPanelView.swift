@@ -289,7 +289,6 @@ struct AgentPanelView: View {
         .controlSize(.small)
         .focusable(false)
         .disabled(service.isComposerBlocked || service.isStreaming)
-        .keyboardShortcut("n", modifiers: .command)
         .accessibilityLabel("New conversation")
     }
 
@@ -314,7 +313,6 @@ struct AgentPanelView: View {
         )
     }
 
-    @State private var showHistory = false
     @State private var isUserPinnedAway = false
     @State private var programmaticScrollPending = false
     @State private var scrollToLatestRequest: UInt = 0
@@ -365,7 +363,7 @@ struct AgentPanelView: View {
     }
 
     private var historyButton: some View {
-        Button { showHistory.toggle() } label: {
+        Button { editor.agentConversationHistoryPresented.toggle() } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Image(systemName: "clock.arrow.circlepath")
                 Text(currentConversationTitle)
@@ -391,10 +389,12 @@ struct AgentPanelView: View {
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
         .focusable(false)
-        .keyboardShortcut("h", modifiers: [.command, .shift])
         .accessibilityLabel("Switch conversation, \(currentConversationTitle)")
         .accessibilityValue(currentConversationCue?.label ?? "Current")
-        .popover(isPresented: $showHistory, arrowEdge: .top) {
+        .popover(isPresented: Binding(
+            get: { editor.agentConversationHistoryPresented },
+            set: { editor.agentConversationHistoryPresented = $0 }
+        ), arrowEdge: .top) {
             ChatHistoryList(
                 sessions: service.sessions.sorted { $0.updatedAt > $1.updatedAt },
                 currentId: service.currentSessionId,
@@ -402,7 +402,7 @@ struct AgentPanelView: View {
                 canSwitch: !service.isComposerBlocked && !service.isStreaming,
                 onSelect: { id in
                     service.selectSession(id)
-                    showHistory = false
+                    editor.agentConversationHistoryPresented = false
                 },
                 onDelete: { service.deleteSession($0) }
             )
@@ -777,6 +777,7 @@ struct AgentPanelView: View {
 
     private var footer: some View {
         @Bindable var service = editor.agentService
+        let sessionID = service.currentSessionId
         return VStack(spacing: AppTheme.Spacing.sm) {
             if let fn = service.pendingFunction {
                 HStack(spacing: AppTheme.Spacing.xs) {
@@ -789,15 +790,18 @@ struct AgentPanelView: View {
             AgentInputBox(
                 draft: $service.draft,
                 mentions: $service.mentions,
+                composerHeight: $service.composerHeight,
+                initiallyFocused: service.composerShouldFocus,
                 isSending: service.isStreaming,
                 canSend: canSend,
                 onSend: submit,
                 onCancel: { service.cancel() },
-                onFocusChange: { service.recordComposerFocus($0) }
+                onFocusChange: { service.recordComposerFocus($0, for: sessionID) }
             ) {
                 modelPicker
                 byokIndicator
             }
+            .id(sessionID)
         }
         .padding(.horizontal, AppTheme.Spacing.mdLg)
         .padding(.bottom, AppTheme.Spacing.mdLg)

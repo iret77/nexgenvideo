@@ -99,6 +99,69 @@ struct ChatSessionStoreTests {
         #expect(title.hasSuffix("distinct ending"))
     }
 
+    @Test("conversation switching restores only that conversation's composer state")
+    @MainActor
+    func composerStateIsScopedToConversation() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.newChat()
+        let originalHeight = service.composerHeight
+        defer { service.composerHeight = originalHeight }
+
+        let firstSessionID = try #require(service.currentSessionId)
+        let firstMention = AgentMention(
+            displayName: "First-reference",
+            mediaRef: "first-asset",
+            type: .image
+        )
+        let firstFunction = AgentService.PendingFunction(
+            title: "First function",
+            systemImage: "sparkles",
+            prompt: "Run the first function"
+        )
+        let firstHeight = Double(AppTheme.ComponentSize.agentComposerMinHeight)
+            + Double(AppTheme.Spacing.md)
+        service.draft = "First draft @First-reference"
+        service.mentions = [firstMention]
+        service.pendingFunction = firstFunction
+        service.composerHeight = firstHeight
+        service.recordComposerFocus(true)
+
+        service.newChat()
+        let secondSessionID = try #require(service.currentSessionId)
+        #expect(secondSessionID != firstSessionID)
+        #expect(service.draft.isEmpty)
+        #expect(service.mentions.isEmpty)
+        #expect(service.pendingFunction == nil)
+        #expect(!service.composerShouldFocus)
+
+        let secondMention = AgentMention(
+            displayName: "Second-reference",
+            mediaRef: "second-asset",
+            type: .image
+        )
+        let secondHeight = Double(AppTheme.ComponentSize.agentComposerMinHeight)
+            + Double(AppTheme.Spacing.xl)
+        service.draft = "Second draft @Second-reference"
+        service.mentions = [secondMention]
+        service.composerHeight = secondHeight
+
+        service.selectAdjacentOpenSession(offset: 1)
+        #expect(service.currentSessionId == firstSessionID)
+        #expect(service.draft == "First draft @First-reference")
+        #expect(service.mentions == [firstMention])
+        #expect(service.pendingFunction == firstFunction)
+        #expect(service.composerHeight == firstHeight)
+        #expect(service.composerShouldFocus)
+
+        service.selectAdjacentOpenSession(offset: -1)
+        #expect(service.currentSessionId == secondSessionID)
+        #expect(service.draft == "Second draft @Second-reference")
+        #expect(service.mentions == [secondMention])
+        #expect(service.pendingFunction == nil)
+        #expect(service.composerHeight == secondHeight)
+        #expect(!service.composerShouldFocus)
+    }
+
     @Test("conversation attention is keyed to the owning session")
     @MainActor
     func sessionAttentionIsScoped() async throws {

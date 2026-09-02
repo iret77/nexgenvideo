@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>UI-Spec — Agent chat</title>
-<meta name="ui-spec-viewports" content="1680x1100,1440x1000">
+<meta name="ui-spec-viewports" content="1400x840">
+<meta name="ui-spec-agent-widths" content="240,400,640">
 <style>
   :root {
     color-scheme: dark;
@@ -807,6 +808,29 @@
 
   .field.filled { color: var(--text); }
 
+  .decision-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-xs);
+    margin-top: var(--s-sm);
+  }
+
+  .decision-field-label {
+    display: block;
+    margin-bottom: var(--s-xxs);
+    color: var(--text-3);
+    font-size: var(--f-micro);
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .choice-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-xs);
+    margin-top: var(--s-sm);
+  }
+
   .drop-target {
     display: grid;
     place-items: center;
@@ -833,9 +857,7 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--s-xs);
-    max-height: 68px;
     margin-top: var(--s-xs);
-    overflow: auto;
   }
 
   .asset {
@@ -970,6 +992,7 @@
   .w240 .composer-tools { flex-wrap: wrap; }
   .w240 .send { margin-left: auto; }
   .w240 .decision { max-height: 318px; padding: var(--s-sm-md); }
+  .w240 .decision-fields { grid-template-columns: minmax(0, 1fr); }
   .w240 .asset-list { grid-template-columns: minmax(0, 1fr); }
   .w240 .decision-actions { justify-content: stretch; }
   .w240 .decision-actions .button { flex: 1 1 auto; text-align: center; }
@@ -1451,6 +1474,27 @@
         "</div></div>";
     }
 
+    function clarificationDecision() {
+      return "<div class='dock'><div class='decision' aria-label='Choose the transition'>" +
+        "<div class='decision-head'><span class='decision-symbol'>◇</span><div class='decision-title'>Choose the transition</div></div>" +
+        "<div class='decision-scroll'><p class='decision-copy'>Which transition should connect the bridge to the final refrain?</p>" +
+        "<div class='choice-row'><span class='button primary'>Hard cut</span><span class='button'>Match dissolve</span>" +
+        "<span class='button'>Hold the wide</span></div><div class='field'>Other direction…</div></div>" +
+        "<div class='decision-actions'><span class='button'>Cancel</span><span class='button primary'>Continue</span></div>" +
+        "</div></div>";
+    }
+
+    function spendDecision() {
+      return "<div class='dock'><div class='decision' aria-label='Approve spend'>" +
+        "<div class='decision-head'><span class='decision-symbol'>▣</span><div class='decision-title'>Approve spend</div></div>" +
+        "<div class='decision-scroll'><p class='decision-copy'>Generate the lighting anchor with Nano Banana Pro.</p>" +
+        "<div class='decision-fields'><div><span class='decision-field-label'>Provider</span><div class='field filled'>Google AI⌄</div></div>" +
+        "<div><span class='decision-field-label'>Model</span><div class='field filled'>Nano Banana Pro⌄</div></div></div>" +
+        "<p>Only connected models compatible with this request are shown.</p></div>" +
+        "<div class='decision-actions'><span class='button'>Decline</span><span class='button primary'>Generate image · €0.04</span></div>" +
+        "</div></div>";
+    }
+
     function intakeDecision(kind) {
       var isFirst = kind === "intake-first";
       var isPartial = kind === "intake-partial";
@@ -1483,16 +1527,20 @@
       return content + "</div></div></div>";
     }
 
-    function recoveryDock() {
+    function recoveryDock(kind) {
+      var authentication = kind === "authentication";
       return "<div class='dock'><div class='recovery'>" +
-        "<div class='recovery-title'>Connect the Agent</div>" +
-        "<div class='recovery-copy'>Sign in to Claude Code or configure an Anthropic API key.</div>" +
+        "<div class='recovery-title'>" + (authentication ? "Sign in to the Agent" : "Connect the Agent") + "</div>" +
+        "<div class='recovery-copy'>" + (authentication
+          ? "The Claude Code session expired. Sign in again or select the configured API-key backend."
+          : "No configured Agent backend is currently available.") + "</div>" +
         "<div><span class='button primary'>Open Agent Settings</span></div></div></div>";
     }
 
     function status(kind) {
       var map = {
         ready: ["●", "Ready", ""],
+        checking: ["◇", "Checking Agent", ""],
         working: ["◇", "Working", ""],
         action: ["!", "Action required", ""],
         stopped: ["!", "Stopped", ""],
@@ -1514,10 +1562,10 @@
     function conversationSwitcher() {
       return "<div class='conversation-popover' aria-label='Conversation switcher'>" +
         "<div class='switch-search'>Search conversations</div>" +
-        "<div class='conversation-row current'><span>●</span><span>Rooftop performance treatment</span><span class='conversation-state'>Current</span></div>" +
-        "<div class='conversation-row'><span>!</span><span>Production Design approval</span><span class='conversation-state attention'>Needs action</span></div>" +
-        "<div class='conversation-row'><span>◇</span><span>Audio analysis and beat grid</span><span class='conversation-state running'>Running</span></div>" +
-        "<div class='conversation-row'><span>○</span><span>Imported media organization</span><span class='conversation-state'>12 min</span></div>" +
+        "<div class='conversation-row current'><span>●</span><span>Rooftop performance treatment — approved continuity</span><span class='conversation-state'>Current</span></div>" +
+        "<div class='conversation-row'><span>!</span><span>Rooftop performance treatment — Production Design approval</span><span class='conversation-state attention'>Needs action</span></div>" +
+        "<div class='conversation-row'><span>◇</span><span>Rooftop performance treatment — Audio Analysis running</span><span class='conversation-state running'>Running</span></div>" +
+        "<div class='conversation-row'><span>○</span><span>Rooftop performance treatment — imported media organization</span><span class='conversation-state'>12 min</span></div>" +
         "</div>";
     }
 
@@ -1529,7 +1577,8 @@
         "Show which references are already attached.",
         "Carry that visual rule into the next four shots.",
         "Do not change the rooftop location.",
-        "Prepare a concise review summary."
+        "Prepare a concise review summary.",
+        "Bewahre die nächtliche Dachterrasse und die rote Jacke unverändert."
       ];
       var answers = [
         "The direction is recorded on the treatment and the locked wardrobe remains unchanged.",
@@ -1538,14 +1587,15 @@
         "Two character references and one location reference are attached.",
         "The same restraint is applied to the next four planned shots.",
         "The rooftop remains the canonical location.",
-        "The current artifacts are ready for review."
+        "The current artifacts are ready for review.",
+        "Die Dachterrasse und die rote Jacke bleiben als freigegebene Kontinuität erhalten."
       ];
       var out = "<div class='stress-marker'>34 durable turns · viewing earlier history</div>";
       var i;
       for (i = 1; i <= 34; i += 1) {
         var parts = [intent(prompts[(i - 1) % prompts.length]), prose(answers[(i - 1) % answers.length])];
         if (i % 6 === 0) {
-          parts.push(receipt([["◇", "Treatment updated", "Turn " + i], ["↗", "Reference retained", "rooftop-location.png"]]));
+          parts.push(receipt([["◇", "Treatment updated", "Turn " + i], ["↗", "Reference retained", "Dachterrasse_Nachtaufnahme_Kamera_B_Final_v03.png"]]));
         }
         out += turn(parts);
       }
@@ -1591,6 +1641,20 @@
         conversation: "Imported media"
       },
       {
+        id: "activity-completed",
+        title: "Completed multi-tool activity",
+        description: "The answer leads; three completed tools collapse into one quiet disclosure with provenance retained.",
+        transcript: function () {
+          return turn([intent("Check the treatment, references and current gate state."),
+            prose("The treatment matches the approved references and is ready for Production Design review."),
+            activity("Checked 3 project records", "Completed", "✓")]);
+        },
+        status: "ready",
+        dock: function () { return composer("idle"); },
+        latest: false,
+        conversation: "Treatment verification"
+      },
+      {
         id: "long-prose",
         title: "Long plain-prose result",
         description: "A longer answer keeps the same unframed grammar, readable measure and semantic result identity.",
@@ -1618,6 +1682,19 @@
         conversation: "Rooftop performance treatment"
       },
       {
+        id: "clarification",
+        title: "Pending clarification",
+        description: "One compact clarification replaces the composer and keeps its primary action visible.",
+        transcript: function () {
+          return turn([intent("Resolve the bridge into the final refrain."),
+            prose("Choose the transition that should become canonical.")]);
+        },
+        status: "action",
+        dock: clarificationDecision,
+        latest: false,
+        conversation: "Bridge transition"
+      },
+      {
         id: "decision",
         title: "Pending gate decision",
         description: "The decision replaces the composer; no interactive approval appears in the transcript.",
@@ -1630,6 +1707,19 @@
         dock: gateDecision,
         latest: false,
         conversation: "Production Design approval"
+      },
+      {
+        id: "spend",
+        title: "Pending spend approval",
+        description: "Provider, compatible model, price and the only Generate action live in the decision Dock.",
+        transcript: function () {
+          return turn([intent("Generate the approved lighting anchor."),
+            activity("Prepared the provider request", "Completed", "✓")]);
+        },
+        status: "action",
+        dock: spendDecision,
+        latest: false,
+        conversation: "Lighting anchor"
       },
       {
         id: "intake-first",
@@ -1670,6 +1760,24 @@
         conversation: "Prepared characters"
       },
       {
+        id: "workflow-receipts",
+        title: "Durable workflow receipts",
+        description: "Attached, skipped and completed outcomes form one quiet phase group and remain understandable without color.",
+        transcript: function () {
+          return turn([prose("Prepared material intake is complete."), receipt([
+            ["↗", "Track attached", "long_original_filename_master.wav"],
+            ["○", "Existing story skipped", "Greenfield"],
+            ["✓", "Prepared characters done", "2 characters"],
+            ["!", "Location import failed", "Unreadable image"],
+            ["!", "Lighting anchor needs action", "Choose a provider"]
+          ])]);
+        },
+        status: "ready",
+        dock: function () { return composer("idle"); },
+        latest: false,
+        conversation: "Prepared material"
+      },
+      {
         id: "pipeline",
         title: "Active Pipeline phase",
         description: "Runner-emitted progress stays at the run_phase call; the status strip does not repeat it.",
@@ -1682,8 +1790,21 @@
         conversation: "Audio analysis and beat grid"
       },
       {
+        id: "generation",
+        title: "Approved paid generation",
+        description: "The provider run continues independently; its sole Cancel action remains in Live Status while composition stays available.",
+        transcript: function () {
+          return turn([intent("Generate the approved lighting anchor."),
+            activity("Submitted Nano Banana Pro generation", "Running remotely", "◇")]);
+        },
+        status: "generation",
+        dock: function () { return composer("idle"); },
+        latest: false,
+        conversation: "Lighting anchor"
+      },
+      {
         id: "failed",
-        title: "Failed turn",
+        title: "Recoverable failed turn",
         description: "The affected turn owns specific failure and Retry; Live Status remains a terse Stopped state.",
         transcript: function () {
           return turn([intent("Continue from the completed host action."),
@@ -1696,6 +1817,32 @@
         conversation: "Treatment follow-up"
       },
       {
+        id: "terminal-failure",
+        title: "Terminal failed turn",
+        description: "The affected turn explains the terminal cause without offering a false Retry; Live Status remains terse.",
+        transcript: function () {
+          return turn([intent("Write the approved Production Design."),
+            activity("Writing Production Design", "Failed", "!"),
+            notice("Production Design was not written", "The project package is no longer writable. Reopen a writable copy before continuing.", "")]);
+        },
+        status: "stopped",
+        dock: function () { return composer("idle"); },
+        latest: false,
+        conversation: "Production Design failure"
+      },
+      {
+        id: "backend-checking",
+        title: "Backend checking",
+        description: "The persistent status owns the transient check; no duplicate setup notice is inserted into the transcript.",
+        transcript: function () {
+          return turn([prose("Your saved conversation remains available while the Agent backend is checked.")]);
+        },
+        status: "checking",
+        dock: function () { return composer("idle"); },
+        latest: false,
+        conversation: "Rooftop direction"
+      },
+      {
         id: "backend",
         title: "Backend unavailable",
         description: "One recovery Dock owns setup copy and the only Agent Settings action.",
@@ -1703,7 +1850,19 @@
           return turn([prose("Your saved conversation remains available.")]);
         },
         status: "unavailable",
-        dock: recoveryDock,
+        dock: function () { return recoveryDock("unavailable"); },
+        latest: false,
+        conversation: "Rooftop direction"
+      },
+      {
+        id: "authentication",
+        title: "Authentication required",
+        description: "One recovery Dock explains the expired session and owns the only Agent Settings action.",
+        transcript: function () {
+          return turn([prose("The current conversation and project state remain saved.")]);
+        },
+        status: "unavailable",
+        dock: function () { return recoveryDock("authentication"); },
         latest: false,
         conversation: "Rooftop direction"
       },
@@ -1791,7 +1950,10 @@
       var target = document.querySelector("[data-state-section='" + capture + "']");
       if (target) {
         document.body.classList.add("capture");
+        document.body.dataset.captureState = capture;
         target.classList.add("capture-target");
+      } else {
+        throw new Error("Unknown capture state: " + capture);
       }
     }
 
@@ -1799,6 +1961,7 @@
       document.querySelectorAll(".stress .transcript").forEach(function (node) {
         node.scrollTop = Math.floor(node.scrollHeight * .70);
       });
+      document.body.dataset.renderReady = "true";
     });
   }());
 </script>

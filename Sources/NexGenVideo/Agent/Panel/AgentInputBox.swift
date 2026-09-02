@@ -7,6 +7,8 @@ struct AgentInputBox<LeadingTools: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var draft: String
     @Binding var mentions: [AgentMention]
+    @Binding var composerHeight: Double
+    let initiallyFocused: Bool
     let isSending: Bool
     let canSend: Bool
     let onSend: () -> Void
@@ -17,6 +19,8 @@ struct AgentInputBox<LeadingTools: View>: View {
     init(
         draft: Binding<String>,
         mentions: Binding<[AgentMention]>,
+        composerHeight: Binding<Double>,
+        initiallyFocused: Bool,
         isSending: Bool,
         canSend: Bool,
         onSend: @escaping () -> Void,
@@ -26,6 +30,8 @@ struct AgentInputBox<LeadingTools: View>: View {
     ) {
         self._draft = draft
         self._mentions = mentions
+        self._composerHeight = composerHeight
+        self.initiallyFocused = initiallyFocused
         self.isSending = isSending
         self.canSend = canSend
         self.onSend = onSend
@@ -45,8 +51,6 @@ struct AgentInputBox<LeadingTools: View>: View {
     @State private var attachmentError: String?
     @Namespace private var sendStopNamespace
 
-    /// User-set input height (drag the top edge), persisted across sessions.
-    @AppStorage("agentComposerHeight") private var composerHeight: Double = Double(AppTheme.ComponentSize.agentComposerMinHeight)
     @State private var resizeStartHeight: Double?
 
     private var clampedComposerHeight: CGFloat {
@@ -103,6 +107,10 @@ struct AgentInputBox<LeadingTools: View>: View {
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: focused)
         .animation(.easeOut(duration: AppTheme.Anim.hover), value: isDropTargeted)
         .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop)
+        .onAppear {
+            guard initiallyFocused else { return }
+            Task { @MainActor in focused = true }
+        }
         .onChange(of: editor.agentService.focusInputRequestTick) { _, _ in
             Task { @MainActor in focused = true }
         }

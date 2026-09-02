@@ -51,6 +51,8 @@ struct GateApprovalCard: View {
                 approveFocused = !isBlocked
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Approve \(approval.phaseLabel)")
     }
 
     private var header: some View {
@@ -127,6 +129,9 @@ struct GateApprovalCard: View {
                 .controlSize(.small)
                 .disabled(isWorking || isBlocked)
                 .focused($approveFocused)
+                .accessibilityHint(
+                    isBlocked ? "Finish the running phase before approving" : ""
+                )
         }
     }
 }

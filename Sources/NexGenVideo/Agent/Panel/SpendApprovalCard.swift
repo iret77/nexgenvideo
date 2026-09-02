@@ -107,6 +107,8 @@ struct SpendApprovalCard: View {
             providerKeyRevision += 1
         }
         .id(approval.id)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Approve spend")
     }
 
     private var decisionBody: some View {
@@ -244,6 +246,9 @@ struct SpendApprovalCard: View {
             .controlSize(.small)
             .disabled(selectedOption == nil || isWorking)
             .focused($focusedControl, equals: .approve)
+            .accessibilityHint(
+                selectedOption == nil ? "Choose an available provider and model" : ""
+            )
         }
     }
 

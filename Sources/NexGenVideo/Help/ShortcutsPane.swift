@@ -52,6 +52,13 @@ struct ShortcutsPane: View {
             ("Cmd + Scroll", "Zoom Preview to Cursor"),
             ("Esc", "Deselect & Reset Tool"),
         ]),
+        ShortcutGroup(title: "Agent", shortcuts: [
+            ("Cmd + Shift + N", "New Conversation"),
+            ("Cmd + Shift + H", "Conversation History"),
+            ("Cmd + Shift + [", "Previous Conversation"),
+            ("Cmd + Shift + ]", "Next Conversation"),
+            ("Cmd + Shift + W", "Close Conversation"),
+        ]),
     ]
 
     private static let leftColumn = Array(allShortcuts.prefix(4))

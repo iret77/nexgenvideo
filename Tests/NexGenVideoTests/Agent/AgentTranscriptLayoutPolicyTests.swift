@@ -187,7 +187,7 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(!input.contains(".disabled(blocked)"))
         #expect(input.contains("onFocusChange(value)"))
         #expect(panel.contains("service.restoreComposerFocus()"))
-        #expect(panel.contains("service.recordComposerFocus($0)"))
+        #expect(panel.contains("service.recordComposerFocus($0, for: sessionID)"))
     }
 
     @Test func conversationHeaderHasOneLabeledNavigator() throws {
@@ -246,6 +246,8 @@ struct AgentTranscriptLayoutPolicyTests {
             let source = try sourceFile(path)
             #expect(source.contains("ScrollView {"))
             #expect(source.contains("AppTheme.ComponentSize.agentDecisionMaxHeight"))
+            #expect(source.contains(".accessibilityElement(children: .contain)"))
+            #expect(source.contains(".accessibilityLabel("))
         }
 
         let dialog = try sourceFile(

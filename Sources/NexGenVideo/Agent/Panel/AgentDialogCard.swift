@@ -84,6 +84,8 @@ struct AgentDialogCard: View {
             seedDefaults()
             requestInitialFocus()
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(dialog.title)
     }
 
     private var decisionBody: some View {
@@ -433,6 +435,7 @@ struct AgentDialogCard: View {
                 .controlSize(.small)
                 .disabled(!canSubmit)
                 .focused($focusedControl, equals: .primaryAction)
+                .accessibilityHint(canSubmit ? "" : "Complete the required fields first")
         }
     }
 

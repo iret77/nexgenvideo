@@ -686,6 +686,8 @@ final class EditorViewModel {
         }
     }
 
+    var agentConversationHistoryPresented = false
+
     @ObservationIgnored private var lastNonAgentSidebarTab: LeftSidebarTab = .media
 
     var mediaPanelVisible: Bool = {
