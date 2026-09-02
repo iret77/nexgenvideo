@@ -2989,13 +2989,33 @@ struct WorkflowToolsTests {
         let home = FrameInventory.projectHome(of: dataRoot)
         let firstVideo = home.appendingPathComponent("s001.mp4")
         let lastFrame = home.appendingPathComponent("s001-last.png")
+        let first = try await h.runOK(
+            "next_render_shot",
+            args: [
+                "project_dir": dataRoot.path,
+                "phase": "preview",
+            ]
+        ) as? [String: Any]
+        #expect(first?["shot_id"] as? String == "s001")
+        let firstRouting = try PipelineProductionRouting.requireCurrent(
+            shotID: "s001",
+            dataRoot: dataRoot,
+            activation: routing.activation,
+            candidateProvider: routing.candidates
+        )
         try addGeneratedVideo(
             "s001-video",
             at: firstVideo,
             to: h,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            currentRouting: firstRouting
         )
         try addGeneratedImage("s001-last", at: lastFrame, to: h)
+        let generationInput = try #require(
+            h.editor.mediaAssets.first { $0.id == "s001-video" }?.generationInput
+        )
+        let generationRouting = try #require(generationInput.productionRouting)
+        let outputSHA256 = try FileDigest.sha256(of: firstVideo)
         var manifest = RenderManifest(project: "demo", phase: "preview")
         record(
             &manifest,
@@ -3014,11 +3034,24 @@ struct WorkflowToolsTests {
                     "s001": RenderProofEntry(
                         shotId: "s001",
                         output: "s001.mp4",
-                        outputSha256: try FileDigest.sha256(
-                            of: firstVideo
-                        ),
-                        providerPrompt: "Compiled provider prompt.",
-                        generationModel: "video-model"
+                        outputSha256: outputSHA256,
+                        providerPrompt: generationInput.prompt,
+                        generationModel: generationInput.model
+                    ),
+                ]
+            ),
+            dataRoot: dataRoot
+        )
+        try PipelineRenderRoutingProofStore.save(
+            PipelineRenderRoutingProofManifestV1(
+                project: "demo",
+                phase: "preview",
+                entries: [
+                    "s001": PipelineRenderRoutingProofEntryV1(
+                        shotID: "s001",
+                        output: "s001.mp4",
+                        outputSHA256: outputSHA256,
+                        generation: generationRouting
                     ),
                 ]
             ),
@@ -3450,17 +3483,24 @@ struct WorkflowToolsTests {
             try hybridShotlist(),
             dataRoot: dataRoot
         )
+        // s001 is imported → skipped; the first render shot is the generated s002.
+        let first = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
+        #expect(first?["shot_id"] as? String == "s002")
+        #expect(first?["source_mode"] as? String == "generated")
+        let firstRouting = try PipelineProductionRouting.requireCurrent(
+            shotID: "s002",
+            dataRoot: dataRoot,
+            activation: routing.activation,
+            candidateProvider: routing.candidates
+        )
         try addGeneratedVideo(
             "s002-video",
             at: home.appendingPathComponent("s002.mp4"),
             to: h,
             dataRoot: dataRoot,
-            shotId: "s002"
+            shotId: "s002",
+            currentRouting: firstRouting
         )
-        // s001 is imported → skipped; the first render shot is the generated s002.
-        let first = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
-        #expect(first?["shot_id"] as? String == "s002")
-        #expect(first?["source_mode"] as? String == "generated")
 
         // Record s002 → the enhanced s003 is next (enhanced shots ARE queued).
         _ = try await h.runOK("record_render", args: [
