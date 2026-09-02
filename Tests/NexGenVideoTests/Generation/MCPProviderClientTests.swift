@@ -167,7 +167,13 @@ struct MCPProviderClientTests {
         )
 
         #expect(payloads.contains("generation-42"))
-        #expect(payloads.contains { $0.contains("https://cdn.example/video.mp4") })
+        #expect(payloads.contains { payload in
+            guard let data = payload.data(using: .utf8),
+                  let raw = try? JSONSerialization.jsonObject(with: data),
+                  let object = raw as? [String: Any] else { return false }
+            return object["resource_url"] as? String
+                == "https://cdn.example/video.mp4"
+        })
         #expect(payloads.contains { $0.contains("\"status\":\"complete\"") })
         #expect(!payloads.contains { $0.contains("ui://provider/widget") })
 
