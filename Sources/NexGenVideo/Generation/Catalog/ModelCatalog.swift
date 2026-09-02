@@ -80,7 +80,7 @@ final class ModelCatalog {
     @ObservationIgnored private var discoveredByProvider: [GenerationProvider: [CatalogEntry]] = [:]
     @ObservationIgnored private var completedDiscoveryProviders = Set<GenerationProvider>()
 
-    private init() {}
+    init() {}
 
     func configure() {
         guard !didConfigure else { return }
@@ -379,9 +379,9 @@ final class ModelCatalog {
                     offer,
                     in: capability
                 )
-                return capability
+                return productionRoutingCapability(capability)
             }
-            return try resolver.resolveOffering(
+            return productionRoutingCapability(try resolver.resolveOffering(
                 offering,
                 lookup: CapabilityLookupV1(
                     modality: modality,
@@ -391,8 +391,69 @@ final class ModelCatalog {
                     offer.productionInputPolicy,
                     offering: offering
                 )
-            )
+            ))
         }
+    }
+
+    private nonisolated static func productionRoutingCapability(
+        _ capability: ResolvedOfferingCapabilityProfileV1
+    ) -> ResolvedOfferingCapabilityProfileV1 {
+        guard capability.offering.modality == .video,
+              capability.effective.fields.strings[CapabilityFieldIDV1.modes]?.value
+                .isEmpty != false,
+              let identity = capability.effective.resolvedIdentity
+                ?? capability.effective.requestedIdentity else {
+            return capability
+        }
+        var modes: Set<String> = []
+        let variant = ProductionIdentifierNormalizerV1.canonical(
+            identity.variantID.rawValue
+        )
+        if variant.hasPrefix("text-to-video") {
+            modes.insert("text-to-video")
+        } else if variant.hasPrefix("image-to-video") {
+            modes.insert("image-to-video")
+        } else if variant.hasPrefix("reference-to-video") {
+            modes.insert("reference-to-video")
+        } else if variant.hasPrefix("video-to-video") {
+            modes.insert("video-to-video")
+        } else {
+            return capability
+        }
+        if capability.effective.fields.booleans[
+            CapabilityFieldIDV1.sourceVideo
+        ]?.value == true {
+            modes.insert("video-to-video")
+        }
+        let evidence = CapabilityEvidenceV1(
+            sourceTitle: "NexGenVideo provider endpoint mode contract v1",
+            observedAt: "2026-09-01T00:00:00Z",
+            kind: .providerSchema,
+            confidence: 1
+        )
+        var fields = capability.effective.fields
+        fields.strings[CapabilityFieldIDV1.modes] = ResolvedCapabilityValueV1(
+            value: modes.sorted(),
+            semantics: .supportedSet,
+            origin: ResolvedCapabilityOriginV1(
+                kind: .endpointOverlay,
+                profileID: "provider-endpoint-mode-contract/v1",
+                versionID: identity.versionID,
+                endpointID: capability.offering.endpointID
+            ),
+            evidence: [evidence]
+        )
+        return ResolvedOfferingCapabilityProfileV1(
+            offering: capability.offering,
+            intrinsic: capability.intrinsic,
+            effective: ResolvedCapabilityProfileV1(
+                requestedIdentity: capability.effective.requestedIdentity,
+                resolvedIdentity: capability.effective.resolvedIdentity,
+                defensiveProfileID: capability.effective.defensiveProfileID,
+                researchNeeded: capability.effective.researchNeeded,
+                fields: fields
+            )
+        )
     }
 
     private nonisolated static func productionInputPolicyOverlay(

@@ -16,6 +16,9 @@ final class ToolHarness {
         enforceHardGates: Bool = false,
         providerActivation: @escaping () -> ProviderActivation = {
             ProviderActivation.current()
+        },
+        productionRouteCandidates: @escaping ProductionRouteCandidateProvider = {
+            ModelCatalog.shared.productionRouteCandidates(activation: $0)
         }
     ) {
         let editor = EditorViewModel()
@@ -24,7 +27,8 @@ final class ToolHarness {
         self.executor = ToolExecutor(
             editor: editor,
             enforceHardGates: enforceHardGates,
-            providerActivation: providerActivation
+            providerActivation: providerActivation,
+            productionRouteCandidates: productionRouteCandidates
         )
     }
 

@@ -19,6 +19,9 @@ struct WorkflowToolsTests {
         enforceHardGates: Bool = false,
         providerActivation: @escaping () -> ProviderActivation = {
             ProviderActivation.current()
+        },
+        productionRouteCandidates: @escaping ProductionRouteCandidateProvider = {
+            ModelCatalog.shared.productionRouteCandidates(activation: $0)
         }
     ) throws -> (ToolHarness, URL, URL) {
         let tmp = FileManager.default.temporaryDirectory
@@ -28,20 +31,27 @@ struct WorkflowToolsTests {
         return (
             ToolHarness(
                 enforceHardGates: enforceHardGates,
-                providerActivation: providerActivation
+                providerActivation: providerActivation,
+                productionRouteCandidates: productionRouteCandidates
             ),
             dataRoot,
             tmp
         )
     }
 
-    private func falProviderActivation() -> ProviderActivation {
-        if !ModelCatalog.shared.isLoaded {
-            ModelCatalog.shared.load(entries: ModelCatalog.launchEntries)
-        }
-        return ProviderActivation(active: [
+    private func falRoutingDependencies() -> (
+        activation: ProviderActivation,
+        candidates: ProductionRouteCandidateProvider
+    ) {
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.launchEntries)
+        let activation = ProviderActivation(active: [
             ProviderActivation.Key(provider: .fal, transport: .api),
         ])
+        return (
+            activation,
+            { catalog.productionRouteCandidates(activation: $0) }
+        )
     }
 
     private func declineIntakeStep(
@@ -2966,9 +2976,10 @@ struct WorkflowToolsTests {
 
     @Test("next render shot hands a chained shot the predecessor's exact last frame")
     func nextRenderShotResolvesChainStart() async throws {
-        let activation = falProviderActivation()
+        let routing = falRoutingDependencies()
         let (h, dataRoot, cleanup) = try scaffold(
-            providerActivation: { activation }
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates
         )
         defer { try? FileManager.default.removeItem(at: cleanup) }
         _ = try prepareNativeSourceExecution(
@@ -3355,9 +3366,10 @@ struct WorkflowToolsTests {
 
     @Test("next_render_shot surfaces the first unrendered shot's prompt")
     func nextRenderShotPending() async throws {
-        let activation = falProviderActivation()
+        let routing = falRoutingDependencies()
         let (h, dataRoot, cleanup) = try scaffold(
-            providerActivation: { activation }
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates
         )
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let plan = try ShotProductionPlan(
@@ -3421,9 +3433,10 @@ struct WorkflowToolsTests {
 
     @Test("next_render_shot skips imported shots and returns ai_enhanced with its source_mode")
     func nextRenderShotSkipsLiveAction() async throws {
-        let activation = falProviderActivation()
+        let routing = falRoutingDependencies()
         let (h, dataRoot, cleanup) = try scaffold(
-            providerActivation: { activation }
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates
         )
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let dir = dataRoot.path
@@ -3462,7 +3475,8 @@ struct WorkflowToolsTests {
         let currentRouting = try PipelineProductionRouting.requireCurrent(
             shotID: "s003",
             dataRoot: dataRoot,
-            activation: activation
+            activation: routing.activation,
+            candidateProvider: routing.candidates
         )
         try addGeneratedVideo(
             "s003-video",
@@ -3484,9 +3498,10 @@ struct WorkflowToolsTests {
 
     @Test("next_render_shot rejects an AI-enhanced source that escapes through a symlink")
     func nextRenderShotRejectsEnhancedSourceSymlinkEscape() async throws {
-        let activation = falProviderActivation()
+        let routing = falRoutingDependencies()
         let (h, dataRoot, cleanup) = try scaffold(
-            providerActivation: { activation }
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates
         )
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let home = FrameInventory.projectHome(of: dataRoot)

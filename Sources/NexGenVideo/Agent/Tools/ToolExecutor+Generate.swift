@@ -145,7 +145,8 @@ extension ToolExecutor {
                 try PipelineProductionRouting.requireCurrent(
                     shotID: shotID,
                     dataRoot: dataRoot,
-                    activation: providerActivation()
+                    activation: providerActivation(),
+                    candidateProvider: productionRouteCandidates
                 ),
                 dataRoot
             )
@@ -409,7 +410,8 @@ extension ToolExecutor {
         guard let selections = try? PipelineProductionRouting.resolveOptions(
             shotID: shotID,
             dataRoot: dataRoot,
-            activation: providerActivation()
+            activation: providerActivation(),
+            candidateProvider: productionRouteCandidates
         ) else { return [] }
         return selections.compactMap { selection in
             guard let offeringCapabilities = selection.target.binding?
@@ -1121,6 +1123,7 @@ extension ToolExecutor {
                         dataRoot: productionRouting.dataRoot,
                         target: approved.target,
                         activation: self.providerActivation(),
+                        candidateProvider: self.productionRouteCandidates,
                         declaredPack: declaration.packName,
                         declaredBinding: declaration.binding
                     )
@@ -1406,6 +1409,7 @@ extension ToolExecutor {
                         dataRoot: productionRouting.dataRoot,
                         target: approved.target,
                         activation: self.providerActivation(),
+                        candidateProvider: self.productionRouteCandidates,
                         declaredPack: declaration.packName,
                         declaredBinding: declaration.binding
                     )

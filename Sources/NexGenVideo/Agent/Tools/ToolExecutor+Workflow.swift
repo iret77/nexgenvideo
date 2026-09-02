@@ -1356,6 +1356,7 @@ extension ToolExecutor {
                     shotID: shotId,
                     dataRoot: root,
                     activation: providerActivation(),
+                    candidateProvider: productionRouteCandidates,
                     declaredPack: declaration.packName,
                     declaredBinding: declaration.binding
                 )

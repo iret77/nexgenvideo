@@ -23,6 +23,10 @@ struct PipelineProductionRouteSelection {
     let orderedBindingsSHA256: String
 }
 
+typealias ProductionRouteCandidateProvider = (
+    ProviderActivation
+) -> [CatalogProductionRouteCandidate]
+
 @MainActor
 enum PipelineProductionRouting {
     private struct Publication: Codable, Equatable {
@@ -56,13 +60,17 @@ enum PipelineProductionRouting {
         shotID: String,
         dataRoot: URL,
         activation: ProviderActivation = .current(),
+        candidateProvider: ProductionRouteCandidateProvider = {
+            ModelCatalog.shared.productionRouteCandidates(activation: $0)
+        },
         declaredPack: String? = nil,
         declaredBinding: ProjectPackBinding? = nil
     ) throws -> PipelineProductionRouteSelection {
         guard let selection = try resolveOptions(
             shotID: shotID,
             dataRoot: dataRoot,
-            activation: activation
+            activation: activation,
+            candidateProvider: candidateProvider
         ).first else {
             throw PipelineProductionRoutingError.selectedCatalogModelMissing
         }
@@ -81,13 +89,17 @@ enum PipelineProductionRouting {
         dataRoot: URL,
         target: ResolvedGenerationTarget,
         activation: ProviderActivation = .current(),
+        candidateProvider: ProductionRouteCandidateProvider = {
+            ModelCatalog.shared.productionRouteCandidates(activation: $0)
+        },
         declaredPack: String? = nil,
         declaredBinding: ProjectPackBinding? = nil
     ) throws -> PipelineProductionRouteSelection {
         guard let selection = try resolveOptions(
             shotID: shotID,
             dataRoot: dataRoot,
-            activation: activation
+            activation: activation,
+            candidateProvider: candidateProvider
         ).first(where: { $0.target == target }) else {
             throw PipelineProductionRoutingError.selectedCatalogModelMissing
         }
@@ -104,12 +116,13 @@ enum PipelineProductionRouting {
     static func resolveOptions(
         shotID: String,
         dataRoot: URL,
-        activation: ProviderActivation = .current()
+        activation: ProviderActivation = .current(),
+        candidateProvider: ProductionRouteCandidateProvider = {
+            ModelCatalog.shared.productionRouteCandidates(activation: $0)
+        }
     ) throws -> [PipelineProductionRouteSelection] {
         let dependencies = try loadDependencies(shotID: shotID, dataRoot: dataRoot)
-        let records = ModelCatalog.shared.productionRouteCandidates(
-            activation: activation
-        )
+        let records = candidateProvider(activation)
         let matches = try ProductionRequirementResolverV1.matchingRoutes(
             requirement: dependencies.requirement,
             demandSet: dependencies.demandSet,
@@ -190,7 +203,10 @@ enum PipelineProductionRouting {
     static func requireCurrent(
         shotID: String,
         dataRoot: URL,
-        activation: ProviderActivation = .current()
+        activation: ProviderActivation = .current(),
+        candidateProvider: ProductionRouteCandidateProvider = {
+            ModelCatalog.shared.productionRouteCandidates(activation: $0)
+        }
     ) throws -> PipelineProductionRouteSelection {
         let dependencies = try loadDependencies(shotID: shotID, dataRoot: dataRoot)
         let directory = routingDirectory(shotID: shotID, dataRoot: dataRoot)
@@ -220,9 +236,7 @@ enum PipelineProductionRouting {
                 )
             }
             let route = try JSONDecoder().decode(ProductionRouteV1.self, from: routeData)
-            let records = ModelCatalog.shared.productionRouteCandidates(
-                activation: activation
-            )
+            let records = candidateProvider(activation)
             guard let record = records.first(where: {
                 $0.candidate.capabilities.offering == route.offering
                     && ProductionRouteCapabilitySnapshotV1(candidate: $0.candidate)
