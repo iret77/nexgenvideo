@@ -204,7 +204,7 @@ struct LibraryPickerTests {
         ) == true)
     }
 
-    @Test("dialog library results are searchable and height bounded")
+    @Test("dialog library results share the card's single bounded scroll region")
     func dialogLibraryIsBounded() throws {
         let source = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift"
@@ -219,7 +219,9 @@ struct LibraryPickerTests {
         let picker = source[start.lowerBound..<end.lowerBound]
 
         #expect(picker.contains("showsSearch: true"))
-        #expect(picker.contains("scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight"))
+        #expect(!picker.contains("scrollHeight:"))
+        #expect(source.contains("ScrollView {\n                decisionBody"))
+        #expect(source.contains("AppTheme.ComponentSize.agentDecisionMaxHeight"))
     }
 }
 

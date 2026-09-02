@@ -9,9 +9,13 @@ struct ChatHistoryCue {
 struct ChatHistoryList: View {
     let sessions: [ChatSession]
     let currentId: UUID?
-    let currentCue: ChatHistoryCue?
+    let cuesBySessionID: [UUID: ChatHistoryCue]
+    let canSwitch: Bool
     let onSelect: (UUID) -> Void
     let onDelete: (UUID) -> Void
+
+    @State private var query = ""
+    @State private var pendingDeletion: ChatSession?
 
     private static let formatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -27,9 +31,13 @@ struct ChatHistoryList: View {
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .padding(AppTheme.Spacing.md)
             } else {
+                searchField
+                Rectangle()
+                    .fill(AppTheme.Border.subtleColor)
+                    .frame(height: AppTheme.BorderWidth.hairline)
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
-                        ForEach(sessions) { session in
+                        ForEach(filteredSessions) { session in
                             row(session: session)
                         }
                     }
@@ -40,10 +48,52 @@ struct ChatHistoryList: View {
         }
         .frame(width: AppTheme.ComponentSize.chatHistoryWidth)
         .glassEffect(.clear, in: .rect(cornerRadius: AppTheme.Radius.md))
+        .confirmationDialog(
+            "Delete conversation?",
+            isPresented: deletionIsPresented,
+            titleVisibility: .visible
+        ) {
+            if let pendingDeletion {
+                Button("Delete “\(pendingDeletion.title)”", role: .destructive) {
+                    onDelete(pendingDeletion.id)
+                    self.pendingDeletion = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: {
+            Text("This permanently removes the selected conversation from history.")
+        }
+    }
+
+    private var filteredSessions: [ChatSession] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return sessions }
+        return sessions.filter { $0.title.localizedCaseInsensitiveContains(needle) }
+    }
+
+    private var deletionIsPresented: Binding<Bool> {
+        Binding(
+            get: { pendingDeletion != nil },
+            set: { if !$0 { pendingDeletion = nil } }
+        )
+    }
+
+    private var searchField: some View {
+        HStack(spacing: AppTheme.Spacing.xs) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.mutedColor)
+            TextField("Search conversations", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: AppTheme.FontSize.xs))
+        }
+        .padding(.horizontal, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.sm)
     }
 
     private func row(session: ChatSession) -> some View {
         let isCurrent = session.id == currentId
+        let cue = cuesBySessionID[session.id]
         return HStack(spacing: AppTheme.Spacing.smMd) {
             Button { onSelect(session.id) } label: {
                 HStack(spacing: AppTheme.Spacing.sm) {
@@ -52,15 +102,22 @@ struct ChatHistoryList: View {
                             .font(.system(size: AppTheme.FontSize.xs, weight: isCurrent ? .semibold : .regular))
                             .foregroundStyle(AppTheme.Text.primaryColor)
                             .lineLimit(1)
-                        Text(Self.formatter.localizedString(for: session.updatedAt, relativeTo: Date()))
-                            .font(.system(size: AppTheme.FontSize.xxs))
-                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            .truncationMode(.middle)
+                        HStack(spacing: AppTheme.Spacing.xs) {
+                            Text(Self.formatter.localizedString(for: session.updatedAt, relativeTo: Date()))
+                            if let cue {
+                                Label(cue.label, systemImage: cue.symbol)
+                                    .foregroundStyle(cue.color)
+                            }
+                        }
+                        .font(.system(size: AppTheme.FontSize.xxs))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
                     Spacer(minLength: AppTheme.Spacing.sm)
-                    if isCurrent, let currentCue {
-                        Image(systemName: currentCue.symbol)
-                            .foregroundStyle(currentCue.color)
-                            .accessibilityLabel(currentCue.label)
+                    if isCurrent {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(AppTheme.Text.tertiaryColor)
+                            .accessibilityLabel("Current")
                     }
                 }
             }
@@ -68,20 +125,20 @@ struct ChatHistoryList: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .accessibilityLabel(
-                [session.title, isCurrent ? "Current" : nil, isCurrent ? currentCue?.label : nil]
+                [session.title, isCurrent ? "Current" : nil, cue?.label]
                     .compactMap { $0 }
                     .joined(separator: ", ")
             )
-            if !isCurrent {
-                Button { onDelete(session.id) } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: AppTheme.FontSize.xs))
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .help("Delete from history")
+            .disabled(!canSwitch && !isCurrent)
+            Button { pendingDeletion = session } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: AppTheme.FontSize.xs))
+                    .foregroundStyle(AppTheme.Text.mutedColor)
             }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .disabled(!canSwitch)
+            .accessibilityLabel("Delete \(session.title)")
         }
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.sm)

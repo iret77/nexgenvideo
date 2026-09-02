@@ -30,8 +30,12 @@ struct AgentTranscriptProjectionTests {
 
         #expect(turns.count == 1)
         #expect(turns[0].items.count == 3)
-        guard case .activity(let activity) = turns[0].items[1] else {
-            Issue.record("the middle row must be the consolidated activity")
+        guard case .assistantResult = turns[0].items[1] else {
+            Issue.record("the result must precede completed activity detail")
+            return
+        }
+        guard case .activity(let activity) = turns[0].items[2] else {
+            Issue.record("the completed activity must follow the result")
             return
         }
         #expect(activity.statuses == ["Reading the storage contract", "Checking recovery behavior"])
@@ -141,6 +145,47 @@ struct AgentTranscriptProjectionTests {
             return
         }
         #expect(projected == record)
+    }
+
+    @Test("result, activity, receipts, and notices follow the semantic reading order")
+    func semanticReadingOrder() {
+        let user = AgentMessage(role: .user, blocks: [.text("Build the look.")])
+        let work = AgentMessage(role: .assistant, blocks: [
+            .text("Reading references"),
+            .toolUse(id: "work", name: "Read", inputJSON: "{}"),
+        ])
+        let result = AgentMessage(role: .assistant, blocks: [.text("The look is ready.")])
+        let receipt = AgentMessage(
+            role: .user,
+            blocks: [],
+            userPresentation: .init(
+                choiceRecord: nil,
+                typedText: nil,
+                notice: "Saved",
+                workflowRecord: AgentWorkflowRecord(
+                    title: "Style references",
+                    symbol: "photo",
+                    phase: "brief",
+                    detail: nil,
+                    attachmentNames: ["reference.png"],
+                    outcome: .attached
+                )
+            )
+        )
+
+        let turns = AgentTranscriptProjection.turns(
+            messages: [user, work, result, receipt],
+            isStreaming: false
+        )
+
+        #expect(turns.count == 1)
+        let items = turns[0].items
+        #expect(items.count == 5)
+        if case .userIntent = items[0] {} else { Issue.record("user intent order") }
+        if case .assistantResult = items[1] {} else { Issue.record("result order") }
+        if case .activity = items[2] {} else { Issue.record("activity order") }
+        if case .receipts = items[3] {} else { Issue.record("receipt order") }
+        if case .notice = items[4] {} else { Issue.record("notice order") }
     }
 
     @Test("host records do not become user intents")

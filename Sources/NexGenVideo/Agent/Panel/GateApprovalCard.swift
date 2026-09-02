@@ -9,6 +9,7 @@ struct GateApprovalCard: View {
     var isBlocked: Bool = false
     let onApprove: () -> Void
     let onDecline: () -> Void
+    @FocusState private var approveFocused: Bool
 
     private var reviewHint: String? {
         if approval.phase == "analysis" {
@@ -24,10 +25,15 @@ struct GateApprovalCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             header
-            summary
+            ScrollView {
+                summary
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollBounceBehavior(.basedOnSize)
             footerRow
         }
         .padding(AppTheme.Spacing.md)
+        .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
                 .fill(AppTheme.Background.raisedColor)
@@ -39,6 +45,12 @@ struct GateApprovalCard: View {
         )
         .padding(.horizontal, AppTheme.Spacing.mdLg)
         .id(approval.id)
+        .onAppear {
+            Task { @MainActor in
+                await Task.yield()
+                approveFocused = !isBlocked
+            }
+        }
     }
 
     private var header: some View {
@@ -114,6 +126,7 @@ struct GateApprovalCard: View {
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.small)
                 .disabled(isWorking || isBlocked)
+                .focused($approveFocused)
         }
     }
 }

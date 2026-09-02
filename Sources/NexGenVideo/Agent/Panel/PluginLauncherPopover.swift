@@ -5,15 +5,19 @@ import SwiftUI
 /// discovered plugins and the run/prefill callback.
 struct PluginLauncherPopover: View {
     let plugins: [PluginCommandCatalog.PluginInfo]
-    /// Invoked with the chosen command. The panel decides run-now vs. prefill (based on whether the
-    /// command needs an argument) and dismisses the popover.
+    let canCloseConversation: Bool
     let onRun: (PluginCommandCatalog.PluginCommand) -> Void
+    let onCloseConversation: () -> Void
+
+    @State private var query = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             header
             Rectangle().fill(AppTheme.Border.subtleColor).frame(height: AppTheme.BorderWidth.hairline)
             content
+            Rectangle().fill(AppTheme.Border.subtleColor).frame(height: AppTheme.BorderWidth.hairline)
+            closeConversationButton
         }
         .frame(width: AppTheme.ComponentSize.pluginLauncherWidth)
         .glassEffect(.clear, in: .rect(cornerRadius: AppTheme.Radius.md))
@@ -21,10 +25,10 @@ struct PluginLauncherPopover: View {
 
     private var header: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
-            Image(systemName: "puzzlepiece.extension")
+            Image(systemName: "ellipsis")
                 .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
-            Text("Workflows")
+            Text("More")
                 .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer()
@@ -36,24 +40,86 @@ struct PluginLauncherPopover: View {
     @ViewBuilder
     private var content: some View {
         if plugins.allSatisfy({ $0.commands.isEmpty }) {
-            Text("No plugin commands found")
+            Text("No workflows available")
                 .font(.system(size: AppTheme.FontSize.xs))
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(AppTheme.Spacing.md)
         } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                    ForEach(plugins) { plugin in
-                        if !plugin.commands.isEmpty {
-                            pluginSection(plugin)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
+                Text("Workflows".uppercased())
+                    .font(.system(
+                        size: AppTheme.FontSize.xxs,
+                        weight: AppTheme.FontWeight.semibold
+                    ))
+                    .tracking(AppTheme.Tracking.wide)
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .padding(.horizontal, AppTheme.Spacing.md)
+                    .padding(.top, AppTheme.Spacing.sm)
+                workflowSearch
+                if filteredPlugins.isEmpty {
+                    Text("No matching workflows")
+                        .font(.system(size: AppTheme.FontSize.xs))
+                        .foregroundStyle(AppTheme.Text.mutedColor)
+                        .padding(AppTheme.Spacing.md)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                            ForEach(filteredPlugins) { plugin in
+                                if !plugin.commands.isEmpty {
+                                    pluginSection(plugin)
+                                }
+                            }
                         }
+                        .padding(AppTheme.Spacing.sm)
                     }
+                    .frame(maxHeight: AppTheme.ComponentSize.pluginLauncherMaxHeight)
                 }
-                .padding(AppTheme.Spacing.sm)
             }
-            .frame(maxHeight: AppTheme.ComponentSize.pluginLauncherMaxHeight)
         }
+    }
+
+    private var workflowSearch: some View {
+        HStack(spacing: AppTheme.Spacing.xs) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.mutedColor)
+            TextField("Search workflows", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: AppTheme.FontSize.xs))
+        }
+        .padding(.horizontal, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.sm)
+    }
+
+    private var filteredPlugins: [PluginCommandCatalog.PluginInfo] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return plugins }
+        return plugins.compactMap { plugin in
+            let commands = plugin.commands.filter { command in
+                [command.title, command.description, command.command]
+                    .compactMap { $0 }
+                    .contains { $0.localizedCaseInsensitiveContains(needle) }
+            }
+            guard !commands.isEmpty else { return nil }
+            return PluginCommandCatalog.PluginInfo(
+                name: plugin.name,
+                description: plugin.description,
+                commands: commands
+            )
+        }
+    }
+
+    private var closeConversationButton: some View {
+        Button(action: onCloseConversation) {
+            Label("Close conversation", systemImage: "xmark")
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .disabled(!canCloseConversation)
+        .padding(.horizontal, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.sm)
     }
 
     private func pluginSection(_ plugin: PluginCommandCatalog.PluginInfo) -> some View {

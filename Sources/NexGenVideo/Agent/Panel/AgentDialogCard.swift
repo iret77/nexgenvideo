@@ -2,6 +2,15 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum AgentDialogFocusTarget: Hashable {
+    case choice(String)
+    case toggle(String)
+    case custom(String)
+    case direction
+    case filePicker
+    case primaryAction
+}
+
 /// Presenter-agnostic docked dialog card with explicit submit, complete, and cancel actions.
 struct AgentDialogCard: View {
     let dialog: AgentDialog
@@ -34,6 +43,7 @@ struct AgentDialogCard: View {
     @State private var isDropTargeted = false
     /// Files chosen for a `fileIntake` dialog — via the drop zone or the native picker.
     @State private var pickedFiles: [URL] = []
+    @FocusState private var focusedControl: AgentDialogFocusTarget?
 
     private var choiceSelections: [String: Set<String>] {
         get { externalSelections?.wrappedValue ?? localChoiceSelections }
@@ -46,6 +56,38 @@ struct AgentDialogCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             header
+            ScrollView {
+                decisionBody
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            footerRow
+        }
+        .padding(AppTheme.Spacing.md)
+        .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .fill(AppTheme.Background.raisedColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .strokeBorder(isDropTargeted ? accent : accent.opacity(AppTheme.Opacity.medium),
+                              lineWidth: isDropTargeted ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.thin)
+        )
+        .padding(.horizontal, AppTheme.Spacing.mdLg)
+        // A file-intake dialog accepts a drop anywhere on the card (a big, forgiving target) — a leaf
+        // drop, not shadowed by any parent .onDrop. Non-file dialogs take no drop (isTargeted nil).
+        .onDrop(of: [.fileURL],
+                isTargeted: dialog.fileIntake != nil ? $isDropTargeted : nil,
+                perform: handleFileDrop)
+        .onAppear {
+            seedDefaults()
+            requestInitialFocus()
+        }
+    }
+
+    private var decisionBody: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             if let intro = dialog.intro {
                 Text(intro)
                     .font(.system(size: AppTheme.FontSize.xs))
@@ -62,30 +104,17 @@ struct AgentDialogCard: View {
                 sectionView(section)
             }
             if let tf = dialog.textField {
-                dialogField(tf.placeholder, text: $direction, lineLimit: tf.multiline ? 3...12 : 1...3)
+                dialogField(
+                    tf.placeholder,
+                    text: $direction,
+                    focus: .direction,
+                    lineLimit: tf.multiline ? 3...12 : 1...3
+                )
             }
             if let intake = dialog.fileIntake {
                 fileWell(intake)
             }
-            footerRow
         }
-        .padding(AppTheme.Spacing.md)
-        .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .fill(AppTheme.Background.raisedColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(isDropTargeted ? accent : accent.opacity(AppTheme.Opacity.medium),
-                              lineWidth: isDropTargeted ? AppTheme.BorderWidth.medium : AppTheme.BorderWidth.thin)
-        )
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
-        // A file-intake dialog accepts a drop anywhere on the card (a big, forgiving target) — a leaf
-        // drop, not shadowed by any parent .onDrop. Non-file dialogs take no drop (isTargeted nil).
-        .onDrop(of: [.fileURL],
-                isTargeted: dialog.fileIntake != nil ? $isDropTargeted : nil,
-                perform: handleFileDrop)
-        .onAppear(perform: seedDefaults)
     }
 
     private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -138,14 +167,16 @@ struct AgentDialogCard: View {
                 FlowChips(options: options,
                           selected: choiceSelections[section.id] ?? [],
                           multiSelect: multiSelect,
-                          accent: accent) { optionId in
+                          accent: accent,
+                          focus: $focusedControl,
+                          focusNamespace: section.id) { optionId in
                     toggleChoice(sectionId: section.id, optionId: optionId, multiSelect: multiSelect)
                 }
                 if section.allowsCustom {
                     dialogField("Other…", text: Binding(
                         get: { customText[section.id] ?? "" },
                         set: { customText[section.id] = $0 }
-                    ))
+                    ), focus: .custom(section.id))
                 }
             }
         case .toggle:
@@ -161,6 +192,7 @@ struct AgentDialogCard: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
+                .focused($focusedControl, equals: .toggle(section.id))
             }
         }
     }
@@ -168,7 +200,12 @@ struct AgentDialogCard: View {
     /// The single text-input styling for a dialog card — reused by the free-text field, per-section
     /// "Other…" inputs, and the file-intake identity name, so every input field in the AI chat looks
     /// and behaves identically (one design, no one-offs).
-    private func dialogField(_ placeholder: String, text: Binding<String>, lineLimit: ClosedRange<Int> = 1...3) -> some View {
+    private func dialogField(
+        _ placeholder: String,
+        text: Binding<String>,
+        focus: AgentDialogFocusTarget,
+        lineLimit: ClosedRange<Int> = 1...3
+    ) -> some View {
         TextField(placeholder, text: text, axis: .vertical)
             .textFieldStyle(.plain)
             .lineLimit(lineLimit)
@@ -183,6 +220,7 @@ struct AgentDialogCard: View {
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                     .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
             )
+            .focused($focusedControl, equals: focus)
     }
 
     // MARK: - File intake
@@ -191,7 +229,7 @@ struct AgentDialogCard: View {
     private func fileWell(_ intake: AgentDialog.FileIntake) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             if let namePrompt = intake.namePrompt {
-                dialogField(namePrompt, text: $direction)
+                dialogField(namePrompt, text: $direction, focus: .direction)
             }
             if pickedFiles.isEmpty {
                 emptyFileWell(intake)
@@ -225,8 +263,7 @@ struct AgentDialogCard: View {
                 LibraryAssetPicker(
                     assets: picks,
                     showsSearch: true,
-                    showsTypeTabs: Set(picks.map(\.type.rawValue)).count > 1,
-                    scrollHeight: AppTheme.ComponentSize.agentAssetPickerHeight
+                    showsTypeTabs: Set(picks.map(\.type.rawValue)).count > 1
                 ) { addPicked($0.url, intake) }
             }
         }
@@ -263,6 +300,7 @@ struct AgentDialogCard: View {
             .buttonStyle(.borderedProminent)
             .tint(accent)
             .controlSize(.regular)
+            .focused($focusedControl, equals: .filePicker)
         }
         .padding(AppTheme.Spacing.mdLg)
         .frame(maxWidth: .infinity)
@@ -316,6 +354,7 @@ struct AgentDialogCard: View {
         Button(label) { presentFilePanel(intake) }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .focused($focusedControl, equals: .filePicker)
     }
 
     private func presentFilePanel(_ intake: AgentDialog.FileIntake) {
@@ -393,6 +432,7 @@ struct AgentDialogCard: View {
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.small)
                 .disabled(!canSubmit)
+                .focused($focusedControl, equals: .primaryAction)
         }
     }
 
@@ -438,6 +478,31 @@ struct AgentDialogCard: View {
         }
     }
 
+    private func requestInitialFocus() {
+        let target = initialFocusTarget
+        Task { @MainActor in
+            await Task.yield()
+            focusedControl = target
+        }
+    }
+
+    private var initialFocusTarget: AgentDialogFocusTarget {
+        if dialog.fileIntake?.namePrompt != nil { return .direction }
+        for section in dialog.sections {
+            switch section.kind {
+            case .choices(let options, _):
+                if let option = options.first {
+                    return .choice("\(section.id):\(option.id)")
+                }
+            case .toggle:
+                return .toggle(section.id)
+            }
+        }
+        if dialog.textField != nil { return .direction }
+        if dialog.fileIntake != nil { return .filePicker }
+        return .primaryAction
+    }
+
     private func toggleChoice(sectionId: String, optionId: String, multiSelect: Bool) {
         var current = choiceSelections[sectionId] ?? []
         if multiSelect {
@@ -476,6 +541,8 @@ private struct FlowChips: View {
     let selected: Set<String>
     let multiSelect: Bool
     var accent: Color = AppTheme.Accent.primary
+    let focus: FocusState<AgentDialogFocusTarget?>.Binding
+    let focusNamespace: String
     let onTap: (String) -> Void
 
     var body: some View {
@@ -513,6 +580,7 @@ private struct FlowChips: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .focused(focus, equals: .choice("\(focusNamespace):\(option.id)"))
                 .help(option.label)
                 .accessibilityLabel(option.shortLabel)
             }

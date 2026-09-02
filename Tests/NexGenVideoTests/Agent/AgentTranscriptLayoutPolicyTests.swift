@@ -47,7 +47,7 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(implementation.contains("isUserPinnedAway = false"))
     }
 
-    @Test func backendSetupNoticeIsIndependentFromWorkflowIntake() throws {
+    @Test func backendRecoveryLivesInTheDockInsteadOfTheTranscript() throws {
         let source = try agentPanelSource()
         let bodyStart = try #require(source.range(of: "var body: some View"))
         let bodyEnd = try #require(source.range(
@@ -59,20 +59,20 @@ struct AgentTranscriptLayoutPolicyTests {
             of: "private func scrollingMessages",
             range: messageStart.upperBound..<source.endIndex
         ))
-        let emptyStart = try #require(source.range(of: "private var emptyState"))
-        let emptyEnd = try #require(source.range(
-            of: "private var entryCommands",
-            range: emptyStart.upperBound..<source.endIndex
+        let dockStart = try #require(source.range(of: "private var composerDock"))
+        let dockEnd = try #require(source.range(
+            of: "private var footer",
+            range: dockStart.upperBound..<source.endIndex
         ))
 
         let body = source[bodyStart.lowerBound..<bodyEnd.lowerBound]
         let messageList = source[messageStart.lowerBound..<messageEnd.lowerBound]
-        let emptyState = source[emptyStart.lowerBound..<emptyEnd.lowerBound]
+        let dock = source[dockStart.lowerBound..<dockEnd.lowerBound]
 
         #expect(body.contains("service.refreshBackendStatus()"))
-        #expect(messageList.contains("if showsBackendSetupNotice"))
-        #expect(messageList.contains("backendSetupNotice"))
-        #expect(!emptyState.contains("backendSetupNotice"))
+        #expect(!messageList.contains("backendRecoveryDock"))
+        #expect(dock.contains("case .backendRecovery:"))
+        #expect(dock.contains("backendRecoveryDock"))
         #expect(source.contains("SettingsWindowController.shared.show(tab: .agent)"))
         #expect(source.contains("Open Agent Settings"))
     }
@@ -129,6 +129,7 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(dockImplementation.contains("case .spendApproval:"))
         #expect(dockImplementation.contains("case .gateApproval:"))
         #expect(dockImplementation.contains("case .dialog:"))
+        #expect(dockImplementation.contains("case .backendRecovery:"))
         #expect(dockImplementation.contains("case .composer:\n            footer"))
 
         let statusSource = try sourceFile(
@@ -141,15 +142,16 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(implementation.contains("service.cancelRunningSpend()"))
     }
 
-    @Test func runningTranscriptActivityOwnsTheOnlyOperationSpinnerAndLabel() throws {
+    @Test func runningTranscriptActivityLeavesAStaticStatusLandmark() throws {
         let panel = try agentPanelSource()
         let state = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/AgentSurfaceState.swift"
         )
         #expect(panel.contains("streamHasTranscriptActivity: activityVisible"))
         #expect(panel.contains("phaseHasTranscriptActivity: activityVisible"))
-        #expect(state.contains("input.streamHasTranscriptActivity ? .none : .stream"))
-        #expect(state.contains("input.phaseHasTranscriptActivity ? .none : .phaseRun"))
+        #expect(state.contains("case .phaseRun: input.phaseHasTranscriptActivity"))
+        #expect(state.contains("case .stream: input.streamHasTranscriptActivity"))
+        #expect(panel.contains("surfaceState.statusHasTranscriptActivity"))
         #expect(!panel.contains("detail: \"Current operation appears in the transcript\""))
 
         let statusSource = try sourceFile(
@@ -192,17 +194,33 @@ struct AgentTranscriptLayoutPolicyTests {
         let panel = try agentPanelSource()
         let start = try #require(panel.range(of: "private var conversationBar"))
         let end = try #require(panel.range(
-            of: "@State private var showHistory",
+            of: "private var modelPicker",
             range: start.upperBound..<panel.endIndex
         ))
         let header = panel[start.lowerBound..<end.lowerBound]
 
         #expect(header.contains("historyButton"))
-        #expect(header.contains("pluginLauncherButton"))
+        #expect(header.contains("utilityButton"))
         #expect(header.contains("newConversationButton"))
         #expect(header.contains("Label(\"Latest\""))
+        #expect(header.contains("ViewThatFits(in: .horizontal)"))
+        #expect(header.contains("currentConversationTitle"))
+        #expect(header.contains(".truncationMode(.middle)"))
+        #expect(header.contains(".opacity(isUserPinnedAway"))
         #expect(!header.contains("ForEach(service.openSessions)"))
         #expect(!panel.contains("ChatTabView"))
+
+        let history = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/ChatHistoryList.swift"
+        )
+        let utilities = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/PluginLauncherPopover.swift"
+        )
+        #expect(history.contains("Search conversations"))
+        #expect(history.contains(".confirmationDialog("))
+        #expect(history.contains("cue.label"))
+        #expect(utilities.contains("Close conversation"))
+        #expect(utilities.contains("Search workflows"))
     }
 
     @Test func dialogChoiceChipsUseBoundedCompactTitles() throws {
@@ -217,6 +235,25 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(implementation.contains("agentChoiceChipMaxWidth"))
         #expect(implementation.contains(".help(option.label)"))
         #expect(!implementation.contains(".fixedSize()"))
+    }
+
+    @Test func everyDecisionCardHasOneBoundedInternalScrollRegion() throws {
+        for path in [
+            "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift",
+            "Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift",
+            "Sources/NexGenVideo/Agent/Panel/SpendApprovalCard.swift",
+        ] {
+            let source = try sourceFile(path)
+            #expect(source.contains("ScrollView {"))
+            #expect(source.contains("AppTheme.ComponentSize.agentDecisionMaxHeight"))
+        }
+
+        let dialog = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentDialogCard.swift"
+        )
+        #expect(dialog.components(separatedBy: "ScrollView {").count == 2)
+        #expect(dialog.contains("requestInitialFocus()"))
+        #expect(dialog.contains(".focused($focusedControl"))
     }
 
     @Test func spendApprovalKeepsValidProviderAndModelChoicesInTheCard() throws {

@@ -103,4 +103,25 @@ struct AgentBlocksTests {
             ]])
         }
     }
+
+    @Test func legacySavedPayloadsRemainRenderableWithoutWeakeningNewCalls() throws {
+        let legacy = Array(repeating: ["type": "text", "body": "Saved result"] as [String: Any], count: 8)
+            + [["type": "headline", "text": "Legacy trailing headline"] as [String: Any]]
+
+        #expect(throws: ToolError.self) {
+            _ = try blocks(legacy)
+        }
+        let rendered = try #require(AgentBlocks.parseForRendering(["blocks": legacy]))
+        #expect(rendered.count == 9)
+
+        #expect(AgentBlocks.parseForRendering([
+            "blocks": [["type": "unknown", "text": "unsafe"]],
+        ]) == nil)
+        #expect(AgentBlocks.parseForRendering([
+            "blocks": [[
+                "type": "text",
+                "body": String(repeating: "x", count: AgentBlocks.maxBodyLength + 1),
+            ]],
+        ]) == nil)
+    }
 }

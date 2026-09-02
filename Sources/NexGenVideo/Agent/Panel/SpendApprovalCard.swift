@@ -1,5 +1,11 @@
 import SwiftUI
 
+private enum SpendApprovalFocusTarget: Hashable {
+    case provider
+    case model
+    case approve
+}
+
 struct SpendApprovalCard: View {
     let approval: SpendApproval
     let error: String?
@@ -11,6 +17,7 @@ struct SpendApprovalCard: View {
     @State private var selectedOptionId: String
     @State private var approvalError: String?
     @State private var providerKeyRevision = 0
+    @FocusState private var focusedControl: SpendApprovalFocusTarget?
 
     init(
         approval: SpendApproval,
@@ -65,6 +72,45 @@ struct SpendApprovalCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             header
+            ScrollView {
+                decisionBody
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            footerRow
+        }
+        .padding(AppTheme.Spacing.md)
+        .frame(maxHeight: AppTheme.ComponentSize.agentDecisionMaxHeight)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .fill(AppTheme.Background.raisedColor)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .strokeBorder(
+                    AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
+                    lineWidth: AppTheme.BorderWidth.thin
+                )
+        )
+        .padding(.horizontal, AppTheme.Spacing.mdLg)
+        .onAppear {
+            normalizeSelection()
+            requestInitialFocus()
+        }
+        .onChange(of: availableOptions.map(\.id)) { _, _ in normalizeSelection() }
+        .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
+            onRefresh()
+            providerKeyRevision += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .modelCatalogChanged)) { _ in
+            onRefresh()
+            providerKeyRevision += 1
+        }
+        .id(approval.id)
+    }
+
+    private var decisionBody: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             summary
             if availableOptions.count > 1 { selectionControls }
             if !availableOptions.isEmpty {
@@ -86,32 +132,7 @@ struct SpendApprovalCard: View {
                     .font(.system(size: AppTheme.FontSize.xxs))
                     .foregroundStyle(AppTheme.Status.errorColor)
             }
-            footerRow
         }
-        .padding(AppTheme.Spacing.md)
-        .background(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .fill(AppTheme.Background.raisedColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(
-                    AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
-                    lineWidth: AppTheme.BorderWidth.thin
-                )
-        )
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
-        .onAppear { normalizeSelection() }
-        .onChange(of: availableOptions.map(\.id)) { _, _ in normalizeSelection() }
-        .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
-            onRefresh()
-            providerKeyRevision += 1
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .modelCatalogChanged)) { _ in
-            onRefresh()
-            providerKeyRevision += 1
-        }
-        .id(approval.id)
     }
 
     private var header: some View {
@@ -166,6 +187,7 @@ struct SpendApprovalCard: View {
                 .pickerStyle(.menu)
                 .controlSize(.small)
                 .disabled(isWorking || availableProviders.count < 2)
+                .focused($focusedControl, equals: .provider)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -185,6 +207,7 @@ struct SpendApprovalCard: View {
                 .pickerStyle(.menu)
                 .controlSize(.small)
                 .disabled(isWorking || modelOptions.count < 2)
+                .focused($focusedControl, equals: .model)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -220,6 +243,21 @@ struct SpendApprovalCard: View {
             .buttonStyle(.capsule(.prominent, size: .regular))
             .controlSize(.small)
             .disabled(selectedOption == nil || isWorking)
+            .focused($focusedControl, equals: .approve)
+        }
+    }
+
+    private func requestInitialFocus() {
+        let target: SpendApprovalFocusTarget = if availableProviders.count > 1 {
+            .provider
+        } else if modelOptions.count > 1 {
+            .model
+        } else {
+            .approve
+        }
+        Task { @MainActor in
+            await Task.yield()
+            focusedControl = target
         }
     }
 

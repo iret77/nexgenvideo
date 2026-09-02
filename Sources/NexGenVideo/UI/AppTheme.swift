@@ -394,9 +394,11 @@ enum AppTheme {
         static let agentComposerMinHeight: CGFloat = 92
         static let agentComposerMaxHeight: CGFloat = 280
         static let agentComposerGrabHeight: CGFloat = 10
+        static let agentDecisionMaxHeight: CGFloat = 318
         static let agentBlockLabelWidth: CGFloat = 96
         static let agentAssetPickerWidth: CGFloat = 280
         static let agentAssetPickerHeight: CGFloat = 260
+        static let agentConversationTitleMinWidth: CGFloat = 120
         static let agentScrollAwayThreshold: CGFloat = 80
         static let formatSheetWidth: CGFloat = 500
         static let formatSheetCardListMinHeight: CGFloat = 460

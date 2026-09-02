@@ -44,6 +44,9 @@ enum AgentBlocks {
     static let maxBodyLength = 1_600
     static let maxLabelLength = 80
     static let maxValueLength = 600
+    private static let legacyMaxBlocks = 12
+    private static let legacyMaxBadges = 6
+    private static let legacyMaxRows = 12
 
     /// Strict parse of the `show_blocks` args. Throws `ToolError` with the exact violation —
     /// the error IS the enforcement loop (the model reads it and re-calls correctly).
@@ -59,6 +62,137 @@ enum AgentBlocks {
         }
         try validateGrammar(parsed)
         return parsed
+    }
+
+    static func parseForRendering(_ args: [String: Any]) -> [AgentBlock]? {
+        if let current = try? parse(args) { return current }
+        return try? parseLegacy(args)
+    }
+
+    private static func parseLegacy(_ args: [String: Any]) throws -> [AgentBlock] {
+        guard let raw = args["blocks"] as? [[String: Any]], !raw.isEmpty,
+              raw.count <= legacyMaxBlocks else {
+            throw ToolError("show_blocks: unsupported legacy payload.")
+        }
+        return try raw.enumerated().map { index, block in
+            try parseLegacyBlock(block, at: index)
+        }
+    }
+
+    private static func parseLegacyBlock(
+        _ dict: [String: Any],
+        at index: Int
+    ) throws -> AgentBlock {
+        guard let type = dict["type"] as? String else {
+            throw ToolError("show_blocks: blocks[\(index)] is missing 'type'.")
+        }
+        switch type {
+        case "headline":
+            try allowKeys(dict, ["type", "text", "symbol"], index: index)
+            return .headline(
+                text: try requiredLegacyText(
+                    dict,
+                    "text",
+                    index: index,
+                    maxLength: maxHeadlineLength
+                ),
+                symbol: dict["symbol"] as? String
+            )
+        case "text":
+            try allowKeys(dict, ["type", "body"], index: index)
+            return .text(body: try requiredLegacyText(
+                dict,
+                "body",
+                index: index,
+                maxLength: maxBodyLength
+            ))
+        case "status":
+            try allowKeys(dict, ["type", "badges"], index: index)
+            guard let badges = dict["badges"] as? [[String: Any]],
+                  (1...legacyMaxBadges).contains(badges.count) else {
+                throw ToolError("show_blocks: unsupported legacy status payload.")
+            }
+            return .status(badges: try badges.enumerated().map { badgeIndex, badge in
+                try allowKeys(badge, ["label", "value", "symbol"], index: index)
+                return AgentBlock.Badge(
+                    label: try requiredLegacyText(
+                        badge,
+                        "label",
+                        index: index,
+                        element: "badges[\(badgeIndex)]",
+                        maxLength: maxLabelLength
+                    ),
+                    value: try requiredLegacyText(
+                        badge,
+                        "value",
+                        index: index,
+                        element: "badges[\(badgeIndex)]",
+                        maxLength: maxValueLength
+                    ),
+                    symbol: badge["symbol"] as? String
+                )
+            })
+        case "keyvalue":
+            try allowKeys(dict, ["type", "title", "rows"], index: index)
+            guard let rows = dict["rows"] as? [[String]],
+                  (1...legacyMaxRows).contains(rows.count),
+                  rows.allSatisfy({ $0.count == 2 }) else {
+                throw ToolError("show_blocks: unsupported legacy key-value payload.")
+            }
+            let boundedRows = try rows.enumerated().map { rowIndex, row in
+                let label = try boundedText(
+                    row[0],
+                    path: "blocks[\(index)].rows[\(rowIndex)][0]",
+                    maxLength: maxLabelLength
+                )
+                let value = try boundedText(
+                    row[1],
+                    path: "blocks[\(index)].rows[\(rowIndex)][1]",
+                    maxLength: maxValueLength
+                )
+                return (label, value)
+            }
+            let title = try (dict["title"] as? String).map {
+                try boundedText(
+                    $0,
+                    path: "blocks[\(index)].title",
+                    maxLength: maxHeadlineLength
+                )
+            }
+            return .keyValue(title: title, rows: boundedRows)
+        case "callout":
+            try allowKeys(dict, ["type", "tone", "text"], index: index)
+            guard let rawTone = dict["tone"] as? String,
+                  let tone = AgentBlock.CalloutTone(rawValue: rawTone) else {
+                throw ToolError("show_blocks: unsupported legacy callout payload.")
+            }
+            return .callout(
+                tone: tone,
+                text: try requiredLegacyText(
+                    dict,
+                    "text",
+                    index: index,
+                    maxLength: maxValueLength
+                )
+            )
+        default:
+            throw ToolError("show_blocks: unsupported legacy block type.")
+        }
+    }
+
+    private static func requiredLegacyText(
+        _ dict: [String: Any],
+        _ key: String,
+        index: Int,
+        element: String? = nil,
+        maxLength: Int
+    ) throws -> String {
+        let place = element.map { "blocks[\(index)].\($0)" } ?? "blocks[\(index)]"
+        return try boundedText(
+            dict[key] as? String ?? "",
+            path: "\(place).\(key)",
+            maxLength: maxLength
+        )
     }
 
     private static func parseBlock(_ dict: [String: Any], at index: Int) throws -> AgentBlock {

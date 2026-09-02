@@ -5,6 +5,7 @@ struct AgentSurfaceState: Equatable {
         case spendApproval
         case gateApproval
         case dialog
+        case backendRecovery
         case composer
     }
 
@@ -12,10 +13,13 @@ struct AgentSurfaceState: Equatable {
         case spendRun
         case phaseRun
         case phaseFailure
+        case actionRequired
         case hostFollowUp
         case stream
+        case turnFailure
+        case backendChecking
+        case backendUnavailable
         case ready
-        case none
     }
 
     struct Input: Equatable {
@@ -29,11 +33,14 @@ struct AgentSurfaceState: Equatable {
         var hasHostFollowUp = false
         var isStreaming = false
         var streamHasTranscriptActivity = false
-        var transcriptOwnsStatus = false
+        var hasTurnFailure = false
+        var isCheckingBackend = false
+        var needsBackendRecovery = false
     }
 
     let dockOwner: DockOwner
     let statusOwner: StatusOwner
+    let statusHasTranscriptActivity: Bool
 
     static func resolve(_ input: Input) -> AgentSurfaceState {
         let dockOwner: DockOwner
@@ -43,6 +50,8 @@ struct AgentSurfaceState: Equatable {
             dockOwner = .gateApproval
         } else if input.hasDialog {
             dockOwner = .dialog
+        } else if input.needsBackendRecovery {
+            dockOwner = .backendRecovery
         } else {
             dockOwner = .composer
         }
@@ -51,19 +60,36 @@ struct AgentSurfaceState: Equatable {
         if input.hasSpendRun {
             statusOwner = .spendRun
         } else if input.phaseIsRunning {
-            statusOwner = input.phaseHasTranscriptActivity ? .none : .phaseRun
+            statusOwner = .phaseRun
         } else if input.phaseHasFailed {
             statusOwner = .phaseFailure
+        } else if dockOwner == .spendApproval
+                    || dockOwner == .gateApproval
+                    || dockOwner == .dialog {
+            statusOwner = .actionRequired
+        } else if input.isStreaming {
+            statusOwner = .stream
+        } else if input.hasTurnFailure {
+            statusOwner = .turnFailure
         } else if input.hasHostFollowUp {
             statusOwner = .hostFollowUp
-        } else if input.isStreaming {
-            statusOwner = input.streamHasTranscriptActivity ? .none : .stream
-        } else if dockOwner == .composer, !input.transcriptOwnsStatus {
-            statusOwner = .ready
+        } else if input.isCheckingBackend {
+            statusOwner = .backendChecking
+        } else if input.needsBackendRecovery {
+            statusOwner = .backendUnavailable
         } else {
-            statusOwner = .none
+            statusOwner = .ready
         }
 
-        return AgentSurfaceState(dockOwner: dockOwner, statusOwner: statusOwner)
+        let statusHasTranscriptActivity = switch statusOwner {
+        case .phaseRun: input.phaseHasTranscriptActivity
+        case .stream: input.streamHasTranscriptActivity
+        default: false
+        }
+        return AgentSurfaceState(
+            dockOwner: dockOwner,
+            statusOwner: statusOwner,
+            statusHasTranscriptActivity: statusHasTranscriptActivity
+        )
     }
 }

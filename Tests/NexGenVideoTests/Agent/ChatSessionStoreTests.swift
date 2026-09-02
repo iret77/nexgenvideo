@@ -86,6 +86,34 @@ struct ChatSessionStoreTests {
         #expect(back.messages.first?.userPresentation?.workflowRecord == record)
     }
 
+    @Test("conversation titles preserve distinguishing text at both ends")
+    func conversationTitleUsesMiddleCompaction() {
+        let source = String(repeating: "opening detail ", count: 8)
+            + String(repeating: "shared middle ", count: 8)
+            + "distinct ending"
+        let title = AgentService.conversationTitle(from: source)
+
+        #expect(title.count == 120)
+        #expect(title.contains("…"))
+        #expect(title.hasPrefix("opening detail"))
+        #expect(title.hasSuffix("distinct ending"))
+    }
+
+    @Test("conversation attention is keyed to the owning session")
+    @MainActor
+    func sessionAttentionIsScoped() async throws {
+        let service = AgentService()
+        service.newChat()
+        let current = try #require(service.currentSessionId)
+        service.isStreaming = true
+        #expect(service.sessionAttention(for: current) == .running)
+        service.isStreaming = false
+
+        _ = try service.requestGateApproval(GateApproval(phase: "brief"))
+        #expect(service.sessionAttention(for: current) == .actionRequired)
+        _ = await service.resolveGate(.declined)
+    }
+
     @Test("strict project load rejects a malformed chat instead of dropping it")
     func malformedChatIsRejected() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

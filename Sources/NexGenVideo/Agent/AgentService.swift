@@ -2220,6 +2220,33 @@ final class AgentService {
 
     var openSessions: [ChatSession] { sessions.filter { $0.isOpen } }
 
+    func sessionAttention(for id: UUID) -> ChatSessionAttention? {
+        let isCurrent = id == currentSessionId
+        if let dialog = pendingDialog {
+            let owner = dialogOrigins[dialog.id]?.chatSessionID
+            if owner == id || (owner == nil && isCurrent) { return .actionRequired }
+        }
+        if pendingSpendApproval != nil {
+            let owner = pendingSpendOperation?.origin.chatSessionID
+            if owner == id || (owner == nil && isCurrent) { return .actionRequired }
+        }
+        if let approval = pendingGateApproval,
+           approval.sessionId == id || (approval.sessionId == nil && isCurrent) {
+            return .actionRequired
+        }
+        if (isCurrent && isStreaming)
+            || runningSpendStatus?.chatSessionID == id
+            || (isCurrent && runningSpendStatus?.chatSessionID == nil
+                && runningSpendStatus != nil) {
+            return .running
+        }
+        if pendingSpendFollowUps.contains(where: { $0.origin.chatSessionID == id })
+            || pendingGateFollowUp?.origin.chatSessionID == id {
+            return .unreadResult
+        }
+        return nil
+    }
+
     func selectSession(_ id: UUID) {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
         currentTask?.cancel()
@@ -2893,20 +2920,32 @@ final class AgentService {
         if let presentation = message.userPresentation {
             if let typed = presentation.typedText?.trimmingCharacters(in: .whitespacesAndNewlines),
                !typed.isEmpty {
-                return String(typed.prefix(40))
+                return conversationTitle(from: typed)
             }
             if let summary = presentation.choiceRecord?.summary, !summary.isEmpty {
-                return String(summary.prefix(40))
+                return conversationTitle(from: summary)
             }
             return "New chat"
         }
         for block in message.blocks {
             if case let .text(s) = block {
                 let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { return String(trimmed.prefix(40)) }
+                if !trimmed.isEmpty { return conversationTitle(from: trimmed) }
             }
         }
         return "New chat"
+    }
+
+    nonisolated static func conversationTitle(from text: String) -> String {
+        let normalized = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let maximumLength = 120
+        guard normalized.count > maximumLength else { return normalized }
+        let available = maximumLength - 1
+        let leadingCount = (available + 1) / 2
+        let trailingCount = available - leadingCount
+        return String(normalized.prefix(leadingCount))
+            + "…"
+            + String(normalized.suffix(trailingCount))
     }
 }
 

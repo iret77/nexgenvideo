@@ -53,6 +53,8 @@ struct AgentWorkflowRecord: Codable, Equatable, Sendable {
         case provided
         case skipped
         case completed
+        case failed
+        case needsAction
     }
 
     let title: String

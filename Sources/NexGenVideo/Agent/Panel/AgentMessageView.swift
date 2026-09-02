@@ -24,6 +24,8 @@ struct AgentTranscriptTurnView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Conversation turn")
     }
 }
 
@@ -104,7 +106,12 @@ private struct AgentReceiptView: View {
     private var symbol: String {
         switch receipt.content {
         case .choice: "checkmark.circle.fill"
-        case .workflow(let record): record.symbol
+        case .workflow(let record):
+            switch record.outcome {
+            case .failed: "exclamationmark.triangle.fill"
+            case .needsAction: "exclamationmark.circle.fill"
+            default: record.symbol
+            }
         }
     }
 
@@ -112,9 +119,12 @@ private struct AgentReceiptView: View {
         switch receipt.content {
         case .choice: AppTheme.Text.tertiaryColor
         case .workflow(let record):
-            record.outcome == .skipped
-                ? AppTheme.Text.tertiaryColor
-                : AppTheme.Status.successColor
+            switch record.outcome {
+            case .skipped: AppTheme.Text.tertiaryColor
+            case .failed: AppTheme.Status.errorColor
+            case .needsAction: AppTheme.Status.warningColor
+            default: AppTheme.Status.successColor
+            }
         }
     }
 
@@ -124,6 +134,8 @@ private struct AgentReceiptView: View {
         case .provided: "Provided"
         case .skipped: "Skipped"
         case .completed: "Done"
+        case .failed: "Failed"
+        case .needsAction: "Needs action"
         }
     }
 }
@@ -245,7 +257,7 @@ struct AgentMessageView: View {
         guard let data = inputJSON.data(using: .utf8),
               let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return nil }
-        return try? AgentBlocks.parse(args)
+        return AgentBlocks.parseForRendering(args)
     }
 }
 
@@ -258,6 +270,25 @@ private struct WorkflowRecordView: View {
         case .provided: "Provided"
         case .skipped: "Skipped"
         case .completed: "Done"
+        case .failed: "Failed"
+        case .needsAction: "Needs action"
+        }
+    }
+
+    private var outcomeSymbol: String {
+        switch record.outcome {
+        case .failed: "exclamationmark.triangle.fill"
+        case .needsAction: "exclamationmark.circle.fill"
+        default: "checkmark.circle.fill"
+        }
+    }
+
+    private var outcomeColor: Color {
+        switch record.outcome {
+        case .skipped: AppTheme.Text.tertiaryColor
+        case .failed: AppTheme.Status.errorColor
+        case .needsAction: AppTheme.Status.warningColor
+        default: AppTheme.Status.successColor
         }
     }
 
@@ -276,12 +307,12 @@ private struct WorkflowRecordView: View {
                         ))
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Spacer(minLength: AppTheme.Spacing.sm)
-                    Label(outcomeLabel, systemImage: "checkmark.circle.fill")
+                    Label(outcomeLabel, systemImage: outcomeSymbol)
                         .font(.system(
                             size: AppTheme.FontSize.xs,
                             weight: AppTheme.FontWeight.medium
                         ))
-                        .foregroundStyle(AppTheme.Status.successColor)
+                        .foregroundStyle(outcomeColor)
                 }
                 if let phase = record.phase {
                     Text(PhaseDisplay.label(phase))

@@ -94,43 +94,40 @@ enum AgentTranscriptProjection {
     ) -> AgentTranscriptTurn? {
         guard let first = messages.first else { return nil }
         let activity = makeActivity(messages, isRunning: isRunning)
-        var insertedActivity = false
-        var output: [AgentTranscriptItem] = []
+        var intents: [AgentTranscriptItem] = []
+        var results: [AgentTranscriptItem] = []
+        var receipts: [AgentTranscriptItem] = []
+        var notices: [AgentTranscriptItem] = []
 
         for message in messages {
             switch message.role {
             case .user:
                 if !message.hidden, let text = authoredText(message) {
-                    output.append(.userIntent(.init(id: message.id, text: text)))
+                    intents.append(.userIntent(.init(id: message.id, text: text)))
                 }
                 if let presentation = message.userPresentation {
                     if let workflow = presentation.workflowRecord {
                         appendReceipt(
                             .init(id: message.id, content: .workflow(workflow)),
                             phase: workflow.phase,
-                            to: &output
+                            to: &receipts
                         )
                     }
                     if let choice = presentation.choiceRecord {
                         appendReceipt(
                             .init(id: message.id, content: .choice(choice)),
                             phase: nil,
-                            to: &output
+                            to: &receipts
                         )
                     }
                     if let notice = presentation.notice?.trimmingCharacters(
                         in: .whitespacesAndNewlines
                     ), !notice.isEmpty {
-                        output.append(.notice(.init(id: message.id, text: notice)))
+                        notices.append(.notice(.init(id: message.id, text: notice)))
                     }
                 }
             case .assistant:
                 let hasActivityTool = message.blocks.contains(where: isActivityTool)
-                if hasActivityTool, let activity, !insertedActivity {
-                    output.append(.activity(activity))
-                    insertedActivity = true
-                }
-
                 let persistentBlocks = message.blocks.filter { block in
                     guard hasActivityTool else { return true }
                     return isPersistentTool(block)
@@ -138,11 +135,13 @@ enum AgentTranscriptProjection {
                 if !persistentBlocks.isEmpty {
                     var persistent = message
                     persistent.blocks = persistentBlocks
-                    output.append(.assistantResult(persistent))
+                    results.append(.assistantResult(persistent))
                 }
             }
         }
 
+        let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
+        let output = intents + results + activityItems + receipts + notices
         guard !output.isEmpty else { return nil }
         return AgentTranscriptTurn(id: first.id, items: output)
     }
