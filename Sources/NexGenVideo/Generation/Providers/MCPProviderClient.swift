@@ -58,11 +58,28 @@ actor MCPProviderClient {
     }
 
     private let config: Config
+    private let urlSession: URLSession
     private var client: Client?
+    private var protocolMode: ProtocolMode?
+    private var protocolModeResolution: Task<ProtocolMode, Error>?
+    private var modernTools: [DiscoveredTool] = []
+    private var modernHeaderBindings: [String: [MCP20260728.HeaderBinding]] = [:]
+    private var modernDiscoveryExpiresAt: Date?
+    private var modernToolsExpireAt: Date?
 
-    init(config: Config) { self.config = config }
+    private enum ProtocolMode: Sendable {
+        case legacy
+        case modern
+    }
 
-    private func connectedClient() async throws -> Client {
+    private struct ModernFallback: Error {}
+
+    init(config: Config, urlSession: URLSession = .shared) {
+        self.config = config
+        self.urlSession = urlSession
+    }
+
+    private func connectedLegacyClient() async throws -> Client {
         if let client { return client }
         let client = Client(name: "nexgen", version: "1.0.0")
         let transport: HTTPClientTransport
@@ -84,12 +101,21 @@ actor MCPProviderClient {
     /// (result URLs / payload the host then imports onto the timeline). Arguments are already
     /// gate-compiled by the caller.
     func callTool(name: String, arguments: [String: Value]) async throws -> [String] {
-        let client = try await connectedClient()
-        let context: RequestContext<CallTool.Result> = try await client.callTool(
-            name: name,
-            arguments: arguments
-        )
-        return try await payloads(from: context, client: client)
+        switch try await resolvedProtocolMode() {
+        case .legacy:
+            let client = try await connectedLegacyClient()
+            let context: RequestContext<CallTool.Result> = try await client.callTool(
+                name: name,
+                arguments: arguments
+            )
+            return try await payloads(from: context, client: client)
+        case .modern:
+            return try await callModernTool(
+                name: name,
+                arguments: arguments,
+                onDispatched: nil
+            )
+        }
     }
 
     func callGenerationTool(
@@ -97,13 +123,22 @@ actor MCPProviderClient {
         arguments: [String: Value],
         onDispatched: @escaping @MainActor @Sendable () -> Void
     ) async throws -> [String] {
-        let client = try await connectedClient()
-        let context: RequestContext<CallTool.Result> = try await client.callTool(
-            name: name,
-            arguments: arguments
-        )
-        await onDispatched()
-        return try await payloads(from: context, client: client)
+        switch try await resolvedProtocolMode() {
+        case .legacy:
+            let client = try await connectedLegacyClient()
+            let context: RequestContext<CallTool.Result> = try await client.callTool(
+                name: name,
+                arguments: arguments
+            )
+            await onDispatched()
+            return try await payloads(from: context, client: client)
+        case .modern:
+            return try await callModernTool(
+                name: name,
+                arguments: arguments,
+                onDispatched: onDispatched
+            )
+        }
     }
 
     private func payloads(
@@ -210,6 +245,63 @@ actor MCPProviderClient {
         }
     }
 
+    private final class HTTPRequestSettlement: @unchecked Sendable {
+        typealias Output = (Data, URLResponse)
+
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Output, Error>?
+        private var result: Result<Output, Error>?
+        private var task: URLSessionDataTask?
+
+        func attach(_ task: URLSessionDataTask) {
+            let shouldCancel = lock.withLock {
+                guard result == nil else { return true }
+                self.task = task
+                return false
+            }
+            if shouldCancel { task.cancel() }
+        }
+
+        func value() async throws -> Output {
+            try await withCheckedThrowingContinuation { continuation in
+                let completed = lock.withLock { () -> Result<Output, Error>? in
+                    if let result { return result }
+                    self.continuation = continuation
+                    return nil
+                }
+                if let completed { continuation.resume(with: completed) }
+            }
+        }
+
+        func receive(data: Data?, response: URLResponse?, error: Error?) {
+            if let error {
+                settle(.failure(error))
+            } else if let data, let response {
+                settle(.success((data, response)))
+            } else {
+                settle(.failure(URLError(.badServerResponse)))
+            }
+        }
+
+        func cancel() {
+            let task = lock.withLock { self.task }
+            task?.cancel()
+            settle(.failure(CancellationError()))
+        }
+
+        private func settle(_ result: Result<Output, Error>) {
+            let continuation: CheckedContinuation<Output, Error>? = lock.withLock {
+                guard self.result == nil else { return nil }
+                self.result = result
+                let continuation = self.continuation
+                self.continuation = nil
+                self.task = nil
+                return continuation
+            }
+            continuation?.resume(with: result)
+        }
+    }
+
     func callTool(name: String, arguments: [String: String]) async throws -> [String] {
         try await callTool(name: name, arguments: arguments.mapValues(Value.string))
     }
@@ -217,7 +309,17 @@ actor MCPProviderClient {
     /// Enumerate the provider's tools (`tools/list`). This is how NGV learns what a provider offers
     /// over `.mcp` without a per-provider hardcoded table — the self-describing MCP handshake.
     func discoverTools() async throws -> [DiscoveredTool] {
-        let client = try await connectedClient()
+        switch try await resolvedProtocolMode() {
+        case .modern:
+            try await refreshModernToolsIfExpired()
+            return modernTools
+        case .legacy:
+            return try await discoverLegacyTools()
+        }
+    }
+
+    private func discoverLegacyTools() async throws -> [DiscoveredTool] {
+        let client = try await connectedLegacyClient()
         var discovered: [DiscoveredTool] = []
         var byName: [String: DiscoveredTool] = [:]
         var seenCursors = Set<String>()
@@ -262,9 +364,375 @@ actor MCPProviderClient {
         return discovered
     }
 
+    private func resolvedProtocolMode() async throws -> ProtocolMode {
+        if let protocolMode {
+            switch protocolMode {
+            case .legacy:
+                return .legacy
+            case .modern where modernDiscoveryExpiresAt.map({ $0 > Date() }) == true:
+                return .modern
+            case .modern:
+                self.protocolMode = nil
+            }
+        }
+        if let protocolModeResolution {
+            return try await protocolModeResolution.value
+        }
+        let resolution = Task { try await negotiateProtocolMode() }
+        protocolModeResolution = resolution
+        do {
+            let mode = try await resolution.value
+            protocolModeResolution = nil
+            return mode
+        } catch {
+            protocolModeResolution = nil
+            throw error
+        }
+    }
+
+    private func negotiateProtocolMode() async throws -> ProtocolMode {
+        do {
+            let discovery = try await performModernRequest(
+                method: "server/discover",
+                params: [:],
+                allowsLegacyFallback: true
+            )
+            guard let cached = cacheableCompleteResult(discovery),
+                  cached.object["capabilities"]?.objectValue != nil,
+                  cached.object["supportedVersions"]?.arrayValue?.contains(
+                    .string(MCP20260728.version)
+                  ) == true
+            else {
+                throw ClientError.toolFailed(
+                    "The provider MCP returned an invalid server/discover result."
+                )
+            }
+            let tools = try await loadModernTools()
+            modernTools = tools.tools
+            modernHeaderBindings = tools.bindings
+            modernToolsExpireAt = tools.expiresAt
+            modernDiscoveryExpiresAt = cached.expiresAt
+            protocolMode = .modern
+            return .modern
+        } catch is ModernFallback {
+            _ = try await connectedLegacyClient()
+            protocolMode = .legacy
+            return .legacy
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as ClientError {
+            throw error
+        } catch let error as MCP20260728.RemoteError {
+            throw ClientError.toolFailed(error.message)
+        } catch {
+            throw ClientError.toolFailed(error.localizedDescription)
+        }
+    }
+
+    private func loadModernTools() async throws -> (
+        tools: [DiscoveredTool],
+        bindings: [String: [MCP20260728.HeaderBinding]],
+        expiresAt: Date
+    ) {
+        var discovered: [DiscoveredTool] = []
+        var byName: [String: DiscoveredTool] = [:]
+        var bindingsByName: [String: [MCP20260728.HeaderBinding]] = [:]
+        var seenCursors = Set<String>()
+        var cursor: String?
+        var pages = 0
+        var expiresAt = Date.distantFuture
+        repeat {
+            var params: [String: MCP20260728.WireValue] = [:]
+            if let cursor { params["cursor"] = .string(cursor) }
+            let result = try await performModernRequest(
+                method: "tools/list",
+                params: params
+            )
+            guard let cached = cacheableCompleteResult(result),
+                  let tools = cached.object["tools"]?.arrayValue else {
+                throw ClientError.toolFailed(
+                    "The provider MCP returned an invalid tools/list result."
+                )
+            }
+            expiresAt = min(expiresAt, cached.expiresAt)
+            for value in tools {
+                guard let tool = value.objectValue,
+                      let name = tool["name"]?.stringValue,
+                      !name.isEmpty,
+                      let inputSchema = tool["inputSchema"],
+                      inputSchema.objectValue != nil
+                else {
+                    throw ClientError.toolFailed(
+                        "The provider returned an invalid MCP tool definition."
+                    )
+                }
+                let headerBindings: [MCP20260728.HeaderBinding]
+                do {
+                    headerBindings = try MCP20260728.headerBindings(
+                        in: inputSchema
+                    )
+                } catch {
+                    Log.generation.warning(
+                        "provider MCP omitted invalid tool=\(name) reason=\(error.localizedDescription)"
+                    )
+                    continue
+                }
+                let mapped = DiscoveredTool(
+                    name: name,
+                    description: tool["description"]?.stringValue,
+                    inputSchema: inputSchema.mcpValue,
+                    outputSchema: tool["outputSchema"]?.mcpValue
+                )
+                if let existing = byName[name] {
+                    guard existing == mapped else {
+                        throw ClientError.toolFailed(
+                            "The provider returned conflicting definitions for tool \(name)."
+                        )
+                    }
+                    continue
+                }
+                byName[name] = mapped
+                bindingsByName[name] = headerBindings
+                discovered.append(mapped)
+                guard discovered.count <= 1_000 else {
+                    throw ClientError.toolFailed("The provider returned too many tools.")
+                }
+            }
+            pages += 1
+            let nextCursor = cached.object["nextCursor"]?.stringValue
+            if let nextCursor, !nextCursor.isEmpty {
+                guard seenCursors.insert(nextCursor).inserted else {
+                    throw ClientError.toolFailed(
+                        "The provider repeated its tools cursor."
+                    )
+                }
+                cursor = nextCursor
+            } else {
+                cursor = nil
+            }
+        } while cursor != nil && pages < 20
+        guard cursor == nil else {
+            throw ClientError.toolFailed(
+                "The provider tool list exceeded the paging limit."
+            )
+        }
+        return (discovered, bindingsByName, expiresAt)
+    }
+
+    private func refreshModernToolsIfExpired() async throws {
+        guard modernToolsExpireAt.map({ $0 > Date() }) != true else { return }
+        let tools = try await loadModernTools()
+        modernTools = tools.tools
+        modernHeaderBindings = tools.bindings
+        modernToolsExpireAt = tools.expiresAt
+    }
+
+    private func callModernTool(
+        name: String,
+        arguments: [String: Value],
+        onDispatched: (@MainActor @Sendable () -> Void)?
+    ) async throws -> [String] {
+        try await refreshModernToolsIfExpired()
+        var didRefresh = false
+        var shouldNotifyDispatch = true
+        while true {
+            guard modernTools.contains(where: { $0.name == name }),
+                  let bindings = modernHeaderBindings[name] else {
+                throw ClientError.toolFailed(
+                    "The provider MCP did not advertise tool \(name)."
+                )
+            }
+            let wireArguments = arguments.mapValues {
+                MCP20260728.WireValue.fromMCP($0)
+            }
+            let parameterHeaders: [String: String]
+            do {
+                parameterHeaders = try MCP20260728.parameterHeaders(
+                    bindings: bindings,
+                    arguments: wireArguments
+                )
+            } catch {
+                throw ClientError.toolFailed(
+                    "The provider MCP tool header contract is invalid (\(error.localizedDescription))."
+                )
+            }
+            do {
+                let result = try await performModernRequest(
+                    method: "tools/call",
+                    name: name,
+                    params: [
+                        "name": .string(name),
+                        "arguments": .object(wireArguments),
+                    ],
+                    parameterHeaders: parameterHeaders,
+                    onDispatched: shouldNotifyDispatch ? onDispatched : nil
+                )
+                guard let object = result.objectValue else {
+                    throw ClientError.toolFailed(
+                        "The provider MCP returned an invalid tools/call result."
+                    )
+                }
+                guard object["resultType"]?.stringValue == "complete" else {
+                    throw ClientError.toolFailed(
+                        "The provider MCP requested an unsupported additional input round trip."
+                    )
+                }
+                if object["isError"]?.boolValue == true {
+                    let message = Self.modernToolErrorMessage(result)
+                    throw ClientError.toolFailed(
+                        message.isEmpty
+                            ? "provider tool reported an error"
+                            : message
+                    )
+                }
+                return Self.payloadContents(modernResult: result)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as MCP20260728.RemoteError
+                where error.code == -32020 && !didRefresh {
+                didRefresh = true
+                shouldNotifyDispatch = false
+                let tools = try await loadModernTools()
+                modernTools = tools.tools
+                modernHeaderBindings = tools.bindings
+                modernToolsExpireAt = tools.expiresAt
+            } catch let error as MCP20260728.RemoteError {
+                throw ClientError.toolFailed(error.message)
+            }
+        }
+    }
+
+    private func performModernRequest(
+        method: String,
+        name: String? = nil,
+        params: [String: MCP20260728.WireValue],
+        parameterHeaders: [String: String] = [:],
+        allowsLegacyFallback: Bool = false,
+        onDispatched: (@MainActor @Sendable () -> Void)? = nil
+    ) async throws -> MCP20260728.WireValue {
+        let id = MCP20260728.WireValue.string(UUID().uuidString)
+        var request = URLRequest(url: config.endpoint)
+        request.httpMethod = "POST"
+        request.httpBody = try MCP20260728.requestBody(
+            id: id,
+            method: method,
+            params: params
+        )
+        for (header, value) in MCP20260728.requestHeaders(
+            method: method,
+            name: name,
+            parameterHeaders: parameterHeaders
+        ) {
+            request.setValue(value, forHTTPHeaderField: header)
+        }
+        if let token = config.bearerToken, !token.isEmpty {
+            request.setValue(
+                "Bearer \(token)",
+                forHTTPHeaderField: "Authorization"
+            )
+        }
+        let data: Data
+        let response: HTTPURLResponse
+        do {
+            let result = try await performHTTPRequest(
+                request,
+                onDispatched: onDispatched
+            )
+            data = result.0
+            guard let httpResponse = result.1 as? HTTPURLResponse else {
+                throw ClientError.toolFailed(
+                    "The provider MCP returned a non-HTTP response."
+                )
+            }
+            response = httpResponse
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            throw error
+        }
+
+        do {
+            let result = try MCP20260728.decodeResponse(
+                data: data,
+                response: response,
+                expectedID: id
+            )
+            guard (200..<300).contains(response.statusCode) else {
+                throw MCP20260728.RemoteError(
+                    status: response.statusCode,
+                    code: nil,
+                    message: "The provider MCP request failed with HTTP \(response.statusCode).",
+                    data: nil,
+                    recognizedModern: false
+                )
+            }
+            return result
+        } catch let error as MCP20260728.RemoteError {
+            if allowsLegacyFallback,
+               Self.shouldFallbackToLegacy(after: error) {
+                throw ModernFallback()
+            }
+            throw error
+        }
+    }
+
+    private func performHTTPRequest(
+        _ request: URLRequest,
+        onDispatched: (@MainActor @Sendable () -> Void)?
+    ) async throws -> (Data, URLResponse) {
+        let settlement = HTTPRequestSettlement()
+        let task = urlSession.dataTask(with: request) { data, response, error in
+            settlement.receive(data: data, response: response, error: error)
+        }
+        settlement.attach(task)
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            task.resume()
+            if let onDispatched { await onDispatched() }
+            return try await settlement.value()
+        } onCancel: {
+            settlement.cancel()
+        }
+    }
+
+    static func shouldFallbackToLegacy(
+        after error: MCP20260728.RemoteError
+    ) -> Bool {
+        guard !error.recognizedModern else { return false }
+        if [400, 404, 405].contains(error.status) { return true }
+        return (200..<300).contains(error.status) && error.code != nil
+    }
+
+    private func completeResult(
+        _ value: MCP20260728.WireValue
+    ) -> [String: MCP20260728.WireValue]? {
+        guard let object = value.objectValue,
+              object["resultType"]?.stringValue == "complete" else { return nil }
+        return object
+    }
+
+    private func cacheableCompleteResult(
+        _ value: MCP20260728.WireValue
+    ) -> (object: [String: MCP20260728.WireValue], expiresAt: Date)? {
+        guard let object = completeResult(value),
+              let milliseconds = MCP20260728.cacheLifetimeMilliseconds(
+                in: object
+              ) else { return nil }
+        return (
+            object,
+            Date(timeIntervalSinceNow: milliseconds / 1_000)
+        )
+    }
+
     func disconnect() async {
         await client?.disconnect()
         client = nil
+        protocolModeResolution?.cancel()
+        protocolModeResolution = nil
+        protocolMode = nil
+        modernTools = []
+        modernHeaderBindings = [:]
+        modernDiscoveryExpiresAt = nil
+        modernToolsExpireAt = nil
     }
 
     private static func toolErrorMessage(_ result: CallTool.Result) -> String {
@@ -275,6 +743,105 @@ actor MCPProviderClient {
         }.joined(separator: " ")
         guard message.count > maximumCharacters else { return message }
         return String(message.prefix(maximumCharacters)) + "…"
+    }
+
+    private static func modernToolErrorMessage(
+        _ result: MCP20260728.WireValue
+    ) -> String {
+        let maximumCharacters = 16_384
+        let message = result.objectValue?["content"]?.arrayValue?
+            .compactMap { item -> String? in
+                guard let object = item.objectValue,
+                      object["type"]?.stringValue == "text" else { return nil }
+                return object["text"]?.stringValue
+            }
+            .joined(separator: " ") ?? ""
+        guard message.count > maximumCharacters else { return message }
+        return String(message.prefix(maximumCharacters)) + "…"
+    }
+
+    static func payloadContents(
+        modernResult result: MCP20260728.WireValue
+    ) -> [String] {
+        guard let object = result.objectValue else { return [] }
+        var payloads: [String] = []
+        var remainingInlineCharacters = MCPGenerationLifecycle
+            .maxInlineMediaBase64Characters
+        for item in object["content"]?.arrayValue ?? [] {
+            guard let content = item.objectValue,
+                  let type = content["type"]?.stringValue else { continue }
+            switch type {
+            case "text":
+                guard let text = content["text"]?.stringValue else { continue }
+                let extraction = inlineMediaPayloads(
+                    in: Data(text.utf8),
+                    remainingCharacters: &remainingInlineCharacters
+                )
+                if extraction.foundCandidate {
+                    if let sanitized = extraction.sanitizedPayload {
+                        payloads.append(sanitized)
+                    }
+                } else {
+                    payloads.append(text)
+                }
+            case "resource":
+                guard let resource = content["resource"],
+                      let data = try? JSONEncoder().encode(resource) else { continue }
+                let extraction = inlineMediaPayloads(
+                    in: data,
+                    remainingCharacters: &remainingInlineCharacters
+                )
+                if extraction.foundCandidate {
+                    if let sanitized = extraction.sanitizedPayload {
+                        payloads.append(sanitized)
+                    }
+                } else if let json = String(data: data, encoding: .utf8) {
+                    payloads.append(json)
+                }
+            case "resource_link":
+                guard let uri = content["uri"]?.stringValue else { continue }
+                let mimeType = content["mimeType"]?.stringValue
+                let isMedia = mimeType?.lowercased().hasPrefix("image/") == true
+                    || mimeType?.lowercased().hasPrefix("video/") == true
+                    || mimeType?.lowercased().hasPrefix("audio/") == true
+                if isMedia {
+                    var resource: [String: Any] = ["resource_url": uri]
+                    if let mimeType { resource["mime_type"] = mimeType }
+                    if let data = try? JSONSerialization.data(
+                        withJSONObject: resource
+                    ), let json = String(data: data, encoding: .utf8) {
+                        payloads.append(json)
+                    }
+                }
+            case "image", "audio":
+                guard let data = content["data"]?.stringValue,
+                      let mimeType = content["mimeType"]?.stringValue,
+                      let inline = inlineMediaPayload(
+                        data: data,
+                        mimeType: mimeType,
+                        remainingCharacters: &remainingInlineCharacters
+                      ) else { continue }
+                payloads.append(inline)
+            default:
+                continue
+            }
+        }
+        if let structured = object["structuredContent"],
+           structured != .null,
+           let data = try? JSONEncoder().encode(structured) {
+            let extraction = inlineMediaPayloads(
+                in: data,
+                remainingCharacters: &remainingInlineCharacters
+            )
+            if extraction.foundCandidate {
+                if let sanitized = extraction.sanitizedPayload {
+                    payloads.append(sanitized)
+                }
+            } else if let json = String(data: data, encoding: .utf8) {
+                payloads.append(json)
+            }
+        }
+        return payloads
     }
 
     static func payloadContents(_ result: CallTool.Result) -> [String] {

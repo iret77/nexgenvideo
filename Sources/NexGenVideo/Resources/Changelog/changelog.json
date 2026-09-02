@@ -2,6 +2,36 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.0",
+      "date": "2026-09-03",
+      "sections": [
+        {
+          "heading": "Agent",
+          "items": [
+            "Agent conversations now group each request, answer, activity, generated media, and durable workflow receipt into one calm semantic turn with progressively disclosed technical detail.",
+            "The Composer Dock now shows either the editor or one required decision, preserves drafts and references across decisions, and keeps large searchable media choices within a bounded surface.",
+            "One conversation navigator replaces competing tabs and history controls, while current status, recoverable errors, required actions, and completed provenance each have one visible owner.",
+            "The complete Agent surface remains keyboard and VoiceOver accessible, stable under streaming and progress updates, and responsive across compact, standard, and wide panel widths."
+          ]
+        },
+        {
+          "heading": "Generation and pipeline",
+          "items": [
+            "Format packs can publish format-neutral execution inputs, production routing, source bindings, and exact-byte provenance without moving project truth out of the host.",
+            "Model selection and validation now derive duration, resolution, reference, and provider-route limits from versioned capabilities, including the verified Seedance 2.5 480p/720p and 4–30-second contract.",
+            "Imported and AI-enhanced shots retain their declared project-local source and deterministic render route through planning, approval, and final provenance checks."
+          ]
+        },
+        {
+          "heading": "Integrations",
+          "items": [
+            "The built-in MCP server and connected generation providers now negotiate the sessionless MCP 2026-07-28 protocol while retaining compatibility with existing initialize-based clients and servers.",
+            "Modern MCP requests validate per-request identity, capability, routing, cache, and custom-header contracts; provider-authored MCP Apps remain outside the Agent transcript and prompt path."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.4.6",
       "date": "2026-08-30",
       "sections": [

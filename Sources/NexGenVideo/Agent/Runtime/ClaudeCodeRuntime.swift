@@ -123,6 +123,7 @@ final class ClaudeCodeRuntime {
             fail("No project folder is selected for the Claude Code runtime.")
             return false
         }
+        let agentTurnId = UUID()
 
         let config = ClaudeCodeLaunchConfig(
             workingDirectory: workingDirectory,
@@ -136,7 +137,8 @@ final class ClaudeCodeRuntime {
             // soft protocol hint, not guaranteed injection — this closes that backend gap.
             appendSystemPrompt: AgentInstructions.serverInstructions,
             resumeSessionId: resumeSessionId,
-            appSessionId: appSessionId
+            appSessionId: appSessionId,
+            agentTurnId: agentTurnId
         )
         let newProcess = ClaudeCodeProcess()
         do {

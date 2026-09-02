@@ -46,7 +46,7 @@ Learn how packs plug in — and how to add your own — in the
 
 ## MCP server
 
-When the app is open, it exposes an MCP server at `http://127.0.0.1:19789/mcp` via HTTP. To connect:
+When the app is open, it exposes an MCP server at `http://127.0.0.1:19789/mcp` via HTTP. The endpoint supports the sessionless MCP 2026-07-28 request format and the earlier initialize-based format used by existing clients. To connect:
 
 **Claude Code**
 ```bash

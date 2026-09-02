@@ -78,8 +78,9 @@ struct MCPHTTPServerTests {
     func explicitToolCallOrigin() throws {
         let chatID = UUID()
         let mcpID = UUID()
+        let turnID = UUID()
         let embeddedData = Data(
-            "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\(MCPHTTPServer.agentSessionHeader): \(chatID.uuidString)\r\n\r\n".utf8
+            "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\(MCPHTTPServer.agentSessionHeader): \(chatID.uuidString)\r\n\(MCPHTTPServer.agentTurnHeader): \(turnID.uuidString)\r\n\r\n".utf8
         )
         guard case .complete(let embedded, _) = MCPHTTPServer.decodeRequest(embeddedData) else {
             Issue.record("Embedded request did not decode")
@@ -87,8 +88,8 @@ struct MCPHTTPServerTests {
         }
         #expect(MCPHTTPServer.toolCallOrigin(
             request: embedded,
-            mcpSessionID: mcpID
-        ) == .embeddedRuntime(chatSessionID: chatID, mcpSessionID: mcpID))
+            mcpSessionID: turnID
+        ) == .embeddedRuntime(chatSessionID: chatID, mcpSessionID: turnID))
 
         let externalData = Data(
             "POST /mcp HTTP/1.1\r\nContent-Length: 0\r\n\r\n".utf8
@@ -184,6 +185,66 @@ struct MCPHTTPServerTests {
                 String(decoding: externalResponse.data, as: UTF8.self)
                     .contains("external")
             )
+            await server.stop()
+        } catch {
+            await server.stop()
+            throw error
+        }
+    }
+
+    @Test("modern requests remain sessionless and retain logical turn ownership")
+    func modernRequestsAreSessionless() async throws {
+        let port: UInt16 = 29_990
+        let chatID = UUID()
+        let turnID = UUID()
+        let legacyServerCount = MCPRunCounter()
+        let modernCallCount = MCPRunCounter()
+        let server = MCPHTTPServer(
+            port: port,
+            makeServer: { _ in
+                legacyServerCount.increment()
+                return Server(
+                    name: "mcp-modern-test",
+                    version: "1.0.0",
+                    capabilities: .init(tools: .init(listChanged: false))
+                )
+            },
+            modernHandler: { request, origin in
+                modernCallCount.increment()
+                let owner = switch origin {
+                case .embeddedRuntime(let sessionID, let logicalTurnID):
+                    "\(sessionID.uuidString):\(logicalTurnID.uuidString)"
+                case .direct: "direct"
+                case .inAppChat: "in-app"
+                case .externalMCP: "external"
+                }
+                return .result([
+                    "method": .string(request.method),
+                    "owner": .string(owner),
+                ])
+            }
+        )
+        do {
+            try await server.start()
+            let endpoint = try #require(
+                URL(string: "http://127.0.0.1:\(port)/mcp")
+            )
+            for requestID in 1...2 {
+                let response = try await modernPost(
+                    method: "server/discover",
+                    id: requestID,
+                    to: endpoint,
+                    agentSessionID: chatID,
+                    agentTurnID: turnID
+                )
+                #expect(response.statusCode == 200)
+                let text = String(decoding: response.data, as: UTF8.self)
+                #expect(text.contains(chatID.uuidString))
+                #expect(text.contains(turnID.uuidString))
+                #expect(response.mcpSessionID == nil)
+            }
+            #expect(legacyServerCount.value == 1)
+            #expect(modernCallCount.value == 2)
             await server.stop()
         } catch {
             await server.stop()
@@ -386,6 +447,44 @@ struct MCPHTTPServerTests {
         let (data, rawResponse) = try await session.data(for: request)
         let response = try #require(rawResponse as? HTTPURLResponse)
         return (data, response.statusCode)
+    }
+
+    private func modernPost(
+        method: String,
+        id: Int,
+        to endpoint: URL,
+        agentSessionID: UUID,
+        agentTurnID: UUID
+    ) async throws -> (data: Data, statusCode: Int, mcpSessionID: String?) {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.httpBody = try MCP20260728.requestBody(
+            id: .int(id),
+            method: method,
+            params: [:]
+        )
+        for (header, value) in MCP20260728.requestHeaders(method: method) {
+            request.setValue(value, forHTTPHeaderField: header)
+        }
+        request.setValue(
+            "http://127.0.0.1:\(endpoint.port!)",
+            forHTTPHeaderField: "Origin"
+        )
+        request.setValue(
+            agentSessionID.uuidString,
+            forHTTPHeaderField: MCPHTTPServer.agentSessionHeader
+        )
+        request.setValue(
+            agentTurnID.uuidString,
+            forHTTPHeaderField: MCPHTTPServer.agentTurnHeader
+        )
+        let (data, rawResponse) = try await URLSession.shared.data(for: request)
+        let response = try #require(rawResponse as? HTTPURLResponse)
+        return (
+            data,
+            response.statusCode,
+            response.value(forHTTPHeaderField: "Mcp-Session-Id")
+        )
     }
 }
 

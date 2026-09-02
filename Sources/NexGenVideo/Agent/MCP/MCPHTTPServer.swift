@@ -4,6 +4,7 @@ import Network
 
 actor MCPHTTPServer {
     static let agentSessionHeader = "X-NexGen-Agent-Session"
+    static let agentTurnHeader = "X-NexGen-Agent-Turn"
 
     final class SessionOrigin: @unchecked Sendable {
         private let lock = NSLock()
@@ -66,6 +67,10 @@ actor MCPHTTPServer {
 
     private let port: UInt16
     private let makeServer: @Sendable (SessionOrigin) async -> Server
+    private let modernHandler: @Sendable (
+        MCP20260728.Request,
+        ToolCallOrigin
+    ) async -> MCP20260728.HandlerResult
     private let onFailure: @Sendable (String) async -> Void
     private var listener: NWListener?
     private var sessions: [UUID: SDKSession] = [:]
@@ -80,10 +85,21 @@ actor MCPHTTPServer {
     init(
         port: UInt16,
         makeServer: @escaping @Sendable (SessionOrigin) async -> Server,
+        modernHandler: @escaping @Sendable (
+            MCP20260728.Request,
+            ToolCallOrigin
+        ) async -> MCP20260728.HandlerResult = { request, _ in
+            .error(
+                status: 404,
+                code: -32601,
+                message: "Method not found: \(request.method)"
+            )
+        },
         onFailure: @escaping @Sendable (String) async -> Void = { _ in }
     ) {
         self.port = port
         self.makeServer = makeServer
+        self.modernHandler = modernHandler
         self.onFailure = onFailure
     }
 
@@ -500,6 +516,21 @@ actor MCPHTTPServer {
             let body = Data("{\"resource\":\"http://127.0.0.1:\(port)\"}".utf8)
             response = .data(body, headers: ["Content-Type": "application/json"])
         } else if path == "/mcp" || path == "/" {
+            if MCP20260728.isModernRequest(
+                body: request.body,
+                headers: request.headers
+            ) {
+                let result = await handleModern(request)
+                await writeDataResponse(
+                    status: result.status,
+                    headers: result.headers,
+                    body: result.body,
+                    id: id,
+                    connection: connection,
+                    remaining: remaining
+                )
+                return
+            }
             do {
                 let requestMethod = request.method
                 let requestBody = request.body
@@ -560,25 +591,100 @@ actor MCPHTTPServer {
         finishConnection(id: id)
     }
 
+    private func handleModern(
+        _ request: HTTPRequest
+    ) async -> MCP20260728.HTTPResult {
+        guard request.method.uppercased() == "POST" else {
+            return MCP20260728.error(
+                status: 405,
+                id: .null,
+                code: -32600,
+                message: "The MCP endpoint accepts POST requests only."
+            )
+        }
+        guard let contentType = MCP20260728.header(
+            request.headers,
+            named: "Content-Type"
+        )?.lowercased(), contentType.contains("application/json") else {
+            return MCP20260728.error(
+                status: 415,
+                id: .null,
+                code: -32600,
+                message: "Content-Type must be application/json."
+            )
+        }
+        let accepted = MCP20260728.header(
+            request.headers,
+            named: "Accept"
+        )?.lowercased() ?? ""
+        guard accepted.contains("application/json"),
+              accepted.contains("text/event-stream") else {
+            return MCP20260728.error(
+                status: 406,
+                id: .null,
+                code: -32600,
+                message: "Accept must include application/json and text/event-stream."
+            )
+        }
+        if let origin = MCP20260728.header(request.headers, named: "Origin"),
+           !Self.isAllowedOrigin(origin, port: port) {
+            return MCP20260728.error(
+                status: 403,
+                id: .null,
+                code: -32600,
+                message: "Origin is not allowed."
+            )
+        }
+
+        let logicalTurnID = Self.agentTurnID(request: request) ?? UUID()
+        let origin = Self.toolCallOrigin(
+            request: request,
+            mcpSessionID: logicalTurnID
+        )
+        return await MCP20260728.handle(
+            body: request.body,
+            headers: request.headers
+        ) { [modernHandler] request in
+            await modernHandler(request, origin)
+        }
+    }
+
     private func writeDataResponse(
         _ response: HTTPResponse,
         id: UUID,
         connection: NWConnection,
         remaining: Data
     ) async {
-        let body = response.bodyData ?? Data()
-        var headers = response.headers
+        await writeDataResponse(
+            status: response.statusCode,
+            headers: response.headers,
+            body: response.bodyData ?? Data(),
+            id: id,
+            connection: connection,
+            remaining: remaining
+        )
+    }
+
+    private func writeDataResponse(
+        status: Int,
+        headers: [String: String],
+        body: Data,
+        id: UUID,
+        connection: NWConnection,
+        remaining: Data
+    ) async {
+        var headers = headers
         headers["Content-Length"] = "\(body.count)"
         headers["Connection"] = "keep-alive"
         var data = Self.responseHead(
-            status: response.statusCode,
+            status: status,
             headers: headers
         )
         data.append(body)
 
         do {
             try await Self.send(data, on: connection)
-            Log.mcp.info("response status=\(response.statusCode)")
+            Log.mcp.info("response status=\(status)")
         } catch {
             Log.mcp.warning("response send failed error=\(error.localizedDescription)")
             finishConnection(id: id)
@@ -743,11 +849,34 @@ actor MCPHTTPServer {
         return .externalMCP(sessionID: mcpSessionID)
     }
 
+    private nonisolated static func agentTurnID(
+        request: HTTPRequest
+    ) -> UUID? {
+        header(request.headers, named: agentTurnHeader)
+            .flatMap(UUID.init(uuidString:))
+    }
+
     private nonisolated static func agentChatSessionID(
         request: HTTPRequest
     ) -> UUID? {
         header(request.headers, named: agentSessionHeader)
             .flatMap(UUID.init(uuidString:))
+    }
+
+    private nonisolated static func isAllowedOrigin(
+        _ value: String,
+        port: UInt16
+    ) -> Bool {
+        guard let components = URLComponents(string: value),
+              components.scheme?.lowercased() == "http",
+              let host = components.host?.lowercased(),
+              host == "127.0.0.1" || host == "localhost",
+              components.port == Int(port),
+              components.path.isEmpty,
+              components.query == nil,
+              components.fragment == nil
+        else { return false }
+        return true
     }
 
     private nonisolated static func responseHead(
@@ -771,8 +900,10 @@ actor MCPHTTPServer {
         case 403: "Forbidden"
         case 404: "Not Found"
         case 405: "Method Not Allowed"
+        case 406: "Not Acceptable"
         case 409: "Conflict"
         case 413: "Payload Too Large"
+        case 415: "Unsupported Media Type"
         case 431: "Request Header Fields Too Large"
         case 500: "Internal Server Error"
         case 501: "Not Implemented"
