@@ -46,7 +46,6 @@ enum FalInputBuilder {
             if let image = p.endFrameURL { input["end_image_url"] = image }
         }
         if model.videoReferenceArrays {
-            // Seedance 2.0 reference-to-video: @Image1/@Video1/@Audio1 refs (≤9/3/3).
             if !p.referenceImageURLs.isEmpty { input["image_urls"] = p.referenceImageURLs }
             if !p.referenceVideoURLs.isEmpty { input["video_urls"] = p.referenceVideoURLs }
             if !p.referenceAudioURLs.isEmpty { input["audio_urls"] = p.referenceAudioURLs }

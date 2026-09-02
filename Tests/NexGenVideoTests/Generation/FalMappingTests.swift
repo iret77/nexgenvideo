@@ -218,11 +218,11 @@ struct FalVideoInputTests {
     @Test func seedance25SerializesAutomaticDuration() throws {
         let model = try #require(FalModelRegistry.model(for: "bytedance/seedance-2.5/text-to-video"))
         let params = VideoGenerationParams(
-            prompt: "p", duration: .automatic, aspectRatio: "16:9", resolution: "1080p"
+            prompt: "p", duration: .automatic, aspectRatio: "16:9", resolution: "720p"
         )
         let input = FalInputBuilder.videoInput(params, model: model)
         #expect(input["duration"] as? String == "auto")
-        #expect(input["resolution"] as? String == "1080p")
+        #expect(input["resolution"] as? String == "720p")
         #expect(input["generate_audio"] as? Bool == true)
     }
 
@@ -410,10 +410,7 @@ struct FalRegistryTests {
             #expect(caps.duration.discrete.isEmpty)
             #expect(caps.duration.range == .init(min: 4, max: 30))
             #expect(caps.duration.supportsAuto)
-            let expectedResolutions = id.hasSuffix("reference-to-video")
-                ? ["480p", "720p"]
-                : ["480p", "720p", "1080p"]
-            #expect(caps.resolutions == expectedResolutions)
+            #expect(caps.resolutions == ["480p", "720p"])
             #expect(model.entry.offers?.first?.resolvedVideoCapabilities?
                 .supportsNativeAudio == true)
         }

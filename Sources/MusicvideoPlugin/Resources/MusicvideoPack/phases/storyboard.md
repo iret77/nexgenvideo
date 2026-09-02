@@ -363,24 +363,24 @@ in the shotlist as shot fields:
 
 **`scene_video_provider`** — default the host's primary video provider
 for new projects; a keyframe-only legacy provider only when explicitly
-requested. The default delivers 1080p, full reference mode, audio
-lip-sync.
+requested. Resolve resolution, reference, native-audio, and lip-sync
+support from the host catalog; never infer them from the provider name.
 
 **`seedance_input_mode`** — per shot one of two strategies:
 
 | Mode | When | What goes in |
 |---|---|---|
 | `keyframe` (default) | Composition-driven shots: pan, establishing, fixed composition for the connecting cut | Start frame (+ optional end frame) from the frame phase. Identity via the anchor frame |
-| `reference` | Identity-driven shots: CU/MS on a character, performance, long shots where drift looms | Up to 9 bible refs (char sheets + location wide) via `@image1` mention in the prompt. Composition becomes the model's choice |
+| `reference` | Identity-driven shots: CU/MS on a character, performance, long shots where drift looms | Bible refs (character sheets + location wide) up to the selected catalog offering's image and total-reference limits, bound through the host's reference inputs. Composition becomes the model's choice |
 
 **Rule of thumb:** if the cut connection hinges on the frame-to-frame
 transition or the shot is composition-driven (POV pan, insert,
 establishing) → `keyframe`. If **character consistency** over the shot
 duration is the main problem (long, CU, performance) → `reference`.
 
-> On **Seedance 2.0** the `reference` strategy runs through the
-> `reference-to-video` endpoint (up to 9 image refs, plus optional video/audio
-> refs, native synchronized audio, clips up to 15s).
+> On **Seedance 2.5** the `reference` strategy runs through the
+> `reference-to-video` endpoint (up to 50 mixed image, video, and audio refs,
+> native synchronized audio, 480p/720p, 4–30 seconds or automatic duration).
 
 Sanity check `REFERENCE_MODE_REQUIRES_FAL` (error) blocks reference mode
 on a keyframe-only provider pre-render. `REFERENCE_MODE_NEEDS_REFS`
