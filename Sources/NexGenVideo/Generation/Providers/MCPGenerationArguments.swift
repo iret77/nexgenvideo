@@ -61,7 +61,8 @@ enum MCPGenerationArguments {
         model: String?,
         schema: Value,
         mediaRoles: [String]? = nil,
-        requestID: String? = nil
+        requestID: String? = nil,
+        requiredCandidateNames: Set<String> = []
     ) throws -> [String: Value] {
         let input = values(
             for: params,
@@ -80,6 +81,14 @@ enum MCPGenerationArguments {
         }
         if model?.isEmpty == false, !result.mappedNames.contains("model") {
             throw MappingError.missingModel
+        }
+        let missingCandidates = requiredCandidateNames.subtracting(
+            result.mappedNames
+        )
+        if !missingCandidates.isEmpty {
+            throw MappingError.unsupportedRequiredFields(
+                missingCandidates.sorted()
+            )
         }
         let missingMedia = input.media.filter { !result.mappedMedia.contains($0.key) }
         if !missingMedia.isEmpty {

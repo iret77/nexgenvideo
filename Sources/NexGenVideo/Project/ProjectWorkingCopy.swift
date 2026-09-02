@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import NexGenEngine
 
@@ -35,6 +36,11 @@ enum ProjectWorkingCopy {
         let existing = home(key)
         if isComplete(existing, fm: fm),
            fm.fileExists(atPath: existing.appendingPathComponent(dirtyMarker).path) {
+            guard let packageURL,
+                  ProjectPluginSettings.bindingResolution(projectURL: packageURL)
+                    == ProjectPluginSettings.bindingResolution(projectURL: existing) else {
+                throw PersistError.recoveredFormatMismatch
+            }
             migrateSchemas(in: home(key))
             return OpenResult(
                 home: home(key),
@@ -168,11 +174,256 @@ enum ProjectWorkingCopy {
         }
     }
 
+    @discardableResult
+    static func transactChange(
+        key: String,
+        markDirty: Bool = true,
+        validateCurrent: (URL) throws -> Void = { _ in },
+        mutate: (URL) throws -> Bool
+    ) throws -> Bool {
+        let fm = FileManager.default
+        let current = home(key)
+        guard isComplete(current, fm: fm) else {
+            throw PersistError.noWorkingCopy(key: key)
+        }
+        let staging = AppPaths.ensure(AppPaths.recovery).appendingPathComponent(
+            ".transaction-\(key)-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        do {
+            try fm.copyItem(at: current, to: staging)
+            let changed = try mutate(staging)
+            guard changed else {
+                try fm.removeItem(at: staging)
+                return false
+            }
+            if markDirty {
+                try Data().write(
+                    to: staging.appendingPathComponent(dirtyMarker),
+                    options: .atomic
+                )
+            }
+            try validatePackage(staging, fm: fm)
+            try validateCurrent(current)
+            try installWorkingCopy(staging, at: current, key: key, fm: fm)
+            return true
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
+    }
+
+    static func transactProject<Output>(
+        at projectRoot: URL,
+        markDirty: Bool = false,
+        validateCurrent: (URL) throws -> Void = { _ in },
+        mutate: (URL) throws -> Output
+    ) throws -> Output {
+        let fm = FileManager.default
+        let root = projectRoot.standardizedFileURL
+        let values = try root.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+        ])
+        guard values.isDirectory == true, values.isSymbolicLink != true else {
+            throw PersistError.incompletePackage(package: root.lastPathComponent)
+        }
+        let staging = root.deletingLastPathComponent().appendingPathComponent(
+            ".transaction-\(root.lastPathComponent)-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        do {
+            try fm.copyItem(at: root, to: staging)
+            let result = try mutate(staging)
+            if markDirty {
+                try Data().write(
+                    to: staging.appendingPathComponent(dirtyMarker),
+                    options: .atomic
+                )
+                try validatePackage(staging, fm: fm)
+            }
+            try validateCurrent(root)
+            _ = try fm.replaceItemAt(root, withItemAt: staging)
+            return result
+        } catch {
+            try? fm.removeItem(at: staging)
+            throw error
+        }
+    }
+
+    static func transactPipeline<Output>(
+        at dataRoot: URL,
+        validateCurrent: (URL) throws -> Void = { _ in },
+        mutate: (URL) throws -> Output
+    ) throws -> Output {
+        let fm = FileManager.default
+        let root = dataRoot.standardizedFileURL
+        let values = try root.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+        ])
+        guard values.isDirectory == true,
+              values.isSymbolicLink != true,
+              root.lastPathComponent == pipelineDir else {
+            throw PersistError.incompletePackage(package: root.lastPathComponent)
+        }
+        let projectHome = root.deletingLastPathComponent()
+        let stagingHome = projectHome.deletingLastPathComponent().appendingPathComponent(
+            ".pipeline-transaction-\(projectHome.lastPathComponent)-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let stagingRoot = stagingHome.appendingPathComponent(
+            pipelineDir,
+            isDirectory: true
+        )
+        do {
+            try cloneProjectReadView(
+                from: projectHome,
+                to: stagingHome,
+                fm: fm
+            )
+            let result = try mutate(stagingRoot)
+            try validateCurrent(projectHome)
+            _ = try fm.replaceItemAt(root, withItemAt: stagingRoot)
+            try? fm.removeItem(at: stagingHome)
+            return result
+        } catch {
+            try? fm.removeItem(at: stagingHome)
+            throw error
+        }
+    }
+
+    private static func cloneProjectReadView(
+        from source: URL,
+        to destination: URL,
+        fm: FileManager
+    ) throws {
+        guard try source.resourceValues(
+            forKeys: [.volumeSupportsFileCloningKey]
+        ).volumeSupportsFileCloning == true else {
+            throw PersistError.readViewCloneUnavailable(
+                package: source.lastPathComponent,
+                detail: "The project volume doesn't support copy-on-write file clones."
+            )
+        }
+        try fm.createDirectory(at: destination, withIntermediateDirectories: false)
+        let keys: [URLResourceKey] = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+        ]
+        var enumerationError: Error?
+        guard let enumerator = fm.enumerator(
+            at: source,
+            includingPropertiesForKeys: keys,
+            options: [],
+            errorHandler: { _, error in
+                enumerationError = error
+                return false
+            }
+        ) else {
+            throw PersistError.readViewCloneUnavailable(
+                package: source.lastPathComponent,
+                detail: "The project files couldn't be enumerated."
+            )
+        }
+        let canonicalSource = source.resolvingSymlinksInPath().standardizedFileURL
+        let canonicalDestination = destination.resolvingSymlinksInPath()
+            .standardizedFileURL
+        let sourceDescriptor = Darwin.open(
+            canonicalSource.path,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC
+        )
+        guard sourceDescriptor >= 0 else {
+            throw PersistError.readViewCloneUnavailable(
+                package: source.lastPathComponent,
+                detail: "The project directory couldn't be opened for cloning: "
+                    + String(cString: strerror(errno))
+            )
+        }
+        defer { _ = Darwin.close(sourceDescriptor) }
+        let destinationDescriptor = Darwin.open(
+            canonicalDestination.path,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC
+        )
+        guard destinationDescriptor >= 0 else {
+            throw PersistError.readViewCloneUnavailable(
+                package: source.lastPathComponent,
+                detail: "The staging directory couldn't be opened for cloning: "
+                    + String(cString: strerror(errno))
+            )
+        }
+        defer { _ = Darwin.close(destinationDescriptor) }
+        let prefix = canonicalSource.path.hasSuffix("/")
+            ? canonicalSource.path
+            : canonicalSource.path + "/"
+        for case let item as URL in enumerator {
+            let values = try item.resourceValues(forKeys: Set(keys))
+            if values.isSymbolicLink == true {
+                let relativePath = item.lastPathComponent
+                throw PersistError.symbolicLink(path: relativePath)
+            }
+            let canonicalItem = item.resolvingSymlinksInPath().standardizedFileURL
+            guard canonicalItem.path.hasPrefix(prefix) else {
+                throw PersistError.readViewCloneUnavailable(
+                    package: source.lastPathComponent,
+                    detail: "A project path escaped the read-view clone."
+                )
+            }
+            let relativePath = String(canonicalItem.path.dropFirst(prefix.count))
+            let target = canonicalDestination.appendingPathComponent(relativePath)
+            if values.isDirectory == true {
+                try fm.createDirectory(at: target, withIntermediateDirectories: true)
+                continue
+            }
+            guard values.isRegularFile == true else {
+                throw PersistError.readViewCloneUnavailable(
+                    package: source.lastPathComponent,
+                    detail: "The project contains an unsupported file at \(relativePath)."
+                )
+            }
+            try fm.createDirectory(
+                at: target.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let status = relativePath.withCString { sourcePath in
+                relativePath.withCString { targetPath in
+                    clonefileat(
+                        sourceDescriptor,
+                        sourcePath,
+                        destinationDescriptor,
+                        targetPath,
+                        UInt32(CLONE_NOFOLLOW_ANY)
+                    )
+                }
+            }
+            guard status == 0 else {
+                let detail = String(cString: strerror(errno))
+                throw PersistError.readViewCloneUnavailable(
+                    package: source.lastPathComponent,
+                    detail: "Copy-on-write cloning failed at \(relativePath): \(detail)"
+                )
+            }
+        }
+        if let enumerationError {
+            throw PersistError.readViewCloneUnavailable(
+                package: source.lastPathComponent,
+                detail: "The project files couldn't be enumerated: "
+                    + enumerationError.localizedDescription
+            )
+        }
+    }
+
     static func markSaved(key: String) {
         try? FileManager.default.removeItem(at: home(key).appendingPathComponent(dirtyMarker))
     }
 
-    static func persist(key: String, to packageURL: URL, mintNewIdentity: Bool = false) throws {
+    static func persist(
+        key: String,
+        to packageURL: URL,
+        mintNewIdentity: Bool = false,
+        validateSourceBeforeCommit: (URL) throws -> Void = { _ in }
+    ) throws {
         let fm = FileManager.default
         let source = home(key)
         guard isComplete(source, fm: fm) else {
@@ -196,7 +447,14 @@ enum ProjectWorkingCopy {
                     throw PersistError.identityNotRegenerated
                 }
             }
-            try commitStagedPackage(staging, to: packageURL, fm: fm)
+            try commitStagedPackage(
+                staging,
+                to: packageURL,
+                fm: fm,
+                validateBeforeCommit: {
+                    try validateSourceBeforeCommit(source)
+                }
+            )
         } catch {
             try? fm.removeItem(at: staging)
             throw error
@@ -207,6 +465,8 @@ enum ProjectWorkingCopy {
         case noWorkingCopy(key: String)
         case incompletePackage(package: String)
         case identityNotRegenerated
+        case recoveredFormatMismatch
+        case readViewCloneUnavailable(package: String, detail: String)
         case symbolicLink(path: String)
 
         var errorDescription: String? {
@@ -220,6 +480,12 @@ enum ProjectWorkingCopy {
             case .identityNotRegenerated:
                 return "Couldn't create an independent identity for the project copy. "
                     + "The original project was left untouched."
+            case .recoveredFormatMismatch:
+                return "Couldn't recover unsaved work because its exact format-pack binding "
+                    + "doesn't match the saved project. The saved project and recovery copy were left untouched."
+            case .readViewCloneUnavailable(let package, let detail):
+                return "Couldn't prepare \(package) for the pipeline phase. \(detail) "
+                    + "No project files were changed."
             case .symbolicLink(let path):
                 return "The project contains a symbolic link at \(path). "
                     + "NexGenVideo projects must be self-contained."
@@ -501,9 +767,11 @@ enum ProjectWorkingCopy {
     static func commitStagedPackage(
         _ staging: URL,
         to destination: URL,
-        fm: FileManager = .default
+        fm: FileManager = .default,
+        validateBeforeCommit: () throws -> Void = {}
     ) throws {
         try validatePackage(staging, fm: fm)
+        try validateBeforeCommit()
         try replaceDirectory(at: destination, with: staging, fm: fm)
         try validatePackage(destination, fm: fm)
     }

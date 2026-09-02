@@ -234,6 +234,36 @@ final class AgentService {
         let prompt: String
     }
 
+    private struct ComposerState {
+        let draft: String
+        let mentions: [AgentMention]
+        let pendingFunction: PendingFunction?
+        let height: Double
+        let wantsFocus: Bool
+    }
+
+    @ObservationIgnored
+    private var composerStates: [UUID: ComposerState] = [:]
+
+    private static let composerHeightPreferenceKey = "agentComposerHeight"
+
+    private static var preferredComposerHeight: Double {
+        let minimum = Double(AppTheme.ComponentSize.agentComposerMinHeight)
+        let maximum = Double(AppTheme.ComponentSize.agentComposerMaxHeight)
+        let stored = UserDefaults.standard.object(forKey: composerHeightPreferenceKey) as? NSNumber
+        return min(maximum, max(minimum, stored?.doubleValue ?? minimum))
+    }
+
+    var composerHeight: Double = AgentService.preferredComposerHeight {
+        didSet {
+            UserDefaults.standard.set(composerHeight, forKey: Self.composerHeightPreferenceKey)
+        }
+    }
+
+    private var composerWantsFocus = false
+
+    var composerShouldFocus: Bool { composerWantsFocus }
+
     /// Builds the outgoing message from a staged function's full prompt and the free-typed note. A
     /// completion-style prompt (trailing space, e.g. "Generate an AI video of ") absorbs the note
     /// inline to finish the sentence; a full-instruction prompt takes the note as a trailing line.
@@ -646,7 +676,9 @@ final class AgentService {
                 from: src,
                 dataRoot: dataRoot,
                 replace: true,
-                originalFilename: filename
+                originalFilename: filename,
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding
             )
             let routing: String
             if let next = editor.projectState?.nextPhaseName, next != "analysis" {
@@ -1237,8 +1269,15 @@ final class AgentService {
 
     private struct PendingSpendOperation {
         let origin: ToolCallOrigin
+        let acquirePipelineMutation: @MainActor () throws -> SpendPipelineMutationLease?
         let execute: @MainActor (SpendOption) async throws -> ToolResult
         let cancel: @MainActor () -> Void
+    }
+
+    private struct SpendPipelineMutationLease {
+        let coordinator: PipelinePhaseRunCoordinator
+        let dataRoot: URL
+        let id: UUID
     }
 
     struct SpendRunStatus: Equatable, Sendable {
@@ -1273,6 +1312,7 @@ final class AgentService {
         _ approval: SpendApproval,
         origin: ToolCallOrigin,
         editor: EditorViewModel,
+        pipelineScope: SpendPipelineScope? = nil,
         refresh: (@MainActor () -> SpendApproval)? = nil,
         cancel: @escaping @MainActor (EditorViewModel) -> Void = { _ in },
         execute: @escaping @MainActor (EditorViewModel, SpendOption) async throws -> ToolResult
@@ -1299,11 +1339,88 @@ final class AgentService {
                 "An approved generation is already running. Wait for it to finish or cancel it before starting another paid request."
             )
         }
+        if pipelineScope == nil,
+           let workingRoot = editor.workingRoot,
+           DataRootResolver.dataRoot(of: workingRoot) != nil {
+            throw ToolError(
+                "The paid pipeline operation has no project execution scope. Start it again from its generation tool."
+            )
+        }
         editor.agentPanelVisible = true
         spendApprovalError = nil
         spendApprovalRefresh = refresh
         pendingSpendOperation = PendingSpendOperation(
             origin: origin,
+            acquirePipelineMutation: { [weak editor] in
+                guard let pipelineScope else { return nil }
+                guard let editor else {
+                    throw ToolError(
+                        "The project closed before the approved operation could start."
+                    )
+                }
+                let expectedRoot = pipelineScope.dataRoot.standardizedFileURL
+                    .resolvingSymlinksInPath()
+                guard let workingRoot = editor.workingRoot,
+                      let currentDataRoot = DataRootResolver.dataRoot(of: workingRoot),
+                      currentDataRoot.standardizedFileURL.resolvingSymlinksInPath()
+                        == expectedRoot else {
+                    throw ToolError(
+                        "The project changed while the spend approval was open. Review the request and try again."
+                    )
+                }
+                guard editor.declaredPluginName == pipelineScope.declaredPack,
+                      editor.declaredPluginBinding == pipelineScope.declaredBinding else {
+                    throw ToolError(
+                        "The project format changed while the spend approval was open. Review the request and try again."
+                    )
+                }
+                let projectHome = FrameInventory.projectHome(of: expectedRoot)
+                guard ProjectPluginSettings.bindingResolution(projectURL: projectHome)
+                        == pipelineScope.bindingResolution else {
+                    throw ToolError(
+                        "The project format binding changed while the spend approval was open. Review the request and try again."
+                    )
+                }
+                do {
+                    _ = try ProjectPackGate.requireLiveMutation(
+                        projectURL: projectHome,
+                        declaredPack: pipelineScope.declaredPack,
+                        declaredBinding: pipelineScope.declaredBinding
+                    )
+                } catch {
+                    throw ToolError(
+                        "The project format binding changed while the spend approval was open: "
+                            + error.localizedDescription
+                    )
+                }
+                let currentPhase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
+                    tool: pipelineScope.tool,
+                    dataRoot: expectedRoot,
+                    declaredPack: pipelineScope.declaredPack,
+                    declaredBinding: pipelineScope.declaredBinding
+                )
+                guard currentPhase == pipelineScope.phase else {
+                    throw ToolError(
+                        "The pipeline phase changed while the spend approval was open. Review the request and try again."
+                    )
+                }
+                guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(
+                    projectRoot: expectedRoot,
+                    label: pipelineScope.phase ?? approval.actionLabel
+                ) else {
+                    let active = editor.pipelinePhaseRunCoordinator.runningPhase(
+                        projectRoot: expectedRoot
+                    ) ?? "pipeline work"
+                    throw ToolError(
+                        "Can't start the approved operation while \(active) is running. Wait for it to finish."
+                    )
+                }
+                return SpendPipelineMutationLease(
+                    coordinator: editor.pipelinePhaseRunCoordinator,
+                    dataRoot: expectedRoot,
+                    id: id
+                )
+            },
             execute: { [weak editor] option in
                 guard let editor else {
                     throw ToolError("The project closed before the approved operation could start.")
@@ -1343,6 +1460,13 @@ final class AgentService {
             spendApprovalError = "The approved operation is no longer available. Decline it and try again."
             return
         }
+        let pipelineLease: SpendPipelineMutationLease?
+        do {
+            pipelineLease = try operation.acquirePipelineMutation()
+        } catch {
+            spendApprovalError = error.localizedDescription
+            return
+        }
         pendingSpendApproval = nil
         spendApprovalRefresh = nil
         pendingSpendOperation = nil
@@ -1356,12 +1480,21 @@ final class AgentService {
             cancellationRequested: false
         )
         runningSpendCancel = operation.cancel
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
+        let task = Task { @MainActor [weak self, pipelineLease] in
+            guard let self else {
+                if let pipelineLease {
+                    pipelineLease.coordinator.endMutation(
+                        projectRoot: pipelineLease.dataRoot,
+                        id: pipelineLease.id
+                    )
+                }
+                return
+            }
             await self.executeApprovedSpend(
                 approvalID: approval.id,
                 option: option,
-                operation: operation
+                operation: operation,
+                pipelineLease: pipelineLease
             )
         }
         runningSpendTask = task
@@ -1370,8 +1503,17 @@ final class AgentService {
     private func executeApprovedSpend(
         approvalID: String,
         option: SpendOption,
-        operation: PendingSpendOperation
+        operation: PendingSpendOperation,
+        pipelineLease: SpendPipelineMutationLease?
     ) async {
+        defer {
+            if let pipelineLease {
+                pipelineLease.coordinator.endMutation(
+                    projectRoot: pipelineLease.dataRoot,
+                    id: pipelineLease.id
+                )
+            }
+        }
         guard runningSpendStatus?.id == approvalID else { return }
         if runningSpendStatus?.cancellationRequested == true || Task.isCancelled {
             let cancelled = ToolResult.error("Generation cancelled.")
@@ -1889,6 +2031,18 @@ final class AgentService {
     /// that still needs an argument). `AgentInputBox` observes this and focuses its editor.
     private(set) var focusInputRequestTick = 0
 
+    func recordComposerFocus(_ focused: Bool, for sessionID: UUID? = nil) {
+        guard sessionID == nil || sessionID == currentSessionId else { return }
+        if focused || !isComposerBlocked {
+            composerWantsFocus = focused
+        }
+    }
+
+    func restoreComposerFocus() {
+        guard composerWantsFocus, !isComposerBlocked else { return }
+        focusInputRequestTick &+= 1
+    }
+
     /// Insert `text` into the input field and focus it — used by the plugin launcher for commands that
     /// still need an argument, so the user lands in the field ready to type rather than sending an
     /// incomplete command. Clears mentions (a slash-command carries no media references).
@@ -1897,6 +2051,7 @@ final class AgentService {
         draft = text
         mentions.removeAll()
         pendingFunction = nil
+        composerWantsFocus = true
         focusInputRequestTick &+= 1
     }
 
@@ -2045,6 +2200,7 @@ final class AgentService {
         currentTask = nil
         _claudeRuntime?.stop()
         _claudeRuntime = nil
+        composerStates.removeAll()
         sessions = ChatSessionStore.load(from: projectURL)
             .filter { !$0.messages.isEmpty }
             .map {
@@ -2062,11 +2218,14 @@ final class AgentService {
         draft = ""
         mentions.removeAll()
         pendingFunction = nil
+        composerHeight = Self.preferredComposerHeight
+        composerWantsFocus = false
         streamError = nil
         toolExecutor?.resetFeedbackState()
     }
 
     func newChat() {
+        saveComposerState()
         currentTask?.cancel()
         abandonSessionDialog()
         abandonSpendApproval()
@@ -2077,17 +2236,17 @@ final class AgentService {
         syncMessagesIntoCurrentSession()
         if let id = currentSessionId,
            let idx = sessions.firstIndex(where: { $0.id == id }),
-           sessions[idx].messages.isEmpty {
+           sessions[idx].messages.isEmpty,
+           composerStateIsEmpty(for: id) {
             sessions.remove(at: idx)
+            composerStates.removeValue(forKey: id)
         }
         let session = ChatSession()
         sessions.insert(session, at: 0)
         currentSessionId = session.id
         messages = []
         isStreaming = false          // a cancelled first-send encode never had a runtime to stop
-        draft = ""
-        mentions = []
-        pendingFunction = nil
+        restoreComposerState(for: session.id)
         streamError = nil
         toolExecutor?.resetFeedbackState()
         onSessionsChanged?()
@@ -2095,8 +2254,43 @@ final class AgentService {
 
     var openSessions: [ChatSession] { sessions.filter { $0.isOpen } }
 
+    func sessionAttention(for id: UUID) -> ChatSessionAttention? {
+        let isCurrent = id == currentSessionId
+        if let dialog = pendingDialog {
+            let owner = dialogOrigins[dialog.id]?.chatSessionID
+            if owner == id || (owner == nil && isCurrent) { return .actionRequired }
+        }
+        if pendingSpendApproval != nil {
+            let owner = pendingSpendOperation?.origin.chatSessionID
+            if owner == id || (owner == nil && isCurrent) { return .actionRequired }
+        }
+        if let approval = pendingGateApproval,
+           approval.sessionId == id || (approval.sessionId == nil && isCurrent) {
+            return .actionRequired
+        }
+        if (isCurrent && isStreaming)
+            || runningSpendStatus?.chatSessionID == id
+            || (isCurrent && runningSpendStatus?.chatSessionID == nil
+                && runningSpendStatus != nil) {
+            return .running
+        }
+        if pendingSpendFollowUps.contains(where: { $0.origin.chatSessionID == id })
+            || pendingGateFollowUp?.origin.chatSessionID == id {
+            return .unreadResult
+        }
+        return nil
+    }
+
     func selectSession(_ id: UUID) {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
+        guard currentSessionId != id else {
+            if !sessions[idx].isOpen {
+                sessions[idx].isOpen = true
+                onSessionsChanged?()
+            }
+            return
+        }
+        saveComposerState()
         currentTask?.cancel()
         abandonSessionDialog()
         abandonSpendApproval()
@@ -2110,6 +2304,7 @@ final class AgentService {
         // the selected chat, reseeded from its transcript.
         currentSessionId = id
         messages = sessions[idx].messages
+        restoreComposerState(for: id)
         isStreaming = false
         _claudeRuntime?.stop()
         _claudeRuntime = nil
@@ -2123,10 +2318,20 @@ final class AgentService {
         }
     }
 
+    func selectAdjacentOpenSession(offset: Int) {
+        guard !isComposerBlocked, !isStreaming else { return }
+        let ids = openSessions.map(\.id)
+        guard ids.count > 1, let currentSessionId,
+              let currentIndex = ids.firstIndex(of: currentSessionId) else { return }
+        let nextIndex = (currentIndex + offset % ids.count + ids.count) % ids.count
+        selectSession(ids[nextIndex])
+    }
+
     func closeTab(_ id: UUID) {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[idx].isOpen = false
         if currentSessionId == id {
+            saveComposerState()
             // Closing the active tab mid-stream: stop the stream and keep its partial reply with
             // THIS session — otherwise the still-running task appends into the next tab's messages.
             currentTask?.cancel()
@@ -2137,6 +2342,7 @@ final class AgentService {
             if let next = sessions.first(where: { $0.isOpen }) {
                 currentSessionId = next.id
                 messages = next.messages
+                restoreComposerState(for: next.id)
                 _claudeRuntime?.stop()
                 _claudeRuntime = nil
             } else {
@@ -2149,6 +2355,9 @@ final class AgentService {
 
     func deleteSession(_ id: UUID) {
         let deletingActive = currentSessionId == id
+        if deletingActive {
+            saveComposerState()
+        }
         if runningSpendStatus?.chatSessionID == id {
             abandonRunningSpend()
         }
@@ -2165,6 +2374,7 @@ final class AgentService {
             resumeToolCalls(from: followUp.origin)
         }
         sessions.removeAll { $0.id == id }
+        composerStates.removeValue(forKey: id)
         if deletingActive {
             currentTask?.cancel()
             abandonSessionDialog()
@@ -2173,6 +2383,9 @@ final class AgentService {
             messages = currentSessionId
                 .flatMap { id in sessions.first { $0.id == id }?.messages }
                 ?? []
+            if let currentSessionId {
+                restoreComposerState(for: currentSessionId)
+            }
             isStreaming = false
             _claudeRuntime?.stop()      // its process belonged to the deleted chat
             _claudeRuntime = nil
@@ -2668,6 +2881,47 @@ final class AgentService {
         return obj
     }
 
+    private func saveComposerState() {
+        guard let id = currentSessionId else { return }
+        composerStates[id] = ComposerState(
+            draft: draft,
+            mentions: mentions,
+            pendingFunction: pendingFunction,
+            height: composerHeight,
+            wantsFocus: composerWantsFocus
+        )
+        guard let idx = sessions.firstIndex(where: { $0.id == id }),
+              sessions[idx].messages.isEmpty,
+              sessions[idx].title == "New chat" else { return }
+        let titleSource = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !titleSource.isEmpty {
+            sessions[idx].title = Self.conversationTitle(from: titleSource)
+        }
+    }
+
+    private func restoreComposerState(for id: UUID) {
+        guard let state = composerStates[id] else {
+            draft = ""
+            mentions = []
+            pendingFunction = nil
+            composerHeight = Self.preferredComposerHeight
+            composerWantsFocus = false
+            return
+        }
+        draft = state.draft
+        mentions = state.mentions
+        pendingFunction = state.pendingFunction
+        composerHeight = state.height
+        composerWantsFocus = state.wantsFocus
+    }
+
+    private func composerStateIsEmpty(for id: UUID) -> Bool {
+        guard let state = composerStates[id] else { return true }
+        return state.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && state.mentions.isEmpty
+            && state.pendingFunction == nil
+    }
+
     private func syncMessagesIntoCurrentSession() {
         guard let id = currentSessionId,
               let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
@@ -2768,20 +3022,32 @@ final class AgentService {
         if let presentation = message.userPresentation {
             if let typed = presentation.typedText?.trimmingCharacters(in: .whitespacesAndNewlines),
                !typed.isEmpty {
-                return String(typed.prefix(40))
+                return conversationTitle(from: typed)
             }
             if let summary = presentation.choiceRecord?.summary, !summary.isEmpty {
-                return String(summary.prefix(40))
+                return conversationTitle(from: summary)
             }
             return "New chat"
         }
         for block in message.blocks {
             if case let .text(s) = block {
                 let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { return String(trimmed.prefix(40)) }
+                if !trimmed.isEmpty { return conversationTitle(from: trimmed) }
             }
         }
         return "New chat"
+    }
+
+    nonisolated static func conversationTitle(from text: String) -> String {
+        let normalized = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let maximumLength = 120
+        guard normalized.count > maximumLength else { return normalized }
+        let available = maximumLength - 1
+        let leadingCount = (available + 1) / 2
+        let trailingCount = available - leadingCount
+        return String(normalized.prefix(leadingCount))
+            + "…"
+            + String(normalized.suffix(trailingCount))
     }
 }
 

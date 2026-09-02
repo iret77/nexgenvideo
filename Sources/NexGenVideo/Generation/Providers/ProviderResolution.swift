@@ -36,6 +36,210 @@ enum ProviderCapabilityKind: String, Sendable, Codable, Hashable {
     case tool
 }
 
+struct ProviderProductionInputPolicyV1: Codable, Sendable, Hashable {
+    let requiresSourceVideo: Bool
+    let framesCountTowardImageReferenceLimit: Bool
+    let framesCountTowardTotalReferenceLimit: Bool
+
+    init(
+        requiresSourceVideo: Bool,
+        framesCountTowardImageReferenceLimit: Bool,
+        framesCountTowardTotalReferenceLimit: Bool
+    ) {
+        self.requiresSourceVideo = requiresSourceVideo
+        self.framesCountTowardImageReferenceLimit =
+            framesCountTowardImageReferenceLimit
+        self.framesCountTowardTotalReferenceLimit =
+            framesCountTowardTotalReferenceLimit
+    }
+
+    init(videoCapabilities: VideoCaps) {
+        self.init(
+            requiresSourceVideo: videoCapabilities.requiresSourceVideo,
+            framesCountTowardImageReferenceLimit:
+                videoCapabilities.framesCountTowardImageReferenceLimit,
+            framesCountTowardTotalReferenceLimit:
+                videoCapabilities.framesCountTowardTotalReferenceLimit
+        )
+    }
+}
+
+struct ResolvedVideoOfferingCapabilitiesV1: Codable, Sendable, Hashable {
+    let schemaVersion: Int
+    let inputPolicy: ProviderProductionInputPolicyV1
+    let durationValues: [Int]
+    let durationMinimum: Int?
+    let durationMaximum: Int?
+    let supportsAutomaticDuration: Bool
+    let supportsNativeAudio: Bool
+    let resolutions: [String]?
+    let aspectRatios: [String]
+    let supportsFirstFrame: Bool
+    let supportsLastFrame: Bool
+    let maxReferenceImages: Int
+    let maxReferenceVideos: Int
+    let maxReferenceAudios: Int
+    let maxTotalReferences: Int?
+    let maxCombinedVideoReferenceSeconds: Double?
+    let maxCombinedAudioReferenceSeconds: Double?
+    let framesAndReferencesExclusive: Bool
+    let requiresReferenceImage: Bool
+    let maxReferenceImagesWhenVideoPresent: Int?
+
+    var durationCapabilities: VideoDurationCapabilities {
+        VideoDurationCapabilities(
+            discrete: durationValues,
+            range: durationRange,
+            supportsAuto: supportsAutomaticDuration
+        )
+    }
+
+    var durationRange: VideoDurationCapabilities.Range? {
+        guard let durationMinimum,
+              let durationMaximum,
+              durationMinimum > 0,
+              durationMinimum <= durationMaximum else { return nil }
+        return VideoDurationCapabilities.Range(
+            min: durationMinimum,
+            max: durationMaximum
+        )
+    }
+
+    var contractViolation: String? {
+        guard schemaVersion == 1 else { return "schema_version" }
+        guard durationValues.allSatisfy({ $0 > 0 }) else {
+            return "duration_values"
+        }
+        guard (durationMinimum == nil) == (durationMaximum == nil) else {
+            return "duration_range_pair"
+        }
+        if let durationMinimum, let durationMaximum,
+           durationMinimum <= 0 || durationMaximum < durationMinimum {
+            return "duration_range"
+        }
+        guard maxReferenceImages >= 0,
+              maxReferenceVideos >= 0,
+              maxReferenceAudios >= 0,
+              maxTotalReferences.map({ $0 >= 0 }) ?? true,
+              maxCombinedVideoReferenceSeconds.map({ $0 >= 0 }) ?? true,
+              maxCombinedAudioReferenceSeconds.map({ $0 >= 0 }) ?? true,
+              maxReferenceImagesWhenVideoPresent.map({ $0 >= 0 }) ?? true else {
+            return "reference_limits"
+        }
+        guard !supportsLastFrame || supportsFirstFrame else {
+            return "last_frame_without_first_frame"
+        }
+        if requiresReferenceImage {
+            let totalAllowsOne = maxTotalReferences.map { $0 >= 1 } ?? true
+            let ordinaryImageAllowed = maxReferenceImages >= 1
+                && totalAllowsOne
+            let firstFrameAllowed = !inputPolicy.requiresSourceVideo
+                && supportsFirstFrame
+                && (!inputPolicy.framesCountTowardImageReferenceLimit
+                    || maxReferenceImages >= 1)
+                && (!inputPolicy.framesCountTowardTotalReferenceLimit
+                    || totalAllowsOne)
+            guard ordinaryImageAllowed || firstFrameAllowed else {
+                return "required_reference_image_unfulfillable"
+            }
+        }
+        return nil
+    }
+
+    var supportsReferences: Bool {
+        maxReferenceImages > 0 || maxReferenceVideos > 0 || maxReferenceAudios > 0
+    }
+
+    func maxReferenceImages(hasVideoReference: Bool) -> Int {
+        guard hasVideoReference, let conditional = maxReferenceImagesWhenVideoPresent else {
+            return maxReferenceImages
+        }
+        return min(maxReferenceImages, conditional)
+    }
+
+    func validate(
+        duration: VideoDuration,
+        aspectRatio: String,
+        resolution: String?,
+        generateAudio: Bool,
+        displayName: String
+    ) -> String? {
+        if let contractViolation {
+            return "\(displayName) has an invalid provider capability contract (\(contractViolation))"
+        }
+        if !durationCapabilities.accepts(duration) {
+            return unsupportedValue(
+                model: displayName,
+                field: "duration",
+                value: duration.displayLabel,
+                allowed: durationCapabilities.validationLabels
+            )
+        }
+        if !aspectRatios.isEmpty,
+           !aspectRatio.isEmpty,
+           !aspectRatios.contains(aspectRatio) {
+            return unsupportedValue(
+                model: displayName,
+                field: "aspect ratio",
+                value: aspectRatio,
+                allowed: aspectRatios
+            )
+        }
+        if let resolutions,
+           let resolution,
+           !resolution.isEmpty,
+           !resolutions.contains(resolution) {
+            return unsupportedValue(
+                model: displayName,
+                field: "resolution",
+                value: resolution,
+                allowed: resolutions
+            )
+        }
+        if generateAudio && !supportsNativeAudio {
+            return "\(displayName) does not support native audio generation"
+        }
+        return nil
+    }
+}
+
+extension ResolvedVideoOfferingCapabilitiesV1 {
+    init(
+        videoCapabilities: VideoCaps,
+        inputPolicy: ProviderProductionInputPolicyV1? = nil,
+        supportsNativeAudio: Bool
+    ) {
+        self.init(
+            schemaVersion: 1,
+            inputPolicy: inputPolicy ?? ProviderProductionInputPolicyV1(
+                videoCapabilities: videoCapabilities
+            ),
+            durationValues: videoCapabilities.duration.discrete,
+            durationMinimum: videoCapabilities.duration.range?.min,
+            durationMaximum: videoCapabilities.duration.range?.max,
+            supportsAutomaticDuration: videoCapabilities.duration.supportsAuto,
+            supportsNativeAudio: supportsNativeAudio,
+            resolutions: videoCapabilities.resolutions,
+            aspectRatios: videoCapabilities.aspectRatios,
+            supportsFirstFrame: videoCapabilities.supportsFirstFrame,
+            supportsLastFrame: videoCapabilities.supportsLastFrame,
+            maxReferenceImages: videoCapabilities.maxReferenceImages,
+            maxReferenceVideos: videoCapabilities.maxReferenceVideos,
+            maxReferenceAudios: videoCapabilities.maxReferenceAudios,
+            maxTotalReferences: videoCapabilities.maxTotalReferences,
+            maxCombinedVideoReferenceSeconds:
+                videoCapabilities.maxCombinedVideoRefSeconds,
+            maxCombinedAudioReferenceSeconds:
+                videoCapabilities.maxCombinedAudioRefSeconds,
+            framesAndReferencesExclusive:
+                videoCapabilities.framesAndReferencesExclusive,
+            requiresReferenceImage: videoCapabilities.requiresReferenceImage,
+            maxReferenceImagesWhenVideoPresent:
+                videoCapabilities.maxReferenceImagesWhenVideoPresent
+        )
+    }
+}
+
 /// One concrete way to fulfil a capability: a (provider, transport) with the provider's
 /// own reference and its billing mode. A provider may offer the same capability over both
 /// transports (API pay-per-call and MCP subscription) — the resolver weighs both.
@@ -57,6 +261,10 @@ struct ProviderBinding: Sendable, Hashable {
     /// Media roles declared by this exact MCP model (`image`, `start_image`, …). The request mapper
     /// uses these instead of guessing one provider-wide role vocabulary.
     var mcpMediaRoles: [String]? = nil
+    /// Versioned input semantics for this exact provider endpoint.
+    var productionInputPolicy: ProviderProductionInputPolicyV1? = nil
+    /// Versioned runtime capabilities for this exact video endpoint.
+    var resolvedVideoCapabilities: ResolvedVideoOfferingCapabilitiesV1? = nil
 }
 
 /// One provider's declared way to serve a model — the DATA that replaces id-prefix inference.
@@ -75,20 +283,35 @@ struct ProviderOffer: Codable, Sendable, Hashable {
     /// Per-model roles returned by MCP catalog discovery. Nil for direct API offers and tool-only
     /// MCP providers whose generate schema carries no separate model catalog.
     var mcpMediaRoles: [String]? = nil
+    /// Values proven by this exact endpoint and adapter.
+    var productionQualityTargetIDs: [String]? = nil
+    /// Input accounting proven by this exact endpoint and adapter.
+    var productionInputPolicy: ProviderProductionInputPolicyV1? = nil
+    /// Output and input limits proven by this exact video endpoint and adapter.
+    var resolvedVideoCapabilities: ResolvedVideoOfferingCapabilitiesV1? = nil
 
     private enum CodingKeys: String, CodingKey {
         case provider, transport, providerRef, costPerCall, modelParam, mcpMediaRoles
+        case productionQualityTargetIDs
+        case productionInputPolicy = "productionInputPolicyV1"
+        case resolvedVideoCapabilities = "resolvedVideoOfferingCapabilitiesV1"
     }
 
     init(provider: GenerationProvider, transport: ProviderTransport = .api,
          providerRef: String? = nil, costPerCall: Double? = nil, modelParam: String? = nil,
-         mcpMediaRoles: [String]? = nil) {
+         mcpMediaRoles: [String]? = nil,
+         productionQualityTargetIDs: [String]? = nil,
+         productionInputPolicy: ProviderProductionInputPolicyV1? = nil,
+         resolvedVideoCapabilities: ResolvedVideoOfferingCapabilitiesV1? = nil) {
         self.provider = provider
         self.transport = transport
         self.providerRef = providerRef
         self.costPerCall = costPerCall
         self.modelParam = modelParam
         self.mcpMediaRoles = mcpMediaRoles
+        self.productionQualityTargetIDs = productionQualityTargetIDs
+        self.productionInputPolicy = productionInputPolicy
+        self.resolvedVideoCapabilities = resolvedVideoCapabilities
     }
 
     init(from decoder: Decoder) throws {
@@ -99,6 +322,18 @@ struct ProviderOffer: Codable, Sendable, Hashable {
         costPerCall = try c.decodeIfPresent(Double.self, forKey: .costPerCall)
         modelParam = try c.decodeIfPresent(String.self, forKey: .modelParam)
         mcpMediaRoles = try c.decodeIfPresent([String].self, forKey: .mcpMediaRoles)
+        productionQualityTargetIDs = try c.decodeIfPresent(
+            [String].self,
+            forKey: .productionQualityTargetIDs
+        )
+        productionInputPolicy = try c.decodeIfPresent(
+            ProviderProductionInputPolicyV1.self,
+            forKey: .productionInputPolicy
+        )
+        resolvedVideoCapabilities = try c.decodeIfPresent(
+            ResolvedVideoOfferingCapabilitiesV1.self,
+            forKey: .resolvedVideoCapabilities
+        )
     }
 }
 
@@ -141,10 +376,12 @@ enum ProviderResolver {
     static func preferredActiveBindingPerProvider(
         bindings: [ProviderBinding],
         activation: ProviderActivation,
-        effectiveCost: (ProviderBinding) -> Double
+        effectiveCost: (ProviderBinding) -> Double,
+        isCompatible: (ProviderBinding) -> Bool = { _ in true }
     ) -> [ProviderBinding] {
         var best: [GenerationProvider: ProviderBinding] = [:]
-        for binding in bindings where activation.isActive(binding.provider, binding.transport) {
+        for binding in bindings where activation.isActive(binding.provider, binding.transport)
+            && isCompatible(binding) {
             if let current = best[binding.provider],
                effectiveCost(current) <= effectiveCost(binding) {
                 continue

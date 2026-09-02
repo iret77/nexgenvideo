@@ -4,6 +4,8 @@ import re
 import sys
 from pathlib import Path
 
+import validate_pipeline_contract as validate_pipeline_contract_module
+
 
 ROOT = Path(__file__).resolve().parent.parent
 KNOWN_ATTACH_AS = {"song", "lyrics", "script", "character", "location", "style"}
@@ -33,8 +35,9 @@ ENGINE_REGISTRY_STORED_PROPERTIES = [
     "artifactWriteRequirements",
     "musicUnderstandingAnalyzer",
     "declarativeCockpitSurface",
+    "phaseArtifactProviders",
 ]
-ENGINE_BOUNDARY_LAYOUT_CONTRACT = 8
+ENGINE_BOUNDARY_LAYOUT_CONTRACT = 9
 ENGINE_BOUNDARY_COMPATIBILITY_FLOOR = 2
 ENGINE_AUDIO_BOUNDARY_FILES = [
     "Engine/Sources/NexGenEngine/Audio/PCM.swift",
@@ -68,6 +71,18 @@ ENGINE_BOUNDARY_LAYOUTS = {
     },
 }
 ENGINE_BOUNDARY_VALUE_LAYOUTS = {
+    "CapabilityFieldDefinitionV1": {
+        "path": "Engine/Sources/NexGenEngine/Capabilities/CapabilityFieldRegistryV1.swift",
+        "start": "public struct CapabilityFieldDefinitionV1: Sendable, Equatable {",
+        "end": "    public init(",
+        "members": [
+            "let id: String",
+            "let modalities: Set<CapabilityModalityV1>",
+            "let valueType: CapabilityFieldValueTypeV1",
+            "let endpointMergePolicy: CapabilityEndpointMergePolicyV1",
+            "let requiresDefensiveDefault: Bool",
+        ],
+    },
     "PCMBuffer": {
         "path": "Engine/Sources/NexGenEngine/Audio/PCM.swift",
         "start": "public struct PCMBuffer: Sendable, Equatable {",
@@ -355,6 +370,19 @@ ENGINE_BOUNDARY_VALUE_LAYOUTS = {
     },
 }
 ENGINE_BOUNDARY_ENUM_LAYOUTS = {
+    "CapabilityEndpointMergePolicyV1": {
+        "path": "Engine/Sources/NexGenEngine/Capabilities/CapabilityFieldRegistryV1.swift",
+        "start": "public enum CapabilityEndpointMergePolicyV1: String, Codable, Sendable, Equatable {",
+        "end": "public struct CapabilityFieldDefinitionV1:",
+        "cases": [
+            "maximum",
+            "minimum",
+            "booleanAnd = \"boolean_and\"",
+            "endpointOverride = \"endpoint_override\"",
+            "setIntersection = \"set_intersection\"",
+            "intrinsicOnly = \"intrinsic_only\"",
+        ],
+    },
     "KnownTextAlignmentTimingMethod": {
         "path": "Engine/Sources/NexGenEngine/Audio/AudioML.swift",
         "start": "public enum KnownTextAlignmentTimingMethod: String, Codable, Sendable, Equatable {",
@@ -725,6 +753,16 @@ def validate_hardsteps() -> None:
         fail("lyrics and every creative-material hard step must remain optional")
 
 
+def validate_pipeline_contract() -> None:
+    try:
+        validate_pipeline_contract_module.validate_pack_manifest(
+            ROOT / "plugins/musicvideo.json",
+            ROOT,
+        )
+    except validate_pipeline_contract_module.PipelineContractValidationError as error:
+        fail(f"musicvideo pipeline contract is invalid: {error}")
+
+
 def validate_agent_guidance() -> None:
     try:
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -1008,6 +1046,7 @@ def main() -> None:
     version = sys.argv[1]
     validate_changelog(version)
     validate_hardsteps()
+    validate_pipeline_contract()
     validate_agent_guidance()
     validate_engine_registry_abi()
     validate_engine_boundary_abi()
@@ -1015,7 +1054,7 @@ def main() -> None:
     validate_plugin_version(version, Path(sys.argv[2]))
     print(
         f"Release preflight passed for {version}: "
-        "changelog + agent guidance + engine ABI + pack intake/version + release assets"
+        "changelog + agent guidance + engine ABI + pack intake/pipeline/version + release assets"
     )
 
 

@@ -10,6 +10,7 @@ enum SongAnchorError: LocalizedError {
     case preparationFailed(String)
     case placementFailed
     case projectChanged
+    case formatChanged(String)
     case alreadyInProgress
 
     var errorDescription: String? {
@@ -28,6 +29,8 @@ enum SongAnchorError: LocalizedError {
             "Couldn't place the project song on the timeline."
         case .projectChanged:
             "The project changed while the song was being prepared. Attach it again."
+        case .formatChanged(let detail):
+            "The project format changed while the song was being prepared: \(detail)"
         case .alreadyInProgress:
             "Another project song is still being attached. Wait for it to finish."
         }
@@ -62,7 +65,9 @@ extension EditorViewModel {
         from sourceURL: URL,
         dataRoot: URL,
         replace: Bool,
-        originalFilename: String? = nil
+        originalFilename: String? = nil,
+        declaredPack: String? = nil,
+        declaredBinding: ProjectPackBinding? = nil
     ) async throws -> SongAnchorResult {
         let source = sourceURL.standardizedFileURL.resolvingSymlinksInPath()
         let ext = source.pathExtension.lowercased()
@@ -83,6 +88,15 @@ extension EditorViewModel {
         defer { songAttachInProgress = false }
 
         let projectHome = FrameInventory.projectHome(of: dataRoot)
+        do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: projectHome,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+        } catch {
+            throw SongAnchorError.formatChanged(error.localizedDescription)
+        }
         let expectedWorkingRoot = workingRoot?.standardizedFileURL
         let expectedWorkingCopyKey = openWorkingCopyKey
         let mediaDirectory = projectHome.appendingPathComponent(
@@ -119,6 +133,16 @@ extension EditorViewModel {
               openWorkingCopyKey == expectedWorkingCopyKey else {
             prepared.discard(removeDurableCopy: prepared.durableCopy.created)
             throw SongAnchorError.projectChanged
+        }
+        do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: projectHome,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+        } catch {
+            prepared.discard(removeDurableCopy: prepared.durableCopy.created)
+            throw SongAnchorError.formatChanged(error.localizedDescription)
         }
 
         let sameSongContent = prepared.currentDigest == prepared.durableCopy.digest
@@ -162,6 +186,11 @@ extension EditorViewModel {
         }
 
         do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: projectHome,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
             if existing == nil {
                 mediaAssets.append(song)
                 mediaManifest.entries.append(
@@ -176,6 +205,11 @@ extension EditorViewModel {
             mediaManifest.intakeRoleByAssetID[song.id] = "song"
 
             if !pipelineSongReady {
+                _ = try ProjectPackGate.requireLiveMutation(
+                    projectURL: projectHome,
+                    declaredPack: declaredPack,
+                    declaredBinding: declaredBinding
+                )
                 _ = try FileManager.default.replaceItemAt(
                     prepared.audioDirectory,
                     withItemAt: prepared.stagingAudioDirectory

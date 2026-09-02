@@ -111,6 +111,9 @@ public final class EngineRegistry: @unchecked Sendable {
     /// The active pack's single declarative cockpit surface.
     public private(set) var declarativeCockpitSurface: DeclarativeCockpitSurface?
 
+    /// Exact project-local files owned by each phase, for cumulative execution lineage.
+    public private(set) var phaseArtifactProviders: [String: PhaseArtifactProvider] = [:]
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -125,6 +128,9 @@ public final class EngineRegistry: @unchecked Sendable {
 
     public typealias PhaseLineageProvider =
         @Sendable (URL) throws -> PhaseLineageSnapshot
+
+    public typealias PhaseArtifactProvider =
+        @Sendable (URL) throws -> [String]
 
     /// A named, engine-run step pinned to a phase (#174). `run` executes the deterministic operation
     /// against the data root; throwing blocks the phase with the error's message.
@@ -237,6 +243,13 @@ public final class EngineRegistry: @unchecked Sendable {
         _ provider: @escaping PhaseLineageProvider
     ) {
         phaseLineageProviders[phase] = provider
+    }
+
+    public func registerPhaseArtifactProvider(
+        _ phase: String,
+        _ provider: @escaping PhaseArtifactProvider
+    ) {
+        phaseArtifactProviders[phase] = provider
     }
 
     public func registerProjectSchemaMigration(
@@ -459,24 +472,77 @@ public struct PhasePlacement: Sendable, Equatable {
 /// state, list_phases, cost/next_phase, rewind — goes through here so the order
 /// can never diverge between surfaces.
 ///
-/// Placement rules, applied in the order the pack registered them:
-/// - a phase already present in `core` is skipped (a pack must not shadow a core
-///   gate; matches the old dedup);
-/// - `after` naming a phase already in the working order inserts right after it;
-/// - `after == nil`, or naming an unknown/not-yet-present phase, appends to the
-///   end (safe fallback — never drops the phase).
+/// This is the historical placement adapter. Declarative pack contracts provide
+/// their complete order directly. The adapter is strict so malformed legacy
+/// registrations cannot silently become a different graph.
 public enum PhaseOrder {
-    public static func merged(core: [String] = coreGatePhases, packPlacements: [PhasePlacement]) -> [String] {
+    public enum ResolutionError: Swift.Error, Sendable, Equatable {
+        case duplicateCorePhase(String)
+        case duplicatePlacement(String)
+        case shadowsCorePhase(String)
+        case unknownPredecessor(phase: String, predecessor: String)
+        case ambiguousPredecessor(String)
+        case invalidPhase(String)
+    }
+
+    public static func validatedMerged(
+        core: [String] = coreGatePhases,
+        packPlacements: [PhasePlacement]
+    ) throws -> [String] {
+        var seenCore = Set<String>()
+        for phase in core {
+            guard isValidPhaseID(phase) else {
+                throw ResolutionError.invalidPhase(phase)
+            }
+            guard seenCore.insert(phase).inserted else {
+                throw ResolutionError.duplicateCorePhase(phase)
+            }
+        }
+
+        var seenPlacements = Set<String>()
+        var usedPredecessors = Set<String>()
         var order = core
         for placement in packPlacements {
-            guard !order.contains(placement.phase) else { continue }
-            if let after = placement.after, let idx = order.firstIndex(of: after) {
-                order.insert(placement.phase, at: idx + 1)
+            guard isValidPhaseID(placement.phase) else {
+                throw ResolutionError.invalidPhase(placement.phase)
+            }
+            guard seenPlacements.insert(placement.phase).inserted else {
+                throw ResolutionError.duplicatePlacement(placement.phase)
+            }
+            guard !seenCore.contains(placement.phase) else {
+                throw ResolutionError.shadowsCorePhase(placement.phase)
+            }
+            if let after = placement.after {
+                guard isValidPhaseID(after), let index = order.firstIndex(of: after) else {
+                    throw ResolutionError.unknownPredecessor(
+                        phase: placement.phase,
+                        predecessor: after
+                    )
+                }
+                guard usedPredecessors.insert(after).inserted else {
+                    throw ResolutionError.ambiguousPredecessor(after)
+                }
+                order.insert(placement.phase, at: index + 1)
             } else {
+                guard usedPredecessors.insert("<end>").inserted else {
+                    throw ResolutionError.ambiguousPredecessor("<end>")
+                }
                 order.append(placement.phase)
             }
         }
         return order
+    }
+
+    public static func merged(core: [String] = coreGatePhases, packPlacements: [PhasePlacement]) -> [String] {
+        (try? validatedMerged(core: core, packPlacements: packPlacements)) ?? []
+    }
+
+    private static func isValidPhaseID(_ value: String) -> Bool {
+        guard !value.isEmpty,
+              value.first?.isLetter == true || value.first == "_" else {
+            return false
+        }
+        return value.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
     }
 }
 

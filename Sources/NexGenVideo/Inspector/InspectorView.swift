@@ -25,6 +25,8 @@ struct InspectorView: View {
     @State private var entityEditPrompt = ""
     @State private var entityEditTrait = ""
     @State private var transformExpanded = true
+    @State private var shotSourceModeMutationID: String?
+    @State private var shotSourceModeAvailableID: String?
     @State var collapsedAdjustSections: Set<String> = ["Curves", "Color Wheels", "Hue Curves", "LUTs", "Effects"]
     @State var collapsedAdjustSubgroups: Set<String> = [
         "Detail", "Blur", "Motion Blur", "Vignette", "Film Grain", "Glow", "Chroma Key",
@@ -208,10 +210,6 @@ struct InspectorView: View {
         }
     }
 
-    /// The shot's source mode, changed via a direct menu — a structured native write (load, mutate,
-    /// save, refresh) through `setShotSourceMode`, the direct-manipulation default
-    /// (docs/UI_UX_CONCEPT.md §2). Generated shots are provider-rendered; live shots are shot to a
-    /// directorial spec; enhanced shots run the video-to-video edit path.
     private func shotSourceModeRow(_ shot: ShotSummary) -> some View {
         let current = shot.sourceModeTag
         return HStack(spacing: AppTheme.Spacing.sm) {
@@ -221,49 +219,70 @@ struct InspectorView: View {
                 .fixedSize()
             Spacer()
             Menu {
-                ForEach(
-                    SourceModeTag.allCases.filter {
-                        $0 != .aiEnhanced || current == .aiEnhanced
-                    }
-                ) { tag in
-                    let needsPlan = tag != .imported
-                        && tag != current
-                        && !shot.hasProductionPlan
-                    let discardsPlan = tag == .imported
-                        && tag != current
-                        && shot.hasProductionPlan
+                ForEach(SourceModeTag.allCases) { option in
+                    let supported = option == .imported
+                        && current != .imported
+                        && shotSourceModeMutationID == nil
+                        && shotSourceModeAvailableID == shot.id
                     Button {
-                        Task { await editor.setShotSourceMode(shotId: shot.id, to: tag.engineMode) }
-                    } label: {
-                        if tag == current {
-                            Label(tag.label, systemImage: "checkmark")
-                        } else {
-                            Label(
-                                needsPlan
-                                    ? "\(tag.label) — ask the assistant to re-plan this shot"
-                                    : discardsPlan
-                                        ? "\(tag.label) — discard production plan"
-                                        : tag.label,
-                                systemImage: tag.symbol
+                        shotSourceModeMutationID = shot.id
+                        Task {
+                            _ = await editor.setShotSourceMode(
+                                shotId: shot.id,
+                                to: option.engineMode
                             )
+                            shotSourceModeMutationID = nil
                         }
+                    } label: {
+                        Label(option.label, systemImage: option.symbol)
                     }
-                    .disabled(needsPlan)
+                    .disabled(!supported)
+                    .help(supported
+                        ? "Switch to Imported and rebuild this shot's execution plan."
+                        : sourceModeHelp(option: option, current: current))
                 }
             } label: {
                 HStack(spacing: AppTheme.Spacing.xxs) {
                     Image(systemName: current.symbol)
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                        .font(.system(
+                            size: AppTheme.FontSize.xxs,
+                            weight: AppTheme.FontWeight.medium
+                        ))
                     Text(current.label)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: AppTheme.FontSize.micro))
+                        .font(.system(
+                            size: AppTheme.FontSize.xs,
+                            weight: AppTheme.FontWeight.medium
+                        ))
                 }
                 .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize()
             }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
+            .menuStyle(.borderlessButton)
+            .fixedSize()
         }
         .frame(height: AppTheme.IconSize.md)
+        .task(id: "\(shot.id)|\(shot.sourceMode)|\(editor.pipelinePhaseRunCoordinator.hasRunningJobs)") {
+            shotSourceModeAvailableID = nil
+            if await editor.canSetShotSourceMode(
+                shotId: shot.id,
+                to: .imported
+            ), !Task.isCancelled {
+                shotSourceModeAvailableID = shot.id
+            }
+        }
+    }
+
+    private func sourceModeHelp(
+        option: SourceModeTag,
+        current: SourceModeTag
+    ) -> String {
+        if option == current {
+            return "This is the current source."
+        }
+        if option == .imported {
+            return "Ask the assistant to resolve this shot's execution dependencies."
+        }
+        return "Ask the assistant to re-plan this source change."
     }
 
     /// Shot↔entity provenance: which shots use this entity (click → inspect the shot).

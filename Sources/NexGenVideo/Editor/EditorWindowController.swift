@@ -274,6 +274,30 @@ extension EditorWindowController: EditorActions {
     @objc func toggleMediaPanel(_ sender: Any?) { editorViewModel.mediaPanelVisible.toggle() }
     @objc func toggleInspectorPanel(_ sender: Any?) { editorViewModel.inspectorPanelVisible.toggle() }
     @objc func toggleAgentPanel(_ sender: Any?) { editorViewModel.agentPanelVisible.toggle() }
+    @objc func newAgentConversation(_ sender: Any?) {
+        guard !editorViewModel.agentService.isComposerBlocked,
+              !editorViewModel.agentService.isStreaming else { return }
+        editorViewModel.agentPanelVisible = true
+        editorViewModel.agentService.newChat()
+    }
+    @objc func showAgentConversationHistory(_ sender: Any?) {
+        editorViewModel.agentPanelVisible = true
+        editorViewModel.agentConversationHistoryPresented = true
+    }
+    @objc func selectPreviousAgentConversation(_ sender: Any?) {
+        editorViewModel.agentPanelVisible = true
+        editorViewModel.agentService.selectAdjacentOpenSession(offset: -1)
+    }
+    @objc func selectNextAgentConversation(_ sender: Any?) {
+        editorViewModel.agentPanelVisible = true
+        editorViewModel.agentService.selectAdjacentOpenSession(offset: 1)
+    }
+    @objc func closeAgentConversation(_ sender: Any?) {
+        guard !editorViewModel.agentService.isComposerBlocked,
+              !editorViewModel.agentService.isStreaming,
+              let id = editorViewModel.agentService.currentSessionId else { return }
+        editorViewModel.agentService.closeTab(id)
+    }
     @objc func toggleMaximizePanel(_ sender: Any?) { toggleMaximizePanelAction() }
     @objc func setLayoutDefault(_ sender: Any?) { editorViewModel.layoutPreset = .default }
     @objc func setLayoutMedia(_ sender: Any?) { editorViewModel.layoutPreset = .media }
@@ -302,6 +326,14 @@ extension EditorWindowController: EditorActions {
         case #selector(toggleAgentPanel(_:)):
             menuItem.state = editorViewModel.agentPanelVisible ? .on : .off
             return true
+        case #selector(newAgentConversation(_:)), #selector(closeAgentConversation(_:)):
+            return !editorViewModel.agentService.isComposerBlocked
+                && !editorViewModel.agentService.isStreaming
+        case #selector(selectPreviousAgentConversation(_:)),
+             #selector(selectNextAgentConversation(_:)):
+            return !editorViewModel.agentService.isComposerBlocked
+                && !editorViewModel.agentService.isStreaming
+                && editorViewModel.agentService.openSessions.count > 1
         case #selector(toggleMaximizePanel(_:)):
             menuItem.state = editorViewModel.maximizedPanel != nil ? .on : .off
             return editorViewModel.maximizedPanel != nil || editorViewModel.focusedPanel != nil

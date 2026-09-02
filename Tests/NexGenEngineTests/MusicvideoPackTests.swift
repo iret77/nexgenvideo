@@ -19,10 +19,242 @@ struct MusicvideoPackTests {
         #expect(reg.engine.progressPhaseRunners["analysis"] != nil)
         #expect(reg.engine.gateRequirements["analysis"] != nil)
         #expect(reg.engine.artifactWriteRequirements["analysis"] != nil)
+        #expect(Set(reg.engine.phaseArtifactProviders.keys) == Set(
+            MusicvideoPipelineLineage.executionInputPhases
+        ))
         #expect(reg.engine.productionProfiles.map(\.id) == [
             .generativeFilm,
             .narrativeStorytelling,
         ])
+    }
+
+    @Test("phase artifact inventory includes versioned creative truth")
+    func phaseArtifactInventoryIncludesVersionedTruth() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "musicvideo-lineage-inventory-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("treatment", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("storyboard", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try Data("treatment".utf8).write(
+            to: root.appendingPathComponent(PipelineLayout.treatmentCurrentFile)
+        )
+        try Data("treatment".utf8).write(
+            to: root.appendingPathComponent(PipelineLayout.treatmentVersionFile(3))
+        )
+        try Data("storyboard".utf8).write(
+            to: root.appendingPathComponent(PipelineLayout.storyboardCurrentFile)
+        )
+        try Data("storyboard".utf8).write(
+            to: root.appendingPathComponent(PipelineLayout.storyboardVersionFile(4))
+        )
+
+        #expect(try MusicvideoPipelineLineage.artifactPaths(
+            phase: "treatment",
+            dataRoot: root
+        ) == [
+            PipelineLayout.treatmentCurrentFile,
+            PipelineLayout.treatmentVersionFile(3),
+        ])
+        #expect(try MusicvideoPipelineLineage.artifactPaths(
+            phase: "storyboard",
+            dataRoot: root
+        ) == [
+            PipelineLayout.storyboardCurrentFile,
+            PipelineLayout.storyboardVersionFile(4),
+        ])
+    }
+
+    @Test("versioned creative artifact bytes participate in lineage")
+    func versionedCreativeBytesParticipateInLineage() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "musicvideo-versioned-lineage-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("treatment", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let current = root.appendingPathComponent(PipelineLayout.treatmentCurrentFile)
+        let version = root.appendingPathComponent(PipelineLayout.treatmentVersionFile(1))
+        try Data("same".utf8).write(to: current)
+        try Data("v1".utf8).write(to: version)
+
+        let before = try MusicvideoPipelineLineage.snapshot(
+            phase: "treatment",
+            dataRoot: root
+        )
+        try Data("v1 changed".utf8).write(to: version)
+        let after = try MusicvideoPipelineLineage.snapshot(
+            phase: "treatment",
+            dataRoot: root
+        )
+
+        #expect(before.artifactFingerprint != after.artifactFingerprint)
+    }
+
+    @Test("render lineage binds immutable per-shot proofs and outputs")
+    func renderLineageBindsImmutableShotProofsAndOutputs() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "musicvideo-render-lineage-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outputPath = "outputs/shot-001.mov"
+        let lastFramePath = "outputs/shot-001.last-frame.png"
+        let inputPath = "inputs/shot-001-start.png"
+        let outputData = Data("rendered-video".utf8)
+        let lastFrameData = Data("last-frame".utf8)
+        let inputData = Data("start-frame".utf8)
+        for (path, data) in [
+            (outputPath, outputData),
+            (lastFramePath, lastFrameData),
+            (inputPath, inputData),
+        ] {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        }
+        let renderEntry = RenderEntry(
+            shotId: "shot-001",
+            phase: "final",
+            status: .rendered,
+            output: outputPath,
+            costEur: 0.1,
+            updatedAt: "2026-08-31T00:00:00Z",
+            lastFramePath: lastFramePath
+        )
+        let renderProof = RenderProofEntry(
+            shotId: "shot-001",
+            output: outputPath,
+            outputSha256: FileDigest.sha256(of: outputData),
+            providerPrompt: "Compiled prompt.",
+            generationModel: "fixture-model",
+            startFrame: RenderInputProof(
+                path: inputPath,
+                sha256: FileDigest.sha256(of: inputData)
+            )
+        )
+        let lastFrameProof = RenderLastFrameProofV1(
+            shotID: "shot-001",
+            phase: "final",
+            path: lastFramePath,
+            sha256: FileDigest.sha256(of: lastFrameData),
+            sourceOutput: outputPath,
+            sourceOutputSHA256: FileDigest.sha256(of: outputData),
+            extractedAt: "2026-08-31T00:00:01Z"
+        )
+        let proof = RenderShotProvenanceProofV1(
+            project: "project-001",
+            phase: "final",
+            shotID: "shot-001",
+            renderEntry: renderEntry,
+            renderProofEntry: renderProof,
+            routingProofEntry: Data("routing-proof".utf8),
+            frames: nil,
+            lastFrame: lastFrameProof,
+            outputs: [
+                RenderPublishedArtifactV1(
+                    path: lastFramePath,
+                    sha256: FileDigest.sha256(of: lastFrameData)
+                ),
+                RenderPublishedArtifactV1(
+                    path: outputPath,
+                    sha256: FileDigest.sha256(of: outputData)
+                ),
+            ].sorted { $0.path < $1.path },
+            dependencies: [RenderPublishedArtifactV1(
+                path: inputPath,
+                sha256: FileDigest.sha256(of: inputData)
+            )]
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let proofData = try encoder.encode(proof)
+        let proofSHA256 = FileDigest.sha256(of: proofData)
+        let proofPath = RenderShotProvenanceProofV1.artifactPath(
+            phase: "final",
+            shotID: "shot-001",
+            sha256: proofSHA256
+        )
+        let proofURL = root.appendingPathComponent(proofPath)
+        try FileManager.default.createDirectory(
+            at: proofURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try proofData.write(to: proofURL, options: .atomic)
+        let publication = RenderShotProvenancePublicationV1(
+            transactionID: UUID().uuidString.lowercased(),
+            project: "project-001",
+            phase: "final",
+            proofs: [
+                "shot-001": RenderPublishedArtifactV1(
+                    path: proofPath,
+                    sha256: proofSHA256
+                ),
+            ]
+        )
+        let publicationPath = RenderShotProvenancePublicationV1.artifactPath(
+            phase: "final"
+        )
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("renders"),
+            withIntermediateDirectories: true
+        )
+        try encoder.encode(publication).write(
+            to: root.appendingPathComponent(publicationPath),
+            options: .atomic
+        )
+        for path in [
+            PipelineLayout.renderManifestFile(phase: "final"),
+            PipelineLayout.renderProofFile(phase: "final"),
+            PipelineLayout.renderRoutingProofFile(phase: "final"),
+            RenderRecordPublicationV1.artifactPath(phase: "final"),
+        ] {
+            try Data(path.utf8).write(
+                to: root.appendingPathComponent(path),
+                options: .atomic
+            )
+        }
+
+        let paths = Set(try MusicvideoPipelineLineage.artifactPaths(
+            phase: "render",
+            dataRoot: root
+        ))
+        #expect(paths.contains(proofPath))
+        #expect(paths.contains(publicationPath))
+        #expect(paths.contains(outputPath))
+        #expect(paths.contains(lastFramePath))
+        #expect(paths.contains(inputPath))
+        #expect(paths.contains(PipelineLayout.renderRoutingProofFile(phase: "final")))
+        #expect(paths.contains(RenderRecordPublicationV1.artifactPath(phase: "final")))
+
+        try Data("replaced-output".utf8).write(
+            to: root.appendingPathComponent(outputPath),
+            options: .atomic
+        )
+        #expect(throws: MusicvideoPipelineLineage.LineageError.self) {
+            _ = try MusicvideoPipelineLineage.artifactPaths(
+                phase: "render",
+                dataRoot: root
+            )
+        }
     }
 
     @Test("music duration bands")
@@ -53,8 +285,8 @@ struct MusicvideoPackTests {
     func packSatisfiesContract() {
         let pack: Pack = MusicvideoPack()
         #expect(pack.name == "musicvideo")
-        #expect(pack.version == "0.4.6")
-        #expect(pack.manifest.minAppVersion == "1.4.6")
+        #expect(pack.version == "0.5.0")
+        #expect(pack.manifest.minAppVersion == "1.5.0")
     }
 
     @Test("pack exposes gallery manifest and a starter")

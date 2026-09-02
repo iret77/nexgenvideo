@@ -6,6 +6,34 @@ struct PromptBinding: Sendable, Equatable {
     let projectKey: String
     let shotId: String
     let shotFingerprint: String
+    let routeArtifactSHA256: String
+    let requirementSHA256: String
+    let capabilitiesSHA256: String
+    let routeSHA256: String
+    let referencePlanSHA256: String
+    let orderedBindingsSHA256: String
+
+    init(
+        projectKey: String,
+        shotId: String,
+        shotFingerprint: String,
+        routeArtifactSHA256: String = "none",
+        requirementSHA256: String = "none",
+        capabilitiesSHA256: String = "none",
+        routeSHA256: String = "none",
+        referencePlanSHA256: String = "none",
+        orderedBindingsSHA256: String = "none"
+    ) {
+        self.projectKey = projectKey
+        self.shotId = shotId
+        self.shotFingerprint = shotFingerprint
+        self.routeArtifactSHA256 = routeArtifactSHA256
+        self.requirementSHA256 = requirementSHA256
+        self.capabilitiesSHA256 = capabilitiesSHA256
+        self.routeSHA256 = routeSHA256
+        self.referencePlanSHA256 = referencePlanSHA256
+        self.orderedBindingsSHA256 = orderedBindingsSHA256
+    }
 
     static let free = PromptBinding(
         projectKey: "none",
@@ -40,6 +68,7 @@ enum PromptCompiler {
         let setting: String
         let lighting: String
         let style: String
+        let preserveComposition: Bool
         let binding: PromptBinding
     }
 
@@ -79,7 +108,8 @@ enum PromptCompiler {
         lighting: String = "",
         style: String = "",
         shotId: String = "none",
-        shot: PromptComposer.ShotProjection? = nil
+        shot: PromptComposer.ShotProjection? = nil,
+        preserveCompositionOverride: Bool? = nil
     ) async throws -> CompiledPrompt {
         guard shotId == "none" || shot != nil else {
             throw ToolError(
@@ -89,7 +119,13 @@ enum PromptCompiler {
         if shotId != "none", case .image = modality, let shot {
             try validateImageShotSourceContract(sourceMode: shot.sourceMode)
         }
-        let binding = try currentBinding(editor: editor, shotId: shotId)
+        let binding = try currentBinding(
+            editor: editor,
+            shotId: shotId,
+            modality: modality
+        )
+        let preserveComposition = preserveCompositionOverride
+            ?? preservesComposition(modelId: modelId)
         let composed = try await PromptComposer.compose(
             intent: intent,
             modality: modality,
@@ -101,7 +137,7 @@ enum PromptCompiler {
             lighting: lighting,
             style: style,
             shot: shot,
-            preserveComposition: preservesComposition(modelId: modelId)
+            preserveComposition: preserveComposition
         )
         let compiled = CompiledPrompt(
             text: composed.text,
@@ -123,6 +159,7 @@ enum PromptCompiler {
                 setting: setting,
                 lighting: lighting,
                 style: style,
+                preserveComposition: preserveComposition,
                 binding: binding
             )
         )
@@ -135,7 +172,9 @@ enum PromptCompiler {
         token: String,
         text: String,
         for modelId: String,
-        editor: EditorViewModel?
+        editor: EditorViewModel?,
+        allowCurrentRoutingChange: Bool = false,
+        preserveCompositionOverride: Bool? = nil
     ) async throws -> CompiledPrompt {
         guard let recipe = recipesByToken[token],
               validate(
@@ -146,8 +185,14 @@ enum PromptCompiler {
               ) else {
             throw ToolError("The compiled prompt can no longer be adapted to another model.")
         }
-        let current = try currentBinding(editor: editor, shotId: recipe.binding.shotId)
-        guard current == recipe.binding else {
+        let current = try currentBinding(
+            editor: editor,
+            shotId: recipe.binding.shotId,
+            modality: recipe.modality
+        )
+        guard current == recipe.binding
+                || (allowCurrentRoutingChange
+                    && current.hasSameShotPlan(as: recipe.binding)) else {
             throw ToolError("The project changed while the generation approval was open. Compile the current shot again.")
         }
         return try await compile(
@@ -161,7 +206,28 @@ enum PromptCompiler {
             lighting: recipe.lighting,
             style: recipe.style,
             shotId: recipe.binding.shotId,
-            shot: try currentShotProjection(editor: editor, shotId: recipe.binding.shotId)
+            shot: try currentShotProjection(editor: editor, shotId: recipe.binding.shotId),
+            preserveCompositionOverride: preserveCompositionOverride
+        )
+    }
+
+    @MainActor
+    static func rememberedCompositionModeMatches(
+        token: String,
+        text: String,
+        modelId: String,
+        preserveComposition: Bool
+    ) -> Bool {
+        guard let recipe = recipesByToken[token],
+              recipe.modelId == modelId,
+              recipe.preserveComposition == preserveComposition else {
+            return false
+        }
+        return validate(
+            token: token,
+            text: text,
+            modelId: recipe.modelId,
+            binding: recipe.binding
         )
     }
 
@@ -175,13 +241,30 @@ enum PromptCompiler {
         }
     }
 
-    /// #223 — a video model that consumes a SOURCE VIDEO is a composition-preserving pass (restyle):
-    /// it re-renders footage that already exists, so the prompt must invent nothing. Derived from the
-    /// model rather than asked for as a tool argument — the gate then applies itself, and there is no
-    /// new knob for the agent to forget or misuse.
+    /// Apply preservation during the initial compile only when every runnable exact endpoint agrees.
+    /// A mixed logical model is normalized again against the exact approved endpoint before submission.
     @MainActor
     static func preservesComposition(modelId: String) -> Bool {
-        VideoModelConfig.allModels.first { $0.id == modelId }?.requiresSourceVideo == true
+        preservesComposition(
+            bindings: ProviderManifest.bindings(forModelId: modelId),
+            activation: .current()
+        )
+    }
+
+    nonisolated static func preservesComposition(
+        bindings: [ProviderBinding],
+        activation: ProviderActivation
+    ) -> Bool {
+        let modes = bindings.compactMap { binding -> Bool? in
+            guard activation.isActive(binding.provider, binding.transport),
+                  let capabilities = binding.resolvedVideoCapabilities,
+                  capabilities.contractViolation == nil,
+                  binding.productionInputPolicy == capabilities.inputPolicy else {
+                return nil
+            }
+            return capabilities.inputPolicy.requiresSourceVideo
+        }
+        return !modes.isEmpty && modes.allSatisfy { $0 }
     }
 
     /// Resolve a model id to its composition modality (the `compile_prompt` tool only receives a model
@@ -200,7 +283,10 @@ enum PromptCompiler {
         binding: PromptBinding = .free
     ) -> String {
         let material = "\(salt)|\(binding.projectKey)|\(binding.shotId)|"
-            + "\(binding.shotFingerprint)|\(modelId)|\(text)"
+            + "\(binding.shotFingerprint)|\(binding.routeArtifactSHA256)|"
+            + "\(binding.requirementSHA256)|\(binding.capabilitiesSHA256)|"
+            + "\(binding.routeSHA256)|\(binding.referencePlanSHA256)|"
+            + "\(binding.orderedBindingsSHA256)|\(modelId)|\(text)"
         let digest = SHA256.hash(data: Data(material.utf8))
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
@@ -232,7 +318,8 @@ enum PromptCompiler {
     @MainActor
     static func currentBinding(
         editor: EditorViewModel?,
-        shotId: String
+        shotId: String,
+        modality: PromptComposer.Modality
     ) throws -> PromptBinding {
         let root = editor?.workingRoot.flatMap {
             DataRootResolver.dataRoot(of: $0)
@@ -251,6 +338,23 @@ enum PromptCompiler {
               let shot = shotlist.shots.first(where: { $0.id == shotId }) else {
             throw ToolError(
                 "No current shot '\(shotId)' is available for prompt binding."
+            )
+        }
+        if case .video = modality {
+            let routing = try PipelineProductionRouting.requireCurrent(
+                shotID: shotId,
+                dataRoot: root
+            )
+            return PromptBinding(
+                projectKey: projectKey,
+                shotId: shotId,
+                shotFingerprint: try shotFingerprint(shot),
+                routeArtifactSHA256: routing.routeArtifactSHA256,
+                requirementSHA256: routing.route.requirementSHA256,
+                capabilitiesSHA256: routing.route.capabilitiesSHA256,
+                routeSHA256: routing.route.routeSHA256,
+                referencePlanSHA256: routing.referencePlanSHA256,
+                orderedBindingsSHA256: routing.orderedBindingsSHA256
             )
         }
         return PromptBinding(
@@ -319,7 +423,11 @@ enum PromptCompiler {
             }
             return
         }
-        let binding = try currentBinding(editor: editor, shotId: shotId)
+        let binding = try currentBinding(
+            editor: editor,
+            shotId: shotId,
+            modality: modalityForModel(modelId)
+        )
         guard let token = args.string("compileToken"), validate(
             token: token,
             text: prompt,
@@ -332,5 +440,13 @@ enum PromptCompiler {
                 + "compileToken, and shotId "
                 + "here unchanged. If essential details are missing, ask the user BEFORE generating.")
         }
+    }
+}
+
+private extension PromptBinding {
+    func hasSameShotPlan(as other: PromptBinding) -> Bool {
+        projectKey == other.projectKey
+            && shotId == other.shotId
+            && shotFingerprint == other.shotFingerprint
     }
 }

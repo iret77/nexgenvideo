@@ -53,6 +53,17 @@ struct ProjectWorkingCopyTests {
 
     private func uniqueKey() -> String { "test-\(UUID().uuidString)" }
 
+    private func musicvideoBinding(
+        version: String? = nil,
+        schema: String = "musicvideo/2.0.0"
+    ) throws -> ProjectPackBinding {
+        try #require(ProjectPackBinding(
+            id: "musicvideo",
+            version: version ?? MusicvideoPack().version,
+            projectSchema: schema
+        ))
+    }
+
     @Test("open with no working copy materializes from the package (no recovery)")
     func materializesFresh() throws {
         let pkg = try tempPackage()
@@ -212,6 +223,263 @@ struct ProjectWorkingCopyTests {
         }
 
         #expect(try Data(contentsOf: settings) == before)
+    }
+
+    @Test("project transaction publishes all staged files together")
+    func projectTransactionPublishesTogether() throws {
+        let pkg = try tempPackage()
+        defer { try? FileManager.default.removeItem(at: pkg) }
+
+        try ProjectWorkingCopy.transactProject(at: pkg) { staging in
+            try Data("shotlist".utf8).write(
+                to: staging.appendingPathComponent("shotlist-proof.txt")
+            )
+            try Data("lineage".utf8).write(
+                to: staging.appendingPathComponent("lineage-proof.txt")
+            )
+        }
+
+        #expect(FileManager.default.fileExists(
+            atPath: pkg.appendingPathComponent("shotlist-proof.txt").path
+        ))
+        #expect(FileManager.default.fileExists(
+            atPath: pkg.appendingPathComponent("lineage-proof.txt").path
+        ))
+    }
+
+    @Test("failed project transaction leaves every current byte unchanged")
+    func projectTransactionRollsBack() throws {
+        enum Failure: Error { case expected }
+        let pkg = try tempPackage()
+        defer { try? FileManager.default.removeItem(at: pkg) }
+        let settings = pkg.appendingPathComponent(ProjectPluginSettings.filename)
+        let before = try Data(contentsOf: settings)
+
+        #expect(throws: Failure.self) {
+            try ProjectWorkingCopy.transactProject(at: pkg) { staging in
+                try Data("damaged".utf8).write(
+                    to: staging.appendingPathComponent(ProjectPluginSettings.filename)
+                )
+                try Data("partial".utf8).write(
+                    to: staging.appendingPathComponent("shotlist-proof.txt")
+                )
+                throw Failure.expected
+            }
+        }
+
+        #expect(try Data(contentsOf: settings) == before)
+        #expect(!FileManager.default.fileExists(
+            atPath: pkg.appendingPathComponent("shotlist-proof.txt").path
+        ))
+    }
+
+    @Test("project transaction rejects a live binding change before publish")
+    func projectTransactionRechecksCurrentBinding() throws {
+        PackCatalog.register(MusicvideoPack())
+        let pkg = try tempPackage()
+        defer { try? FileManager.default.removeItem(at: pkg) }
+        let trusted = try musicvideoBinding()
+        let sibling = try musicvideoBinding(version: "0.4.5")
+        try ProjectPluginSettings.setActivePlugin(trusted, projectURL: pkg)
+
+        #expect(throws: GateBlocked.self) {
+            try ProjectWorkingCopy.transactProject(
+                at: pkg,
+                validateCurrent: { current in
+                    _ = try ProjectPackGate.requireMutation(
+                        projectURL: current,
+                        declaredPack: trusted.id,
+                        declaredBinding: trusted
+                    )
+                }
+            ) { staging in
+                try Data("staged".utf8).write(
+                    to: staging.appendingPathComponent("shotlist-proof.txt")
+                )
+                try ProjectPluginSettings.setActivePlugin(
+                    sibling,
+                    projectURL: pkg
+                )
+            }
+        }
+
+        #expect(!FileManager.default.fileExists(
+            atPath: pkg.appendingPathComponent("shotlist-proof.txt").path
+        ))
+        #expect(ProjectPluginSettings.bindingResolution(projectURL: pkg) == .bound(sibling))
+    }
+
+    @Test("a pipeline transaction preserves concurrent files outside the pipeline")
+    func pipelineTransactionPreservesProjectFiles() throws {
+        let pkg = try tempPackage()
+        defer { try? FileManager.default.removeItem(at: pkg) }
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: pkg))
+        let mediaURL = pkg.appendingPathComponent("media/concurrent.mov")
+
+        try ProjectWorkingCopy.transactPipeline(at: dataRoot) { stagingRoot in
+            let stagedProjectHome = FrameInventory.projectHome(of: stagingRoot)
+            #expect(
+                try Data(contentsOf: stagedProjectHome.appendingPathComponent("media/saved.mov"))
+                    == Data("saved-media".utf8)
+            )
+            try Data("phase-result".utf8).write(
+                to: stagingRoot.appendingPathComponent("analysis.json")
+            )
+            try Data("provider-result".utf8).write(to: mediaURL)
+        }
+
+        #expect(try Data(contentsOf: mediaURL) == Data("provider-result".utf8))
+        #expect(
+            try Data(contentsOf: dataRoot.appendingPathComponent("analysis.json"))
+                == Data("phase-result".utf8)
+        )
+    }
+
+    @Test("a pipeline read-view clone rejects project symlinks")
+    func pipelineTransactionRejectsSymlinks() throws {
+        let pkg = try tempPackage()
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ngv-clone-outside-\(UUID().uuidString).txt"
+        )
+        defer {
+            try? FileManager.default.removeItem(at: pkg)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try Data("outside".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(
+            at: pkg.appendingPathComponent("media/linked.mov"),
+            withDestinationURL: outside
+        )
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: pkg))
+
+        #expect(throws: ProjectWorkingCopy.PersistError.self) {
+            try ProjectWorkingCopy.transactPipeline(at: dataRoot) { stagingRoot in
+                try Data("phase-result".utf8).write(
+                    to: stagingRoot.appendingPathComponent("analysis.json")
+                )
+            }
+        }
+
+        #expect(try Data(contentsOf: outside) == Data("outside".utf8))
+        #expect(!FileManager.default.fileExists(
+            atPath: dataRoot.appendingPathComponent("analysis.json").path
+        ))
+    }
+
+    @Test("working-copy transaction rejects a live binding change before publish")
+    func workingCopyTransactionRechecksCurrentBinding() throws {
+        PackCatalog.register(MusicvideoPack())
+        let pkg = try tempPackage()
+        let key = uniqueKey()
+        defer {
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        let trusted = try musicvideoBinding()
+        let sibling = try musicvideoBinding(version: "0.4.5")
+        try ProjectPluginSettings.setActivePlugin(trusted, projectURL: pkg)
+        let opened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+
+        #expect(throws: GateBlocked.self) {
+            try ProjectWorkingCopy.transactChange(
+                key: key,
+                validateCurrent: { current in
+                    _ = try ProjectPackGate.requireMutation(
+                        projectURL: current,
+                        declaredPack: trusted.id,
+                        declaredBinding: trusted
+                    )
+                }
+            ) { staging in
+                try Data("staged".utf8).write(
+                    to: staging.appendingPathComponent("shotlist-proof.txt")
+                )
+                try ProjectPluginSettings.setActivePlugin(
+                    sibling,
+                    projectURL: opened.home
+                )
+                return true
+            }
+        }
+
+        #expect(!FileManager.default.fileExists(
+            atPath: opened.home.appendingPathComponent("shotlist-proof.txt").path
+        ))
+        #expect(ProjectPluginSettings.bindingResolution(projectURL: opened.home) == .bound(sibling))
+    }
+
+    @Test("package persist rechecks the source binding at the commit boundary")
+    func persistRechecksSourceBinding() throws {
+        PackCatalog.register(MusicvideoPack())
+        let pkg = try tempPackage()
+        let key = uniqueKey()
+        defer {
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        let trusted = try musicvideoBinding()
+        let sibling = try musicvideoBinding(version: "0.4.5")
+        try ProjectPluginSettings.setActivePlugin(trusted, projectURL: pkg)
+        _ = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        let timelineURL = pkg.appendingPathComponent(Project.timelineFilename)
+        let before = try Data(contentsOf: timelineURL)
+
+        #expect(throws: GateBlocked.self) {
+            try ProjectWorkingCopy.persist(
+                key: key,
+                to: pkg,
+                validateSourceBeforeCommit: { current in
+                    try ProjectPluginSettings.setActivePlugin(
+                        sibling,
+                        projectURL: current
+                    )
+                    _ = try ProjectPackGate.requireMutation(
+                        projectURL: current,
+                        declaredPack: trusted.id,
+                        declaredBinding: trusted
+                    )
+                }
+            )
+        }
+
+        #expect(try Data(contentsOf: timelineURL) == before)
+        #expect(ProjectPluginSettings.bindingResolution(projectURL: pkg) == .bound(trusted))
+    }
+
+    @Test("a recovered working copy with a different exact binding is not opened")
+    func recoveredBindingRemainsUntrusted() throws {
+        PackCatalog.register(MusicvideoPack())
+        let pkg = try tempPackage()
+        let trusted = try musicvideoBinding()
+        let sibling = try musicvideoBinding(version: "0.4.5")
+        try ProjectPluginSettings.setActivePlugin(trusted, projectURL: pkg)
+        let id = try #require(ProjectIdentity.existingUUID(for: pkg))
+        let key = "p-\(id)"
+        let first = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        try ProjectPluginSettings.setActivePlugin(
+            sibling,
+            projectURL: first.home
+        )
+        try ProjectWorkingCopy.markDirty(key: key)
+
+        let editor = EditorViewModel()
+        editor.projectURL = pkg
+        defer {
+            editor.releaseWorkingCopy()
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+
+        #expect(editor.workingRoot == nil)
+        #expect(!editor.recoveredUnsavedWork)
+        #expect(editor.declaredPluginBinding == trusted)
+        #expect(
+            ProjectPluginSettings.bindingResolution(projectURL: first.home)
+                == .bound(sibling)
+        )
+        #expect(throws: ProjectWorkingCopy.PersistError.self) {
+            _ = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        }
     }
 
     @Test("the package declaration stays independent from live working-copy verification")

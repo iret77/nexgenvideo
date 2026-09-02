@@ -11,6 +11,7 @@ struct ToolDefinitionContractTests {
             "apply_effect.effects[].params": "number",
             "run_provider_tool.arguments": "string",
             "save_frame_audit.checks": "object",
+            "write_phase_extension.payload": "json",
         ]
         var failures: [String] = []
         var seenDynamicMaps: Set<String> = []
@@ -31,6 +32,28 @@ struct ToolDefinitionContractTests {
         }
         #expect(failures.isEmpty)
         #expect(seenDynamicMaps == Set(dynamicMaps.keys))
+    }
+
+    @Test("show_blocks advertises the same versioned closed variants the executor enforces")
+    func showBlocksSchemaIsVersionedAndClosed() throws {
+        let tool = try #require(
+            ToolDefinitions.all.first { $0.name == .showBlocks }
+        )
+        #expect(Set(tool.inputSchema["required"] as? [String] ?? []) == ["version", "blocks"])
+        let properties = try #require(tool.inputSchema["properties"] as? [String: Any])
+        let version = try #require(properties["version"] as? [String: Any])
+        #expect(version["enum"] as? [String] == [AgentBlocks.currentVersion])
+        let blocks = try #require(properties["blocks"] as? [String: Any])
+        #expect(blocks["maxItems"] as? Int == AgentBlocks.maxBlocks)
+        let items = try #require(blocks["items"] as? [String: Any])
+        let variants = try #require(items["anyOf"] as? [[String: Any]])
+        #expect(variants.count == 5)
+        for variant in variants {
+            #expect(variant["additionalProperties"] as? Bool == false)
+            #expect((variant["required"] as? [String])?.contains("type") == true)
+            let fields = try #require(variant["properties"] as? [String: Any])
+            #expect(fields["symbol"] == nil)
+        }
     }
 
     @Test("unknown keys are rejected at the tool boundary")
@@ -117,7 +140,10 @@ struct ToolDefinitionContractTests {
         ])
         #expect(ToolHarness.textOf(negativeCost).contains("expected at least 0"))
 
-        let empty = await harness.runRaw("show_blocks", args: ["blocks": []])
+        let empty = await harness.runRaw("show_blocks", args: [
+            "version": AgentBlocks.currentVersion,
+            "blocks": [],
+        ])
         #expect(ToolHarness.textOf(empty).contains("expected at least 1 item"))
 
         let unboundGeneration = await harness.runRaw(
@@ -417,6 +443,7 @@ struct ToolDefinitionContractTests {
             .attachSong, .copyProjectFile, .extractScene3dPovs,
             .writeAnalysisInterpretation, .writeBrief, .writeProductionDesign,
             .writeTreatment, .writeStoryboard, .writeBible, .writeShotlist,
+            .writePhaseExtension, .nextRenderShot,
             .cropToAspect, .assembleTimeline, .runSanity,
         ]
 
@@ -473,7 +500,11 @@ struct ToolDefinitionContractTests {
         if schema["type"] as? String == "object" {
             if let additional = schema["additionalProperties"] as? Bool {
                 if additional {
-                    failures.append("\(path): additionalProperties must not be true")
+                    if dynamicMaps[path] == "json" {
+                        seenDynamicMaps.insert(path)
+                    } else {
+                        failures.append("\(path): additionalProperties must not be true")
+                    }
                 }
             } else if let additional = schema["additionalProperties"] as? [String: Any] {
                 guard let expectedType = dynamicMaps[path] else {

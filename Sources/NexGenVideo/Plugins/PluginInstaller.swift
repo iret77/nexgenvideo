@@ -142,6 +142,22 @@ enum PluginInstaller {
         if let reason = PluginGate.evaluate(info: info, appVersion: appVersion) {
             throw InstallError.gate(reason)
         }
+        do {
+            _ = try PhaseContractBundleLoader.prepare(
+                identity: PhaseContractBundleIdentity(
+                    id: info.id,
+                    version: info.version,
+                    engineContract: info.engineContract,
+                    pipelineContractVersion: info.pipelineContractVersion,
+                    resourceRoot: info.resourceRoot
+                ),
+                bundleURL: unpacked
+            )
+        } catch {
+            throw InstallError.gate(
+                .malformedMetadata(error.localizedDescription)
+            )
+        }
         if let reason = PluginSignature.verify(bundleURL: unpacked, host: PluginSignature.hostSigningState()) {
             throw InstallError.gate(reason)
         }

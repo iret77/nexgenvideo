@@ -131,6 +131,7 @@ extension EditorViewModel {
         note: String? = nil
     ) throws {
         guard let transactionId = authorization.transactionId else { return }
+        try authorization.projectMutationScope?.requireCurrent(editor: self)
         let previousLog = generationLog
         generationLog.version = 2
         generationLog.spendEvents.append(GenerationSpendEvent(

@@ -32,6 +32,8 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
     var resumeSessionId: String?
     /// The in-app chat that owns this embedded runtime's MCP calls.
     var appSessionId: UUID?
+    /// The subprocess lifetime that owns suspension and retry state for its MCP calls.
+    var agentTurnId: UUID?
 
     init(
         workingDirectory: URL,
@@ -44,7 +46,8 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         appendSystemPrompt: String? = nil,
         sessionId: String? = nil,
         resumeSessionId: String? = nil,
-        appSessionId: UUID? = nil
+        appSessionId: UUID? = nil,
+        agentTurnId: UUID? = nil
     ) {
         self.workingDirectory = workingDirectory
         self.pluginDirectories = pluginDirectories
@@ -57,6 +60,7 @@ struct ClaudeCodeLaunchConfig: Sendable, Equatable {
         self.sessionId = sessionId
         self.resumeSessionId = resumeSessionId
         self.appSessionId = appSessionId
+        self.agentTurnId = agentTurnId
     }
 }
 
@@ -68,11 +72,23 @@ enum ClaudeCodeLaunch {
     static func mcpConfigJSON(
         port: Int,
         appSessionId: UUID? = nil,
+        agentTurnId: UUID? = nil,
         pluginServers: [String: String] = [:]
     ) -> String {
-        let headers = appSessionId.map {
-            ",\"headers\":{\"\(MCPHTTPServer.agentSessionHeader)\":\"\($0.uuidString)\"}"
-        } ?? ""
+        var headerFields: [String] = []
+        if let appSessionId {
+            headerFields.append(
+                "\"\(MCPHTTPServer.agentSessionHeader)\":\"\(appSessionId.uuidString)\""
+            )
+        }
+        if let agentTurnId {
+            headerFields.append(
+                "\"\(MCPHTTPServer.agentTurnHeader)\":\"\(agentTurnId.uuidString)\""
+            )
+        }
+        let headers = headerFields.isEmpty
+            ? ""
+            : ",\"headers\":{\(headerFields.joined(separator: ","))}"
         var entries = [
             "\"nexgen\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:\(port)/mcp\"\(headers)}"
         ]
@@ -95,6 +111,7 @@ enum ClaudeCodeLaunch {
             "--mcp-config", mcpConfigJSON(
                 port: cfg.mcpPort,
                 appSessionId: cfg.appSessionId,
+                agentTurnId: cfg.agentTurnId,
                 pluginServers: cfg.pluginMcpServers
             ),
             "--strict-mcp-config",

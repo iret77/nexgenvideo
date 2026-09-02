@@ -27,6 +27,8 @@ private struct ProjectPackageSnapshot: Sendable {
     var chatSessionFiles: [(name: String, data: Data)]
     var workingCopyKey: String?
     var mintNewIdentity: Bool
+    var packDeclaration: ProjectPackGate.MutationDeclaration
+    var packVerificationRoot: URL
 }
 
 private enum PackBindingFinalization: Equatable {
@@ -58,6 +60,8 @@ final class VideoProject: NSDocument {
     private nonisolated(unsafe) var snapshotSourceProjectURL: URL?
     private nonisolated(unsafe) var snapshotWorkingCopyKey: String?
     private nonisolated(unsafe) var snapshotMintNewIdentity = false
+    private nonisolated(unsafe) var snapshotPackDeclaration: ProjectPackGate.MutationDeclaration?
+    private nonisolated(unsafe) var snapshotPackVerificationRoot: URL?
     private nonisolated(unsafe) var snapshotPreparedForWrite = false
     private nonisolated(unsafe) var snapshotCaptureError: Error?
     private var checkpointFailurePresented = false
@@ -223,7 +227,7 @@ final class VideoProject: NSDocument {
             completionHandler(blocked)
             return
         }
-        captureSaveSnapshot()
+        captureSaveSnapshot(verificationRoot: editorViewModel.workingRoot ?? fileURL ?? url)
         if let captureError = snapshotCaptureError {
             clearSaveSnapshot()
             completionHandler(captureError)
@@ -272,12 +276,24 @@ final class VideoProject: NSDocument {
     /// reshape the project.
     @MainActor
     private func packUnavailable(savingTo url: URL) -> Error? {
+        let verificationRoot = editorViewModel.workingRoot ?? fileURL ?? url
         switch ProjectPackGate.evaluate(
-            projectURL: editorViewModel.workingRoot ?? fileURL ?? url,
+            projectURL: verificationRoot,
             declaredPack: editorViewModel.declaredPluginName
         ) {
         case .satisfied:
-            return nil
+            do {
+                _ = try ProjectPackGate.requireLiveMutation(
+                    projectURL: verificationRoot,
+                    declaredPack: editorViewModel.declaredPluginName,
+                    declaredBinding: editorViewModel.declaredPluginBinding
+                )
+                return nil
+            } catch {
+                return ProjectFormatSettingsUnavailableError(
+                    problem: "do not match the format pack trusted by this session"
+                )
+            }
         case .unreadable:
             return ProjectFormatSettingsUnavailableError()
         case .settingsMissing:
@@ -315,7 +331,9 @@ final class VideoProject: NSDocument {
                 throw blocked
             }
             MainActor.assumeIsolated {
-                captureSaveSnapshot()
+                captureSaveSnapshot(
+                    verificationRoot: editorViewModel.workingRoot ?? fileURL ?? url
+                )
                 snapshotSourceProjectURL = fileURL
             }
         }
@@ -326,8 +344,10 @@ final class VideoProject: NSDocument {
         defer {
             clearSaveSnapshot()
         }
-        guard let data = snapshotTimeline else {
-            Log.project.error("save: snapshotTimeline missing at write()")
+        guard let data = snapshotTimeline,
+              let packDeclaration = snapshotPackDeclaration,
+              let packVerificationRoot = snapshotPackVerificationRoot else {
+            Log.project.error("save: prepared snapshot is incomplete at write()")
             throw CocoaError(.fileWriteUnknown)
         }
 
@@ -339,15 +359,22 @@ final class VideoProject: NSDocument {
                 thumbnail: snapshotThumbnail,
                 chatSessionFiles: snapshotChatSessionFiles,
                 workingCopyKey: snapshotWorkingCopyKey,
-                mintNewIdentity: snapshotMintNewIdentity
+                mintNewIdentity: snapshotMintNewIdentity,
+                packDeclaration: packDeclaration,
+                packVerificationRoot: packVerificationRoot
             ),
             to: url,
             sourceURL: snapshotSourceProjectURL
         )
     }
 
-    private func captureSaveSnapshot() {
+    private func captureSaveSnapshot(verificationRoot: URL) {
         clearSaveSnapshot()
+        snapshotPackDeclaration = ProjectPackGate.MutationDeclaration(
+            packName: editorViewModel.declaredPluginName,
+            binding: editorViewModel.declaredPluginBinding
+        )
+        snapshotPackVerificationRoot = verificationRoot
         do {
             snapshotTimeline = try JSONEncoder().encode(editorViewModel.timeline)
             snapshotManifest = try JSONEncoder().encode(editorViewModel.mediaManifest)
@@ -383,6 +410,8 @@ final class VideoProject: NSDocument {
         snapshotSourceProjectURL = nil
         snapshotWorkingCopyKey = nil
         snapshotMintNewIdentity = false
+        snapshotPackDeclaration = nil
+        snapshotPackVerificationRoot = nil
         snapshotCaptureError = nil
         snapshotPreparedForWrite = false
     }
@@ -431,6 +460,14 @@ final class VideoProject: NSDocument {
     }
 
     private nonisolated static func writeProjectPackage(_ snapshot: ProjectPackageSnapshot, to packageURL: URL, sourceURL: URL?) throws {
+        let validateBinding = {
+            _ = try ProjectPackGate.requireMutation(
+                projectURL: snapshot.packVerificationRoot,
+                declaredPack: snapshot.packDeclaration.packName,
+                declaredBinding: snapshot.packDeclaration.binding
+            )
+        }
+        try validateBinding()
         if let key = snapshot.workingCopyKey {
             try ProjectWorkingCopy.checkpoint(
                 key: key,
@@ -445,7 +482,10 @@ final class VideoProject: NSDocument {
             try ProjectWorkingCopy.persist(
                 key: key,
                 to: packageURL,
-                mintNewIdentity: snapshot.mintNewIdentity
+                mintNewIdentity: snapshot.mintNewIdentity,
+                validateSourceBeforeCommit: { _ in
+                    try validateBinding()
+                }
             )
             return
         }
@@ -495,7 +535,12 @@ final class VideoProject: NSDocument {
                 throw ProjectWorkingCopy.PersistError.identityNotRegenerated
             }
         }
-        try ProjectWorkingCopy.commitStagedPackage(staging, to: packageURL, fm: fm)
+        try ProjectWorkingCopy.commitStagedPackage(
+            staging,
+            to: packageURL,
+            fm: fm,
+            validateBeforeCommit: validateBinding
+        )
     }
 
     private nonisolated static func writeChatDirectory(_ files: [(name: String, data: Data)], to packageURL: URL, fm: FileManager) throws {

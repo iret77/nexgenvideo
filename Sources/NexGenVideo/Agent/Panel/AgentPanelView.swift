@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AgentPanelView: View {
     @Environment(EditorViewModel.self) var editor
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let starterPrompts: [AgentStarterPrompt] = [
         AgentStarterPrompt(
@@ -65,59 +66,15 @@ struct AgentPanelView: View {
     }
 
     var body: some View {
-        let entries = transcriptEntries
+        let turns = transcriptTurns
         VStack(spacing: AppTheme.Spacing.none) {
-            floatingTabBar
-            messageList(entries: entries)
-            if let approval = service.pendingSpendApproval {
-                SpendApprovalCard(
-                    approval: approval,
-                    error: service.spendApprovalError,
-                    isWorking: service.spendApprovalIsRunning,
-                    onApprove: { option in
-                        Task { await service.approveSpend(option) }
-                    },
-                    onDecline: { service.declineSpend() },
-                    onRefresh: { service.refreshSpendApproval() }
-                )
-                .padding(.bottom, AppTheme.Spacing.xs)
-            } else if let gate = service.pendingGateApproval,
-                      !pendingGateIsBlockedByPhaseRun {
-                GateApprovalCard(
-                    approval: gate,
-                    error: service.gateApprovalError,
-                    surface: editor.uiContract?.phases[gate.phase]?.surface,
-                    isWorking: service.gateApprovalIsWriting,
-                    onApprove: {
-                        Task { await service.resolveGate(.approved) }
-                    },
-                    onDecline: {
-                        Task { await service.resolveGate(.declined) }
-                    }
-                )
-                .padding(.bottom, AppTheme.Spacing.xs)
-            } else if let dialog = service.pendingDialog {
-                @Bindable var service = service
-                AgentDialogCard(
-                    dialog: dialog,
-                    externalSelections: $service.dialogChoiceSelections,
-                    accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
-                    libraryAssets: editor.agentPickableMediaAssets,
-                    libraryAssetRoles: editor.mediaManifest.intakeRoleByAssetID,
-                    submissionError: service.dialogSubmissionError,
-                    isSubmitting: service.submittingDialogID == dialog.id,
-                    onSubmit: { result in service.submitDialog(dialog, result: result) },
-                    onComplete: { service.completeDialog(dialog) },
-                    onCancel: { service.cancelDialog() }
-                )
-                .id(dialog.id)
-                .padding(.bottom, AppTheme.Spacing.xs)
-            }
+            conversationBar
+            messageList(turns: turns)
             AgentLiveStatusView(
                 status: liveStatus,
                 onCancel: { service.cancelRunningSpend() }
             )
-            footer
+            composerDock
         }
         .onAppear {
             refreshDiscoveredPlugins()
@@ -132,6 +89,11 @@ struct AgentPanelView: View {
         .onChange(of: packProgress) { _, _ in refreshDiscoveredPlugins() }
         .onChange(of: hangContext, initial: true) { _, context in
             MainThreadHangWatchdog.shared.update(context: context)
+        }
+        .onChange(of: surfaceState.dockOwner) { previous, current in
+            if previous != .composer, current == .composer {
+                service.restoreComposerFocus()
+            }
         }
         .onDisappear {
             MainThreadHangWatchdog.shared.resetContext()
@@ -170,8 +132,36 @@ struct AgentPanelView: View {
         )
     }
 
+    private var surfaceState: AgentSurfaceState {
+        let snapshot = editor.pipelinePhaseExecution.snapshot
+        let activityVisible = runningTranscriptActivity != nil
+        return AgentSurfaceState.resolve(.init(
+            hasSpendApproval: service.pendingSpendApproval != nil,
+            hasGateApproval: service.pendingGateApproval != nil,
+            hasDialog: service.pendingDialog != nil,
+            hasSpendRun: service.currentSpendRun != nil,
+            phaseIsRunning: snapshot?.isRunning == true,
+            phaseHasTranscriptActivity: activityVisible,
+            phaseHasFailed: {
+                if case .failed? = snapshot?.status { return true }
+                return false
+            }(),
+            hasHostFollowUp: service.hasPendingHostFollowUp,
+            isStreaming: service.isStreaming,
+            streamHasTranscriptActivity: activityVisible,
+            hasTurnFailure: service.streamError != nil && !showsAuthenticationError,
+            isCheckingBackend: service.isCheckingBackend,
+            needsBackendRecovery: !service.isCheckingBackend
+                && (!service.canStream || showsAuthenticationError)
+        ))
+    }
+
     private var liveStatus: AgentLiveStatus {
-        if let run = service.currentSpendRun {
+        switch surfaceState.statusOwner {
+        case .spendRun:
+            guard let run = service.currentSpendRun else {
+                return AgentLiveStatus(state: .working, title: "Generation in progress")
+            }
             return AgentLiveStatus(
                 state: .working,
                 title: run.cancellationRequested
@@ -181,15 +171,12 @@ struct AgentPanelView: View {
                 canCancel: true,
                 cancellationRequested: run.cancellationRequested
             )
-        }
-        if let snapshot = editor.pipelinePhaseExecution.snapshot,
-           snapshot.isRunning {
-            if runningTranscriptActivity != nil {
-                return AgentLiveStatus(
-                    state: .streaming,
-                    title: "Agent is working",
-                    detail: "Current operation appears in the transcript"
-                )
+        case .phaseRun:
+            guard let snapshot = editor.pipelinePhaseExecution.snapshot else {
+                return AgentLiveStatus(state: .working, title: "Working")
+            }
+            if surfaceState.statusHasTranscriptActivity {
+                return AgentLiveStatus(state: .streaming, title: "Working")
             }
             let presentation = PipelinePhaseProgressPresentation(
                 stageID: snapshot.stageID
@@ -202,147 +189,79 @@ struct AgentPanelView: View {
                 title: presentation.title,
                 detail: "\(PhaseDisplay.label(snapshot.phase))\(count)"
             )
-        }
-        if service.gateApprovalIsWriting {
-            return AgentLiveStatus(
-                state: .working,
-                title: "Saving approval",
-                detail: service.pendingGateApproval.map {
-                    PhaseDisplay.label($0.phase)
-                } ?? "Updating the pipeline gate"
-            )
-        }
-        if service.submittingDialogID != nil {
-            return AgentLiveStatus(
-                state: .working,
-                title: "Attaching files",
-                detail: service.pendingDialog?.title ?? "Saving your workflow input"
-            )
-        }
-        if let error = service.dialogSubmissionError {
+        case .phaseFailure:
             return AgentLiveStatus(
                 state: .failed,
-                title: "Attachment failed",
-                detail: error
+                title: "Stopped"
             )
-        }
-        if let dialog = service.pendingDialog {
-            return AgentLiveStatus(
-                state: .waiting,
-                title: "Waiting for your input",
-                detail: dialog.title
-            )
-        }
-        if let gate = service.pendingGateApproval {
-            return AgentLiveStatus(
-                state: .waiting,
-                title: "Waiting for your approval",
-                detail: PhaseDisplay.label(gate.phase)
-            )
-        }
-        if service.pendingSpendApproval != nil {
-            return AgentLiveStatus(
-                state: .waiting,
-                title: "Waiting for spend approval",
-                detail: "Choose a model or decline the request"
-            )
-        }
-        if case .failed(let message)? = editor.pipelinePhaseExecution.snapshot?.status {
-            return AgentLiveStatus(
-                state: .failed,
-                title: "Pipeline phase failed",
-                detail: message
-            )
-        }
-        if let error = service.streamError {
-            return AgentLiveStatus(
-                state: .failed,
-                title: "Agent stopped",
-                detail: error.localizedDescription
-            )
-        }
-        if service.hasPendingHostFollowUp {
+        case .actionRequired:
+            return AgentLiveStatus(state: .waiting, title: "Action required")
+        case .hostFollowUp:
             return AgentLiveStatus(
                 state: .working,
-                title: "Resuming agent",
-                detail: "Continuing from the completed host action"
+                title: "Resuming agent"
             )
-        }
-        if service.isStreaming {
-            if runningTranscriptActivity != nil {
-                return AgentLiveStatus(
-                    state: .streaming,
-                    title: "Agent is working",
-                    detail: "Current operation appears in the transcript"
-                )
+        case .stream:
+            if surfaceState.statusHasTranscriptActivity {
+                return AgentLiveStatus(state: .streaming, title: "Working")
             }
             return AgentLiveStatus(
                 state: .working,
-                title: "Agent is working",
-                detail: "The current task is still running"
+                title: "Agent is working"
             )
+        case .turnFailure:
+            return AgentLiveStatus(state: .failed, title: "Stopped")
+        case .backendChecking:
+            return AgentLiveStatus(state: .working, title: "Checking Agent")
+        case .backendUnavailable:
+            return AgentLiveStatus(state: .unavailable, title: "Agent unavailable")
+        case .ready:
+            return AgentLiveStatus(state: .ready, title: "Ready")
         }
-        if service.isCheckingBackend {
-            return AgentLiveStatus(
-                state: .working,
-                title: service.backendStatusCheckLabel,
-                detail: "Checking whether the agent is available"
-            )
-        }
-        if !service.canStream {
-            return AgentLiveStatus(
-                state: .unavailable,
-                title: "Agent unavailable",
-                detail: service.backendSetupMessage
-            )
-        }
-        return AgentLiveStatus(
-            state: .ready,
-            title: "Ready",
-            detail: "No task is running"
-        )
     }
 
     private var runningTranscriptActivity: AgentActivity? {
-        transcriptEntries.compactMap { entry -> AgentActivity? in
-            guard case .activity(let activity) = entry,
-                  activity.isRunning else { return nil }
-            return activity
-        }.last
+        transcriptTurns
+            .flatMap(\.items)
+            .compactMap { item -> AgentActivity? in
+                guard case .activity(let activity) = item,
+                      activity.isRunning else { return nil }
+                return activity
+            }
+            .last
     }
 
-    private var floatingTabBar: some View {
-        GlassEffectContainer {
-            HStack(spacing: AppTheme.Spacing.xs) {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: AppTheme.Spacing.xxs) {
-                            ForEach(service.openSessions) { session in
-                                ChatTabView(
-                                    session: session,
-                                    isActive: session.id == service.currentSessionId,
-                                    onSelect: { service.selectSession(session.id) },
-                                    onClose: { service.closeTab(session.id) }
-                                )
-                                .id(session.id)
-                            }
-                        }
-                    }
-                    .onChange(of: service.currentSessionId) { _, new in
-                        guard let new else { return }
-                        withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
-                            proxy.scrollTo(new, anchor: .center)
-                        }
-                    }
-                }
-                scrollToLatestButton
-                newTabButton
-                pluginLauncherButton
-                historyButton
+    private var transcriptOwnsTerminalError: Bool {
+        let terminalActivity = transcriptTurns
+            .flatMap(\.items)
+            .compactMap { item -> AgentActivity? in
+                guard case .activity(let activity) = item else { return nil }
+                return activity
             }
-            .padding(.horizontal, AppTheme.Spacing.sm)
+            .last
+        guard let activity = terminalActivity else { return false }
+        return activity.steps.contains { toolResults[$0.id]?.isError == true }
+    }
+
+    private var conversationBar: some View {
+        GlassEffectContainer {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: AppTheme.Spacing.xs) {
+                    historyButton
+                        .frame(minWidth: AppTheme.ComponentSize.agentConversationTitleMinWidth)
+                    Spacer(minLength: AppTheme.Spacing.none)
+                    conversationActions(equalWidth: false)
+                }
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    historyButton
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    conversationActions(equalWidth: true)
+                }
+            }
+            .padding(.horizontal, AppTheme.Spacing.smMd)
+            .padding(.vertical, AppTheme.Spacing.xs)
             .frame(maxWidth: .infinity)
-            .frame(height: AppTheme.Layout.panelHeaderHeight)
+            .frame(minHeight: AppTheme.Layout.panelHeaderHeight)
             .glassEffect(.regular, in: Rectangle())
             .overlay(alignment: .bottom) {
                 Rectangle()
@@ -352,42 +271,50 @@ struct AgentPanelView: View {
         }
     }
 
-    private var newTabButton: some View {
-        Button { service.newChat() } label: {
-            Image(systemName: "plus")
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
+    private func conversationActions(equalWidth: Bool) -> some View {
+        HStack(spacing: AppTheme.Spacing.xs) {
+            latestButton.frame(maxWidth: equalWidth ? .infinity : nil)
+            newConversationButton.frame(maxWidth: equalWidth ? .infinity : nil)
+            utilityButton.frame(maxWidth: equalWidth ? .infinity : nil)
         }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .help("New chat")
+        .frame(maxWidth: equalWidth ? .infinity : nil)
     }
 
-    private var scrollToLatestButton: some View {
+    private var newConversationButton: some View {
+        Button { service.newChat() } label: {
+            Label("New", systemImage: "plus")
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+        }
+        .buttonStyle(.capsule(.secondary, size: .small))
+        .controlSize(.small)
+        .disabled(service.isComposerBlocked || service.isStreaming)
+        .accessibilityLabel("New conversation")
+    }
+
+    private var latestButton: some View {
         Button {
             isUserPinnedAway = false
             programmaticScrollPending = true
             scrollToLatestRequest &+= 1
         } label: {
-            Image(systemName: "arrow.down")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
-                .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
+            Label("Latest", systemImage: "arrow.down")
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
         }
-        .buttonStyle(.plain)
-        .focusable(false)
+        .buttonStyle(.capsule(.secondary, size: .small))
+        .controlSize(.small)
         .opacity(isUserPinnedAway ? AppTheme.Opacity.opaque : AppTheme.Opacity.transparent)
         .allowsHitTesting(isUserPinnedAway)
         .accessibilityHidden(!isUserPinnedAway)
-        .help("Scroll to latest")
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: AppTheme.Anim.quick),
+            value: isUserPinnedAway
+        )
     }
 
-    @State private var showHistory = false
     @State private var isUserPinnedAway = false
     @State private var programmaticScrollPending = false
     @State private var scrollToLatestRequest: UInt = 0
-    @State private var showPluginLauncher = false
+    @State private var showUtilities = false
     @State private var discoveredPlugins: [PluginCommandCatalog.PluginInfo] = []
 
     /// The launcher shows when the active pack exposes at least one starter.
@@ -395,32 +322,28 @@ struct AgentPanelView: View {
         discoveredPlugins.contains { !$0.commands.isEmpty }
     }
 
-    @ViewBuilder
-    private var pluginLauncherButton: some View {
-        if pluginLauncherAvailable {
-            Button {
-                refreshDiscoveredPlugins()
-                showPluginLauncher.toggle()
-            } label: {
-                Image(systemName: "puzzlepiece.extension")
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .disabled(service.isComposerBlocked || service.isStreaming)
-            .help("Workflows")
-            .popover(isPresented: $showPluginLauncher, arrowEdge: .top) {
-                PluginLauncherPopover(plugins: discoveredPlugins) { command in
-                    runPluginCommand(command)
-                }
-            }
+    private var utilityButton: some View {
+        Button {
+            refreshDiscoveredPlugins()
+            showUtilities.toggle()
+        } label: {
+            Label("More", systemImage: "ellipsis")
+                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+        }
+        .buttonStyle(.capsule(.secondary, size: .small))
+        .controlSize(.small)
+        .popover(isPresented: $showUtilities, arrowEdge: .top) {
+            PluginLauncherPopover(
+                plugins: pluginLauncherAvailable ? discoveredPlugins : [],
+                canCloseConversation: !service.isComposerBlocked && !service.isStreaming,
+                onRun: runPluginCommand,
+                onCloseConversation: closeCurrentConversation
+            )
         }
     }
 
     private func runPluginCommand(_ command: PluginCommandCatalog.PluginCommand) {
-        showPluginLauncher = false
+        showUtilities = false
         if command.requiresArgument {
             service.prefillInput(command.command + " ")
         } else {
@@ -428,25 +351,96 @@ struct AgentPanelView: View {
         }
     }
 
+    private func closeCurrentConversation() {
+        showUtilities = false
+        guard let id = service.currentSessionId,
+              !service.isComposerBlocked,
+              !service.isStreaming else { return }
+        service.closeTab(id)
+    }
+
     private var historyButton: some View {
-        Button { showHistory.toggle() } label: {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
+        Button { editor.agentConversationHistoryPresented.toggle() } label: {
+            HStack(spacing: AppTheme.Spacing.xs) {
+                Image(systemName: "clock.arrow.circlepath")
+                Text(currentConversationTitle)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(1)
+                if let cue = currentConversationCue {
+                    Label(cue.label, systemImage: cue.symbol)
+                        .font(.system(size: AppTheme.FontSize.xxs))
+                        .foregroundStyle(cue.color)
+                        .lineLimit(1)
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(
+                        size: AppTheme.FontSize.micro,
+                        weight: AppTheme.FontWeight.semibold
+                    ))
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
+            }
+            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .help("Chat history")
-        .popover(isPresented: $showHistory, arrowEdge: .top) {
+        .buttonStyle(.capsule(.secondary, size: .small))
+        .controlSize(.small)
+        .accessibilityLabel("Switch conversation, \(currentConversationTitle)")
+        .accessibilityValue(currentConversationCue?.label ?? "Current")
+        .popover(isPresented: Binding(
+            get: { editor.agentConversationHistoryPresented },
+            set: { editor.agentConversationHistoryPresented = $0 }
+        ), arrowEdge: .top) {
             ChatHistoryList(
                 sessions: service.sessions.sorted { $0.updatedAt > $1.updatedAt },
                 currentId: service.currentSessionId,
+                cuesBySessionID: conversationCues,
+                canSwitch: !service.isComposerBlocked && !service.isStreaming,
                 onSelect: { id in
                     service.selectSession(id)
-                    showHistory = false
+                    editor.agentConversationHistoryPresented = false
                 },
                 onDelete: { service.deleteSession($0) }
+            )
+        }
+    }
+
+    private var currentConversationTitle: String {
+        guard let id = service.currentSessionId else { return "New conversation" }
+        return service.sessions.first(where: { $0.id == id })?.title ?? "New conversation"
+    }
+
+    private var currentConversationCue: ChatHistoryCue? {
+        guard let id = service.currentSessionId else { return nil }
+        return conversationCues[id]
+    }
+
+    private var conversationCues: [UUID: ChatHistoryCue] {
+        Dictionary(uniqueKeysWithValues: service.sessions.compactMap { session in
+            guard let attention = service.sessionAttention(for: session.id) else { return nil }
+            return (session.id, Self.historyCue(for: attention))
+        })
+    }
+
+    private static func historyCue(for attention: ChatSessionAttention) -> ChatHistoryCue {
+        switch attention {
+        case .actionRequired:
+            return ChatHistoryCue(
+                symbol: "exclamationmark.circle.fill",
+                color: AppTheme.Status.warningColor,
+                label: "Needs action"
+            )
+        case .running:
+            return ChatHistoryCue(
+                symbol: "circle.fill",
+                color: AppTheme.Status.successColor,
+                label: "Running"
+            )
+        case .unreadResult:
+            return ChatHistoryCue(
+                symbol: "circle.fill",
+                color: AppTheme.Accent.primary,
+                label: "Unread result"
             )
         }
     }
@@ -471,16 +465,7 @@ struct AgentPanelView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-        }
-    }
-
-    @ViewBuilder
-    private var byokIndicator: some View {
-        if service.backend == .anthropicAPI && service.hasApiKey {
-            Text("using API key")
-                .font(.system(size: AppTheme.FontSize.xs).italic())
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .help("Streaming through your Anthropic API key (BYOK)")
+            .help("Model for this conversation · Anthropic API key")
         }
     }
 
@@ -496,8 +481,11 @@ struct AgentPanelView: View {
         return out
     }
 
-    private var transcriptEntries: [AgentTranscriptEntry] {
-        AgentTranscriptProjection.entries(messages: service.messages, isStreaming: service.isStreaming)
+    private var transcriptTurns: [AgentTranscriptTurn] {
+        AgentTranscriptProjection.turns(
+            messages: service.messages,
+            isStreaming: service.isStreaming
+        )
     }
 
     private var showsAuthenticationError: Bool {
@@ -505,20 +493,13 @@ struct AgentPanelView: View {
         return false
     }
 
-    private var showsBackendSetupNotice: Bool {
-        !service.canStream && !showsAuthenticationError
-    }
-
-    private func messageList(entries: [AgentTranscriptEntry]) -> some View {
+    private func messageList(turns: [AgentTranscriptTurn]) -> some View {
         Group {
-            if entries.isEmpty && !service.isStreaming {
+            if turns.isEmpty && !service.isStreaming {
                 // Scrollable: in a short pane (Edit-focus sidebar) a fixed empty state would
                 // overflow centered — covering the sidebar tabs above and running out below.
                 ScrollView {
                     VStack(spacing: AppTheme.Spacing.smMd) {
-                        if showsBackendSetupNotice {
-                            backendSetupNotice
-                        }
                         emptyState
                         errorBanner
                     }
@@ -528,7 +509,7 @@ struct AgentPanelView: View {
                     .padding(.bottom, AppTheme.Spacing.md)
                 }
             } else {
-                scrollingMessages(entries: entries)
+                scrollingMessages(turns: turns)
             }
         }
         .onChange(of: service.currentSessionId) { _, _ in
@@ -537,28 +518,16 @@ struct AgentPanelView: View {
         }
     }
 
-    private func scrollingMessages(entries: [AgentTranscriptEntry]) -> some View {
+    private func scrollingMessages(turns: [AgentTranscriptTurn]) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
                     let results = toolResults
-                    ForEach(entries) { entry in
-                        switch entry {
-                        case .message(let message):
-                            AgentMessageView(message: message, toolResults: results)
-                        case .activity(let activity):
-                            AgentActivityView(activity: activity, toolResults: results)
-                        }
+                    ForEach(turns) { turn in
+                        AgentTranscriptTurnView(turn: turn, toolResults: results)
                     }
-                    if service.isStreaming && !entries.contains(where: {
-                        if case .activity(let activity) = $0 { return activity.isRunning }
-                        return false
-                    }) {
+                    if service.isStreaming && runningTranscriptActivity == nil {
                         ThinkingDots().id("streaming-indicator")
-                    }
-                    if showsBackendSetupNotice {
-                        backendSetupNotice
-                            .padding(.top, AppTheme.Spacing.sm)
                     }
                     errorBanner
                         .padding(.top, AppTheme.Spacing.sm)
@@ -606,13 +575,15 @@ struct AgentPanelView: View {
 
     @ViewBuilder
     private var errorBanner: some View {
-        if let err = service.streamError {
+        if let message = currentFailureMessage,
+           surfaceState.dockOwner == .composer,
+           !transcriptOwnsTerminalError {
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
-                Text(err.localizedDescription)
+                Text(message)
                     .font(.system(size: AppTheme.FontSize.xs))
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .multilineTextAlignment(.leading)
-                if let cta = errorCTA(for: err) {
+                if let cta = errorCTA(for: service.streamError) {
                     Button(action: cta.action) {
                         Text(cta.title)
                             .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
@@ -622,6 +593,16 @@ struct AgentPanelView: View {
                 }
             }
         }
+    }
+
+    private var currentFailureMessage: String? {
+        if let error = service.streamError, !showsAuthenticationError {
+            return error.localizedDescription
+        }
+        if case .failed(let message)? = editor.pipelinePhaseExecution.snapshot?.status {
+            return message
+        }
+        return nil
     }
 
     private struct ErrorCTA {
@@ -696,30 +677,23 @@ struct AgentPanelView: View {
     }
 
     @ViewBuilder
-    private var backendSetupNotice: some View {
-        if service.isCheckingBackend {
-            HStack(spacing: AppTheme.Spacing.sm) {
-                ProgressView()
-                    .controlSize(.small)
-                Text(service.backendStatusCheckLabel)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-            }
-            .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
-        } else {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                Text(service.backendSetupMessage)
-                    .foregroundStyle(AppTheme.Text.tertiaryColor)
-                    .fixedSize(horizontal: false, vertical: true)
+    private var backendRecoveryDock: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Text(service.backendSetupMessage)
+                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                .fixedSize(horizontal: false, vertical: true)
 
-                Button(action: { SettingsWindowController.shared.show(tab: .agent) }) {
-                    Text("Open Agent Settings")
-                }
-                .buttonStyle(.capsule(.secondary, size: .regular))
-                .controlSize(.small)
+            Button(action: { SettingsWindowController.shared.show(tab: .agent) }) {
+                Text("Open Agent Settings")
             }
-            .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.capsule(.secondary, size: .regular))
+            .controlSize(.small)
         }
+        .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+        .padding(.horizontal, AppTheme.Spacing.mdLg)
+        .padding(.vertical, AppTheme.Spacing.smMd)
+        .frame(maxWidth: AppTheme.Layout.chatColumnMax, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -729,34 +703,91 @@ struct AgentPanelView: View {
         }
     }
 
+    @ViewBuilder
+    private var composerDock: some View {
+        switch surfaceState.dockOwner {
+        case .spendApproval:
+            if let approval = service.pendingSpendApproval {
+                SpendApprovalCard(
+                    approval: approval,
+                    error: service.spendApprovalError,
+                    isWorking: service.spendApprovalIsRunning,
+                    onApprove: { option in
+                        Task { await service.approveSpend(option) }
+                    },
+                    onDecline: { service.declineSpend() },
+                    onRefresh: { service.refreshSpendApproval() }
+                )
+                .padding(.bottom, AppTheme.Spacing.xs)
+            }
+        case .gateApproval:
+            if let gate = service.pendingGateApproval {
+                GateApprovalCard(
+                    approval: gate,
+                    error: service.gateApprovalError,
+                    surface: editor.uiContract?.phases[gate.phase]?.surface,
+                    isWorking: service.gateApprovalIsWriting,
+                    isBlocked: pendingGateIsBlockedByPhaseRun,
+                    onApprove: {
+                        Task { await service.resolveGate(.approved) }
+                    },
+                    onDecline: {
+                        Task { await service.resolveGate(.declined) }
+                    }
+                )
+                .padding(.bottom, AppTheme.Spacing.xs)
+            }
+        case .dialog:
+            if let dialog = service.pendingDialog {
+                @Bindable var service = service
+                AgentDialogCard(
+                    dialog: dialog,
+                    externalSelections: $service.dialogChoiceSelections,
+                    accent: editor.activePackAccentColor ?? AppTheme.Accent.primary,
+                    libraryAssets: editor.agentPickableMediaAssets,
+                    libraryAssetRoles: editor.mediaManifest.intakeRoleByAssetID,
+                    submissionError: service.dialogSubmissionError,
+                    isSubmitting: service.submittingDialogID == dialog.id,
+                    onSubmit: { result in service.submitDialog(dialog, result: result) },
+                    onComplete: { service.completeDialog(dialog) },
+                    onCancel: { service.cancelDialog() }
+                )
+                .id(dialog.id)
+                .padding(.bottom, AppTheme.Spacing.xs)
+            }
+        case .backendRecovery:
+            backendRecoveryDock
+        case .composer:
+            footer
+        }
+    }
+
     private var footer: some View {
         @Bindable var service = editor.agentService
+        let sessionID = service.currentSessionId
         return VStack(spacing: AppTheme.Spacing.sm) {
             if let fn = service.pendingFunction {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     FunctionPill(title: fn.title, systemImage: fn.systemImage) {
                         service.pendingFunction = nil
                     }
-                    Spacer(minLength: 0)
+                    Spacer(minLength: AppTheme.Spacing.none)
                 }
             }
             AgentInputBox(
                 draft: $service.draft,
                 mentions: $service.mentions,
+                composerHeight: $service.composerHeight,
+                initiallyFocused: service.composerShouldFocus,
                 isSending: service.isStreaming,
                 canSend: canSend,
-                blocked: service.isComposerBlocked,
-                blockedHint: pendingGateIsBlockedByPhaseRun
-                           ? "Wait for the running pipeline phase to finish"
-                           : service.pendingGateApproval != nil ? "Approve or choose Not yet above to continue"
-                           : service.pendingSpendApproval != nil ? "Respond to the approval above to continue"
-                                                                 : "Answer the card above to continue",
                 onSend: submit,
-                onCancel: { service.cancel() }
+                onCancel: { service.cancel() },
+                onFocusChange: { service.recordComposerFocus($0, for: sessionID) }
             ) {
                 modelPicker
-                byokIndicator
             }
+            .id(sessionID)
         }
         .padding(.horizontal, AppTheme.Spacing.mdLg)
         .padding(.bottom, AppTheme.Spacing.mdLg)
@@ -846,7 +877,6 @@ private struct AgentStarterPromptButton: View {
             )
         }
         .buttonStyle(.plain)
-        .focusable(false)
         .help("Add function")
     }
 }
@@ -871,7 +901,6 @@ private struct FunctionPill: View {
                     .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.bold))
             }
             .buttonStyle(.plain)
-            .focusable(false)
             .help("Remove function")
         }
         .foregroundStyle(AppTheme.Accent.primary)
@@ -879,51 +908,5 @@ private struct FunctionPill: View {
         .padding(.vertical, AppTheme.Spacing.xxs)
         .background(Capsule(style: .continuous).fill(AppTheme.Accent.primary.opacity(AppTheme.Opacity.muted)))
         .overlay(Capsule(style: .continuous).strokeBorder(AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium), lineWidth: AppTheme.BorderWidth.thin))
-    }
-}
-
-private struct ChatTabView: View {
-    let session: ChatSession
-    let isActive: Bool
-    let onSelect: () -> Void
-    let onClose: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: onSelect) {
-            VStack(spacing: AppTheme.Spacing.xs) {
-                HStack(spacing: AppTheme.Spacing.xs) {
-                    Text(displayTitle)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: isActive ? .semibold : .regular))
-                        .foregroundStyle(isActive ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
-                        .lineLimit(1)
-                        .fixedSize()
-                    if hovering || isActive {
-                        Button(action: onClose) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
-                                .foregroundStyle(AppTheme.Text.mutedColor)
-                                .frame(width: AppTheme.Spacing.mdLg, height: AppTheme.Spacing.mdLg)
-                        }
-                        .buttonStyle(.plain)
-                        .focusable(false)
-                    }
-                }
-                Rectangle()
-                    .fill(isActive ? AppTheme.Text.primaryColor : AppTheme.Background.clearColor)
-                    .frame(height: AppTheme.BorderWidth.medium)
-            }
-            .padding(.horizontal, AppTheme.Spacing.sm)
-            .padding(.top, AppTheme.Spacing.xxs)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .onHover { hovering = $0 }
-    }
-
-    private var displayTitle: String {
-        let t = session.title
-        return t.count > 20 ? String(t.prefix(20)) + "…" : t
     }
 }

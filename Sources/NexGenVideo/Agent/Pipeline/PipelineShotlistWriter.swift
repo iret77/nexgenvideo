@@ -4,15 +4,147 @@ import NexGenEngine
 enum PipelineShotlistWriter {
     static func write(
         _ shotlist: Shotlist,
+        executionInputs: [PipelineExecutionShotInput],
         dataRoot: URL,
-        declaredPack: String?
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding? = nil
     ) throws -> URL {
         try validate(
             shotlist,
             dataRoot: dataRoot,
-            declaredPack: declaredPack
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
+        )
+        let version = (latestShotlistVersion(dataRoot: dataRoot) ?? 0) + 1
+        let shotlistPath = PipelineLayout.shotlistVersionFile(version)
+        let shotlistURL = PipelineLayout.url(shotlistPath, in: dataRoot)
+        let shotlistData = Data(try YAMLCoding.encode(shotlist).utf8)
+        let executionInputData = try PipelineExecutionShotInputStore.canonicalData(
+            executionShots: executionInputs,
+            shotlist: shotlist,
+            shotlistPath: shotlistPath,
+            shotlistData: shotlistData
+        )
+        let executionSnapshot = try PipelineExecutionPlanWriter.snapshot(
+            dataRoot: dataRoot
+        )
+        let executionInputSnapshot = try PipelineExecutionShotInputStore.snapshot(
+            dataRoot: dataRoot
+        )
+        let productionInputsSnapshot = try PipelineProductionInputsWriter.snapshot(
+            shotIDs: Set(executionInputs.map(\.id)),
+            dataRoot: dataRoot
+        )
+        let previousShotlist = FileManager.default.fileExists(atPath: shotlistURL.path)
+            ? try Data(contentsOf: shotlistURL)
+            : nil
+
+        do {
+            try requirePackMutation(
+                dataRoot: dataRoot,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+            try FileManager.default.createDirectory(
+                at: shotlistURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try shotlistData.write(to: shotlistURL, options: .atomic)
+            try PipelineExecutionShotInputStore.write(
+                executionInputData,
+                dataRoot: dataRoot
+            )
+            let draft = try PipelineExecutionPlanComposer.compose(
+                shotlist: shotlist,
+                executionInputs: executionInputs,
+                executionInputData: executionInputData,
+                shotlistPath: shotlistPath,
+                dataRoot: dataRoot,
+                declaredPack: declaredPack
+            )
+            try PipelineProductionInputsWriter.write(
+                graph: draft.assetGraph,
+                demandSets: draft.demandSets,
+                templates: draft.inputTemplates,
+                dataRoot: dataRoot,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+            _ = try PipelineExecutionPlanWriter.write(
+                plan: draft.plan,
+                context: draft.context,
+                dataRoot: dataRoot
+            )
+            try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(
+                dataRoot: dataRoot
+            )
+            return shotlistURL
+        } catch {
+            let writeError = error
+            var rollbackFailures: [String] = []
+            do {
+                try restore(previousShotlist, at: shotlistURL)
+            } catch {
+                rollbackFailures.append("Shot List: \(error.localizedDescription)")
+            }
+            do {
+                try PipelineProductionInputsWriter.restore(
+                    productionInputsSnapshot,
+                    dataRoot: dataRoot
+                )
+            } catch {
+                rollbackFailures.append("production inputs: \(error.localizedDescription)")
+            }
+            do {
+                try PipelineExecutionShotInputStore.restore(
+                    executionInputSnapshot,
+                    dataRoot: dataRoot
+                )
+            } catch {
+                rollbackFailures.append("execution inputs: \(error.localizedDescription)")
+            }
+            do {
+                try PipelineExecutionPlanWriter.restore(
+                    executionSnapshot,
+                    dataRoot: dataRoot
+                )
+            } catch {
+                rollbackFailures.append("execution plan: \(error.localizedDescription)")
+            }
+            if !rollbackFailures.isEmpty {
+                throw ToolError(
+                    "Couldn't roll back the Shot List and execution plan: "
+                        + rollbackFailures.joined(separator: "; ")
+                )
+            }
+            if let error = writeError as? ToolError {
+                throw error
+            }
+            throw ToolError(
+                "Couldn't write the Shot List and execution plan: "
+                    + writeError.localizedDescription
+            )
+        }
+    }
+
+    static func write(
+        _ shotlist: Shotlist,
+        dataRoot: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding? = nil
+    ) throws -> URL {
+        try validate(
+            shotlist,
+            dataRoot: dataRoot,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
         )
         do {
+            try requirePackMutation(
+                dataRoot: dataRoot,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
             return try saveShotlist(shotlist, to: dataRoot)
         } catch {
             throw ToolError("Couldn't write shot list: \(error.localizedDescription)")
@@ -23,41 +155,110 @@ enum PipelineShotlistWriter {
         shotId: String,
         to mode: SourceMode,
         dataRoot: URL,
-        declaredPack: String?
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding? = nil
     ) throws -> Bool {
+        try changeSourceMode(
+            shotId: shotId,
+            to: mode,
+            dataRoot: dataRoot,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding,
+            persist: true
+        )
+    }
+
+    static func canSetSourceMode(
+        shotId: String,
+        to mode: SourceMode,
+        dataRoot: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding? = nil
+    ) -> Bool {
+        (try? changeSourceMode(
+            shotId: shotId,
+            to: mode,
+            dataRoot: dataRoot,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding,
+            persist: false
+        )) == true
+    }
+
+    private static func changeSourceMode(
+        shotId: String,
+        to mode: SourceMode,
+        dataRoot: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding?,
+        persist: Bool
+    ) throws -> Bool {
+        try requirePackMutation(
+            dataRoot: dataRoot,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
+        )
         guard var shotlist = try loadShotlist(dataRoot: dataRoot),
               let index = shotlist.shots.firstIndex(where: { $0.id == shotId }),
               shotlist.shots[index].sourceMode != mode else {
             return false
         }
-        guard mode == .imported || shotlist.shots[index].productionPlan != nil else {
+        guard mode == .imported,
+              shotlist.shots[index].sourceMode == .generated
+                || shotlist.shots[index].sourceMode == .aiEnhanced else {
             throw ToolError(
-                "Ask the assistant to re-plan this shot before changing its source to "
-                    + "\(mode.rawValue)."
+                "Only a generated or AI-enhanced shot can switch to Imported here. "
+                    + "Ask the assistant to re-plan any other source change."
             )
         }
-        shotlist.shots[index].sourceMode = mode
-        switch mode {
-        case .generated:
-            shotlist.shots[index].sourcePath = nil
-            if shotlist.shots[index].keyframeStrategy == .none {
-                shotlist.shots[index].keyframeStrategy = .start
-            }
-        case .imported:
-            shotlist.shots[index].sourcePath = nil
-            shotlist.shots[index].productionPlan = nil
-            shotlist.shots[index].keyframeStrategy = .none
-            shotlist.shots[index].chainWithPreviousEnd = false
-        case .aiEnhanced:
-            shotlist.shots[index].keyframeStrategy = .none
-            shotlist.shots[index].chainWithPreviousEnd = false
-            shotlist.shots[index].referenceImageRefs = []
-            shotlist.shots[index].seedanceInputMode = .keyframe
+        guard !ChainContinuity.needsLastFrame(shotlist, shotId: shotId) else {
+            throw ToolError(
+                "This shot anchors the next chained shot. Ask the assistant to re-plan "
+                    + "that chain before switching this source to Imported."
+            )
         }
+        do {
+            try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(
+                dataRoot: dataRoot
+            )
+        } catch {
+            throw ToolError(
+                "Rebuild the Shot List execution plan before changing this source."
+            )
+        }
+        let (plan, _) = try PipelineExecutionPlanWriter.load(dataRoot: dataRoot)
+        let storedInputs = try PipelineExecutionShotInputStore.loadCurrent(
+            dataRoot: dataRoot
+        ).executionShots
+        guard plan.shots.count == shotlist.shots.count,
+              storedInputs.count == shotlist.shots.count,
+              plan.shots[index].id == shotId,
+              storedInputs[index].id == shotId else {
+            throw ToolError(
+                "Rebuild the Shot List execution plan before changing this source."
+            )
+        }
+        var executionInputs = storedInputs
+        executionInputs[index] = try PipelineExecutionShotInput.imported(
+            from: plan.shots[index]
+        )
+        let previousMode = shotlist.shots[index].sourceMode
+        shotlist.shots[index].sourceMode = mode
+        if previousMode == .generated {
+            shotlist.shots[index].sourcePath = nil
+        }
+        shotlist.shots[index].productionPlan = nil
+        shotlist.shots[index].keyframeStrategy = .none
+        shotlist.shots[index].chainWithPreviousEnd = false
+        shotlist.shots[index].referenceImageRefs = []
+        shotlist.shots[index].seedanceInputMode = .keyframe
+        guard persist else { return true }
         _ = try write(
             shotlist,
+            executionInputs: executionInputs,
             dataRoot: dataRoot,
-            declaredPack: declaredPack
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
         )
         return true
     }
@@ -65,8 +266,14 @@ enum PipelineShotlistWriter {
     static func validate(
         _ shotlist: Shotlist,
         dataRoot: URL,
-        declaredPack: String?
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding? = nil
     ) throws {
+        try requirePackMutation(
+            dataRoot: dataRoot,
+            declaredPack: declaredPack,
+            declaredBinding: declaredBinding
+        )
         do {
             try shotlist.validate()
         } catch {
@@ -88,23 +295,6 @@ enum PipelineShotlistWriter {
             }
         } else {
             brief = nil
-        }
-        let bibleURL = PipelineLayout.url(
-            PipelineLayout.bibleFile,
-            in: dataRoot
-        )
-        let bible: Bible?
-        if FileManager.default.fileExists(atPath: bibleURL.path) {
-            do {
-                bible = try loadBible(dataRoot: dataRoot)
-            } catch {
-                throw ToolError(
-                    "The Bible is unreadable. Repair or restore it before writing the Shot List: "
-                        + error.localizedDescription
-                )
-            }
-        } else {
-            bible = nil
         }
         let activePack: String?
         do {
@@ -142,31 +332,6 @@ enum PipelineShotlistWriter {
                 throw ToolError(
                     "Every new shot requires production_plan (e.g. "
                         + missingPlans.prefix(3).map(\.id).joined(separator: ", ")
-                        + ")."
-                )
-            }
-            let crowded = shotlist.shots.filter {
-                $0.productionPlan != nil
-                    && ProductionDiscipline.hasTooManyVisibleCharacters(
-                        $0,
-                        bible: bible
-                    )
-            }
-            guard crowded.isEmpty else {
-                throw ToolError(
-                    "Generated shots may contain at most two visible characters; split "
-                        + crowded.prefix(3).map(\.id).joined(separator: ", ")
-                        + " into simpler shots."
-                )
-            }
-            let undeclaredLongTakes = shotlist.shots.filter(
-                ProductionDiscipline.hasUndeclaredLongTake
-            )
-            guard undeclaredLongTakes.isEmpty else {
-                throw ToolError(
-                    "Generated shots over 12 seconds must declare long_take and a rescue cut "
-                        + "(e.g. "
-                        + undeclaredLongTakes.prefix(3).map(\.id).joined(separator: ", ")
                         + ")."
                 )
             }
@@ -298,6 +463,22 @@ enum PipelineShotlistWriter {
         }
     }
 
+    private static func requirePackMutation(
+        dataRoot: URL,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding?
+    ) throws {
+        do {
+            _ = try ProjectPackGate.requireMutation(
+                projectURL: FrameInventory.projectHome(of: dataRoot),
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+        } catch {
+            throw ToolError(error.localizedDescription)
+        }
+    }
+
     private static func projectFileURL(
         _ path: String,
         dataRoot: URL
@@ -330,5 +511,13 @@ enum PipelineShotlistWriter {
             }
         }
         return nil
+    }
+
+    private static func restore(_ data: Data?, at url: URL) throws {
+        if let data {
+            try data.write(to: url, options: .atomic)
+        } else if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
     }
 }

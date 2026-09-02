@@ -85,6 +85,7 @@ enum ToolName: String, CaseIterable, Sendable {
     case writeStoryboard = "write_storyboard"
     case writeBible = "write_bible"
     case writeShotlist = "write_shotlist"
+    case writePhaseExtension = "write_phase_extension"
 
     /// Filesystem writers that must dirty the live project before execution.
     var isDurableWrite: Bool {
@@ -96,7 +97,9 @@ enum ToolName: String, CaseIterable, Sendable {
              .attachSong, .copyProjectFile, .extractScene3dPovs, .writeBrief,
              .writeAnalysisInterpretation,
              .writeProductionDesign, .writeTreatment, .writeStoryboard, .writeBible,
-             .writeShotlist, .cropToAspect, .assembleTimeline, .runSanity:
+             .writeShotlist, .writePhaseExtension, .cropToAspect, .assembleTimeline, .runSanity:
+            return true
+        case .nextRenderShot:
             return true
         default:
             return false
@@ -118,6 +121,9 @@ enum ToolName: String, CaseIterable, Sendable {
         case .writeStoryboard:            return "storyboard"
         case .writeBible:                 return "bible"
         case .writeShotlist:              return "shotlist"
+        case .writePhaseExtension:
+            let phase = (args["phase"] as? String)?.trimmingCharacters(in: .whitespaces)
+            return phase?.isEmpty == false ? phase : nil
         case .runSanity:                  return "sanity"
         case .extractScene3dPovs:         return "bible"
         case .saveFrameAudit:             return "frames"
@@ -157,7 +163,7 @@ enum ToolName: String, CaseIterable, Sendable {
             return phase == "frames" || phase == "final"
         case .writeAnalysisInterpretation, .writeBrief,
              .writeProductionDesign, .writeTreatment, .writeStoryboard,
-             .writeBible, .writeShotlist, .runSanity, .saveFrameAudit:
+             .writeBible, .writeShotlist, .writePhaseExtension, .runSanity, .saveFrameAudit:
             return true
         default:
             return false
@@ -292,18 +298,22 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showBlocks,
-            description: "Present status, reports, and summaries as NATIVE UI in the transcript — headlines, badge rows, key-value boxes, callouts — instead of markdown walls. USE THIS whenever you report state (project status, brief fields, cost, phase results); plain chat text is for genuine conversation only and never gets rich rendering. Interaction stays with show_dialog — show_blocks displays, it never asks. Strictly validated: unknown block types, unknown keys, or empty required fields are rejected with the exact violation; fix and re-call.",
+            description: "Present one bounded native result document in the transcript instead of a Markdown wall. USE THIS whenever you report state (project status, brief fields, cost, phase results); plain chat text is for genuine conversation only. Interaction stays with show_dialog. Supply version 1 and fixed slot order: optional headline, optional body text, optional status, up to two key-value groups, optional callout. Unknown fields, arbitrary symbols, repeated slots, and invalid ordering are rejected with the exact violation; fix and re-call.",
             inputSchema: objectSchema(
                 properties: [
+                    "version": [
+                        "type": "string",
+                        "enum": [AgentBlocks.currentVersion],
+                    ],
                     "blocks": [
                         "type": "array",
                         "minItems": 1,
                         "maxItems": AgentBlocks.maxBlocks,
-                        "description": "1–\(AgentBlocks.maxBlocks) blocks, rendered top to bottom.",
+                        "description": "Fixed slot order: optional headline, optional body text, optional status, up to two key-value groups, optional callout.",
                         "items": showBlocksItemSchema,
                     ],
                 ],
-                required: ["blocks"]
+                required: ["version", "blocks"]
             )
         ),
         AgentTool(
@@ -711,9 +721,9 @@ enum ToolDefinitions {
                     "endFrameMediaRef": ["type": "string", "description": "Media asset ID to use as the last frame (supported by some models)"],
                     "sourceVideoMediaRef": ["type": "string", "description": "Media asset ID of a source video. For an AI-enhanced pipeline shot this must be the exact source_video_media_ref returned by next_render_shot; the host rejects substitutions before generation."],
                     "sourceClipId": ["type": "string", "description": "Optional. Clip id (from get_timeline) referencing sourceVideoMediaRef. When set and the clip is trimmed, only the clip's visible range is sent to the model, not the full source — matches the UI's 'Use trimmed portion only'."],
-                    "referenceImageMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of image references. Covers both reference-to-video generation (Seedance, Kling V3/O3 elements, Grok — refer as @Image1/@Element1 in prompt) and the single-image ref used by video-to-video edit models (Kling V3 Motion Control). See list_models maxReferenceImages for per-model cap."],
-                    "referenceVideoMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of video references (Seedance only). Refer to them as @Video1, @Video2. See maxReferenceVideos and maxCombinedVideoRefSeconds."],
-                    "referenceAudioMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of audio references (Seedance only). Refer to them as @Audio1, @Audio2. See maxReferenceAudios and maxCombinedAudioRefSeconds."],
+                    "referenceImageMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of image references. See the selected runnable offering in list_models for its exact maxReferenceImages and input mode."],
+                    "referenceVideoMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of video references. See the selected runnable offering in list_models for its exact maximum and combined-duration limit."],
+                    "referenceAudioMediaRefs": ["type": "array", "items": ["type": "string"], "description": "Media asset IDs of audio references. See the selected runnable offering in list_models for its exact maximum and combined-duration limit."],
                     "folderId": ["type": "string", "description": "Optional. Folder id (from list_folders or create_folder) to place the result in. Omit for the project root."],
                 ],
                 required: ["prompt", "shotId"]
@@ -1190,8 +1200,24 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .writeShotlist,
-            description: "Write the next validated shotlist version. Use this instead of authoring YAML. Supply only shots and notes: the host derives schema, project, mode, budget and the complete Song block from the approved Brief plus measured analysis. Every generated or AI-enhanced shot requires a production_plan with one primary action, one camera movement, renderability, declared risks, continuity locks, and a rescue cut for yellow/red risk; imported shots omit it. Narrative/hybrid planned shots also require narrative_beat. Approval requires complete song coverage, valid Storyboard section assignment, existing explicit references, and reference mode without keyframes or chaining.",
+            description: "Write the next validated Shot List and its complete format-neutral execution plan as one transaction. Use this instead of authoring YAML or execution JSON. Supply `shots`, matching `execution_shots`, and optional notes: both arrays must have identical order, ids, and source modes. The host derives schema, project, mode, budget, Song, source bindings, visible-entity count, aspect ratio, resolution, keyframe requirements, hashes, and provenance. Generated and AI-enhanced shots carry exact generation requirements; imported shots carry complete directorial execution semantics without a generation requirement. Every reference must already be a real project-local file. If any Shot List, execution-plan, AssetGraph, Demand Set, or lineage check fails, no new version is committed.",
             inputSchema: PipelineArtifactWriteContract.shotlistSchema
+        ),
+        AgentTool(
+            name: .writePhaseExtension,
+            description: "Write the current format pack's schema-validated extension artifact. The phase contract chooses the project-local destination and JSON Schema; callers provide only the declared phase and payload. Unknown fields, invalid values, undeclared phases, and non-generic writers fail before any bytes change.",
+            inputSchema: objectSchema(
+                properties: [
+                    "phase": ["type": "string", "description": "Exact current phase id from list_phases."],
+                    "payload": [
+                        "type": "object",
+                        "additionalProperties": true,
+                        "description": "Artifact object validated against the pack-declared closed schema.",
+                    ],
+                    "project_dir": projectDirProperty,
+                ],
+                required: ["phase", "payload"]
+            )
         ),
         AgentTool(
             name: .initProject,
@@ -1294,7 +1320,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .nextRenderShot,
-            description: "The next shot artifact to render for `phase`, in shotlist order. Read-only.\n\nFor `frames`, completion is role-aware against the authoritative Frames manifest: a `start_end` shot is returned once with `role=start` and again with `role=end`; missing files or provider-prompt provenance make that role pending again. For video phases, the phase render manifest determines completion per shot. Returns the shot's structured generation context, or `{phase, shot_id:null, done:true}` only when every required artifact exists. A missing, unreadable, or corrupt source artifact is an error. `project_dir` is the `pipeline/` data root; omit to use the open project.",
+            description: "The next shot artifact to render for `phase`, in shotlist order. WRITES the exact provider route and ordered ReferencePlan for a pending video shot.\n\nFor `frames`, completion is role-aware against the authoritative Frames manifest: a `start_end` shot is returned once with `role=start` and again with `role=end`; missing files or provider-prompt provenance make that role pending again. For video phases, the phase render manifest plus immutable routing provenance determine completion per shot. Returns the shot's structured generation context, or `{phase, shot_id:null, done:true}` only when every required artifact exists. A missing, unreadable, or corrupt source artifact is an error. `project_dir` is the `pipeline/` data root; omit to use the open project.",
             inputSchema: objectSchema(
                 properties: [
                     "project_dir": projectDirProperty,
@@ -1549,51 +1575,93 @@ enum ToolDefinitions {
         ]
     }
 
-    private static var showBlocksItemSchema: [String: Any] {
-        var schema = objectSchema(
-            properties: [
-                "type": [
-                    "type": "string",
-                    "enum": ["headline", "text", "status", "keyvalue", "callout"],
-                ],
-                "text": ["type": "string"],
-                "symbol": ["type": "string"],
-                "body": ["type": "string"],
-                "badges": [
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": AgentBlocks.maxBadges,
-                    "items": objectSchema(
-                        properties: [
-                            "label": ["type": "string"],
-                            "value": ["type": "string"],
-                            "symbol": ["type": "string"],
-                        ],
-                        required: ["label", "value"]
-                    ),
-                ],
-                "title": ["type": "string"],
-                "rows": [
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": AgentBlocks.maxRows,
-                    "items": [
-                        "type": "array",
-                        "minItems": 2,
-                        "maxItems": 2,
-                        "items": ["type": "string"],
+    private static var showBlocksItemSchema: [String: Any] { [
+        "description": "Exactly one closed block shape in the fixed result-document grammar.",
+        "anyOf": [
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["headline"]],
+                    "text": [
+                        "type": "string",
+                        "maxLength": AgentBlocks.maxHeadlineLength,
                     ],
                 ],
-                "tone": [
-                    "type": "string",
-                    "enum": AgentBlock.CalloutTone.allCases.map(\.rawValue),
+                required: ["type", "text"]
+            ),
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["text"]],
+                    "body": [
+                        "type": "string",
+                        "maxLength": AgentBlocks.maxBodyLength,
+                    ],
                 ],
-            ],
-            required: ["type"]
-        )
-        schema["description"] = "Exactly one supported block shape; the executor enforces its type-specific required fields."
-        return schema
-    }
+                required: ["type", "body"]
+            ),
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["status"]],
+                    "badges": [
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": AgentBlocks.maxBadges,
+                        "items": objectSchema(
+                            properties: [
+                                "label": [
+                                    "type": "string",
+                                    "maxLength": AgentBlocks.maxLabelLength,
+                                ],
+                                "value": [
+                                    "type": "string",
+                                    "maxLength": AgentBlocks.maxValueLength,
+                                ],
+                            ],
+                            required: ["label", "value"]
+                        ),
+                    ],
+                ],
+                required: ["type", "badges"]
+            ),
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["keyvalue"]],
+                    "title": [
+                        "type": "string",
+                        "maxLength": AgentBlocks.maxHeadlineLength,
+                    ],
+                    "rows": [
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": AgentBlocks.maxRows,
+                        "items": [
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "items": [
+                                "type": "string",
+                                "maxLength": AgentBlocks.maxValueLength,
+                            ],
+                        ],
+                    ],
+                ],
+                required: ["type", "rows"]
+            ),
+            objectSchema(
+                properties: [
+                    "type": ["type": "string", "enum": ["callout"]],
+                    "tone": [
+                        "type": "string",
+                        "enum": AgentBlock.CalloutTone.allCases.map(\.rawValue),
+                    ],
+                    "text": [
+                        "type": "string",
+                        "maxLength": AgentBlocks.maxValueLength,
+                    ],
+                ],
+                required: ["type", "tone", "text"]
+            ),
+        ],
+    ] }
 
     /// Shared `project_dir` property schema for the pipeline tools (optional — defaults to the open
     /// project's pipeline dir when omitted).

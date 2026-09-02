@@ -2,9 +2,151 @@ import AppKit
 import NexGenEngine
 import SwiftUI
 
+struct AgentTranscriptTurnView: View {
+    let turn: AgentTranscriptTurn
+    let toolResults: [String: ToolRunResult]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            ForEach(turn.items) { item in
+                switch item {
+                case .userIntent(let intent):
+                    AgentUserIntentView(text: intent.text)
+                case .assistantResult(let message):
+                    AgentMessageView(message: message, toolResults: toolResults)
+                case .activity(let activity):
+                    AgentActivityView(activity: activity, toolResults: toolResults)
+                case .receipts(let group):
+                    AgentReceiptGroupView(group: group)
+                case .notice(let notice):
+                    DialogNoticeView(text: notice.text)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Conversation turn")
+    }
+}
+
+private struct AgentUserIntentView: View {
+    let text: String
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: AppTheme.Spacing.xxl)
+            Text(text)
+                .font(.system(size: AppTheme.FontSize.md))
+                .foregroundStyle(AppTheme.Text.primaryColor)
+                .lineSpacing(AppTheme.Spacing.xxs)
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.smMd)
+                .background(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                        .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint))
+                )
+                .textSelection(.enabled)
+        }
+    }
+}
+
+private struct AgentReceiptGroupView: View {
+    let group: AgentReceiptGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+            if let phase = group.phase {
+                Text(PhaseDisplay.label(phase).uppercased())
+                    .font(.system(
+                        size: AppTheme.FontSize.xxs,
+                        weight: AppTheme.FontWeight.semibold
+                    ))
+                    .tracking(AppTheme.Tracking.wide)
+                    .foregroundStyle(AppTheme.Text.mutedColor)
+            }
+            ForEach(group.receipts) { receipt in
+                AgentReceiptView(receipt: receipt)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct AgentReceiptView: View {
+    let receipt: AgentTranscriptReceipt
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
+            Image(systemName: symbol)
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(color)
+                .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
+            Text(summary)
+                .font(.system(size: AppTheme.FontSize.xs))
+                .foregroundStyle(AppTheme.Text.secondaryColor)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .accessibilityLabel(summary)
+    }
+
+    private var summary: String {
+        switch receipt.content {
+        case .choice(let record):
+            return record.summary
+        case .workflow(let record):
+            let details = [record.detail] + record.attachmentNames.map { Optional($0) }
+            let suffix = details.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+            return suffix.isEmpty
+                ? "\(record.title) — \(outcomeLabel(record.outcome))"
+                : "\(record.title) — \(outcomeLabel(record.outcome)) · \(suffix)"
+        }
+    }
+
+    private var symbol: String {
+        switch receipt.content {
+        case .choice: "checkmark.circle.fill"
+        case .workflow(let record):
+            switch record.outcome {
+            case .attached: "paperclip.circle.fill"
+            case .provided: "tray.and.arrow.down.fill"
+            case .skipped: "forward.fill"
+            case .completed: "checkmark.circle.fill"
+            case .failed: "exclamationmark.triangle.fill"
+            case .needsAction: "exclamationmark.circle.fill"
+            }
+        }
+    }
+
+    private var color: Color {
+        switch receipt.content {
+        case .choice: AppTheme.Text.tertiaryColor
+        case .workflow(let record):
+            switch record.outcome {
+            case .skipped: AppTheme.Text.tertiaryColor
+            case .failed: AppTheme.Status.errorColor
+            case .needsAction: AppTheme.Status.warningColor
+            default: AppTheme.Status.successColor
+            }
+        }
+    }
+
+    private func outcomeLabel(_ outcome: AgentWorkflowRecord.Outcome) -> String {
+        switch outcome {
+        case .attached: "Attached"
+        case .provided: "Provided"
+        case .skipped: "Skipped"
+        case .completed: "Done"
+        case .failed: "Failed"
+        case .needsAction: "Needs action"
+        }
+    }
+}
+
 struct AgentMessageView: View {
     let message: AgentMessage
     let toolResults: [String: ToolRunResult]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {
@@ -73,8 +215,11 @@ struct AgentMessageView: View {
 
     @ViewBuilder
     private var assistantBody: some View {
+        let structuredResults = parsedStructuredResults
+        let firstStructuredResultIndex = structuredResults.first?.index
+        let combinedStructuredBlocks = structuredResults.flatMap(\.blocks)
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            ForEach(Array(message.blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(message.blocks.enumerated()), id: \.offset) { index, block in
                 switch block {
                 case .text(let text):
                     MarkdownText(text: text)
@@ -84,8 +229,10 @@ struct AgentMessageView: View {
                     // strict parser rejects falls back to the row — its expanded detail carries
                     // the violation the model was told about.
                     if ToolRunPresentation.baseName(for: name) == ToolName.showBlocks.rawValue,
-                       let blocks = Self.parsedBlocks(inputJSON) {
-                        AgentBlocksView(blocks: blocks)
+                       Self.parsedBlocks(inputJSON) != nil {
+                        if index == firstStructuredResultIndex {
+                            AgentBlocksView(blocks: combinedStructuredBlocks)
+                        }
                     } else {
                         ToolRunRow(name: name, inputJSON: inputJSON, result: toolResults[id])
                     }
@@ -106,7 +253,24 @@ struct AgentMessageView: View {
             }
         }
         .onHover { isHovering = $0 }
-        .animation(.easeOut(duration: AppTheme.Anim.hover), value: isHovering)
+        .animation(
+            reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover),
+            value: isHovering
+        )
+    }
+
+    private struct StructuredResult {
+        let index: Int
+        let blocks: [AgentBlock]
+    }
+
+    private var parsedStructuredResults: [StructuredResult] {
+        message.blocks.enumerated().compactMap { index, block in
+            guard case .toolUse(_, let name, let inputJSON) = block,
+                  ToolRunPresentation.baseName(for: name) == ToolName.showBlocks.rawValue,
+                  let blocks = Self.parsedBlocks(inputJSON) else { return nil }
+            return StructuredResult(index: index, blocks: blocks)
+        }
     }
 
     /// Blocks from a show_blocks tool-use payload, nil when the JSON or the strict
@@ -115,7 +279,7 @@ struct AgentMessageView: View {
         guard let data = inputJSON.data(using: .utf8),
               let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return nil }
-        return try? AgentBlocks.parse(args)
+        return AgentBlocks.parseForRendering(args)
     }
 }
 
@@ -128,6 +292,25 @@ private struct WorkflowRecordView: View {
         case .provided: "Provided"
         case .skipped: "Skipped"
         case .completed: "Done"
+        case .failed: "Failed"
+        case .needsAction: "Needs action"
+        }
+    }
+
+    private var outcomeSymbol: String {
+        switch record.outcome {
+        case .failed: "exclamationmark.triangle.fill"
+        case .needsAction: "exclamationmark.circle.fill"
+        default: "checkmark.circle.fill"
+        }
+    }
+
+    private var outcomeColor: Color {
+        switch record.outcome {
+        case .skipped: AppTheme.Text.tertiaryColor
+        case .failed: AppTheme.Status.errorColor
+        case .needsAction: AppTheme.Status.warningColor
+        default: AppTheme.Status.successColor
         }
     }
 
@@ -146,12 +329,12 @@ private struct WorkflowRecordView: View {
                         ))
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Spacer(minLength: AppTheme.Spacing.sm)
-                    Label(outcomeLabel, systemImage: "checkmark.circle.fill")
+                    Label(outcomeLabel, systemImage: outcomeSymbol)
                         .font(.system(
                             size: AppTheme.FontSize.xs,
                             weight: AppTheme.FontWeight.medium
                         ))
-                        .foregroundStyle(AppTheme.Status.successColor)
+                        .foregroundStyle(outcomeColor)
                 }
                 if let phase = record.phase {
                     Text(PhaseDisplay.label(phase))
@@ -294,6 +477,7 @@ struct AgentActivityView: View {
     let activity: AgentActivity
     let toolResults: [String: ToolRunResult]
     @Environment(EditorViewModel.self) private var editor
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
 
     private var hasError: Bool {
@@ -305,9 +489,7 @@ struct AgentActivityView: View {
     }
 
     private var label: String {
-        activity.currentStatus
-            ?? activity.steps.last.map { ToolRunPresentation.label(for: $0.name) }
-            ?? "Working"
+        activity.operationLabel
     }
 
     private var accessibilityState: String {
@@ -363,8 +545,12 @@ struct AgentActivityView: View {
         } else {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Button {
-                    withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
+                    if reduceMotion {
                         expanded.toggle()
+                    } else {
+                        withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
+                            expanded.toggle()
+                        }
                     }
                 } label: {
                     HStack(spacing: AppTheme.Spacing.sm) {
@@ -389,6 +575,8 @@ struct AgentActivityView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(accessibilityState): \(label)")
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                .accessibilityHint(expanded ? "Hide technical details" : "Show technical details")
 
                 ForEach(Array(generationImages.enumerated()), id: \.offset) { _, base64 in
                     ToolResultImageView(base64: base64)
@@ -407,15 +595,18 @@ struct AgentActivityView: View {
                             }
                         }
                         ForEach(activity.steps) { step in
-                            ToolRunRow(
+                            ToolRunDetail(
                                 name: step.name,
                                 inputJSON: step.inputJSON,
-                                result: toolResults[step.id]
+                                result: toolResults[step.id],
+                                showsHeader: true
                             )
                         }
                     }
                     .padding(.leading, AppTheme.Spacing.xxs)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(reduceMotion
+                        ? .opacity
+                        : .opacity.combined(with: .move(edge: .top)))
                 }
             }
         }
@@ -453,6 +644,7 @@ private struct ToolRunRow: View {
     let name: String
     let inputJSON: String
     let result: ToolRunResult?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
 
     private var isRunning: Bool { result == nil }
@@ -467,27 +659,16 @@ private struct ToolRunRow: View {
             ? AppTheme.Status.warningColor.opacity(AppTheme.Opacity.prominent)
             : AppTheme.Text.tertiaryColor
     }
-    private var showsGenerationImage: Bool {
-        Self.displaysCompletedImage(for: name)
-            && result?.content.contains(where: {
-                if case .image = $0 { return true }
-                return false
-            }) == true
-    }
-
-    private static func displaysCompletedImage(for name: String) -> Bool {
-        switch ToolRunPresentation.baseName(for: name) {
-        case ToolName.generateImage.rawValue, ToolName.upscaleMedia.rawValue:
-            true
-        default:
-            false
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             Button {
-                withAnimation(.easeOut(duration: AppTheme.Anim.hover)) { expanded.toggle() }
+                if reduceMotion {
+                    expanded.toggle()
+                } else {
+                    withAnimation(.easeOut(duration: AppTheme.Anim.hover)) {
+                        expanded.toggle()
+                    }
+                }
             } label: {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     if isRunning {
@@ -511,27 +692,88 @@ private struct ToolRunRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
 
             if expanded {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                    Text(name)
-                        .font(.system(size: AppTheme.FontSize.xxs, design: .monospaced))
-                        .foregroundStyle(AppTheme.Text.mutedColor)
-                    argsSection
-                    if let result { resultSection(result) }
-                }
-                .font(.system(size: AppTheme.FontSize.xs, design: .monospaced))
-                .foregroundStyle(AppTheme.Text.tertiaryColor)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(AppTheme.Spacing.md)
-                .background(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                        .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
+                ToolRunDetail(
+                    name: name,
+                    inputJSON: inputJSON,
+                    result: result,
+                    showsHeader: false
                 )
-                .textSelection(.enabled)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion
+                    ? .opacity
+                    : .opacity.combined(with: .move(edge: .top)))
             }
         }
+    }
+}
+
+private struct ToolRunDetail: View {
+    let name: String
+    let inputJSON: String
+    let result: ToolRunResult?
+    let showsHeader: Bool
+
+    private var isRunning: Bool { result == nil }
+    private var statusIcon: String {
+        guard let result else { return "circle.dotted" }
+        return result.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill"
+    }
+    private var statusTint: Color {
+        guard let result else { return AppTheme.Text.mutedColor }
+        return result.isError
+            ? AppTheme.Status.warningColor.opacity(AppTheme.Opacity.prominent)
+            : AppTheme.Text.tertiaryColor
+    }
+    private var showsGenerationImage: Bool {
+        switch ToolRunPresentation.baseName(for: name) {
+        case ToolName.generateImage.rawValue, ToolName.upscaleMedia.rawValue:
+            return result?.content.contains(where: {
+                if case .image = $0 { return true }
+                return false
+            }) == true
+        default:
+            return false
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            if showsHeader {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    if isRunning {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .frame(width: AppTheme.Spacing.md, height: AppTheme.Spacing.md)
+                    } else {
+                        Image(systemName: statusIcon)
+                            .font(.system(size: AppTheme.FontSize.xs))
+                            .foregroundStyle(statusTint)
+                    }
+                    Text(ToolRunPresentation.label(for: name))
+                        .font(.system(
+                            size: AppTheme.FontSize.sm,
+                            weight: AppTheme.FontWeight.medium
+                        ))
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
+                }
+            }
+            Text(name)
+                .font(.system(size: AppTheme.FontSize.xxs, design: .monospaced))
+                .foregroundStyle(AppTheme.Text.mutedColor)
+            argsSection
+            if let result { resultSection(result) }
+        }
+        .font(.system(size: AppTheme.FontSize.xs, design: .monospaced))
+        .foregroundStyle(AppTheme.Text.tertiaryColor)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(AppTheme.Spacing.md)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
+        )
+        .textSelection(.enabled)
     }
 
     @ViewBuilder

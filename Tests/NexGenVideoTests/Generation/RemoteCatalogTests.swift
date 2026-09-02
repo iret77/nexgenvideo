@@ -30,6 +30,14 @@ struct RemoteCatalogTests {
             #expect(caps.duration.supportsAuto)
             #expect(caps.resolutions == ["480p", "720p"])
             #expect(entry.offers?.first?.provider == .fal)
+            #expect(entry.offers?.first?.productionInputPolicy != nil)
+            #expect(entry.offers?.first?.resolvedVideoCapabilities?.schemaVersion == 1)
+            #expect(entry.offers?.first?.resolvedVideoCapabilities?.contractViolation == nil)
+            #expect(entry.offers?.first?.resolvedVideoCapabilities?.supportsNativeAudio == true)
+            #expect(
+                entry.offers?.first?.resolvedVideoCapabilities?.inputPolicy
+                    == entry.offers?.first?.productionInputPolicy
+            )
         }
     }
 

@@ -15,10 +15,19 @@ enum MusicvideoPipelineLineage {
         "frames",
         "render",
     ]
+    static let executionInputPhases = Set([
+        "analysis",
+        "brief",
+        "production_design",
+        "treatment",
+        "storyboard",
+        "bible",
+    ])
 
     enum LineageError: Swift.Error {
         case unknownPhase(String)
         case unreadableFile(String)
+        case unsafeProjectPath(String)
     }
 
     static func snapshot(
@@ -31,7 +40,7 @@ enum MusicvideoPipelineLineage {
         return PhaseLineageSnapshot(
             inputFingerprint: try fingerprint(
                 selectors: inputSelectors(phase: phase, dataRoot: dataRoot),
-                dynamicFiles: dynamicInputFiles(
+                dynamicFiles: try dynamicInputFiles(
                     phase: phase,
                     dataRoot: dataRoot
                 ),
@@ -42,7 +51,7 @@ enum MusicvideoPipelineLineage {
                     phase: phase,
                     dataRoot: dataRoot
                 ),
-                dynamicFiles: dynamicArtifactFiles(
+                dynamicFiles: try dynamicArtifactFiles(
                     phase: phase,
                     dataRoot: dataRoot
                 ),
@@ -68,6 +77,43 @@ enum MusicvideoPipelineLineage {
         }
     }
 
+    static func artifactPaths(
+        phase: String,
+        dataRoot: URL
+    ) throws -> [String] {
+        guard phases.contains(phase) else {
+            throw LineageError.unknownPhase(phase)
+        }
+        let projectRoot = FrameInventory.projectHome(of: dataRoot).standardizedFileURL
+        var selected: [String: URL] = [:]
+        for selector in artifactSelectors(phase: phase, dataRoot: dataRoot) {
+            let url = dataRoot.appendingPathComponent(selector)
+            for file in try regularFiles(at: url, inside: projectRoot) {
+                let path = try canonicalPath(
+                    file,
+                    dataRoot: dataRoot,
+                    projectRoot: projectRoot
+                )
+                selected[path] = file
+            }
+        }
+        for file in try dynamicArtifactFiles(phase: phase, dataRoot: dataRoot) {
+            let path = try canonicalPath(
+                file.standardizedFileURL,
+                dataRoot: dataRoot,
+                projectRoot: projectRoot
+            )
+            let safeFile: URL
+            do {
+                safeFile = try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
+            } catch {
+                throw LineageError.unsafeProjectPath(path)
+            }
+            selected[path] = safeFile
+        }
+        return selected.keys.sorted()
+    }
+
     private static func inputSelectors(
         phase: String,
         dataRoot: URL
@@ -83,11 +129,11 @@ enum MusicvideoPipelineLineage {
         guard phase != "brief" else { return selectors }
         selectors.append(PipelineLayout.briefFile)
         guard phase != "production_design" else { return selectors }
-        selectors.append("production_design/production_design.yaml")
+        selectors.append(PipelineLayout.productionDesignFile)
         guard phase != "treatment" else { return selectors }
-        selectors.append(PipelineLayout.treatmentCurrentFile)
+        selectors += treatmentSelectors(dataRoot: dataRoot)
         guard phase != "storyboard" else { return selectors }
-        selectors.append(PipelineLayout.storyboardCurrentFile)
+        selectors += storyboardSelectors(dataRoot: dataRoot)
         guard phase != "bible" else { return selectors }
         selectors.append(PipelineLayout.bibleFile)
         guard phase != "shotlist" else { return selectors }
@@ -111,7 +157,11 @@ enum MusicvideoPipelineLineage {
         case "analysis":
             return []
         case "brief":
-            return [PipelineLayout.projectFile, PipelineLayout.briefFile]
+            return [
+                PipelineLayout.projectFile,
+                PipelineLayout.briefFile,
+                AffectProfile.file,
+            ]
         case "production_design":
             return [
                 "production_design/production_design.yaml",
@@ -120,9 +170,9 @@ enum MusicvideoPipelineLineage {
                 ),
             ]
         case "treatment":
-            return [PipelineLayout.treatmentCurrentFile]
+            return treatmentSelectors(dataRoot: dataRoot)
         case "storyboard":
-            return [PipelineLayout.storyboardCurrentFile]
+            return storyboardSelectors(dataRoot: dataRoot)
         case "bible":
             return [
                 PipelineLayout.bibleFile,
@@ -136,31 +186,56 @@ enum MusicvideoPipelineLineage {
         case "sanity":
             return [PipelineLayout.sanityReportFile]
         case "frames":
-            return [PipelineLayout.framesDir]
+            return [
+                PipelineLayout.framesDir,
+                PipelineLayout.renderManifestFile(phase: "frames"),
+                RenderRecordPublicationV1.artifactPath(phase: "frames"),
+                RenderShotProvenancePublicationV1.artifactPath(phase: "frames"),
+            ]
         case "render":
             return [
                 PipelineLayout.renderManifestFile(phase: "final"),
                 PipelineLayout.renderProofFile(phase: "final"),
+                PipelineLayout.renderRoutingProofFile(phase: "final"),
+                RenderRecordPublicationV1.artifactPath(phase: "final"),
+                RenderShotProvenancePublicationV1.artifactPath(phase: "final"),
             ]
         default:
             return []
         }
     }
 
+    private static func treatmentSelectors(dataRoot: URL) -> [String] {
+        var selectors = [PipelineLayout.treatmentCurrentFile]
+        if let version = TreatmentStore.versions(dataRoot: dataRoot).last {
+            selectors.append(PipelineLayout.treatmentVersionFile(version))
+        }
+        return selectors
+    }
+
+    private static func storyboardSelectors(dataRoot: URL) -> [String] {
+        var selectors = [PipelineLayout.storyboardCurrentFile]
+        let version = StoryboardStore.nextVersion(dataRoot: dataRoot) - 1
+        if version > 0 {
+            selectors.append(PipelineLayout.storyboardVersionFile(version))
+        }
+        return selectors
+    }
+
     private static func dynamicInputFiles(
         phase: String,
         dataRoot: URL
-    ) -> [URL] {
+    ) throws -> [URL] {
         var urls: [URL] = []
         if phasesFrom("production_design").contains(phase) {
-            urls += productionDesignReferences(dataRoot: dataRoot)
+            urls += try productionDesignReferences(dataRoot: dataRoot)
         }
         if phasesFrom("shotlist").contains(phase) {
-            urls += bibleReferences(dataRoot: dataRoot)
-            urls += shotlistReferences(dataRoot: dataRoot)
+            urls += try bibleReferences(dataRoot: dataRoot)
+            urls += try shotlistReferences(dataRoot: dataRoot)
         }
         if phase == "render" {
-            urls += frameImages(dataRoot: dataRoot)
+            urls += try frameImages(dataRoot: dataRoot)
         }
         return urls
     }
@@ -168,7 +243,7 @@ enum MusicvideoPipelineLineage {
     private static func dynamicArtifactFiles(
         phase: String,
         dataRoot: URL
-    ) -> [URL] {
+    ) throws -> [URL] {
         switch phase {
         case "analysis":
             var files = [
@@ -177,20 +252,25 @@ enum MusicvideoPipelineLineage {
             ].compactMap { $0 }.filter {
                 FileManager.default.fileExists(atPath: $0.path)
             }
-            if let proof = try? AnalysisMeasurementProofStore.load(dataRoot: dataRoot),
-               let sourcePath = proof.lyricsAlignment?.sourcePath,
-               let source = projectFile(sourcePath, dataRoot: dataRoot) {
-                files.append(source)
+            if let proofURL = AnalysisMeasurementProofStore.url(dataRoot: dataRoot),
+               FileManager.default.fileExists(atPath: proofURL.path) {
+                let proof = try AnalysisMeasurementProofStore.load(dataRoot: dataRoot)
+                if let sourcePath = proof.lyricsAlignment?.sourcePath {
+                    files.append(try projectFile(sourcePath, dataRoot: dataRoot))
+                }
             }
             return files
         case "production_design":
-            return productionDesignReferences(dataRoot: dataRoot)
+            return try productionDesignReferences(dataRoot: dataRoot)
         case "bible":
-            return bibleReferences(dataRoot: dataRoot)
+            return try bibleReferences(dataRoot: dataRoot)
         case "shotlist":
-            return shotlistReferences(dataRoot: dataRoot)
+            return try shotlistReferences(dataRoot: dataRoot)
         case "frames":
-            return frameImages(dataRoot: dataRoot)
+            return try frameImages(dataRoot: dataRoot)
+                + renderRecordArtifacts(phase: "frames", dataRoot: dataRoot)
+        case "render":
+            return try renderRecordArtifacts(phase: "final", dataRoot: dataRoot)
         default:
             return []
         }
@@ -201,22 +281,35 @@ enum MusicvideoPipelineLineage {
         return Set(phases[index...])
     }
 
-    private static func productionDesignReferences(dataRoot: URL) -> [URL] {
-        guard let design = try? YAMLArtifactStore(dataRoot: dataRoot).load(
+    private static func productionDesignReferences(dataRoot: URL) throws -> [URL] {
+        let artifactURL = PipelineLayout.url(
+            PipelineLayout.productionDesignFile,
+            in: dataRoot
+        )
+        guard FileManager.default.fileExists(atPath: artifactURL.path) else {
+            return []
+        }
+        let design = try YAMLArtifactStore(dataRoot: dataRoot).load(
             ProductionDesign.self,
             at: "production_design/production_design.yaml"
-        ) else { return [] }
+        )
         var paths = design.refs.map(\.path)
         if !design.lightingAnchor.isEmpty {
             paths.append(design.lightingAnchor)
         }
-        return paths.compactMap {
-            projectFile($0, dataRoot: dataRoot)
+        return try paths.map {
+            try projectFile($0, dataRoot: dataRoot)
         }
     }
 
-    private static func bibleReferences(dataRoot: URL) -> [URL] {
-        guard let bible = try? loadBible(dataRoot: dataRoot) else { return [] }
+    private static func bibleReferences(dataRoot: URL) throws -> [URL] {
+        let artifactURL = PipelineLayout.url(PipelineLayout.bibleFile, in: dataRoot)
+        guard FileManager.default.fileExists(atPath: artifactURL.path) else {
+            return []
+        }
+        guard let bible = try loadBible(dataRoot: dataRoot) else {
+            throw LineageError.unreadableFile(PipelineLayout.bibleFile)
+        }
         var paths: [String] = []
         for entity in bible.characters {
             paths += entity.referenceImages + Array(entity.sheets.values)
@@ -240,63 +333,148 @@ enum MusicvideoPipelineLineage {
         if !bible.look.lightingAnchor.isEmpty {
             paths.append(bible.look.lightingAnchor)
         }
-        return paths.compactMap {
-            projectFile($0, dataRoot: dataRoot)
+        return try paths.map {
+            try projectFile($0, dataRoot: dataRoot)
         }
     }
 
-    private static func frameImages(dataRoot: URL) -> [URL] {
-        guard let manifest = try? loadFramesManifest(dataRoot: dataRoot) else {
+    private static func frameImages(dataRoot: URL) throws -> [URL] {
+        let artifactURL = PipelineLayout.url(
+            PipelineLayout.framesManifestFile,
+            in: dataRoot
+        )
+        guard FileManager.default.fileExists(atPath: artifactURL.path) else {
             return []
         }
-        return manifest.shots
+        let manifest = try loadFramesManifest(dataRoot: dataRoot)
+        return try manifest.shots
             .flatMap(\.frames)
-            .compactMap { projectFile($0.path, dataRoot: dataRoot) }
+            .map { try projectFile($0.path, dataRoot: dataRoot) }
     }
 
-    private static func shotlistReferences(dataRoot: URL) -> [URL] {
-        guard let shotlist = try? loadShotlist(dataRoot: dataRoot) else {
+    private static func renderRecordArtifacts(
+        phase: String,
+        dataRoot: URL
+    ) throws -> [URL] {
+        let publicationPath = RenderShotProvenancePublicationV1.artifactPath(
+            phase: phase
+        )
+        let publicationURL = PipelineLayout.url(publicationPath, in: dataRoot)
+        guard FileManager.default.fileExists(atPath: publicationURL.path) else {
             return []
         }
+        let publicationData: Data
+        let publication: RenderShotProvenancePublicationV1
+        do {
+            publicationData = try Data(contentsOf: publicationURL)
+            publication = try JSONDecoder().decode(
+                RenderShotProvenancePublicationV1.self,
+                from: publicationData
+            )
+        } catch {
+            throw LineageError.unreadableFile(publicationPath)
+        }
+        guard (try? RenderShotProvenanceValidatorV1.validate(publication)) != nil,
+              publication.phase == phase else {
+            throw LineageError.unreadableFile(publicationPath)
+        }
+        var files: [URL] = [publicationURL]
+        for (shotID, artifact) in publication.proofs.sorted(by: {
+            $0.key < $1.key
+        }) {
+            let proofURL = try projectFile(artifact.path, dataRoot: dataRoot)
+            let proofData: Data
+            let proof: RenderShotProvenanceProofV1
+            do {
+                proofData = try Data(contentsOf: proofURL)
+                guard FileDigest.sha256(of: proofData) == artifact.sha256 else {
+                    throw LineageError.unreadableFile(artifact.path)
+                }
+                proof = try JSONDecoder().decode(
+                    RenderShotProvenanceProofV1.self,
+                    from: proofData
+                )
+                try RenderShotProvenanceValidatorV1.validate(
+                    proof,
+                    artifactPath: artifact.path,
+                    artifactSHA256: artifact.sha256
+                )
+            } catch let error as LineageError {
+                throw error
+            } catch {
+                throw LineageError.unreadableFile(artifact.path)
+            }
+            guard proof.project == publication.project,
+                  proof.phase == phase,
+                  proof.shotID == shotID else {
+                throw LineageError.unreadableFile(artifact.path)
+            }
+            files.append(proofURL)
+            for dependency in proof.dependencies {
+                let dependencyURL = try projectFile(
+                    dependency.path,
+                    dataRoot: dataRoot
+                )
+                do {
+                    guard try FileDigest.sha256(of: dependencyURL)
+                            == dependency.sha256 else {
+                        throw LineageError.unreadableFile(dependency.path)
+                    }
+                } catch let error as LineageError {
+                    throw error
+                } catch {
+                    throw LineageError.unreadableFile(dependency.path)
+                }
+                files.append(dependencyURL)
+            }
+            for output in proof.outputs {
+                let outputURL = try projectFile(
+                    output.path,
+                    dataRoot: dataRoot
+                )
+                do {
+                    guard try FileDigest.sha256(of: outputURL)
+                            == output.sha256 else {
+                        throw LineageError.unreadableFile(output.path)
+                    }
+                } catch let error as LineageError {
+                    throw error
+                } catch {
+                    throw LineageError.unreadableFile(output.path)
+                }
+                files.append(outputURL)
+            }
+        }
+        return files
+    }
+
+    private static func shotlistReferences(dataRoot: URL) throws -> [URL] {
+        guard let shotlist = try loadShotlist(dataRoot: dataRoot) else { return [] }
         var paths = shotlist.shots.flatMap(\.referenceImageRefs)
         paths += shotlist.shots.compactMap {
             $0.sourceMode == .aiEnhanced ? $0.sourcePath : nil
         }
-        return paths.compactMap {
-            projectFile($0, dataRoot: dataRoot)
+        return try paths.map {
+            try projectFile($0, dataRoot: dataRoot)
         }
     }
 
     private static func projectFile(
         _ rawPath: String,
         dataRoot: URL
-    ) -> URL? {
+    ) throws -> URL {
         let path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty,
+              path == rawPath,
               !NSString(string: path).isAbsolutePath,
               !path.split(separator: "/").contains("..") else {
-            return nil
+            throw LineageError.unsafeProjectPath(rawPath)
         }
-        let home = FrameInventory.projectHome(of: dataRoot)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-        for base in [dataRoot, FrameInventory.projectHome(of: dataRoot)] {
-            let candidate = base.appendingPathComponent(path)
-                .standardizedFileURL
-                .resolvingSymlinksInPath()
-            guard candidate.path == home.path
-                    || candidate.path.hasPrefix(home.path + "/") else {
-                continue
-            }
-            var isDirectory: ObjCBool = false
-            if FileManager.default.fileExists(
-                atPath: candidate.path,
-                isDirectory: &isDirectory
-            ), !isDirectory.boolValue {
-                return candidate
-            }
+        do {
+            return try ProjectLocalFile.resolve(path, dataRoot: dataRoot)
+        } catch {
+            throw LineageError.unsafeProjectPath(path)
         }
-        return nil
     }
 
     private static func fingerprint(
@@ -304,25 +482,34 @@ enum MusicvideoPipelineLineage {
         dynamicFiles: [URL],
         dataRoot: URL
     ) throws -> String {
-        let home = FrameInventory.projectHome(of: dataRoot)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
+        let home = FrameInventory.projectHome(of: dataRoot).standardizedFileURL
         var hasher = SHA256()
         var selected: [String: URL] = [:]
         for selector in selectors {
             hasher.update(data: Data("selector:\(selector)\u{0}".utf8))
             let url = dataRoot.appendingPathComponent(selector)
-            for file in regularFiles(at: url, inside: home) {
-                selected[relativePath(file, home: home)] = file
+            for file in try regularFiles(at: url, inside: home) {
+                selected[try canonicalPath(
+                    file,
+                    dataRoot: dataRoot,
+                    projectRoot: home
+                )] = file
             }
         }
         for file in dynamicFiles {
-            let resolved = file.standardizedFileURL.resolvingSymlinksInPath()
-            guard resolved.path == home.path
-                    || resolved.path.hasPrefix(home.path + "/") else {
-                continue
+            let canonical = try canonicalPath(
+                file.standardizedFileURL,
+                dataRoot: dataRoot,
+                projectRoot: home
+            )
+            do {
+                selected[canonical] = try ProjectLocalFile.resolve(
+                    canonical,
+                    dataRoot: dataRoot
+                )
+            } catch {
+                throw LineageError.unsafeProjectPath(canonical)
             }
-            selected[relativePath(resolved, home: home)] = resolved
         }
         for (path, url) in selected.sorted(by: { $0.key < $1.key }) {
             hasher.update(data: Data(path.utf8))
@@ -344,38 +531,79 @@ enum MusicvideoPipelineLineage {
     private static func regularFiles(
         at url: URL,
         inside home: URL
-    ) -> [URL] {
+    ) throws -> [URL] {
+        let candidate = url.standardizedFileURL
+        guard candidate.path == home.path
+                || candidate.path.hasPrefix(home.path + "/") else {
+            throw LineageError.unsafeProjectPath(candidate.path)
+        }
+        try requireNoSymbolicLink(candidate, inside: home)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(
-            atPath: url.path,
+            atPath: candidate.path,
             isDirectory: &isDirectory
         ) else { return [] }
         if !isDirectory.boolValue {
-            let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
-            guard resolved.path == home.path
-                    || resolved.path.hasPrefix(home.path + "/") else {
-                return []
+            let values = try candidate.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+            ])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw LineageError.unsafeProjectPath(candidate.path)
             }
-            return [resolved]
+            return [candidate]
         }
+        var enumerationError: (any Error)?
         guard let enumerator = FileManager.default.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
+            at: candidate,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, error in
+                enumerationError = error
+                return false
+            }
         ) else { return [] }
         var files: [URL] = []
         for case let file as URL in enumerator {
-            let resolved = file.standardizedFileURL.resolvingSymlinksInPath()
-            guard resolved.path == home.path
-                    || resolved.path.hasPrefix(home.path + "/"),
-                  (try? resolved.resourceValues(
-                    forKeys: [.isRegularFileKey]
-                  ).isRegularFile) == true else {
+            let standardized = file.standardizedFileURL
+            guard standardized.path.hasPrefix(home.path + "/") else {
+                throw LineageError.unsafeProjectPath(standardized.path)
+            }
+            try requireNoSymbolicLink(standardized, inside: home)
+            let values = try standardized.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+            ])
+            guard values.isSymbolicLink != true else {
+                throw LineageError.unsafeProjectPath(standardized.path)
+            }
+            guard values.isRegularFile == true else {
                 continue
             }
-            files.append(resolved)
+            files.append(standardized)
+        }
+        if enumerationError != nil {
+            throw LineageError.unreadableFile(candidate.path)
         }
         return files
+    }
+
+    private static func requireNoSymbolicLink(_ url: URL, inside home: URL) throws {
+        guard (try? FileManager.default.destinationOfSymbolicLink(
+            atPath: home.path
+        )) == nil else {
+            throw LineageError.unsafeProjectPath(home.path)
+        }
+        let suffix = url.path.dropFirst(home.path.count)
+        var current = home
+        for component in suffix.split(separator: "/") {
+            current.appendPathComponent(String(component))
+            if (try? FileManager.default.destinationOfSymbolicLink(
+                atPath: current.path
+            )) != nil {
+                throw LineageError.unsafeProjectPath(current.path)
+            }
+        }
     }
 
     private static func relativePath(_ url: URL, home: URL) -> String {
@@ -383,5 +611,21 @@ enum MusicvideoPipelineLineage {
         return url.path.hasPrefix(prefix)
             ? String(url.path.dropFirst(prefix.count))
             : url.lastPathComponent
+    }
+
+    private static func canonicalPath(
+        _ url: URL,
+        dataRoot: URL,
+        projectRoot: URL
+    ) throws -> String {
+        let file = url.standardizedFileURL
+        let resolvedDataRoot = dataRoot.standardizedFileURL
+        if file.path.hasPrefix(resolvedDataRoot.path + "/") {
+            return String(file.path.dropFirst(resolvedDataRoot.path.count + 1))
+        }
+        guard file.path.hasPrefix(projectRoot.path + "/") else {
+            throw LineageError.unsafeProjectPath(file.path)
+        }
+        return relativePath(file, home: projectRoot)
     }
 }

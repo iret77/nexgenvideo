@@ -1,6 +1,7 @@
 import CoreFoundation
 import Foundation
 import MCP
+import NexGenEngine
 
 /// Turns a provider's runtime MCP discovery into model-catalog entries — the pure, testable core of
 /// provider MCP discovery (#163). No I/O: the coordinator (`CatalogDiscovery`) drives the tool
@@ -11,8 +12,6 @@ import MCP
 /// resolver routes them through the gated `GenerationController` path (compile+token) exactly like the
 /// REST providers — discovery adds models, never a raw-prompt bypass.
 enum MCPModelDiscovery {
-
-    private static let providerUnboundedReferenceHostMaximum = 32
     private static let paginationCursorKeys = [
         "next_page_token", "nextPageToken", "next", "cursor",
     ]
@@ -40,18 +39,44 @@ enum MCPModelDiscovery {
         case detail
     }
 
+    struct ModelDiagnostic: Sendable, Equatable {
+        enum Kind: String, Sendable {
+            case payloadIncompatible = "payload_incompatible"
+            case unsupportedModality = "unsupported_modality"
+            case generationToolUnavailable = "generation_tool_unavailable"
+            case generationSchemaIncompatible = "generation_schema_incompatible"
+            case capabilityResolutionFailed = "capability_resolution_failed"
+            case duplicateModelID = "duplicate_model_id"
+        }
+
+        let modelID: String?
+        let kind: Kind
+    }
+
     struct ListingParseResult: Sendable {
         let items: [ModelItem]
         let pagination: PaginationEvidence
         let isCatalogPayload: Bool
+        let structuralIsComplete: Bool
         let structuralAndDecodeIsComplete: Bool
+        let modelDiagnostics: [ModelDiagnostic]
 
         var next: String? {
-            structuralAndDecodeIsComplete ? pagination.next : nil
+            structuralIsComplete ? pagination.next : nil
         }
         var isComplete: Bool {
             structuralAndDecodeIsComplete && pagination.isComplete
         }
+    }
+
+    struct CapabilityResolutionResult: Sendable {
+        let capabilities: [String: ResolvedOfferingCapabilityProfileV1]
+        let diagnostics: [ModelDiagnostic]
+    }
+
+    struct CatalogEntryMappingResult: Sendable {
+        let entries: [CatalogEntry]
+        let diagnostics: [ModelDiagnostic]
     }
 
     private enum ListingPayloadResult {
@@ -511,7 +536,7 @@ enum MCPModelDiscovery {
         var rawItems: [Any] = []
         var paginationEvidence: [PaginationEvidence] = []
         var isCatalogPayload = false
-        var structuralAndDecodeIsComplete = true
+        var structuralIsComplete = true
         for segment in segments {
             guard segment.isBalanced,
                   let data = segment.text.data(using: .utf8),
@@ -522,7 +547,7 @@ enum MCPModelDiscovery {
                     context: context
                 ) {
                     isCatalogPayload = true
-                    structuralAndDecodeIsComplete = false
+                    structuralIsComplete = false
                 }
                 continue
             }
@@ -537,26 +562,32 @@ enum MCPModelDiscovery {
             isCatalogPayload = true
             rawItems.append(contentsOf: items)
             paginationEvidence.append(pagination)
-            structuralAndDecodeIsComplete = structuralAndDecodeIsComplete
+            structuralIsComplete = structuralIsComplete
                 && payloadIsStructurallyComplete
         }
         if isCatalogPayload && hasUnbalancedJSONSegment {
-            structuralAndDecodeIsComplete = false
+            structuralIsComplete = false
         }
         guard isCatalogPayload else {
             return ListingParseResult(
                 items: [],
                 pagination: .none,
                 isCatalogPayload: false,
-                structuralAndDecodeIsComplete: true
+                structuralIsComplete: true,
+                structuralAndDecodeIsComplete: true,
+                modelDiagnostics: []
             )
         }
         let pagination = PaginationEvidence.aggregating(paginationEvidence)
         let decoder = JSONDecoder()
         var items: [ModelItem] = []
+        var diagnostics: [ModelDiagnostic] = []
         for value in rawItems {
             guard let decoded = decodedModelItem(from: value, decoder: decoder) else {
-                structuralAndDecodeIsComplete = false
+                diagnostics.append(ModelDiagnostic(
+                    modelID: modelIdentityHint(from: value),
+                    kind: .payloadIncompatible
+                ))
                 continue
             }
             items.append(decoded.withOutputType(defaultOutputType))
@@ -565,7 +596,9 @@ enum MCPModelDiscovery {
             items: items,
             pagination: pagination,
             isCatalogPayload: true,
-            structuralAndDecodeIsComplete: structuralAndDecodeIsComplete
+            structuralIsComplete: structuralIsComplete,
+            structuralAndDecodeIsComplete: structuralIsComplete && diagnostics.isEmpty,
+            modelDiagnostics: diagnostics
         )
     }
 
@@ -576,8 +609,8 @@ enum MCPModelDiscovery {
               let start = text[searchStart...].firstIndex(where: {
                 $0 == "{" || $0 == "["
               }) {
-            var expectedClosers: [Character] = []
-            var quote: Character?
+            var expectedClosers: [Swift.Character] = []
+            var quote: Swift.Character?
             var isEscaped = false
             var index = start
             var foundEnd = false
@@ -662,7 +695,7 @@ enum MCPModelDiscovery {
         aliases: [String]
     ) -> Bool {
         let aliases = Set(aliases.map { $0.lowercased() })
-        var quote: Character?
+        var quote: Swift.Character?
         var isEscaped = false
         var index = text.startIndex
         while index < text.endIndex {
@@ -864,6 +897,16 @@ enum MCPModelDiscovery {
         return decoded
     }
 
+    private static func modelIdentityHint(from value: Any) -> String? {
+        guard let object = value as? [String: Any] else { return nil }
+        for key in ["id", "job_set_type", "jobSetType", "model_id", "modelId"] {
+            guard let value = object[key] as? String else { continue }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return nil
+    }
+
     private static func paginationMetadata(
         in object: [String: Any]
     ) -> PaginationEvidence {
@@ -946,6 +989,108 @@ enum MCPModelDiscovery {
 
     // MARK: - Mapping (the unit-tested core)
 
+    static func resolveOfferingCapabilities(
+        models: [ModelItem],
+        toolsByModality: [Modality: String],
+        provider: GenerationProvider,
+        resolver: ModelCapabilityResolver,
+        observedAt: String
+    ) throws -> [String: ResolvedOfferingCapabilityProfileV1] {
+        resolveOfferingCapabilitiesResult(
+            models: models,
+            toolsByModality: toolsByModality,
+            provider: provider,
+            resolver: resolver,
+            observedAt: observedAt
+        ).capabilities
+    }
+
+    static func resolveOfferingCapabilitiesResult(
+        models: [ModelItem],
+        toolsByModality: [Modality: String],
+        provider: GenerationProvider,
+        resolver: ModelCapabilityResolver,
+        observedAt: String
+    ) -> CapabilityResolutionResult {
+        var result: [String: ResolvedOfferingCapabilityProfileV1] = [:]
+        var diagnostics: [ModelDiagnostic] = []
+        for model in models {
+            guard let modality = modalityOf(model),
+                  let capabilityModality = capabilityModality(modality) else {
+                diagnostics.append(ModelDiagnostic(
+                    modelID: model.id,
+                    kind: .unsupportedModality
+                ))
+                continue
+            }
+            guard let endpointID = toolsByModality[modality] else {
+                diagnostics.append(ModelDiagnostic(
+                    modelID: model.id,
+                    kind: .generationToolUnavailable
+                ))
+                continue
+            }
+            let inputPolicy = productionInputPolicy(model, modality: modality)
+            if modality == .video, inputPolicy == nil {
+                diagnostics.append(ModelDiagnostic(
+                    modelID: model.id,
+                    kind: .capabilityResolutionFailed
+                ))
+                continue
+            }
+            let offer = ProviderOffer(
+                provider: provider,
+                transport: .mcp,
+                providerRef: endpointID,
+                modelParam: model.id,
+                productionInputPolicy: inputPolicy
+            )
+            let offering = CatalogOfferingIdentity.make(
+                offer: offer,
+                modelID: model.id,
+                modality: capabilityModality
+            )
+            let evidence = CapabilityEvidenceV1(
+                sourceTitle: "\(provider.displayName) runtime endpoint schema",
+                observedAt: observedAt,
+                kind: .providerSchema,
+                confidence: 1
+            )
+            let overlay = EndpointCapabilityOverlayV1(
+                offering: offering,
+                schemaEvidence: [evidence],
+                restrictions: endpointRestrictions(
+                    model,
+                    modality: modality,
+                    evidence: evidence
+                ),
+                arrayConstraints: endpointArrayConstraints(
+                    model,
+                    modality: modality
+                )
+            )
+            do {
+                result[model.id] = try resolver.resolveOffering(
+                    offering,
+                    lookup: CapabilityLookupV1(
+                        modality: capabilityModality,
+                        catalogModelID: model.id
+                    ),
+                    overlay: overlay
+                )
+            } catch {
+                diagnostics.append(ModelDiagnostic(
+                    modelID: model.id,
+                    kind: .capabilityResolutionFailed
+                ))
+            }
+        }
+        return CapabilityResolutionResult(
+            capabilities: result,
+            diagnostics: diagnostics
+        )
+    }
+
     /// Map a provider's enumerated models onto catalog entries, one per model, each bound to the
     /// generate tool of its modality. A model whose modality has no discovered generate tool is
     /// dropped (nothing could dispatch it). This is the pure Tool→CatalogEntry contract.
@@ -954,31 +1099,100 @@ enum MCPModelDiscovery {
         toolsByModality: [Modality: String],
         toolSchemasByModality: [Modality: Value] = [:],
         allowsLocalMedia: Bool = true,
+        resolvedCapabilities: [String: ResolvedOfferingCapabilityProfileV1] = [:],
         provider: GenerationProvider
     ) -> [CatalogEntry] {
+        catalogEntriesResult(
+            models: models,
+            toolsByModality: toolsByModality,
+            toolSchemasByModality: toolSchemasByModality,
+            allowsLocalMedia: allowsLocalMedia,
+            resolvedCapabilities: resolvedCapabilities,
+            provider: provider
+        ).entries
+    }
+
+    static func catalogEntriesResult(
+        models: [ModelItem],
+        toolsByModality: [Modality: String],
+        toolSchemasByModality: [Modality: Value] = [:],
+        allowsLocalMedia: Bool = true,
+        resolvedCapabilities: [String: ResolvedOfferingCapabilityProfileV1] = [:],
+        provider: GenerationProvider
+    ) -> CatalogEntryMappingResult {
         var out: [CatalogEntry] = []
+        var diagnostics: [ModelDiagnostic] = []
         var seen = Set<String>()
         for model in models {
-            guard !model.id.isEmpty, !seen.contains(model.id) else { continue }
-            guard let modality = modalityOf(model), let tool = toolsByModality[modality] else { continue }
+            guard !model.id.isEmpty else {
+                diagnostics.append(ModelDiagnostic(modelID: nil, kind: .payloadIncompatible))
+                continue
+            }
+            guard !seen.contains(model.id) else {
+                diagnostics.append(ModelDiagnostic(
+                    modelID: model.id,
+                    kind: .duplicateModelID
+                ))
+                continue
+            }
+            guard let modality = modalityOf(model) else {
+                diagnostics.append(ModelDiagnostic(
+                    modelID: model.id,
+                    kind: .unsupportedModality
+                ))
+                continue
+            }
+            guard let tool = toolsByModality[modality] else {
+                diagnostics.append(ModelDiagnostic(
+                    modelID: model.id,
+                    kind: .generationToolUnavailable
+                ))
+                continue
+            }
             if let schema = toolSchemasByModality[modality],
                !generationSchemaSupports(
                    model: model, modality: modality, schema: schema, modelParam: model.id,
                    includeMedia: allowsLocalMedia
                ) {
+                diagnostics.append(ModelDiagnostic(
+                    modelID: model.id,
+                    kind: .generationSchemaIncompatible
+                ))
                 continue
             }
             seen.insert(model.id)
+            let productionQualityTargetIDs = toolSchemasByModality[modality].flatMap { schema in
+                productionQualityTargets(
+                    model: model,
+                    modality: modality,
+                    schema: schema,
+                    modelParam: model.id,
+                    includeMedia: allowsLocalMedia
+                )
+            }
             let offer = ProviderOffer(provider: provider, transport: .mcp,
                                       providerRef: tool, modelParam: model.id,
                                       mcpMediaRoles: allowsLocalMedia
-                                        ? Array(mediaRoles(model)).sorted() : [])
-            out.append(entry(
+                                        ? Array(mediaRoles(model)).sorted() : [],
+                                      productionQualityTargetIDs: productionQualityTargetIDs,
+                                      productionInputPolicy: productionInputPolicy(
+                                        model,
+                                        modality: modality
+                                      ))
+            guard let mapped = entry(
                 for: model, modality: modality, offer: offer,
-                allowsLocalMedia: allowsLocalMedia
-            ))
+                allowsLocalMedia: allowsLocalMedia,
+                capabilityProfile: resolvedCapabilities[model.id]
+            ) else {
+                diagnostics.append(ModelDiagnostic(
+                    modelID: model.id,
+                    kind: .capabilityResolutionFailed
+                ))
+                continue
+            }
+            out.append(mapped)
         }
-        return out
+        return CatalogEntryMappingResult(entries: out, diagnostics: diagnostics)
     }
 
     /// A generate tool with no separate model catalog (its `model` is a single implicit choice, or the
@@ -1003,8 +1217,27 @@ enum MCPModelDiscovery {
                 modelParam: nil,
                 includeMedia: false
             ) else { continue }
-            let offer = ProviderOffer(provider: provider, transport: .mcp, providerRef: tool, modelParam: nil)
-            out.append(entry(for: item, modality: modality, offer: offer, allowsLocalMedia: false))
+            let offer = ProviderOffer(
+                provider: provider,
+                transport: .mcp,
+                providerRef: tool,
+                modelParam: nil,
+                productionInputPolicy: modality == .video
+                    ? ProviderProductionInputPolicyV1(
+                        requiresSourceVideo: false,
+                        framesCountTowardImageReferenceLimit: false,
+                        framesCountTowardTotalReferenceLimit: false
+                    )
+                    : nil
+            )
+            if let mapped = entry(
+                for: item,
+                modality: modality,
+                offer: offer,
+                allowsLocalMedia: false
+            ) {
+                out.append(mapped)
+            }
         }
         return out
     }
@@ -1021,55 +1254,297 @@ enum MCPModelDiscovery {
         }
     }
 
+    private static func capabilityModality(_ modality: Modality) -> CapabilityModalityV1? {
+        switch modality {
+        case .video: return .video
+        case .image: return .image
+        case .audio: return .audio
+        case .upscale: return nil
+        }
+    }
+
+    private static func endpointArrayConstraints(
+        _ model: ModelItem,
+        modality: Modality
+    ) -> [String: EndpointArrayConstraintV1] {
+        switch modality {
+        case .video:
+            return [
+                CapabilityFieldIDV1.referenceImages: endpointArrayConstraint(
+                    model,
+                    mediaType: "image"
+                ),
+                CapabilityFieldIDV1.referenceVideos: endpointArrayConstraint(
+                    model,
+                    mediaType: "video"
+                ),
+                CapabilityFieldIDV1.referenceAudios: endpointArrayConstraint(
+                    model,
+                    mediaType: "audio"
+                ),
+            ]
+        case .image:
+            return [
+                CapabilityFieldIDV1.imageReferences: endpointArrayConstraint(
+                    model,
+                    mediaType: "image"
+                ),
+            ]
+        case .audio, .upscale:
+            return [:]
+        }
+    }
+
+    private static func endpointArrayConstraint(
+        _ model: ModelItem,
+        mediaType: String
+    ) -> EndpointArrayConstraintV1 {
+        let medias = referenceMedia(model, type: mediaType)
+        let parameter = referenceParameter(model, type: mediaType)
+        let constraintMaximum = constraintMaximum(model, mediaType: mediaType)
+        let mediaMaximum = !medias.isEmpty && medias.allSatisfy { $0.max != nil }
+            ? medias.reduce(0) { $0 + Swift.max(0, $1.max ?? 0) }
+            : nil
+        return EndpointArrayConstraintV1(
+            isPresent: !medias.isEmpty || parameter != nil || constraintMaximum != nil,
+            maxItems: [constraintMaximum, parameter?.max, mediaMaximum]
+                .compactMap { $0 }
+                .min()
+        )
+    }
+
+    private static func endpointRestrictions(
+        _ model: ModelItem,
+        modality: Modality,
+        evidence: CapabilityEvidenceV1
+    ) -> EndpointCapabilityRestrictionsV1 {
+        var integers: [String: EndpointIntegerRestrictionV1] = [:]
+        var decimals: [String: EndpointDecimalRestrictionV1] = [:]
+        var booleans: [String: EndpointBooleanRestrictionV1] = [:]
+        var strings: [String: EndpointStringListRestrictionV1] = [:]
+        var integerLists: [String: EndpointIntegerListRestrictionV1] = [:]
+
+        if let aspectRatios = model.aspectRatios?.filter({ !$0.isEmpty }) {
+            strings[CapabilityFieldIDV1.aspectRatios] = EndpointStringListRestrictionV1(
+                values: Array(Set(aspectRatios)).sorted(),
+                evidence: [evidence]
+            )
+        }
+        if let resolutions = options(model, param: "resolution"), !resolutions.isEmpty {
+            strings[CapabilityFieldIDV1.resolutions] = EndpointStringListRestrictionV1(
+                values: Array(Set(resolutions)).sorted(),
+                evidence: [evidence]
+            )
+        }
+        if modality == .video {
+            if let maximum = constraintMaximum(model, mediaType: "total") {
+                integers[CapabilityFieldIDV1.totalReferences] =
+                    EndpointIntegerRestrictionV1(
+                        value: maximum,
+                        operation: .maximum,
+                        evidence: [evidence]
+                    )
+            }
+            if let policy = productionInputPolicy(model, modality: modality) {
+                booleans[CapabilityFieldIDV1.sourceVideoRequired] =
+                    EndpointBooleanRestrictionV1(
+                        value: policy.requiresSourceVideo,
+                        evidence: [evidence]
+                    )
+                booleans[CapabilityFieldIDV1.framesCountTowardImageReferenceLimit] =
+                    EndpointBooleanRestrictionV1(
+                        value: policy.framesCountTowardImageReferenceLimit,
+                        evidence: [evidence]
+                    )
+                booleans[CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit] =
+                    EndpointBooleanRestrictionV1(
+                        value: policy.framesCountTowardTotalReferenceLimit,
+                        evidence: [evidence]
+                    )
+            }
+            if let minimum = model.durationRange?.min {
+                decimals[CapabilityFieldIDV1.durationMinimum] = EndpointDecimalRestrictionV1(
+                    value: Double(minimum),
+                    operation: .minimum,
+                    evidence: [evidence]
+                )
+            }
+            if let maximum = model.durationRange?.max {
+                decimals[CapabilityFieldIDV1.durationMaximum] = EndpointDecimalRestrictionV1(
+                    value: Double(maximum),
+                    operation: .maximum,
+                    evidence: [evidence]
+                )
+            }
+            if let durations = model.durations, !durations.isEmpty {
+                integerLists[CapabilityFieldIDV1.durationValues] =
+                    EndpointIntegerListRestrictionV1(
+                        values: Array(Set(durations)).sorted(),
+                        evidence: [evidence]
+                    )
+            }
+        }
+        if modality == .image,
+           let maximum = outputImageParameterMaximum(model) {
+            integers[CapabilityFieldIDV1.imageOutputsPerRequest] =
+                EndpointIntegerRestrictionV1(
+                    value: maximum,
+                    operation: .maximum,
+                    evidence: [evidence]
+                )
+        }
+        return EndpointCapabilityRestrictionsV1(
+            integers: integers,
+            decimals: decimals,
+            booleans: booleans,
+            strings: strings,
+            integerLists: integerLists
+        )
+    }
+
+    private static func outputImageParameterMaximum(_ model: ModelItem) -> Int? {
+        let names = Set(["batch_size", "num_images", "number_of_images"])
+        return model.parameters?
+            .filter { names.contains(($0.name ?? "").lowercased()) }
+            .flatMap { parameter -> [Int] in
+                var values = (parameter.options ?? []).compactMap { Int($0.text) }
+                if let maximum = parameter.max { values.append(maximum) }
+                return values
+            }
+            .max()
+    }
+
     private static func entry(
         for model: ModelItem,
         modality: Modality,
         offer: ProviderOffer,
-        allowsLocalMedia: Bool
-    ) -> CatalogEntry {
+        allowsLocalMedia: Bool,
+        capabilityProfile: ResolvedOfferingCapabilityProfileV1? = nil
+    ) -> CatalogEntry? {
         let displayName = model.name?.isEmpty == false ? model.name! : model.id
         let card = ModelCard(strengths: nil, weaknesses: nil, bestFor: model.description,
                              rank: nil, tags: model.tags)
         switch modality {
         case .video:
+            guard let inputPolicy = offer.productionInputPolicy else { return nil }
+            let capabilities = videoCaps(
+                model,
+                allowsLocalMedia: allowsLocalMedia,
+                capabilityProfile: capabilityProfile?.effective,
+                inputPolicy: inputPolicy
+            )
+            var resolvedOffer = offer
+            resolvedOffer.resolvedVideoCapabilities =
+                ResolvedVideoOfferingCapabilitiesV1(
+                    videoCapabilities: capabilities,
+                    supportsNativeAudio: capabilityProfile?.effective.fields.booleans[
+                        CapabilityFieldIDV1.nativeAudio
+                    ]?.value ?? false
+                )
             return CatalogEntry(
                 id: model.id, kind: .video, displayName: displayName,
                 allowedEndpoints: [model.id], responseShape: .video,
-                uiCapabilities: .video(videoCaps(model, allowsLocalMedia: allowsLocalMedia)),
-                card: card, offers: [offer])
+                uiCapabilities: .video(capabilities),
+                card: card,
+                offers: [resolvedOffer],
+                resolvedOfferingCapabilities: capabilityProfile.map { [$0] })
         case .image:
             return CatalogEntry(
                 id: model.id, kind: .image, displayName: displayName,
                 allowedEndpoints: [model.id], responseShape: .images,
-                uiCapabilities: .image(imageCaps(model, allowsLocalMedia: allowsLocalMedia)),
-                card: card, offers: [offer])
+                uiCapabilities: .image(imageCaps(
+                    model,
+                    allowsLocalMedia: allowsLocalMedia,
+                    capabilityProfile: capabilityProfile?.effective
+                )),
+                card: card,
+                offers: [offer],
+                resolvedOfferingCapabilities: capabilityProfile.map { [$0] })
         case .audio:
             return CatalogEntry(
                 id: model.id, kind: .audio, displayName: displayName,
                 allowedEndpoints: [model.id], responseShape: .audio,
-                uiCapabilities: .audio(audioCaps(model)), card: card, offers: [offer])
+                uiCapabilities: .audio(audioCaps(model)),
+                card: card,
+                offers: [offer],
+                resolvedOfferingCapabilities: capabilityProfile.map { [$0] })
         case .upscale:
             return CatalogEntry(
                 id: model.id, kind: .upscale, displayName: displayName,
                 allowedEndpoints: [model.id], responseShape: .upscaledImage,
                 uiCapabilities: .upscale(UpscaleCaps(speed: "Medium", p75DurationSeconds: 60,
                                                      supportedTypes: ["image", "video"])),
-                card: card, offers: [offer])
+                card: card,
+                offers: [offer],
+                resolvedOfferingCapabilities: capabilityProfile.map { [$0] })
         }
     }
 
-    private static func videoCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> VideoCaps {
+    private static func videoCaps(
+        _ model: ModelItem,
+        allowsLocalMedia: Bool,
+        capabilityProfile: ResolvedCapabilityProfileV1?,
+        inputPolicy: ProviderProductionInputPolicyV1
+    ) -> VideoCaps {
         let roles = allowsLocalMedia ? mediaRoles(model) : []
+        let endpointTotalMaximum = constraintMaximum(model, mediaType: "total")
         let imageBounds = allowsLocalMedia
-            ? mediaBounds(model, type: "image") : .none
+            ? mediaBounds(
+                model,
+                type: "image",
+                intrinsicMaximum: integerCapability(
+                    capabilityProfile,
+                    field: CapabilityFieldIDV1.referenceImages,
+                    ignoringDefensive: endpointTotalMaximum != nil
+                ) ?? endpointTotalMaximum
+            ) : .none
         let videoBounds = allowsLocalMedia
-            ? mediaBounds(model, type: "video") : .none
+            ? mediaBounds(
+                model,
+                type: "video",
+                intrinsicMaximum: integerCapability(
+                    capabilityProfile,
+                    field: CapabilityFieldIDV1.referenceVideos,
+                    ignoringDefensive: endpointTotalMaximum != nil
+                ) ?? endpointTotalMaximum
+            ) : .none
         let audioBounds = allowsLocalMedia
-            ? mediaBounds(model, type: "audio") : .none
+            ? mediaBounds(
+                model,
+                type: "audio",
+                intrinsicMaximum: integerCapability(
+                    capabilityProfile,
+                    field: CapabilityFieldIDV1.referenceAudios,
+                    ignoringDefensive: endpointTotalMaximum != nil
+                ) ?? endpointTotalMaximum
+            ) : .none
         let derivedTotalMaximum = [imageBounds, videoBounds, audioBounds]
-            .allSatisfy { !$0.declared || $0.declaredMaximum != nil }
+            .allSatisfy(\.isEffectivelyBounded)
             ? imageBounds.max + videoBounds.max + audioBounds.max
             : nil
+        let intrinsicTotalMaximum = integerCapability(
+            capabilityProfile,
+            field: CapabilityFieldIDV1.totalReferences,
+            ignoringDefensive: true
+        )
+        let hasReferenceArgument = imageBounds.declared
+            || videoBounds.declared
+            || audioBounds.declared
+        let totalMaximum = hasReferenceArgument
+            ? [endpointTotalMaximum, intrinsicTotalMaximum, derivedTotalMaximum]
+                .compactMap { $0 }
+                .min()
+            : nil
+        let conditionalImageMaximum = conditionalConstraintMaximum(
+            model,
+            mediaType: "image",
+            whenReferenceType: "video"
+        ).map { endpointMaximum in
+            integerCapability(
+                capabilityProfile,
+                field: CapabilityFieldIDV1.referenceImages
+            ).map { Swift.min(endpointMaximum, $0) } ?? endpointMaximum
+        }
         return VideoCaps(
             durations: model.durations ?? [],
             durationRange: durationRange(model.durationRange),
@@ -1080,34 +1555,44 @@ enum MCPModelDiscovery {
             supportsLastFrame: roles.contains("end_image"),
             maxReferenceImages: imageBounds.max,
             maxReferenceVideos: videoBounds.max, maxReferenceAudios: audioBounds.max,
-            maxTotalReferences: constraintMaximum(model, mediaType: "total")
-                ?? derivedTotalMaximum.flatMap { $0 > 0 ? $0 : nil },
+            maxTotalReferences: totalMaximum,
             maxCombinedVideoRefSeconds: nil, maxCombinedAudioRefSeconds: nil,
             framesAndReferencesExclusive: false, referenceTagNoun: "image",
-            requiresSourceVideo: false, requiresReferenceImage: imageBounds.min > 0,
-            framesCountTowardImageReferenceLimit: framesCountTowardImageReferenceLimit(model),
-            framesCountTowardTotalReferenceLimit: framesCountTowardTotalReferenceLimit(model),
-            maxReferenceImagesWhenVideoPresent: conditionalConstraintMaximum(
-                model,
-                mediaType: "image",
-                whenReferenceType: "video"
-            ))
+            requiresSourceVideo: inputPolicy.requiresSourceVideo,
+            requiresReferenceImage: imageBounds.min > 0,
+            framesCountTowardImageReferenceLimit:
+                inputPolicy.framesCountTowardImageReferenceLimit,
+            framesCountTowardTotalReferenceLimit:
+                inputPolicy.framesCountTowardTotalReferenceLimit,
+            maxReferenceImagesWhenVideoPresent: conditionalImageMaximum)
     }
 
-    private static func imageCaps(_ model: ModelItem, allowsLocalMedia: Bool) -> ImageCaps {
+    private static func imageCaps(
+        _ model: ModelItem,
+        allowsLocalMedia: Bool,
+        capabilityProfile: ResolvedCapabilityProfileV1?
+    ) -> ImageCaps {
+        let intrinsicReferences = integerCapability(
+            capabilityProfile,
+            field: CapabilityFieldIDV1.imageReferences
+        )
         let bounds = allowsLocalMedia
-            ? mediaBounds(model, type: "image") : .none
+            ? mediaBounds(
+                model,
+                type: "image",
+                intrinsicMaximum: intrinsicReferences
+            ) : .none
         let referenceLimit = allowsLocalMedia
-            ? imageReferenceLimit(model) : .bounded(0)
+            ? imageReferenceLimit(model, intrinsicMaximum: intrinsicReferences) : .bounded(0)
         return ImageCaps(
             resolutions: options(model, param: "resolution"),
             aspectRatios: aspectRatios(model),
             qualities: options(model, param: "quality") ?? options(model, param: "mode"),
-            supportsImageReference: referenceLimit.hostMaximum > 0,
+            supportsImageReference: referenceLimit.effectiveMaximum > 0,
             requiresImageReference: bounds.min > 0,
             minReferenceImages: bounds.min,
             referenceImageLimit: referenceLimit,
-            maxImages: maxOutputImages(model))
+            maxImages: maxOutputImages(model, capabilityProfile: capabilityProfile))
     }
 
     private static func audioCaps(_ model: ModelItem) -> AudioCaps {
@@ -1179,16 +1664,22 @@ enum MCPModelDiscovery {
         let max: Int
         let declaredMaximum: Int?
         let declared: Bool
+        let isEffectivelyBounded: Bool
 
         static let none = MediaBounds(
             min: 0,
             max: 0,
             declaredMaximum: nil,
-            declared: false
+            declared: false,
+            isEffectivelyBounded: true
         )
     }
 
-    private static func mediaBounds(_ model: ModelItem, type: String) -> MediaBounds {
+    private static func mediaBounds(
+        _ model: ModelItem,
+        type: String,
+        intrinsicMaximum: Int?
+    ) -> MediaBounds {
         let medias = referenceMedia(model, type: type)
         let parameter = referenceParameter(model, type: type)
         let constraintMax = constraintMaximum(model, mediaType: type)
@@ -1205,9 +1696,15 @@ enum MCPModelDiscovery {
         )
         let maximum: Int
         if let declaredMaximum {
-            maximum = Swift.max(0, declaredMaximum)
-        } else if declared, model.hasResolvedMediaType(type) {
-            maximum = providerUnboundedReferenceHostMaximum
+            maximum = Swift.max(
+                0,
+                intrinsicMaximum.map { Swift.min(declaredMaximum, $0) }
+                    ?? declaredMaximum
+            )
+        } else if declared,
+                  model.hasResolvedMediaType(type),
+                  let intrinsicMaximum {
+            maximum = Swift.max(0, intrinsicMaximum)
         } else {
             maximum = 0
         }
@@ -1215,16 +1712,27 @@ enum MCPModelDiscovery {
             min: minimum,
             max: maximum,
             declaredMaximum: declaredMaximum,
-            declared: declared
+            declared: declared,
+            isEffectivelyBounded: !declared
+                || declaredMaximum != nil
+                || intrinsicMaximum != nil
         )
     }
 
-    private static func imageReferenceLimit(_ model: ModelItem) -> ImageReferenceLimit {
-        let bounds = mediaBounds(model, type: "image")
+    private static func imageReferenceLimit(
+        _ model: ModelItem,
+        intrinsicMaximum: Int?
+    ) -> ImageReferenceLimit {
+        let bounds = mediaBounds(
+            model,
+            type: "image",
+            intrinsicMaximum: intrinsicMaximum
+        )
         guard bounds.declared else { return .bounded(0) }
-        if let maximum = bounds.declaredMaximum { return .bounded(maximum) }
+        if bounds.declaredMaximum != nil { return .bounded(bounds.max) }
         guard model.hasResolvedMediaType("image") else { return .unknown }
-        return .providerUnbounded(hostMaximum: providerUnboundedReferenceHostMaximum)
+        guard intrinsicMaximum != nil else { return .unknown }
+        return .capabilityProfile(bounds.max)
     }
 
     private static func referenceMedia(_ model: ModelItem, type: String) -> [ModelItem.Media] {
@@ -1317,33 +1825,137 @@ enum MCPModelDiscovery {
         return mediaTypeCount > 1 || normalized.contains("+")
     }
 
-    private static func framesCountTowardImageReferenceLimit(_ model: ModelItem) -> Bool {
-        (model.constraints ?? []).contains { value in
-            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
-            return normalized.contains("image")
-                && normalized.contains("reference")
-                && !isAggregateTotalConstraint(normalized)
-                && (normalized.contains("counting") || normalized.contains("including"))
-                && (normalized.contains("start image") || normalized.contains("end image"))
-        }
+    private static func framesCountTowardImageReferenceLimit(
+        _ model: ModelItem
+    ) -> Bool? {
+        frameAccountingEvidence(model, aggregate: false)
     }
 
-    private static func framesCountTowardTotalReferenceLimit(_ model: ModelItem) -> Bool {
-        framesCountTowardImageReferenceLimit(model) || (model.constraints ?? []).contains { value in
-            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
-            return isAggregateTotalConstraint(normalized)
-                && (normalized.contains("start image") || normalized.contains("end image"))
-        }
+    private static func framesCountTowardTotalReferenceLimit(
+        _ model: ModelItem
+    ) -> Bool? {
+        frameAccountingEvidence(model, aggregate: true)
     }
 
-    private static func maxOutputImages(_ model: ModelItem) -> Int {
+    private static func frameAccountingEvidence(
+        _ model: ModelItem,
+        aggregate: Bool
+    ) -> Bool? {
+        let roles = mediaRoles(model)
+        guard roles.contains("start_image") || roles.contains("end_image") else {
+            return false
+        }
+        let values = Set((model.constraints ?? []).compactMap { value -> Bool? in
+            let normalized = value.lowercased().replacingOccurrences(of: "_", with: " ")
+            let concernsFrames = normalized.contains("start image")
+                || normalized.contains("end image")
+            let concernsLimit = aggregate
+                ? isAggregateTotalConstraint(normalized)
+                : normalized.contains("image")
+                    && normalized.contains("reference")
+                    && !isAggregateTotalConstraint(normalized)
+            guard concernsFrames, concernsLimit else { return nil }
+            let excludes = normalized.contains("excluding")
+                || normalized.contains("does not count")
+                || normalized.contains("do not count")
+                || normalized.contains("not counted")
+                || normalized.contains("separate from")
+            if excludes { return false }
+            let includes = normalized.contains("counting")
+                || normalized.contains("including")
+                || (aggregate && normalized.contains("+"))
+            return includes ? true : nil
+        })
+        return values.count == 1 ? values.first : nil
+    }
+
+    private static func productionInputPolicy(
+        _ model: ModelItem,
+        modality: Modality
+    ) -> ProviderProductionInputPolicyV1? {
+        guard modality == .video else { return nil }
+        let sourceNames = Set([
+            "source", "source_video", "sourcevideo", "input_video", "inputvideo",
+            "video_input", "videoinput",
+        ])
+        func isSource(_ media: ModelItem.Media) -> Bool {
+            guard (media.type ?? "").lowercased() == "video" else { return false }
+            let roles = Set((media.roles ?? []).map {
+                $0.lowercased().replacingOccurrences(of: "-", with: "_")
+            })
+            let name = (media.name ?? "").lowercased()
+                .replacingOccurrences(of: "-", with: "_")
+            return sourceNames.contains(name) || !roles.isDisjoint(with: sourceNames)
+        }
+        let videoMedia = (model.medias ?? []).filter {
+            ($0.type ?? "").lowercased() == "video"
+        }
+        let sourceMedia = videoMedia.filter(isSource)
+        guard sourceMedia.isEmpty || sourceMedia.allSatisfy({ $0.min != nil }) else {
+            return nil
+        }
+        guard !videoMedia.contains(where: {
+            !isSource($0) && ($0.min ?? 0) > 0
+        }) else { return nil }
+        let requiresSourceVideo = sourceMedia.contains { ($0.min ?? 0) > 0 }
+        let imageAccounting: Bool
+        let totalAccounting: Bool
+        if requiresSourceVideo {
+            imageAccounting = false
+            totalAccounting = false
+        } else {
+            guard let exactImageAccounting = framesCountTowardImageReferenceLimit(model),
+                  let exactTotalAccounting = framesCountTowardTotalReferenceLimit(model) else {
+                return nil
+            }
+            imageAccounting = exactImageAccounting
+            totalAccounting = exactTotalAccounting
+        }
+        return ProviderProductionInputPolicyV1(
+            requiresSourceVideo: requiresSourceVideo,
+            framesCountTowardImageReferenceLimit: imageAccounting,
+            framesCountTowardTotalReferenceLimit: totalAccounting
+        )
+    }
+
+    private static func maxOutputImages(
+        _ model: ModelItem,
+        capabilityProfile: ResolvedCapabilityProfileV1?
+    ) -> Int {
         let names = Set(["batch_size", "num_images", "number_of_images"])
-        let declared = model.parameters?
-            .filter { names.contains(($0.name ?? "").lowercased()) }
-            .flatMap { $0.options ?? [] }
-            .compactMap { Int($0.text) }
-            .max()
-        return max(1, min(4, declared ?? 1))
+        let parameters = model.parameters?
+            .filter { names.contains(($0.name ?? "").lowercased()) } ?? []
+        guard !parameters.isEmpty else { return 1 }
+        let declared = parameters.flatMap { parameter -> [Int] in
+            var values = (parameter.options ?? []).compactMap { Int($0.text) }
+            if let maximum = parameter.max { values.append(maximum) }
+            return values
+        }.max()
+        let intrinsic = integerCapability(
+            capabilityProfile,
+            field: CapabilityFieldIDV1.imageOutputsPerRequest
+        )
+        return Swift.max(
+            1,
+            declared.map { declaredMaximum in
+                intrinsic.map { Swift.min(declaredMaximum, $0) } ?? declaredMaximum
+            }
+                ?? intrinsic
+                ?? 1
+        )
+    }
+
+    private static func integerCapability(
+        _ profile: ResolvedCapabilityProfileV1?,
+        field: String,
+        ignoringDefensive: Bool = false
+    ) -> Int? {
+        guard let capability = profile?.fields.integers[field],
+              !ignoringDefensive || capability.semantics != .defensiveDefault,
+              capability.value >= 0 else {
+            return nil
+        }
+        return capability.value
     }
 
     private static func generationSchemaSupports(
@@ -1351,7 +1963,8 @@ enum MCPModelDiscovery {
         modality: Modality,
         schema: Value,
         modelParam: String?,
-        includeMedia: Bool
+        includeMedia: Bool,
+        requiredCandidateNames: Set<String> = []
     ) -> Bool {
         let roles = includeMedia ? Array(mediaRoles(model)).sorted() : []
         let params: BackendGenerationParams
@@ -1397,7 +2010,33 @@ enum MCPModelDiscovery {
             ))
         }
         return (try? MCPGenerationArguments.make(
-            for: params, model: modelParam, schema: schema, mediaRoles: roles
+            for: params,
+            model: modelParam,
+            schema: schema,
+            mediaRoles: roles,
+            requiredCandidateNames: requiredCandidateNames
         )) != nil
+    }
+
+    private static func productionQualityTargets(
+        model: ModelItem,
+        modality: Modality,
+        schema: Value,
+        modelParam: String?,
+        includeMedia: Bool
+    ) -> [String]? {
+        guard modality == .image,
+              let values = options(model, param: "quality"),
+              generationSchemaSupports(
+                  model: model,
+                  modality: modality,
+                  schema: schema,
+                  modelParam: modelParam,
+                  includeMedia: includeMedia,
+                  requiredCandidateNames: ["quality"]
+              ) else {
+            return nil
+        }
+        return values
     }
 }

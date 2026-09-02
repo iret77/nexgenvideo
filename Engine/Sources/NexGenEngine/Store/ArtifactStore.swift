@@ -20,6 +20,7 @@ public enum PipelineLayout {
     public static let gatesFile = "gates.yaml"
     public static let lineageFile = "lineage.json"
     public static let briefFile = "brief.yaml"
+    public static let productionDesignFile = "production_design/production_design.yaml"
     public static let ledgerFile = "ledger.yaml"
     public static let bibleFile = "bible/bible.yaml"
 
@@ -34,6 +35,15 @@ public enum PipelineLayout {
     public static let sanityDir = "sanity"
     public static let sanityReportFile = "sanity/report.json"
     public static let rendersDir = "renders"
+    public static let executionDir = "execution"
+    public static let executionPlanFile = "execution/plan.v1.json"
+    public static let creativeContextFile = "execution/creative-context.v1.json"
+    public static let executionShotInputsFile = "execution/shot-inputs.v1.json"
+    public static let assetGraphFile = "execution/asset-graph.v1.json"
+    public static let productionInputsPublicationFile =
+        "execution/production-inputs-publication.v1.json"
+    public static let referencePlansDir = "execution/references"
+    public static let executionExtensionsDir = "execution/extensions"
 
     /// Format-neutral data-root subdirs created at init — exact order and names
     /// from `core/layout.py::CORE_SUBDIRS`. Pack dirs come separately.
@@ -46,6 +56,8 @@ public enum PipelineLayout {
         "sanity",
         "frames",
         "renders",
+        "execution/extensions",
+        "execution/references",
         "import",
         "import/characters",
         "import/locations",
@@ -87,8 +99,28 @@ public enum PipelineLayout {
         "\(rendersDir)/proof-\(phase).json"
     }
 
+    public static func renderRoutingProofFile(phase: String) -> String {
+        "\(rendersDir)/routing-proof-\(phase).v1.json"
+    }
+
     public static func assetProofFile(scope: String) -> String {
         "\(scope)/provenance.json"
+    }
+
+    public static func referenceDemandSetFile(shotID: String) -> String {
+        "\(referencePlansDir)/\(shotID)/demand-set.v1.json"
+    }
+
+    public static func productionInputTemplateFile(shotID: String) -> String {
+        "\(referencePlansDir)/\(shotID)/input-template.v1.json"
+    }
+
+    public static func referencePlanFile(shotID: String) -> String {
+        "\(referencePlansDir)/\(shotID)/plan.v2.json"
+    }
+
+    public static func productionRouteFile(shotID: String) -> String {
+        "\(referencePlansDir)/\(shotID)/route.v1.json"
     }
 }
 

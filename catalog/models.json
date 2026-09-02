@@ -31,7 +31,38 @@
       {
         "provider": "fal",
         "transport": "api",
-        "providerRef": "bytedance/seedance-2.5/text-to-video"
+        "providerRef": "bytedance/seedance-2.5/text-to-video",
+        "productionInputPolicyV1": {
+          "requiresSourceVideo": false,
+          "framesCountTowardImageReferenceLimit": false,
+          "framesCountTowardTotalReferenceLimit": false
+        },
+        "resolvedVideoOfferingCapabilitiesV1": {
+          "schemaVersion": 1,
+          "inputPolicy": {
+            "requiresSourceVideo": false,
+            "framesCountTowardImageReferenceLimit": false,
+            "framesCountTowardTotalReferenceLimit": false
+          },
+          "durationValues": [],
+          "durationMinimum": 4,
+          "durationMaximum": 30,
+          "supportsAutomaticDuration": true,
+          "supportsNativeAudio": true,
+          "resolutions": ["480p", "720p"],
+          "aspectRatios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+          "supportsFirstFrame": false,
+          "supportsLastFrame": false,
+          "maxReferenceImages": 0,
+          "maxReferenceVideos": 0,
+          "maxReferenceAudios": 0,
+          "maxTotalReferences": null,
+          "maxCombinedVideoReferenceSeconds": null,
+          "maxCombinedAudioReferenceSeconds": null,
+          "framesAndReferencesExclusive": false,
+          "requiresReferenceImage": false,
+          "maxReferenceImagesWhenVideoPresent": null
+        }
       }
     ]
   },
@@ -67,7 +98,38 @@
       {
         "provider": "fal",
         "transport": "api",
-        "providerRef": "bytedance/seedance-2.5/image-to-video"
+        "providerRef": "bytedance/seedance-2.5/image-to-video",
+        "productionInputPolicyV1": {
+          "requiresSourceVideo": false,
+          "framesCountTowardImageReferenceLimit": false,
+          "framesCountTowardTotalReferenceLimit": false
+        },
+        "resolvedVideoOfferingCapabilitiesV1": {
+          "schemaVersion": 1,
+          "inputPolicy": {
+            "requiresSourceVideo": false,
+            "framesCountTowardImageReferenceLimit": false,
+            "framesCountTowardTotalReferenceLimit": false
+          },
+          "durationValues": [],
+          "durationMinimum": 4,
+          "durationMaximum": 30,
+          "supportsAutomaticDuration": true,
+          "supportsNativeAudio": true,
+          "resolutions": ["480p", "720p"],
+          "aspectRatios": ["16:9", "9:16"],
+          "supportsFirstFrame": true,
+          "supportsLastFrame": true,
+          "maxReferenceImages": 0,
+          "maxReferenceVideos": 0,
+          "maxReferenceAudios": 0,
+          "maxTotalReferences": 0,
+          "maxCombinedVideoReferenceSeconds": null,
+          "maxCombinedAudioReferenceSeconds": null,
+          "framesAndReferencesExclusive": false,
+          "requiresReferenceImage": true,
+          "maxReferenceImagesWhenVideoPresent": null
+        }
       }
     ]
   },
@@ -103,7 +165,38 @@
       {
         "provider": "fal",
         "transport": "api",
-        "providerRef": "bytedance/seedance-2.5/reference-to-video"
+        "providerRef": "bytedance/seedance-2.5/reference-to-video",
+        "productionInputPolicyV1": {
+          "requiresSourceVideo": false,
+          "framesCountTowardImageReferenceLimit": false,
+          "framesCountTowardTotalReferenceLimit": false
+        },
+        "resolvedVideoOfferingCapabilitiesV1": {
+          "schemaVersion": 1,
+          "inputPolicy": {
+            "requiresSourceVideo": false,
+            "framesCountTowardImageReferenceLimit": false,
+            "framesCountTowardTotalReferenceLimit": false
+          },
+          "durationValues": [],
+          "durationMinimum": 4,
+          "durationMaximum": 30,
+          "supportsAutomaticDuration": true,
+          "supportsNativeAudio": true,
+          "resolutions": ["480p", "720p"],
+          "aspectRatios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+          "supportsFirstFrame": false,
+          "supportsLastFrame": false,
+          "maxReferenceImages": 30,
+          "maxReferenceVideos": 10,
+          "maxReferenceAudios": 10,
+          "maxTotalReferences": 50,
+          "maxCombinedVideoReferenceSeconds": null,
+          "maxCombinedAudioReferenceSeconds": null,
+          "framesAndReferencesExclusive": false,
+          "requiresReferenceImage": false,
+          "maxReferenceImagesWhenVideoPresent": null
+        }
       }
     ]
   }

@@ -86,6 +86,137 @@ struct ChatSessionStoreTests {
         #expect(back.messages.first?.userPresentation?.workflowRecord == record)
     }
 
+    @Test("conversation titles preserve distinguishing text at both ends")
+    func conversationTitleUsesMiddleCompaction() {
+        let source = String(repeating: "opening detail ", count: 8)
+            + String(repeating: "shared middle ", count: 8)
+            + "distinct ending"
+        let title = AgentService.conversationTitle(from: source)
+
+        #expect(title.count == 120)
+        #expect(title.contains("…"))
+        #expect(title.hasPrefix("opening detail"))
+        #expect(title.hasSuffix("distinct ending"))
+    }
+
+    @Test("conversation switching restores only that conversation's composer state")
+    @MainActor
+    func composerStateIsScopedToConversation() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.newChat()
+        let originalHeight = service.composerHeight
+        defer { service.composerHeight = originalHeight }
+
+        let firstSessionID = try #require(service.currentSessionId)
+        let firstMention = AgentMention(
+            displayName: "First-reference",
+            mediaRef: "first-asset",
+            type: .image
+        )
+        let firstFunction = AgentService.PendingFunction(
+            title: "First function",
+            systemImage: "sparkles",
+            prompt: "Run the first function"
+        )
+        let firstHeight = Double(AppTheme.ComponentSize.agentComposerMinHeight)
+            + Double(AppTheme.Spacing.md)
+        service.draft = "First draft @First-reference"
+        service.mentions = [firstMention]
+        service.pendingFunction = firstFunction
+        service.composerHeight = firstHeight
+        service.recordComposerFocus(true)
+
+        service.newChat()
+        let secondSessionID = try #require(service.currentSessionId)
+        #expect(secondSessionID != firstSessionID)
+        #expect(service.draft.isEmpty)
+        #expect(service.mentions.isEmpty)
+        #expect(service.pendingFunction == nil)
+        #expect(!service.composerShouldFocus)
+
+        let secondMention = AgentMention(
+            displayName: "Second-reference",
+            mediaRef: "second-asset",
+            type: .image
+        )
+        let secondHeight = Double(AppTheme.ComponentSize.agentComposerMinHeight)
+            + Double(AppTheme.Spacing.xl)
+        service.draft = "Second draft @Second-reference"
+        service.mentions = [secondMention]
+        service.composerHeight = secondHeight
+
+        service.selectAdjacentOpenSession(offset: 1)
+        #expect(service.currentSessionId == firstSessionID)
+        #expect(service.draft == "First draft @First-reference")
+        #expect(service.mentions == [firstMention])
+        #expect(service.pendingFunction == firstFunction)
+        #expect(service.composerHeight == firstHeight)
+        #expect(service.composerShouldFocus)
+
+        service.selectAdjacentOpenSession(offset: -1)
+        #expect(service.currentSessionId == secondSessionID)
+        #expect(service.draft == "Second draft @Second-reference")
+        #expect(service.mentions == [secondMention])
+        #expect(service.pendingFunction == nil)
+        #expect(service.composerHeight == secondHeight)
+        #expect(!service.composerShouldFocus)
+    }
+
+    @Test("a dock decision leaves the owning conversation composer state unchanged")
+    @MainActor
+    func composerStateSurvivesDecisionRoundTrip() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.newChat()
+        let originalHeight = service.composerHeight
+        defer { service.composerHeight = originalHeight }
+        let mention = AgentMention(
+            displayName: "Look-reference",
+            mediaRef: "look-reference",
+            type: .image
+        )
+        let height = Double(AppTheme.ComponentSize.agentComposerMinHeight)
+            + Double(AppTheme.Spacing.xl)
+        service.draft = "Keep this draft @Look-reference"
+        service.mentions = [mention]
+        service.composerHeight = height
+        service.recordComposerFocus(true)
+
+        let dialog = AgentDialog(
+            id: "decision-round-trip",
+            title: "Choose the treatment",
+            symbol: "questionmark",
+            intro: nil,
+            costHint: nil,
+            confirmLabel: "Continue",
+            textField: nil,
+            sections: []
+        )
+        try service.presentDialog(dialog)
+        #expect(service.isComposerBlocked)
+        service.abandonDialog()
+
+        #expect(!service.isComposerBlocked)
+        #expect(service.draft == "Keep this draft @Look-reference")
+        #expect(service.mentions == [mention])
+        #expect(service.composerHeight == height)
+        #expect(service.composerShouldFocus)
+    }
+
+    @Test("conversation attention is keyed to the owning session")
+    @MainActor
+    func sessionAttentionIsScoped() async throws {
+        let service = AgentService()
+        service.newChat()
+        let current = try #require(service.currentSessionId)
+        service.isStreaming = true
+        #expect(service.sessionAttention(for: current) == .running)
+        service.isStreaming = false
+
+        _ = try service.requestGateApproval(GateApproval(phase: "brief"))
+        #expect(service.sessionAttention(for: current) == .actionRequired)
+        _ = await service.resolveGate(.declined)
+    }
+
     @Test("strict project load rejects a malformed chat instead of dropping it")
     func malformedChatIsRejected() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

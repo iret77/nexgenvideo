@@ -16,39 +16,250 @@ struct WorkflowToolsTests {
 
     /// A throwaway scaffolded project; returns (harness, dataRoot, cleanup-root).
     private func scaffold(
-        enforceHardGates: Bool = false
+        enforceHardGates: Bool = false,
+        providerActivation: @escaping () -> ProviderActivation = {
+            ProviderActivation.current()
+        },
+        productionRouteCandidates: @escaping ProductionRouteCandidateProvider = {
+            ModelCatalog.shared.productionRouteCandidates(activation: $0)
+        }
     ) throws -> (ToolHarness, URL, URL) {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("wf-tools-\(UUID().uuidString)", isDirectory: true)
         let home = tmp.appendingPathComponent("proj", isDirectory: true)
         let dataRoot = try ProjectScaffold.initProject(home: home, name: "demo", mode: .beat)
         return (
-            ToolHarness(enforceHardGates: enforceHardGates),
+            ToolHarness(
+                enforceHardGates: enforceHardGates,
+                providerActivation: providerActivation,
+                productionRouteCandidates: productionRouteCandidates
+            ),
             dataRoot,
             tmp
         )
     }
 
+    private func falRoutingDependencies() -> (
+        activation: ProviderActivation,
+        candidates: ProductionRouteCandidateProvider
+    ) {
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.launchEntries)
+        let activation = ProviderActivation(active: [
+            ProviderActivation.Key(provider: .fal, transport: .api),
+        ])
+        return (
+            activation,
+            { catalog.productionRouteCandidates(activation: $0) }
+        )
+    }
+
+    private func hybridRoutingDependencies() -> (
+        activation: ProviderActivation,
+        candidates: ProductionRouteCandidateProvider
+    ) {
+        let modelID = "fixture-video-edit"
+        let endpoint = "generate_video"
+        let videoCaps = VideoCaps(
+            durations: [4],
+            resolutions: ["720p"],
+            aspectRatios: ["16:9"],
+            supportsFirstFrame: false,
+            supportsLastFrame: false,
+            maxReferenceImages: 0,
+            maxReferenceVideos: 0,
+            maxReferenceAudios: 0,
+            maxTotalReferences: 0,
+            maxCombinedVideoRefSeconds: nil,
+            maxCombinedAudioRefSeconds: nil,
+            framesAndReferencesExclusive: false,
+            referenceTagNoun: "video",
+            requiresSourceVideo: true,
+            requiresReferenceImage: false
+        )
+        let resolvedVideo = ResolvedVideoOfferingCapabilitiesV1(
+            videoCapabilities: videoCaps,
+            supportsNativeAudio: false
+        )
+        let offer = ProviderOffer(
+            provider: .higgsfield,
+            transport: .mcp,
+            providerRef: endpoint,
+            modelParam: modelID,
+            mcpMediaRoles: ["video"],
+            productionInputPolicy: resolvedVideo.inputPolicy,
+            resolvedVideoCapabilities: resolvedVideo
+        )
+        let offering = CatalogOfferingIdentity.make(
+            offer: offer,
+            modelID: modelID,
+            modality: .video
+        )
+        let evidence = CapabilityEvidenceV1(
+            sourceTitle: "Fixture MCP video-edit schema",
+            observedAt: "2026-08-31T00:00:00Z",
+            kind: .providerSchema,
+            confidence: 1
+        )
+        let exactOrigin = ResolvedCapabilityOriginV1(
+            kind: .exact,
+            profileID: "fixture-video-edit"
+        )
+        let endpointOrigin = ResolvedCapabilityOriginV1(
+            kind: .endpointOverlay,
+            profileID: "fixture-video-edit-endpoint",
+            endpointID: endpoint
+        )
+        func value<Value>(
+            _ value: Value,
+            semantics: CapabilityValueSemanticsV1 = .hardAPILimit,
+            origin: ResolvedCapabilityOriginV1
+        ) -> ResolvedCapabilityValueV1<Value>
+        where Value: Codable & Sendable & Equatable {
+            ResolvedCapabilityValueV1(
+                value: value,
+                semantics: semantics,
+                origin: origin,
+                evidence: [evidence]
+            )
+        }
+        func fields(origin: ResolvedCapabilityOriginV1) -> ResolvedCapabilityFieldsV1 {
+            ResolvedCapabilityFieldsV1(
+                integers: [
+                    CapabilityFieldIDV1.visibleCharacters: value(0, origin: origin),
+                    CapabilityFieldIDV1.referenceImages: value(0, origin: origin),
+                    CapabilityFieldIDV1.referenceVideos: value(0, origin: origin),
+                    CapabilityFieldIDV1.referenceAudios: value(0, origin: origin),
+                    CapabilityFieldIDV1.totalReferences: value(0, origin: origin),
+                ],
+                decimals: [
+                    CapabilityFieldIDV1.durationMinimum: value(4.0, origin: origin),
+                    CapabilityFieldIDV1.durationMaximum: value(4.0, origin: origin),
+                ],
+                booleans: [
+                    CapabilityFieldIDV1.nativeAudio: value(false, origin: origin),
+                    CapabilityFieldIDV1.firstFrame: value(false, origin: origin),
+                    CapabilityFieldIDV1.lastFrame: value(false, origin: origin),
+                    CapabilityFieldIDV1.sourceVideo: value(true, origin: origin),
+                    CapabilityFieldIDV1.sourceVideoRequired: value(true, origin: origin),
+                    CapabilityFieldIDV1.framesCountTowardImageReferenceLimit:
+                        value(false, origin: origin),
+                    CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit:
+                        value(false, origin: origin),
+                ],
+                strings: [
+                    CapabilityFieldIDV1.modes: value(
+                        ["video-to-video"],
+                        semantics: .supportedSet,
+                        origin: origin
+                    ),
+                    CapabilityFieldIDV1.aspectRatios: value(
+                        ["16:9"],
+                        semantics: .supportedSet,
+                        origin: origin
+                    ),
+                    CapabilityFieldIDV1.resolutions: value(
+                        ["720p"],
+                        semantics: .supportedSet,
+                        origin: origin
+                    ),
+                ],
+                integerLists: [
+                    CapabilityFieldIDV1.durationValues: value(
+                        [4],
+                        semantics: .supportedSet,
+                        origin: origin
+                    ),
+                ]
+            )
+        }
+        let capability = ResolvedOfferingCapabilityProfileV1(
+            offering: offering,
+            intrinsic: ResolvedCapabilityProfileV1(
+                requestedIdentity: nil,
+                resolvedIdentity: nil,
+                defensiveProfileID: nil,
+                researchNeeded: false,
+                fields: fields(origin: exactOrigin)
+            ),
+            effective: ResolvedCapabilityProfileV1(
+                requestedIdentity: nil,
+                resolvedIdentity: nil,
+                defensiveProfileID: nil,
+                researchNeeded: false,
+                fields: fields(origin: endpointOrigin)
+            )
+        )
+        let editEntry = CatalogEntry(
+            id: modelID,
+            kind: .video,
+            displayName: "Fixture Video Edit",
+            allowedEndpoints: [endpoint],
+            responseShape: .video,
+            uiCapabilities: .video(videoCaps),
+            offers: [offer],
+            resolvedOfferingCapabilities: [capability]
+        )
+        let catalog = ModelCatalog()
+        catalog.load(entries: ModelCatalog.launchEntries + [editEntry])
+        catalog.applyDiscovered([editEntry], for: .higgsfield)
+        catalog.setProviderDiscoveryState(.ready(modelCount: 1), for: .higgsfield)
+        let activation = ProviderActivation(active: [
+            ProviderActivation.Key(provider: .fal, transport: .api),
+            ProviderActivation.Key(provider: .higgsfield, transport: .mcp),
+        ])
+        return (
+            activation,
+            { catalog.productionRouteCandidates(activation: $0) }
+        )
+    }
+
+    private func declineIntakeStep(
+        _ id: String,
+        pack: String = "musicvideo",
+        dataRoot: URL
+    ) throws {
+        let loaded = try #require(PackCatalog.pack(named: pack))
+        let manifest = try #require(HardStepManifest.load(pack: loaded))
+        let step = try #require(manifest.allSteps.first { $0.id == id })
+        try IntakeLedger.recordDecline(step, dataRoot: dataRoot)
+    }
+
     /// Mark the given data root's project package (parent of `pipeline`) active with `pack` by writing
     /// its `ngv.json` — the same file `ProjectPluginSettings` reads. Proves the pack resolves from the
     /// project HOME, not the data root.
-    private func activatePack(_ pack: String, dataRoot: URL) throws {
+    @discardableResult
+    private func activatePack(
+        _ pack: String,
+        dataRoot: URL
+    ) throws -> ProjectPackBinding {
         // Packs load at runtime — register the loadable musicvideo pack (idempotent)
         // the way the host's PluginLoader does, so the workflow tools resolve it.
         PackCatalog.register(MusicvideoPack())
         let home = FrameInventory.projectHome(of: dataRoot)
-        try ProjectPluginSettings.setActivePlugin(pack, projectURL: home)
+        let loaded = try #require(PackCatalog.pack(named: pack))
+        let binding = try #require(ProjectPackBinding(
+            id: pack,
+            version: loaded.version,
+            projectSchema: "\(pack)/2.0.0"
+        ))
+        try ProjectPluginSettings.setActivePlugin(binding, projectURL: home)
+        return binding
     }
 
-    private func recordAnalysisLineage(dataRoot: URL) throws {
+    private func recordLineage(_ phase: String, dataRoot: URL) throws {
         PackCatalog.register(MusicvideoPack())
         let registry = PackCatalog.registry(activePack: "musicvideo")
-        let provider = try #require(registry.phaseLineageProviders["analysis"])
+        let provider = try #require(registry.phaseLineageProviders[phase])
         try PipelineLineageStore.record(
-            phase: "analysis",
+            phase: phase,
             snapshot: try provider(dataRoot),
             dataRoot: dataRoot
         )
+    }
+
+    private func recordAnalysisLineage(dataRoot: URL) throws {
+        try recordLineage("analysis", dataRoot: dataRoot)
     }
 
     private func minimalShotlist(
@@ -70,6 +281,282 @@ struct WorkflowToolsTests {
         )
     }
 
+    private func generatedExecutionShotInput(
+        id: String = "s001",
+        duration: Double = 12,
+        firstFrame: Bool = true
+    ) -> [String: Any] {
+        [
+            "id": id,
+            "source_mode": ExecutionSourceModeV1.generated.rawValue,
+            "start_state": [
+                "summary": "The shot begins.",
+                "entity_state_ids": [],
+            ],
+            "end_state": [
+                "summary": "The shot ends.",
+                "entity_state_ids": [],
+            ],
+            "blocking": [],
+            "timed_action_beats": [],
+            "acceptance": [[
+                "id": "accept-\(id)",
+                "requirement": "Keep the composition intact.",
+                "severity": "required",
+            ]],
+            "generation_requirement": [
+                "modality_id": CapabilityModalityV1.video.rawValue,
+                "mode_ids": [firstFrame ? "image-to-video" : "text-to-video"],
+                "duration": [
+                    "minimum_seconds": duration,
+                    "maximum_seconds": duration,
+                    "allows_automatic": false,
+                ],
+                "requires_output_audio": false,
+            ],
+            "core_inputs": firstFrame
+                ? ["first_frame_mode_id": "image-to-video"]
+                : [:],
+            "reference_demands": [],
+        ]
+    }
+
+    private func importedExecutionShotInput(id: String = "s001") -> [String: Any] {
+        [
+            "id": id,
+            "source_mode": ExecutionSourceModeV1.imported.rawValue,
+            "start_state": [
+                "summary": "The shot begins.",
+                "entity_state_ids": [],
+            ],
+            "end_state": [
+                "summary": "The shot ends.",
+                "entity_state_ids": [],
+            ],
+            "blocking": [],
+            "timed_action_beats": [],
+            "acceptance": [[
+                "id": "accept-\(id)",
+                "requirement": "Keep the composition intact.",
+                "severity": "required",
+            ]],
+            "primary_action": "The performer enters the yard.",
+            "camera": ["movement_id": "static"],
+            "continuity_locks": [],
+            "renderability": "green",
+            "risks": [],
+        ]
+    }
+
+    private func executionShotInput(_ shot: Shot) -> [String: Any] {
+        var result: [String: Any] = [
+            "id": shot.id,
+            "source_mode": shot.sourceMode.rawValue,
+            "start_state": [
+                "summary": "The shot begins.",
+                "entity_state_ids": [],
+            ],
+            "end_state": [
+                "summary": "The shot ends.",
+                "entity_state_ids": [],
+            ],
+            "blocking": [],
+            "timed_action_beats": [],
+            "acceptance": [[
+                "id": "accept-\(shot.id)",
+                "requirement": "Keep the composition intact.",
+                "severity": "required",
+            ]],
+        ]
+        switch shot.sourceMode {
+        case .generated, .aiEnhanced:
+            var coreInputs: [String: Any] = [:]
+            let modeIDs: [String]
+            if shot.sourceMode == .aiEnhanced {
+                modeIDs = ["video-to-video"]
+                coreInputs["source_video_mode_id"] = "video-to-video"
+            } else if shot.chainWithPreviousEnd {
+                modeIDs = ["image-to-video"]
+                coreInputs["predecessor_last_frame_mode_id"] = "image-to-video"
+            } else if shot.keyframeStrategy != .none {
+                modeIDs = ["image-to-video"]
+                coreInputs["first_frame_mode_id"] = "image-to-video"
+                if shot.keyframeStrategy == .startEnd {
+                    coreInputs["last_frame_mode_id"] = "image-to-video"
+                }
+            } else {
+                modeIDs = ["text-to-video"]
+            }
+            result["generation_requirement"] = [
+                "modality_id": CapabilityModalityV1.video.rawValue,
+                "mode_ids": modeIDs,
+                "duration": [
+                    "minimum_seconds": shot.durationS,
+                    "maximum_seconds": shot.durationS,
+                    "allows_automatic": false,
+                ],
+                "requires_output_audio": false,
+            ]
+            result["core_inputs"] = coreInputs
+            if shot.sourceMode == .generated {
+                result["reference_demands"] = []
+            }
+        case .imported:
+            result["primary_action"] = "The performer enters the yard."
+            result["camera"] = ["movement_id": "static"]
+            result["continuity_locks"] = []
+            result["renderability"] = "green"
+            result["risks"] = []
+        }
+        return result
+    }
+
+    private func publishExecutionShotlist(
+        _ shotlist: Shotlist,
+        dataRoot: URL,
+        finalResolution: VideoResolution = .res1080p
+    ) throws -> [PipelineExecutionShotInput] {
+        let audioURL = dataRoot.appendingPathComponent(shotlist.song.audioPath)
+        let analysisURL = dataRoot.appendingPathComponent(shotlist.song.analysisPath)
+        for (url, bytes) in [
+            (audioURL, Data("audio".utf8)),
+            (analysisURL, Data("{}".utf8)),
+            (
+                PipelineLayout.url(PipelineLayout.productionDesignFile, in: dataRoot),
+                Data("production design".utf8)
+            ),
+            (
+                PipelineLayout.url(PipelineLayout.treatmentCurrentFile, in: dataRoot),
+                Data("treatment".utf8)
+            ),
+            (
+                PipelineLayout.url(PipelineLayout.storyboardCurrentFile, in: dataRoot),
+                Data("storyboard".utf8)
+            ),
+        ] {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try bytes.write(to: url, options: .atomic)
+        }
+        let store = YAMLArtifactStore(dataRoot: dataRoot)
+        try store.save(
+            try Brief(
+                project: shotlist.project,
+                generated: "2026-08-31T00:00:00Z",
+                mission: .demo,
+                targetPlatform: "Test",
+                aspectRatio: .landscape16x9,
+                projectMode: Mode.section.rawValue,
+                conceptType: .abstract,
+                visualMedium: .animation2d,
+                visualMediumNotes: "Flat 2D animation",
+                figures: .none,
+                lyricsIntegration: .metaphorical,
+                finalResolution: finalResolution
+            ),
+            to: PipelineLayout.briefFile
+        )
+        try store.save(
+            try Bible(
+                project: shotlist.project,
+                generated: "2026-08-31T00:00:00Z",
+                generator: "test"
+            ),
+            to: PipelineLayout.bibleFile
+        )
+        let objects = shotlist.shots.map(executionShotInput)
+        let inputs = try JSONDecoder().decode(
+            [PipelineExecutionShotInput].self,
+            from: JSONSerialization.data(withJSONObject: objects, options: [.sortedKeys])
+        )
+        _ = try PipelineShotlistWriter.write(
+            shotlist,
+            executionInputs: inputs,
+            dataRoot: dataRoot,
+            declaredPack: nil
+        )
+        return inputs
+    }
+
+    private func prepareNativeSourceExecution(
+        dataRoot: URL,
+        chainedSuccessor: Bool = false,
+        finalResolution: VideoResolution = .res1080p
+    ) throws -> [PipelineExecutionShotInput] {
+        let plan = try ShotProductionPlan(
+            primaryAction: "Hold the composition.",
+            cameraMovement: .static,
+            renderability: .green
+        )
+        let shots = try [
+            Shot(
+                id: "s001",
+                section: "one",
+                timeStart: 0,
+                timeEnd: 4,
+                durationS: 4,
+                type: .performance,
+                description: "First shot",
+                visualPrompt: "First frame",
+                mood: "calm",
+                keyframeStrategy: .none,
+                productionPlan: plan
+            ),
+            Shot(
+                id: "s002",
+                section: "two",
+                timeStart: 4,
+                timeEnd: 8,
+                durationS: 4,
+                type: .performance,
+                description: "Second shot",
+                visualPrompt: "Second frame",
+                mood: "calm",
+                keyframeStrategy: .none,
+                chainWithPreviousEnd: chainedSuccessor,
+                productionPlan: plan
+            ),
+        ]
+        let shotlist = try Shotlist(
+            schema_: shotlistSchemaVersion,
+            mode: .section,
+            project: "demo",
+            song: try Song(
+                title: "Song",
+                audioPath: "audio/song.wav",
+                analysisPath: "analysis/song.json",
+                bpm: 120,
+                durationS: 8
+            ),
+            generated: "2026-08-31T00:00:00Z",
+            generator: "test",
+            shots: shots
+        )
+        return try publishExecutionShotlist(
+            shotlist,
+            dataRoot: dataRoot,
+            finalResolution: finalResolution
+        )
+    }
+
+    private func recursiveFileBytes(in root: URL) throws -> [String: Data] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ) else { return [:] }
+        var result: [String: Data] = [:]
+        for case let url as URL in enumerator {
+            guard try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                continue
+            }
+            let path = String(url.path.dropFirst(root.path.count + 1))
+            result[path] = try Data(contentsOf: url)
+        }
+        return result
+    }
+
     private func addGeneratedVideo(
         _ id: String,
         at url: URL,
@@ -77,7 +564,8 @@ struct WorkflowToolsTests {
         dataRoot: URL,
         model: String = "video-model",
         sourceVideoAssetId: String? = nil,
-        shotId: String = "s001"
+        shotId: String = "s001",
+        currentRouting: PipelineProductionRouteSelection? = nil
     ) throws {
         try Data(id.utf8).write(to: url)
         let shot = try #require(
@@ -89,17 +577,85 @@ struct WorkflowToolsTests {
             .joined(separator: ". ")
         let prompt = "Compiled provider prompt for \(id)."
             + (requirements.isEmpty ? "" : " \(requirements)")
+        let selectedModel = currentRouting?.modelID ?? model
+        let selectedRequirement = currentRouting?.requirement
+        let duration = Int(
+            (selectedRequirement?.duration?.preferredSeconds
+                ?? selectedRequirement?.duration?.minimumSeconds
+                ?? selectedRequirement?.duration?.maximumSeconds
+                ?? 4).rounded()
+        )
         var input = GenerationInput(
             prompt: prompt,
-            model: model,
-            duration: 4,
-            aspectRatio: "16:9"
+            model: selectedModel,
+            duration: duration,
+            aspectRatio: selectedRequirement?.aspectRatio ?? "16:9",
+            resolution: selectedRequirement?.resolution
         )
-        input.sourceVideoAssetId = sourceVideoAssetId
+        input.videoDuration = .seconds(duration)
+        input.generateAudio = selectedRequirement?.requiresOutputAudio ?? false
         input.promptShotId = shotId
         input.promptProjectKey = dataRoot.standardizedFileURL
             .resolvingSymlinksInPath().path
         input.promptShotFingerprint = try PromptCompiler.shotFingerprint(shot)
+        if let currentRouting {
+            let (proof, submitted) = try currentRoutingProof(
+                currentRouting,
+                harness: harness,
+                dataRoot: dataRoot
+            )
+            let grouped = Dictionary(
+                grouping: submitted,
+                by: { ProductionIdentifierNormalizerV1.canonical($0.semanticJobID) }
+            )
+            input.sourceVideoAssetId = grouped[
+                CoreReferenceSemanticJobIDV1.sourceVideo
+            ]?.first?.mediaAssetID
+            input.startFrameAssetId = (
+                grouped[CoreReferenceSemanticJobIDV1.predecessorLastFrame]
+                    ?? grouped[CoreReferenceSemanticJobIDV1.firstFrame]
+            )?.first?.mediaAssetID
+            input.endFrameAssetId = grouped[
+                CoreReferenceSemanticJobIDV1.lastFrame
+            ]?.first?.mediaAssetID
+            let ordinary = submitted.filter {
+                ![
+                    CoreReferenceSemanticJobIDV1.sourceVideo,
+                    CoreReferenceSemanticJobIDV1.firstFrame,
+                    CoreReferenceSemanticJobIDV1.predecessorLastFrame,
+                    CoreReferenceSemanticJobIDV1.lastFrame,
+                ].contains(ProductionIdentifierNormalizerV1.canonical($0.semanticJobID))
+            }
+            input.referenceImageAssetIds = ordinary.filter {
+                $0.modalityID == AssetPhysicalModalityV1.image.rawValue
+            }.map(\.mediaAssetID)
+            input.referenceVideoAssetIds = ordinary.filter {
+                $0.modalityID == AssetPhysicalModalityV1.video.rawValue
+            }.map(\.mediaAssetID)
+            input.referenceAudioAssetIds = ordinary.filter {
+                $0.modalityID == AssetPhysicalModalityV1.audio.rawValue
+            }.map(\.mediaAssetID)
+            input.productionRouting = proof
+        } else {
+            input.sourceVideoAssetId = sourceVideoAssetId
+            input.productionRouting = PipelineProductionRoutingTests.generationInput(
+                requirement: ProductionRequirementV1(
+                    modalityID: CapabilityModalityV1.video.rawValue,
+                    modeIDs: ["text-to-video"],
+                    visibleEntityCount: 0,
+                    duration: RequestedDurationV1(
+                        preferredSeconds: 4,
+                        minimumSeconds: 4,
+                        maximumSeconds: 4
+                    ),
+                    aspectRatio: "16:9",
+                    requiresOutputAudio: false
+                ),
+                modelID: model,
+                projectID: "demo",
+                shotID: shotId
+            ).productionRouting
+        }
         harness.editor.mediaAssets.append(
             MediaAsset(
                 id: id,
@@ -109,6 +665,73 @@ struct WorkflowToolsTests {
                 generationInput: input
             )
         )
+    }
+
+    private func currentRoutingProof(
+        _ selection: PipelineProductionRouteSelection,
+        harness: ToolHarness,
+        dataRoot: URL
+    ) throws -> (
+        ProductionGenerationRoutingProofV1,
+        [ProductionGenerationRoutingBindingV1]
+    ) {
+        let offeringCapabilities = try #require(
+            selection.target.binding?.resolvedVideoCapabilities
+        )
+        let (assetGraph, demandSet, _) = try PipelineProductionInputsWriter.load(
+            shotID: selection.route.shotID,
+            dataRoot: dataRoot
+        )
+        let submitted = try selection.referencePlan.bindings.map { binding in
+            let plannedURL = try ProjectLocalFile.requireHash(
+                binding.sha256,
+                at: binding.path,
+                dataRoot: dataRoot
+            ).standardizedFileURL.resolvingSymlinksInPath()
+            let media = try #require(harness.editor.mediaAssets.first {
+                $0.url.standardizedFileURL.resolvingSymlinksInPath() == plannedURL
+            })
+            return ProductionGenerationRoutingBindingV1(
+                demandID: binding.demandID,
+                graphAssetID: binding.assetID,
+                graphAssetVersion: binding.assetVersion,
+                mediaAssetID: media.id,
+                path: binding.path,
+                sha256: binding.sha256,
+                modalityID: binding.modality.rawValue,
+                semanticJobID: binding.semanticJobID,
+                inputSlotID: binding.inputSlotID,
+                modeID: binding.modeID
+            )
+        }
+        let capabilitiesData = try ReferencePlanCanonicalCodecV2.encode(
+            offeringCapabilities
+        )
+        let proof = ProductionGenerationRoutingProofV1(
+            projectID: selection.route.projectID,
+            shotID: selection.route.shotID,
+            modelID: selection.modelID,
+            providerID: selection.target.provider.rawValue,
+            transportID: selection.target.transport.rawValue,
+            endpointID: selection.target.endpoint,
+            modelParam: selection.target.binding?.modelParam,
+            offeringID: selection.route.offering.offeringID,
+            requirement: selection.requirement,
+            route: selection.route,
+            referencePlan: selection.referencePlan,
+            routeArtifactSHA256: selection.routeArtifactSHA256,
+            requirementSHA256: selection.route.requirementSHA256,
+            capabilitiesSHA256: selection.route.capabilitiesSHA256,
+            routeSHA256: selection.route.routeSHA256,
+            referencePlanSHA256: selection.referencePlanSHA256,
+            orderedBindingsSHA256: selection.orderedBindingsSHA256,
+            orderedBindings: submitted,
+            offeringCapabilities: offeringCapabilities,
+            offeringCapabilitiesSHA256: FileDigest.sha256(of: capabilitiesData),
+            historicalAssetGraph: assetGraph,
+            historicalDemandSet: demandSet
+        )
+        return (proof, submitted)
     }
 
     private func addSourceVideo(
@@ -633,7 +1256,7 @@ struct WorkflowToolsTests {
     func analysisGateHardBlocked() async throws {
         let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
         try FileManager.default.createDirectory(
             at: dataRoot.appendingPathComponent("audio"),
             withIntermediateDirectories: true
@@ -658,6 +1281,7 @@ struct WorkflowToolsTests {
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "analysis",
             declaredPack: "musicvideo",
+            declaredBinding: binding,
             executionCoordinator: h.editor.pipelinePhaseRunCoordinator
         ).approval
         #expect(!nativeReadiness.isReady)
@@ -667,6 +1291,7 @@ struct WorkflowToolsTests {
                 projectDir: FrameInventory.projectHome(of: dataRoot),
                 phase: "analysis",
                 declaredPack: "musicvideo",
+                declaredBinding: binding,
                 executionCoordinator: h.editor.pipelinePhaseRunCoordinator
             )
             Issue.record("Native approval ignored its blocked readiness")
@@ -717,6 +1342,7 @@ struct WorkflowToolsTests {
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "analysis",
             declaredPack: "musicvideo",
+            declaredBinding: binding,
             executionCoordinator: h.editor.pipelinePhaseRunCoordinator
         ).approval
         #expect(ready.isReady)
@@ -727,7 +1353,7 @@ struct WorkflowToolsTests {
     func gateMutationBlockedDuringPhaseRun() async throws {
         let (h, dataRoot, cleanup) = try scaffold(enforceHardGates: true)
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        try activatePack("musicvideo", dataRoot: dataRoot)
+        let binding = try activatePack("musicvideo", dataRoot: dataRoot)
         let store = YAMLArtifactStore(dataRoot: dataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
         GatesOperations.approve(&gates, phase: "project_init")
@@ -757,7 +1383,8 @@ struct WorkflowToolsTests {
         try await h.editor.pipelineAgentHarness.recordPhaseMutation(
             phase: "analysis",
             dataRoot: dataRoot,
-            declaredPack: "musicvideo"
+            declaredPack: "musicvideo",
+            declaredBinding: binding
         )
         let latch = PhaseRunnerLatch()
         async let phaseRun = h.editor.pipelinePhaseRunCoordinator.run(
@@ -782,10 +1409,32 @@ struct WorkflowToolsTests {
         )
         #expect(h.editor.agentService.pendingGateApproval == nil)
 
+        let stateBlocked = await h.runRaw("set_gate_state", args: [
+            "project_dir": dataRoot.path,
+            "phase": "analysis",
+            "state": "needs_revision",
+        ])
+        #expect(stateBlocked.isError)
+        #expect(
+            ToolHarness.textOf(stateBlocked)
+                .contains("while analysis is running")
+        )
+
+        let rewindBlocked = await h.runRaw("rewind", args: [
+            "project_dir": dataRoot.path,
+            "target_phase": "project_init",
+        ])
+        #expect(rewindBlocked.isError)
+        #expect(
+            ToolHarness.textOf(rewindBlocked)
+                .contains("while analysis is running")
+        )
+
         let nativeReadiness = await NativeGateWriter.controlReadiness(
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "analysis",
             declaredPack: "musicvideo",
+            declaredBinding: binding,
             executionCoordinator: h.editor.pipelinePhaseRunCoordinator
         ).approval
         #expect(!nativeReadiness.isReady)
@@ -821,6 +1470,7 @@ struct WorkflowToolsTests {
             projectDir: FrameInventory.projectHome(of: dataRoot),
             phase: "analysis",
             declaredPack: "musicvideo",
+            declaredBinding: binding,
             executionCoordinator: h.editor.pipelinePhaseRunCoordinator
         )
         #expect(settledReadiness.mutations.isReady)
@@ -856,7 +1506,6 @@ struct WorkflowToolsTests {
             .appendingPathComponent("brief-intake-\(UUID().uuidString)", isDirectory: true)
         let package = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
         try Fixtures.prepareProjectPackage(at: package)
-        try ProjectPluginSettings.setActivePlugin("musicvideo", projectURL: package)
         PackCatalog.register(MusicvideoPack())
         let packageDataRoot = try ProjectScaffold.initProject(
             home: package,
@@ -864,6 +1513,7 @@ struct WorkflowToolsTests {
             mode: .beat,
             extraDirs: PackCatalog.projectDirs(activePack: "musicvideo")
         )
+        _ = try activatePack("musicvideo", dataRoot: packageDataRoot)
 
         let store = YAMLArtifactStore(dataRoot: packageDataRoot)
         var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
@@ -1078,6 +1728,108 @@ struct WorkflowToolsTests {
         #expect(try Data(contentsOf: gatesURL) == gatesBefore)
     }
 
+    @Test("same-ID pack schema changes block agent and native gate mutations byte-exactly")
+    func gateMutationsRejectSameIDPackSchemaChange() async throws {
+        let (h, savedDataRoot, cleanup) = try scaffold()
+        let trusted = try activatePack("musicvideo", dataRoot: savedDataRoot)
+        let package = FrameInventory.projectHome(of: savedDataRoot)
+        try Fixtures.prepareProjectPackage(at: package)
+        h.editor.projectURL = package
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(h.editor.workingRoot)
+        let workingDataRoot = try #require(
+            DataRootResolver.dataRoot(of: workingHome)
+        )
+        let gatesURL = PipelineLayout.url(
+            PipelineLayout.gatesFile,
+            in: workingDataRoot
+        )
+        let gatesBefore = try Data(contentsOf: gatesURL)
+        let sibling = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: trusted.version,
+            projectSchema: "musicvideo/2.0.1"
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            sibling,
+            projectURL: workingHome
+        )
+
+        let agentResult = await h.runRaw("rewind", args: [
+            "project_dir": workingDataRoot.path,
+            "target_phase": "project_init",
+        ])
+        #expect(agentResult.isError)
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+
+        #expect(throws: NativeGateWriter.WriteError.self) {
+            try NativeGateWriter.rewind(
+                projectDir: workingHome,
+                targetPhase: "project_init",
+                declaredPack: trusted.id,
+                declaredBinding: trusted,
+                executionCoordinator: h.editor.pipelinePhaseRunCoordinator
+            )
+        }
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+    }
+
+    @Test("gate approval rechecks the exact pack binding before the click writes")
+    func deferredGateApprovalRejectsBindingChange() async throws {
+        let (h, savedDataRoot, cleanup) = try scaffold()
+        let trusted = try activatePack("musicvideo", dataRoot: savedDataRoot)
+        let package = FrameInventory.projectHome(of: savedDataRoot)
+        try Fixtures.prepareProjectPackage(at: package)
+        let track = savedDataRoot.appendingPathComponent("audio/song.wav")
+        try FileManager.default.createDirectory(
+            at: track.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try writeStub(track)
+        try declineIntakeStep(
+            "project_init.lyrics",
+            dataRoot: savedDataRoot
+        )
+        h.editor.projectURL = package
+        defer {
+            h.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(h.editor.workingRoot)
+        let workingDataRoot = try #require(
+            DataRootResolver.dataRoot(of: workingHome)
+        )
+        let gatesURL = PipelineLayout.url(
+            PipelineLayout.gatesFile,
+            in: workingDataRoot
+        )
+        let gatesBefore = try Data(contentsOf: gatesURL)
+        let pending = await h.runRaw("approve_gate", args: [
+            "project_dir": workingDataRoot.path,
+            "phase": "project_init",
+        ])
+        #expect(!pending.isError)
+        #expect(h.editor.agentService.pendingGateApproval?.declaredBinding == trusted)
+
+        let sibling = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: "0.4.5",
+            projectSchema: trusted.projectSchema
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            sibling,
+            projectURL: workingHome
+        )
+        let result = try #require(
+            await h.editor.agentService.resolveGate(.approved)
+        )
+        #expect(result.isError)
+        #expect(try Data(contentsOf: gatesURL) == gatesBefore)
+    }
+
     @Test("agent and native rewinds reject a declared but unwired pack")
     func rewindsRejectUnwiredPack() async throws {
         let (h, savedDataRoot, cleanup) = try scaffold()
@@ -1109,7 +1861,7 @@ struct WorkflowToolsTests {
             "target_phase": "project_init",
         ])
         #expect(agentResult.isError)
-        #expect(ToolHarness.textOf(agentResult).contains("isn't wired"))
+        #expect(ToolHarness.textOf(agentResult).contains("isn't the pack code active"))
         #expect(try Data(contentsOf: gatesURL) == gatesBefore)
 
         let agentStateResult = await h.runRaw("set_gate_state", args: [
@@ -1118,7 +1870,7 @@ struct WorkflowToolsTests {
             "state": "needs_revision",
         ])
         #expect(agentStateResult.isError)
-        #expect(ToolHarness.textOf(agentStateResult).contains("isn't wired"))
+        #expect(ToolHarness.textOf(agentStateResult).contains("isn't the pack code active"))
         #expect(try Data(contentsOf: gatesURL) == gatesBefore)
 
         #expect(throws: NativeGateWriter.WriteError.self) {
@@ -1475,6 +2227,27 @@ struct WorkflowToolsTests {
         defer { try? FileManager.default.removeItem(at: cleanup) }
         try activatePack("musicvideo", dataRoot: dataRoot)
 
+        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
+        try YAMLArtifactStore(dataRoot: dataRoot).save(
+            try Brief(
+                project: "demo",
+                generated: "2026-07-26T00:00:00Z",
+                mission: .demo,
+                targetPlatform: "YouTube",
+                aspectRatio: .landscape16x9,
+                projectMode: "section",
+                budgetEur: 50,
+                conceptType: .narrative,
+                visualMedium: .animation2d,
+                visualMediumNotes: "restrained hand-drawn animation",
+                figures: .none,
+                lyricsIntegration: .metaphorical
+            ),
+            to: PipelineLayout.briefFile
+        )
+        try recordAnalysisLineage(dataRoot: dataRoot)
+        try recordLineage("brief", dataRoot: dataRoot)
+
         _ = try await h.runOK("write_production_design", args: [
             "project_dir": dataRoot.path,
             "visual_medium": "2d_animation",
@@ -1490,6 +2263,7 @@ struct WorkflowToolsTests {
         )
         #expect(design.project == "demo")
         #expect(design.colorScript["intro"] == "Muted blue dawn.")
+        try recordLineage("production_design", dataRoot: dataRoot)
 
         _ = try await h.runOK("write_treatment", args: [
             "project_dir": dataRoot.path,
@@ -1500,6 +2274,7 @@ struct WorkflowToolsTests {
         let treatment = try TreatmentStore.load(dataRoot: dataRoot)
         #expect(treatment.meta.project == "demo")
         #expect(treatment.meta.version == 1)
+        try recordLineage("treatment", dataRoot: dataRoot)
 
         let storyboardSteps: [[String: Any]] = (1...4).map { index in
             [
@@ -1544,6 +2319,7 @@ struct WorkflowToolsTests {
             )
         )
         #expect(storyboard.sections.first?.steps.first?.framing == "wide")
+        try recordLineage("storyboard", dataRoot: dataRoot)
 
         let anchor = dataRoot.appendingPathComponent("bible/yard-wide.png")
         try FileManager.default.createDirectory(
@@ -1599,25 +2375,8 @@ struct WorkflowToolsTests {
         ])
         let bible = try #require(try loadBible(dataRoot: dataRoot))
         #expect(bible.locations.first?.sheets["wide"] == "bible/yard-wide.png")
+        try recordLineage("bible", dataRoot: dataRoot)
 
-        try YAMLArtifactStore(dataRoot: dataRoot).save(
-            try Brief(
-                project: "demo",
-                generated: "2026-07-26T00:00:00Z",
-                mission: .demo,
-                targetPlatform: "YouTube",
-                aspectRatio: .landscape16x9,
-                projectMode: "section",
-                budgetEur: 50,
-                conceptType: .narrative,
-                visualMedium: .animation2d,
-                visualMediumNotes: "restrained hand-drawn animation",
-                figures: .none,
-                lyricsIntegration: .metaphorical
-            ),
-            to: PipelineLayout.briefFile
-        )
-        _ = try writeMeasuredAnalysis(dataRoot: dataRoot)
         let shot: [String: Any] = [
             "id": "s001",
             "section": "intro",
@@ -1654,11 +2413,13 @@ struct WorkflowToolsTests {
                 "blocking_anchors": [],
             ],
         ]
+        let generatedExecution = generatedExecutionShotInput()
         var missingPlanShot = shot
         missingPlanShot.removeValue(forKey: "production_plan")
         let missingPlan = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [missingPlanShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(missingPlan.isError)
         #expect(ToolHarness.textOf(missingPlan).contains("production_plan"))
@@ -1673,6 +2434,7 @@ struct WorkflowToolsTests {
         let missingBeat = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [invalidShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(missingBeat.isError)
         #expect(ToolHarness.textOf(missingBeat).contains("narrative_beat"))
@@ -1689,6 +2451,7 @@ struct WorkflowToolsTests {
         let oversized = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [oversizedShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(oversized.isError)
         #expect(
@@ -1715,6 +2478,7 @@ struct WorkflowToolsTests {
         let unanchored = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [unanchoredShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(unanchored.isError)
         #expect(ToolHarness.textOf(unanchored).contains("required pattern"))
@@ -1738,6 +2502,7 @@ struct WorkflowToolsTests {
         let directionOnly = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [directionOnlyShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(directionOnly.isError)
         #expect(ToolHarness.textOf(directionOnly).contains("required pattern"))
@@ -1755,6 +2520,7 @@ struct WorkflowToolsTests {
         let disguisedDirection = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [disguisedDirectionShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(disguisedDirection.isError)
         #expect(
@@ -1775,6 +2541,7 @@ struct WorkflowToolsTests {
         let undeclaredAnchor = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [undeclaredAnchorShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(undeclaredAnchor.isError)
         #expect(ToolHarness.textOf(undeclaredAnchor).contains("prop_refs or visible_zones"))
@@ -1798,6 +2565,7 @@ struct WorkflowToolsTests {
         let missingRelation = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [missingRelationShot],
+            "execution_shots": [generatedExecution],
         ])
         #expect(missingRelation.isError)
         #expect(ToolHarness.textOf(missingRelation).contains("expected at least 1 character"))
@@ -1805,6 +2573,7 @@ struct WorkflowToolsTests {
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [shot],
+            "execution_shots": [generatedExecution],
         ])
         let shotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(shotlist.project == "demo")
@@ -1817,6 +2586,7 @@ struct WorkflowToolsTests {
         let importedWithPlan = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [importedShot],
+            "execution_shots": [importedExecutionShotInput()],
         ])
         #expect(importedWithPlan.isError)
         #expect(ToolHarness.textOf(importedWithPlan).contains("production_plan"))
@@ -1826,6 +2596,7 @@ struct WorkflowToolsTests {
         _ = try await h.runOK("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [importedShot],
+            "execution_shots": [importedExecutionShotInput()],
         ])
         let importedShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
         #expect(importedShotlist.shots.first?.sourceMode == .imported)
@@ -1924,15 +2695,8 @@ struct WorkflowToolsTests {
         let workingDataRoot = try #require(
             DataRootResolver.dataRoot(of: workingHome)
         )
-        let plan = try ShotProductionPlan(
-            primaryAction: "The subject crosses the doorway.",
-            cameraMovement: .static,
-            renderability: .green,
-            continuityLocks: []
-        )
-        _ = try saveShotlist(
-            try minimalShotlist(productionPlan: plan),
-            to: workingDataRoot
+        let initialInputs = try prepareNativeSourceExecution(
+            dataRoot: workingDataRoot
         )
         let store = YAMLArtifactStore(dataRoot: workingDataRoot)
         var gates = try store.load(
@@ -1943,6 +2707,7 @@ struct WorkflowToolsTests {
             GatesOperations.approve(&gates, phase: phase)
         }
         try store.save(gates, to: PipelineLayout.gatesFile)
+        let unchangedInput = initialInputs[1]
 
         let changed = await harness.editor.setShotSourceMode(
             shotId: "s001",
@@ -1968,13 +2733,98 @@ struct WorkflowToolsTests {
             )
         )
         #expect(latestShotlistVersion(dataRoot: workingDataRoot) == 2)
+        try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(
+            dataRoot: workingDataRoot
+        )
+        let (executionPlan, context) = try PipelineExecutionPlanWriter.load(
+            dataRoot: workingDataRoot
+        )
+        #expect(executionPlan.shots.map(\.sourceMode) == [.imported, .generated])
+        #expect(context.artifacts.contains {
+            $0.role == PipelineExecutionShotInputStore.artifactRole
+                && $0.path == PipelineLayout.executionShotInputsFile
+        })
+        let storedInputs = try PipelineExecutionShotInputStore.loadCurrent(
+            dataRoot: workingDataRoot
+        ).executionShots
+        #expect(storedInputs[0].sourceMode == .imported)
+        #expect(storedInputs[1] == unchangedInput)
+        let productionInputs = try PipelineProductionInputsWriter.load(
+            shotID: "s002",
+            dataRoot: workingDataRoot
+        )
+        #expect(productionInputs.1.shotID == "s002")
+        #expect(productionInputs.2.shotID == "s002")
+        #expect(!FileManager.default.fileExists(
+            atPath: PipelineLayout.url(
+                PipelineLayout.referenceDemandSetFile(shotID: "s001"),
+                in: workingDataRoot
+            ).path
+        ))
+        #expect(!FileManager.default.fileExists(
+            atPath: PipelineLayout.url(
+                PipelineLayout.productionInputTemplateFile(shotID: "s001"),
+                in: workingDataRoot
+            ).path
+        ))
 
+        let beforeFailure = try recursiveFileBytes(in: workingHome)
         let invalidEnhancement = await harness.editor.setShotSourceMode(
             shotId: "s001",
             to: .aiEnhanced
         )
         #expect(!invalidEnhancement)
         #expect(latestShotlistVersion(dataRoot: workingDataRoot) == 2)
+        #expect(try recursiveFileBytes(in: workingHome) == beforeFailure)
+    }
+
+    @Test("native source edit preserves a successor's exact chain binding")
+    func nativeShotSourceEditRejectsChainRetargeting() async throws {
+        let cleanup = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "shot-source-chain-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let package = cleanup.appendingPathComponent("Project.ngv", isDirectory: true)
+        try Fixtures.prepareProjectPackage(at: package)
+        let packageDataRoot = try ProjectScaffold.initProject(
+            home: package,
+            name: "demo",
+            mode: .beat
+        )
+        _ = try prepareNativeSourceExecution(
+            dataRoot: packageDataRoot,
+            chainedSuccessor: true
+        )
+
+        let harness = ToolHarness()
+        harness.editor.projectURL = package
+        defer {
+            harness.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: cleanup)
+        }
+        let workingHome = try #require(harness.editor.workingRoot)
+        let workingDataRoot = try #require(DataRootResolver.dataRoot(of: workingHome))
+        let store = YAMLArtifactStore(dataRoot: workingDataRoot)
+        var gates = try store.load(Gates.self, at: PipelineLayout.gatesFile)
+        for phase in coreGatePhases.prefix(while: { $0 != "shotlist" }) {
+            GatesOperations.approve(&gates, phase: phase)
+        }
+        try store.save(gates, to: PipelineLayout.gatesFile)
+        let before = try recursiveFileBytes(in: workingHome)
+
+        let changed = await harness.editor.setShotSourceMode(
+            shotId: "s001",
+            to: .imported
+        )
+
+        #expect(!changed)
+        #expect(try recursiveFileBytes(in: workingHome) == before)
+        try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(
+            dataRoot: workingDataRoot
+        )
+        let shotlist = try #require(try loadShotlist(dataRoot: workingDataRoot))
+        #expect(ChainContinuity.chainPredecessor(shotlist, shotId: "s002") == "s001")
     }
 
     @Test("shotlist writes fail closed when declared pack state is unreadable")
@@ -1991,6 +2841,32 @@ struct WorkflowToolsTests {
                 try minimalShotlist(),
                 dataRoot: dataRoot,
                 declaredPack: "musicvideo"
+            )
+        }
+        #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
+    }
+
+    @Test("shotlist writer rejects a same-ID version change before writing")
+    func shotlistWriteRejectsSameIDPackVersionChange() throws {
+        let (_, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let trusted = try activatePack("musicvideo", dataRoot: dataRoot)
+        let sibling = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: "0.4.5",
+            projectSchema: trusted.projectSchema
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            sibling,
+            projectURL: FrameInventory.projectHome(of: dataRoot)
+        )
+
+        #expect(throws: ToolError.self) {
+            _ = try PipelineShotlistWriter.write(
+                try minimalShotlist(),
+                dataRoot: dataRoot,
+                declaredPack: trusted.id,
+                declaredBinding: trusted
             )
         }
         #expect(latestShotlistVersion(dataRoot: dataRoot) == nil)
@@ -2111,21 +2987,20 @@ struct WorkflowToolsTests {
         #expect(next?["done"] as? Bool == true)
 
         try Data("replaced-outside-the-render-path".utf8).write(to: video)
-        let stale = try await h.runOK(
+        let stale = await h.runRaw(
             "next_render_shot",
             args: ["project_dir": dir, "phase": "preview"]
-        ) as? [String: Any]
-        #expect(stale?["done"] as? Bool == false)
-        #expect(stale?["shot_id"] as? String == "s001")
-        let staleManifest = try #require(try await h.runOK(
+        )
+        #expect(stale.isError)
+        #expect(
+            ToolHarness.textOf(stale).contains("publication is unreadable")
+                || ToolHarness.textOf(stale).contains("does not match")
+        )
+        let staleManifest = await h.runRaw(
             "get_render_manifest",
             args: ["project_dir": dir, "phase": "preview"]
-        ) as? [String: Any])
-        let staleSummary = try #require(
-            staleManifest["summary"] as? [String: Any]
         )
-        #expect(staleSummary["rendered"] as? Int == 0)
-        #expect(staleSummary["pending"] as? Int == 1)
+        #expect(staleManifest.isError)
     }
 
     @Test("record_render preserves the submitted asset provenance when URLs collide")
@@ -2268,63 +3143,47 @@ struct WorkflowToolsTests {
 
     @Test("next render shot hands a chained shot the predecessor's exact last frame")
     func nextRenderShotResolvesChainStart() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let routing = falRoutingDependencies()
+        let (h, dataRoot, cleanup) = try scaffold(
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates
+        )
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        let song = try Song(
-            title: "Track",
-            audioPath: "audio/song.wav",
-            analysisPath: "analysis/song.json",
-            bpm: 120,
-            durationS: 8
-        )
-        let first = try Shot(
-            id: "s001",
-            section: "verse",
-            timeStart: 0,
-            timeEnd: 4,
-            durationS: 4,
-            type: .performance,
-            description: "Opening.",
-            visualPrompt: "A measured opening composition.",
-            mood: "restrained",
-            keyframeStrategy: .none
-        )
-        let chained = try Shot(
-            id: "s002",
-            section: "verse",
-            timeStart: 4,
-            timeEnd: 8,
-            durationS: 4,
-            type: .performance,
-            description: "Continue.",
-            visualPrompt: "The previous composition continues.",
-            mood: "restrained",
-            keyframeStrategy: .none,
-            seedanceInputMode: .keyframe,
-            chainWithPreviousEnd: true
-        )
-        _ = try saveShotlist(
-            try Shotlist(
-                schema_: shotlistSchemaVersion,
-                mode: .section,
-                project: "demo",
-                song: song,
-                generated: "2026-07-26T00:00:00Z",
-                generator: "test",
-                shots: [first, chained]
-            ),
-            to: dataRoot
+        _ = try prepareNativeSourceExecution(
+            dataRoot: dataRoot,
+            chainedSuccessor: true,
+            finalResolution: .res720p
         )
         let home = FrameInventory.projectHome(of: dataRoot)
         let firstVideo = home.appendingPathComponent("s001.mp4")
         let lastFrame = home.appendingPathComponent("s001-last.png")
+        let first = try await h.runOK(
+            "next_render_shot",
+            args: [
+                "project_dir": dataRoot.path,
+                "phase": "preview",
+            ]
+        ) as? [String: Any]
+        #expect(first?["shot_id"] as? String == "s001")
+        let firstRouting = try PipelineProductionRouting.requireCurrent(
+            shotID: "s001",
+            dataRoot: dataRoot,
+            activation: routing.activation,
+            candidateProvider: routing.candidates
+        )
         try addGeneratedVideo(
             "s001-video",
             at: firstVideo,
             to: h,
-            dataRoot: dataRoot
+            dataRoot: dataRoot,
+            currentRouting: firstRouting
         )
         try addGeneratedImage("s001-last", at: lastFrame, to: h)
+        let generationInput = try #require(
+            h.editor.mediaAssets.first { $0.id == "s001-video" }?.generationInput
+        )
+        let generationRouting = try #require(generationInput.productionRouting)
+        let outputSHA256 = try FileDigest.sha256(of: firstVideo)
         var manifest = RenderManifest(project: "demo", phase: "preview")
         record(
             &manifest,
@@ -2334,23 +3193,52 @@ struct WorkflowToolsTests {
             phase: "preview",
             lastFramePath: "s001-last.png"
         )
-        try saveRenderManifest(manifest, dataRoot: dataRoot)
-        try saveRenderProofManifest(
-            RenderProofManifest(
-                project: "demo",
-                phase: "preview",
-                entries: [
-                    "s001": RenderProofEntry(
-                        shotId: "s001",
-                        output: "s001.mp4",
-                        outputSha256: try FileDigest.sha256(
-                            of: firstVideo
-                        ),
-                        providerPrompt: "Compiled provider prompt.",
-                        generationModel: "video-model"
-                    ),
-                ]
+        let proof = RenderProofManifest(
+            project: "demo",
+            phase: "preview",
+            entries: [
+                "s001": RenderProofEntry(
+                    shotId: "s001",
+                    output: "s001.mp4",
+                    outputSha256: outputSHA256,
+                    providerPrompt: generationInput.prompt,
+                    generationModel: generationInput.model
+                ),
+            ]
+        )
+        let routingProof = PipelineRenderRoutingProofManifestV1(
+            project: "demo",
+            phase: "preview",
+            entries: [
+                "s001": PipelineRenderRoutingProofEntryV1(
+                    shotID: "s001",
+                    output: "s001.mp4",
+                    outputSHA256: outputSHA256,
+                    generation: generationRouting
+                ),
+            ]
+        )
+        let lastFrameData = try Data(contentsOf: lastFrame)
+        let lastFrameProof = RenderLastFrameProofV1(
+            shotID: "s001",
+            phase: "preview",
+            path: "s001-last.png",
+            sha256: FileDigest.sha256(of: lastFrameData),
+            sourceOutput: "s001.mp4",
+            sourceOutputSHA256: outputSHA256,
+            extractedAt: "2026-08-31T00:00:00+00:00"
+        )
+        _ = try PipelineRenderRecordWriter.publish(
+            manifest: manifest,
+            proof: proof,
+            routingProof: routingProof,
+            framesManifest: nil,
+            replacingShotID: "s001",
+            preparedLastFrame: .init(
+                proof: lastFrameProof,
+                data: lastFrameData
             ),
+            expectedPublicationTransactionID: nil,
             dataRoot: dataRoot
         )
 
@@ -2695,7 +3583,11 @@ struct WorkflowToolsTests {
 
     @Test("next_render_shot surfaces the first unrendered shot's prompt")
     func nextRenderShotPending() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let routing = falRoutingDependencies()
+        let (h, dataRoot, cleanup) = try scaffold(
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates
+        )
         defer { try? FileManager.default.removeItem(at: cleanup) }
         let plan = try ShotProductionPlan(
             primaryAction: "performer turns toward camera",
@@ -2706,7 +3598,14 @@ struct WorkflowToolsTests {
             rescueCut: "Cut to a profile reaction",
             continuityLocks: ["silver jacket"]
         )
-        _ = try saveShotlist(try minimalShotlist(productionPlan: plan), to: dataRoot)
+        _ = try publishExecutionShotlist(
+            try minimalShotlist(
+                keyframeStrategy: .none,
+                productionPlan: plan
+            ),
+            dataRoot: dataRoot,
+            finalResolution: .res720p
+        )
         let next = try await h.runOK("next_render_shot", args: ["project_dir": dataRoot.path, "phase": "preview"]) as? [String: Any]
         #expect(next?["done"] as? Bool == false)
         #expect(next?["shot_id"] as? String == "s001")
@@ -2721,13 +3620,21 @@ struct WorkflowToolsTests {
     /// A 3-shot shotlist: s001 imported, s002 generated, s003 ai_enhanced.
     private func hybridShotlist() throws -> Shotlist {
         func shot(_ id: String, _ start: Double, _ mode: SourceMode) throws -> Shot {
-            try Shot(
+            let productionPlan = mode == .imported
+                ? nil
+                : try ShotProductionPlan(
+                    primaryAction: "Hold the composition.",
+                    cameraMovement: .static,
+                    renderability: .green
+                )
+            return try Shot(
                 id: id, section: "verse", timeStart: start, timeEnd: start + 4.0, durationS: 4.0,
                 type: .performance, sourceMode: mode, description: "d",
                 visualPrompt: "p", mood: "m", keyframeStrategy: .none,
                 sourcePath: mode == .aiEnhanced
                     ? "media/s003-source.mp4"
-                    : nil
+                    : nil,
+                productionPlan: productionPlan
             )
         }
         let song = try Song(title: "t", audioPath: "a.wav", analysisPath: "an.json", bpm: 120.0, durationS: 12.0)
@@ -2744,9 +3651,12 @@ struct WorkflowToolsTests {
 
     @Test("next_render_shot skips imported shots and returns ai_enhanced with its source_mode")
     func nextRenderShotSkipsLiveAction() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let routing = hybridRoutingDependencies()
+        let (h, dataRoot, cleanup) = try scaffold(
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates
+        )
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try saveShotlist(try hybridShotlist(), to: dataRoot)
         let dir = dataRoot.path
         let home = FrameInventory.projectHome(of: dataRoot)
         try addSourceVideo(
@@ -2754,27 +3664,29 @@ struct WorkflowToolsTests {
             at: home.appendingPathComponent("media/s003-source.mp4"),
             to: h
         )
+        _ = try publishExecutionShotlist(
+            try hybridShotlist(),
+            dataRoot: dataRoot,
+            finalResolution: .res720p
+        )
+        // s001 is imported → skipped; the first render shot is the generated s002.
+        let first = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
+        #expect(first?["shot_id"] as? String == "s002")
+        #expect(first?["source_mode"] as? String == "generated")
+        let firstRouting = try PipelineProductionRouting.requireCurrent(
+            shotID: "s002",
+            dataRoot: dataRoot,
+            activation: routing.activation,
+            candidateProvider: routing.candidates
+        )
         try addGeneratedVideo(
             "s002-video",
             at: home.appendingPathComponent("s002.mp4"),
             to: h,
             dataRoot: dataRoot,
-            shotId: "s002"
+            shotId: "s002",
+            currentRouting: firstRouting
         )
-        try addGeneratedVideo(
-            "s003-video",
-            at: home.appendingPathComponent("s003.mp4"),
-            to: h,
-            dataRoot: dataRoot,
-            model: "runway/aleph2",
-            sourceVideoAssetId: "s003-source",
-            shotId: "s003"
-        )
-
-        // s001 is imported → skipped; the first render shot is the generated s002.
-        let first = try await h.runOK("next_render_shot", args: ["project_dir": dir, "phase": "preview"]) as? [String: Any]
-        #expect(first?["shot_id"] as? String == "s002")
-        #expect(first?["source_mode"] as? String == "generated")
 
         // Record s002 → the enhanced s003 is next (enhanced shots ARE queued).
         _ = try await h.runOK("record_render", args: [
@@ -2786,6 +3698,20 @@ struct WorkflowToolsTests {
         #expect(second?["source_mode"] as? String == "ai_enhanced")
         #expect(second?["source_video_media_ref"] as? String == "s003-source")
         #expect(second?["source_video_path"] as? String == "media/s003-source.mp4")
+        let currentRouting = try PipelineProductionRouting.requireCurrent(
+            shotID: "s003",
+            dataRoot: dataRoot,
+            activation: routing.activation,
+            candidateProvider: routing.candidates
+        )
+        try addGeneratedVideo(
+            "s003-video",
+            at: home.appendingPathComponent("s003.mp4"),
+            to: h,
+            dataRoot: dataRoot,
+            shotId: "s003",
+            currentRouting: currentRouting
+        )
 
         // Record s003 → done. s001 (imported) never appears, so the queue is empty.
         _ = try await h.runOK("record_render", args: [
@@ -2798,17 +3724,26 @@ struct WorkflowToolsTests {
 
     @Test("next_render_shot rejects an AI-enhanced source that escapes through a symlink")
     func nextRenderShotRejectsEnhancedSourceSymlinkEscape() async throws {
-        let (h, dataRoot, cleanup) = try scaffold()
+        let routing = falRoutingDependencies()
+        let (h, dataRoot, cleanup) = try scaffold(
+            providerActivation: { routing.activation },
+            productionRouteCandidates: routing.candidates
+        )
         defer { try? FileManager.default.removeItem(at: cleanup) }
-        _ = try saveShotlist(try hybridShotlist(), to: dataRoot)
         let home = FrameInventory.projectHome(of: dataRoot)
         let outside = cleanup.appendingPathComponent("outside.mp4")
         try Data("outside".utf8).write(to: outside)
         let source = home.appendingPathComponent("media/s003-source.mp4")
-        try FileManager.default.createDirectory(
-            at: source.deletingLastPathComponent(),
-            withIntermediateDirectories: true
+        try addSourceVideo(
+            "s003-source",
+            at: source,
+            to: h
         )
+        _ = try publishExecutionShotlist(
+            try hybridShotlist(),
+            dataRoot: dataRoot
+        )
+        try FileManager.default.removeItem(at: source)
         try FileManager.default.createSymbolicLink(
             at: source,
             withDestinationURL: outside
@@ -2903,6 +3838,7 @@ struct WorkflowToolsTests {
         let result = await h.runRaw("write_shotlist", args: [
             "project_dir": dataRoot.path,
             "shots": [shot],
+            "execution_shots": [generatedExecutionShotInput(firstFrame: false)],
         ])
 
         #expect(result.isError)
@@ -3213,7 +4149,7 @@ struct WorkflowToolsTests {
         )
 
         #expect(result.isError)
-        #expect(ToolHarness.textOf(result).contains("artifact-write contract"))
+        #expect(ToolHarness.textOf(result).contains("not pinned to an exact version"))
         #expect(try Data(contentsOf: analysisURL) == before)
     }
 
@@ -3234,6 +4170,29 @@ struct WorkflowToolsTests {
         #expect(result.isError)
         #expect(ToolHarness.textOf(result).contains("one_song_contract"))
         #expect(ToolHarness.textOf(result).contains("audio/"))
+    }
+
+    @Test("run_phase rejects a mismatched exact pack before deterministic work")
+    func runPhaseRejectsMismatchedPackVersion() async throws {
+        let (h, dataRoot, cleanup) = try scaffold()
+        defer { try? FileManager.default.removeItem(at: cleanup) }
+        let trusted = try activatePack("musicvideo", dataRoot: dataRoot)
+        let sibling = try #require(ProjectPackBinding(
+            id: trusted.id,
+            version: "0.4.5",
+            projectSchema: trusted.projectSchema
+        ))
+        try ProjectPluginSettings.setActivePlugin(
+            sibling,
+            projectURL: FrameInventory.projectHome(of: dataRoot)
+        )
+
+        let result = await h.runRaw(
+            "run_phase",
+            args: ["project_dir": dataRoot.path, "phase": "analysis"]
+        )
+        #expect(result.isError)
+        #expect(!ToolHarness.textOf(result).contains("one_song_contract"))
     }
 
     // MARK: - attach_song

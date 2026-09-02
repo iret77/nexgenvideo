@@ -11,6 +11,7 @@ enum MainMenuBuilder {
         mainMenu.addItem(fileMenu())
         mainMenu.addItem(editMenu())
         mainMenu.addItem(viewMenu())
+        mainMenu.addItem(agentMenu())
         mainMenu.addItem(helpMenu())
         return mainMenu
     }
@@ -169,6 +170,58 @@ enum MainMenuBuilder {
         return item
     }
 
+    // MARK: - Agent menu
+
+    private static func agentMenu() -> NSMenuItem {
+        let item = NSMenuItem()
+        let menu = NSMenu(title: "Agent")
+
+        let newConversation = NSMenuItem(
+            title: "New Conversation",
+            action: #selector(EditorActions.newAgentConversation(_:)),
+            keyEquivalent: "n"
+        )
+        newConversation.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(newConversation)
+
+        let history = NSMenuItem(
+            title: "Conversation History",
+            action: #selector(EditorActions.showAgentConversationHistory(_:)),
+            keyEquivalent: "h"
+        )
+        history.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(history)
+        menu.addItem(.separator())
+
+        let previous = NSMenuItem(
+            title: "Previous Conversation",
+            action: #selector(EditorActions.selectPreviousAgentConversation(_:)),
+            keyEquivalent: "["
+        )
+        previous.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(previous)
+
+        let next = NSMenuItem(
+            title: "Next Conversation",
+            action: #selector(EditorActions.selectNextAgentConversation(_:)),
+            keyEquivalent: "]"
+        )
+        next.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(next)
+        menu.addItem(.separator())
+
+        let close = NSMenuItem(
+            title: "Close Conversation",
+            action: #selector(EditorActions.closeAgentConversation(_:)),
+            keyEquivalent: "w"
+        )
+        close.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(close)
+
+        item.submenu = menu
+        return item
+    }
+
     // MARK: - Help menu
 
     private static func helpMenu() -> NSMenuItem {
@@ -210,4 +263,9 @@ enum MainMenuBuilder {
     func setFocusProduce(_ sender: Any?)
     func setFocusFinish(_ sender: Any?)
     func toggleTheater(_ sender: Any?)
+    func newAgentConversation(_ sender: Any?)
+    func showAgentConversationHistory(_ sender: Any?)
+    func selectPreviousAgentConversation(_ sender: Any?)
+    func selectNextAgentConversation(_ sender: Any?)
+    func closeAgentConversation(_ sender: Any?)
 }

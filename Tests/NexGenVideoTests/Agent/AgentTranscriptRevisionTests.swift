@@ -19,26 +19,26 @@ struct AgentTranscriptRevisionTests {
                 .toolUse(id: "report", name: "mcp__nexgen__show_blocks", inputJSON: "{}"),
             ]
         )
-        let entries = AgentTranscriptProjection.entries(
+        let items = AgentTranscriptProjection.turns(
             messages: [activityMessage, reportMessage],
             isStreaming: true
-        )
+        ).flatMap(\.items)
 
-        #expect(entries.contains {
+        #expect(items.contains {
             if case .activity(let activity) = $0 { return activity.isRunning }
             return false
         })
     }
 
     @Test func plainStreamingTurnProjectsWithoutAnActivity() {
-        let entries = AgentTranscriptProjection.entries(
+        let items = AgentTranscriptProjection.turns(
             messages: [
                 AgentMessage(role: .assistant, blocks: [.text("Preparing")]),
             ],
             isStreaming: true
-        )
+        ).flatMap(\.items)
 
-        #expect(!entries.contains {
+        #expect(!items.contains {
             if case .activity = $0 { return true }
             return false
         })

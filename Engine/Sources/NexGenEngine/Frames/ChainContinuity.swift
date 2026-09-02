@@ -37,4 +37,15 @@ public enum ChainContinuity {
               order[i].chainWithPreviousEnd, i > 0 else { return nil }
         return order[i - 1].id
     }
+
+    public static func executionPredecessor(
+        _ plan: ExecutionPlanV1,
+        shotID: String
+    ) -> String? {
+        let order = plan.shots.filter { $0.sourceMode != .imported }
+        guard let index = order.firstIndex(where: { $0.id == shotID }), index > 0 else {
+            return nil
+        }
+        return order[index - 1].id
+    }
 }

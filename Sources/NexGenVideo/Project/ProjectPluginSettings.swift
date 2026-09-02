@@ -67,7 +67,7 @@ enum ProjectPluginSettings {
         case unreadable
     }
 
-    enum BindingResolution: Equatable {
+    enum BindingResolution: Equatable, Sendable {
         case absent
         case legacy(String)
         case bound(ProjectPackBinding)

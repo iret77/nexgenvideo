@@ -16,7 +16,18 @@ enum ProviderManifest {
     /// (legacy registry entry, or catalog not yet loaded) `defaultOffers` bootstraps them.
     @MainActor
     static func bindings(forModelId id: String) -> [ProviderBinding] {
-        let offers = ModelCatalog.shared.offersById[id] ?? defaultOffers(forModelId: id)
+        let catalog = ModelCatalog.shared
+        let offers: [ProviderOffer]
+        if let declared = catalog.offersById[id] {
+            offers = declared
+        } else if catalog.byId[id] != nil {
+            offers = defaultOffers(forModelId: id)
+        } else if !catalog.isLoaded {
+            offers = ModelCatalog.bootstrapEntries.first(where: { $0.id == id })?.offers
+                ?? defaultOffers(forModelId: id)
+        } else {
+            offers = []
+        }
         return bindings(from: offers, modelId: id)
     }
 
@@ -27,17 +38,23 @@ enum ProviderManifest {
                 provider: offer.provider, transport: offer.transport, kind: .generation,
                 providerRef: ref, billing: offer.transport == .mcp ? .subscription : .perCall,
                 costPerCall: offer.costPerCall, modelParam: offer.modelParam,
-                mcpMediaRoles: offer.mcpMediaRoles)
+                mcpMediaRoles: offer.mcpMediaRoles,
+                productionInputPolicy: offer.productionInputPolicy,
+                resolvedVideoCapabilities: offer.resolvedVideoCapabilities)
         }
     }
 
     /// Return one currently runnable binding per provider for a model.
     @MainActor
-    static func runnableBindingsByProvider(forModelId id: String) -> [ProviderBinding] {
+    static func runnableBindingsByProvider(
+        forModelId id: String,
+        matching isCompatible: (ProviderBinding) -> Bool = { _ in true }
+    ) -> [ProviderBinding] {
         ProviderResolver.preferredActiveBindingPerProvider(
             bindings: bindings(forModelId: id),
             activation: .current(),
-            effectiveCost: effectiveCost
+            effectiveCost: effectiveCost,
+            isCompatible: isCompatible
         )
     }
 

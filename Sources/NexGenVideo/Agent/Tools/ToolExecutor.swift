@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 struct ToolError: LocalizedError, Sendable {
     let message: String
@@ -11,6 +12,8 @@ struct ToolError: LocalizedError, Sendable {
 @MainActor
 final class ToolExecutor {
     private let editorProvider: () -> EditorViewModel?
+    let providerActivation: () -> ProviderActivation
+    let productionRouteCandidates: ProductionRouteCandidateProvider
     var editor: EditorViewModel? { editorProvider() }
 
     /// The hard gate refuses a phase's work tool until every earlier gate is approved. ON by default so
@@ -18,14 +21,32 @@ final class ToolExecutor {
     /// isolation opt out (they scaffold minimal state and don't walk the gate chain).
     private let enforceHardGates: Bool
 
-    init(editor: EditorViewModel, enforceHardGates: Bool = true) {
+    init(
+        editor: EditorViewModel,
+        enforceHardGates: Bool = true,
+        providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
+        productionRouteCandidates: @escaping ProductionRouteCandidateProvider = {
+            ModelCatalog.shared.productionRouteCandidates(activation: $0)
+        }
+    ) {
         self.editorProvider = { [weak editor] in editor }
         self.enforceHardGates = enforceHardGates
+        self.providerActivation = providerActivation
+        self.productionRouteCandidates = productionRouteCandidates
     }
 
-    init(editorProvider: @escaping () -> EditorViewModel?, enforceHardGates: Bool = true) {
+    init(
+        editorProvider: @escaping () -> EditorViewModel?,
+        enforceHardGates: Bool = true,
+        providerActivation: @escaping () -> ProviderActivation = { ProviderActivation.current() },
+        productionRouteCandidates: @escaping ProductionRouteCandidateProvider = {
+            ModelCatalog.shared.productionRouteCandidates(activation: $0)
+        }
+    ) {
         self.editorProvider = editorProvider
         self.enforceHardGates = enforceHardGates
+        self.providerActivation = providerActivation
+        self.productionRouteCandidates = productionRouteCandidates
     }
 
     private var agentUndoStack: [String] = []
@@ -43,16 +64,110 @@ final class ToolExecutor {
         )
     }
 
+    func mutationPackDeclaration(
+        _ editor: EditorViewModel,
+        dataRoot: URL
+    ) throws -> ProjectPackGate.MutationDeclaration {
+        try mutationPackDeclaration(
+            editor,
+            projectURL: FrameInventory.projectHome(of: dataRoot)
+        )
+    }
+
+    func mutationPackDeclaration(
+        _ editor: EditorViewModel,
+        projectURL: URL
+    ) throws -> ProjectPackGate.MutationDeclaration {
+        let target = projectURL.standardizedFileURL.resolvingSymlinksInPath()
+        if let workingRoot = editor.workingRoot,
+           workingRoot.standardizedFileURL.resolvingSymlinksInPath() == target {
+            return ProjectPackGate.MutationDeclaration(
+                packName: editor.declaredPluginName,
+                binding: editor.declaredPluginBinding
+            )
+        }
+        return try ProjectPackGate.captureMutationDeclaration(
+            projectURL: projectURL
+        )
+    }
+
+    func reserveDurablePipelineMutation(
+        tool: ToolName,
+        phase: String?,
+        dataRoot: URL,
+        editor: EditorViewModel
+    ) throws -> UUID? {
+        guard tool != .runPhase, tool.isDurableWrite else { return nil }
+        return try reservePipelineMutation(
+            label: phase ?? tool.rawValue,
+            dataRoot: dataRoot,
+            editor: editor
+        )
+    }
+
+    func reservePipelineMutation(
+        label: String,
+        dataRoot: URL,
+        editor: EditorViewModel
+    ) throws -> UUID {
+        guard let id = editor.pipelinePhaseRunCoordinator.beginMutation(
+            projectRoot: dataRoot,
+            label: label
+        ) else {
+            let active = editor.pipelinePhaseRunCoordinator.runningPhase(
+                projectRoot: dataRoot
+            ) ?? "pipeline phase"
+            throw ToolError(
+                "Can't change pipeline state while \(active) is running. "
+                    + "Wait for the phase to finish."
+            )
+        }
+        return id
+    }
+
     func currentPhaseIfEnforced(
         tool: ToolName,
         editor: EditorViewModel,
         dataRoot: URL
     ) throws -> String? {
         guard enforceHardGates else { return nil }
+        let declaration = try mutationPackDeclaration(
+            editor,
+            dataRoot: dataRoot
+        )
         return try editor.pipelineAgentHarness.guardCurrentPhaseWork(
             tool: tool,
             dataRoot: dataRoot,
-            declaredPack: editor.declaredPluginName
+            declaredPack: declaration.packName,
+            declaredBinding: declaration.binding
+        )
+    }
+
+    func spendPipelineScope(
+        tool: ToolName,
+        editor: EditorViewModel
+    ) throws -> SpendPipelineScope? {
+        guard let dataRoot = editor.workingRoot.flatMap({
+            DataRootResolver.dataRoot(of: $0)
+        }) else { return nil }
+        let phase = try currentPhaseIfEnforced(
+            tool: tool,
+            editor: editor,
+            dataRoot: dataRoot
+        )
+        let declaration = try mutationPackDeclaration(
+            editor,
+            dataRoot: dataRoot
+        )
+        return SpendPipelineScope(
+            dataRoot: dataRoot,
+            phase: phase,
+            tool: tool,
+            declaredPack: declaration.packName,
+            declaredBinding: declaration.binding,
+            bindingResolution: ProjectPluginSettings.bindingResolution(
+                projectURL: FrameInventory.projectHome(of: dataRoot)
+            )
         )
     }
 
@@ -70,6 +185,16 @@ final class ToolExecutor {
         var result: ToolResult
         var guardedPhase: String?
         var guardedRoot: URL?
+        var guardedDeclaration: ProjectPackGate.MutationDeclaration?
+        var mutationLease: (root: URL, id: UUID)?
+        defer {
+            if let mutationLease {
+                editor.pipelinePhaseRunCoordinator.endMutation(
+                    projectRoot: mutationLease.root,
+                    id: mutationLease.id
+                )
+            }
+        }
         let started = ContinuousClock.now
         Log.agent.notice(
             "tool start name=\(tool.rawValue)",
@@ -92,28 +217,70 @@ final class ToolExecutor {
             if enforceHardGates {
                 if let phase = tool.advancingPhase(args: resolved) {
                     let root = try resolveDataRoot(resolved, editor: editor)
+                    let declaration = try mutationPackDeclaration(
+                        editor,
+                        dataRoot: root
+                    )
                     try editor.pipelineAgentHarness.guardPhaseWork(
                         tool: tool,
                         phase: phase,
                         dataRoot: root,
-                        declaredPack: editor.declaredPluginName
+                        declaredPack: declaration.packName,
+                        declaredBinding: declaration.binding
                     )
                     guardedPhase = phase
                     guardedRoot = root
+                    guardedDeclaration = declaration
                 } else if tool.usesCurrentPipelinePhase {
                     let root = try resolveDataRoot(resolved, editor: editor)
+                    let declaration = try mutationPackDeclaration(
+                        editor,
+                        dataRoot: root
+                    )
                     guardedPhase = try editor.pipelineAgentHarness.guardCurrentPhaseWork(
                         tool: tool,
                         dataRoot: root,
-                        declaredPack: editor.declaredPluginName
+                        declaredPack: declaration.packName,
+                        declaredBinding: declaration.binding
                     )
                     guardedRoot = root
+                    guardedDeclaration = declaration
                 }
             }
             if tool != .runPhase, let guardedRoot {
                 try requirePhaseIdle(editor, dataRoot: guardedRoot)
             }
-            if tool.isDurableWrite, editor.projectURL != nil {
+            if tool != .runPhase,
+               tool.isDurableWrite,
+               let guardedRoot {
+                let id = try reserveDurablePipelineMutation(
+                    tool: tool,
+                    phase: guardedPhase,
+                    dataRoot: guardedRoot,
+                    editor: editor
+                )
+                mutationLease = id.map { (root: guardedRoot, id: $0) }
+            }
+            if tool.isDurableWrite,
+               let mutationRoot = guardedRoot ?? (try? resolveDataRoot(resolved, editor: editor)) {
+                let declaration: ProjectPackGate.MutationDeclaration
+                if let guardedDeclaration {
+                    declaration = guardedDeclaration
+                } else {
+                    declaration = try mutationPackDeclaration(
+                        editor,
+                        dataRoot: mutationRoot
+                    )
+                }
+                _ = try ProjectPackGate.requireLiveMutation(
+                    projectURL: FrameInventory.projectHome(of: mutationRoot),
+                    declaredPack: declaration.packName,
+                    declaredBinding: declaration.binding
+                )
+            }
+            if tool.isDurableWrite,
+               tool != .writeShotlist,
+               editor.projectURL != nil {
                 guard let key = editor.openWorkingCopyKey else {
                     throw ToolError(
                         "The project working copy is unavailable. Reopen the project before writing."
@@ -123,12 +290,24 @@ final class ToolExecutor {
             }
             result = try await run(tool, editor, resolved, origin: origin)
             if tool != .runPhase,
+               tool != .writeShotlist,
                !result.isError,
                result.turnDisposition == .continueTurn,
                let phase = guardedPhase,
                let root = guardedRoot,
                tool.invalidatesPhaseState(args: resolved, dataRoot: root) {
-                try requirePhaseIdle(editor, dataRoot: root)
+                if mutationLease == nil {
+                    try requirePhaseIdle(editor, dataRoot: root)
+                }
+                let declaration: ProjectPackGate.MutationDeclaration
+                if let guardedDeclaration {
+                    declaration = guardedDeclaration
+                } else {
+                    declaration = try mutationPackDeclaration(
+                        editor,
+                        dataRoot: root
+                    )
+                }
                 try await editor.pipelineAgentHarness.recordPhaseMutation(
                     phase: phase,
                     dataRoot: root,
@@ -136,7 +315,8 @@ final class ToolExecutor {
                         args: resolved,
                         dataRoot: root
                     ),
-                    declaredPack: editor.declaredPluginName
+                    declaredPack: declaration.packName,
+                    declaredBinding: declaration.binding
                 )
                 await editor.refreshEngineState()
             }
@@ -265,6 +445,7 @@ final class ToolExecutor {
         case .writeStoryboard:      return try writeStoryboardTool(editor, args)
         case .writeBible:           return try writeBibleTool(editor, args)
         case .writeShotlist:        return try writeShotlistTool(editor, args)
+        case .writePhaseExtension:  return try writePhaseExtensionTool(editor, args)
         case .getPattern:           return try getPatternTool(editor, args)
         case .initProject:          return try initProjectTool(editor, args)
         case .approveGate:          return try await approveGateTool(editor, args, origin: origin)

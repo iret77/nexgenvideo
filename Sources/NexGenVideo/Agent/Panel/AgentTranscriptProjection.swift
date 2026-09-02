@@ -14,25 +14,65 @@ struct AgentActivity: Identifiable {
     let isRunning: Bool
 
     var currentStatus: String? { statuses.last }
+    var operationLabel: String {
+        steps.last.map { ToolRunPresentation.label(for: $0.name) } ?? "Working"
+    }
 }
 
-enum AgentTranscriptEntry: Identifiable {
-    case message(AgentMessage)
+struct AgentUserIntent: Identifiable {
+    let id: UUID
+    let text: String
+}
+
+struct AgentTranscriptReceipt: Identifiable {
+    enum Content {
+        case choice(AgentChoiceRecord)
+        case workflow(AgentWorkflowRecord)
+    }
+
+    let id: UUID
+    let content: Content
+}
+
+struct AgentReceiptGroup: Identifiable {
+    let id: UUID
+    let phase: String?
+    var receipts: [AgentTranscriptReceipt]
+}
+
+struct AgentNoticeReceipt: Identifiable {
+    let id: UUID
+    let text: String
+}
+
+enum AgentTranscriptItem: Identifiable {
+    case userIntent(AgentUserIntent)
+    case assistantResult(AgentMessage)
     case activity(AgentActivity)
+    case receipts(AgentReceiptGroup)
+    case notice(AgentNoticeReceipt)
 
     var id: String {
         switch self {
-        case .message(let message): "message-\(message.id.uuidString)"
+        case .userIntent(let intent): "intent-\(intent.id.uuidString)"
+        case .assistantResult(let message): "result-\(message.id.uuidString)"
         case .activity(let activity): "activity-\(activity.id.uuidString)"
+        case .receipts(let group): "receipts-\(group.id.uuidString)"
+        case .notice(let notice): "notice-\(notice.id.uuidString)"
         }
     }
 }
 
+struct AgentTranscriptTurn: Identifiable {
+    let id: UUID
+    let items: [AgentTranscriptItem]
+}
+
 enum AgentTranscriptProjection {
-    static func entries(messages: [AgentMessage], isStreaming: Bool) -> [AgentTranscriptEntry] {
-        let turns = splitIntoTurns(messages)
-        return turns.enumerated().flatMap { index, turn in
-            project(turn, isRunning: isStreaming && index == turns.count - 1)
+    static func turns(messages: [AgentMessage], isStreaming: Bool) -> [AgentTranscriptTurn] {
+        let messageTurns = splitIntoTurns(messages)
+        return messageTurns.enumerated().compactMap { index, messages in
+            project(messages, isRunning: isStreaming && index == messageTurns.count - 1)
         }
     }
 
@@ -41,7 +81,7 @@ enum AgentTranscriptProjection {
         var current: [AgentMessage] = []
 
         for message in messages {
-            if isAuthoredUserTurn(message), !current.isEmpty {
+            if beginsTurn(message), !current.isEmpty {
                 turns.append(current)
                 current = []
             }
@@ -51,37 +91,84 @@ enum AgentTranscriptProjection {
         return turns
     }
 
-    private static func project(_ turn: [AgentMessage], isRunning: Bool) -> [AgentTranscriptEntry] {
-        let activity = makeActivity(turn, isRunning: isRunning)
-        var insertedActivity = false
-        var output: [AgentTranscriptEntry] = []
+    private static func project(
+        _ messages: [AgentMessage],
+        isRunning: Bool
+    ) -> AgentTranscriptTurn? {
+        guard let first = messages.first else { return nil }
+        let activity = makeActivity(messages, isRunning: isRunning)
+        var intents: [AgentTranscriptItem] = []
+        var resultMessage: AgentMessage?
+        var receipts: [AgentTranscriptItem] = []
+        var notices: [AgentTranscriptItem] = []
 
-        for message in turn {
+        for message in messages {
             switch message.role {
             case .user:
-                if isAuthoredUserTurn(message), !message.hidden {
-                    output.append(.message(message))
+                if !message.hidden, let text = authoredText(message) {
+                    intents.append(.userIntent(.init(id: message.id, text: text)))
+                }
+                if let presentation = message.userPresentation {
+                    if let workflow = presentation.workflowRecord {
+                        appendReceipt(
+                            .init(id: message.id, content: .workflow(workflow)),
+                            phase: workflow.phase,
+                            to: &receipts
+                        )
+                    }
+                    if let choice = presentation.choiceRecord {
+                        appendReceipt(
+                            .init(id: message.id, content: .choice(choice)),
+                            phase: nil,
+                            to: &receipts
+                        )
+                    }
+                    if let notice = presentation.notice?.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    ), !notice.isEmpty {
+                        notices.append(.notice(.init(id: message.id, text: notice)))
+                    }
                 }
             case .assistant:
                 let hasActivityTool = message.blocks.contains(where: isActivityTool)
-                if hasActivityTool, let activity, !insertedActivity {
-                    output.append(.activity(activity))
-                    insertedActivity = true
-                }
-
                 let persistentBlocks = message.blocks.filter { block in
                     guard hasActivityTool else { return true }
                     return isPersistentTool(block)
                 }
                 if !persistentBlocks.isEmpty {
-                    var persistent = message
-                    persistent.blocks = persistentBlocks
-                    output.append(.message(persistent))
+                    if resultMessage == nil {
+                        var persistent = message
+                        persistent.blocks = persistentBlocks
+                        resultMessage = persistent
+                    } else {
+                        resultMessage?.blocks.append(contentsOf: persistentBlocks)
+                    }
                 }
             }
         }
 
-        return output
+        let activityItems = activity.map { [AgentTranscriptItem.activity($0)] } ?? []
+        let results = resultMessage.map { [AgentTranscriptItem.assistantResult($0)] } ?? []
+        let output = intents + results + activityItems + receipts + notices
+        guard !output.isEmpty else { return nil }
+        return AgentTranscriptTurn(id: first.id, items: output)
+    }
+
+    private static func appendReceipt(
+        _ receipt: AgentTranscriptReceipt,
+        phase: String?,
+        to output: inout [AgentTranscriptItem]
+    ) {
+        if case .receipts(var group)? = output.last, group.phase == phase {
+            group.receipts.append(receipt)
+            output[output.count - 1] = .receipts(group)
+        } else {
+            output.append(.receipts(.init(
+                id: receipt.id,
+                phase: phase,
+                receipts: [receipt]
+            )))
+        }
     }
 
     private static func makeActivity(_ turn: [AgentMessage], isRunning: Bool) -> AgentActivity? {
@@ -115,13 +202,29 @@ enum AgentTranscriptProjection {
         )
     }
 
-    private static func isAuthoredUserTurn(_ message: AgentMessage) -> Bool {
+    private static func beginsTurn(_ message: AgentMessage) -> Bool {
         guard message.role == .user else { return false }
-        if message.userPresentation != nil { return true }
-        return message.blocks.contains {
-            if case .text = $0 { return true }
-            return false
+        if message.hidden {
+            return message.blocks.contains {
+                guard case .text(let text) = $0 else { return false }
+                return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
         }
+        return authoredText(message) != nil
+    }
+
+    private static func authoredText(_ message: AgentMessage) -> String? {
+        if let typed = message.userPresentation?.typedText?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ), !typed.isEmpty {
+            return typed
+        }
+        guard message.userPresentation == nil else { return nil }
+        let text = message.blocks.compactMap { block -> String? in
+            guard case .text(let value) = block else { return nil }
+            return value
+        }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     private static func isActivityTool(_ block: AgentContentBlock) -> Bool {

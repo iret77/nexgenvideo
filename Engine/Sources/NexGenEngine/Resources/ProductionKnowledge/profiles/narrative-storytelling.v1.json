@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "production-profile.v1",
+  "id": "narrative_storytelling",
+  "version": "1.0.0",
+  "applicability": {
+    "packIDs": [],
+    "phases": ["treatment", "storyboard", "shotlist", "review"],
+    "intentTags": ["narrative", "hybrid"],
+    "activeProfileIDs": []
+  },
+  "phaseGuidance": [
+    {
+      "phase": "treatment",
+      "instructions": [
+        "Make the protagonist's immediate want, the opposing force, the change in value, and the consequence observable in the planned material.",
+        "Prefer causal transitions and meaningful ellipsis over connective events that add no turn."
+      ]
+    },
+    {
+      "phase": "storyboard",
+      "instructions": [
+        "Give each step a narrative function and preserve readable spatial and emotional causality across the sequence.",
+        "Use reaction, detail, and transition coverage to show consequence instead of explaining it outside the image."
+      ]
+    },
+    {
+      "phase": "shotlist",
+      "instructions": [
+        "Bind every planned generated or AI-enhanced shot to a concrete narrative beat and the approved causal order.",
+        "Imported footage remains production truth and is not forced into invented execution details."
+      ]
+    },
+    {
+      "phase": "review",
+      "instructions": [
+        "Verify that the cut makes context, action, and consequence legible without explanatory prose.",
+        "Judge emotional truth before lower-order spatial neatness when the two genuinely conflict."
+      ]
+    }
+  ],
+  "machineRules": [
+    {
+      "id": "narrative-beat-present",
+      "phase": "shotlist",
+      "severity": "error",
+      "predicateID": "execution_plan.narrative_beat_is_declared",
+      "message": "Narrative generated and AI-enhanced shots require a declared beat."
+    },
+    {
+      "id": "sequence-causality-visible",
+      "phase": "review",
+      "severity": "warning",
+      "predicateID": "sequence.context_action_consequence_are_visible",
+      "message": "Narrative sequences should make context, action, and consequence visible."
+    }
+  ],
+  "provenance": {
+    "sourceURL": "https://github.com/iret77/ai-film-production/tree/d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2",
+    "sourceCommit": "d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2",
+    "sourceSections": [
+      "references/film-craft.md#8-dramaturgy",
+      "references/story-structures.md#23e-masters-rules-sourced-pearls-apply-as-lints-dont-recite"
+    ],
+    "adaptation": "Distilled into format-neutral narrative guidance and structural predicates without selecting a format container."
+  },
+  "license": {
+    "spdxIdentifier": "MIT",
+    "copyrightNotice": "Copyright (c) 2026 iret77",
+    "sourceURL": "https://github.com/iret77/ai-film-production/blob/d07a1ce5c54b899b7c565d3e3cc4aac40b8363e2/LICENSE"
+  }
+}

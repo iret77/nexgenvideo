@@ -62,6 +62,19 @@ final class MCPService {
                 await self?.registerResources(on: server)
                 return server
             },
+            modernHandler: { [weak self] request, origin in
+                guard let self else {
+                    return .error(
+                        status: 500,
+                        code: -32603,
+                        message: "Editor not available"
+                    )
+                }
+                return await self.handleModernRequest(
+                    request,
+                    origin: origin
+                )
+            },
             onFailure: { [weak self] message in
                 await self?.serverFailed(
                     message,
@@ -190,6 +203,190 @@ final class MCPService {
 
         await server.withMethodHandler(ReadResource.self) { params in
             await Self.readResource(uri: params.uri)
+        }
+    }
+
+    private func handleModernRequest(
+        _ request: MCP20260728.Request,
+        origin: ToolCallOrigin
+    ) async -> MCP20260728.HandlerResult {
+        switch request.method {
+        case "server/discover":
+            return .result([
+                "supportedVersions": .array([.string(MCP20260728.version)]),
+                "capabilities": .object([
+                    "resources": .object([
+                        "subscribe": .bool(false),
+                        "listChanged": .bool(false),
+                    ]),
+                    "tools": .object(["listChanged": .bool(false)]),
+                ]),
+                "instructions": .string(AgentInstructions.serverInstructions),
+                "ttlMs": .int(0),
+                "cacheScope": .string("private"),
+            ])
+        case "tools/list":
+            guard request.params["cursor"] == nil else {
+                return .error(
+                    status: 400,
+                    code: -32602,
+                    message: "Invalid params: this tool list has no additional page."
+                )
+            }
+            let tools = ToolDefinitions.all
+                .sorted { $0.name.rawValue < $1.name.rawValue }
+                .map { definition in
+                    MCP20260728.WireValue.object([
+                        "name": .string(definition.name.rawValue),
+                        "description": .string(definition.description),
+                        "inputSchema": .fromMCP(definition.mcpSchemaValue),
+                    ])
+                }
+            return .result([
+                "tools": .array(tools),
+                "ttlMs": .int(0),
+                "cacheScope": .string("private"),
+            ])
+        case "tools/call":
+            guard let name = request.params["name"]?.stringValue else {
+                return .error(
+                    status: 400,
+                    code: -32602,
+                    message: "Invalid params: tool name is required."
+                )
+            }
+            guard ToolDefinitions.all.contains(where: {
+                $0.name.rawValue == name
+            }) else {
+                return .error(
+                    status: 200,
+                    code: -32602,
+                    message: "Tool not found: \(name)"
+                )
+            }
+            guard request.params["inputResponses"] == nil,
+                  request.params["requestState"] == nil else {
+                return .error(
+                    status: 400,
+                    code: -32602,
+                    message: "Invalid params: this server does not issue MCP input requests."
+                )
+            }
+            let arguments: [String: Any]
+            if let value = request.params["arguments"] {
+                guard let object = value.objectValue else {
+                    return .error(
+                        status: 400,
+                        code: -32602,
+                        message: "Invalid params: tool arguments must be an object."
+                    )
+                }
+                arguments = object.mapValues { $0.anyValue }
+            } else {
+                arguments = [:]
+            }
+            let result = await toolExecutor.execute(
+                name: name,
+                args: arguments,
+                origin: origin
+            )
+            let content = result.content.map { block -> MCP20260728.WireValue in
+                switch block {
+                case .text(let text):
+                    .object([
+                        "type": .string("text"),
+                        "text": .string(text),
+                    ])
+                case .image(let base64, let mediaType):
+                    .object([
+                        "type": .string("image"),
+                        "data": .string(base64),
+                        "mimeType": .string(mediaType),
+                    ])
+                }
+            }
+            var fields: [String: MCP20260728.WireValue] = [
+                "content": .array(content),
+            ]
+            if result.isError { fields["isError"] = .bool(true) }
+            return .result(fields)
+        case "resources/list":
+            guard request.params["cursor"] == nil else {
+                return .error(
+                    status: 400,
+                    code: -32602,
+                    message: "Invalid params: this resource list has no additional page."
+                )
+            }
+            return .result([
+                "resources": .array(Self.modernResources),
+                "ttlMs": .int(0),
+                "cacheScope": .string("private"),
+            ])
+        case "resources/read":
+            guard let uri = request.params["uri"]?.stringValue else {
+                return .error(
+                    status: 400,
+                    code: -32602,
+                    message: "Invalid params: resource URI is required."
+                )
+            }
+            guard let text = Self.modernResourceText(uri: uri) else {
+                return .error(
+                    status: 404,
+                    code: -32002,
+                    message: "Resource not found: \(uri)"
+                )
+            }
+            return .result([
+                "contents": .array([.object([
+                    "uri": .string(uri),
+                    "mimeType": .string("application/json"),
+                    "text": .string(text),
+                ])]),
+                "ttlMs": .int(0),
+                "cacheScope": .string("private"),
+            ])
+        default:
+            return .error(
+                status: 404,
+                code: -32601,
+                message: "Method not found: \(request.method)"
+            )
+        }
+    }
+
+    private static let modernResources: [MCP20260728.WireValue] = [
+        .object([
+            "name": .string("Image Models"),
+            "uri": .string("nexgen://models/image"),
+            "description": .string(
+                "Available AI image generation models and their capabilities"
+            ),
+            "mimeType": .string("application/json"),
+        ]),
+        .object([
+            "name": .string("Video Models"),
+            "uri": .string("nexgen://models/video"),
+            "description": .string(
+                "Available AI video generation models and their capabilities"
+            ),
+            "mimeType": .string("application/json"),
+        ]),
+    ]
+
+    private static func modernResourceText(uri: String) -> String? {
+        switch uri {
+        case "nexgen://models/video":
+            ToolExecutor.jsonString(
+                VideoModelConfig.allModels.map { ToolExecutor.videoModelInfo($0) }
+            ) ?? "[]"
+        case "nexgen://models/image":
+            ToolExecutor.jsonString(
+                ImageModelConfig.allModels.map { ToolExecutor.imageModelInfo($0) }
+            ) ?? "[]"
+        default:
+            nil
         }
     }
 

@@ -23,10 +23,22 @@ struct GenerationReferencesStrip: View {
 
     static func slots(for gen: GenerationInput, in assets: [MediaAsset]) -> [(String, MediaAsset)] {
         let byId = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
-        let primary = primaryLabels(for: gen)
+        let persistedPrimaryIDs = gen.imageURLAssetIds ?? []
+        let primaryIDs: [String]
+        if let sourceID = gen.sourceVideoAssetId,
+           gen.referenceImageAssetIds != nil {
+            primaryIDs = [sourceID]
+        } else {
+            primaryIDs = persistedPrimaryIDs
+        }
+        let primary = primaryLabels(
+            for: gen,
+            primaryIDs: primaryIDs,
+            assetsByID: byId
+        )
         let videoBase = videoReferenceBaseLabel(for: gen)
         let groups: [(ids: [String]?, base: String, primary: [String])] = [
-            (gen.imageURLAssetIds,       "Reference", primary),
+            (primaryIDs,                 "Reference", primary),
             (gen.referenceImageAssetIds, "Image Ref", []),
             (gen.referenceVideoAssetIds, videoBase, []),
             (gen.referenceAudioAssetIds, "Audio Ref", []),
@@ -49,11 +61,32 @@ struct GenerationReferencesStrip: View {
         return "Video Ref"
     }
 
-    private static func primaryLabels(for gen: GenerationInput) -> [String] {
+    private static func primaryLabels(
+        for gen: GenerationInput,
+        primaryIDs: [String],
+        assetsByID: [String: MediaAsset]
+    ) -> [String] {
+        if gen.sourceVideoAssetId != nil {
+            return primaryIDs.indices.map { $0 == 0 ? "Source" : "Reference" }
+        }
+        if gen.startFrameAssetId != nil || gen.endFrameAssetId != nil {
+            return (gen.startFrameAssetId == nil ? [] : ["First Frame"])
+                + (gen.endFrameAssetId == nil ? [] : ["Last Frame"])
+        }
         switch ModelRegistry.byId[gen.model] {
-        case .video(let m):
-            if m.requiresSourceVideo { return m.supportsReferences ? ["Source", "Reference"] : ["Source"] }
-            if m.supportsFirstFrame  { return m.supportsLastFrame  ? ["First Frame", "Last Frame"] : ["First Frame"] }
+        case .video:
+            let legacySource = primaryIDs.first.flatMap { assetsByID[$0] }?.type == .video
+            guard let capabilities = GenerationService.dispatchTarget(
+                modelId: gen.model,
+                requiringSourceVideo: legacySource
+            ).binding?.resolvedVideoCapabilities else { return [] }
+            if capabilities.inputPolicy.requiresSourceVideo {
+                return primaryIDs.indices.map { $0 == 0 ? "Source" : "Reference" }
+            }
+            if capabilities.supportsFirstFrame {
+                return capabilities.supportsLastFrame
+                    ? ["First Frame", "Last Frame"] : ["First Frame"]
+            }
             return []
         case .upscale:
             return ["Source"]

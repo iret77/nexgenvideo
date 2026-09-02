@@ -1,5 +1,11 @@
 import Foundation
 
+enum ChatSessionAttention: Equatable {
+    case running
+    case actionRequired
+    case unreadResult
+}
+
 struct ChatSession: Codable, Identifiable {
     let id: UUID
     var title: String

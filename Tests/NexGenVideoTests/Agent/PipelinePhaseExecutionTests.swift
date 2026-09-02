@@ -40,6 +40,56 @@ struct PipelinePhaseExecutionTests {
         #expect(coordinator.runningPhase(projectRoot: root) == nil)
     }
 
+    @Test("record_render reserves the project across suspension and excludes run_phase")
+    func recordRenderToolMutationLease() async throws {
+        let harness = ToolHarness(enforceHardGates: true)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        let reservation = try harness.executor.reserveDurablePipelineMutation(
+            tool: .recordRender,
+            phase: "render",
+            dataRoot: root,
+            editor: harness.editor
+        )
+        let mutation = try #require(reservation)
+        #expect(
+            harness.editor.pipelinePhaseRunCoordinator.holdsMutation(
+                projectRoot: root,
+                id: mutation
+            )
+        )
+
+        await Task.yield()
+        let outcome = await harness.editor.pipelinePhaseRunCoordinator.run(
+            projectRoot: root,
+            phase: "render",
+            sourceFilename: nil,
+            runner: { _ in },
+            progressRunner: nil,
+            state: PipelinePhaseExecutionState()
+        )
+
+        #expect(outcome == .refused(activePhase: "render"))
+        harness.editor.pipelinePhaseRunCoordinator.endMutation(
+            projectRoot: root,
+            id: mutation
+        )
+        #expect(
+            !harness.editor.pipelinePhaseRunCoordinator.holdsMutation(
+                projectRoot: root,
+                id: mutation
+            )
+        )
+        #expect(
+            try harness.executor.reserveDurablePipelineMutation(
+                tool: .runPhase,
+                phase: "render",
+                dataRoot: root,
+                editor: harness.editor
+            ) == nil
+        )
+    }
+
     @Test("approval control fails closed for blocked, writing, and running states")
     func approvalControlPredicate() {
         #expect(PipelineApprovalControl.isEnabled(

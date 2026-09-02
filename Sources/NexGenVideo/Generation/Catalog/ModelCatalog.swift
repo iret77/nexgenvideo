@@ -1,4 +1,5 @@
 import Foundation
+import NexGenEngine
 
 enum ModelKind: Sendable {
     case video(VideoModelConfig)
@@ -65,6 +66,8 @@ final class ModelCatalog {
     /// (`kling`, `gen4.5`); NGV maps back to the internal id for resolution + dispatch. Built at load.
     private(set) var internalByLogical: [String: String] = [:]
     private(set) var providerDiscovery: [GenerationProvider: ProviderDiscoveryState] = [:]
+    private(set) var offeringCapabilitiesByModelID:
+        [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
     private(set) var isLoaded: Bool = false
     private(set) var lastError: String?
 
@@ -77,7 +80,7 @@ final class ModelCatalog {
     @ObservationIgnored private var discoveredByProvider: [GenerationProvider: [CatalogEntry]] = [:]
     @ObservationIgnored private var completedDiscoveryProviders = Set<GenerationProvider>()
 
-    private init() {}
+    init() {}
 
     func configure() {
         guard !didConfigure else { return }
@@ -142,8 +145,27 @@ final class ModelCatalog {
             for entry in entries {
                 if var existing = byId[entry.id] {
                     var offers = existing.offers ?? []
-                    for offer in (entry.offers ?? []) where !offers.contains(offer) { offers.append(offer) }
+                    for offer in entry.offers ?? [] {
+                        if let index = offers.firstIndex(where: {
+                            Self.sameOffering($0, offer)
+                        }) {
+                            offers[index] = Self.mergingOfferingMetadata(
+                                current: offers[index],
+                                refreshed: offer
+                            )
+                        } else {
+                            offers.append(offer)
+                        }
+                    }
                     existing.offers = offers
+                    var capabilities = existing.resolvedOfferingCapabilities ?? []
+                    for capability in entry.resolvedOfferingCapabilities ?? []
+                    where !capabilities.contains(capability) {
+                        capabilities.append(capability)
+                    }
+                    existing.resolvedOfferingCapabilities = capabilities.isEmpty
+                        ? nil
+                        : capabilities
                     byId[entry.id] = existing
                 } else {
                     byId[entry.id] = entry
@@ -160,6 +182,32 @@ final class ModelCatalog {
             if let entries = discoveredByProvider[provider] { add(entries) }
         }
         return order.map { byId[$0]! }
+    }
+
+    private static func sameOffering(_ lhs: ProviderOffer, _ rhs: ProviderOffer) -> Bool {
+        lhs.provider == rhs.provider
+            && lhs.transport == rhs.transport
+            && lhs.providerRef == rhs.providerRef
+            && lhs.modelParam == rhs.modelParam
+    }
+
+    private static func mergingOfferingMetadata(
+        current: ProviderOffer,
+        refreshed: ProviderOffer
+    ) -> ProviderOffer {
+        var merged = current
+        if refreshed.costPerCall != nil { merged.costPerCall = refreshed.costPerCall }
+        if refreshed.mcpMediaRoles != nil { merged.mcpMediaRoles = refreshed.mcpMediaRoles }
+        if refreshed.productionQualityTargetIDs != nil {
+            merged.productionQualityTargetIDs = refreshed.productionQualityTargetIDs
+        }
+        if refreshed.productionInputPolicy != nil {
+            merged.productionInputPolicy = refreshed.productionInputPolicy
+        }
+        if refreshed.resolvedVideoCapabilities != nil {
+            merged.resolvedVideoCapabilities = refreshed.resolvedVideoCapabilities
+        }
+        return merged
     }
 
     static func gatingCompletedDirectProviders(
@@ -212,6 +260,13 @@ final class ModelCatalog {
     }
 
     private func apply(_ entries: [CatalogEntry]) {
+        guard let capabilityResolver = CatalogCapabilityRuntime.resolver else {
+            clearAppliedCatalog(
+                error: CatalogCapabilityRuntime.loadError?.localizedDescription
+                    ?? "Model capability knowledge is unavailable."
+            )
+            return
+        }
         var newVideo: [VideoModelConfig] = []
         var newImage: [ImageModelConfig] = []
         var newAudio: [AudioModelConfig] = []
@@ -220,6 +275,9 @@ final class ModelCatalog {
         var newCardsById: [String: ModelCard] = [:]
         var newOffersById: [String: [ProviderOffer]] = [:]
         var newInternalByLogical: [String: String] = [:]
+        var newOfferingCapabilitiesByModelID:
+            [String: [ResolvedOfferingCapabilityProfileV1]] = [:]
+        var capabilityErrors: [String] = []
         newVideo.reserveCapacity(entries.count)
         newImage.reserveCapacity(entries.count)
         newAudio.reserveCapacity(entries.count)
@@ -227,8 +285,20 @@ final class ModelCatalog {
         newById.reserveCapacity(entries.count)
 
         for entry in entries {
+            do {
+                let capabilities = try Self.offeringCapabilities(
+                    for: entry,
+                    resolver: capabilityResolver
+                )
+                if !capabilities.isEmpty {
+                    newOfferingCapabilitiesByModelID[entry.id] = capabilities
+                }
+            } catch {
+                capabilityErrors.append("\(entry.id): \(error.localizedDescription)")
+                continue
+            }
             if let card = entry.card { newCardsById[entry.id] = card }
-            if let offers = entry.offers, !offers.isEmpty { newOffersById[entry.id] = offers }
+            if let offers = entry.offers { newOffersById[entry.id] = offers }
             newInternalByLogical[Self.deriveLogicalId(entry.id)] = entry.id
             switch entry.uiCapabilities {
             case .video(let caps):
@@ -258,7 +328,846 @@ final class ModelCatalog {
         self.cardsById = newCardsById
         self.offersById = newOffersById
         self.internalByLogical = newInternalByLogical
-        self.lastError = nil
+        self.offeringCapabilitiesByModelID = newOfferingCapabilitiesByModelID
+        self.lastError = capabilityErrors.first
+    }
+
+    nonisolated static func offeringCapabilities(
+        for entry: CatalogEntry,
+        resolver: ModelCapabilityResolver
+    ) throws -> [ResolvedOfferingCapabilityProfileV1] {
+        let modality: CapabilityModalityV1
+        switch entry.kind {
+        case .video: modality = .video
+        case .image: modality = .image
+        case .audio: modality = .audio
+        case .upscale: return []
+        }
+        let offers = entry.offers ?? ProviderManifest.defaultOffers(forModelId: entry.id)
+        let supplied = entry.resolvedOfferingCapabilities ?? []
+        let discovered = Dictionary(
+            supplied.map { ($0.offering.offeringID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard discovered.count == supplied.count else {
+            throw ModelCapabilityKnowledgeError.invalidOffering(
+                "duplicate_catalog_offering"
+            )
+        }
+        let declaredOfferingIDs = Set(offers.map {
+            CatalogOfferingIdentity.id(offer: $0, modelID: entry.id)
+        })
+        guard Set(discovered.keys).isSubset(of: declaredOfferingIDs) else {
+            throw ModelCapabilityKnowledgeError.invalidOffering(
+                "undeclared_catalog_offering"
+            )
+        }
+        return try offers.map { offer in
+            let offering = CatalogOfferingIdentity.make(
+                offer: offer,
+                modelID: entry.id,
+                modality: modality
+            )
+            try validateVideoOfferingContract(offer, modality: modality)
+            if let capability = discovered[offering.offeringID] {
+                guard capability.offering == offering else {
+                    throw ModelCapabilityKnowledgeError.invalidOffering(
+                        "catalog_offering_identity"
+                    )
+                }
+                try validateProductionInputPolicy(
+                    offer,
+                    in: capability
+                )
+                return productionRoutingCapability(capability)
+            }
+            return productionRoutingCapability(try resolver.resolveOffering(
+                offering,
+                lookup: CapabilityLookupV1(
+                    modality: modality,
+                    catalogModelID: entry.id
+                ),
+                overlay: try productionInputPolicyOverlay(
+                    offer.productionInputPolicy,
+                    offering: offering
+                )
+            ))
+        }
+    }
+
+    private nonisolated static func productionRoutingCapability(
+        _ capability: ResolvedOfferingCapabilityProfileV1
+    ) -> ResolvedOfferingCapabilityProfileV1 {
+        guard capability.offering.modality == .video,
+              capability.effective.fields.strings[CapabilityFieldIDV1.modes]?.value
+                .isEmpty != false,
+              let identity = capability.effective.resolvedIdentity
+                ?? capability.effective.requestedIdentity else {
+            return capability
+        }
+        var modes: Set<String> = []
+        let variant = ProductionIdentifierNormalizerV1.canonical(
+            identity.variantID.rawValue
+        )
+        if variant.hasPrefix("text-to-video") {
+            modes.insert("text-to-video")
+        } else if variant.hasPrefix("image-to-video") {
+            modes.insert("image-to-video")
+        } else if variant.hasPrefix("reference-to-video") {
+            modes.insert("reference-to-video")
+        } else if variant.hasPrefix("video-to-video") {
+            modes.insert("video-to-video")
+        } else {
+            return capability
+        }
+        if capability.effective.fields.booleans[
+            CapabilityFieldIDV1.sourceVideo
+        ]?.value == true {
+            modes.insert("video-to-video")
+        }
+        let evidence = CapabilityEvidenceV1(
+            sourceTitle: "NexGenVideo provider endpoint mode contract v1",
+            observedAt: "2026-09-01T00:00:00Z",
+            kind: .providerSchema,
+            confidence: 1
+        )
+        var fields = capability.effective.fields
+        fields.strings[CapabilityFieldIDV1.modes] = ResolvedCapabilityValueV1(
+            value: modes.sorted(),
+            semantics: .supportedSet,
+            origin: ResolvedCapabilityOriginV1(
+                kind: .endpointOverlay,
+                profileID: "provider-endpoint-mode-contract/v1",
+                versionID: identity.versionID,
+                endpointID: capability.offering.endpointID
+            ),
+            evidence: [evidence]
+        )
+        return ResolvedOfferingCapabilityProfileV1(
+            offering: capability.offering,
+            intrinsic: capability.intrinsic,
+            effective: ResolvedCapabilityProfileV1(
+                requestedIdentity: capability.effective.requestedIdentity,
+                resolvedIdentity: capability.effective.resolvedIdentity,
+                defensiveProfileID: capability.effective.defensiveProfileID,
+                researchNeeded: capability.effective.researchNeeded,
+                fields: fields
+            )
+        )
+    }
+
+    private nonisolated static func productionInputPolicyOverlay(
+        _ policy: ProviderProductionInputPolicyV1?,
+        offering: CapabilityOfferingIdentityV1
+    ) throws -> EndpointCapabilityOverlayV1? {
+        guard offering.modality == .video else { return nil }
+        guard let policy else {
+            throw ModelCapabilityKnowledgeError.invalidOffering(
+                "missing_production_input_policy"
+            )
+        }
+        let evidence = CapabilityEvidenceV1(
+            sourceTitle: "NexGenVideo provider input adapter contract v1",
+            observedAt: "2026-08-31T00:00:00Z",
+            kind: .providerSchema,
+            confidence: 1
+        )
+        func restriction(_ value: Bool) -> EndpointBooleanRestrictionV1 {
+            EndpointBooleanRestrictionV1(value: value, evidence: [evidence])
+        }
+        return EndpointCapabilityOverlayV1(
+            offering: offering,
+            schemaEvidence: [evidence],
+            restrictions: EndpointCapabilityRestrictionsV1(booleans: [
+                CapabilityFieldIDV1.sourceVideoRequired:
+                    restriction(policy.requiresSourceVideo),
+                CapabilityFieldIDV1.framesCountTowardImageReferenceLimit:
+                    restriction(policy.framesCountTowardImageReferenceLimit),
+                CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit:
+                    restriction(policy.framesCountTowardTotalReferenceLimit),
+            ])
+        )
+    }
+
+    private nonisolated static func validateProductionInputPolicy(
+        _ offer: ProviderOffer,
+        in capability: ResolvedOfferingCapabilityProfileV1
+    ) throws {
+        guard capability.offering.modality == .video else { return }
+        guard let policy = offer.productionInputPolicy,
+              exactEndpointBoolean(
+                CapabilityFieldIDV1.sourceVideoRequired,
+                in: capability
+              ) == policy.requiresSourceVideo,
+              exactEndpointBoolean(
+                CapabilityFieldIDV1.framesCountTowardImageReferenceLimit,
+                in: capability
+              ) == policy.framesCountTowardImageReferenceLimit,
+              exactEndpointBoolean(
+                CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit,
+                in: capability
+              ) == policy.framesCountTowardTotalReferenceLimit else {
+            throw ModelCapabilityKnowledgeError.invalidOffering(
+                "production_input_policy_mismatch"
+            )
+        }
+    }
+
+    private nonisolated static func validateVideoOfferingContract(
+        _ offer: ProviderOffer,
+        modality: CapabilityModalityV1
+    ) throws {
+        guard modality == .video else { return }
+        guard let policy = offer.productionInputPolicy else {
+            throw ModelCapabilityKnowledgeError.invalidOffering(
+                "missing_production_input_policy"
+            )
+        }
+        guard let capabilities = offer.resolvedVideoCapabilities,
+              capabilities.schemaVersion == 1,
+              capabilities.inputPolicy == policy else {
+            throw ModelCapabilityKnowledgeError.invalidOffering(
+                "missing_resolved_video_offering_capabilities_v1"
+            )
+        }
+        guard capabilities.contractViolation == nil else {
+            throw ModelCapabilityKnowledgeError.invalidOffering(
+                "invalid_resolved_video_offering_capabilities_v1"
+            )
+        }
+    }
+
+    private func clearAppliedCatalog(error: String) {
+        video = []
+        image = []
+        audio = []
+        upscale = []
+        byId = [:]
+        cardsById = [:]
+        offersById = [:]
+        internalByLogical = [:]
+        offeringCapabilitiesByModelID = [:]
+        lastError = error
+    }
+
+    func compatibleImageOfferings(
+        preferredModelID: String,
+        aspectRatio: String,
+        resolution: String?,
+        quality: String?,
+        referenceCount: Int,
+        numImages: Int = 1
+    ) -> [CatalogImageOfferingCandidate] {
+        let discovered = discoveredByProvider
+        let discoveryStates = providerDiscovery
+        return Self.compatibleImageOfferings(
+            models: image,
+            offersByModelID: offersById,
+            preferredModelID: preferredModelID,
+            aspectRatio: aspectRatio,
+            resolution: resolution,
+            quality: quality,
+            referenceCount: referenceCount,
+            numImages: numImages,
+            activation: .current(),
+            isEnabled: ModelPreferences.shared.isEnabled,
+            offeringIsVerified: { modelID, binding in
+                Self.imageOfferingIsVerified(
+                    modelID: modelID,
+                    binding: binding,
+                    discoveredByProvider: discovered,
+                    providerDiscovery: discoveryStates
+                )
+            }
+        )
+    }
+
+    nonisolated static func imageOfferingIsVerified(
+        modelID: String,
+        binding: ProviderBinding,
+        discoveredByProvider: [GenerationProvider: [CatalogEntry]],
+        providerDiscovery: [GenerationProvider: ProviderDiscoveryState]
+    ) -> Bool {
+        if binding.transport == .mcp {
+            switch providerDiscovery[binding.provider] {
+            case .ready?, .stale?:
+                break
+            default:
+                return false
+            }
+        }
+        guard let entries = discoveredByProvider[binding.provider] else {
+            return false
+        }
+        let expected = CatalogImageBindingIdentity(
+            modelID: modelID,
+            binding: binding
+        )
+        return entries.contains { entry in
+            guard entry.id == modelID else { return false }
+            let offers = entry.offers
+                ?? ProviderManifest.defaultOffers(forModelId: modelID)
+            return ProviderManifest.bindings(
+                from: offers,
+                modelId: modelID
+            ).contains {
+                $0.provider == binding.provider
+                    && CatalogImageBindingIdentity(
+                        modelID: modelID,
+                        binding: $0
+                    ) == expected
+            }
+        }
+    }
+
+    nonisolated static func compatibleImageOfferings(
+        models: [ImageModelConfig],
+        offersByModelID: [String: [ProviderOffer]],
+        preferredModelID: String,
+        aspectRatio: String,
+        resolution: String?,
+        quality: String?,
+        referenceCount: Int,
+        numImages: Int = 1,
+        activation: ProviderActivation,
+        isEnabled: (String) -> Bool,
+        offeringIsVerified: (String, ProviderBinding) -> Bool
+    ) -> [CatalogImageOfferingCandidate] {
+        models
+            .filter { isEnabled($0.id) && !MarbleModelRegistry.isMarbleModel($0.id) }
+            .compactMap { model -> (ImageAlternativeCandidate, [ProviderBinding])? in
+                let adapted: ImageAlternativeCandidate
+                if model.id == preferredModelID {
+                    guard model.validate(
+                        aspectRatio: aspectRatio,
+                        resolution: resolution,
+                        quality: quality,
+                        imageRefCount: referenceCount,
+                        numImages: numImages
+                    ) == nil else { return nil }
+                    adapted = ImageAlternativeCandidate(
+                        model: model,
+                        aspectRatio: aspectRatio,
+                        resolution: resolution,
+                        quality: quality
+                    )
+                } else {
+                    guard let candidate = ImageAlternativeResolver.candidates(
+                        models: [model],
+                        excluding: preferredModelID,
+                        aspectRatio: aspectRatio,
+                        resolution: resolution,
+                        quality: quality,
+                        referenceCount: referenceCount,
+                        isAvailable: { _ in true }
+                    ).first,
+                    candidate.model.validate(
+                        aspectRatio: candidate.aspectRatio,
+                        resolution: candidate.resolution,
+                        quality: candidate.quality,
+                        imageRefCount: referenceCount,
+                        numImages: numImages
+                    ) == nil else { return nil }
+                    adapted = candidate
+                }
+                let offers = offersByModelID[model.id]
+                    ?? ProviderManifest.defaultOffers(forModelId: model.id)
+                let bindings = ProviderResolver.preferredActiveBindingPerProvider(
+                    bindings: ProviderManifest.bindings(from: offers, modelId: model.id),
+                    activation: activation,
+                    effectiveCost: ProviderManifest.effectiveCost,
+                    isCompatible: {
+                        imageRouteIsImplemented(modelID: model.id, binding: $0)
+                            && (!imageRouteRequiresLiveDiscovery($0)
+                                || offeringIsVerified(model.id, $0))
+                    }
+                )
+                return bindings.isEmpty ? nil : (adapted, bindings)
+            }
+            .flatMap { adapted, bindings in
+                bindings.map { binding in
+                    CatalogImageOfferingCandidate(
+                        model: adapted.model,
+                        target: ResolvedGenerationTarget(
+                            modelId: adapted.model.id,
+                            provider: binding.provider,
+                            endpoint: binding.providerRef,
+                            binding: binding
+                        ),
+                        aspectRatio: adapted.aspectRatio,
+                        resolution: adapted.resolution,
+                        quality: adapted.quality
+                    )
+                }
+            }
+            .sorted { lhs, rhs in
+                if lhs.model.id == preferredModelID,
+                   rhs.model.id != preferredModelID { return true }
+                if rhs.model.id == preferredModelID,
+                   lhs.model.id != preferredModelID { return false }
+                let providerOrder = GenerationProvider.allCases
+                let lhsProvider = providerOrder.firstIndex(of: lhs.target.provider) ?? .max
+                let rhsProvider = providerOrder.firstIndex(of: rhs.target.provider) ?? .max
+                if lhsProvider != rhsProvider { return lhsProvider < rhsProvider }
+                let modelOrder = lhs.model.displayName.localizedCaseInsensitiveCompare(
+                    rhs.model.displayName
+                )
+                if modelOrder != .orderedSame { return modelOrder == .orderedAscending }
+                return lhs.target.endpoint < rhs.target.endpoint
+            }
+    }
+
+    func activeImageProviderScope() -> [GenerationProvider] {
+        Self.activeImageProviderScope(activation: .current())
+    }
+
+    nonisolated static func activeImageProviderScope(
+        activation: ProviderActivation
+    ) -> [GenerationProvider] {
+        GenerationProvider.allCases.filter { provider in
+            provider.supportsGenericImageGeneration
+                && ProviderTransport.allCases.contains {
+                    activation.isActive(provider, $0)
+                }
+        }
+    }
+
+    private nonisolated static func imageRouteIsImplemented(
+        modelID: String,
+        binding: ProviderBinding
+    ) -> Bool {
+        guard binding.kind == .generation else { return false }
+        if binding.transport == .mcp {
+            return !binding.providerRef.isEmpty
+        }
+        switch binding.provider {
+        case .fal:
+            return FalModelRegistry.model(for: modelID) != nil
+        case .runway:
+            return RunwayModelRegistry.model(for: binding.providerRef) != nil
+        case .google:
+            return GoogleModelRegistry.model(for: binding.providerRef) != nil
+        case .marble:
+            return MarbleModelRegistry.model(for: binding.providerRef) != nil
+        case .higgsfield, .openart, .ace, .elevenlabs:
+            return false
+        }
+    }
+
+    private nonisolated static func imageRouteRequiresLiveDiscovery(
+        _ binding: ProviderBinding
+    ) -> Bool {
+        binding.transport == .mcp
+            || binding.provider.requiresLiveImageCatalogDiscovery
+    }
+
+    func productionRouteCandidates(
+        activation: ProviderActivation = .current()
+    ) -> [CatalogProductionRouteCandidate] {
+        let discovered = discoveredByProvider
+        let discoveryStates = providerDiscovery
+        return offeringCapabilitiesByModelID.keys.sorted().flatMap { modelID in
+            let offers = offersById[modelID] ?? ProviderManifest.defaultOffers(
+                forModelId: modelID
+            )
+            let capabilities = offeringCapabilitiesByModelID[modelID] ?? []
+            return capabilities.map { capability in
+                let offer = offers.first {
+                    $0.provider.rawValue == capability.offering.providerID
+                        && Self.offeringID(
+                            offer: $0,
+                            modelID: modelID
+                        ) == capability.offering.offeringID
+                }
+                let provider = GenerationProvider(
+                    rawValue: capability.offering.providerID
+                )
+                let providerActivated = provider.flatMap { provider in
+                    offer.map { activation.isActive(provider, $0.transport) }
+                } ?? false
+                let binding = offer.flatMap {
+                    ProviderManifest.bindings(from: [$0], modelId: modelID).first
+                }
+                let target = binding.map {
+                    ResolvedGenerationTarget(
+                        modelId: modelID,
+                        provider: $0.provider,
+                        endpoint: $0.providerRef,
+                        binding: $0
+                    )
+                }
+                let qualityTargetIDs = productionQualityTargets(for: offer)
+                let inputSlots: [ProductionInputSlotCapabilityV1]
+                if capability.offering.modality == .video,
+                   let exact = binding?.resolvedVideoCapabilities {
+                    inputSlots = Self.inputSlots(
+                        capabilities: exact,
+                        modeIDs: capability.effective.fields.strings[
+                            CapabilityFieldIDV1.modes
+                        ]?.value ?? []
+                    )
+                } else {
+                    inputSlots = Self.inputSlots(capabilities: capability)
+                }
+                // Profile requirements remain unsupported without a versioned adapter contract.
+                let candidate = ProductionRouteCandidateV1(
+                    capabilities: capability,
+                    providerActivated: providerActivated,
+                    liveAvailable: Self.productionOfferingIsLive(
+                        modelID: modelID,
+                        modality: capability.offering.modality,
+                        binding: binding,
+                        modelExists: byId[modelID] != nil,
+                        modelEnabled: ModelPreferences.shared.isEnabled(modelID),
+                        discoveredByProvider: discovered,
+                        providerDiscovery: discoveryStates
+                    ),
+                    qualityScore: cardsById[modelID]?.rank.map { -Double($0) } ?? 0,
+                    qualityTargetIDs: qualityTargetIDs,
+                    satisfiedProductionProfileRequirementIDs: [],
+                    inputSlots: inputSlots,
+                    estimatedCost: binding.map { ProviderManifest.effectiveCost($0) }
+                )
+                return CatalogProductionRouteCandidate(
+                    modelID: modelID,
+                    candidate: candidate,
+                    target: target
+                )
+            }
+        }
+    }
+
+    nonisolated static func productionOfferingIsLive(
+        modelID: String,
+        modality: CapabilityModalityV1,
+        binding: ProviderBinding?,
+        modelExists: Bool,
+        modelEnabled: Bool,
+        discoveredByProvider: [GenerationProvider: [CatalogEntry]],
+        providerDiscovery: [GenerationProvider: ProviderDiscoveryState]
+    ) -> Bool {
+        guard let binding, modelExists, modelEnabled else { return false }
+        if modality == .image,
+           !imageRouteIsImplemented(modelID: modelID, binding: binding) {
+            return false
+        }
+        let requiresDiscovery = binding.transport == .mcp
+            || (modality == .image
+                && binding.provider.requiresLiveImageCatalogDiscovery)
+        return !requiresDiscovery || imageOfferingIsVerified(
+            modelID: modelID,
+            binding: binding,
+            discoveredByProvider: discoveredByProvider,
+            providerDiscovery: providerDiscovery
+        )
+    }
+
+    private static func offeringID(offer: ProviderOffer, modelID: String) -> String {
+        CatalogOfferingIdentity.id(offer: offer, modelID: modelID)
+    }
+
+    private func productionQualityTargets(for offer: ProviderOffer?) -> [String] {
+        validatedSupportIDs(offer?.productionQualityTargetIDs)
+    }
+
+    private func validatedSupportIDs(_ values: [String]?) -> [String] {
+        guard let values,
+              values.allSatisfy({
+                  !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              }),
+              Set(values).count == values.count else {
+            return []
+        }
+        return values
+    }
+
+    nonisolated static func inputSlots(
+        capabilities: ResolvedOfferingCapabilityProfileV1
+    ) -> [ProductionInputSlotCapabilityV1] {
+        let profile = capabilities.effective
+        let modes = profile.fields.strings[CapabilityFieldIDV1.modes]?.value ?? []
+        guard !modes.isEmpty else { return [] }
+        let integers = profile.fields.integers
+        let booleans = profile.fields.booleans
+        var slots: [ProductionInputSlotCapabilityV1] = []
+        func append(
+            _ id: String,
+            _ modality: AssetPhysicalModalityV1,
+            requestOrder: Int,
+            modalityBudget: Bool,
+            totalBudget: Bool,
+            durationBudget: Bool
+        ) {
+            slots.append(ProductionInputSlotCapabilityV1(
+                id: id,
+                modality: modality,
+                modeIDs: modes,
+                requestOrder: requestOrder,
+                countsTowardModalityBudget: modalityBudget,
+                countsTowardTotalBudget: totalBudget,
+                countsTowardCombinedDuration: durationBudget
+            ))
+        }
+        switch capabilities.offering.modality {
+        case .video:
+            guard let frameModalityBudget = exactEndpointBoolean(
+                    CapabilityFieldIDV1.framesCountTowardImageReferenceLimit,
+                    in: capabilities
+                  ),
+                  let frameTotalBudget = exactEndpointBoolean(
+                    CapabilityFieldIDV1.framesCountTowardTotalReferenceLimit,
+                    in: capabilities
+                  ),
+                  let requiresSourceVideo = exactEndpointBoolean(
+                    CapabilityFieldIDV1.sourceVideoRequired,
+                    in: capabilities
+                  ) else {
+                return []
+            }
+            if !requiresSourceVideo,
+               booleans[CapabilityFieldIDV1.firstFrame]?.value == true {
+                append(
+                    CoreReferenceInputSlotIDV1.firstFrame,
+                    .image,
+                    requestOrder: 0,
+                    modalityBudget: frameModalityBudget,
+                    totalBudget: frameTotalBudget,
+                    durationBudget: false
+                )
+            }
+            if !requiresSourceVideo,
+               booleans[CapabilityFieldIDV1.lastFrame]?.value == true {
+                append(
+                    CoreReferenceInputSlotIDV1.lastFrame,
+                    .image,
+                    requestOrder: 1,
+                    modalityBudget: frameModalityBudget,
+                    totalBudget: frameTotalBudget,
+                    durationBudget: false
+                )
+            }
+            if requiresSourceVideo {
+                append(
+                    CoreReferenceInputSlotIDV1.sourceVideo,
+                    .video,
+                    requestOrder: 0,
+                    modalityBudget: false,
+                    totalBudget: false,
+                    durationBudget: false
+                )
+            }
+            if integers[CapabilityFieldIDV1.referenceImages]?.value ?? 0 > 0 {
+                append(
+                    CoreReferenceInputSlotIDV1.referenceImage,
+                    .image,
+                    requestOrder: 2,
+                    modalityBudget: true,
+                    totalBudget: true,
+                    durationBudget: false
+                )
+            }
+            if !requiresSourceVideo,
+               integers[CapabilityFieldIDV1.referenceVideos]?.value ?? 0 > 0 {
+                append(
+                    CoreReferenceInputSlotIDV1.referenceVideo,
+                    .video,
+                    requestOrder: 3,
+                    modalityBudget: true,
+                    totalBudget: true,
+                    durationBudget: true
+                )
+            }
+            if !requiresSourceVideo,
+               integers[CapabilityFieldIDV1.referenceAudios]?.value ?? 0 > 0 {
+                append(
+                    CoreReferenceInputSlotIDV1.referenceAudio,
+                    .audio,
+                    requestOrder: 4,
+                    modalityBudget: true,
+                    totalBudget: true,
+                    durationBudget: true
+                )
+                append(
+                    CoreReferenceInputSlotIDV1.audioTiming,
+                    .audio,
+                    requestOrder: 4,
+                    modalityBudget: true,
+                    totalBudget: true,
+                    durationBudget: true
+                )
+            }
+        case .image:
+            if integers[CapabilityFieldIDV1.imageReferences]?.value ?? 0 > 0 {
+                append(
+                    CoreReferenceInputSlotIDV1.referenceImage,
+                    .image,
+                    requestOrder: 0,
+                    modalityBudget: true,
+                    totalBudget: true,
+                    durationBudget: false
+                )
+            }
+        case .audio, .music:
+            if booleans[CapabilityFieldIDV1.audioReference]?.value == true {
+                append(
+                    CoreReferenceInputSlotIDV1.referenceAudio,
+                    .audio,
+                    requestOrder: 0,
+                    modalityBudget: true,
+                    totalBudget: true,
+                    durationBudget: true
+                )
+            }
+        }
+        return slots
+    }
+
+    nonisolated static func inputSlots(
+        capabilities: ResolvedVideoOfferingCapabilitiesV1,
+        modeIDs: [String]
+    ) -> [ProductionInputSlotCapabilityV1] {
+        let modes = Array(Set(modeIDs.filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })).sorted()
+        guard !modes.isEmpty else { return [] }
+        let policy = capabilities.inputPolicy
+        var slots: [ProductionInputSlotCapabilityV1] = []
+        func append(
+            _ id: String,
+            _ modality: AssetPhysicalModalityV1,
+            requestOrder: Int,
+            modalityBudget: Bool,
+            totalBudget: Bool,
+            durationBudget: Bool
+        ) {
+            slots.append(ProductionInputSlotCapabilityV1(
+                id: id,
+                modality: modality,
+                modeIDs: modes,
+                requestOrder: requestOrder,
+                countsTowardModalityBudget: modalityBudget,
+                countsTowardTotalBudget: totalBudget,
+                countsTowardCombinedDuration: durationBudget
+            ))
+        }
+        if policy.requiresSourceVideo {
+            append(
+                CoreReferenceInputSlotIDV1.sourceVideo,
+                .video,
+                requestOrder: 0,
+                modalityBudget: false,
+                totalBudget: false,
+                durationBudget: false
+            )
+        } else {
+            if capabilities.supportsFirstFrame {
+                append(
+                    CoreReferenceInputSlotIDV1.firstFrame,
+                    .image,
+                    requestOrder: 0,
+                    modalityBudget: policy.framesCountTowardImageReferenceLimit,
+                    totalBudget: policy.framesCountTowardTotalReferenceLimit,
+                    durationBudget: false
+                )
+            }
+            if capabilities.supportsLastFrame {
+                append(
+                    CoreReferenceInputSlotIDV1.lastFrame,
+                    .image,
+                    requestOrder: 1,
+                    modalityBudget: policy.framesCountTowardImageReferenceLimit,
+                    totalBudget: policy.framesCountTowardTotalReferenceLimit,
+                    durationBudget: false
+                )
+            }
+        }
+        if capabilities.maxReferenceImages > 0 {
+            append(
+                CoreReferenceInputSlotIDV1.referenceImage,
+                .image,
+                requestOrder: 2,
+                modalityBudget: true,
+                totalBudget: true,
+                durationBudget: false
+            )
+        }
+        if !policy.requiresSourceVideo,
+           capabilities.maxReferenceVideos > 0 {
+            append(
+                CoreReferenceInputSlotIDV1.referenceVideo,
+                .video,
+                requestOrder: 3,
+                modalityBudget: true,
+                totalBudget: true,
+                durationBudget: true
+            )
+        }
+        if !policy.requiresSourceVideo,
+           capabilities.maxReferenceAudios > 0 {
+            append(
+                CoreReferenceInputSlotIDV1.referenceAudio,
+                .audio,
+                requestOrder: 4,
+                modalityBudget: true,
+                totalBudget: true,
+                durationBudget: true
+            )
+            append(
+                CoreReferenceInputSlotIDV1.audioTiming,
+                .audio,
+                requestOrder: 4,
+                modalityBudget: true,
+                totalBudget: true,
+                durationBudget: true
+            )
+        }
+        return slots
+    }
+
+    private nonisolated static func exactEndpointBoolean(
+        _ fieldID: String,
+        in capabilities: ResolvedOfferingCapabilityProfileV1
+    ) -> Bool? {
+        guard let field = capabilities.effective.fields.booleans[fieldID],
+              field.origin.kind == .endpointOverlay,
+              field.origin.endpointID == capabilities.offering.endpointID else {
+            return nil
+        }
+        return field.value
+    }
+}
+
+struct CatalogProductionRouteCandidate {
+    let modelID: String
+    let candidate: ProductionRouteCandidateV1
+    let target: ResolvedGenerationTarget?
+}
+
+struct CatalogImageOfferingCandidate: Sendable {
+    let model: ImageModelConfig
+    let target: ResolvedGenerationTarget
+    let aspectRatio: String
+    let resolution: String?
+    let quality: String?
+}
+
+private struct CatalogImageBindingIdentity: Hashable {
+    let modelID: String
+    let provider: GenerationProvider
+    let transport: ProviderTransport
+    let kind: ProviderCapabilityKind
+    let endpoint: String
+    let modelParam: String?
+    let mediaRoles: [String]?
+
+    init(modelID: String, binding: ProviderBinding) {
+        self.modelID = modelID
+        provider = binding.provider
+        transport = binding.transport
+        kind = binding.kind
+        endpoint = binding.providerRef
+        modelParam = binding.modelParam
+        mediaRoles = binding.mcpMediaRoles
     }
 }
 
@@ -281,6 +1190,7 @@ struct CatalogEntry: Decodable, Sendable {
     /// catalog may declare several (one logical model, multiple providers). `var` so a registry can
     /// stamp it onto the entry it builds.
     var offers: [ProviderOffer]?
+    var resolvedOfferingCapabilities: [ResolvedOfferingCapabilityProfileV1]?
 
     enum Kind: String, Decodable, Sendable { case video, image, audio, upscale }
     enum ResponseShape: String, Decodable, Sendable {
@@ -339,7 +1249,8 @@ struct CatalogEntry: Decodable, Sendable {
         audioPricing: AudioPricing? = nil,
         creditsPerSecondUpscale: Double? = nil,
         card: ModelCard? = nil,
-        offers: [ProviderOffer]? = nil
+        offers: [ProviderOffer]? = nil,
+        resolvedOfferingCapabilities: [ResolvedOfferingCapabilityProfileV1]? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -355,6 +1266,7 @@ struct CatalogEntry: Decodable, Sendable {
         self.creditsPerSecondUpscale = creditsPerSecondUpscale
         self.card = card
         self.offers = offers
+        self.resolvedOfferingCapabilities = resolvedOfferingCapabilities
     }
 
     init(from decoder: Decoder) throws {
@@ -372,6 +1284,7 @@ struct CatalogEntry: Decodable, Sendable {
         self.creditsPerSecondUpscale = try c.decodeIfPresent(Double.self, forKey: .creditsPerSecondUpscale)
         self.card = try c.decodeIfPresent(ModelCard.self, forKey: .card)
         self.offers = try c.decodeIfPresent([ProviderOffer].self, forKey: .offers)
+        self.resolvedOfferingCapabilities = nil
         switch self.kind {
         case .video:
             self.uiCapabilities = .video(try c.decode(VideoCaps.self, forKey: .uiCapabilities))
@@ -583,12 +1496,12 @@ struct VideoCaps: Decodable, Sendable {
 
 enum ImageReferenceLimit: Sendable, Equatable {
     case bounded(Int)
-    case providerUnbounded(hostMaximum: Int)
+    case capabilityProfile(Int)
     case unknown
 
-    var hostMaximum: Int {
+    var effectiveMaximum: Int {
         switch self {
-        case .bounded(let maximum), .providerUnbounded(let maximum): max(0, maximum)
+        case .bounded(let maximum), .capabilityProfile(let maximum): max(0, maximum)
         case .unknown: 0
         }
     }
@@ -609,7 +1522,7 @@ struct ImageCaps: Decodable, Sendable {
     let referenceImageLimit: ImageReferenceLimit
     let maxImages: Int
 
-    var maxReferenceImages: Int { referenceImageLimit.hostMaximum }
+    var maxReferenceImages: Int { referenceImageLimit.effectiveMaximum }
 
     init(
         resolutions: [String]?,
@@ -629,7 +1542,7 @@ struct ImageCaps: Decodable, Sendable {
         self.resolutions = resolutions
         self.aspectRatios = aspectRatios
         self.qualities = qualities
-        self.supportsImageReference = supportsImageReference && limit.hostMaximum > 0
+        self.supportsImageReference = supportsImageReference && limit.effectiveMaximum > 0
         self.requiresImageReference = requiresImageReference || minimum > 0
         self.minReferenceImages = minimum
         self.referenceImageLimit = limit

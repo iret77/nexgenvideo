@@ -99,10 +99,65 @@ struct GenerationSpendEvent: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+struct GenerationProjectMutationScope: Equatable, Sendable {
+    let projectHome: URL
+    let declaredPack: String?
+    let declaredBinding: ProjectPackBinding?
+
+    @MainActor
+    init(projectHome: URL, editor: EditorViewModel) throws {
+        self.projectHome = projectHome.standardizedFileURL.resolvingSymlinksInPath()
+        declaredPack = editor.declaredPluginName
+        declaredBinding = editor.declaredPluginBinding
+        try requireCurrent(editor: editor)
+    }
+
+    @MainActor
+    func requireCurrent(editor: EditorViewModel) throws {
+        guard let workingRoot = editor.workingRoot,
+              workingRoot.standardizedFileURL.resolvingSymlinksInPath() == projectHome else {
+            throw GenerationBackendError.transport(
+                "The project changed while generation was running. The provider result was not imported."
+            )
+        }
+        guard editor.declaredPluginName == declaredPack,
+              editor.declaredPluginBinding == declaredBinding else {
+            throw GenerationBackendError.transport(
+                "The project format changed while generation was running. The provider result was not imported."
+            )
+        }
+        do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: projectHome,
+                declaredPack: declaredPack,
+                declaredBinding: declaredBinding
+            )
+        } catch {
+            throw GenerationBackendError.transport(
+                "The project format changed while generation was running. "
+                    + "The provider result was not imported: \(error.localizedDescription)"
+            )
+        }
+    }
+}
+
 struct GenerationAuthorization: Sendable {
     let transactionId: String?
     let target: ResolvedGenerationTarget
     let estimate: GenerationMoney?
+    let projectMutationScope: GenerationProjectMutationScope?
+
+    init(
+        transactionId: String?,
+        target: ResolvedGenerationTarget,
+        estimate: GenerationMoney?,
+        projectMutationScope: GenerationProjectMutationScope? = nil
+    ) {
+        self.transactionId = transactionId
+        self.target = target
+        self.estimate = estimate
+        self.projectMutationScope = projectMutationScope
+    }
 }
 
 enum BackendGenerationStatus: String, Decodable, Sendable {

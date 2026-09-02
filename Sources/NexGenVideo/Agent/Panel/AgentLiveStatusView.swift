@@ -12,14 +12,14 @@ struct AgentLiveStatus: Equatable {
 
     let state: State
     let title: String
-    let detail: String
+    let detail: String?
     let canCancel: Bool
     let cancellationRequested: Bool
 
     init(
         state: State,
         title: String,
-        detail: String,
+        detail: String? = nil,
         canCancel: Bool = false,
         cancellationRequested: Bool = false
     ) {
@@ -49,15 +49,15 @@ struct AgentLiveStatusView: View {
                 HStack(spacing: AppTheme.Spacing.smMd) {
                     statusIcon
                         .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
-                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                        Text(status.title)
-                            .font(.system(
-                                size: AppTheme.FontSize.xs,
-                                weight: AppTheme.FontWeight.semibold
-                            ))
-                            .foregroundStyle(titleColor)
-                            .lineLimit(1)
-                        Text(status.detail)
+                    Text(status.title)
+                        .font(.system(
+                            size: AppTheme.FontSize.xs,
+                            weight: AppTheme.FontWeight.semibold
+                        ))
+                        .foregroundStyle(titleColor)
+                        .lineLimit(1)
+                    if let detail = status.detail, !detail.isEmpty {
+                        Text("· \(detail)")
                             .font(.system(size: AppTheme.FontSize.xxs))
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .lineLimit(1)
@@ -65,7 +65,12 @@ struct AgentLiveStatusView: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(status.title). \(status.detail)")
+                .accessibilityLabel(
+                    [status.title, status.detail]
+                        .compactMap { $0 }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: ". ")
+                )
                 Spacer(minLength: AppTheme.Spacing.sm)
                 if status.canCancel {
                     Button(status.cancellationRequested ? "Cancelling…" : "Cancel") {

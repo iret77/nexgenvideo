@@ -71,6 +71,7 @@ final class GenerationService {
         buildParams: @escaping ([String]) -> BackendGenerationParams,
         snapshotRefs: (@Sendable (inout GenerationInput, [String]) -> Void)? = nil,
         preprocessRef: (@Sendable (Int, MediaAsset) async throws -> URL?)? = nil,
+        resolvedVideoCapabilities: ResolvedVideoOfferingCapabilitiesV1? = nil,
         fileExtension: String,
         projectURL: URL?,
         editor: EditorViewModel,
@@ -121,6 +122,30 @@ final class GenerationService {
                 self.generationTasks.removeValue(forKey: primaryId)
             }
             do {
+                try authorization.projectMutationScope?.requireCurrent(editor: editor)
+                if assetType == .video {
+                    try Self.validateVideoTargetCapabilities(
+                        resolvedVideoCapabilities,
+                        target: target
+                    )
+                }
+                if authorizedGenInput.productionRouting != nil {
+                    guard preUploadedURLs?.isEmpty != false,
+                          trimmedSourceOverride?.hasTrim != true,
+                          preprocessRef == nil else {
+                        throw PipelineProductionRoutingError.publicationInvalid(
+                            "A routed submission must upload the exact proven project bytes."
+                        )
+                    }
+                }
+                if assetType == .video {
+                    try PipelineProductionRouting.validateSubmission(
+                        genInput: authorizedGenInput,
+                        target: target,
+                        references: references,
+                        editor: editor
+                    )
+                }
                 let uploaded: [String]
                 if let preUploadedURLs, !preUploadedURLs.isEmpty {
                     uploaded = preUploadedURLs
@@ -153,6 +178,7 @@ final class GenerationService {
                     // Cache against the MediaAsset only when asset bytes are pristine (not trimmed, not preprocessed)
                     let trimmedFirst = trimmedSourceOverride?.hasTrim == true
                     let cacheKeys: [MediaAsset?] = references.enumerated().map { (i, asset) in
+                        if authorizedGenInput.productionRouting != nil { return nil }
                         if preprocessRef != nil { return nil }
                         if i == 0 && trimmedFirst { return nil }
                         return asset
@@ -189,6 +215,26 @@ final class GenerationService {
                 }
 
                 let params = buildParams(uploaded)
+                try Self.validateVideoDispatchCapabilities(
+                    resolvedVideoCapabilities,
+                    target: target,
+                    params: params
+                )
+                try PipelineProductionRouting.validateProviderEnvelope(
+                    genInput: finalGenInput,
+                    target: target,
+                    params: params,
+                    uploadedReferences: uploaded
+                )
+
+                if assetType == .video {
+                    try PipelineProductionRouting.validateSubmission(
+                        genInput: finalGenInput,
+                        target: target,
+                        references: references,
+                        editor: editor
+                    )
+                }
 
                 await self.runJob(
                     placeholders: placeholders,
@@ -299,14 +345,26 @@ final class GenerationService {
     }
 
     @discardableResult
-    private func downloadAndFinalize(asset: MediaAsset, remoteURL: URL, editor: EditorViewModel) async -> Bool {
+    private func downloadAndFinalize(
+        asset: MediaAsset,
+        remoteURL: URL,
+        editor: EditorViewModel,
+        mutationScope: GenerationProjectMutationScope?
+    ) async -> Bool {
         asset.generationStatus = .downloading
+        var transientURL: URL?
+        defer {
+            if let transientURL {
+                try? FileManager.default.removeItem(at: transientURL)
+            }
+        }
         do {
             let (downloadURL, _) = try await URLSession.shared.download(from: remoteURL)
+            transientURL = downloadURL
             guard editor.mediaAssets.contains(where: { $0.id == asset.id }) else {
-                try? FileManager.default.removeItem(at: downloadURL)
                 return false
             }
+            try mutationScope?.requireCurrent(editor: editor)
             let realExt = remoteURL.pathExtension.lowercased()
             if !realExt.isEmpty, realExt != asset.url.pathExtension.lowercased(),
                ClipType(fileExtension: realExt) != nil {
@@ -316,8 +374,10 @@ final class GenerationService {
             // per-project) before finalizing into the working media store. Falls back to the
             // system temp URL when no project is open.
             let tempURL = Self.stageDownload(downloadURL, ext: asset.url.pathExtension, editor: editor)
+            transientURL = tempURL
             try? FileManager.default.removeItem(at: asset.url)
             try FileManager.default.moveItem(at: tempURL, to: asset.url)
+            transientURL = nil
 
             asset.pendingDownloadURL = nil
             asset.generationStatus = .none
@@ -336,8 +396,27 @@ final class GenerationService {
 
     func retryDownload(asset: MediaAsset, editor: EditorViewModel) {
         guard let remoteURL = asset.pendingDownloadURL else { return }
+        let mutationScope: GenerationProjectMutationScope?
+        do {
+            if let workingRoot = editor.workingRoot {
+                mutationScope = try GenerationProjectMutationScope(
+                    projectHome: workingRoot,
+                    editor: editor
+                )
+            } else {
+                mutationScope = nil
+            }
+        } catch {
+            asset.generationStatus = .failed(error.localizedDescription)
+            return
+        }
         Task { @MainActor in
-            await downloadAndFinalize(asset: asset, remoteURL: remoteURL, editor: editor)
+            await downloadAndFinalize(
+                asset: asset,
+                remoteURL: remoteURL,
+                editor: editor,
+                mutationScope: mutationScope
+            )
         }
     }
 
@@ -463,6 +542,140 @@ final class GenerationService {
 
     // MARK: - Job execution
 
+    nonisolated static func validateVideoDispatchCapabilities(
+        _ submitted: ResolvedVideoOfferingCapabilitiesV1?,
+        target: ResolvedGenerationTarget,
+        params: BackendGenerationParams
+    ) throws {
+        guard case .video(let video) = params else { return }
+        try validateVideoTargetCapabilities(submitted, target: target)
+        guard let exact = target.binding?.resolvedVideoCapabilities else {
+            throw GenerationBackendError.transport(
+                "The selected provider endpoint has no versioned video capability contract."
+            )
+        }
+        guard exact.contractViolation == nil,
+              (video.sourceVideoURL != nil)
+                == exact.inputPolicy.requiresSourceVideo else {
+            throw GenerationBackendError.transport(
+                "The video request does not match the selected provider endpoint's source-video contract."
+            )
+        }
+        if let error = exact.validate(
+            duration: video.duration,
+            aspectRatio: video.aspectRatio,
+            resolution: video.resolution,
+            generateAudio: video.generateAudio,
+            displayName: target.modelId
+        ) {
+            throw GenerationBackendError.transport(error)
+        }
+        if let error = validateVideoInputEnvelope(
+            video,
+            capabilities: exact,
+            displayName: target.modelId
+        ) {
+            throw GenerationBackendError.transport(error)
+        }
+    }
+
+    nonisolated static func validateVideoInputEnvelope(
+        _ video: VideoGenerationParams,
+        capabilities: ResolvedVideoOfferingCapabilitiesV1,
+        displayName: String
+    ) -> String? {
+        let policy = capabilities.inputPolicy
+        let frameCount = (video.startFrameURL == nil ? 0 : 1)
+            + (video.endFrameURL == nil ? 0 : 1)
+        if policy.requiresSourceVideo {
+            guard video.sourceVideoURL != nil else {
+                return "\(displayName) requires a source video"
+            }
+            if frameCount > 0
+                || !video.referenceVideoURLs.isEmpty
+                || !video.referenceAudioURLs.isEmpty {
+                return "\(displayName) only accepts a source video and image references"
+            }
+            if capabilities.requiresReferenceImage,
+               video.referenceImageURLs.isEmpty {
+                return "\(displayName) requires an image reference"
+            }
+            if video.referenceImageURLs.count > capabilities.maxReferenceImages {
+                return "\(displayName) accepts at most \(capabilities.maxReferenceImages) image reference(s)"
+            }
+            if let totalCap = capabilities.maxTotalReferences,
+               video.referenceImageURLs.count > totalCap {
+                return "\(displayName) accepts at most \(totalCap) references total"
+            }
+            return nil
+        }
+
+        guard video.sourceVideoURL == nil else {
+            return "\(displayName) does not accept a source video"
+        }
+        if video.endFrameURL != nil, video.startFrameURL == nil {
+            return "\(displayName) requires a start frame before an end frame"
+        }
+        if frameCount > 0, !capabilities.supportsFirstFrame {
+            return "\(displayName) does not accept frame references"
+        }
+        if video.endFrameURL != nil, !capabilities.supportsLastFrame {
+            return "\(displayName) does not accept a last frame"
+        }
+        let hasReferences = !video.referenceImageURLs.isEmpty
+            || !video.referenceVideoURLs.isEmpty
+            || !video.referenceAudioURLs.isEmpty
+        if capabilities.requiresReferenceImage,
+           frameCount == 0,
+           video.referenceImageURLs.isEmpty {
+            return "\(displayName) requires a start frame"
+        }
+        if capabilities.framesAndReferencesExclusive,
+           frameCount > 0,
+           hasReferences {
+            return "\(displayName) uses frames OR references, not both"
+        }
+        let framesInImageLimit = policy.framesCountTowardImageReferenceLimit
+            ? frameCount : 0
+        let imageLimit = capabilities.maxReferenceImages(
+            hasVideoReference: !video.referenceVideoURLs.isEmpty
+        )
+        if video.referenceImageURLs.count + framesInImageLimit > imageLimit {
+            return "\(displayName) accepts at most \(imageLimit) image inputs"
+        }
+        if video.referenceVideoURLs.count > capabilities.maxReferenceVideos {
+            return "\(displayName) accepts at most \(capabilities.maxReferenceVideos) video references"
+        }
+        if video.referenceAudioURLs.count > capabilities.maxReferenceAudios {
+            return "\(displayName) accepts at most \(capabilities.maxReferenceAudios) audio references"
+        }
+        let framesInTotalLimit = policy.framesCountTowardTotalReferenceLimit
+            ? frameCount : 0
+        let totalReferences = video.referenceImageURLs.count
+            + video.referenceVideoURLs.count
+            + video.referenceAudioURLs.count
+            + framesInTotalLimit
+        if let totalCap = capabilities.maxTotalReferences,
+           totalReferences > totalCap {
+            return "\(displayName) accepts at most \(totalCap) references total"
+        }
+        return nil
+    }
+
+    nonisolated static func validateVideoTargetCapabilities(
+        _ submitted: ResolvedVideoOfferingCapabilitiesV1?,
+        target: ResolvedGenerationTarget
+    ) throws {
+        guard let exact = target.binding?.resolvedVideoCapabilities,
+              exact.contractViolation == nil,
+              submitted == exact,
+              target.binding?.productionInputPolicy == exact.inputPolicy else {
+            throw GenerationBackendError.transport(
+                "The selected provider endpoint has no matching versioned video capability contract."
+            )
+        }
+    }
+
     private func runJob(
         placeholders: [MediaAsset],
         params: BackendGenerationParams,
@@ -490,7 +703,8 @@ final class GenerationService {
             await runMCPJob(
                 provider: provider, toolName: endpoint, modelParam: binding?.modelParam,
                 mediaRoles: binding?.mcpMediaRoles,
-                params: params, placeholders: placeholders, editor: editor,
+                params: params, genInput: genInput,
+                placeholders: placeholders, editor: editor,
                 authorization: authorization,
                 onComplete: onComplete, onFailure: onFailure)
             return
@@ -511,7 +725,9 @@ final class GenerationService {
             return
         case .runway:
             await runRunwayJob(
-                endpoint: endpoint, params: params,
+                endpoint: endpoint,
+                params: params,
+                inputPolicy: binding?.resolvedVideoCapabilities?.inputPolicy,
                 placeholders: placeholders, editor: editor,
                 authorization: authorization,
                 onComplete: onComplete, onFailure: onFailure)
@@ -571,7 +787,24 @@ final class GenerationService {
                     placeholders, "Unknown video model: \(endpoint)",
                     authorization: authorization, editor: editor, onFailure: onFailure)
             }
-            input = FalInputBuilder.videoInput(p, model: falModel)
+            let videoInput = FalInputBuilder.videoInput(p, model: falModel)
+            do {
+                try PipelineProductionRouting.validateFalProviderEnvelope(
+                    genInput: genInput,
+                    params: p,
+                    input: videoInput,
+                    model: falModel
+                )
+            } catch {
+                return failBeforeSubmission(
+                    placeholders,
+                    "The routed fal request failed its final provider-envelope check: \(error)",
+                    authorization: authorization,
+                    editor: editor,
+                    onFailure: onFailure
+                )
+            }
+            input = videoInput
             shape = .video
         case .audio(let p):
             guard let falModel else {
@@ -709,6 +942,7 @@ final class GenerationService {
                 job: job,
                 placeholders: placeholders,
                 editor: editor,
+                mutationScope: authorization.projectMutationScope,
                 onComplete: onComplete,
                 onFailure: onFailure
             )
@@ -768,6 +1002,7 @@ final class GenerationService {
         modelParam: String?,
         mediaRoles: [String]?,
         params: BackendGenerationParams,
+        genInput: GenerationInput,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
         authorization: GenerationAuthorization,
@@ -781,6 +1016,9 @@ final class GenerationService {
         }
         let submissionState = MCPSubmissionDispatchState()
         var selectedToolName = toolName
+        let requiredCandidateNames = PipelineProductionRouting.requiredMCPFieldNames(
+            genInput: genInput
+        )
         do {
             let tools = try await client.discoverTools()
             // Prefer the exact generate tool the resolved offer named (from discovery); fall back to
@@ -801,7 +1039,8 @@ final class GenerationService {
                 model: modelParam,
                 schema: tool.inputSchema,
                 mediaRoles: mediaRoles,
-                requestID: requestId
+                requestID: requestId,
+                requiredCandidateNames: requiredCandidateNames
             )
             guard MCPGenerationExecutor.hasProvenResultPath(
                 generationTool: tool,
@@ -821,7 +1060,8 @@ final class GenerationService {
                 model: modelParam,
                 schema: tool.inputSchema,
                 mediaRoles: mediaRoles,
-                requestID: requestId
+                requestID: requestId,
+                requiredCandidateNames: requiredCandidateNames
             )
             Log.generation.notice(
                 "MCP submit provider=\(provider.rawValue) tool=\(tool.name) model=\(modelParam ?? "<implicit>") fields=\(arguments.keys.sorted().joined(separator: ","))"
@@ -849,12 +1089,14 @@ final class GenerationService {
             if result.output.inlineMedia.isEmpty {
                 await finalizeSuccess(
                     job: job, placeholders: placeholders, editor: editor,
+                    mutationScope: authorization.projectMutationScope,
                     onComplete: onComplete, onFailure: onFailure)
             } else {
                 await finalizeMCPMedia(
                     result.output.media,
                     placeholders: placeholders,
                     editor: editor,
+                    mutationScope: authorization.projectMutationScope,
                     onComplete: onComplete,
                     onFailure: onFailure
                 )
@@ -932,6 +1174,7 @@ final class GenerationService {
     private func runRunwayJob(
         endpoint: String,
         params: BackendGenerationParams,
+        inputPolicy: ProviderProductionInputPolicyV1?,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
         authorization: GenerationAuthorization,
@@ -952,7 +1195,7 @@ final class GenerationService {
         do {
             let client = RunwayClient(apiKey: apiKey)
             switch params {
-            case .video(let p) where RunwayModelRegistry.requiresSourceVideo(model):
+            case .video(let p) where inputPolicy?.requiresSourceVideo == true:
                 // #223 — the restyle pass: re-render an existing clip. No duration (the output follows
                 // the source) and no reference image; the source clip IS the input.
                 guard let source = p.sourceVideoURL else {
@@ -1002,6 +1245,7 @@ final class GenerationService {
                 errorMessage: nil, costCredits: nil, completedAt: nil)
             await finalizeSuccess(
                 job: job, placeholders: placeholders, editor: editor,
+                mutationScope: authorization.projectMutationScope,
                 onComplete: onComplete, onFailure: onFailure)
             markCharged(authorization: authorization, editor: editor)
         } catch let error as RunwayClient.SubmissionOutcomeUnknownError {
@@ -1074,9 +1318,19 @@ final class GenerationService {
     /// endpoint (provider-neutral models). The nominal-provider fallback keeps the "add a key" errors
     /// naming the right provider when nothing is activated.
     @MainActor
-    static func dispatchTarget(modelId: String) -> ResolvedGenerationTarget {
+    static func dispatchTarget(
+        modelId: String,
+        requiringSourceVideo: Bool? = nil,
+        matchingVideoCapabilities: ((ResolvedVideoOfferingCapabilitiesV1) -> Bool)? = nil
+    ) -> ResolvedGenerationTarget {
         let binding = ProviderResolver.resolve(
-            bindings: ProviderManifest.bindings(forModelId: modelId),
+            bindings: ProviderManifest.bindings(forModelId: modelId).filter { binding in
+                videoBindingIsCompatible(
+                    binding,
+                    requiringSourceVideo: requiringSourceVideo,
+                    matchingCapabilities: matchingVideoCapabilities
+                )
+            },
             activation: .current(),
             effectiveCost: ProviderManifest.effectiveCost)
         return ResolvedGenerationTarget(
@@ -1085,6 +1339,24 @@ final class GenerationService {
             endpoint: binding?.providerRef ?? modelId,
             binding: binding
         )
+    }
+
+    nonisolated static func videoBindingIsCompatible(
+        _ binding: ProviderBinding,
+        requiringSourceVideo: Bool?,
+        matchingCapabilities: ((ResolvedVideoOfferingCapabilitiesV1) -> Bool)? = nil
+    ) -> Bool {
+        guard requiringSourceVideo != nil || matchingCapabilities != nil else { return true }
+        guard let capabilities = binding.resolvedVideoCapabilities,
+              capabilities.contractViolation == nil,
+              binding.productionInputPolicy == capabilities.inputPolicy else {
+            return false
+        }
+        if let requiringSourceVideo,
+           capabilities.inputPolicy.requiresSourceVideo != requiringSourceVideo {
+            return false
+        }
+        return matchingCapabilities?(capabilities) ?? true
     }
 
     static func referenceBytes(_ paths: [String]) throws -> [Data] {
@@ -1138,8 +1410,14 @@ final class GenerationService {
                 editor: editor
             )
             let images = try await client.geminiImage(prepared: prepared)
-            await finalizeBytes(images, placeholders: placeholders, editor: editor,
-                                onComplete: onComplete, onFailure: onFailure)
+            await finalizeBytes(
+                images,
+                placeholders: placeholders,
+                editor: editor,
+                mutationScope: authorization.projectMutationScope,
+                onComplete: onComplete,
+                onFailure: onFailure
+            )
             markCharged(authorization: authorization, editor: editor)
         } catch {
             failJob(placeholders, error.localizedDescription, onFailure)
@@ -1180,6 +1458,7 @@ final class GenerationService {
         _ images: [Data],
         placeholders: [MediaAsset],
         editor: EditorViewModel,
+        mutationScope: GenerationProjectMutationScope?,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
@@ -1197,6 +1476,7 @@ final class GenerationService {
                 placeholder.url = placeholder.url.deletingPathExtension().appendingPathExtension(realExt)
             }
             do {
+                try mutationScope?.requireCurrent(editor: editor)
                 try? FileManager.default.removeItem(at: placeholder.url)
                 try images[i].write(to: placeholder.url, options: .atomic)
             } catch {
@@ -1220,6 +1500,7 @@ final class GenerationService {
         _ outputMedia: [MCPGenerationLifecycle.OutputMedia],
         placeholders: [MediaAsset],
         editor: EditorViewModel,
+        mutationScope: GenerationProjectMutationScope?,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
@@ -1239,7 +1520,8 @@ final class GenerationService {
                 if await downloadAndFinalize(
                     asset: placeholder,
                     remoteURL: remoteURL,
-                    editor: editor
+                    editor: editor,
+                    mutationScope: mutationScope
                 ) {
                     onComplete?(placeholder)
                     finalized.append(placeholder)
@@ -1281,6 +1563,7 @@ final class GenerationService {
                         .appendingPathExtension(fileExtension)
                 }
                 do {
+                    try mutationScope?.requireCurrent(editor: editor)
                     try? FileManager.default.removeItem(at: placeholder.url)
                     try media.data.write(to: placeholder.url, options: .atomic)
                 } catch {
@@ -1482,6 +1765,7 @@ final class GenerationService {
             }
             // Bytes arrive directly (no result URL) — write to the placeholder's destination and
             // run the same finalize steps downloadAndFinalize performs after its move.
+            try authorization.projectMutationScope?.requireCurrent(editor: editor)
             try? FileManager.default.removeItem(at: placeholder.url)
             try data.write(to: placeholder.url, options: .atomic)
             placeholder.generationStatus = .none
@@ -1555,6 +1839,7 @@ final class GenerationService {
                 job: job,
                 placeholders: placeholders,
                 editor: editor,
+                mutationScope: authorization.projectMutationScope,
                 onComplete: onComplete,
                 onFailure: onFailure
             )
@@ -1579,6 +1864,7 @@ final class GenerationService {
         job: BackendGenerationJob,
         placeholders: [MediaAsset],
         editor: EditorViewModel,
+        mutationScope: GenerationProjectMutationScope?,
         onComplete: (@MainActor (MediaAsset) -> Void)?,
         onFailure: (@MainActor () -> Void)?
     ) async {
@@ -1602,7 +1888,12 @@ final class GenerationService {
                 placeholder.generationStatus = .failed("No URL for placeholder")
                 continue
             }
-            if await downloadAndFinalize(asset: placeholder, remoteURL: remote, editor: editor) {
+            if await downloadAndFinalize(
+                asset: placeholder,
+                remoteURL: remote,
+                editor: editor,
+                mutationScope: mutationScope
+            ) {
                 onComplete?(placeholder)
                 finalized.append(placeholder)
             }

@@ -1,5 +1,6 @@
-import Testing
 import Foundation
+import NexGenEngine
+import Testing
 
 @testable import NexGenVideo
 
@@ -108,6 +109,30 @@ struct CostGuardTests {
         body()
     }
 
+    @MainActor
+    private func pipelineEditor() throws -> (
+        editor: EditorViewModel,
+        dataRoot: URL,
+        package: URL
+    ) {
+        let package = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spend-lease-\(UUID().uuidString).ngv")
+        try Fixtures.prepareProjectPackage(at: package)
+        let pipeline = package.appendingPathComponent("pipeline", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: pipeline,
+            withIntermediateDirectories: true
+        )
+        try Data("project: spend-lease\nmode: test\n".utf8).write(
+            to: pipeline.appendingPathComponent("project.yaml")
+        )
+        let editor = EditorViewModel()
+        editor.projectURL = package
+        let workingRoot = try #require(editor.workingRoot)
+        let dataRoot = try #require(DataRootResolver.dataRoot(of: workingRoot))
+        return (editor, dataRoot, package)
+    }
+
     @Test func freeRenderNeverNeedsApproval() {
         withThreshold(0) { #expect(CostGuard.needsApproval(credits: 0) == false) }
     }
@@ -185,6 +210,273 @@ struct CostGuardTests {
     }
 
     @MainActor
+    @Test func pendingApprovalDoesNotLeaseThePipelineDuringHumanWait() throws {
+        let fixture = try pipelineEditor()
+        defer {
+            fixture.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: fixture.package)
+        }
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "human-wait-has-no-lease",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+
+        _ = try fixture.editor.agentService.requestSpendApproval(
+            approval,
+            origin: .direct,
+            editor: fixture.editor,
+            pipelineScope: SpendPipelineScope(
+                dataRoot: fixture.dataRoot,
+                phase: nil,
+                tool: .generateImage,
+                declaredPack: nil,
+                bindingResolution: .absent
+            ),
+            execute: { _, _ in .ok("unexpected") }
+        )
+
+        #expect(
+            fixture.editor.pipelinePhaseRunCoordinator.runningPhase(
+                projectRoot: fixture.dataRoot
+            ) == nil
+        )
+        let mutation = fixture.editor.pipelinePhaseRunCoordinator.beginMutation(
+            projectRoot: fixture.dataRoot,
+            label: "Rewind brief"
+        )
+        #expect(mutation != nil)
+        fixture.editor.pipelinePhaseRunCoordinator.endMutation(
+            projectRoot: fixture.dataRoot,
+            id: try #require(mutation)
+        )
+        fixture.editor.agentService.declineSpend()
+    }
+
+    @MainActor
+    @Test func pipelineSpendApprovalFailsClosedWithoutAnExecutionScope() throws {
+        let fixture = try pipelineEditor()
+        defer {
+            fixture.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: fixture.package)
+        }
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+
+        #expect(throws: ToolError.self) {
+            try fixture.editor.agentService.requestSpendApproval(
+                SpendApproval(
+                    id: "missing-pipeline-spend-scope",
+                    recommendedOptionId: selected.id,
+                    options: [selected],
+                    actionLabel: "Generate image"
+                ),
+                origin: .direct,
+                editor: fixture.editor,
+                execute: { _, _ in .ok("unexpected") }
+            )
+        }
+        #expect(fixture.editor.agentService.pendingSpendApproval == nil)
+    }
+
+    @MainActor
+    @Test func approvedSpendExcludesConcurrentRewindAndPhaseRunUntilSettlement() async throws {
+        let fixture = try pipelineEditor()
+        defer {
+            fixture.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: fixture.package)
+        }
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "approved-spend-lease",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        let execution = PendingExecutionFixture()
+        _ = try fixture.editor.agentService.requestSpendApproval(
+            approval,
+            origin: .direct,
+            editor: fixture.editor,
+            pipelineScope: SpendPipelineScope(
+                dataRoot: fixture.dataRoot,
+                phase: nil,
+                tool: .generateImage,
+                declaredPack: nil,
+                bindingResolution: .absent
+            ),
+            execute: { _, _ in
+                await execution.wait()
+                return .ok("rendered")
+            }
+        )
+
+        await fixture.editor.agentService.approveSpend(selected)
+        await waitUntil { execution.didStart }
+        #expect(
+            fixture.editor.pipelinePhaseRunCoordinator.runningPhase(
+                projectRoot: fixture.dataRoot
+            ) == "Generate image"
+        )
+
+        let phaseOutcome = await fixture.editor.pipelinePhaseRunCoordinator.run(
+            projectRoot: fixture.dataRoot,
+            phase: "render",
+            sourceFilename: nil,
+            runner: { _ in },
+            progressRunner: nil,
+            state: fixture.editor.pipelinePhaseExecution
+        )
+        #expect(phaseOutcome == .refused(activePhase: "Generate image"))
+
+        do {
+            _ = try ToolExecutor(editor: fixture.editor).rewindTool(
+                fixture.editor,
+                [
+                    "project_dir": fixture.dataRoot.path,
+                    "target_phase": "brief",
+                ]
+            )
+            Issue.record("Rewind started during an approved paid operation")
+        } catch let error as ToolError {
+            #expect(error.message.contains("Generate image"))
+        }
+
+        execution.finish()
+        await waitUntil { !fixture.editor.agentService.spendApprovalIsRunning }
+        #expect(
+            fixture.editor.pipelinePhaseRunCoordinator.runningPhase(
+                projectRoot: fixture.dataRoot
+            ) == nil
+        )
+    }
+
+    @MainActor
+    @Test func approvalConflictFailsBeforeCallingTheProvider() async throws {
+        let fixture = try pipelineEditor()
+        defer {
+            fixture.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: fixture.package)
+        }
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        let approval = SpendApproval(
+            id: "spend-conflict-before-provider",
+            recommendedOptionId: selected.id,
+            options: [selected],
+            actionLabel: "Generate image"
+        )
+        var providerWasCalled = false
+        _ = try fixture.editor.agentService.requestSpendApproval(
+            approval,
+            origin: .direct,
+            editor: fixture.editor,
+            pipelineScope: SpendPipelineScope(
+                dataRoot: fixture.dataRoot,
+                phase: nil,
+                tool: .generateImage,
+                declaredPack: nil,
+                bindingResolution: .absent
+            ),
+            execute: { _, _ in
+                providerWasCalled = true
+                return .ok("unexpected")
+            }
+        )
+        let conflictingMutation = try #require(
+            fixture.editor.pipelinePhaseRunCoordinator.beginMutation(
+                projectRoot: fixture.dataRoot,
+                label: "Rewind brief"
+            )
+        )
+
+        await fixture.editor.agentService.approveSpend(selected)
+
+        #expect(!providerWasCalled)
+        #expect(fixture.editor.agentService.pendingSpendApproval?.id == approval.id)
+        #expect(!fixture.editor.agentService.spendApprovalIsRunning)
+        #expect(
+            fixture.editor.agentService.spendApprovalError?.contains("Rewind brief") == true
+        )
+        fixture.editor.pipelinePhaseRunCoordinator.endMutation(
+            projectRoot: fixture.dataRoot,
+            id: conflictingMutation
+        )
+        fixture.editor.agentService.declineSpend()
+    }
+
+    @MainActor
+    @Test func changedPipelineBindingFailsBeforeCallingTheProvider() async throws {
+        let fixture = try pipelineEditor()
+        defer {
+            fixture.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: fixture.package)
+        }
+        let selected = option(
+            modelId: "m1",
+            name: "Model One",
+            provider: .fal,
+            credits: 120
+        )
+        var providerWasCalled = false
+        _ = try fixture.editor.agentService.requestSpendApproval(
+            SpendApproval(
+                id: "spend-binding-change",
+                recommendedOptionId: selected.id,
+                options: [selected],
+                actionLabel: "Generate image"
+            ),
+            origin: .direct,
+            editor: fixture.editor,
+            pipelineScope: SpendPipelineScope(
+                dataRoot: fixture.dataRoot,
+                phase: nil,
+                tool: .generateImage,
+                declaredPack: nil,
+                bindingResolution: .absent
+            ),
+            execute: { _, _ in
+                providerWasCalled = true
+                return .ok("unexpected")
+            }
+        )
+        try ProjectPluginSettings.setActivePlugin(
+            "musicvideo",
+            projectURL: try #require(fixture.editor.workingRoot)
+        )
+
+        await fixture.editor.agentService.approveSpend(selected)
+
+        #expect(!providerWasCalled)
+        #expect(fixture.editor.agentService.pendingSpendApproval != nil)
+        #expect(
+            fixture.editor.agentService.spendApprovalError?
+                .contains("format binding changed") == true
+        )
+        fixture.editor.agentService.declineSpend()
+    }
+
+    @MainActor
     @Test func embeddedApprovalKeepsItsResumeOwner() async throws {
         let editor = EditorViewModel()
         let service = AgentService(
@@ -250,6 +542,68 @@ struct CostGuardTests {
             Issue.record("Expected the unavailable backend to remain visible before retry")
             return
         }
+    }
+
+    @MainActor
+    @Test func approvedEmbeddedImageResumesExactlyOnceWhenTheSuspendedTurnEnds() async throws {
+        let editor = EditorViewModel()
+        let followUp = HostFollowUpFixture()
+        let service = AgentService(
+            backend: .claudeCode,
+            refreshBackendStatusOnInit: false,
+            embeddedHostFollowUpSender: followUp.send
+        )
+        service.editor = editor
+        service.newChat()
+        NotificationCenter.default.post(
+            name: .claudeCodeStatusChanged,
+            object: ClaudeCodeLocator.Status(
+                executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+                version: "test",
+                isAuthenticated: true
+            )
+        )
+        let sessionID = try #require(service.currentSessionId)
+        let origin = ToolCallOrigin.embeddedRuntime(
+            chatSessionID: sessionID,
+            mcpSessionID: UUID()
+        )
+        let selected = option(
+            modelId: "fal-ai/nano-banana-pro/edit",
+            name: "Nano Banana Pro (edit)",
+            provider: .fal,
+            credits: 120
+        )
+        service.messages = [AgentMessage(role: .user, blocks: [
+            .toolResult(
+                toolUseId: "lighting-anchor",
+                content: [.text("The spend approval card is open. End this turn and wait for the host result; do not retry this tool call.")],
+                isError: false
+            ),
+        ])]
+        service.isStreaming = true
+        _ = try service.requestSpendApproval(
+            SpendApproval(
+                id: "resume-image-once",
+                recommendedOptionId: selected.id,
+                options: [selected],
+                actionLabel: "Generate image"
+            ),
+            origin: origin,
+            editor: editor,
+            execute: { _, _ in .ok("Lighting anchor rendered.") }
+        )
+
+        await service.approveSpend(selected)
+        await waitUntil { service.hasPendingHostFollowUp }
+        #expect(followUp.sent.isEmpty)
+
+        service.isStreaming = false
+        await waitUntil { followUp.sent.count == 1 }
+        #expect(followUp.sent[0].contains("Lighting anchor rendered."))
+        #expect(!service.hasPendingHostFollowUp)
+        #expect(!service.resumePendingSpendFollowUp())
+        #expect(followUp.sent.count == 1)
     }
 
     @MainActor
@@ -464,7 +818,12 @@ struct CostGuardTests {
 
     @MainActor
     @Test func runningGenerationCanBeCancelledAndSettlesExactlyOnce() async throws {
-        let editor = EditorViewModel()
+        let fixture = try pipelineEditor()
+        defer {
+            fixture.editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: fixture.package)
+        }
+        let editor = fixture.editor
         let service = editor.agentService
         service.newChat()
         let sessionID = try #require(service.currentSessionId)
@@ -498,6 +857,13 @@ struct CostGuardTests {
             approval,
             origin: origin,
             editor: editor,
+            pipelineScope: SpendPipelineScope(
+                dataRoot: fixture.dataRoot,
+                phase: nil,
+                tool: .generateImage,
+                declaredPack: nil,
+                bindingResolution: .absent
+            ),
             cancel: { _ in cancellationCount += 1 },
             execute: { _, _ in
                 didStart = true
@@ -517,6 +883,11 @@ struct CostGuardTests {
 
         #expect(cancellationCount == 1)
         #expect(service.hasPendingHostFollowUp)
+        #expect(
+            editor.pipelinePhaseRunCoordinator.runningPhase(
+                projectRoot: fixture.dataRoot
+            ) == nil
+        )
         let results = service.messages.flatMap(\.blocks).compactMap { block -> ([ToolResult.Block], Bool)? in
             guard case .toolResult(let id, let content, let isError) = block,
                   id == "cancelled-image" else { return nil }

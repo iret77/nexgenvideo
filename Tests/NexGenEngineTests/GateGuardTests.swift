@@ -2239,6 +2239,82 @@ struct GateGuardTests {
     func importedOnlyPreparation() throws {
         let root = try tempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
+        func publish(
+            _ render: RenderManifest,
+            proof: RenderProofManifest? = nil,
+            frames: FramesManifest? = nil
+        ) throws {
+            try saveRenderManifest(render, dataRoot: root)
+            if let proof { try saveRenderProofManifest(proof, dataRoot: root) }
+            if let frames { try saveFramesManifest(frames, dataRoot: root) }
+            let renderPath = PipelineLayout.renderManifestFile(phase: render.phase)
+            let renderData = try Data(
+                contentsOf: PipelineLayout.url(renderPath, in: root)
+            )
+            let proofArtifact: RenderPublishedArtifactV1?
+            let routingArtifact: RenderPublishedArtifactV1?
+            if let proof {
+                let proofPath = PipelineLayout.renderProofFile(phase: render.phase)
+                let proofData = try Data(
+                    contentsOf: PipelineLayout.url(proofPath, in: root)
+                )
+                proofArtifact = RenderPublishedArtifactV1(
+                    path: proofPath,
+                    sha256: FileDigest.sha256(of: proofData)
+                )
+                let routingPath = PipelineLayout.renderRoutingProofFile(
+                    phase: render.phase
+                )
+                let routingData = Data("test-routing-proof".utf8)
+                try routingData.write(
+                    to: PipelineLayout.url(routingPath, in: root),
+                    options: .atomic
+                )
+                routingArtifact = RenderPublishedArtifactV1(
+                    path: routingPath,
+                    sha256: FileDigest.sha256(of: routingData)
+                )
+            } else {
+                proofArtifact = nil
+                routingArtifact = nil
+            }
+            let framesArtifact: RenderPublishedArtifactV1?
+            if frames != nil {
+                let framesData = try Data(
+                    contentsOf: PipelineLayout.url(
+                        PipelineLayout.framesManifestFile,
+                        in: root
+                    )
+                )
+                framesArtifact = RenderPublishedArtifactV1(
+                    path: PipelineLayout.framesManifestFile,
+                    sha256: FileDigest.sha256(of: framesData)
+                )
+            } else {
+                framesArtifact = nil
+            }
+            let publication = RenderRecordPublicationV1(
+                transactionID: UUID().uuidString.lowercased(),
+                project: render.project,
+                phase: render.phase,
+                renderManifest: RenderPublishedArtifactV1(
+                    path: renderPath,
+                    sha256: FileDigest.sha256(of: renderData)
+                ),
+                renderProof: proofArtifact,
+                renderRoutingProof: routingArtifact,
+                framesManifest: framesArtifact,
+                lastFrames: [:],
+                committedAt: "2026-08-31T00:00:00Z"
+            )
+            try JSONEncoder().encode(publication).write(
+                to: PipelineLayout.url(
+                    RenderRecordPublicationV1.artifactPath(phase: render.phase),
+                    in: root
+                ),
+                options: .atomic
+            )
+        }
         let song = try Song(
             title: "song",
             audioPath: "audio/song.wav",
@@ -2272,11 +2348,23 @@ struct GateGuardTests {
             to: root
         )
 
+        let framesManifest = FramesManifest(
+            project: "demo",
+            generated: "2026-08-31T00:00:00Z"
+        )
+        try publish(
+            RenderManifest(project: "demo", phase: "frames"),
+            frames: framesManifest
+        )
         try MusicvideoPhasePreparation.frames(dataRoot: root)
         let frames = try loadFramesManifest(dataRoot: root)
         #expect(frames.shots.isEmpty)
         try MusicvideoGateChecks.requireRealFrames(dataRoot: root)
 
+        try publish(
+            RenderManifest(project: "demo", phase: "final"),
+            proof: RenderProofManifest(project: "demo", phase: "final")
+        )
         try MusicvideoPhasePreparation.render(dataRoot: root)
         let render = try loadRenderManifest(dataRoot: root, phase: "final")
         let proof = try loadRenderProofManifest(

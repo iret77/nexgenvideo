@@ -65,8 +65,22 @@ struct PluginEngineContractTests {
 
     /// A non-integer stamp is not "close enough" — it reads as pre-contract, never as a match.
     @Test func unparseableContractReadsAsPreContract() {
-        let plist: [String: Any] = [PluginBundleInfo.Key.engineContract: "2"]
-        #expect(PluginBundleInfo(plist: plist).engineContract == 0)
+        let plist: [String: Any] = [
+            PluginBundleInfo.Key.engineContract: "2",
+            PluginBundleInfo.Key.pipelineContractVersion: "1",
+        ]
+        let info = PluginBundleInfo(plist: plist)
+        #expect(info.engineContract == 0)
+        #expect(info.pipelineContractVersion == 0)
+    }
+
+    @Test func booleanContractMarkersAreNotIntegers() {
+        let info = PluginBundleInfo(plist: [
+            PluginBundleInfo.Key.engineContract: true,
+            PluginBundleInfo.Key.pipelineContractVersion: true,
+        ])
+        #expect(info.engineContract == 0)
+        #expect(info.pipelineContractVersion == 0)
     }
 
     @Test func contractCheckIsPure() {
@@ -110,12 +124,16 @@ struct PluginEngineContractTests {
             PluginBundleInfo.Key.minAppVersion: "0.1.0",
             PluginBundleInfo.Key.principalClass: "MusicvideoPackEntry",
             PluginBundleInfo.Key.engineContract: EngineContract.current,
+            PluginBundleInfo.Key.pipelineContractVersion: 1,
+            PluginBundleInfo.Key.resourceRoot: " MusicvideoPack ",
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: contents.appendingPathComponent("Info.plist"))
 
         let read = try #require(PluginBundleInfo(bundleURL: contents.deletingLastPathComponent()))
         #expect(read.engineContract == EngineContract.current)
+        #expect(read.pipelineContractVersion == 1)
+        #expect(read.resourceRoot == "MusicvideoPack")
         #expect(PluginGate.evaluate(info: read, appVersion: "0.4.1") == nil)
     }
 }

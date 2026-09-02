@@ -351,6 +351,7 @@ struct PipelinePanelView: View {
                     projectDir: $0,
                     phase: phase.phase,
                     declaredPack: editor.declaredPluginName,
+                    declaredBinding: editor.declaredPluginBinding,
                     executionCoordinator: editor.pipelinePhaseRunCoordinator
                 )
             }
@@ -393,6 +394,7 @@ struct PipelinePanelView: View {
                         projectDir: $0,
                         phase: phase.phase,
                         declaredPack: editor.declaredPluginName,
+                        declaredBinding: editor.declaredPluginBinding,
                         executionCoordinator: editor.pipelinePhaseRunCoordinator
                     )
                 }
@@ -408,6 +410,7 @@ struct PipelinePanelView: View {
                         phase: phase.phase,
                         state: .needsRevision,
                         declaredPack: editor.declaredPluginName,
+                        declaredBinding: editor.declaredPluginBinding,
                         executionCoordinator: editor.pipelinePhaseRunCoordinator
                     )
                 }
@@ -421,6 +424,7 @@ struct PipelinePanelView: View {
                         projectDir: $0,
                         targetPhase: phase.phase,
                         declaredPack: editor.declaredPluginName,
+                        declaredBinding: editor.declaredPluginBinding,
                         executionCoordinator: editor.pipelinePhaseRunCoordinator
                     )
                 }
@@ -635,6 +639,7 @@ struct PipelinePanelView: View {
                     projectDir: currentDir,
                     phase: currentPhase,
                     declaredPack: editor.declaredPluginName,
+                    declaredBinding: editor.declaredPluginBinding,
                     executionCoordinator: editor.pipelinePhaseRunCoordinator
                 )
                 guard token == readinessToken,

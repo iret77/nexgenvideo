@@ -8,7 +8,10 @@ import Foundation
 /// and any other surface route through here so wording (and, later, translations) stay consistent.
 enum PhaseDisplay {
     static func label(_ id: String) -> String {
-        switch id {
+        if let declared = PhaseContractRuntime.displayLabel(for: id) {
+            return declared
+        }
+        return switch id {
         case "project_init": String(localized: "phase.project_init", defaultValue: "Project Init", comment: "Pipeline phase")
         case "brief": String(localized: "phase.brief", defaultValue: "Brief", comment: "Pipeline phase")
         case "analysis": String(localized: "phase.analysis", defaultValue: "Audio Analysis", comment: "Pipeline phase")

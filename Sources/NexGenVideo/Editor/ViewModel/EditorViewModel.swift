@@ -239,11 +239,7 @@ final class EditorViewModel {
                 && workingCopyHome != nil
                 && activeWorkingCopyKey != nil
             if !keepsLiveDeclaration {
-                let declaration = ProjectPluginSettings.activePlugin(
-                    projectURL: projectURL
-                )
-                activePluginName = declaration
-                declaredPluginName = declaration
+                capturePluginDeclaration(from: projectURL)
             }
             pipelineAgentHarness.reset()
             workflowHandoffPending = false
@@ -315,10 +311,6 @@ final class EditorViewModel {
             activeWorkingCopyKey = preopenedWorkingCopy.key
             activeWorkingCopyGeneration = preopenedWorkingCopy.result.generation
             recoveredUnsavedWork = preopenedWorkingCopy.result.recoveredUnsaved
-            reconcileRecoveredPluginDeclaration(
-                projectURL: preopenedWorkingCopy.result.home,
-                recovered: preopenedWorkingCopy.result.recoveredUnsaved
-            )
             rebindProjectMediaURLs()
             refreshProductionPipelineMarker()
             verifyPackWiring()
@@ -357,31 +349,10 @@ final class EditorViewModel {
         activeWorkingCopyKey = key
         activeWorkingCopyGeneration = result.generation
         recoveredUnsavedWork = result.recoveredUnsaved
-        reconcileRecoveredPluginDeclaration(
-            projectURL: result.home,
-            recovered: result.recoveredUnsaved
-        )
         rebindProjectMediaURLs()
         refreshProductionPipelineMarker()
         verifyPackWiring()
         Task { [weak self] in await self?.refreshEngineState() }
-    }
-
-    private func reconcileRecoveredPluginDeclaration(
-        projectURL: URL,
-        recovered: Bool
-    ) {
-        guard recovered else { return }
-        switch ProjectPluginSettings.resolution(projectURL: projectURL) {
-        case .absent:
-            activePluginName = nil
-            declaredPluginName = nil
-        case .active(let name):
-            activePluginName = name
-            declaredPluginName = name
-        case .unreadable:
-            break
-        }
     }
 
     /// True when the project DECLARES a pack that the runtime can't actually see in this session — the
@@ -439,11 +410,7 @@ final class EditorViewModel {
                 return
             }
             self.workingCopyHome = home
-            let declaration = ProjectPluginSettings.activePlugin(
-                projectURL: projectURL
-            )
-            self.activePluginName = declaration
-            self.declaredPluginName = declaration
+            self.capturePluginDeclaration(from: projectURL)
             self.onWorkingCopyReset?(home)
             self.rebindProjectMediaURLs()
             self.refreshProductionPipelineMarker()
@@ -498,6 +465,29 @@ final class EditorViewModel {
     private(set) var activePluginName: String?
     /// Trusted snapshot verified independently against the mutable working-copy file.
     private(set) var declaredPluginName: String?
+    /// Exact trusted pack identity captured independently from the mutable working copy.
+    private(set) var declaredPluginBinding: ProjectPackBinding?
+
+    private func capturePluginDeclaration(from projectURL: URL?) {
+        switch ProjectPluginSettings.bindingResolution(projectURL: projectURL) {
+        case .absent:
+            activePluginName = nil
+            declaredPluginName = nil
+            declaredPluginBinding = nil
+        case .legacy(let id):
+            activePluginName = id
+            declaredPluginName = id
+            declaredPluginBinding = nil
+        case .bound(let binding):
+            activePluginName = binding.id
+            declaredPluginName = binding.id
+            declaredPluginBinding = binding
+        case .unreadable:
+            activePluginName = nil
+            declaredPluginName = nil
+            declaredPluginBinding = nil
+        }
+    }
 
     /// Whether the on-disk production pipeline (`pipeline/project.yaml`) exists. SYNCHRONOUS ground
     /// truth for "production has started" — cached from a disk probe on `projectURL` change and after
@@ -524,25 +514,29 @@ final class EditorViewModel {
     func setActivePlugin(_ name: String?) {
         guard let home = workingCopyHome, canChangeFormat else { return }
         do {
+            let binding: ProjectPackBinding?
             if let name {
-                guard let binding = PluginLoader.liveBinding(id: name) else {
+                guard let resolvedBinding = PluginLoader.liveBinding(id: name) else {
                     mediaPanelToast = MediaPanelToast(
                         message: "Restart NexGenVideo before activating this format pack."
                     )
                     return
                 }
                 try ProjectPluginSettings.setActivePlugin(
-                    binding,
+                    resolvedBinding,
                     projectURL: home
                 )
+                binding = resolvedBinding
             } else {
                 try ProjectPluginSettings.setActivePlugin(
                     nil as ProjectPackBinding?,
                     projectURL: home
                 )
+                binding = nil
             }
             activePluginName = name
             declaredPluginName = name
+            declaredPluginBinding = binding
             onPipelineChanged?()
         } catch {
             mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
@@ -568,6 +562,18 @@ final class EditorViewModel {
         let home = ProjectWorkingCopy.home(key)
         workingCopyHome = home
         let name = url.deletingPathExtension().lastPathComponent
+        let trustedPack = declaredPluginName
+        let trustedBinding = declaredPluginBinding
+        do {
+            _ = try ProjectPackGate.requireLiveMutation(
+                projectURL: home,
+                declaredPack: trustedPack,
+                declaredBinding: trustedBinding
+            )
+        } catch {
+            mediaPanelToast = MediaPanelToast(message: error.localizedDescription)
+            return
+        }
         let extraDirs = PackCatalog.projectDirs(activePack: activePluginName)
         productionStarting = true
         workflowHandoffPending = true
@@ -588,7 +594,15 @@ final class EditorViewModel {
             // Already-initialized is benign (the pipeline exists → brief drafting is still right);
             // any OTHER scaffold failure must NOT masquerade as success.
             let scaffoldError: (any Error)? = await Task.detached {
-                do { try ProjectScaffold.initProject(home: home, name: name, extraDirs: extraDirs); return nil }
+                do {
+                    _ = try ProjectPackGate.requireMutation(
+                        projectURL: home,
+                        declaredPack: trustedPack,
+                        declaredBinding: trustedBinding
+                    )
+                    try ProjectScaffold.initProject(home: home, name: name, extraDirs: extraDirs)
+                    return nil
+                }
                 catch ProjectScaffold.ScaffoldError.alreadyAProject { return nil }
                 catch { return error }
             }.value
@@ -671,6 +685,8 @@ final class EditorViewModel {
             }
         }
     }
+
+    var agentConversationHistoryPresented = false
 
     @ObservationIgnored private var lastNonAgentSidebarTab: LeftSidebarTab = .media
 

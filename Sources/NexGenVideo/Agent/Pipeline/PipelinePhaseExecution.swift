@@ -176,6 +176,10 @@ final class PipelinePhaseRunCoordinator {
         for waiter in waiters { waiter.resume() }
     }
 
+    func holdsMutation(projectRoot: URL, id: UUID) -> Bool {
+        mutations[key(for: projectRoot)]?.id == id
+    }
+
     func waitUntilIdle(projectRoot: URL) async {
         let key = key(for: projectRoot)
         if let job = jobs[key] {

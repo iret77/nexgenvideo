@@ -106,6 +106,10 @@ struct FalImageInputTests {
         #expect(gptInput["image_urls"] as? [String] == refs)
         #expect(gptInput["image_size"] as? String == "portrait_16_9")
         #expect(gptInput["quality"] as? String == "high")
+        let gptEntry = try #require(FalModelRegistry.entries.first { $0.id == gpt.entry.id })
+        #expect(gptEntry.offers?.first?.productionQualityTargetIDs == [
+            "auto", "low", "medium", "high",
+        ])
     }
 
     @Test func imageSizeEnumMapping() {
@@ -407,6 +411,8 @@ struct FalRegistryTests {
             #expect(caps.duration.range == .init(min: 4, max: 30))
             #expect(caps.duration.supportsAuto)
             #expect(caps.resolutions == ["480p", "720p"])
+            #expect(model.entry.offers?.first?.resolvedVideoCapabilities?
+                .supportsNativeAudio == true)
         }
 
         let reference = try #require(FalModelRegistry.model(

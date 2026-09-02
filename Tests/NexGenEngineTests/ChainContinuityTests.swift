@@ -48,6 +48,27 @@ struct ChainContinuityTests {
         #expect(ChainContinuity.needsLastFrame(sl, shotId: "s001"))
     }
 
+    @Test("execution plan predecessor skips imported shots")
+    func executionPredecessorSkipsImported() {
+        let plan = ExecutionPlanV1(
+            id: "plan",
+            projectID: "p",
+            creativeContext: CanonicalArtifactReferenceV1(
+                id: ExecutionPlanV1.creativeContextArtifactID,
+                role: ExecutionPlanV1.creativeContextArtifactRole,
+                path: PipelineLayout.creativeContextFile,
+                sha256: String(repeating: "a", count: 64)
+            ),
+            shots: [
+                Self.executionShot("s001", source: .generated),
+                Self.executionShot("s002", source: .imported),
+                Self.executionShot("s003", source: .generated),
+            ]
+        )
+
+        #expect(ChainContinuity.executionPredecessor(plan, shotID: "s003") == "s001")
+    }
+
     @Test("render manifest round-trips last_frame_path")
     func manifestRoundTrip() throws {
         var manifest = RenderManifest(project: "p", phase: "preview")
@@ -56,5 +77,27 @@ struct ChainContinuityTests {
         let data = try JSONEncoder().encode(manifest)
         let decoded = try JSONDecoder().decode(RenderManifest.self, from: data)
         #expect(decoded.entries["s001"]?.lastFramePath == "media/s001.last_frame.png")
+    }
+
+    private static func executionShot(
+        _ id: String,
+        source: ExecutionSourceModeV1
+    ) -> ExecutionShotV1 {
+        ExecutionShotV1(
+            id: id,
+            sourceMode: source,
+            startState: ExecutionStateV1(summary: "Start."),
+            endState: ExecutionStateV1(summary: "End."),
+            primaryAction: "Hold.",
+            camera: ExecutionCameraPlanV1(movementID: "core.static"),
+            renderability: .green,
+            acceptance: [
+                ExecutionAcceptanceCriterionV1(
+                    id: "accept-\(id)",
+                    requirement: "The shot is legible.",
+                    severity: "required"
+                ),
+            ]
+        )
     }
 }

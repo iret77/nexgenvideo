@@ -146,10 +146,11 @@ enum AgentInstructions {
             cheap iterations. Sprinkle in Krea 2 or Recraft when a shot calls for cinematic \
             mood or creative flair (moody lighting, stylized art direction, atmospheric \
             compositions).
-          • Video — default to Seedance 2.5 at 720p for most clips. It supports 4–30 seconds \
-            or automatic duration, native audio, and up to 50 mixed references in reference \
-            mode. If Seedance errors, retry on Kling v3. Use Grok Imagine only for very \
-            simple, fast-turnaround scenes. \
+          • Video — among the models returned by list_models, prefer Seedance 2.5 at 720p \
+            for most clips when it is runnable. It supports 4–30 seconds or automatic \
+            duration, native audio, and up to 50 mixed references in reference mode. If it \
+            is unavailable or fails, choose another listed model whose returned capabilities \
+            satisfy the shot. Use Grok Imagine only for very simple, fast-turnaround scenes. \
             Rarely use Veo — only when the user asks or constraints require it.
         - PROMPT GATE (mandatory): never send your own phrasing to generate_video/image/audio. \
           For free generation and Frames, prepare a concrete English intent; Frames describe only \

@@ -94,8 +94,33 @@ struct SpendOption: Identifiable, Equatable, Sendable {
         guard ModelRegistry.exists(id: modelId),
               ModelPreferences.shared.isEnabled(modelId),
               let binding = target.binding else { return false }
-        return ProviderManifest.runnableBindingsByProvider(forModelId: modelId)
-            .contains(binding)
+        return ProviderActivation.current().isActive(binding.provider, binding.transport)
+            && ProviderManifest.bindings(forModelId: modelId).contains(binding)
+    }
+}
+
+struct SpendPipelineScope: Equatable, Sendable {
+    let dataRoot: URL
+    let phase: String?
+    let tool: ToolName
+    let declaredPack: String?
+    let declaredBinding: ProjectPackBinding?
+    let bindingResolution: ProjectPluginSettings.BindingResolution
+
+    init(
+        dataRoot: URL,
+        phase: String?,
+        tool: ToolName,
+        declaredPack: String?,
+        declaredBinding: ProjectPackBinding? = nil,
+        bindingResolution: ProjectPluginSettings.BindingResolution
+    ) {
+        self.dataRoot = dataRoot
+        self.phase = phase
+        self.tool = tool
+        self.declaredPack = declaredPack
+        self.declaredBinding = declaredBinding
+        self.bindingResolution = bindingResolution
     }
 }
 

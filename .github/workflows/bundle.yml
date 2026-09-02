@@ -2,11 +2,10 @@ name: Bundle .app
 
 # Split out of ci.yml so it can be PATH-GATED. This job re-builds and bundles on a macOS runner
 # (~4.5 min = ~45 quota-minutes at the 10x macOS multiplier), and what it guards — the pack linking
-# the SHARED engine, the @executable_path rpath, and the real load-time cast — can only be broken by
-# the build graph, the engine, the bundling scripts or the pack sources. A change confined to
-# Sources/NexGenVideo cannot alter how the pack links, so paying 45 quota-minutes for it was waste.
-# The relaunch and Home overlay lifecycle files are explicit exceptions because this job exercises
-# the real What's New dismissal and Home restart through native mouse events.
+# the SHARED engine, the @executable_path rpath, the phase contract, and the real load-time cast — can
+# only be broken by the build graph, engine, pack sources, bundling scripts, or the explicit host
+# loader/contract paths below. The relaunch and Home overlay lifecycle files are separate exceptions
+# because this job exercises the real What's New dismissal and Home restart through native mouse events.
 #
 # NOTE the coverage this trades away: the load test also happens to smoke-test that the app BINARY
 # launches. A Sources/NexGenVideo-only PR no longer gets that. `swift test` still runs on every PR.
@@ -20,6 +19,10 @@ on:
       - 'Engine/**'
       - 'Metal/**'
       - 'Sources/MusicvideoPlugin/**'
+      - 'Sources/NexGenVideo/Agent/Intake/HardStepManifest.swift'
+      - 'Sources/NexGenVideo/Agent/Pipeline/**'
+      - 'Sources/NexGenVideo/Agent/Tools/ToolDefinitions.swift'
+      - 'Sources/NexGenVideo/Agent/Tools/ToolExecutor*.swift'
       - 'Sources/NexGenVideo/App/AppDelegate.swift'
       - 'Sources/NexGenVideo/App/Changelog.swift'
       - 'Sources/NexGenVideo/App/AppRelaunch.swift'
@@ -28,6 +31,9 @@ on:
       - 'Sources/NexGenVideo/App/main.swift'
       - 'Sources/NexGenVideo/Project/HomeView.swift'
       - 'Sources/NexGenVideo/Project/UpdateOverlay.swift'
+      - 'Sources/NexGenVideo/Inspector/Cockpit/NativeCockpitReader.swift'
+      - 'Sources/NexGenVideo/Inspector/Cockpit/NativeGateWriter.swift'
+      - 'Sources/NexGenVideo/Plugins/**'
       - 'Sources/NexGenVideo/Resources/**'
       - 'scripts/**'
       - 'plugins/**'
@@ -50,6 +56,9 @@ jobs:
 
       - name: Enforce AppTheme
         run: python3 scripts/lint_app_theme.py
+
+      - name: Validate musicvideo pipeline contract
+        run: python3 scripts/validate_pipeline_contract.py plugins/musicvideo.json
 
       - name: Verify private fixture bundle tooling
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
