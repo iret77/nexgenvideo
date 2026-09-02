@@ -1425,7 +1425,9 @@ enum PipelineProductionRouting {
                   startCount <= 1,
                   endCount <= 1,
                   geometryCount == 0,
-                  requirement.aspectRatio == nil || model.videoSendsAspectRatio,
+                  requirement.aspectRatio == nil
+                    || model.videoSendsAspectRatio
+                    || startCount == 1,
                   requirement.resolution == nil || model.videoSendsResolution,
                   !requirement.requiresOutputAudio || model.videoGeneratesAudio else {
                 return false

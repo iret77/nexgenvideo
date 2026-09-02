@@ -139,6 +139,40 @@ struct PipelineProductionRoutingTests {
     }
 
     @MainActor
+    @Test("fal image-to-video preserves aspect through its required start frame")
+    func falImageToVideoUsesStartFrameAspect() throws {
+        let modelID = "bytedance/seedance-2.5/image-to-video"
+        let model = try #require(FalModelRegistry.model(for: modelID))
+        let requirement = Self.requirement(requiresFirstFrame: true)
+        let route = Self.route(requirement: requirement, endpoint: modelID)
+        let binding = Self.binding(
+            semanticJobID: CoreReferenceSemanticJobIDV1.firstFrame,
+            inputSlotID: CoreReferenceInputSlotIDV1.firstFrame
+        )
+        let plan = Self.plan(route: route, bindings: [binding])
+        let providerBinding = try #require(
+            ProviderManifest.bindings(
+                from: model.entry.offers ?? [],
+                modelId: modelID
+            ).first
+        )
+        let target = ResolvedGenerationTarget(
+            modelId: modelID,
+            provider: .fal,
+            endpoint: modelID,
+            binding: providerBinding
+        )
+
+        #expect(PipelineProductionRouting.providerAdapterSupports(
+            referencePlan: plan,
+            route: route,
+            target: target,
+            modelID: modelID,
+            requirement: requirement
+        ))
+    }
+
+    @MainActor
     @Test("MCP adapter requires endpoint-backed outputs and exact media roles")
     func mcpAdapterRequiresSchemaBackedFieldsAndRoles() throws {
         let requirement = Self.requirement(requiresFirstFrame: true)
