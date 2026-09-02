@@ -299,7 +299,7 @@ enum MCP20260728 {
         } catch {
             let parsedID = (try? JSONDecoder().decode(WireValue.self, from: body))?
                 .objectValue?["id"] ?? .null
-            return .failure(error(
+            return .failure(Self.error(
                 status: 400,
                 id: parsedID,
                 code: -32600,
