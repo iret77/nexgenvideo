@@ -83,6 +83,9 @@ jobs:
       - name: Bundle (debug, ad-hoc signed)
         run: scripts/bundle.sh debug
 
+      - name: Verify app build did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh
+
       - name: Assemble format pack (.ngvpack, ad-hoc) + catalog
         run: |
           set -euo pipefail

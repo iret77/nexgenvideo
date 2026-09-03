@@ -64,7 +64,11 @@ CONTRACT="$(grep -Eo '^[[:space:]]*public static let current = [0-9]+[[:space:]]
   exit 1
 }
 
-BINDIR="$(swift build -c "$CONFIG" --show-bin-path)"
+SWIFTPM_CACHE_ARGS=()
+if [ -n "${NGV_SWIFTPM_CACHE_PATH:-}" ]; then
+  SWIFTPM_CACHE_ARGS=(--cache-path "$NGV_SWIFTPM_CACHE_PATH")
+fi
+BINDIR="$(swift build "${SWIFTPM_CACHE_ARGS[@]}" -c "$CONFIG" --show-bin-path)"
 DYLIB="$BINDIR/lib${TARGET}.dylib"
 RES_BUNDLE="$BINDIR/NexGenVideo_${TARGET}.bundle"
 [ -f "$DYLIB" ] || { echo "!! missing plugin dylib: $DYLIB (run swift build -c $CONFIG first)" >&2; exit 1; }

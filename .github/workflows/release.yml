@@ -426,7 +426,10 @@ jobs:
 
       - name: Build the exact release test configuration
         # Testable release objects stay isolated from the production bundle build.
-        run: swift build -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
+        run: swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing
+
+      - name: Verify release build did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
       - name: Stage release test runtime inputs
         run: scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"
@@ -437,7 +440,7 @@ jobs:
           export SWIFT_BACKTRACE=enable=yes,interactive=no,demangle=yes,cache=no
           attempts=3
           for i in $(seq 1 "$attempts"); do
-            swift test -c release --scratch-path "$RUNNER_TEMP/release-tests" --skip-build -Xswiftc -enable-testing 2>&1 | tee "release-test-attempt-$i.log"
+            swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release --scratch-path "$RUNNER_TEMP/release-tests" --skip-build -Xswiftc -enable-testing 2>&1 | tee "release-test-attempt-$i.log"
             code=${PIPESTATUS[0]}
             if [ "$code" -eq 0 ]; then
               exit 0

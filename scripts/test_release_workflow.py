@@ -44,10 +44,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
         test_name = "Test the exact release configuration"
         bundle_name = "Build and sign app"
         pack_name = "Assemble format packs (.ngvpack + catalog entry)"
-        build = 'swift build -c release --scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing'
+        build = (
+            'swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release '
+            '--scratch-path "$RUNNER_TEMP/release-tests" --build-tests -Xswiftc -enable-testing'
+        )
         stage = 'scripts/stage_test_runtime.sh release "$RUNNER_TEMP/release-tests"'
         test = (
-            'swift test -c release --scratch-path "$RUNNER_TEMP/release-tests" '
+            'swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" -c release '
+            '--scratch-path "$RUNNER_TEMP/release-tests" '
             '--skip-build -Xswiftc -enable-testing 2>&1 | tee '
             '"release-test-attempt-$i.log"'
         )

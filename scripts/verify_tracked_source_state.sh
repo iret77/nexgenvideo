@@ -23,4 +23,7 @@ else
 fi
 git status --short --untracked-files=no
 git diff --stat
+if printf '%s\n' "$actual" | grep -qx 'Package.resolved'; then
+  git diff -- Package.resolved
+fi
 exit 1

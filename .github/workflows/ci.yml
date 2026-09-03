@@ -110,7 +110,10 @@ jobs:
       - uses: ./.github/actions/cache-swiftpm-dependencies
 
       - name: Build
-        run: swift build --build-tests
+        run: swift build --cache-path "$NGV_SWIFTPM_CACHE_PATH" --build-tests
+
+      - name: Verify build did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh
 
       - name: Stage test runtime inputs
         run: scripts/stage_test_runtime.sh debug
@@ -130,7 +133,7 @@ jobs:
           attempts=3
           for i in $(seq 1 "$attempts"); do
             echo "::group::swift test (attempt $i/$attempts)"
-            swift test --skip-build 2>&1 | tee "test-attempt-$i.log"
+            swift test --cache-path "$NGV_SWIFTPM_CACHE_PATH" --skip-build 2>&1 | tee "test-attempt-$i.log"
             code=${PIPESTATUS[0]}
             echo "::endgroup::"
             if [ "$code" -eq 0 ]; then
