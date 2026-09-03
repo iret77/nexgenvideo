@@ -455,8 +455,14 @@ jobs:
           echo "::error::SwiftPM test runner crashed on all $attempts attempts"
           exit 1
 
+      - name: Verify release tests did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+
       - name: Build and sign app
         run: scripts/bundle.sh release --sign
+
+      - name: Verify app bundling did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
 
       - name: Assemble format packs (.ngvpack + catalog entry)
         run: |
@@ -562,6 +568,9 @@ jobs:
           NGV_SELFTEST_PACK="$PACK_BUNDLE" .build/NexGenVideo.app/Contents/MacOS/NexGenVideo
           echo "OK: the signed app loaded the notarized pack under download quarantine"
 
+      - name: Verify pack assembly did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+
       - name: Notarize app and build signed, notarized DMG
         run: scripts/bundle.sh release --package
 
@@ -637,6 +646,9 @@ jobs:
             "$PACK_BUNDLE"
           echo "OK: mounted DMG layout, copied app, Gatekeeper assessment, and quarantined pack load"
 
+      - name: Verify DMG checks did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
+
       - name: Publish isolated preview plugin channel
         if: ${{ env.REL_DRY == 'true' }}
         env:
@@ -683,9 +695,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TRACKED_CHANGES="$(git diff --no-renames --name-only | LC_ALL=C sort)"
-          [ "$TRACKED_CHANGES" = "Sources/NexGenVideo/Resources/Info.plist" ] \
-            || { echo "::error::Release artifact source drifted after version injection"; exit 1; }
+          scripts/verify_tracked_source_state.sh Sources/NexGenVideo/Resources/Info.plist
           BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/plugins"
           PUBLICATION_DIR=".build/publication"
           PENDING_ASSET="catalog-${REL_VERSION}.pending.json"

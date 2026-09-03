@@ -183,6 +183,9 @@ jobs:
             "$PREVIOUS_PACK" \
             .build/plugins/musicvideo.ngvpack
 
+      - name: Verify bundling did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh
+
       - name: Zip .app
         run: ditto -c -k --keepParent .build/NexGenVideo.app .build/NexGenVideo.zip
 

@@ -151,6 +151,9 @@ jobs:
           echo "::error::swift test hit the environmental crash on all $attempts attempts"
           exit 1
 
+      - name: Verify tests did not mutate tracked source
+        run: scripts/verify_tracked_source_state.sh
+
   merge_gate:
     name: Merge Gate
     needs: [classify_changes, source_gate, build_test]
