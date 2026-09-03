@@ -22,7 +22,10 @@ class SwiftPMDependencyCacheTests(unittest.TestCase):
             cache_users.extend([path] * count)
         self.assertEqual(cache_users, [ACTION])
         text = ACTION.read_text()
-        self.assertIn("path: ~/Library/Caches/org.swift.swiftpm", text)
+        self.assertIn("path: ${{ steps.cache-path.outputs.path }}", text)
+        self.assertIn("NGV_SWIFTPM_CACHE_PATH=$path", text)
+        self.assertIn("$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT", text)
+        self.assertNotIn("~/Library/Caches/org.swift.swiftpm", text)
         self.assertNotIn(".build", text)
 
     def test_every_swiftpm_workflow_uses_the_shared_cache_contract(self):
@@ -44,7 +47,8 @@ class SwiftPMDependencyCacheTests(unittest.TestCase):
 
     def test_cache_is_scoped_to_dependencies_and_the_exact_toolchain(self):
         text = ACTION.read_text()
-        self.assertIn("~/Library/Caches/org.swift.swiftpm", text)
+        self.assertIn("$RUNNER_TEMP/swiftpm-cache-", text)
+        self.assertIn("NGV_SWIFTPM_CACHE_PATH", text)
         self.assertNotIn(".build/", text)
         for identity in ("runner.os", "runner.arch", "toolchain.outputs.identity"):
             self.assertIn(identity, text)
