@@ -54,6 +54,43 @@ class UpdateAppcastTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("LSMinimumSystemVersion must be a non-empty string", result.stderr)
 
+    def test_accepts_an_identical_existing_entry_without_duplicating_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            info = root / "Sources/NexGenVideo/Resources/Info.plist"
+            info.parent.mkdir(parents=True)
+            with info.open("wb") as handle:
+                plistlib.dump({"LSMinimumSystemVersion": "26.0"}, handle)
+            (root / "appcast.xml").write_text(
+                '<?xml version="1.0"?>\n'
+                '<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">\n'
+                "  <channel>\n"
+                "    </channel>\n"
+                "</rss>\n"
+            )
+            command = [
+                sys.executable,
+                str(SCRIPT),
+                "1.5.0",
+                "88",
+                "123",
+                "signature",
+                "v1.5.0",
+            ]
+
+            first = subprocess.run(
+                command, cwd=root, capture_output=True, text=True, check=False
+            )
+            after_first = (root / "appcast.xml").read_text()
+            second = subprocess.run(
+                command, cwd=root, capture_output=True, text=True, check=False
+            )
+
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual((root / "appcast.xml").read_text(), after_first)
+            self.assertEqual(after_first.count("<item>"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

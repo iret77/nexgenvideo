@@ -19,6 +19,12 @@ struct PluginCatalogPublicationTests {
             .appendingPathComponent(".github/workflows/release.yml")
     }
 
+    private var releaseMetadataPublisherURL: URL {
+        scriptURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("publish_release_metadata.sh")
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("plugin-publication-\(UUID().uuidString)", isDirectory: true)
@@ -122,17 +128,38 @@ struct PluginCatalogPublicationTests {
         #expect(!workflow.contains("gh label view"))
     }
 
-    @Test("publication resume updates the dispatched ref before pushing appcast")
-    func resumeFastForwardsBeforeAppcastCommit() throws {
+    @Test("publication routes release metadata through a protected exact-head PR")
+    func publicationUsesProtectedMetadataPullRequest() throws {
         let workflow = try String(contentsOf: releaseWorkflowURL, encoding: .utf8)
-        let fetch = try #require(
-            workflow.range(of: #"git fetch --no-tags origin "$GITHUB_REF_NAME""#)
+        let publisher = try String(contentsOf: releaseMetadataPublisherURL, encoding: .utf8)
+        let dispatch = try #require(
+            publisher.range(of: #"gh workflow run "$CI_WORKFLOW""#)
         )
-        let checkout = try #require(workflow.range(of: "git checkout --detach FETCH_HEAD"))
-        let appcast = try #require(workflow.range(of: "python3 scripts/update_appcast.py"))
+        let dispatchRef = try #require(
+            publisher.range(of: #"--ref "$METADATA_BRANCH""#)
+        )
+        let merge = try #require(
+            publisher.range(of: #"gh pr merge "$pr_number""#)
+        )
+        let exactHead = try #require(
+            publisher.range(of: #"--match-head-commit "$head_sha""#)
+        )
+        let ancestryCheck = try #require(
+            publisher.range(
+                of: #"git merge-base --is-ancestor "$release_commit" "origin/$BASE_BRANCH""#
+            )
+        )
+        let publish = try #require(
+            publisher.range(of: #"gh release edit "$TAG""#, options: .backwards)
+        )
 
-        #expect(fetch.lowerBound < checkout.lowerBound)
-        #expect(checkout.lowerBound < appcast.lowerBound)
+        #expect(workflow.contains("scripts/publish_release_metadata.sh"))
+        #expect(!workflow.contains("python3 scripts/update_appcast.py"))
+        #expect(!publisher.contains(#"git push origin "$BASE_BRANCH""#))
+        #expect(dispatch.lowerBound < dispatchRef.lowerBound)
+        #expect(merge.lowerBound < exactHead.lowerBound)
+        #expect(exactHead.lowerBound < ancestryCheck.lowerBound)
+        #expect(ancestryCheck.lowerBound < publish.lowerBound)
     }
 
     @Test("a published stable pack version is immutable")

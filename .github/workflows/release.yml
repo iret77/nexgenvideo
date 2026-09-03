@@ -11,10 +11,12 @@ name: Release (signed + notarized)
 # Secrets (repo): MACOS_CERTIFICATE_P12_BASE64, MACOS_CERTIFICATE_PASSWORD, MACOS_NOTARY_KEY_ID,
 # MACOS_NOTARY_ISSUER_ID, MACOS_NOTARY_KEY_P8_BASE64, SPARKLE_ED_PRIVATE_KEY (base64 of the DER
 # Ed25519 private key; required for a published release, optional for a dry run).
+# Repository setting: Allow GitHub Actions to create and approve pull requests must be enabled. The
+# workflow creates but never approves its release-metadata PR; branch protection still owns merging.
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 on:
   workflow_dispatch:
@@ -39,13 +41,33 @@ permissions: {}
 jobs:
   release-gate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 75
     outputs:
       publication-resumed: ${{ steps.publication-state.outputs.resumed }}
     permissions:
+      actions: write
       contents: write
       issues: read
+      pull-requests: write
     steps:
+      - name: Validate release input
+        env:
+          REL_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          echo "$REL_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::version must be X.Y.Z"; exit 1; }
+
+      - name: Require the default branch for stable publication
+        if: ${{ inputs.dry_run == false }}
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [ "$REF_NAME" = "$DEFAULT_BRANCH" ] \
+            || { echo "::error::Stable releases must run from $DEFAULT_BRANCH"; exit 1; }
+
       - name: Reject open release blockers
         if: ${{ inputs.dry_run == false }}
         env:
@@ -75,7 +97,21 @@ jobs:
             exit 1
           fi
 
+      - name: Require release merge strategy
+        if: ${{ inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ALLOW_MERGE_COMMIT="$(gh api \
+            "repos/$GITHUB_REPOSITORY" \
+            --jq .allow_merge_commit)"
+          [ "$ALLOW_MERGE_COMMIT" = "true" ] \
+            || { echo "::error::Release metadata requires repository merge commits"; exit 1; }
+
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Enforce AppTheme
         run: python3 scripts/lint_app_theme.py
@@ -117,10 +153,10 @@ jobs:
           HAS_RELEASE=false
           if gh release view "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --json assets \
-            --jq '.assets[].name' > "$STATE_DIR/release-assets.txt" 2>/dev/null; then
+            --json assets,isDraft > "$STATE_DIR/release.json" 2>/dev/null; then
             HAS_RELEASE=true
-            grep -Fxq NexGenVideo.dmg "$STATE_DIR/release-assets.txt" \
+            jq -e 'any(.assets[]; .name == "NexGenVideo.dmg")' \
+              "$STATE_DIR/release.json" >/dev/null \
               || { echo "::error::release $TAG exists without NexGenVideo.dmg"; exit 1; }
           fi
           HAS_APPCAST=false
@@ -163,13 +199,19 @@ jobs:
           TRANSACTION="$STATE_DIR/$TRANSACTION_ASSET"
           PENDING="$STATE_DIR/$PENDING_ASSET"
           jq -e '
-            .schema == "release-publication/1"
+            .schema == "release-publication/3"
+            and (.source_sha | test("^[0-9a-f]{40}$"))
+            and (.build_number | test("^[1-9][0-9]*$"))
+            and (.dmg_length | test("^[1-9][0-9]*$"))
+            and (.dmg_sha256 | test("^[0-9a-f]{64}$"))
+            and (.ed_signature | type == "string" and length > 0)
             and (.catalog_sha256 | test("^[0-9a-f]{64}$"))
             and (.assets | type == "array" and length > 0)
             and all(.assets[];
-              (.name | type == "string" and length > 0)
+              (.name | type == "string" and test("^[A-Za-z0-9._-]+$"))
               and (.sha256 | test("^[0-9a-f]{64}$"))
             )
+            and (([.assets[].name] | unique | length) == (.assets | length))
           ' "$TRANSACTION" >/dev/null \
             || { echo "::error::publication transaction schema mismatch"; exit 1; }
           [ "$(jq -r .version "$TRANSACTION")" = "$REL_VERSION" ] \
@@ -205,20 +247,14 @@ jobs:
               || { echo "::error::published asset checksum mismatch for $ASSET_NAME"; exit 1; }
           done < <(jq -r '.assets[] | [.name, .sha256] | @tsv' "$TRANSACTION")
 
-          if [ "$HAS_APPCAST" = "false" ]; then
-            BUILD_NUMBER="$(jq -r .build_number "$TRANSACTION")"
-            DMG_LENGTH="$(jq -r .dmg_length "$TRANSACTION")"
-            ED_SIGNATURE="$(jq -r .ed_signature "$TRANSACTION")"
-            git fetch --no-tags origin "$GITHUB_REF_NAME"
-            git checkout --detach FETCH_HEAD
-            python3 scripts/update_appcast.py \
-              "$REL_VERSION" "$BUILD_NUMBER" "$DMG_LENGTH" "$ED_SIGNATURE" "$TAG"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add appcast.xml
-            git commit -m "release: appcast for $TAG"
-            git push origin "HEAD:${{ github.ref_name }}"
-          fi
+          BUILD_NUMBER="$(jq -r .build_number "$TRANSACTION")"
+          DMG_LENGTH="$(jq -r .dmg_length "$TRANSACTION")"
+          DMG_SHA256="$(jq -r .dmg_sha256 "$TRANSACTION")"
+          ED_SIGNATURE="$(jq -r .ed_signature "$TRANSACTION")"
+          SOURCE_SHA="$(jq -r .source_sha "$TRANSACTION")"
+          scripts/publish_release_metadata.sh \
+            "$REL_VERSION" "$BUILD_NUMBER" "$DMG_LENGTH" "$DMG_SHA256" \
+            "$ED_SIGNATURE" "$TAG" "$SOURCE_SHA"
 
           cp "$PENDING" "$STATE_DIR/catalog.json"
           for ATTEMPT in 1 2 3 4 5; do
@@ -383,6 +419,9 @@ jobs:
           NEW=$((CUR + 1))
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $REL_VERSION" "$PLIST"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW" "$PLIST"
+          CHANGED_PATHS="$(git diff --no-renames --name-only | LC_ALL=C sort)"
+          [ "$CHANGED_PATHS" = "$PLIST" ] \
+            || { echo "::error::Release build mutated tracked files beyond $PLIST"; exit 1; }
           echo "BUILD_NUMBER=$NEW" >> "$GITHUB_ENV"
 
       - name: Build the exact release test configuration
@@ -562,6 +601,12 @@ jobs:
           codesign --verify --strict --verbose=2 "$INSTALL_APP/Contents/Frameworks/libNexGenEngine.dylib"
           xcrun stapler validate "$INSTALL_APP"
           spctl -a -vvv -t exec "$INSTALL_APP"
+          INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INSTALL_APP/Contents/Info.plist")"
+          INSTALLED_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INSTALL_APP/Contents/Info.plist")"
+          [ "$INSTALLED_VERSION" = "$REL_VERSION" ] \
+            || { echo "::error::DMG app version is $INSTALLED_VERSION, expected $REL_VERSION"; exit 1; }
+          [ "$INSTALLED_BUILD" = "$BUILD_NUMBER" ] \
+            || { echo "::error::DMG app build is $INSTALLED_BUILD, expected $BUILD_NUMBER"; exit 1; }
 
           PACK_ZIP="$(ls .build/plugins/*.ngvpack.zip | head -1)"
           PACK_EXTRACT="$(mktemp -d)"
@@ -638,6 +683,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          TRACKED_CHANGES="$(git diff --no-renames --name-only | LC_ALL=C sort)"
+          [ "$TRACKED_CHANGES" = "Sources/NexGenVideo/Resources/Info.plist" ] \
+            || { echo "::error::Release artifact source drifted after version injection"; exit 1; }
           BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/plugins"
           PUBLICATION_DIR=".build/publication"
           PENDING_ASSET="catalog-${REL_VERSION}.pending.json"
@@ -695,7 +743,9 @@ jobs:
             "$REL_VERSION" \
             "$BUILD_NUMBER" \
             "$DMG_LENGTH" \
+            "$(shasum -a 256 .build/NexGenVideo.dmg | awk '{print $1}')" \
             "$ED_SIGNATURE" \
+            "$GITHUB_SHA" \
             "$(shasum -a 256 "$PUBLICATION_DIR/$PENDING_ASSET" | awk '{print $1}')" <<'PY'
           import json
           import glob
@@ -703,7 +753,7 @@ jobs:
           import os
           import sys
 
-          path, version, build, length, signature, catalog_sha = sys.argv[1:]
+          path, version, build, length, dmg_sha, signature, source_sha, catalog_sha = sys.argv[1:]
           assets = []
           for pattern in (
               ".build/plugins/*-*.ngvpack.zip",
@@ -718,12 +768,14 @@ jobs:
                   })
           with open(path, "w", encoding="utf-8") as handle:
               json.dump({
-                  "schema": "release-publication/1",
+                  "schema": "release-publication/3",
                   "version": version,
                   "tag": f"v{version}",
                   "build_number": build,
                   "dmg_length": length,
+                  "dmg_sha256": dmg_sha,
                   "ed_signature": signature,
+                  "source_sha": source_sha,
                   "catalog_sha256": catalog_sha,
                   "assets": assets,
               }, handle, indent=2)
@@ -746,36 +798,144 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Publish GitHub release + appcast
+      - name: Stage draft GitHub release
         if: ${{ env.REL_DRY == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG="v$REL_VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Sources/NexGenVideo/Resources/Info.plist
-          git commit -m "release: bump to $REL_VERSION (build ${BUILD_NUMBER})"
-          git push origin "HEAD:${{ github.ref_name }}"
           # Packs are NOT attached here: they went to the `plugins` channel above, which is what the
           # app actually reads. Attaching them to the version tag is what created the illusion that a
           # release shipped a pack fix (#168).
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
             .build/NexGenVideo.dmg \
+            --draft \
             --title "NexGenVideo $TAG" \
             --notes "NexGenVideo $REL_VERSION (build ${BUILD_NUMBER})." \
-            --target "$(git rev-parse HEAD)"
-          python3 scripts/update_appcast.py \
-            "$REL_VERSION" "$BUILD_NUMBER" "$DMG_LENGTH" "$ED_SIGNATURE" "$TAG"
-          git add appcast.xml
-          git commit -m "release: appcast for $TAG"
-          git push origin "HEAD:${{ github.ref_name }}"
+            --target "$GITHUB_SHA"
 
-      - name: Promote stable plugin catalog
+      - name: Hand off stable publication transaction
         if: ${{ env.REL_DRY == 'false' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-publication-${{ inputs.version }}
+          path: |
+            .build/publication/*.pending.json
+            .build/publication/*.transaction.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "${SIGN_KEYCHAIN:-}" 2>/dev/null || true
+
+  publish:
+    needs: [release-gate, release]
+    if: ${{ inputs.dry_run == false && needs.release-gate.outputs.publication-resumed != 'true' && needs.release.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download publication transaction
+        uses: actions/download-artifact@v4
+        with:
+          name: release-publication-${{ inputs.version }}
+          path: .build/publication
+
+      - name: Validate publication handoff
         env:
           GH_TOKEN: ${{ github.token }}
+          REL_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          PUBLICATION_DIR=".build/publication"
+          PENDING="$PUBLICATION_DIR/catalog-${REL_VERSION}.pending.json"
+          TRANSACTION="$PUBLICATION_DIR/release-${REL_VERSION}.transaction.json"
+          jq -e \
+            --arg version "$REL_VERSION" \
+            --arg tag "v$REL_VERSION" \
+            --arg source "$GITHUB_SHA" \
+            '.schema == "release-publication/3"
+             and .version == $version
+             and .tag == $tag
+             and .source_sha == $source
+             and (.build_number | test("^[1-9][0-9]*$"))
+             and (.dmg_length | test("^[1-9][0-9]*$"))
+             and (.dmg_sha256 | test("^[0-9a-f]{64}$"))
+             and (.ed_signature | type == "string" and length > 0)
+             and (.catalog_sha256 | test("^[0-9a-f]{64}$"))
+             and (.assets | type == "array" and length > 0)
+             and all(.assets[];
+               (.name | type == "string" and test("^[A-Za-z0-9._-]+$"))
+               and (.sha256 | test("^[0-9a-f]{64}$")))
+             and (([.assets[].name] | unique | length) == (.assets | length))' \
+            "$TRANSACTION" >/dev/null \
+            || { echo "::error::publication handoff is invalid"; exit 1; }
+          EXPECTED_SHA="$(jq -r .catalog_sha256 "$TRANSACTION")"
+          ACTUAL_SHA="$(sha256sum "$PENDING" | awk '{print $1}')"
+          [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] \
+            || { echo "::error::publication catalog checksum mismatch"; exit 1; }
+          jq -e '.schema == "plugins/v2" and (.plugins | type == "array")' \
+            "$PENDING" >/dev/null \
+            || { echo "::error::publication catalog schema is invalid"; exit 1; }
+          gh release view plugins \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[].name' > "$PUBLICATION_DIR/plugin-assets.txt"
+          asset_exists() {
+            grep -Fxq "$1" "$PUBLICATION_DIR/plugin-assets.txt"
+          }
+          BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/plugins"
+          while IFS= read -r ASSET_URL; do
+            case "$ASSET_URL" in
+              "$BASE"/*) ;;
+              *) echo "::error::publication catalog references a non-stable channel"; exit 1 ;;
+            esac
+            asset_exists "${ASSET_URL##*/}" \
+              || { echo "::error::publication catalog references missing asset ${ASSET_URL##*/}"; exit 1; }
+          done < <(jq -r '.plugins[] | .url, (.badge // empty)' "$PENDING")
+          ASSET_DIR="$PUBLICATION_DIR/assets"
+          mkdir -p "$ASSET_DIR"
+          while IFS=$'\t' read -r ASSET_NAME ASSET_SHA; do
+            asset_exists "$ASSET_NAME" \
+              || { echo "::error::publication transaction references missing asset $ASSET_NAME"; exit 1; }
+            gh release download plugins \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "$ASSET_NAME" \
+              --dir "$ASSET_DIR"
+            DOWNLOADED_SHA="$(sha256sum "$ASSET_DIR/$ASSET_NAME" | awk '{print $1}')"
+            [ "$DOWNLOADED_SHA" = "$ASSET_SHA" ] \
+              || { echo "::error::published asset checksum mismatch for $ASSET_NAME"; exit 1; }
+          done < <(jq -r '.assets[] | [.name, .sha256] | @tsv' "$TRANSACTION")
+
+      - name: Publish protected release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REL_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          TRANSACTION=".build/publication/release-${REL_VERSION}.transaction.json"
+          scripts/publish_release_metadata.sh \
+            "$REL_VERSION" \
+            "$(jq -r .build_number "$TRANSACTION")" \
+            "$(jq -r .dmg_length "$TRANSACTION")" \
+            "$(jq -r .dmg_sha256 "$TRANSACTION")" \
+            "$(jq -r .ed_signature "$TRANSACTION")" \
+            "v$REL_VERSION" \
+            "$(jq -r .source_sha "$TRANSACTION")"
+
+      - name: Promote stable plugin catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REL_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           PUBLICATION_DIR=".build/publication"
@@ -798,7 +958,3 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             "$PUBLICATION_DIR/$COMPLETE_ASSET" \
             --clobber
-
-      - name: Clean up keychain
-        if: always()
-        run: security delete-keychain "${SIGN_KEYCHAIN:-}" 2>/dev/null || true
