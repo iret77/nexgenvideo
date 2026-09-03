@@ -15,8 +15,17 @@ runs:
         [ -n "$identity" ]
         echo "identity=$identity" >> "$GITHUB_OUTPUT"
 
+    - name: Isolate dependency cache
+      id: cache-path
+      shell: bash
+      run: |
+        set -euo pipefail
+        path="$RUNNER_TEMP/swiftpm-cache-$GITHUB_RUN_ID-$GITHUB_JOB-$GITHUB_RUN_ATTEMPT"
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+        echo "NGV_SWIFTPM_CACHE_PATH=$path" >> "$GITHUB_ENV"
+
     - name: Cache resolved dependencies
       uses: actions/cache@v4
       with:
-        path: ~/Library/Caches/org.swift.swiftpm
+        path: ${{ steps.cache-path.outputs.path }}
         key: spm-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('Package.resolved', 'Package.swift', 'Engine/Package.swift') }}

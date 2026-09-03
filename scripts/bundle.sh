@@ -137,8 +137,12 @@ if [ "$MODE" = "package" ]; then
 fi
 
 echo "==> Building ($CONFIG)"
-swift build -c "$CONFIG"
-BIN_DIRECTORY="$(swift build -c "$CONFIG" --show-bin-path)"
+SWIFTPM_CACHE_ARGS=()
+if [ -n "${NGV_SWIFTPM_CACHE_PATH:-}" ]; then
+  SWIFTPM_CACHE_ARGS=(--cache-path "$NGV_SWIFTPM_CACHE_PATH")
+fi
+swift build "${SWIFTPM_CACHE_ARGS[@]}" -c "$CONFIG"
+BIN_DIRECTORY="$(swift build "${SWIFTPM_CACHE_ARGS[@]}" -c "$CONFIG" --show-bin-path)"
 BIN="$BIN_DIRECTORY/NexGenVideo"
 
 echo "==> Assembling $APP"
