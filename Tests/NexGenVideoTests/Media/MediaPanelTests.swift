@@ -398,6 +398,47 @@ struct DurableMediaImportTests {
         #expect(try directoryIsMissingOrEmpty(mediaDirectory))
     }
 
+    @Test func cancelledInProjectDigestUsesTheCancellationMessage() async throws {
+        let mediaDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "cancel-in-project-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let source = mediaDirectory.appendingPathComponent("source.mp4")
+        defer { try? FileManager.default.removeItem(at: mediaDirectory) }
+        try FileManager.default.createDirectory(
+            at: mediaDirectory,
+            withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(atPath: source.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: source)
+        try handle.truncate(atOffset: 128 * 1024 * 1024)
+        try handle.close()
+
+        let (gate, continuation) = AsyncStream<Void>.makeStream()
+        let task = Task {
+            var iterator = gate.makeAsyncIterator()
+            _ = await iterator.next()
+            return try await DurableMediaStore.copy(
+                source,
+                into: mediaDirectory,
+                reusableByDigest: [:]
+            )
+        }
+        task.cancel()
+        continuation.yield(())
+        continuation.finish()
+
+        do {
+            _ = try await task.value
+            Issue.record("The cancelled in-project digest unexpectedly completed.")
+        } catch let error as MediaImportError {
+            #expect(error == .cancelled)
+        } catch {
+            Issue.record("Unexpected cancellation error: \(error)")
+        }
+    }
+
     @Test func concurrentImportsSerializeWithoutLosingEitherBatch() async throws {
         let e = editor()
         let first = FileManager.default.temporaryDirectory

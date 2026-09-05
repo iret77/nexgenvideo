@@ -2131,6 +2131,8 @@ struct WorkflowToolsTests {
         )
         #expect(performancePrompt.contains("Core production profile: generative_film"))
         #expect(!performancePrompt.contains("Core production profile: narrative_storytelling"))
+        #expect(performancePrompt.contains("Production library: film-craft-baseline/"))
+        #expect(!performancePrompt.contains("execution_plan.has_start_end_states"))
 
         try saveBrief(conceptType: .narrative)
         let narrativePrompt = try #require(
@@ -2138,6 +2140,8 @@ struct WorkflowToolsTests {
         )
         #expect(narrativePrompt.contains("Core production profile: generative_film"))
         #expect(narrativePrompt.contains("Core production profile: narrative_storytelling"))
+        #expect(narrativePrompt.contains("Production library: continuity-and-coverage/"))
+        #expect(!narrativePrompt.contains("execution_plan.narrative_beat_is_declared"))
 
         try Data("concept_type: [unterminated".utf8).write(
             to: PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
@@ -3170,6 +3174,18 @@ struct WorkflowToolsTests {
             dataRoot: dataRoot,
             activation: routing.activation,
             candidateProvider: routing.candidates
+        )
+        let currentShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
+        let discipline = PipelineProductionRouting.disciplineSidecar(
+            shotlist: currentShotlist,
+            dataRoot: dataRoot
+        )
+        #expect(
+            discipline.route(for: "s001")
+                == ProductionRouteDisciplineV1(
+                    capabilityProfile: firstRouting.route.capabilitySnapshot
+                        .capabilities.effective
+                )
         )
         try addGeneratedVideo(
             "s001-video",

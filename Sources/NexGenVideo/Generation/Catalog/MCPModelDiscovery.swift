@@ -18,8 +18,8 @@ enum MCPModelDiscovery {
     private static let paginationHasMoreKeys = ["has_more", "hasMore"]
     private static let catalogContentKeys = [
         "items", "models", "job_sets", "jobSets", "model", "job_set", "jobSet",
-        "job_set_type", "jobSetType", "model_id", "modelId", "output_type",
-        "outputType", "modality",
+        "job_set_type", "jobSetType", "job_type", "jobType", "model_id", "modelId",
+        "output_type", "outputType", "modality",
     ]
     private static let identityFallbackKeys = ["id"]
     private static let operationalEnvelopeKeys = ["status", "action"]
@@ -281,6 +281,8 @@ enum MCPModelDiscovery {
             case id, name, description, parameters, medias, tags, constraints, type, modality
             case jobSetType = "job_set_type"
             case jobSetTypeCamel = "jobSetType"
+            case jobType = "job_type"
+            case jobTypeCamel = "jobType"
             case modelId = "model_id"
             case modelIdCamel = "modelId"
             case displayName = "display_name"
@@ -330,6 +332,8 @@ enum MCPModelDiscovery {
             id = try c.decodeIfPresent(String.self, forKey: .id)
                 ?? c.decodeIfPresent(String.self, forKey: .jobSetType)
                 ?? c.decodeIfPresent(String.self, forKey: .jobSetTypeCamel)
+                ?? c.decodeIfPresent(String.self, forKey: .jobType)
+                ?? c.decodeIfPresent(String.self, forKey: .jobTypeCamel)
                 ?? c.decodeIfPresent(String.self, forKey: .modelId)
                 ?? c.decode(String.self, forKey: .modelIdCamel)
             name = try c.decodeIfPresent(String.self, forKey: .name)
@@ -854,7 +858,9 @@ enum MCPModelDiscovery {
             )
         }
 
-        if ["id", "job_set_type", "jobSetType", "model_id", "modelId"]
+        if [
+            "id", "job_set_type", "jobSetType", "job_type", "jobType", "model_id", "modelId",
+        ]
             .contains(where: { object[$0] != nil }),
            hasStandaloneModelContract(object, context: context) {
             return .catalog(
@@ -899,7 +905,10 @@ enum MCPModelDiscovery {
 
     private static func modelIdentityHint(from value: Any) -> String? {
         guard let object = value as? [String: Any] else { return nil }
-        for key in ["id", "job_set_type", "jobSetType", "model_id", "modelId"] {
+        let identityKeys = [
+            "id", "job_set_type", "jobSetType", "job_type", "jobType", "model_id", "modelId",
+        ]
+        for key in identityKeys {
             guard let value = object[key] as? String else { continue }
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { return trimmed }
@@ -956,15 +965,18 @@ enum MCPModelDiscovery {
         }
         if context == .detail { return true }
         if hasDeclaredOutputModality(object) { return true }
-        let hasJobSetIdentity = ["job_set_type", "jobSetType"].contains { key in
-            guard let value = object[key] as? String else { return false }
-            return !value.isEmpty
-        }
+        let hasJobSetIdentity = ["job_set_type", "jobSetType", "job_type", "jobType"]
+            .contains { key in
+                guard let value = object[key] as? String else { return false }
+                return !value.isEmpty
+            }
         return hasJobSetIdentity && hasGenericTypeModality(object)
     }
 
     private static func hasValidModelIdentity(_ object: [String: Any]) -> Bool {
-        ["id", "job_set_type", "jobSetType", "model_id", "modelId"].contains { key in
+        [
+            "id", "job_set_type", "jobSetType", "job_type", "jobType", "model_id", "modelId",
+        ].contains { key in
             guard let value = object[key] as? String else { return false }
             return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }

@@ -343,16 +343,18 @@ enum NativeCockpitReader {
         let productionProfileIDs = registry.activeProductionProfileIDs(metadata: [
             "concept_type": brief?.conceptType.rawValue ?? "",
         ])
-        return audit(
-            AuditContext(
-                shotlist: shotlist,
-                brief: brief,
-                bible: bible,
-                extra: ["data_root": dataRoot.path],
-                productionProfileIDs: productionProfileIDs
-            ),
-            checks: registry.sanityChecks
+        var context = AuditContext(
+            shotlist: shotlist,
+            brief: brief,
+            bible: bible,
+            extra: ["data_root": dataRoot.path],
+            productionProfileIDs: productionProfileIDs
         )
+        context.productionDisciplineSidecar = PipelineProductionRouting.disciplineSidecar(
+            shotlist: shotlist,
+            dataRoot: dataRoot
+        )
+        return audit(context, checks: registry.sanityChecks)
     }
 
     static func sanityJSON(_ report: SanityReport) throws -> Data {

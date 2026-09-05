@@ -68,7 +68,7 @@ final class HelpWindowController: NSWindowController {
     private var hosting: NSHostingController<AnyView>?
 
     private init() {
-        let initialView = HelpView().tint(AppTheme.Accent.primary)
+        let initialView = HelpView().interfaceStyle()
         let hosting = NSHostingController(rootView: AnyView(initialView))
         let window = NSWindow(contentViewController: hosting)
         window.setContentSize(AppTheme.Window.settingsDefault)
@@ -94,7 +94,7 @@ final class HelpWindowController: NSWindowController {
         hosting?.rootView = AnyView(
             HelpView(initialTab: tab)
                 .id(UUID())
-                .tint(AppTheme.Accent.primary)
+                .interfaceStyle()
         )
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)

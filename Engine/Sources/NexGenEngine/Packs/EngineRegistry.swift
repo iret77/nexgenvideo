@@ -114,6 +114,9 @@ public final class EngineRegistry: @unchecked Sendable {
     /// Exact project-local files owned by each phase, for cumulative execution lineage.
     public private(set) var phaseArtifactProviders: [String: PhaseArtifactProvider] = [:]
 
+    /// Pack-neutral declarations that bind an active format to host-owned production knowledge.
+    public private(set) var productionKnowledgeConsumers: [ProductionKnowledgeConsumerRegistrationV1] = []
+
     /// A phase runner is an opaque callable the engine invokes to run a named
     /// pipeline phase (e.g. `"analysis"`). Precise signatures firm up as more
     /// phases land; kept minimal here for the one phase M8 registers. Port of
@@ -339,6 +342,18 @@ public final class EngineRegistry: @unchecked Sendable {
     ) -> DeclarativeCockpitSurface {
         declarativeCockpitSurface = surface
         return surface
+    }
+
+    public func registerProductionKnowledgeConsumer(
+        _ descriptor: ProductionKnowledgeConsumerDescriptorV1,
+        metadataProvider: @escaping ProductionKnowledgeActivationMetadataProviderV1
+    ) {
+        productionKnowledgeConsumers.append(
+            ProductionKnowledgeConsumerRegistrationV1(
+                descriptor: descriptor,
+                metadataProvider: metadataProvider
+            )
+        )
     }
 }
 

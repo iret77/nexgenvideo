@@ -48,7 +48,7 @@
       "id": "production-sheet-templates",
       "version": "1.0.0",
       "path": "libraries/production-sheet-templates.v1.json",
-      "sha256": "679dca678f048617639de44f66dbf377ebad7f32e7baddc78fad9b9d27bd343d"
+      "sha256": "c44986194bc74832554941b5665e80dffce7c12a4ff3d3d45863da5c8a87bc7d"
     },
     {
       "kind": "library",

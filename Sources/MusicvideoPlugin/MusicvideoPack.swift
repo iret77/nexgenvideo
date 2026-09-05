@@ -40,6 +40,128 @@ public struct MusicvideoPack: Pack {
         StandardProductionProfiles.narrativeStorytelling,
     ]
 
+    static let productionKnowledgeDescriptor = ProductionKnowledgeConsumerDescriptorV1(
+        id: "musicvideo-production-knowledge",
+        version: "1.0.0",
+        packID: "musicvideo",
+        profileResourceIDs: ["generative_film", "narrative_storytelling"],
+        phaseSelections: [
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "production_design",
+                libraryIDs: [
+                    "film-craft-baseline",
+                    "production-sheet-templates", "stylized-3d-animation",
+                ],
+                intentTags: [
+                    "camera", "cinematography", "lighting", "color", "visual-strategy",
+                    "character-sheet", "location-sheet", "style-sheet",
+                ]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "treatment",
+                libraryIDs: ["film-craft-baseline", "story-containers"],
+                intentTags: [
+                    "craft", "story-development", "structure", "goal-driven", "short-form",
+                    "color", "pacing",
+                ]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "storyboard",
+                libraryIDs: [
+                    "continuity-and-coverage", "film-craft-baseline",
+                    "stylized-3d-animation",
+                ],
+                intentTags: [
+                    "camera", "cinematography", "continuity", "coverage",
+                    "editing", "lighting", "pacing", "spatial-clarity", "visual-strategy",
+                ]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "bible",
+                libraryIDs: [
+                    "continuity-and-coverage", "production-sheet-templates",
+                    "stylized-3d-animation",
+                ],
+                intentTags: [
+                    "continuity", "character-sheet", "location-sheet",
+                    "style-sheet", "continuity-sheet",
+                ]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "shotlist",
+                libraryIDs: ["continuity-and-coverage", "film-craft-baseline"],
+                intentTags: [
+                    "camera", "continuity", "editing", "craft", "spatial-clarity",
+                ]
+            ),
+            ProductionKnowledgePhaseSelectionV1(
+                phase: "sanity",
+                knowledgePhase: "review",
+                libraryIDs: [
+                    "continuity-and-coverage", "film-craft-baseline",
+                    "stylized-3d-animation",
+                ],
+                intentTags: [
+                    "quality-control", "continuity", "craft", "cinematography",
+                    "spatial-clarity", "editing", "lighting", "color", "pacing",
+                    "camera", "visual-strategy",
+                ]
+            ),
+        ],
+        budget: ProductionKnowledgeBudgetV1(
+            maximumUTF8Bytes: 16_384,
+            maximumEstimatedTokens: 4_096
+        )
+    )
+
+    static func productionKnowledgeMetadata(
+        dataRoot: URL,
+        phase: String
+    ) throws -> ProductionKnowledgeActivationMetadataV1 {
+        let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
+        guard FileManager.default.fileExists(atPath: briefURL.path) else {
+            if let phaseIndex = MusicvideoPipelineLineage.phases.firstIndex(of: phase),
+               let briefIndex = MusicvideoPipelineLineage.phases.firstIndex(of: "brief"),
+               phaseIndex > briefIndex {
+                throw GateBlocked(
+                    "The approved Brief is missing. Repair or restore it before continuing."
+                )
+            }
+            return ProductionKnowledgeActivationMetadataV1()
+        }
+        let brief: Brief
+        do {
+            brief = try YAMLArtifactStore(dataRoot: dataRoot).load(
+                Brief.self,
+                at: PipelineLayout.briefFile
+            )
+        } catch {
+            throw GateBlocked(
+                "The Brief is unreadable. Repair or restore it before continuing: "
+                    + error.localizedDescription
+            )
+        }
+        var tags = Set(brief.tone.map(\.rawValue))
+        tags.insert(brief.conceptType.rawValue)
+        tags.insert(brief.visualMedium.rawValue)
+        switch brief.visualMedium {
+        case .cg3d, .animation2d, .stopMotion:
+            tags.formUnion(["stylized-3d", "animation", "shape-language"])
+        case .illustration:
+            tags.formUnion(["animation", "shape-language"])
+        case .liveActionRealistic, .liveActionStylized:
+            tags.formUnion(["naturalism", "cinematography"])
+        case .mixed:
+            tags.formUnion(["cinematography", "animation"])
+        case .other:
+            break
+        }
+        return ProductionKnowledgeActivationMetadataV1(
+            values: ["concept_type": brief.conceptType.rawValue],
+            intentTags: tags
+        )
+    }
+
     private static func migrateToMeasuredStructure(_ projectURL: URL) throws {
         guard let dataRoot = DataRootResolver.dataRoot(of: projectURL) else {
             throw GateBlocked(
@@ -192,6 +314,11 @@ public struct MusicvideoPack: Pack {
         registry.registerWiringProbe { PackWiring.token(pack: "musicvideo", nonce: $0) }
         registry.registerDurationPolicy(MusicDurationPolicy())
         registry.registerProductionProfiles(Self.productionProfiles)
+        registry.registerProductionKnowledgeConsumer(
+            Self.productionKnowledgeDescriptor
+        ) { dataRoot, phase in
+            try Self.productionKnowledgeMetadata(dataRoot: dataRoot, phase: phase)
+        }
         // Agent-callable pattern query surface (suggest/get) — the live path to the pattern library.
         registry.registerPatternProvider(MusicvideoPatternProvider())
         registry.registerReferencePlanProvider(MusicvideoReferencePlanProvider())

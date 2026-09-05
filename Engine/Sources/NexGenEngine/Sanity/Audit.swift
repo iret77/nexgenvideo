@@ -19,6 +19,8 @@ public struct AuditContext: Sendable {
     public var extra: [String: String]?
 
     private static let productionProfileKey = "__ngv_internal.production_profile_ids.v1"
+    private static let productionDisciplineSidecarKey =
+        "__ngv_internal.production_discipline_sidecar.v1"
 
     public init(
         shotlist: Shotlist, brief: Brief? = nil, bible: Bible? = nil, extra: [String: String]? = nil
@@ -46,6 +48,25 @@ public struct AuditContext: Sendable {
             } else {
                 let data = try! JSONEncoder().encode(newValue.map(\.rawValue).sorted())
                 values[Self.productionProfileKey] = String(decoding: data, as: UTF8.self)
+            }
+            extra = values.isEmpty && !hadExtra ? nil : values
+        }
+    }
+
+    public var productionDisciplineSidecar: ProductionDisciplineSidecarV1? {
+        get {
+            guard let encoded = extra?[Self.productionDisciplineSidecarKey],
+                  let data = encoded.data(using: .utf8) else { return nil }
+            return try? JSONDecoder().decode(ProductionDisciplineSidecarV1.self, from: data)
+        }
+        set {
+            let hadExtra = extra != nil
+            var values = extra ?? [:]
+            if let newValue,
+               let data = try? JSONEncoder().encode(newValue) {
+                values[Self.productionDisciplineSidecarKey] = String(decoding: data, as: UTF8.self)
+            } else {
+                values.removeValue(forKey: Self.productionDisciplineSidecarKey)
             }
             extra = values.isEmpty && !hadExtra ? nil : values
         }

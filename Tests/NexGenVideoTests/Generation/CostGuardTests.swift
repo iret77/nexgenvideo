@@ -169,6 +169,64 @@ struct CostGuardTests {
     }
 
     @MainActor
+    @Test func approvedImageSelectionSeedsTheNextImageApproval() async throws {
+        let key = SpendSelectionPreferences.defaultsKey(for: .image)
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        let editor = EditorViewModel()
+        let service = editor.agentService
+        let runway = option(
+            modelId: "shared-image-model",
+            name: "Shared image model",
+            provider: .runway,
+            credits: 10
+        )
+        let fal = option(
+            modelId: "shared-image-model",
+            name: "Shared image model",
+            provider: .fal,
+            credits: 10
+        )
+        let first = SpendApproval(
+            id: "remember-first-image",
+            recommendedOptionId: runway.id,
+            options: [runway, fal],
+            actionLabel: "Generate image",
+            selectionScope: .image
+        )
+        _ = try service.requestSpendApproval(
+            first,
+            origin: .direct,
+            editor: editor,
+            execute: { _, _ in .ok("done") }
+        )
+        await service.approveSpend(fal)
+        await waitUntil { !service.spendApprovalIsRunning }
+
+        let next = SpendApproval(
+            id: "remember-next-image",
+            recommendedOptionId: runway.id,
+            options: [runway, fal],
+            actionLabel: "Generate image",
+            selectionScope: .image
+        )
+        _ = try service.requestSpendApproval(
+            next,
+            origin: .direct,
+            editor: editor,
+            execute: { _, _ in .ok("unexpected") }
+        )
+
+        #expect(service.pendingSpendApproval?.recommendedOptionId == fal.id)
+        #expect(service.pendingSpendApproval?.options.first == fal)
+        service.declineSpend()
+    }
+
+    @MainActor
     @Test func approvalEndsTheTurnAndRunsTheStoredOperationAfterTheClick() async throws {
         let editor = EditorViewModel()
         let service = editor.agentService
@@ -602,6 +660,11 @@ struct CostGuardTests {
         await waitUntil { followUp.sent.count == 1 }
         #expect(followUp.sent[0].contains("Lighting anchor rendered."))
         #expect(!service.hasPendingHostFollowUp)
+        #expect(service.toolCallBlockReason(
+            tool: .copyProjectFile,
+            args: [:],
+            origin: origin
+        ) == nil)
         #expect(!service.resumePendingSpendFollowUp())
         #expect(followUp.sent.count == 1)
     }

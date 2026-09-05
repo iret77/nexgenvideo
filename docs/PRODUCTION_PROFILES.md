@@ -23,12 +23,14 @@ project metadata so the engine does not learn pack-specific concepts.
 Always active for the musicvideo pack and reusable by any pack that generates moving images.
 
 - Build named style, character, location, prop, geometry, and reverse-view anchors before shots.
-- Plan one primary action, one camera movement, and at most two visible characters per generated shot;
-  an ensemble contributes its declared `member_count`, not one reference.
+- Plan one primary action and one coherent camera plan per generated shot. Resolve visible-character
+  and reference capacity from the selected route's effective capability profile; an ensemble
+  contributes its declared `member_count`, not one reference.
 - Anchor generated character blocking through a non-empty `production_plan.blocking_anchors` entry
   exactly naming one of the shot's `prop_refs` or `visible_zones`; keep its spatial relationship in `character_blocking.relation_to_set`.
   Screen direction alone is not an anchor.
-- Treat 4–12 seconds as the normal generated-shot range; longer shots declare `long_take` risk.
+- Resolve duration from the selected route's effective capability profile. A shot outside that
+  route's reliable range declares the material risk and a rescue or selects another route.
 - Rate renderability `green`, `yellow`, or `red`; every yellow/red shot declares risks and a rescue cut.
 - Persist continuity locks and match-action cues instead of relying on prompt prose.
 

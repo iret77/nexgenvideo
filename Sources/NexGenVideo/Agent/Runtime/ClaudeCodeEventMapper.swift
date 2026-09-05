@@ -53,6 +53,30 @@ struct ClaudeCodeEventMapper {
         messages.append(message)
     }
 
+    @discardableResult
+    mutating func replaceToolResult(
+        containingText text: String,
+        with result: ToolResult
+    ) -> Bool {
+        for messageIndex in messages.indices.reversed() {
+            for blockIndex in messages[messageIndex].blocks.indices.reversed() {
+                guard case .toolResult(let toolUseId, let content, _) =
+                    messages[messageIndex].blocks[blockIndex],
+                    content.contains(where: {
+                        guard case .text(let value) = $0 else { return false }
+                        return value == text
+                    }) else { continue }
+                messages[messageIndex].blocks[blockIndex] = .toolResult(
+                    toolUseId: toolUseId,
+                    content: result.content,
+                    isError: result.isError
+                )
+                return true
+            }
+        }
+        return false
+    }
+
     /// Append a runtime-level note (e.g. "Claude Code CLI not found") as an assistant message.
     mutating func appendNote(_ text: String) {
         messages.append(AgentMessage(role: .assistant, blocks: [.text(text)]))

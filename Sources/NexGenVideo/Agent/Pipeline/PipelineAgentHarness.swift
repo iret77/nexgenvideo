@@ -194,39 +194,86 @@ final class PipelineAgentHarness {
                 prompt = instructions
             }
             guard var prompt else { return nil }
-            let briefURL = PipelineLayout.url(PipelineLayout.briefFile, in: dataRoot)
-            let brief: Brief?
-            if FileManager.default.fileExists(atPath: briefURL.path) {
-                do {
-                    brief = try YAMLArtifactStore(dataRoot: dataRoot).load(
-                        Brief.self,
-                        at: PipelineLayout.briefFile
-                    )
-                } catch {
-                    throw ToolError(
-                        "The Brief is unreadable. Repair or restore it before continuing: "
-                            + error.localizedDescription
-                    )
-                }
-            } else if snapshot.phases.first(where: { $0.phase == "brief" })?.approved == true {
-                throw ToolError(
-                    "The approved Brief is missing. Repair or restore it before continuing."
-                )
-            } else {
-                brief = nil
-            }
             let registry = PackCatalog.registry(activePack: packName)
-            let activeIDs = registry.activeProductionProfileIDs(metadata: [
-                "concept_type": brief?.conceptType.rawValue ?? "",
-            ])
-            let guidance = ProductionProfileGuidance.instructions(
-                for: phase,
-                profiles: registry.productionProfiles.filter {
-                    activeIDs.contains($0.id)
+            let consumers = try ProductionKnowledgeConsumerRegistryV1(
+                registrations: registry.productionKnowledgeConsumers
+            )
+            guard let registration = consumers.registration(for: packName) else {
+                return prompt
+            }
+            let productionKnowledgeCatalog: ProductionKnowledgeCatalogV1
+            do {
+                productionKnowledgeCatalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
+                try consumers.validateResources(in: productionKnowledgeCatalog)
+            } catch {
+                Log.agent.error(
+                    "production knowledge unavailable error=\(error.localizedDescription)"
+                )
+                throw ToolError(
+                    "NexGenVideo's production knowledge is damaged. Reinstall the app."
+                )
+            }
+            let descriptor = registration.descriptor
+            let metadata: ProductionKnowledgeActivationMetadataV1
+            do {
+                metadata = try registration.metadataProvider(dataRoot, phase)
+            } catch let blocked as GateBlocked {
+                throw ToolError(blocked.message)
+            } catch {
+                throw ToolError(
+                    "The \(packName) production-knowledge activation metadata is unavailable: "
+                        + error.localizedDescription
+                )
+            }
+            let activeProfiles = Set(
+                registry.activeProductionProfileIDs(metadata: metadata.values).map {
+                    ProductionProfileDescriptorIDV1(rawValue: $0.rawValue)
                 }
             )
-            if !guidance.isEmpty {
-                prompt += "\n\nFollow these active core production profiles:\n\n\(guidance)"
+            let undeclaredProfiles = activeProfiles.subtracting(descriptor.profileResourceIDs)
+            guard undeclaredProfiles.isEmpty else {
+                throw ToolError(
+                    "The \(packName) production-knowledge descriptor does not declare active profiles: "
+                        + undeclaredProfiles.map(\.rawValue).sorted().joined(separator: ", ")
+                )
+            }
+            let selection = descriptor.selection(for: phase)
+            let declaredLibraries = Set(selection?.libraryIDs ?? [])
+            let activeLibraries: Set<CreativeKnowledgeLibraryIDV1>
+            if let requested = metadata.activeLibraryIDs {
+                let undeclaredLibraries = requested.subtracting(declaredLibraries)
+                guard undeclaredLibraries.isEmpty else {
+                    throw ToolError(
+                        "The \(packName) activation metadata requested undeclared production libraries: "
+                            + undeclaredLibraries.map(\.rawValue).sorted().joined(separator: ", ")
+                    )
+                }
+                activeLibraries = requested
+            } else {
+                activeLibraries = declaredLibraries
+            }
+            let assembly = try ProductionKnowledgeContextAssemblerV1(
+                catalog: productionKnowledgeCatalog,
+                predicates: ProductionMachinePredicateRegistryV1.standard()
+            ).assemble(
+                ProductionKnowledgeAssemblyQueryV1(
+                    packID: packName,
+                    phase: selection?.knowledgePhase ?? phase,
+                    intentTags: metadata.intentTags.union(selection?.intentTags ?? []),
+                    activeProfileIDs: activeProfiles,
+                    activeLibraryIDs: activeLibraries,
+                    budget: descriptor.budget
+                )
+            )
+            if !assembly.prompt.isEmpty {
+                prompt += "\n\nFollow this selected core production knowledge:\n\n\(assembly.prompt)"
+            }
+            if !assembly.omittedLibraryEntryIDs.isEmpty {
+                Log.agent.warning(
+                    "production knowledge budget omitted="
+                        + assembly.omittedLibraryEntryIDs.joined(separator: ",")
+                        + " bytes=\(assembly.utf8Bytes) tokens=\(assembly.estimatedTokens)"
+                )
             }
             return prompt
         }
@@ -244,12 +291,20 @@ final class PipelineAgentHarness {
         let didProvideMaterial: Bool
     }
 
+    enum TreatmentCreationPath: Equatable {
+        case agentProposal
+        case userSupplied
+        case custom
+    }
+
     private var offered: OfferedIntake?
     private var intakeResolution: IntakeResolution?
+    private var treatmentCreationPath: TreatmentCreationPath?
 
     func reset() {
         offered = nil
         intakeResolution = nil
+        treatmentCreationPath = nil
     }
 
     func workflowIntakePhase(dialogID: String) -> String? {
@@ -399,6 +454,9 @@ final class PipelineAgentHarness {
                 agentPrompt: nil,
                 failure: error.localizedDescription
             )
+        }
+        if context.phase != "treatment" {
+            treatmentCreationPath = nil
         }
 
         var ledger = IntakeLedger.load(dataRoot: dataRoot)
@@ -611,7 +669,7 @@ final class PipelineAgentHarness {
         guard let phase = context.phase else {
             if dialog.workflowDecision != nil {
                 throw ToolError(
-                    "This workflow decision belongs to Audio Analysis, but every pipeline phase is approved."
+                    "This workflow decision belongs to an active pipeline phase, but every phase is approved."
                 )
             }
             return
@@ -632,7 +690,12 @@ final class PipelineAgentHarness {
                 "Project Init has no agent-authored decisions. Complete it before presenting a dialog."
             )
         case "analysis":
-            guard dialog.workflowDecision != nil else {
+            let analysisDecisions: Set<AgentDialog.WorkflowDecision> = [
+                .analysisTempo,
+                .analysisInterpretationReview,
+                .analysisTrackReplacement,
+            ]
+            guard dialog.workflowDecision.map(analysisDecisions.contains) == true else {
                 throw ToolError(
                     "Audio Analysis accepts only its bounded tempo, interpretation-review, or track-replacement dialog. Do not ask about story, identity, style, or later phases yet."
                 )
@@ -650,12 +713,114 @@ final class PipelineAgentHarness {
                     "Wait for \(PhaseDisplay.label(running)) to finish before presenting the analysis decision."
                 )
             }
+        case "treatment":
+            let hasTreatment = !TreatmentStore.versions(dataRoot: dataRoot).isEmpty
+            if hasTreatment {
+                treatmentCreationPath = nil
+                if dialog.workflowDecision == .treatmentPath {
+                    throw ToolError(
+                        "A treatment already exists. Offer continue, revise, or restart instead of asking how to create the first treatment."
+                    )
+                }
+                if dialog.workflowDecision != nil {
+                    throw ToolError(
+                        "The declared workflow decision is not valid during Treatment."
+                    )
+                }
+                return
+            }
+            if treatmentCreationPath == nil {
+                guard dialog.workflowDecision == .treatmentPath else {
+                    throw ToolError(
+                        "Before requesting any treatment text, present the Treatment path choice: agent_proposal first (recommended), then user_supplied, with workflowDecision=treatment_path. The user is never required to upload a treatment."
+                    )
+                }
+                try Self.validateTreatmentPathDialog(dialog)
+                return
+            }
+            if dialog.workflowDecision == .treatmentPath {
+                throw ToolError(
+                    "The Treatment path is already chosen. Continue with that path instead of asking again."
+                )
+            }
+            if dialog.workflowDecision != nil {
+                throw ToolError(
+                    "The declared workflow decision is not valid during Treatment."
+                )
+            }
+            if treatmentCreationPath == .agentProposal,
+               (dialog.fileIntake != nil || dialog.textField?.multiline == true) {
+                throw ToolError(
+                    "The user chose an agent-proposed treatment. Create 2–3 variants from the approved analysis, lyrics, Brief, and Production Design; do not request a treatment upload or long-form treatment text."
+                )
+            }
         default:
             if dialog.workflowDecision != nil {
                 throw ToolError(
-                    "The declared analysis decision is not valid during \(PhaseDisplay.label(phase))."
+                    "The declared workflow decision is not valid during \(PhaseDisplay.label(phase))."
                 )
             }
+        }
+    }
+
+    func recordAgentDecision(
+        _ dialog: AgentDialog,
+        result: AgentDialogResult,
+        selectedOptionIDs: [String: Set<String>]
+    ) throws {
+        guard dialog.workflowDecision == .treatmentPath else { return }
+        treatmentCreationPath = try Self.resolveTreatmentCreationPath(
+            dialog,
+            result: result,
+            selectedOptionIDs: selectedOptionIDs
+        )
+    }
+
+    static func resolveTreatmentCreationPath(
+        _ dialog: AgentDialog,
+        result: AgentDialogResult,
+        selectedOptionIDs: [String: Set<String>]
+    ) throws -> TreatmentCreationPath {
+        try validateTreatmentPathDialog(dialog)
+        let explicit = selectedOptionIDs["treatment_path"] ?? []
+        let selected: Set<String>
+        if explicit.isEmpty {
+            let labels = Set(result.labels("treatment_path"))
+            guard let section = dialog.sections.first,
+                  case .choices(let options, _) = section.kind else {
+                throw ToolError("Choose how the Treatment should be created.")
+            }
+            selected = Set(options.filter { labels.contains($0.label) }.map(\.id))
+        } else {
+            selected = explicit
+        }
+        if selected == ["agent_proposal"] {
+            return .agentProposal
+        } else if selected == ["user_supplied"] {
+            return .userSupplied
+        } else if selected.isEmpty,
+                  result.customValues["treatment_path"]?
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return .custom
+        } else {
+            throw ToolError("Choose one Treatment path before continuing.")
+        }
+    }
+
+    static func validateTreatmentPathDialog(_ dialog: AgentDialog) throws {
+        guard dialog.workflowDecision == .treatmentPath,
+              dialog.fileIntake == nil,
+              dialog.textField == nil,
+              dialog.sections.count == 1,
+              let section = dialog.sections.first,
+              section.id == "treatment_path",
+              section.allowsCustom,
+              case .choices(let options, let multiSelect) = section.kind,
+              !multiSelect,
+              options.map(\.id) == ["agent_proposal", "user_supplied"] else {
+            throw ToolError(
+                "The Treatment path dialog must contain one single-select treatment_path section with agent_proposal first, user_supplied second, and Other enabled; it must not request text or a file."
+            )
         }
     }
 

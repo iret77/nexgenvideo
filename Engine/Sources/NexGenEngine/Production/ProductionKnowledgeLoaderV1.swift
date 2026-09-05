@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ProductionKnowledgeErrorV1: Error, Equatable, LocalizedError {
+public enum ProductionKnowledgeErrorV1: Error, Equatable, LocalizedError, Sendable {
     case resourceRootMissing
     case missingResource(String)
     case invalidJSON(path: String, reason: String)
@@ -59,8 +59,11 @@ public struct ProductionKnowledgeCatalogV1: Sendable, Equatable {
     }
 
     private static func rejectConflicts(_ resources: [(String, String)], kind: String) throws {
-        for (id, values) in Dictionary(grouping: resources, by: { $0.0 }) {
-            guard values.count > 1 else { continue }
+        let grouped = Dictionary(grouping: resources, by: { $0.0 })
+        if let id = grouped.keys.sorted().first(where: {
+            grouped[$0, default: []].count > 1
+        }) {
+            let values = grouped[id, default: []]
             throw ProductionKnowledgeErrorV1.conflictingResource(
                 kind: kind,
                 id: id,
@@ -174,18 +177,20 @@ public struct ProductionKnowledgeLoaderV1: Sendable {
         _ references: [ProductionKnowledgeResourceReferenceV1]
     ) throws {
         let grouped = Dictionary(grouping: references) { "\($0.kind.rawValue):\($0.id)" }
-        for references in grouped.values where references.count > 1 {
-            guard let first = references.first else { continue }
+        if let key = grouped.keys.sorted().first(where: {
+            grouped[$0, default: []].count > 1
+        }), let first = grouped[key]?.first {
+            let references = grouped[key, default: []]
             throw ProductionKnowledgeErrorV1.conflictingResource(
                 kind: first.kind.rawValue,
                 id: first.id,
                 versions: references.map { $0.version.rawValue }.sorted()
             )
         }
-        let duplicatePaths = Dictionary(grouping: references, by: \.path).values.first {
-            $0.count > 1
-        }
-        if let duplicatePaths, let path = duplicatePaths.first?.path {
+        let paths = Dictionary(grouping: references, by: \.path)
+        if let path = paths.keys.sorted().first(where: {
+            paths[$0, default: []].count > 1
+        }) {
             throw ProductionKnowledgeErrorV1.invalidValue(
                 path: "manifest.json.resources.path",
                 reason: "duplicate resource path \(path)"
@@ -202,7 +207,25 @@ public struct ProductionKnowledgeLoaderV1: Sendable {
     }
 }
 
+final class ProductionKnowledgeCatalogCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var catalog: ProductionKnowledgeCatalogV1?
+
+    func load(
+        _ loader: () throws -> ProductionKnowledgeCatalogV1
+    ) rethrows -> ProductionKnowledgeCatalogV1 {
+        lock.lock()
+        defer { lock.unlock() }
+        if let catalog { return catalog }
+        let loaded = try loader()
+        catalog = loaded
+        return loaded
+    }
+}
+
 public enum EngineProductionKnowledgeResourcesV1 {
+    private static let catalogCache = ProductionKnowledgeCatalogCache()
+
     public static func rootURL() throws -> URL {
         let fileManager = FileManager.default
         for bundleURL in resourceBundleCandidates() {
@@ -215,7 +238,9 @@ public enum EngineProductionKnowledgeResourcesV1 {
     }
 
     public static func loadCatalog() throws -> ProductionKnowledgeCatalogV1 {
-        try ProductionKnowledgeLoaderV1(rootURL: rootURL()).load()
+        try catalogCache.load {
+            try ProductionKnowledgeLoaderV1(rootURL: rootURL()).load()
+        }
     }
 
     private static func resourceBundleCandidates() -> [URL] {
@@ -303,6 +328,7 @@ private enum ProductionKnowledgeClosedSchemaV1 {
 
     static func decodeProfile(_ data: Data, path: String) throws -> ProductionProfileDescriptorV1 {
         let root = try object(data, path: path)
+        try ProductionKnowledgeStructuralLintV1.validate(root, path: path)
         try exactKeys(
             root,
             allowed: [
@@ -343,6 +369,19 @@ private enum ProductionKnowledgeClosedSchemaV1 {
         }
         try unique(profile.phaseGuidance.map(\.phase), path: "\(path).phaseGuidance.phase")
         try unique(profile.machineRules.map(\.id), path: "\(path).machineRules.id")
+        let applicabilityPhases = Set(profile.applicability.phases)
+        guard Set(profile.phaseGuidance.map(\.phase)) == applicabilityPhases else {
+            throw invalid(
+                "\(path).phaseGuidance.phase",
+                "must exactly cover the profile applicability phases"
+            )
+        }
+        guard Set(profile.machineRules.map(\.phase)).isSubset(of: applicabilityPhases) else {
+            throw invalid(
+                "\(path).machineRules.phase",
+                "must be contained in the profile applicability phases"
+            )
+        }
         for (index, guidance) in profile.phaseGuidance.enumerated() {
             try validID(guidance.phase, path: "\(path).phaseGuidance[\(index)].phase")
             try nonempty(guidance.instructions, path: "\(path).phaseGuidance[\(index)].instructions")
@@ -360,6 +399,7 @@ private enum ProductionKnowledgeClosedSchemaV1 {
 
     static func decodeLibrary(_ data: Data, path: String) throws -> CreativeKnowledgeLibraryV1 {
         let root = try object(data, path: path)
+        try ProductionKnowledgeStructuralLintV1.validate(root, path: path)
         try exactKeys(
             root,
             allowed: [
@@ -407,11 +447,23 @@ private enum ProductionKnowledgeClosedSchemaV1 {
             try validID(entry.id.rawValue, path: "\(entryPath).id")
             try nonempty(entry.title, path: "\(entryPath).title")
             try validate(entry.applicability, path: "\(entryPath).applicability")
+            guard Set(entry.applicability.phases).isSubset(
+                of: Set(library.applicability.phases)
+            ) else {
+                throw invalid(
+                    "\(entryPath).applicability.phases",
+                    "must be contained in the library applicability phases"
+                )
+            }
             try nonempty(entry.outputIntent, path: "\(entryPath).outputIntent")
             try nonempty(entry.guidance, path: "\(entryPath).guidance")
             try nonempty(entry.verifyCriteria, path: "\(entryPath).verifyCriteria")
             for (inputIndex, input) in entry.inputs.enumerated() {
                 try validID(input.role, path: "\(entryPath).inputs[\(inputIndex)].role")
+                try ProductionKnowledgeStructuralLintV1.validateInputRole(
+                    input.role,
+                    path: "\(entryPath).inputs[\(inputIndex)].role"
+                )
                 try nonempty(input.purpose, path: "\(entryPath).inputs[\(inputIndex)].purpose")
             }
         }
@@ -590,5 +642,88 @@ private enum ProductionKnowledgeClosedSchemaV1 {
 
     private static func invalid(_ path: String, _ reason: String) -> ProductionKnowledgeErrorV1 {
         .invalidValue(path: path, reason: reason)
+    }
+}
+private enum ProductionKnowledgeStructuralLintV1 {
+    private static let forbiddenObjectKeys: Set<String> = [
+        "providerid", "providerids", "modelid", "modelids",
+        "capability", "capabilities", "capabilityfield", "capabilityfields",
+        "capabilitylimit", "capabilitylimits", "characterlimit", "durationlimit",
+        "referencelimit", "referencecountlimit", "requestparameter", "requestparameters",
+        "requestsyntax", "providersyntax", "modelsyntax", "endpointparameter",
+        "endpointparameters", "executableparameter", "executableparameters",
+        "projectid", "projectids", "projectassetid", "projectassetids",
+        "projectcanon", "canonartifactid", "canonassetid", "assetpath", "assetpaths",
+    ]
+
+    private static let forbiddenTypedRoles: Set<String> = [
+        "provider", "providerid", "providerids", "model", "modelid", "modelids",
+        "capability", "capabilityfield", "capabilitylimit", "requestparameter",
+        "requestsyntax", "endpointparameter", "projectid", "projectassetid",
+        "canonartifactid", "canonassetid", "assetpath",
+    ]
+
+    static func validate(_ value: Any, path: String) throws {
+        if let object = value as? [String: Any] {
+            for key in object.keys.sorted() {
+                let normalized = normalize(key)
+                guard !forbiddenObjectKeys.contains(normalized) else {
+                    throw ProductionKnowledgeErrorV1.invalidValue(
+                        path: "\(path).\(key)",
+                        reason: "forbidden structural production-knowledge field \(key)"
+                    )
+                }
+                if let nested = object[key] {
+                    try validate(nested, path: "\(path).\(key)")
+                }
+            }
+        } else if let array = value as? [Any] {
+            for (index, nested) in array.enumerated() {
+                try validate(nested, path: "\(path)[\(index)]")
+            }
+        }
+    }
+
+    static func validateInputRole(_ role: String, path: String) throws {
+        let normalized = normalize(role)
+        let tokens = Set(
+            role.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+        )
+        let typedIdentity = !tokens.isDisjoint(with: ["provider", "model", "capability"])
+        let typedRequest = tokens.contains("request")
+            && !tokens.isDisjoint(with: ["field", "parameter", "syntax"])
+        let typedLimit = tokens.contains("limit")
+            && !tokens.isDisjoint(with: ["capability", "character", "duration", "reference"])
+        let typedCapabilityField =
+            (!tokens.isDisjoint(with: ["capacity", "count", "maximum", "minimum", "total"])
+                && !tokens.isDisjoint(with: ["character", "characters", "duration", "reference", "references"]))
+            || (tokens.contains("visible") && tokens.contains("characters"))
+        let projectAsset = tokens.contains("project")
+            && !tokens.isDisjoint(with: ["asset", "canon"])
+        let canonAsset = tokens.contains("canon")
+            && !tokens.isDisjoint(with: ["artifact", "asset", "id"])
+        let assetPath = tokens == Set(["asset", "path"])
+        guard !forbiddenTypedRoles.contains(normalized),
+              !typedIdentity,
+              !typedRequest,
+              !typedLimit,
+              !typedCapabilityField,
+              !projectAsset,
+              !canonAsset,
+              !assetPath else {
+            throw ProductionKnowledgeErrorV1.invalidValue(
+                path: path,
+                reason: "provider, model, capability, request, and project-asset identifiers are not creative-knowledge inputs"
+            )
+        }
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value.lowercased().unicodeScalars
+            .filter(CharacterSet.alphanumerics.contains)
+            .map { String($0) }
+            .joined()
     }
 }

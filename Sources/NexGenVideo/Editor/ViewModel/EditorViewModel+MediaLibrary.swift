@@ -282,7 +282,7 @@ enum DurableMediaStore {
         into mediaDirectory: URL,
         reusableByDigest: [String: URL],
         fileExtension: String? = nil
-    ) throws -> DurableMediaCopy {
+    ) async throws -> DurableMediaCopy {
         let fm = FileManager.default
         let source = fileURL.standardizedFileURL.resolvingSymlinksInPath()
         let projectMedia = mediaDirectory.standardizedFileURL.resolvingSymlinksInPath()
@@ -296,11 +296,20 @@ enum DurableMediaStore {
             throw MediaImportError.sourceNotFile(fileURL.lastPathComponent)
         }
         if source.path == projectMedia.path || source.path.hasPrefix(projectMedia.path + "/") {
-            return DurableMediaCopy(
-                url: source,
-                created: false,
-                digest: try digest(of: source)
-            )
+            do {
+                return DurableMediaCopy(
+                    url: source,
+                    created: false,
+                    digest: try digest(of: source)
+                )
+            } catch is CancellationError {
+                throw MediaImportError.cancelled
+            } catch {
+                throw MediaImportError.copyFailed(
+                    fileURL.lastPathComponent,
+                    error.localizedDescription
+                )
+            }
         }
 
         let staging = mediaDirectory.appendingPathComponent(
@@ -327,7 +336,8 @@ enum DurableMediaStore {
             }
             var hasher = SHA256()
             while let data = try input.read(upToCount: chunkBytes), !data.isEmpty {
-                if Task.isCancelled { throw CancellationError() }
+                await Task.yield()
+                try Task.checkCancellation()
                 hasher.update(data: data)
                 try output.write(contentsOf: data)
             }
@@ -335,7 +345,7 @@ enum DurableMediaStore {
             let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
             if let reusable = reusableByDigest[digest],
                fm.fileExists(atPath: reusable.path),
-               (try? Self.digest(of: reusable)) == digest {
+               try Self.matchesDigest(digest, at: reusable) {
                 try fm.removeItem(at: staging)
                 completed = true
                 return DurableMediaCopy(url: reusable, created: false, digest: digest)
@@ -359,7 +369,7 @@ enum DurableMediaStore {
                 try fm.moveItem(at: staging, to: destination)
             } catch {
                 guard fm.fileExists(atPath: destination.path),
-                      (try? Self.digest(of: destination)) == digest else {
+                      try Self.matchesDigest(digest, at: destination) else {
                     throw error
                 }
                 try fm.removeItem(at: staging)
@@ -377,6 +387,16 @@ enum DurableMediaStore {
                 fileURL.lastPathComponent,
                 error.localizedDescription
             )
+        }
+    }
+
+    private static func matchesDigest(_ expected: String, at url: URL) throws -> Bool {
+        do {
+            return try digest(of: url) == expected
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return false
         }
     }
 }
@@ -424,7 +444,7 @@ private enum MediaImportPreparer {
             for (index, file) in plan.files.enumerated() {
                 if Task.isCancelled { throw MediaImportError.cancelled }
                 await progress(index, file.name)
-                let copy = try DurableMediaStore.copy(
+                let copy = try await DurableMediaStore.copy(
                     file.url,
                     into: mediaDirectory,
                     reusableByDigest: reusableByDigest,

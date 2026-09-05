@@ -313,6 +313,7 @@ struct SettingsCard<Content: View>: View {
 }
 
 struct SettingsRow<Accessory: View>: View {
+    @Environment(\.interfaceScale) private var textScale
     let title: String
     let subtitle: String?
     let accessory: Accessory

@@ -13,10 +13,22 @@
           ]
         },
         {
+          "heading": "Production intelligence",
+          "items": [
+            "Music Video now selects only the production doctrine, camera, story, continuity, and production-sheet guidance relevant to the current phase and intent, within a deterministic context budget.",
+            "Shot planning and sanity checks can evaluate visible-character, duration, and reference demands against the selected generation route instead of fixed global limits."
+          ]
+        },
+        {
           "heading": "Fixes",
           "items": [
             "Storyboard approval now opens the current storyboard in a readable view and checks its current source and gate readiness before approval.",
-            "Removing an installed format-pack version keeps confirmation actionable, rechecks project use and reports blocked removals or filesystem errors."
+            "Removing an installed format-pack version keeps confirmation actionable, rechecks project use and reports blocked removals or filesystem errors.",
+            "Generated Agent images now open from a legible preview into a bounded viewer with fit and zoom controls.",
+            "Spend approval remembers the last confirmed provider and model per media type, changes choices without repeated credential discovery, and shows only relevant provider diagnostics.",
+            "Completed paid generations resume their existing Agent runtime without a false connection-loss interruption.",
+            "Project saves refresh the package modification date after host writes, preventing false external-change warnings.",
+            "Treatment can begin with Agent-proposed variants instead of requiring an uploaded document, and current Higgsfield job_type catalogs remain discoverable and runnable."
           ]
         }
       ]

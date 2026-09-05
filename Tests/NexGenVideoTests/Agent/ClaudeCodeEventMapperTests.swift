@@ -6,6 +6,52 @@ import Testing
 
 @Suite("ClaudeCodeEventMapper")
 struct ClaudeCodeEventMapperTests {
+    @Test func hostResultReplacesTheSuspendedToolResultInPlace() throws {
+        var mapper = ClaudeCodeEventMapper()
+        mapper.seed([
+            AgentMessage(role: .assistant, blocks: [
+                .toolUse(id: "image-1", name: "generate_image", inputJSON: "{}"),
+            ]),
+            AgentMessage(role: .user, blocks: [
+                .toolResult(
+                    toolUseId: "image-1",
+                    content: [.text("waiting for host")],
+                    isError: false
+                ),
+            ]),
+        ])
+        let completed = ToolResult(
+            content: [
+                .text("Image completed"),
+                .image(base64: "aW1hZ2U=", mediaType: "image/png"),
+            ],
+            isError: false
+        )
+
+        let didReplace = mapper.replaceToolResult(
+            containingText: "waiting for host",
+            with: completed
+        )
+        #expect(didReplace)
+        guard case .toolResult(_, let content, let isError) =
+            mapper.messages[1].blocks[0] else {
+            Issue.record("Expected the completed tool result in its original transcript slot")
+            return
+        }
+        #expect(content.count == 2)
+        if case .text(let text) = content[0] {
+            #expect(text == "Image completed")
+        } else {
+            Issue.record("Expected completed result text")
+        }
+        if case .image(let base64, let mediaType) = content[1] {
+            #expect(base64 == "aW1hZ2U=")
+            #expect(mediaType == "image/png")
+        } else {
+            Issue.record("Expected completed result image")
+        }
+        #expect(!isError)
+    }
 
     // MARK: helpers
 

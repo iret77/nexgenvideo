@@ -32,7 +32,8 @@ struct ProductionDisciplineTests {
         sourceMode: SourceMode = .generated,
         cameraId: String? = nil,
         characterBlocking: [CharacterBlocking] = [],
-        visibleZones: [String] = []
+        visibleZones: [String] = [],
+        referenceImageRefs: [String] = []
     ) throws -> Shot {
         try Shot(
             id: id,
@@ -49,8 +50,23 @@ struct ProductionDisciplineTests {
             visibleZones: visibleZones,
             characterBlocking: characterBlocking,
             cameraId: cameraId,
+            referenceImageRefs: referenceImageRefs,
             productionPlan: plan
         )
+    }
+
+    private static func route(
+        maximumVisibleCharacters: Int? = nil,
+        maximumDurationSeconds: Double? = nil,
+        maximumReferences: Int? = nil
+    ) -> ProductionDisciplineSidecarV1 {
+        ProductionDisciplineSidecarV1(routesByShotID: [
+            "s001": ProductionRouteDisciplineV1(
+                maximumVisibleCharacters: maximumVisibleCharacters,
+                maximumDurationSeconds: maximumDurationSeconds,
+                maximumReferences: maximumReferences
+            ),
+        ])
     }
 
     private static func shotlist(_ shots: [Shot]) throws -> Shotlist {
@@ -103,6 +119,26 @@ struct ProductionDisciplineTests {
             characters: ["a", "b", "c"],
             plan: Self.plan()
         )
+        var ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            productionProfileIDs: [.generativeFilm]
+        )
+        ctx.productionDisciplineSidecar = Self.route(
+            maximumVisibleCharacters: 2,
+            maximumDurationSeconds: 12
+        )
+        let codes = Set(try productionRenderabilityCheck(ctx).map(\.code))
+        #expect(codes == ["TOO_MANY_VISIBLE_CHARACTERS", "LONG_TAKE_RISK_UNDECLARED"])
+    }
+
+    @Test("generated shots have no universal feasibility caps without a selected route")
+    func noUniversalFeasibilityCaps() throws {
+        let shot = try Self.shot(
+            end: 90,
+            characters: ["a", "b", "c", "d"],
+            plan: Self.plan(),
+            referenceImageRefs: ["one.png", "two.png", "three.png"]
+        )
         let ctx = AuditContext(
             shotlist: try Self.shotlist([shot]),
             productionProfileIDs: [.generativeFilm]
@@ -129,12 +165,33 @@ struct ProductionDisciplineTests {
             characters: ["trio"],
             plan: Self.plan()
         )
-        let ctx = AuditContext(
+        var ctx = AuditContext(
             shotlist: try Self.shotlist([shot]),
             bible: bible,
             productionProfileIDs: [.generativeFilm]
         )
-        #expect(try productionRenderabilityCheck(ctx).isEmpty)
+        ctx.productionDisciplineSidecar = Self.route(maximumVisibleCharacters: 2)
+        #expect(
+            try productionRenderabilityCheck(ctx).map(\.code)
+                == ["TOO_MANY_VISIBLE_CHARACTERS"]
+        )
+    }
+
+    @Test("reference limits come from the selected route")
+    func routeReferenceCapacity() throws {
+        let shot = try Self.shot(
+            plan: Self.plan(),
+            referenceImageRefs: ["one.png", "two.png", "three.png"]
+        )
+        var ctx = AuditContext(
+            shotlist: try Self.shotlist([shot]),
+            productionProfileIDs: [.generativeFilm]
+        )
+        ctx.productionDisciplineSidecar = Self.route(maximumReferences: 2)
+        #expect(
+            try productionRenderabilityCheck(ctx).map(\.code)
+                == ["REFERENCE_CAPACITY_EXCEEDED"]
+        )
     }
 
     @Test("declared long takes carry a rescue cut")
@@ -147,11 +204,77 @@ struct ProductionDisciplineTests {
                 rescue: "Split at the doorway and continue on the reaction."
             )
         )
-        let ctx = AuditContext(
+        var ctx = AuditContext(
             shotlist: try Self.shotlist([shot]),
             productionProfileIDs: [.generativeFilm]
         )
+        ctx.productionDisciplineSidecar = Self.route(maximumDurationSeconds: 12)
         #expect(try productionRenderabilityCheck(ctx).isEmpty)
+    }
+
+    @Test("route discipline round-trips through the ABI-safe audit carrier")
+    func routeDisciplineRoundTrip() throws {
+        var ctx = AuditContext(
+            shotlist: try Self.shotlist([Self.shot()]),
+            extra: ["pack.value": "preserved"]
+        )
+        let sidecar = Self.route(
+            maximumVisibleCharacters: 4,
+            maximumDurationSeconds: 18,
+            maximumReferences: 6
+        )
+
+        ctx.productionDisciplineSidecar = sidecar
+
+        #expect(ctx.productionDisciplineSidecar == sidecar)
+        #expect(ctx.extra?["pack.value"] == "preserved")
+    }
+
+    @Test("route discipline is derived from an effective capability profile")
+    func routeDisciplineFromCapabilities() {
+        let origin = ResolvedCapabilityOriginV1(
+            kind: .exact,
+            profileID: "fixture-video-profile"
+        )
+        let profile = ResolvedCapabilityProfileV1(
+            requestedIdentity: nil,
+            resolvedIdentity: nil,
+            defensiveProfileID: nil,
+            researchNeeded: false,
+            fields: ResolvedCapabilityFieldsV1(
+                integers: [
+                    CapabilityFieldIDV1.visibleCharacters: ResolvedCapabilityValueV1(
+                        value: 5,
+                        semantics: .reliableCapacity,
+                        origin: origin,
+                        evidence: []
+                    ),
+                    CapabilityFieldIDV1.totalReferences: ResolvedCapabilityValueV1(
+                        value: 7,
+                        semantics: .hardAPILimit,
+                        origin: origin,
+                        evidence: []
+                    ),
+                ],
+                decimals: [
+                    CapabilityFieldIDV1.durationMaximum: ResolvedCapabilityValueV1(
+                        value: 24,
+                        semantics: .hardAPILimit,
+                        origin: origin,
+                        evidence: []
+                    ),
+                ]
+            )
+        )
+
+        #expect(
+            ProductionRouteDisciplineV1(capabilityProfile: profile)
+                == ProductionRouteDisciplineV1(
+                maximumVisibleCharacters: 5,
+                maximumDurationSeconds: 24,
+                maximumReferences: 7
+            )
+        )
     }
 
     @Test("AI-enhanced shots do not inherit generated-shot feasibility limits")
@@ -170,9 +293,14 @@ struct ProductionDisciplineTests {
             sourceMode: .aiEnhanced,
             characterBlocking: [blocking]
         )
-        let ctx = AuditContext(
+        var ctx = AuditContext(
             shotlist: try Self.shotlist([shot]),
             productionProfileIDs: [.generativeFilm]
+        )
+        ctx.productionDisciplineSidecar = Self.route(
+            maximumVisibleCharacters: 1,
+            maximumDurationSeconds: 5,
+            maximumReferences: 0
         )
         #expect(try productionRenderabilityCheck(ctx).isEmpty)
     }

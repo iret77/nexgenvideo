@@ -202,8 +202,8 @@ struct MCPModelDiscoveryTests {
     @Test func everyMalformedCatalogAliasAndKeyFormIsDetected() {
         let aliases = [
             "items", "models", "job_sets", "jobSets", "model", "job_set", "jobSet",
-            "job_set_type", "jobSetType", "model_id", "modelId", "output_type",
-            "outputType", "modality",
+            "job_set_type", "jobSetType", "job_type", "jobType", "model_id", "modelId",
+            "output_type", "outputType", "modality",
         ]
         for alias in aliases {
             for payload in [
@@ -321,6 +321,8 @@ struct MCPModelDiscoveryTests {
             (#"[{"id":"by-id"}]"#, "by-id"),
             (#"[{"job_set_type":"by-job-set"}]"#, "by-job-set"),
             (#"[{"jobSetType":"by-job-set-camel"}]"#, "by-job-set-camel"),
+            (#"[{"job_type":"by-job-type"}]"#, "by-job-type"),
+            (#"[{"jobType":"by-job-type-camel"}]"#, "by-job-type-camel"),
             (#"[{"model_id":"by-model-id"}]"#, "by-model-id"),
             (#"[{"modelId":"by-model-id-camel"}]"#, "by-model-id-camel"),
         ] {
@@ -625,7 +627,7 @@ struct MCPModelDiscoveryTests {
         #expect(ids == ["first", "second"])
     }
 
-    @Test func currentHiggsfieldJobSetShapeIsDiscovered() {
+    @Test func legacyHiggsfieldJobSetShapeIsStillDiscovered() {
         let listing = #"""
         {"data":{"models":[
           {"job_set_type":"nano_banana_2","display_name":"Nano Banana Pro","type":"image",
@@ -638,6 +640,17 @@ struct MCPModelDiscoveryTests {
         #expect(parsed.items.map(\.id) == ["nano_banana_2", "gpt_image_2"])
         #expect(parsed.items.map(\.outputType) == ["image", "image"])
         #expect(parsed.items.first?.name == "Nano Banana Pro")
+    }
+
+    @Test func currentHiggsfieldJobTypeShapeIsDiscovered() {
+        let listing = #"""
+        {"items":[{"job_type":"nano_banana_pro","name":"Nano Banana Pro","type":"image"}],"has_more":false}
+        """#
+        let parsed = MCPModelDiscovery.parseListingResult(listing)
+
+        #expect(parsed.items.map(\.id) == ["nano_banana_pro"])
+        #expect(parsed.items.map(\.outputType) == ["image"])
+        #expect(parsed.isComplete)
     }
 
     @Test func requestedModalityFillsLeanCatalogItems() {
