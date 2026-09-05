@@ -282,7 +282,7 @@ enum DurableMediaStore {
         into mediaDirectory: URL,
         reusableByDigest: [String: URL],
         fileExtension: String? = nil
-    ) throws -> DurableMediaCopy {
+    ) async throws -> DurableMediaCopy {
         let fm = FileManager.default
         let source = fileURL.standardizedFileURL.resolvingSymlinksInPath()
         let projectMedia = mediaDirectory.standardizedFileURL.resolvingSymlinksInPath()
@@ -327,7 +327,8 @@ enum DurableMediaStore {
             }
             var hasher = SHA256()
             while let data = try input.read(upToCount: chunkBytes), !data.isEmpty {
-                if Task.isCancelled { throw CancellationError() }
+                await Task.yield()
+                try Task.checkCancellation()
                 hasher.update(data: data)
                 try output.write(contentsOf: data)
             }
@@ -424,7 +425,7 @@ private enum MediaImportPreparer {
             for (index, file) in plan.files.enumerated() {
                 if Task.isCancelled { throw MediaImportError.cancelled }
                 await progress(index, file.name)
-                let copy = try DurableMediaStore.copy(
+                let copy = try await DurableMediaStore.copy(
                     file.url,
                     into: mediaDirectory,
                     reusableByDigest: reusableByDigest,
