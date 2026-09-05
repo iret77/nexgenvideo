@@ -402,6 +402,42 @@ struct CatalogDiscoveryTests {
     }
 
     @MainActor
+    @Test("Higgsfield job_type catalog entries remain runnable")
+    func higgsfieldJobTypeCatalogRemainsRunnable() async {
+        let generationSchema: Value = .object([
+            "properties": .object([
+                "job_type": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+            ]),
+            "required": .array([.string("job_type"), .string("prompt")]),
+        ])
+        let tools = [
+            MCPProviderClient.DiscoveredTool(
+                name: "generate_image",
+                description: "Generate an image.",
+                inputSchema: generationSchema
+            ),
+            MCPProviderClient.DiscoveredTool(
+                name: "models_explore",
+                description: "Find generation models.",
+                inputSchema: .object([:])
+            ),
+        ] + mappableHiggsfieldResultLifecycle
+        let client = StubClient(
+            tools: tools,
+            listing: #"""
+            {"items":[{"job_type":"nano_banana_pro","name":"Nano Banana Pro","type":"image"}],"has_more":false}
+            """#
+        )
+
+        let result = await CatalogDiscovery.discoverResult(.higgsfield, client: client)
+
+        #expect(result.entries.map(\.id) == ["nano_banana_pro"])
+        #expect(result.entries.first?.offers?.first?.modelParam == "nano_banana_pro")
+        #expect(result.modelListingIsComplete)
+    }
+
+    @MainActor
     @Test("One incompatible MCP model does not withhold valid siblings")
     func incompatibleModelPayloadIsIsolated() async {
         let tools = [

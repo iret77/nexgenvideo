@@ -219,6 +219,27 @@ struct ImageOfferingSelectionTests {
         #expect(messages == ["Higgsfield: No model supports this request."])
     }
 
+    @Test("A selected provider does not show another provider's failure")
+    func selectedProviderDiagnosticsStayScoped() {
+        let fal = spendOption(
+            modelID: "fal-ai/nano-banana",
+            provider: .fal,
+            transport: .api,
+            endpoint: "fal-ai/nano-banana"
+        )
+
+        let messages = SpendApprovalProviderDiagnostics.messages(
+            providerScope: [.fal],
+            availableOptions: [fal],
+            discovery: [
+                .fal: .ready(modelCount: 1),
+                .higgsfield: .actionRequired("Sign in again."),
+            ]
+        )
+
+        #expect(messages.isEmpty)
+    }
+
     @Test("Verified MCP offerings remain usable while stale and fail closed after authentication loss")
     func cachedMCPEntriesRespectProviderAvailability() throws {
         let higgsfield = mcpEntry(

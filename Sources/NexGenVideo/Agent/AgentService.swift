@@ -404,6 +404,22 @@ final class AgentService {
                 return
             }
         }
+        if dialog.purpose == .chatClarification, let editor {
+            do {
+                try editor.pipelineAgentHarness.guardAgentDecision(
+                    dialog,
+                    editor: editor
+                )
+                try editor.pipelineAgentHarness.recordAgentDecision(
+                    dialog,
+                    result: result,
+                    selectedOptionIDs: dialogChoiceSelections
+                )
+            } catch {
+                dialogSubmissionError = error.localizedDescription
+                return
+            }
+        }
         submittingDialogID = dialog.id
         dialogSubmissionError = nil
         if dialog.purpose == .chatClarification {
@@ -1433,14 +1449,18 @@ final class AgentService {
             }
         )
         suspendToolCalls(from: origin)
-        pendingSpendApproval = approval
+        pendingSpendApproval = SpendSelectionPreferences.applyingStoredSelection(
+            to: approval
+        )
         return .suspended(Self.spendSuspensionText)
     }
 
     func refreshSpendApproval() {
         guard let current = pendingSpendApproval,
               let refresh = spendApprovalRefresh else { return }
-        let updated = refresh()
+        let updated = SpendSelectionPreferences.applyingStoredSelection(
+            to: refresh()
+        )
         guard updated.id == current.id else { return }
         pendingSpendApproval = updated
     }
@@ -1467,6 +1487,7 @@ final class AgentService {
             spendApprovalError = error.localizedDescription
             return
         }
+        SpendSelectionPreferences.record(option, for: approval)
         pendingSpendApproval = nil
         spendApprovalRefresh = nil
         pendingSpendOperation = nil
@@ -1667,6 +1688,10 @@ final class AgentService {
         guard let sessionID = origin.chatSessionID else { return }
         if sessionID == currentSessionId {
             guard Self.replacePendingSpendToolResult(result, in: &messages) else { return }
+            _claudeRuntime?.replaceToolResult(
+                containingText: Self.spendSuspensionText,
+                with: result
+            )
             syncMessagesIntoCurrentSession()
             onSessionsChanged?()
             return
@@ -1725,7 +1750,7 @@ final class AgentService {
         guard prepareHostFollowUp() else { return false }
         hostFollowUpStartInProgress = true
         defer { hostFollowUpStartInProgress = false }
-        prepareToolCallsForFollowUp(from: followUp.origin)
+        prepareSpendToolCallsForFollowUp(from: followUp.origin)
         let followUpText = "Host generation result: \(followUp.text) Continue from this result; do not request the same spend approval again."
         let started: Bool
         if claudeRuntimeEnabled {
@@ -1845,6 +1870,15 @@ final class AgentService {
             _claudeRuntime = nil
         case .direct, .externalMCP:
             break
+        }
+    }
+
+    private func prepareSpendToolCallsForFollowUp(from origin: ToolCallOrigin) {
+        switch origin {
+        case .embeddedRuntime:
+            resumeToolCalls(from: origin)
+        default:
+            prepareToolCallsForFollowUp(from: origin)
         }
     }
 

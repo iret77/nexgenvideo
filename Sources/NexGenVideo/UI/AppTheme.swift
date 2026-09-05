@@ -333,7 +333,12 @@ enum AppTheme {
         static let pluginLauncherMaxHeight: CGFloat = 360
         static let captionPreviewMaxHeight: CGFloat = 150
         static let captionPreviewMaxTextWidthRatio: CGFloat = 0.9
-        static let toolImagePreviewMaxHeight: CGFloat = 50
+        static let toolImagePreviewMaxHeight: CGFloat = 220
+        static let toolImageViewerMin = CGSize(width: 600, height: 480)
+        static let toolImageViewerIdeal = CGSize(width: 900, height: 680)
+        static let toolImageViewerMinZoom: CGFloat = 1
+        static let toolImageViewerMaxZoom: CGFloat = 6
+        static let toolImageViewerZoomStep: CGFloat = 1.25
         static let agentChoiceChipMaxWidth: CGFloat = 320
         static let projectCardWidth: CGFloat = 150
         static let projectCardHeight: CGFloat = 120

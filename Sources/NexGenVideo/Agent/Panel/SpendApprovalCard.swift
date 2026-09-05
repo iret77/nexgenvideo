@@ -16,7 +16,6 @@ struct SpendApprovalCard: View {
 
     @State private var selectedOptionId: String
     @State private var approvalError: String?
-    @State private var providerKeyRevision = 0
     @FocusState private var focusedControl: SpendApprovalFocusTarget?
 
     init(
@@ -37,8 +36,7 @@ struct SpendApprovalCard: View {
     }
 
     private var availableOptions: [SpendOption] {
-        _ = providerKeyRevision
-        return approval.options.filter { $0.isCurrentlyAvailable }
+        approval.options
     }
 
     private var selectedOption: SpendOption? {
@@ -62,8 +60,9 @@ struct SpendApprovalCard: View {
     }
 
     private var providerIssues: [String] {
+        let scope = selectedProvider.map { [$0] } ?? approval.providerScope
         SpendApprovalProviderDiagnostics.messages(
-            providerScope: approval.providerScope,
+            providerScope: scope,
             availableOptions: availableOptions,
             discovery: ModelCatalog.shared.providerDiscovery
         )
@@ -100,11 +99,9 @@ struct SpendApprovalCard: View {
         .onChange(of: availableOptions.map(\.id)) { _, _ in normalizeSelection() }
         .onReceive(NotificationCenter.default.publisher(for: .providerKeysChanged)) { _ in
             onRefresh()
-            providerKeyRevision += 1
         }
         .onReceive(NotificationCenter.default.publisher(for: .modelCatalogChanged)) { _ in
             onRefresh()
-            providerKeyRevision += 1
         }
         .id(approval.id)
         .accessibilityElement(children: .contain)

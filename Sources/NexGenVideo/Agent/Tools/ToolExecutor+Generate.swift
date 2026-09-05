@@ -722,6 +722,7 @@ extension ToolExecutor {
     private func withSpendApproval(
         _ editor: EditorViewModel, currentModelId: String, currentModelName: String,
         credits: Int?, actionLabel: String,
+        selectionScope: SpendSelectionScope,
         pipelineTool: ToolName,
         origin: ToolCallOrigin,
         currentIsCompatible: Bool = true,
@@ -805,7 +806,8 @@ extension ToolExecutor {
                 actionLabel: actionLabel,
                 providerScope: GenerationProvider.allCases.filter {
                     providerScope.contains($0)
-                }
+                },
+                selectionScope: selectionScope
             )
         }
         return try editor.agentService.requestSpendApproval(
@@ -1080,6 +1082,7 @@ extension ToolExecutor {
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: editCredits, actionLabel: "Generate edit",
+            selectionScope: .video,
             pipelineTool: .generateVideo,
             origin: origin,
             alternatives: { self.cheaperVideoAlternatives(
@@ -1355,6 +1358,7 @@ extension ToolExecutor {
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate video",
+            selectionScope: .video,
             pipelineTool: .generateVideo,
             origin: origin,
             alternatives: { self.cheaperVideoAlternatives(
@@ -1622,6 +1626,7 @@ extension ToolExecutor {
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: credits, actionLabel: "Generate image",
+            selectionScope: .image,
             pipelineTool: .generateImage,
             origin: origin,
             currentIsCompatible: currentValidation == nil,
@@ -2342,6 +2347,7 @@ extension ToolExecutor {
         return try await withSpendApproval(
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: audioCredits, actionLabel: "Generate \(model.category.label)",
+            selectionScope: .audio,
             pipelineTool: .generateAudio,
             origin: origin,
             alternatives: { [] },
@@ -2400,6 +2406,7 @@ extension ToolExecutor {
             editor, currentModelId: model.id, currentModelName: model.displayName,
             credits: CostEstimator.upscaleCost(model: model, durationSeconds: upSeconds),
             actionLabel: "Upscale",
+            selectionScope: .upscale,
             pipelineTool: .upscaleMedia,
             origin: origin,
             alternatives: { [] },

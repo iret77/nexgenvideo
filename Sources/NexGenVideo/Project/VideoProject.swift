@@ -239,14 +239,23 @@ final class VideoProject: NSDocument {
         let migrationSourceURL = fileURL
         let clearsWorkingCopy = saveOperation != .saveToOperation
         super.save(to: url, ofType: typeName, for: saveOperation) { error in
-            if error == nil, clearsWorkingCopy, let savedWorkingCopyKey {
-                ProjectWorkingCopy.markSaved(key: savedWorkingCopyKey)
-                if let migrationSourceURL {
-                    ProjectPackMigration.complete(
-                        projectURL: migrationSourceURL
+            if error == nil, clearsWorkingCopy {
+                if let savedWorkingCopyKey {
+                    ProjectWorkingCopy.markSaved(key: savedWorkingCopyKey)
+                    if let migrationSourceURL {
+                        ProjectPackMigration.complete(
+                            projectURL: migrationSourceURL
+                        )
+                    }
+                    ProjectPackMigration.complete(projectURL: url)
+                }
+                do {
+                    try self.recordKnownPackageState(at: url)
+                } catch {
+                    Log.project.error(
+                        "saved package state refresh failed: \(error.localizedDescription)"
                     )
                 }
-                ProjectPackMigration.complete(projectURL: url)
             } else if error != nil {
                 self.clearSaveSnapshot()
             }
