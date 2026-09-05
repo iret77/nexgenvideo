@@ -872,7 +872,7 @@ private struct ToolResultImagePreview: View {
     let image: NSImage
     @Environment(\.dismiss) private var dismiss
     @State private var zoomScale = AppTheme.ComponentSize.toolImageViewerMinZoom
-    @GestureState private var gestureScale = AppTheme.ComponentSize.toolImageViewerMinZoom
+    @GestureState private var gestureScale = AppTheme.ComponentSize.toolImageViewerGestureIdentity
 
     private var effectiveZoom: CGFloat {
         limitedZoom(zoomScale * gestureScale)

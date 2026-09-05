@@ -339,6 +339,7 @@ enum AppTheme {
         static let toolImageViewerMinZoom: CGFloat = 1
         static let toolImageViewerMaxZoom: CGFloat = 6
         static let toolImageViewerZoomStep: CGFloat = 1.25
+        static let toolImageViewerGestureIdentity: CGFloat = 1
         static let agentChoiceChipMaxWidth: CGFloat = 320
         static let projectCardWidth: CGFloat = 150
         static let projectCardHeight: CGFloat = 120
