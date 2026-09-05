@@ -206,7 +206,7 @@ struct ProductionKnowledgeV1Tests {
             ProductionKnowledgeAssemblyQueryV1(
                 packID: "fixture-film",
                 phase: "shotlist",
-                intentTags: ["camera"],
+                intentTags: ["camera", "observational"],
                 activeProfileIDs: ["generative_film"],
                 activeLibraryIDs: ["camera-recipes"],
                 budget: exactBudget
