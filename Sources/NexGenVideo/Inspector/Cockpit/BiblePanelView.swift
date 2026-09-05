@@ -278,7 +278,7 @@ struct BibleEntityCard: View {
                 .textSelection(.enabled)
             Spacer(minLength: 0)
             Text(entity.id)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .lineLimit(1)
         }

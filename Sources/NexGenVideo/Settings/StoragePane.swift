@@ -77,7 +77,7 @@ struct StoragePane: View {
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     Spacer(minLength: AppTheme.Spacing.lg)
                     Text(ByteCountFormatter.string(fromByteCount: indexBytes, countStyle: .file))
-                        .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
+                        .interfaceFont(size: AppTheme.Typography.ui).monospacedDigit()
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Button("Clear index") { clearIndex() }
                         .controlSize(.small)
@@ -94,12 +94,12 @@ struct StoragePane: View {
                                 .interfaceFont(size: AppTheme.Typography.ui)
                                 .foregroundStyle(AppTheme.Text.secondaryColor)
                             Text(SearchIndexConfig.manifest.model)
-                                .font(.system(size: AppTheme.FontSize.xs).monospaced())
+                                .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                         }
                         Spacer(minLength: AppTheme.Spacing.lg)
                         Text(ByteCountFormatter.string(fromByteCount: modelBytes, countStyle: .file))
-                            .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
+                            .interfaceFont(size: AppTheme.Typography.ui).monospacedDigit()
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                         Button("Remove model") { removeModel() }
                             .controlSize(.small)
@@ -131,7 +131,7 @@ struct StoragePane: View {
                 .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Text(value)
-                .font(.system(size: AppTheme.FontSize.xs).monospaced())
+                .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .textSelection(.enabled)
                 .lineLimit(1)
@@ -139,7 +139,7 @@ struct StoragePane: View {
             Spacer(minLength: AppTheme.Spacing.lg)
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
+                    .interfaceFont(size: AppTheme.Typography.ui).monospacedDigit()
                     .foregroundStyle(AppTheme.Text.secondaryColor)
             }
         }

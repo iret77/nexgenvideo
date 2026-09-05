@@ -118,7 +118,7 @@ struct ReviewPanelView: View {
                     editor.inspectedObject = .shot(shot.shotId)
                 } label: {
                     Text(shot.shotId)
-                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold).monospaced())
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold, design: .monospaced)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                 }
                 .buttonStyle(.plain)
@@ -288,7 +288,7 @@ struct ReviewPanelView: View {
             ForEach(picked, id: \.self) { name in
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Text(name)
-                        .font(.system(size: AppTheme.FontSize.xxs).monospaced())
+                        .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .lineLimit(1)
                         .frame(width: AppTheme.ComponentSize.reviewSourceLabelWidth, alignment: .leading)

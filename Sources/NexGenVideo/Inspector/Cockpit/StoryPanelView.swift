@@ -377,7 +377,7 @@ struct StoryPanelView: View {
         case .loaded(.some(let data)):
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 Text("v\(data.version)")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 Text(data.bodyMarkdown)
                     .interfaceFont(size: AppTheme.Typography.ui)

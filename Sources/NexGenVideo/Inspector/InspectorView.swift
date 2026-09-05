@@ -1228,7 +1228,7 @@ struct InspectorView: View {
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Text(active.label)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium).monospacedDigit())
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 Image(systemName: "chevron.down")
                     .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)

@@ -223,7 +223,7 @@ struct TitleBarView: View {
                         .lineLimit(1)
                     if state.budgetEur > 0 {
                         Text(String(format: "€%.0f/%.0f", state.budgetSpentEur, state.budgetEur))
-                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium).monospacedDigit())
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
                             .foregroundStyle(state.budgetWarning ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                     }
                 }

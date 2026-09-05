@@ -111,11 +111,6 @@ struct PluginsPane: View {
         }
     }
 
-    private var removalTitle: String {
-        guard let pendingRemoval else { return "Remove format pack?" }
-        return "Remove \(pendingRemoval.displayName) \(pendingRemoval.version)?"
-    }
-
     private func versionRow(_ installedVersion: InstalledPluginVersion) -> some View {
         let presentation = removalPresentation(for: installedVersion)
         return SettingsRow(

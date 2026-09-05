@@ -45,7 +45,7 @@ struct ScrubbableNumberField: View {
                     TextField("", text: $editText)
                         .textFieldStyle(.plain)
                         .multilineTextAlignment(.trailing)
-                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium).monospacedDigit())
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
                         .foregroundStyle(AppTheme.Text.primaryColor)
                         .focused($editFocused)
                         .onAppear { editFocused = true }
@@ -56,7 +56,7 @@ struct ScrubbableNumberField: View {
                         }
                 } else {
                     Text(displayText)
-                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium).monospacedDigit())
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
                         .foregroundStyle(isMixed ? AppTheme.Text.tertiaryColor : ScrubbableTheme.accent)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                         .lineLimit(1)

@@ -42,7 +42,7 @@ struct PipelinePhaseProgressView: View {
                     Text(
                         "\(snapshot.completedUnitCount) of \(snapshot.totalUnitCount)"
                     )
-                    .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
+                    .interfaceFont(size: AppTheme.Typography.ui).monospacedDigit()
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
             }

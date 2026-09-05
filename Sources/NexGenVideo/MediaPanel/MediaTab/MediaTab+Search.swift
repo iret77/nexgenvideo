@@ -73,7 +73,7 @@ extension MediaTab {
                 Text(title)
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 Text("\(count)")
-                    .font(.system(size: AppTheme.FontSize.xs).monospacedDigit())
+                    .interfaceFont(size: AppTheme.Typography.ui).monospacedDigit()
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                 Spacer()
             }
@@ -107,7 +107,7 @@ extension MediaTab {
                 .lineLimit(1)
             if !isImage {
                 Text("\(timecode(range.lowerBound))–\(timecode(range.upperBound))")
-                    .font(.system(size: AppTheme.FontSize.xxs).monospacedDigit())
+                    .interfaceFont(size: AppTheme.Typography.metadata).monospacedDigit()
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
         }

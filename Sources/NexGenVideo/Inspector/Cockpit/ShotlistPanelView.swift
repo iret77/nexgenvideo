@@ -103,7 +103,7 @@ struct ShotlistPanelView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                 Text(shot.id)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold).monospaced())
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold, design: .monospaced)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 if let section = shot.section?.trimmingCharacters(in: .whitespaces), !section.isEmpty {
                     Text(section)

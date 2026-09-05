@@ -100,12 +100,12 @@ struct SanityPanelView: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Text(finding.code)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold).monospaced())
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold, design: .monospaced)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                     if let shot = targetShot {
                         Text(shot)
-                            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
+                            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                     Spacer(minLength: 0)

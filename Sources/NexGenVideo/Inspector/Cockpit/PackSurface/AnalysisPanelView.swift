@@ -404,7 +404,7 @@ struct DeclarativePackSurfaceView: View {
                     .progressViewStyle(.linear)
                     .tint(AppTheme.Accent.timecodeColor)
                     Text("\(progress.completedUnitCount) of \(progress.totalUnitCount)")
-                        .font(.system(size: AppTheme.FontSize.xxs).monospacedDigit())
+                        .interfaceFont(size: AppTheme.Typography.metadata).monospacedDigit()
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 } else {
                     ProgressView()

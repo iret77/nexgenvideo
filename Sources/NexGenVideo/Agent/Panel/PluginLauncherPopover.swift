@@ -151,7 +151,7 @@ private struct PluginCommandRow: View {
                             .foregroundStyle(AppTheme.Text.primaryColor)
                         if let hint = command.argumentHint {
                             Text(hint)
-                                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
+                                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                                 .padding(.horizontal, AppTheme.Spacing.xs)
                                 .padding(.vertical, AppTheme.Spacing.xxs)
