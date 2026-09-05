@@ -727,11 +727,3 @@ private enum ProductionKnowledgeStructuralLintV1 {
             .joined()
     }
 }
-
-private extension Character {
-    var isASCIIWholeNumber: Bool {
-        let scalars = String(self).unicodeScalars
-        return scalars.count == 1
-            && scalars.first.map { (48...57).contains($0.value) } == true
-    }
-}
