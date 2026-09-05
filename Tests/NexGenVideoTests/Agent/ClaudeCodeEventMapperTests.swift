@@ -28,10 +28,11 @@ struct ClaudeCodeEventMapperTests {
             isError: false
         )
 
-        #expect(mapper.replaceToolResult(
+        let didReplace = mapper.replaceToolResult(
             containingText: "waiting for host",
             with: completed
-        ))
+        )
+        #expect(didReplace)
         guard case .toolResult(_, let content, let isError) =
             mapper.messages[1].blocks[0] else {
             Issue.record("Expected the completed tool result in its original transcript slot")
