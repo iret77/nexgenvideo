@@ -4,6 +4,7 @@ import SwiftUI
 // Shared loading / empty / error / engine-not-ready state views for the cockpit panels, factored out
 // of the Bible panel's idiom so Pipeline / Shotlist / Sanity / Cost render identical states. Read-only.
 
+@MainActor
 enum CockpitStateView {
 
     /// Error / not-initialized state. `subject` is retained for call-site symmetry across the panels;
