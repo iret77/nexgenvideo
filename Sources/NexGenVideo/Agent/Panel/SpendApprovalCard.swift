@@ -61,7 +61,7 @@ struct SpendApprovalCard: View {
 
     private var providerIssues: [String] {
         let scope = selectedProvider.map { [$0] } ?? approval.providerScope
-        SpendApprovalProviderDiagnostics.messages(
+        return SpendApprovalProviderDiagnostics.messages(
             providerScope: scope,
             availableOptions: availableOptions,
             discovery: ModelCatalog.shared.providerDiscovery
@@ -293,7 +293,9 @@ enum SpendApprovalProviderDiagnostics {
                 return "\(provider.displayName): Refreshing available models."
             case .ready where !hasOption:
                 return "\(provider.displayName): No model supports this request."
-            case .inactive, .none where !hasOption:
+            case .inactive where !hasOption:
+                return "\(provider.displayName): No runnable model was discovered."
+            case .none where !hasOption:
                 return "\(provider.displayName): No runnable model was discovered."
             case .inactive, .checking, .ready, .none:
                 return nil
