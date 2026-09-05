@@ -65,7 +65,7 @@ struct MusicvideoPackTests {
         let catalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
         let assembler = ProductionKnowledgeContextAssemblerV1(
             catalog: catalog,
-            predicates: ProductionMachinePredicateRegistryV1.standard()
+            predicates: try ProductionMachinePredicateRegistryV1.standard()
         )
 
         func entries(
