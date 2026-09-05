@@ -117,7 +117,7 @@ extension EditorViewModel {
         let prepared: PreparedProjectSong
         do {
             prepared = try await Task.detached(priority: .userInitiated) {
-                try Self.prepareProjectSong(
+                try await Self.prepareProjectSong(
                     source,
                     destinationFilename: destinationFilename,
                     dataRoot: dataRoot,
@@ -304,7 +304,7 @@ extension EditorViewModel {
         destinationFilename: String,
         dataRoot: URL,
         mediaDirectory: URL
-    ) throws -> PreparedProjectSong {
+    ) async throws -> PreparedProjectSong {
         let fm = FileManager.default
         let audioDirectory = dataRoot.appendingPathComponent("audio", isDirectory: true)
         let staging = dataRoot.appendingPathComponent(
@@ -330,7 +330,7 @@ extension EditorViewModel {
             let stagedSong = staging.appendingPathComponent(destinationFilename)
             try fm.copyItem(at: source, to: stagedSong)
 
-            let copy = try DurableMediaStore.copy(
+            let copy = try await DurableMediaStore.copy(
                 source,
                 into: mediaDirectory,
                 reusableByDigest: [:]
