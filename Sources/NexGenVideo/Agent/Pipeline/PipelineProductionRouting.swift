@@ -12,6 +12,18 @@ enum PipelineProductionRoutingError: Error, Equatable {
     case publicationFailed(String)
 }
 
+private struct PipelineProductionRoutingPublicationSnapshot: Decodable {
+    static let schemaVersion = "production-routing-publication/v1"
+
+    let schema: String
+    let routeArtifactSHA256: String
+
+    private enum CodingKeys: String, CodingKey {
+        case schema
+        case routeArtifactSHA256 = "route_artifact_sha256"
+    }
+}
+
 struct PipelineProductionRouteSelection {
     let modelID: String
     let target: ResolvedGenerationTarget
@@ -290,6 +302,106 @@ enum PipelineProductionRouting {
                 error.localizedDescription
             )
         }
+    }
+
+    nonisolated static func disciplineSidecar(
+        shotlist: Shotlist,
+        dataRoot: URL
+    ) -> ProductionDisciplineSidecarV1 {
+        let executionPlan: ExecutionPlanV1
+        do {
+            executionPlan = try PipelineExecutionPlanWriter.load(dataRoot: dataRoot).0
+            try PipelineExecutionPlanWriter.requireCurrentShotlistBinding(dataRoot: dataRoot)
+        } catch {
+            return ProductionDisciplineSidecarV1(routesByShotID: [:])
+        }
+
+        let executionShots = Dictionary(uniqueKeysWithValues: executionPlan.shots.map {
+            ($0.id, $0)
+        })
+        var routes: [String: ProductionRouteDisciplineV1] = [:]
+        for shot in shotlist.shots {
+            guard let requirement = executionShots[shot.id]?.generationRequirement,
+                  let route = try? persistedDisciplineRoute(
+                      shotID: shot.id,
+                      projectID: shotlist.project,
+                      requirement: requirement,
+                      dataRoot: dataRoot
+                  ) else {
+                continue
+            }
+            routes[shot.id] = route
+        }
+        return ProductionDisciplineSidecarV1(routesByShotID: routes)
+    }
+
+    nonisolated private static func persistedDisciplineRoute(
+        shotID: String,
+        projectID: String,
+        requirement: ProductionRequirementV1,
+        dataRoot: URL
+    ) throws -> ProductionRouteDisciplineV1 {
+        let routePath = PipelineLayout.productionRouteFile(shotID: shotID)
+        let directory = (routePath as NSString).deletingLastPathComponent
+        let publicationPath = (directory as NSString).appendingPathComponent(
+            "publication.v1.json"
+        )
+        let routeURL = try ProjectLocalFile.resolve(routePath, dataRoot: dataRoot)
+        let publicationURL = try ProjectLocalFile.resolve(
+            publicationPath,
+            dataRoot: dataRoot
+        )
+        let publicationBefore = try Data(contentsOf: publicationURL)
+        let routeData = try Data(contentsOf: routeURL)
+        let publicationAfter = try Data(contentsOf: publicationURL)
+        guard publicationBefore == publicationAfter else {
+            throw PipelineProductionRoutingError.publicationInvalid(
+                "The routing publication changed while it was being read."
+            )
+        }
+        let publication = try JSONDecoder().decode(
+            PipelineProductionRoutingPublicationSnapshot.self,
+            from: publicationAfter
+        )
+        let route = try JSONDecoder().decode(ProductionRouteV1.self, from: routeData)
+        let candidate = ProductionRouteCandidateV1(
+            capabilities: route.capabilitySnapshot.capabilities,
+            providerActivated: true,
+            liveAvailable: true,
+            qualityScore: route.qualityScore,
+            preferenceScore: route.preferenceScore,
+            qualityTargetIDs: route.capabilitySnapshot.qualityTargetIDs,
+            satisfiedProductionProfileRequirementIDs:
+                route.capabilitySnapshot.satisfiedProductionProfileRequirementIDs,
+            inputSlots: route.capabilitySnapshot.inputSlots,
+            estimatedCost: route.estimatedCost,
+            estimatedLatencySeconds: route.estimatedLatencySeconds
+        )
+        let fingerprints = try ProductionRequirementResolverV1.fingerprints(
+            requirement: requirement,
+            candidate: candidate
+        )
+        guard publication.schema
+                == PipelineProductionRoutingPublicationSnapshot.schemaVersion,
+              publication.routeArtifactSHA256 == FileDigest.sha256(of: routeData),
+              route.schema == productionRouteV1Schema,
+              route.id == "route-\(shotID)",
+              route.projectID == projectID,
+              route.shotID == shotID,
+              route.offering == route.capabilitySnapshot.capabilities.offering,
+              route.capabilitySnapshot == ProductionRouteCapabilitySnapshotV1(
+                  candidate: candidate
+              ),
+              route.requirementSHA256 == fingerprints.requirementSHA256,
+              route.capabilitiesSHA256 == fingerprints.capabilitiesSHA256,
+              route.routeSHA256 == fingerprints.routeSHA256 else {
+            throw PipelineProductionRoutingError.publicationInvalid(
+                "The persisted routing discipline is no longer current."
+            )
+        }
+        return ProductionRouteDisciplineV1(
+            capabilityProfile: route.capabilitySnapshot.capabilities.effective
+        )
     }
 
     static func validateSubmission(

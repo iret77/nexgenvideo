@@ -296,11 +296,20 @@ enum DurableMediaStore {
             throw MediaImportError.sourceNotFile(fileURL.lastPathComponent)
         }
         if source.path == projectMedia.path || source.path.hasPrefix(projectMedia.path + "/") {
-            return DurableMediaCopy(
-                url: source,
-                created: false,
-                digest: try digest(of: source)
-            )
+            do {
+                return DurableMediaCopy(
+                    url: source,
+                    created: false,
+                    digest: try digest(of: source)
+                )
+            } catch is CancellationError {
+                throw MediaImportError.cancelled
+            } catch {
+                throw MediaImportError.copyFailed(
+                    fileURL.lastPathComponent,
+                    error.localizedDescription
+                )
+            }
         }
 
         let staging = mediaDirectory.appendingPathComponent(
@@ -336,7 +345,7 @@ enum DurableMediaStore {
             let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
             if let reusable = reusableByDigest[digest],
                fm.fileExists(atPath: reusable.path),
-               (try? Self.digest(of: reusable)) == digest {
+               try Self.matchesDigest(digest, at: reusable) {
                 try fm.removeItem(at: staging)
                 completed = true
                 return DurableMediaCopy(url: reusable, created: false, digest: digest)
@@ -360,7 +369,7 @@ enum DurableMediaStore {
                 try fm.moveItem(at: staging, to: destination)
             } catch {
                 guard fm.fileExists(atPath: destination.path),
-                      (try? Self.digest(of: destination)) == digest else {
+                      try Self.matchesDigest(digest, at: destination) else {
                     throw error
                 }
                 try fm.removeItem(at: staging)
@@ -378,6 +387,16 @@ enum DurableMediaStore {
                 fileURL.lastPathComponent,
                 error.localizedDescription
             )
+        }
+    }
+
+    private static func matchesDigest(_ expected: String, at url: URL) throws -> Bool {
+        do {
+            return try digest(of: url) == expected
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return false
         }
     }
 }

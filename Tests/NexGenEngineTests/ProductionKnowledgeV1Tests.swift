@@ -29,6 +29,35 @@ struct ProductionKnowledgeV1Tests {
         })
     }
 
+    @Test("catalog cache retries failures and retains only a successful load")
+    func catalogCacheRetriesFailures() throws {
+        let cache = ProductionKnowledgeCatalogCache()
+        let catalog = try ProductionKnowledgeCatalogV1(
+            profiles: [],
+            libraries: []
+        )
+        var attempts = 0
+
+        #expect(throws: ProductionKnowledgeErrorV1.resourceRootMissing) {
+            _ = try cache.load {
+                attempts += 1
+                throw ProductionKnowledgeErrorV1.resourceRootMissing
+            }
+        }
+        let loaded = try cache.load {
+            attempts += 1
+            return catalog
+        }
+        let cached = try cache.load {
+            attempts += 1
+            throw ProductionKnowledgeErrorV1.resourceRootMissing
+        }
+
+        #expect(loaded == catalog)
+        #expect(cached == catalog)
+        #expect(attempts == 2)
+    }
+
     @Test("effective profile composition is deterministic")
     func effectiveProfileComposition() throws {
         let catalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()

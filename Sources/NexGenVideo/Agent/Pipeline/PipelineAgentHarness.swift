@@ -201,8 +201,18 @@ final class PipelineAgentHarness {
             guard let registration = consumers.registration(for: packName) else {
                 return prompt
             }
-            let productionKnowledgeCatalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
-            try consumers.validateResources(in: productionKnowledgeCatalog)
+            let productionKnowledgeCatalog: ProductionKnowledgeCatalogV1
+            do {
+                productionKnowledgeCatalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
+                try consumers.validateResources(in: productionKnowledgeCatalog)
+            } catch {
+                Log.agent.error(
+                    "production knowledge unavailable error=\(error.localizedDescription)"
+                )
+                throw ToolError(
+                    "NexGenVideo's production knowledge is damaged. Reinstall the app."
+                )
+            }
             let descriptor = registration.descriptor
             let metadata: ProductionKnowledgeActivationMetadataV1
             do {
@@ -257,6 +267,13 @@ final class PipelineAgentHarness {
             )
             if !assembly.prompt.isEmpty {
                 prompt += "\n\nFollow this selected core production knowledge:\n\n\(assembly.prompt)"
+            }
+            if !assembly.omittedLibraryEntryIDs.isEmpty {
+                Log.agent.warning(
+                    "production knowledge budget omitted="
+                        + assembly.omittedLibraryEntryIDs.joined(separator: ",")
+                        + " bytes=\(assembly.utf8Bytes) tokens=\(assembly.estimatedTokens)"
+                )
             }
             return prompt
         }

@@ -49,28 +49,31 @@ public struct MusicvideoPack: Pack {
             ProductionKnowledgePhaseSelectionV1(
                 phase: "production_design",
                 libraryIDs: [
-                    "camera-recipes", "film-craft-baseline",
+                    "film-craft-baseline",
                     "production-sheet-templates", "stylized-3d-animation",
                 ],
                 intentTags: [
-                    "camera", "cinematography", "lighting", "visual-strategy",
+                    "camera", "cinematography", "lighting", "color", "visual-strategy",
                     "character-sheet", "location-sheet", "style-sheet",
                 ]
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "treatment",
-                libraryIDs: ["film-craft-baseline", "genre-baselines", "story-containers"],
-                intentTags: ["craft", "story-development", "structure", "goal-driven", "short-form"]
+                libraryIDs: ["film-craft-baseline", "story-containers"],
+                intentTags: [
+                    "craft", "story-development", "structure", "goal-driven", "short-form",
+                    "color", "pacing",
+                ]
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "storyboard",
                 libraryIDs: [
-                    "camera-recipes", "continuity-and-coverage",
-                    "film-craft-baseline", "stylized-3d-animation",
+                    "continuity-and-coverage", "film-craft-baseline",
+                    "stylized-3d-animation",
                 ],
                 intentTags: [
                     "camera", "cinematography", "continuity", "coverage",
-                    "editing", "spatial-clarity",
+                    "editing", "lighting", "pacing", "spatial-clarity", "visual-strategy",
                 ]
             ),
             ProductionKnowledgePhaseSelectionV1(
@@ -86,17 +89,23 @@ public struct MusicvideoPack: Pack {
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "shotlist",
-                libraryIDs: ["camera-recipes", "continuity-and-coverage", "film-craft-baseline"],
-                intentTags: ["camera", "continuity", "editing", "craft"]
+                libraryIDs: ["continuity-and-coverage", "film-craft-baseline"],
+                intentTags: [
+                    "camera", "continuity", "editing", "craft", "spatial-clarity",
+                ]
             ),
             ProductionKnowledgePhaseSelectionV1(
                 phase: "sanity",
                 knowledgePhase: "review",
                 libraryIDs: [
-                    "camera-recipes", "continuity-and-coverage",
-                    "film-craft-baseline", "stylized-3d-animation",
+                    "continuity-and-coverage", "film-craft-baseline",
+                    "stylized-3d-animation",
                 ],
-                intentTags: ["quality-control", "continuity", "craft", "cinematography"]
+                intentTags: [
+                    "quality-control", "continuity", "craft", "cinematography",
+                    "spatial-clarity", "editing", "lighting", "color", "pacing",
+                    "camera", "visual-strategy",
+                ]
             ),
         ],
         budget: ProductionKnowledgeBudgetV1(

@@ -46,13 +46,76 @@ struct MusicvideoPackTests {
             "generative_film", "narrative_storytelling",
         ])
         #expect(descriptor.selection(for: "treatment")?.libraryIDs == [
-            "film-craft-baseline", "genre-baselines", "story-containers",
+            "film-craft-baseline", "story-containers",
         ])
         #expect(descriptor.selection(for: "sanity")?.knowledgePhase == "review")
         #expect(descriptor.selection(for: "review") == nil)
         #expect(descriptor.selection(for: "analysis") == nil)
         #expect(descriptor.budget.maximumUTF8Bytes == 16_384)
         #expect(descriptor.budget.maximumEstimatedTokens == 4_096)
+    }
+
+    @Test("musicvideo selections reach phase-relevant production knowledge")
+    func productionKnowledgeSelectionsReachRelevantEntries() throws {
+        let reg = PackRegistry()
+        reg.load(MusicvideoPack())
+        let registration = try #require(
+            reg.engine.productionKnowledgeConsumers.first
+        )
+        let catalog = try EngineProductionKnowledgeResourcesV1.loadCatalog()
+        let assembler = ProductionKnowledgeContextAssemblerV1(
+            catalog: catalog,
+            predicates: ProductionMachinePredicateRegistryV1.standard()
+        )
+
+        func entries(
+            phase: String,
+            metadataTags: Set<String>
+        ) throws -> Set<String> {
+            let selection = try #require(
+                registration.descriptor.selection(for: phase)
+            )
+            return Set(try assembler.assemble(
+                ProductionKnowledgeAssemblyQueryV1(
+                    packID: registration.descriptor.packID,
+                    phase: selection.knowledgePhase,
+                    intentTags: metadataTags.union(selection.intentTags),
+                    activeProfileIDs: [
+                        "generative_film", "narrative_storytelling",
+                    ],
+                    activeLibraryIDs: Set(selection.libraryIDs),
+                    budget: registration.descriptor.budget
+                )
+            ).libraryEntryIDs)
+        }
+
+        let productionDesign = try entries(
+            phase: "production_design",
+            metadataTags: ["live_action_realistic", "naturalism", "cinematography"]
+        )
+        #expect(productionDesign.isSuperset(of: [
+            "film-craft-baseline/dominant-visual-device",
+            "film-craft-baseline/motivated-light",
+            "film-craft-baseline/color-as-arc",
+            "production-sheet-templates/character-identity-sheet",
+            "production-sheet-templates/location-and-prop-sheet",
+            "production-sheet-templates/style-contract-sheet",
+        ]))
+
+        let treatment = try entries(
+            phase: "treatment",
+            metadataTags: ["narrative", "quiet", "poetic"]
+        )
+        #expect(treatment.isSuperset(of: [
+            "film-craft-baseline/color-as-arc",
+            "film-craft-baseline/pacing-through-duration",
+            "story-containers/three-act-causal-arc",
+            "story-containers/four-part-recontextualization",
+            "story-containers/associative-mosaic",
+            "story-containers/single-turn-short",
+        ]))
+        #expect(!productionDesign.contains { $0.hasPrefix("camera-recipes/") })
+        #expect(!treatment.contains { $0.hasPrefix("genre-baselines/") })
     }
 
     @Test("phase artifact inventory includes versioned creative truth")

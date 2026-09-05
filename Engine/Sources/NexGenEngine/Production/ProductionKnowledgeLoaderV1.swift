@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ProductionKnowledgeErrorV1: Error, Equatable, LocalizedError {
+public enum ProductionKnowledgeErrorV1: Error, Equatable, LocalizedError, Sendable {
     case resourceRootMissing
     case missingResource(String)
     case invalidJSON(path: String, reason: String)
@@ -207,7 +207,25 @@ public struct ProductionKnowledgeLoaderV1: Sendable {
     }
 }
 
+final class ProductionKnowledgeCatalogCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var catalog: ProductionKnowledgeCatalogV1?
+
+    func load(
+        _ loader: () throws -> ProductionKnowledgeCatalogV1
+    ) rethrows -> ProductionKnowledgeCatalogV1 {
+        lock.lock()
+        defer { lock.unlock() }
+        if let catalog { return catalog }
+        let loaded = try loader()
+        catalog = loaded
+        return loaded
+    }
+}
+
 public enum EngineProductionKnowledgeResourcesV1 {
+    private static let catalogCache = ProductionKnowledgeCatalogCache()
+
     public static func rootURL() throws -> URL {
         let fileManager = FileManager.default
         for bundleURL in resourceBundleCandidates() {
@@ -220,7 +238,9 @@ public enum EngineProductionKnowledgeResourcesV1 {
     }
 
     public static func loadCatalog() throws -> ProductionKnowledgeCatalogV1 {
-        try ProductionKnowledgeLoaderV1(rootURL: rootURL()).load()
+        try catalogCache.load {
+            try ProductionKnowledgeLoaderV1(rootURL: rootURL()).load()
+        }
     }
 
     private static func resourceBundleCandidates() -> [URL] {

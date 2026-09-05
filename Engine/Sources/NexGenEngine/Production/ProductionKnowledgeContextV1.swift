@@ -510,18 +510,30 @@ public struct ProductionKnowledgeContextAssemblerV1: Sendable {
         var chunks: [String] = []
         var includedEntryIDs: [String] = []
         var omittedEntryIDs: [String] = []
+        var utf8Bytes = 0
+        func appendIfWithinBudget(_ text: String) -> Bool {
+            let candidateBytes = utf8Bytes
+                + (chunks.isEmpty ? 0 : 2)
+                + text.utf8.count
+            guard candidateBytes <= query.budget.maximumUTF8Bytes,
+                  Self.estimatedTokens(utf8Bytes: candidateBytes)
+                    <= query.budget.maximumEstimatedTokens else {
+                return false
+            }
+            chunks.append(text)
+            utf8Bytes = candidateBytes
+            return true
+        }
         for chunk in requiredChunks.sorted(by: { $0.id < $1.id }) {
-            guard fits(chunks + [chunk.text], budget: query.budget) else {
+            guard appendIfWithinBudget(chunk.text) else {
                 throw ProductionKnowledgeErrorV1.invalidValue(
                     path: "assembly.budget",
                     reason: "required profile guidance \(chunk.id) exceeds the configured budget"
                 )
             }
-            chunks.append(chunk.text)
         }
         for chunk in optionalChunks {
-            if fits(chunks + [chunk.text], budget: query.budget) {
-                chunks.append(chunk.text)
+            if appendIfWithinBudget(chunk.text) {
                 includedEntryIDs.append(chunk.id)
             } else {
                 omittedEntryIDs.append(chunk.id)
@@ -534,8 +546,8 @@ public struct ProductionKnowledgeContextAssemblerV1: Sendable {
             libraryEntryIDs: includedEntryIDs,
             omittedLibraryEntryIDs: omittedEntryIDs,
             machineRules: resolvedRules,
-            utf8Bytes: prompt.utf8.count,
-            estimatedTokens: Self.estimatedTokens(prompt)
+            utf8Bytes: utf8Bytes,
+            estimatedTokens: Self.estimatedTokens(utf8Bytes: utf8Bytes)
         )
     }
 
@@ -586,14 +598,12 @@ public struct ProductionKnowledgeContextAssemblerV1: Sendable {
         return sections.joined(separator: "\n")
     }
 
-    private func fits(_ chunks: [String], budget: ProductionKnowledgeBudgetV1) -> Bool {
-        let text = chunks.joined(separator: "\n\n")
-        return text.utf8.count <= budget.maximumUTF8Bytes
-            && Self.estimatedTokens(text) <= budget.maximumEstimatedTokens
+    public static func estimatedTokens(_ text: String) -> Int {
+        estimatedTokens(utf8Bytes: text.utf8.count)
     }
 
-    public static func estimatedTokens(_ text: String) -> Int {
-        guard !text.isEmpty else { return 0 }
-        return (text.utf8.count + 3) / 4
+    private static func estimatedTokens(utf8Bytes: Int) -> Int {
+        guard utf8Bytes > 0 else { return 0 }
+        return (utf8Bytes + 3) / 4
     }
 }

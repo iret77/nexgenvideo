@@ -3175,6 +3175,18 @@ struct WorkflowToolsTests {
             activation: routing.activation,
             candidateProvider: routing.candidates
         )
+        let currentShotlist = try #require(try loadShotlist(dataRoot: dataRoot))
+        let discipline = PipelineProductionRouting.disciplineSidecar(
+            shotlist: currentShotlist,
+            dataRoot: dataRoot
+        )
+        #expect(
+            discipline.route(for: "s001")
+                == ProductionRouteDisciplineV1(
+                    capabilityProfile: firstRouting.route.capabilitySnapshot
+                        .capabilities.effective
+                )
+        )
         try addGeneratedVideo(
             "s001-video",
             at: firstVideo,
