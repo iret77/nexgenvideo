@@ -73,7 +73,7 @@ struct StoryPanelView: View {
             // prompt here — it would invite drafting over the user's existing brief.
             Label("The brief exists but can't be read (older schema?). Ask the agent to migrate it.",
                   systemImage: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             promptRow(
                 placeholder: "e.g. migrate the brief to the current schema…",
@@ -108,7 +108,7 @@ struct StoryPanelView: View {
             )
         } else {
             Text("No brief yet — this is where the project starts.")
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             promptRow(
                 placeholder: "Describe the video you want…",
@@ -250,11 +250,11 @@ struct StoryPanelView: View {
     private func briefRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.ComponentSize.briefLabelWidth, alignment: .leading)
             Text(value.isEmpty ? "—" : value)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -265,12 +265,12 @@ struct StoryPanelView: View {
     private func editableTextRow(_ label: String, text: Binding<String>) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.ComponentSize.briefLabelWidth, alignment: .leading)
             TextField(label, text: text)
                 .textFieldStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .labelsHidden()
         }
@@ -279,7 +279,7 @@ struct StoryPanelView: View {
     private func editableMenuRow(_ label: String, selection: Binding<String>, options: [String]) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.ComponentSize.briefLabelWidth, alignment: .leading)
             Menu {
@@ -289,9 +289,9 @@ struct StoryPanelView: View {
             } label: {
                 HStack(spacing: AppTheme.Spacing.xxs) {
                     Text(selection.wrappedValue.isEmpty ? "—" : selection.wrappedValue)
-                    Image(systemName: "chevron.up.chevron.down").font(.system(size: AppTheme.FontSize.xxs))
+                    Image(systemName: "chevron.up.chevron.down").interfaceFont(size: AppTheme.Typography.metadata)
                 }
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
@@ -337,11 +337,11 @@ struct StoryPanelView: View {
     private func proseBlock(_ label: String, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
             Text(label.uppercased())
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             Text(text)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -361,7 +361,7 @@ struct StoryPanelView: View {
                                    subject: "the treatment") { Task { await loadTreatment() } }
         case .loaded(nil):
             Text("No treatment yet.")
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             promptRow(
                 placeholder: "Direction for the treatment (optional)…",
@@ -380,7 +380,7 @@ struct StoryPanelView: View {
                     .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 Text(data.bodyMarkdown)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -405,7 +405,7 @@ struct StoryPanelView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
             .tracking(AppTheme.Tracking.wide)
             .foregroundStyle(AppTheme.Text.mutedColor)
     }
@@ -422,7 +422,7 @@ struct StoryPanelView: View {
         HStack(spacing: AppTheme.Spacing.sm) {
             TextField(placeholder, text: draft)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .onSubmit {
                     submit(
                         draft: draft,
@@ -440,7 +440,7 @@ struct StoryPanelView: View {
                 )
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: AppTheme.FontSize.lg))
+                    .interfaceFont(size: AppTheme.Typography.section)
             }
             .buttonStyle(.plain)
             .disabled(!allowEmpty && draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

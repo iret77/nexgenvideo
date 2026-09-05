@@ -152,7 +152,7 @@ extension InspectorView {
         VStack(spacing: AppTheme.Spacing.none) {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .frame(width: AppTheme.IconSize.xxs, alignment: .center)
                 sectionTitleLabel(title: title)
@@ -208,7 +208,7 @@ extension InspectorView {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .frame(width: AppTheme.IconSize.xxs, alignment: .center)
                 sectionTitleLabel(title: title)
@@ -379,16 +379,16 @@ extension InspectorView {
     private func lutFileRow(path: String?, clips: [Clip]) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Text("File")
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .frame(width: AppTheme.Slider.labelColumn, alignment: .leading)
             Button { chooseLUT(clips: clips) } label: {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     Image(systemName: "square.stack.3d.up")
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Text(path.map { ($0 as NSString).lastPathComponent } ?? "Choose…")
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(path == nil ? AppTheme.Text.tertiaryColor : AppTheme.Text.primaryColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -414,7 +414,7 @@ extension InspectorView {
         let value = lutIntensity(in: clips)
         return HStack(spacing: AppTheme.Spacing.sm) {
             Text("Intensity")
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .lineLimit(1)
                 .frame(width: AppTheme.Slider.labelColumn, alignment: .leading)
@@ -489,7 +489,7 @@ extension InspectorView {
             let label = control.label ?? spec.label
             HStack(spacing: AppTheme.Spacing.sm) {
                 Text(label)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .lineLimit(1)
                     .frame(width: AppTheme.Slider.labelColumn, alignment: .leading)

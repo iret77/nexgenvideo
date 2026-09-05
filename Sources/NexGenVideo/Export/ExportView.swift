@@ -37,7 +37,7 @@ struct ExportView: View {
 
     private func panelHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
+            .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
             .tracking(AppTheme.Tracking.tight)
             .foregroundStyle(AppTheme.Text.primaryColor)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -55,7 +55,7 @@ struct ExportView: View {
                     .aspectRatio(contentMode: .fit)
             } else {
                 Image(systemName: "film")
-                    .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
+                    .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
         }
@@ -117,15 +117,15 @@ struct ExportView: View {
                 case .xml:
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                         Text("Exports your timeline as XML for use in other editors.")
-                            .font(.system(size: AppTheme.FontSize.sm))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.secondaryColor)
 
                         Text("Works with DaVinci Resolve, Premiere Pro, and Final Cut Pro.")
-                            .font(.system(size: AppTheme.FontSize.xs))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
 
                         Text("Text overlays, flips, adjustments, effects, and keyframe easing aren't included.")
-                            .font(.system(size: AppTheme.FontSize.xs))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,12 +134,12 @@ struct ExportView: View {
                 case .ngvProject:
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                         Text("Saves a copy of this project with all media bundled inside, so it opens on any machine.")
-                            .font(.system(size: AppTheme.FontSize.sm))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.secondaryColor)
 
                         if ngvSummary.missing > 0 {
                             Text("\(ngvSummary.missing) media file\(ngvSummary.missing == 1 ? "" : "s") missing — they'll be skipped.")
-                                .font(.system(size: AppTheme.FontSize.xs))
+                                .interfaceFont(size: AppTheme.Typography.ui)
                                 .foregroundStyle(AppTheme.Status.errorColor)
                         }
                     }
@@ -154,7 +154,7 @@ struct ExportView: View {
                     ProgressView(value: service.progress)
                         .progressViewStyle(.linear)
                     Text("\(Int(service.progress * 100))%")
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .monospacedDigit()
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                 }
@@ -163,14 +163,14 @@ struct ExportView: View {
 
             if let error = service.error {
                 Text(error)
-                    .font(.system(size: AppTheme.FontSize.smMd))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .padding(.top, AppTheme.Spacing.sm)
             }
 
             if let ngvResult {
                 Text(ngvResult)
-                    .font(.system(size: AppTheme.FontSize.smMd))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .padding(.top, AppTheme.Spacing.sm)
             }
@@ -208,7 +208,7 @@ struct ExportView: View {
                     }
                 }
             }
-            .font(.system(size: AppTheme.FontSize.xs))
+            .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(AppTheme.Text.mutedColor)
 
             Spacer()
@@ -230,7 +230,7 @@ struct ExportView: View {
     private func settingRow<Control: View>(label: String, @ViewBuilder control: () -> Control) -> some View {
         HStack {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Spacer()
             control()

@@ -27,7 +27,7 @@ struct ChatHistoryList: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             if sessions.isEmpty {
                 Text("No conversations yet")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .padding(AppTheme.Spacing.md)
             } else {
@@ -81,11 +81,11 @@ struct ChatHistoryList: View {
     private var searchField: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             TextField("Search conversations", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
         }
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.sm)
@@ -100,7 +100,7 @@ struct ChatHistoryList: View {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                         Text(session.title)
-                            .font(.system(size: AppTheme.FontSize.xs, weight: isCurrent ? .semibold : .regular))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: isCurrent ? .semibold : .regular)
                             .foregroundStyle(AppTheme.Text.primaryColor)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -111,7 +111,7 @@ struct ChatHistoryList: View {
                                     .foregroundStyle(cue.color)
                             }
                         }
-                        .font(.system(size: AppTheme.FontSize.xxs))
+                        .interfaceFont(size: AppTheme.Typography.metadata)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
                     Spacer(minLength: AppTheme.Spacing.sm)
@@ -133,7 +133,7 @@ struct ChatHistoryList: View {
             .disabled(!canSwitch && !isCurrent)
             Button { pendingDeletion = session } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
             .buttonStyle(.plain)

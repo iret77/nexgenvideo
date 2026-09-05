@@ -9,9 +9,9 @@ struct ScopeChip: View {
     var body: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: "viewfinder")
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
             Text(text)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }

@@ -125,13 +125,13 @@ struct ReviewPanelView: View {
                 .help("Inspect this shot")
                 if let status = shot.auditStatus, !status.isEmpty {
                     Text("audit: \(status)")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(status == "pass" ? AppTheme.Status.successColor : AppTheme.Status.errorColor)
                 }
                 Spacer(minLength: 0)
                 if let picked = remixSelection[shot.shotId], !picked.isEmpty {
                     Text("\(picked.count) picked")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Button("Clear") { remixSelection[shot.shotId] = [] }
                         .controlSize(.small)
@@ -184,7 +184,7 @@ struct ReviewPanelView: View {
             .overlay(alignment: .topTrailing) {
                 if isPicked {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: AppTheme.FontSize.md))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Accent.primary)
                         .padding(AppTheme.Spacing.xxs)
                 }
@@ -236,7 +236,7 @@ struct ReviewPanelView: View {
     private func redoPopover(_ target: RedoTarget) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("Why regenerate?")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 90))], alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 ForEach(ReviewReason.allCases) { reason in
@@ -245,7 +245,7 @@ struct ReviewPanelView: View {
                         redoReason = reason
                     } label: {
                         Text(reason.rawValue)
-                            .font(.system(size: AppTheme.FontSize.xs, weight: selected ? .semibold : .regular))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: selected ? .semibold : .regular)
                             .foregroundStyle(selected ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                             .padding(.horizontal, AppTheme.Spacing.sm)
                             .padding(.vertical, AppTheme.Spacing.xxs)
@@ -260,7 +260,7 @@ struct ReviewPanelView: View {
             }
             TextField("Optional note…", text: $redoNote)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
             HStack {
                 Spacer()
                 Button("Regenerate") { regenerate(target) }
@@ -283,7 +283,7 @@ struct ReviewPanelView: View {
         let picked = (remixSelection[shotId] ?? []).sorted()
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("What to take from each")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             ForEach(picked, id: \.self) { name in
                 HStack(spacing: AppTheme.Spacing.sm) {
@@ -297,12 +297,12 @@ struct ReviewPanelView: View {
                         set: { remixTakes[name] = $0 }
                     ))
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                 }
             }
             TextField("Optional note…", text: $remixNote)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
             HStack {
                 Spacer()
                 Button("Remix") { remix(shotId, picked: picked) }

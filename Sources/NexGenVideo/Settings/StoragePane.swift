@@ -73,7 +73,7 @@ struct StoragePane: View {
                 SettingsDivider()
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Text("Search index")
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     Spacer(minLength: AppTheme.Spacing.lg)
                     Text(ByteCountFormatter.string(fromByteCount: indexBytes, countStyle: .file))
@@ -91,7 +91,7 @@ struct StoragePane: View {
                     HStack(spacing: AppTheme.Spacing.sm) {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                             Text("Search model")
-                                .font(.system(size: AppTheme.FontSize.sm))
+                                .interfaceFont(size: AppTheme.Typography.ui)
                                 .foregroundStyle(AppTheme.Text.secondaryColor)
                             Text(SearchIndexConfig.manifest.model)
                                 .font(.system(size: AppTheme.FontSize.xs).monospaced())
@@ -128,7 +128,7 @@ struct StoragePane: View {
     private func storageDetailRow(label: String, value: String, trailing: String? = nil) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Text(value)
                 .font(.system(size: AppTheme.FontSize.xs).monospaced())

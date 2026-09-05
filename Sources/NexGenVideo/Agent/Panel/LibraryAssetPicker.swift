@@ -31,7 +31,7 @@ struct AssetRow: View {
                     ZStack {
                         Rectangle().fill(.quaternary)
                         Image(systemName: asset.type.sfSymbolName)
-                            .font(.system(size: AppTheme.FontSize.xs))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
                 }
@@ -41,17 +41,17 @@ struct AssetRow: View {
 
             VStack(alignment: .leading, spacing: AppTheme.Spacing.micro) {
                 Text(asset.mentionDisplayName)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .lineLimit(1)
                 Text(asset.type.rawValue)
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             Spacer(minLength: AppTheme.Spacing.sm)
             if let trailingSystemImage {
                 Image(systemName: trailingSystemImage)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
         }
@@ -103,7 +103,7 @@ struct LibraryAssetPicker: View {
             if showsTypeTabs { tabStrip }
             if visible.isEmpty {
                 Text(query.isEmpty ? emptyLabel : "No matches for \u{201C}\(query)\u{201D}")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, AppTheme.Spacing.sm)
@@ -138,11 +138,11 @@ struct LibraryAssetPicker: View {
     private var searchField: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             TextField("Search your library\u{2026}", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
         }
         .padding(.horizontal, AppTheme.Spacing.sm)
@@ -161,7 +161,7 @@ struct LibraryAssetPicker: View {
         HStack(spacing: AppTheme.Spacing.none) {
             ForEach(MentionTab.allCases, id: \.self) { t in
                 Text(t.label)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: t == tab ? .semibold : .regular))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: t == tab ? .semibold : .regular)
                     .foregroundStyle(t == tab ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, AppTheme.Spacing.xxs)

@@ -56,7 +56,7 @@ struct ToolbarView: View {
                 )
                 Slider(value: zoomBinding, in: log(editor.minZoomScale)...log(Zoom.max))
                     .controlSize(.mini)
-                    .tint(AppTheme.Accent.primary)
+                    .tint(editor.projectPalette.accent)
                     .frame(width: AppTheme.ComponentSize.toolbarZoomWidth)
                 zoomButton(
                     "plus.magnifyingglass",
@@ -73,15 +73,16 @@ struct ToolbarView: View {
     private func toolbarButton(_ systemName: String, help: String, isDisabled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
+                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .opacity(isDisabled ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     private func zoomButton(
@@ -92,14 +93,15 @@ struct ToolbarView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(isDisabled ? AppTheme.Text.mutedColor : AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
+                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     private func zoomOut() {
@@ -128,41 +130,44 @@ struct ToolbarView: View {
         let disabled = mode != .pointer && !editor.allowsTimelineEditChrome
         return Button { editor.toolMode = mode } label: {
             Image(systemName: systemName)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(isActive ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
-                .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
+                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
                 .hoverHighlight(isActive: isActive)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     private func textGlyphButton(_ glyph: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(glyph)
-                .font(.system(size: AppTheme.FontSize.xlSm, weight: AppTheme.FontWeight.bold, design: .serif))
+                .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.bold, design: .serif)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
+                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     private func bracketButton(_ bracket: String, help: String, isDisabled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(bracket)
-                .font(.system(size: AppTheme.FontSize.lgXl, weight: AppTheme.FontWeight.semibold, design: .monospaced))
+                .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
-                .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
+                .frame(width: AppTheme.Control.iconTarget, height: AppTheme.Control.iconTarget)
                 .hoverHighlight()
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
         .opacity(isDisabled ? AppTheme.Opacity.strong : AppTheme.Opacity.opaque)
         .help(help)
+        .accessibilityLabel(help)
     }
 
 }

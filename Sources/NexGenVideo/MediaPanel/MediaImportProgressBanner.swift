@@ -18,13 +18,13 @@ struct MediaImportProgressBanner: View {
             }
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Importing media")
-                    .font(.system(
-                        size: AppTheme.FontSize.xs,
+                    .interfaceFont(
+                        size: AppTheme.Typography.ui,
                         weight: AppTheme.FontWeight.semibold
-                    ))
+                    )
                 if let name = progress.currentName {
                     Text(name)
-                        .font(.system(size: AppTheme.FontSize.xxs))
+                        .interfaceFont(size: AppTheme.Typography.metadata)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                 }

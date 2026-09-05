@@ -19,43 +19,47 @@ struct CapsuleButtonStyle: ButtonStyle {
         let fill: AnyShapeStyle?
         @State private var hovered = false
         @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.projectPalette) private var palette
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @Environment(\.interfaceScale) private var textScale
 
-        private var fontSize: CGFloat { size == .small ? AppTheme.FontSize.xs : AppTheme.FontSize.smMd }
+        private var fontSize: CGFloat { AppTheme.Typography.action }
         private var hPadding: CGFloat { size == .small ? AppTheme.Spacing.smMd : AppTheme.Spacing.lgXl }
         private var vPadding: CGFloat { size == .small ? AppTheme.Spacing.xs : AppTheme.Spacing.smMd }
 
         private var foreground: AnyShapeStyle {
-            guard isEnabled else { return AnyShapeStyle(AppTheme.Text.mutedColor) }
+            guard isEnabled else { return AnyShapeStyle(AppTheme.Text.disabledControlColor) }
             return variant == .prominent
-                ? AnyShapeStyle(AppTheme.Background.baseColor)
+                ? AnyShapeStyle(palette.onAccent)
                 : AnyShapeStyle(AppTheme.Text.secondaryColor)
         }
         private var background: AnyShapeStyle {
             guard isEnabled else { return AnyShapeStyle(AppTheme.Background.prominentColor) }
             return variant == .prominent
-                ? (fill ?? AnyShapeStyle(AppTheme.Accent.primary))
+                ? (fill ?? AnyShapeStyle(palette.accent))
                 : AnyShapeStyle(AppTheme.Background.prominentColor)
         }
 
         var body: some View {
             configuration.label
-                .font(.system(size: fontSize, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: fontSize, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(foreground)
                 .padding(.horizontal, hPadding)
-                .padding(.vertical, vPadding)
-                .background(Capsule(style: .continuous).fill(background))
+                .padding(.vertical, AppTheme.Spacing.xs)
+                .frame(minHeight: (size == .small ? AppTheme.Control.compactHeight : AppTheme.Control.regularHeight) * textScale)
+                .background(RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous).fill(background))
                 .overlay(
-                    Capsule(style: .continuous).fill(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous).fill(
                         AppTheme.Text.primaryColor.opacity(
                             hovered && isEnabled ? AppTheme.Opacity.faint : AppTheme.Opacity.transparent
                         )
                     )
                 )
                 .opacity(opacity)
-                .contentShape(Capsule(style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous))
                 .onHover { hovered = isEnabled && $0 }
-                .animation(.easeOut(duration: AppTheme.Anim.hover), value: hovered)
-                .animation(.easeOut(duration: AppTheme.Anim.hover), value: isEnabled)
+                .animation(reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover), value: hovered)
+                .animation(reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover), value: isEnabled)
         }
 
         private var opacity: Double {

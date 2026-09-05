@@ -11,7 +11,7 @@ struct PipelinePhaseProgressView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
             HStack(spacing: AppTheme.Spacing.md) {
                 Image(systemName: "waveform")
-                    .font(.system(size: AppTheme.FontSize.md))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Accent.timecodeColor)
                     .frame(
                         width: AppTheme.IconSize.lg,
@@ -26,13 +26,13 @@ struct PipelinePhaseProgressView: View {
                     )
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     Text(PhaseDisplay.label(snapshot.phase))
-                        .font(.system(
-                            size: AppTheme.FontSize.md,
+                        .interfaceFont(
+                            size: AppTheme.Typography.ui,
                             weight: AppTheme.FontWeight.semibold
-                        ))
+                        )
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Text(snapshot.sourceFilename ?? "Assigned track")
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -49,13 +49,13 @@ struct PipelinePhaseProgressView: View {
 
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(presentation.title)
-                    .font(.system(
-                        size: AppTheme.FontSize.sm,
+                    .interfaceFont(
+                        size: AppTheme.Typography.ui,
                         weight: AppTheme.FontWeight.semibold
-                    ))
+                    )
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 Text(presentation.detail)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -76,7 +76,7 @@ struct PipelinePhaseProgressView: View {
                 Text(
                     "Next: \(PipelinePhaseProgressPresentation(stageID: nextStageID).title)"
                 )
-                .font(.system(size: AppTheme.FontSize.xxs))
+                .interfaceFont(size: AppTheme.Typography.metadata)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             }
         }

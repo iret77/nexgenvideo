@@ -72,7 +72,7 @@ struct FeedbackView: View {
 
             if let errorText {
                 Text(errorText)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
             }
 
@@ -84,7 +84,7 @@ struct FeedbackView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             fieldLabel("Describe the issue or feedback")
             TextEditor(text: $message)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .scrollContentBackground(.hidden)
                 .padding(.horizontal, AppTheme.Spacing.smMd)
@@ -106,7 +106,7 @@ struct FeedbackView: View {
             fieldLabel("Email (optional)")
             TextField("", text: $email, prompt: Text("you@example.com — so we can reply"))
                 .textFieldStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .padding(.horizontal, AppTheme.Spacing.mdLg)
                 .padding(.vertical, AppTheme.Spacing.smMd)
@@ -124,7 +124,7 @@ struct FeedbackView: View {
     private var mayContactRow: some View {
         Toggle(isOn: $mayContact) {
             Text("We may email you for follow-up questions")
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(hasReplyEmail ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
         }
         .toggleStyle(.checkbox)
@@ -136,7 +136,7 @@ struct FeedbackView: View {
         HStack(alignment: .center, spacing: AppTheme.Spacing.mdLg) {
             Toggle(isOn: $includeScreenshot) {
                 Text("Include screenshot")
-                    .font(.system(size: AppTheme.FontSize.md))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
             }
             .toggleStyle(.checkbox)
@@ -162,10 +162,10 @@ struct FeedbackView: View {
     private var contextNote: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: "info.circle")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             Text(contextNoteText)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -208,11 +208,11 @@ struct FeedbackView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(AppTheme.Accent.primary)
                 Text("Thanks for the feedback.")
-                    .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.primaryColor)
             }
             Text(successDetailText)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
@@ -240,7 +240,7 @@ struct FeedbackView: View {
 
     private func fieldLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
             .foregroundStyle(AppTheme.Text.secondaryColor)
     }
 
@@ -280,8 +280,8 @@ final class FeedbackWindowController: NSWindowController {
     private var hosting: NSHostingController<AnyView>?
 
     private init() {
-        let initialView = FeedbackView(screenshot: nil).tint(AppTheme.Accent.primary)
-        let hosting = NSHostingController(rootView: AnyView(initialView))
+        let initialView = FeedbackView(screenshot: nil).interfaceStyle()
+        let hosting = NSHostingController(rootView: AnyView(initialView.interfaceStyle()))
         let window = NSWindow(contentViewController: hosting)
         window.setContentSize(NSSize(
             width: AppTheme.ComponentSize.feedbackWindowIdeal.width,
@@ -314,7 +314,7 @@ final class FeedbackWindowController: NSWindowController {
         hosting?.rootView = AnyView(
             FeedbackView(screenshot: screenshot, prefill: prefill)
                 .id(UUID())
-                .tint(AppTheme.Accent.primary)
+                .interfaceStyle()
         )
         showWindow(nil)
         window?.center()

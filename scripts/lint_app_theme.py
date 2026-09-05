@@ -35,7 +35,7 @@ RULES = [
     ),
     (
         "numeric font size",
-        rf"(?:\.font\s*\(\s*\.system|NSFont\.(?:systemFont|monospacedDigitSystemFont)|"
+        rf"(?:\.font\s*\(\s*\.system|\.interfaceFont|NSFont\.(?:systemFont|monospacedDigitSystemFont)|"
         rf"NSImage\.SymbolConfiguration)\s*\([^)]*(?:size|ofSize|pointSize)\s*:\s*{NUMBER}",
     ),
     (
@@ -187,7 +187,7 @@ def main() -> int:
     capsule_source = CAPSULE_BUTTON_FILE.read_text(encoding="utf-8")
     for fragment, rule_name in (
         (r"@Environment(\.isEnabled)", "capsule style must read enabled state"),
-        ("AppTheme.Text.mutedColor", "disabled capsule must use muted text"),
+        ("AppTheme.Text.disabledControlColor", "disabled capsule must use the shared disabled foreground"),
         ("AppTheme.Opacity.disabled", "disabled capsule must use disabled opacity"),
     ):
         if fragment not in capsule_source:

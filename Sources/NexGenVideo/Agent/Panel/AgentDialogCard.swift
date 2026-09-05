@@ -92,13 +92,13 @@ struct AgentDialogCard: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             if let intro = dialog.intro {
                 Text(intro)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let submissionError {
                 Text(submissionError)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -138,16 +138,16 @@ struct AgentDialogCard: View {
     private var header: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: dialog.symbol)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(accent)
             Text(dialog.title)
-                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.sm)
             if canDismiss {
                 Button(action: onCancel) {
                     Image(systemName: "xmark")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
                 .buttonStyle(.plain)
@@ -163,7 +163,7 @@ struct AgentDialogCard: View {
         case .choices(let options, let multiSelect):
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(section.label.uppercased())
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 FlowChips(options: options,
@@ -184,7 +184,7 @@ struct AgentDialogCard: View {
         case .toggle:
             HStack(spacing: AppTheme.Spacing.sm) {
                 Text(section.label)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 Spacer()
                 Toggle("", isOn: Binding(
@@ -211,7 +211,7 @@ struct AgentDialogCard: View {
         TextField(placeholder, text: text, axis: .vertical)
             .textFieldStyle(.plain)
             .lineLimit(lineLimit)
-            .font(.system(size: AppTheme.FontSize.xs))
+            .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(AppTheme.Text.primaryColor)
             .padding(AppTheme.Spacing.sm)
             .background(
@@ -259,7 +259,7 @@ struct AgentDialogCard: View {
         if !picks.isEmpty, pickedFiles.isEmpty || intake.allowsMultiple {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text("From your library".uppercased())
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 LibraryAssetPicker(
@@ -289,10 +289,10 @@ struct AgentDialogCard: View {
     private func emptyFileWell(_ intake: AgentDialog.FileIntake) -> some View {
         VStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "arrow.down.doc.fill")
-                .font(.system(size: AppTheme.FontSize.xl))
+                .interfaceFont(size: AppTheme.Typography.title)
                 .foregroundStyle(accent)
             Text(intake.prompt ?? "Drop a file here or choose one")
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -322,10 +322,10 @@ struct AgentDialogCard: View {
     private func pickedFileChip(_ url: URL) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: fileSymbol(url))
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(accent)
             Text(Self.displayFilename(for: url, libraryAssets: libraryAssets))
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -334,7 +334,7 @@ struct AgentDialogCard: View {
                 pickedFiles.removeAll { $0 == url }
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .buttonStyle(.plain)
@@ -407,7 +407,7 @@ struct AgentDialogCard: View {
         HStack(spacing: AppTheme.Spacing.sm) {
             if let cost = dialog.costHint {
                 Text(cost)
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
             Spacer()
@@ -558,11 +558,11 @@ private struct FlowChips: View {
                     HStack(spacing: AppTheme.Spacing.xxs) {
                         if let symbol = option.symbol {
                             Image(systemName: symbol)
-                                .font(.system(size: AppTheme.FontSize.xxs))
+                                .interfaceFont(size: AppTheme.Typography.metadata)
                         }
                         Text(option.shortLabel)
-                            .font(.system(size: AppTheme.FontSize.xs,
-                                          weight: isOn ? .semibold : .regular))
+                            .interfaceFont(size: AppTheme.Typography.ui,
+                                          weight: isOn ? .semibold : .regular)
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .frame(maxWidth: AppTheme.ComponentSize.agentChoiceChipMaxWidth)

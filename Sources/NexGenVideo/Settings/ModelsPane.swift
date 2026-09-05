@@ -97,11 +97,11 @@ struct ModelsPane: View {
     private var searchBar: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             TextField("Search models", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
         }
         .padding(.horizontal, AppTheme.Spacing.md)
@@ -132,7 +132,7 @@ struct ModelsPane: View {
     private func modelRow(_ row: ModelsPaneProjection.Row) -> some View {
         HStack(spacing: AppTheme.Spacing.md) {
             Text(row.displayName)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.lg)
             Toggle("", isOn: Binding(

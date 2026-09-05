@@ -15,7 +15,7 @@ struct ColorWheelControl: View {
     var body: some View {
         VStack(spacing: AppTheme.Spacing.sm) {
             Text(title)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             ColorWheelPad(x: x, y: y, onChanged: onColorChanged, onCommit: onColorCommit)

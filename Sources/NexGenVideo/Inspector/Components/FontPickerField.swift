@@ -15,12 +15,12 @@ struct FontPickerField: View {
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Text(displayName)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .padding(.horizontal, AppTheme.Spacing.smMd)

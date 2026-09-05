@@ -273,6 +273,41 @@ struct PluginUninstallTests {
         #expect(presentation.removalMessage.contains("won't open"))
     }
 
+    @Test("confirmation invokes removal once and reports failures")
+    @MainActor func confirmedRemovalExecution() {
+        let installed = installedVersion("1.2.0")
+        let verified = PluginVersionUsageState(knownProjectUsages: [], isRequiredByOpenProject: false)
+        var calls = 0
+        let success = PluginRemovalAttempt.perform(installedVersion: installed, usage: verified) {
+            calls += 1
+            return nil
+        }
+        #expect(success == .removed(restartRequired: false))
+        #expect(calls == 1)
+        let failure = PluginRemovalAttempt.perform(installedVersion: installed, usage: verified) {
+            "The pack directory is not writable."
+        }
+        #expect(failure == .blocked("The pack directory is not writable."))
+    }
+
+    @Test("a newly protected or unverified version never reaches the remover")
+    @MainActor func rechecksUsageAtConfirmation() {
+        let installed = installedVersion("1.2.0")
+        let states: [PluginVersionUsageState?] = [
+            nil,
+            PluginVersionUsageState(knownProjectUsages: [], isRequiredByOpenProject: true),
+            PluginVersionUsageState(knownProjectUsages: [], isRequiredByOpenProject: false, isUsageVerified: false),
+        ]
+        for state in states {
+            let result = PluginRemovalAttempt.perform(installedVersion: installed, usage: state) {
+                Issue.record("A protected version reached the remover")
+                return nil
+            }
+            if case .blocked(let message) = result { #expect(!message.isEmpty) }
+            else { Issue.record("Removal must report its blocker") }
+        }
+    }
+
     private func versionedBundle(root: URL, version: String) -> URL {
         root.appendingPathComponent("musicvideo", isDirectory: true)
             .appendingPathComponent(version)

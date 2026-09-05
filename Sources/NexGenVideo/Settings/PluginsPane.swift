@@ -4,6 +4,9 @@ import SwiftUI
 struct PluginsPane: View {
     let manager: PluginManager
     @State private var pendingRemoval: InstalledPluginVersion?
+    @State private var removalError: String?
+    @State private var isRemoving = false
+    @State private var usageRevision = 0
     @State private var usageModel = PluginUsageSnapshotModel()
 
     var body: some View {
@@ -12,7 +15,7 @@ struct PluginsPane: View {
             subtitle: "NexGenVideo checks for updates when it opens. Applying an update may require a restart."
         ) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
-                if let error = manager.lastError {
+                if let error = removalError ?? manager.lastError {
                     SettingsCard {
                         SettingsNotice(text: error, systemImage: "exclamationmark.triangle", tone: .error)
                     }
@@ -28,24 +31,15 @@ struct PluginsPane: View {
                 packsCard
             }
         }
-        .alert(
-            removalTitle,
-            isPresented: Binding(
-                get: { pendingRemoval != nil },
-                set: { if !$0 { pendingRemoval = nil } }
-            ),
-            presenting: pendingRemoval
-        ) { installedVersion in
-            Button(
-                installedVersion.isResident ? "Remove and Restart" : "Remove",
-                role: .destructive
-            ) {
-                remove(installedVersion)
-            }
-            .disabled(!removalPresentation(for: installedVersion).canRemove)
-            Button("Cancel", role: .cancel) {}
-        } message: { installedVersion in
-            Text(removalPresentation(for: installedVersion).removalMessage)
+        .sheet(item: $pendingRemoval) { installedVersion in
+            PluginRemovalSheet(
+                installedVersion: installedVersion,
+                presentation: removalPresentation(for: installedVersion),
+                isRemoving: isRemoving,
+                error: removalError,
+                onCancel: { pendingRemoval = nil },
+                onRemove: { Task { await remove(installedVersion) } }
+            )
         }
         .task { refreshUsageSnapshot() }
         .onChange(of: manager.installedVersions) { _, _ in
@@ -93,14 +87,14 @@ struct PluginsPane: View {
                     HStack(alignment: .center, spacing: AppTheme.Spacing.md) {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                             Text(rowData.displayName)
-                                .font(.system(size: AppTheme.FontSize.md))
+                                .interfaceFont(size: AppTheme.Typography.ui)
                                 .foregroundStyle(AppTheme.Text.primaryColor)
                             HStack(spacing: AppTheme.Spacing.sm) {
                                 if let tagline = rowData.tagline {
                                     Text(tagline)
                                 }
                             }
-                            .font(.system(size: AppTheme.FontSize.sm))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                         }
                         Spacer(minLength: AppTheme.Spacing.lg)
@@ -143,6 +137,7 @@ struct PluginsPane: View {
                 .controlSize(.small)
         } else {
             Button("Remove", role: .destructive) {
+                removalError = nil
                 pendingRemoval = installedVersion
             }
             .buttonStyle(.capsule(.secondary, size: .regular))
@@ -162,7 +157,7 @@ struct PluginsPane: View {
     }
 
     private func refreshUsageSnapshot() {
-        pendingRemoval = nil
+        usageRevision += 1
         let openProjectRoots = NSDocumentController.shared.documents
             .compactMap { $0 as? VideoProject }
             .map { project in
@@ -175,11 +170,46 @@ struct PluginsPane: View {
         )
     }
 
-    private func remove(_ installedVersion: InstalledPluginVersion) {
-        guard removalPresentation(for: installedVersion).canRemove,
-              manager.uninstall(installedVersion) else { return }
-        if installedVersion.isResident {
-            AppRelaunch.now()
+    private func remove(_ installedVersion: InstalledPluginVersion) async {
+        guard !isRemoving else { return }
+        isRemoving = true
+        removalError = nil
+        defer { isRemoving = false }
+        let openRoots = NSDocumentController.shared.documents
+            .compactMap { $0 as? VideoProject }
+            .map { [$0.editorViewModel.workingRoot, $0.fileURL].compactMap { $0 } }
+        let revision = usageRevision
+        let entries = ProjectRegistry.shared.entries
+        let usage = await PluginRemovalPolicy.loadSnapshot(
+            installedVersions: manager.installedVersions,
+            registryEntries: entries,
+            openProjectRoots: openRoots
+        )
+        let currentRoots = NSDocumentController.shared.documents
+            .compactMap { $0 as? VideoProject }
+            .map { [$0.editorViewModel.workingRoot, $0.fileURL].compactMap { $0 } }
+        guard currentRoots == openRoots, usageRevision == revision else {
+            removalError = "Project use changed. Review the installed version and try again."
+            refreshUsageSnapshot()
+            return
+        }
+        guard let current = manager.installedVersions.first(where: { $0.id == installedVersion.id }),
+              current.bundleURL == installedVersion.bundleURL else {
+            removalError = "The installed version changed. Close this dialog and select it again."
+            refreshUsageSnapshot()
+            return
+        }
+        let result = PluginRemovalAttempt.perform(
+            installedVersion: current,
+            usage: usage.state(for: current)
+        ) {
+            manager.uninstall(current) ? nil : (manager.lastError ?? "Couldn't remove this version. Try again.")
+        }
+        switch result {
+        case .removed(let restartRequired):
+            pendingRemoval = nil
+            if restartRequired { AppRelaunch.now() }
+        case .blocked(let message): removalError = message
         }
     }
 
@@ -220,7 +250,7 @@ struct PluginsPane: View {
                         .controlSize(.small)
                 } else {
                     Text("Up to date")
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                 }
             case .incompatible(let reason, let reinstall):
@@ -230,7 +260,7 @@ struct PluginsPane: View {
                         .controlSize(.small)
                 } else {
                     Text(reason)
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Status.warningColor)
                         .lineLimit(2)
                 }

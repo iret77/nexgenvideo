@@ -15,10 +15,10 @@ struct NewProjectFormatSheet: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Choose a format")
-                    .font(.system(size: AppTheme.FontSize.lg, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Text("The format shapes your production workflow. It's set when you create the project — you can't switch it once production has started.")
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -57,6 +57,7 @@ struct NewProjectFormatSheet: View {
     /// card width with no letterbox and no side crop.
     private func optionCard(id: String?, title: String, subtitle: String, badge: NSImage?) -> some View {
         let isSelected = selected == id
+        let accent = InstalledPack.named(id)?.palette.accent ?? AppTheme.Accent.primary
         return Button { selected = id } label: {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
                 Group {
@@ -68,7 +69,7 @@ struct NewProjectFormatSheet: View {
                         AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle)
                             .overlay(
                                 Image(systemName: "wand.and.stars")
-                                    .font(.system(size: AppTheme.IconSize.lg))
+                                    .interfaceFont(size: AppTheme.IconSize.lg)
                                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                             )
                     }
@@ -80,11 +81,11 @@ struct NewProjectFormatSheet: View {
                 HStack(spacing: AppTheme.Spacing.md) {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                         Text(title)
-                            .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                             .foregroundStyle(AppTheme.Text.primaryColor)
                         if !subtitle.isEmpty {
                             Text(subtitle)
-                                .font(.system(size: AppTheme.FontSize.sm))
+                                .interfaceFont(size: AppTheme.Typography.ui)
                                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
@@ -92,14 +93,14 @@ struct NewProjectFormatSheet: View {
                     }
                     Spacer(minLength: AppTheme.Spacing.sm)
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: AppTheme.FontSize.xl))
+                        .interfaceFont(size: AppTheme.Typography.title)
                         .foregroundStyle(isSelected ? AppTheme.Accent.primary : AppTheme.Text.mutedColor)
                 }
                 .padding(AppTheme.Spacing.mdLg)
             }
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                    .fill(isSelected ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
+                    .fill(isSelected ? accent.opacity(AppTheme.Opacity.faint)
                                      : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
             )
             .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.md))

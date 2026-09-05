@@ -7,11 +7,11 @@ struct ProjectSettingsMismatchView: View {
     var body: some View {
         VStack(spacing: AppTheme.Spacing.xl) {
             Text("Clip Settings Mismatch")
-                .font(.system(size: AppTheme.FontSize.xl, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
 
             Text("The clip you're adding has different settings than the current project.")
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .multilineTextAlignment(.center)
 
@@ -19,21 +19,21 @@ struct ProjectSettingsMismatchView: View {
                 GridRow {
                     Text("")
                     Text("Project")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Text("Clip")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
                 GridRow {
                     Text("FPS")
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     Text("\(editor.timeline.fps)")
-                        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                        .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Text("\(mismatch.clipFPS)")
-                        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                        .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                         .foregroundStyle(
                             mismatch.clipFPS != editor.timeline.fps
                                 ? AppTheme.Status.warningColor
@@ -42,13 +42,13 @@ struct ProjectSettingsMismatchView: View {
                 }
                 GridRow {
                     Text("Resolution")
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     Text("\(editor.timeline.width) x \(editor.timeline.height)")
-                        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                        .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Text("\(mismatch.clipWidth) x \(mismatch.clipHeight)")
-                        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                        .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                         .foregroundStyle(
                             resolutionMismatch ? AppTheme.Status.warningColor : AppTheme.Text.primaryColor
                         )

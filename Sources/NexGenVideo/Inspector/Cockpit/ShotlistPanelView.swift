@@ -64,7 +64,7 @@ struct ShotlistPanelView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
                         Text("\(shots.count) \(shots.count == 1 ? "shot" : "shots")")
-                            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                             .tracking(AppTheme.Tracking.wide)
                             .foregroundStyle(AppTheme.Text.mutedColor)
                         ForEach(shots) { shot in
@@ -107,7 +107,7 @@ struct ShotlistPanelView: View {
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 if let section = shot.section?.trimmingCharacters(in: .whitespaces), !section.isEmpty {
                     Text(section)
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                         .lineLimit(1)
                 }
@@ -118,7 +118,7 @@ struct ShotlistPanelView: View {
             let summary = shot.summaryText
             if !summary.isEmpty {
                 Text(summary)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .lineLimit(3)
                     .textSelection(.enabled)
@@ -129,7 +129,7 @@ struct ShotlistPanelView: View {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     ForEach(shot.chips, id: \.self) { chip in
                         Text(chip)
-                            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .padding(.horizontal, AppTheme.Spacing.sm)
                             .padding(.vertical, AppTheme.Spacing.xxs)
@@ -165,9 +165,9 @@ struct ShotlistPanelView: View {
     private func sourceModeBadge(_ tag: SourceModeTag) -> some View {
         HStack(spacing: AppTheme.Spacing.xxs) {
             Image(systemName: tag.symbol)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
             Text(tag.label)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
         }
         .foregroundStyle(AppTheme.Text.tertiaryColor)
         .padding(.horizontal, AppTheme.Spacing.sm)

@@ -221,11 +221,11 @@ struct AgentPane: View {
             HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                     Text("Anthropic API")
-                        .font(.system(size: AppTheme.FontSize.md))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Button(action: { NSWorkspace.shared.open(consoleURL) }) {
                         Label("Get API key", systemImage: "arrow.up.right")
-                            .font(.system(size: AppTheme.FontSize.sm))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Accent.primary)
                     }
                     .buttonStyle(.plain)
@@ -245,7 +245,7 @@ struct AgentPane: View {
                 SecureField(keyPlaceholder, text: $draft)
                     .textFieldStyle(.plain)
                     .focused($isFocused)
-                    .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                    .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .onSubmit(saveKey)
                     .padding(.horizontal, AppTheme.Spacing.md)
@@ -274,10 +274,10 @@ struct AgentPane: View {
             HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                     Text(claudeCodeTitle)
-                        .font(.system(size: AppTheme.FontSize.md))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Text(claudeCodeDetail)
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -359,7 +359,7 @@ struct AgentPane: View {
                 ) {
                     Stepper(value: $autoApproveCredits, in: 0...1000, step: 10) {
                         Text(CostEstimator.format(autoApproveCredits))
-                            .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                            .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                             .foregroundStyle(AppTheme.Text.secondaryColor)
                     }
                     .controlSize(.small)
@@ -403,14 +403,14 @@ struct AgentPane: View {
                 SettingsDivider()
                 HStack {
                     Text("Connection setup for Claude Desktop, Claude Code, Codex, and other MCP clients.")
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Spacer(minLength: AppTheme.Spacing.lg)
                     Button("Setup instructions") {
                         HelpWindowController.shared.show(tab: .mcp)
                     }
                     .buttonStyle(.plain)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Accent.primary)
                 }
                 .padding(.horizontal, AppTheme.Spacing.mdLg)
@@ -503,7 +503,7 @@ struct AgentPane: View {
                     pendingExternalMcpRemoval = entry.name
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
                 }
                 .buttonStyle(.capsule(.secondary, size: .regular))
@@ -525,7 +525,7 @@ struct AgentPane: View {
     private var externalMcpEditorView: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             Text(externalMcpEditorTitle)
-                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
 
             if externalMcpEditor.importsMultipleServers {
@@ -537,12 +537,12 @@ struct AgentPane: View {
             } else {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                     Text("Name")
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     TextField("server-name", text: $externalMcpEditor.name)
                         .textFieldStyle(.plain)
                         .focused($externalMcpField, equals: .name)
-                        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                        .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                         .onSubmit(saveExternalMcpServer)
                         .padding(.horizontal, AppTheme.Spacing.md)
@@ -554,7 +554,7 @@ struct AgentPane: View {
 
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text("Connection")
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 TextField(
                     externalMcpConnectionPlaceholder,
@@ -564,7 +564,7 @@ struct AgentPane: View {
                 .lineLimit(2...6)
                 .textFieldStyle(.plain)
                 .focused($externalMcpField, equals: .connection)
-                .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .padding(.horizontal, AppTheme.Spacing.md)
                 .padding(.vertical, AppTheme.Spacing.smMd)
@@ -579,7 +579,7 @@ struct AgentPane: View {
                     externalMcpField = .name
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Accent.primary)
             }
 
@@ -590,7 +590,7 @@ struct AgentPane: View {
                     Text(validationMessage)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Status.errorColor)
             }
 
@@ -721,7 +721,7 @@ struct AgentPane: View {
         } else if hasKey {
             Button(action: removeKey) {
                 Image(systemName: "trash")
-                    .font(.system(size: AppTheme.FontSize.md))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
             }

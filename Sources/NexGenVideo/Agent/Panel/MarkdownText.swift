@@ -4,16 +4,17 @@ import SwiftUI
 /// AttributedString rendered by one Text view to minimize hosted-text count under LazyVStack.
 struct MarkdownText: View {
     let text: String
+    @Environment(\.interfaceScale) private var interfaceScale
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            ForEach(Array(Self.cachedParse(text).enumerated()), id: \.offset) { _, block in
+            ForEach(Array(Self.cachedParse(text, scale: interfaceScale).enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .prose(let attr):
                     Text(attr)
-                        .font(.system(size: AppTheme.FontSize.md))
+                        .interfaceFont(size: AppTheme.Typography.reading)
                         .foregroundStyle(AppTheme.Text.primaryColor)
-                        .lineSpacing(AppTheme.Spacing.xs)
+                        .lineSpacing(AppTheme.Typography.readingLineSpacing)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
@@ -22,12 +23,12 @@ struct MarkdownText: View {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                         if let language, !language.isEmpty {
                             Text(language)
-                                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium, design: .monospaced))
+                                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                                 .foregroundStyle(AppTheme.Text.mutedColor)
                                 .textCase(.uppercase)
                         }
                         Text(code)
-                            .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                            .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                             .foregroundStyle(AppTheme.Text.primaryColor)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -43,7 +44,7 @@ struct MarkdownText: View {
                         GridRow {
                             ForEach(Array(header.enumerated()), id: \.offset) { idx, cell in
                                 Text(cell)
-                                    .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
+                                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                                     .foregroundStyle(AppTheme.Text.primaryColor)
                                     .textSelection(.enabled)
                                     .gridColumnAlignment(columnAlign(alignments, at: idx))
@@ -54,7 +55,7 @@ struct MarkdownText: View {
                             GridRow {
                                 ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
                                     Text(cell)
-                                        .font(.system(size: AppTheme.FontSize.md))
+                                        .interfaceFont(size: AppTheme.Typography.reading)
                                         .foregroundStyle(AppTheme.Text.primaryColor)
                                         .textSelection(.enabled)
                                 }
@@ -99,14 +100,15 @@ struct MarkdownText: View {
         init(_ v: [Block]) { self.value = v }
     }
 
-    private static func cachedParse(_ text: String) -> [Block] {
-        if let hit = cache.object(forKey: text as NSString) { return hit.value }
-        let value = parse(text)
-        cache.setObject(CachedBlocks(value), forKey: text as NSString)
+    private static func cachedParse(_ text: String, scale: Double) -> [Block] {
+        let key = "\(scale):\(text)" as NSString
+        if let hit = cache.object(forKey: key) { return hit.value }
+        let value = parse(text, scale: scale)
+        cache.setObject(CachedBlocks(value), forKey: key)
         return value
     }
 
-    private static func parse(_ text: String) -> [Block] {
+    private static func parse(_ text: String, scale: Double) -> [Block] {
         var out: [Block] = []
         var prose = AttributedString()
         var buffer: [String] = []
@@ -118,7 +120,7 @@ struct MarkdownText: View {
             var part = parseInline(raw)
             if let lvl = headingLevel {
                 part.font = .system(
-                    size: headingSize(lvl),
+                    size: headingSize(lvl) * scale,
                     weight: lvl <= 1 ? .bold : .semibold
                 )
             }

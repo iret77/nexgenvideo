@@ -10,15 +10,15 @@ struct InspectorRow<Trailing: View>: View {
     var body: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: icon)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .frame(width: AppTheme.IconSize.xxs, alignment: .leading)
             Text(label)
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             if let labelHelp {
                 Image(systemName: "info.circle")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
                     .contentShape(Rectangle())

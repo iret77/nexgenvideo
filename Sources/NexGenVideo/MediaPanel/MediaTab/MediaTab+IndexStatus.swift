@@ -44,7 +44,7 @@ extension MediaTab {
                 Image(systemName: icon)
                 Text(label)
             }
-            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
             .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .buttonStyle(.plain)
@@ -58,7 +58,7 @@ extension MediaTab {
                 ProgressView().controlSize(.mini)
             }
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
         }
         .help(help)

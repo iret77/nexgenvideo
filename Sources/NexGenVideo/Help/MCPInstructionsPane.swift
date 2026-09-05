@@ -76,7 +76,7 @@ struct MCPInstructionsPane: View {
                 }
                 SettingsDivider()
                 Text(mcpEndpoint)
-                    .font(.system(size: AppTheme.FontSize.md, design: .monospaced))
+                    .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,7 +176,7 @@ struct MCPInstructionsPane: View {
             }
             SettingsDivider()
             Text(command)
-                .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -193,7 +193,7 @@ private struct CodeBlockView: View {
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.smMd) {
             Text(content)
-                .font(.system(size: AppTheme.FontSize.smMd, design: .monospaced))
+                .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -223,10 +223,10 @@ private struct ManualFallback: View {
             Button(action: toggle) {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                     Text("Manual setup")
-                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 }
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .contentShape(Rectangle())
@@ -236,7 +236,7 @@ private struct ManualFallback: View {
             if expanded {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                     Text(intro)
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .fixedSize(horizontal: false, vertical: true)
                     CodeBlockView(content: code)
@@ -261,7 +261,7 @@ private struct CopyButton: View {
     var body: some View {
         Button(action: copy) {
             Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(copied ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
         }
         .buttonStyle(.capsule(.secondary, size: .regular))

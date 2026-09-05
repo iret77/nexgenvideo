@@ -56,11 +56,11 @@ struct StatRow: View {
             ForEach(tiles) { tile in
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     Text(tile.label.uppercased())
-                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .tracking(AppTheme.Tracking.wide)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                     Text(tile.value)
-                        .font(.system(size: AppTheme.FontSize.lg, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(tile.muted ? AppTheme.Text.mutedColor : AppTheme.Text.primaryColor)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -94,7 +94,7 @@ struct PackSurfaceKeyValueList: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             if let title {
                 Text(title)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
             }
             VStack(spacing: AppTheme.Spacing.none) {
@@ -107,7 +107,7 @@ struct PackSurfaceKeyValueList: View {
                             .foregroundStyle(AppTheme.Text.primaryColor)
                             .multilineTextAlignment(.trailing)
                     }
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .padding(.horizontal, AppTheme.Spacing.md)
                     .padding(.vertical, AppTheme.Spacing.xs)
                     if row.id != rows.last?.id { AppDivider() }
@@ -176,7 +176,7 @@ struct BeatTimeline: View {
         HStack(spacing: AppTheme.Spacing.none) {
             ForEach(0..<5) { i in
                 Text(PackSurfaceFormat.mmss(duration * Double(i) / 4))
-                    .font(.system(size: AppTheme.FontSize.micro))
+                    .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .monospacedDigit()
                     .frame(maxWidth: .infinity, alignment: i == 0 ? .leading : (i == 4 ? .trailing : .center))
@@ -220,11 +220,11 @@ struct StructureHierarchyList: View {
                 .fill(PackSurfacePalette.section(row.section.index))
                 .frame(width: AppTheme.IconSize.xxs, height: AppTheme.IconSize.xxs)
             Text(row.section.label ?? "Section \(row.section.index + 1)")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             if let source = row.section.source {
                 Text(source)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             Spacer(minLength: AppTheme.Spacing.sm)
@@ -242,7 +242,7 @@ struct StructureHierarchyList: View {
             Spacer(minLength: AppTheme.Spacing.sm)
             range(segment.start, segment.end, color: AppTheme.Text.tertiaryColor)
         }
-        .font(.system(size: AppTheme.FontSize.xs))
+        .interfaceFont(size: AppTheme.Typography.ui)
         .foregroundStyle(AppTheme.Text.tertiaryColor)
         .padding(.leading, AppTheme.Spacing.xl)
         .padding(.trailing, AppTheme.Spacing.md)
@@ -258,7 +258,7 @@ struct StructureHierarchyList: View {
             Spacer(minLength: AppTheme.Spacing.sm)
             range(phrase.start, phrase.end, color: AppTheme.Text.mutedColor)
         }
-        .font(.system(size: AppTheme.FontSize.micro))
+        .interfaceFont(size: AppTheme.Typography.metadata)
         .foregroundStyle(AppTheme.Text.mutedColor)
         .padding(.leading, AppTheme.Spacing.xxl)
         .padding(.trailing, AppTheme.Spacing.md)

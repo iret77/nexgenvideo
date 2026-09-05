@@ -76,7 +76,7 @@ struct HomeView: View {
                 )
             }
             Text("My Projects")
-                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .padding(.horizontal, AppTheme.Spacing.xlXxl)
                 .padding(.bottom, AppTheme.Spacing.sm)
@@ -133,7 +133,7 @@ private struct NewProjectCard: View {
                 .aspectRatio(5.0/4.0, contentMode: .fit)
                 .overlay {
                     Image(systemName: "plus")
-                        .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
+                        .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                 }
                 .clipped()
@@ -150,7 +150,7 @@ private struct NewProjectCard: View {
             .allowsHitTesting(false)
 
             Text("Untitled")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.regular))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.regular)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(1)
                 .padding(.horizontal, AppTheme.Spacing.md)
@@ -180,7 +180,7 @@ private struct VersionTag: View {
     var body: some View {
         if let version = AppVersion.marketing {
             Text("Version \(version)")
-                .font(.system(size: AppTheme.FontSize.xxs))
+                .interfaceFont(size: AppTheme.Typography.metadata)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .help(AppVersion.build.map { "Version \(version) (\($0))" } ?? "Version \(version)")
         }
@@ -190,7 +190,7 @@ private struct VersionTag: View {
 private struct WelcomeTitle: View {
     var body: some View {
         Text("Welcome to NexGenVideo")
-            .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
+            .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
             .tracking(AppTheme.Tracking.tight)
             .foregroundStyle(AppTheme.Text.primaryColor)
     }
@@ -295,7 +295,7 @@ private struct HomeStatusNotice<Actions: View>: View {
         var color: Color {
             switch self {
             case .warning: return AppTheme.Status.warningColor
-            case .pack: return AppTheme.Accent.pack
+            case .pack: return AppTheme.Accent.primary
             }
         }
     }
@@ -353,10 +353,10 @@ private struct HomeStatusNotice<Actions: View>: View {
 
     private var icon: some View {
         Image(systemName: systemImage)
-            .font(.system(
-                size: AppTheme.FontSize.lgXl,
+            .interfaceFont(
+                size: AppTheme.Typography.section,
                 weight: AppTheme.FontWeight.bold
-            ))
+            )
             .foregroundStyle(tone.color)
             .frame(
                 width: AppTheme.IconSize.lgXl,
@@ -371,13 +371,13 @@ private struct HomeStatusNotice<Actions: View>: View {
     private var copy: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Text(title)
-                .font(.system(
-                    size: AppTheme.FontSize.md,
+                .interfaceFont(
+                    size: AppTheme.Typography.ui,
                     weight: AppTheme.FontWeight.semibold
-                ))
+                )
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Text(message)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -542,7 +542,7 @@ final class HomeWindowController: NSWindowController, NSWindowDelegate {
         AppRelaunchSelfTest.checkpoint("home-init-started")
         let rootView = HomeView().tint(AppTheme.Accent.primary)
         AppRelaunchSelfTest.checkpoint("home-root-ready")
-        let hostingController = NSHostingController(rootView: rootView)
+        let hostingController = NSHostingController(rootView: rootView.interfaceStyle())
         AppRelaunchSelfTest.checkpoint("home-hosting-ready")
         let window = NSWindow(contentViewController: hostingController)
         AppRelaunchSelfTest.checkpoint("home-window-ready")

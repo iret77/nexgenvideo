@@ -15,6 +15,9 @@ struct HoverHighlight: ViewModifier {
     var isActive: Bool = false
 
     @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.projectPalette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
@@ -23,15 +26,16 @@ struct HoverHighlight: ViewModifier {
                     .fill(fill)
             )
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .onHover { isHovered = $0 }
-            .animation(.easeOut(duration: AppTheme.Anim.hover), value: isHovered)
-            .animation(.easeOut(duration: AppTheme.Anim.hover), value: isActive)
+            .onHover { isHovered = isEnabled && $0 }
+            .animation(reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover), value: isHovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: AppTheme.Anim.hover), value: isActive)
     }
 
     private var fill: Color {
-        switch (isActive, isHovered) {
-        case (true, true): AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.muted)
-        case (true, false): AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.soft)
+        guard isEnabled else { return AppTheme.Background.clearColor }
+        return switch (isActive, isHovered) {
+        case (true, true): palette.accent.opacity(AppTheme.Opacity.muted)
+        case (true, false): palette.accent.opacity(AppTheme.Opacity.soft)
         case (false, true): AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint)
         case (false, false): AppTheme.Background.clearColor
         }

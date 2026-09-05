@@ -1,3 +1,4 @@
+import NexGenEngine
 import SwiftUI
 
 enum ProjectCardControl {
@@ -30,6 +31,8 @@ struct ProjectCard: View {
 
     @State private var isHovered = false
     @State private var thumbnail: NSImage?
+    @State private var packLabel: String?
+    @State private var packPalette = ProjectPalette.neutral
     @State private var showDeleteConfirmation = false
 
     private let cardRadius: CGFloat = AppTheme.Radius.mdLg
@@ -78,7 +81,30 @@ struct ProjectCard: View {
         } message: {
             Text("The project will be moved to the Trash.")
         }
-        .task(id: entry.lastOpenedDate) { await loadThumbnail(for: entry.url) }
+        .task(id: entry.lastOpenedDate) {
+            await loadThumbnail(for: entry.url)
+            await loadPackIdentity()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .projectPackBindingChanged)) { _ in
+            Task { await loadPackIdentity() }
+        }
+    }
+
+    private func loadPackIdentity() async {
+        let url = entry.url
+        let resolution = await Task.detached(priority: .utility) {
+            ProjectPluginSettings.bindingResolution(projectURL: url)
+        }.value
+        guard !Task.isCancelled else { return }
+        packLabel = nil
+        packPalette = .neutral
+        if case .bound(let binding) = resolution {
+            packLabel = binding.id
+            if let pack = PackCatalog.pack(named: binding.id), pack.version == binding.version {
+                packLabel = pack.manifest.displayName
+                packPalette = .resolve(hex: pack.manifest.accentHex)
+            }
+        }
     }
 
     private var openButton: some View {
@@ -103,7 +129,7 @@ struct ProjectCard: View {
                             .aspectRatio(contentMode: .fill)
                     } else {
                         Image(systemName: "film")
-                            .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
+                            .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                 }
@@ -113,11 +139,11 @@ struct ProjectCard: View {
 
                         VStack(spacing: AppTheme.Spacing.xxs) {
                             Image(systemName: "questionmark.folder")
-                                .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
+                                .interfaceFont(size: AppTheme.Typography.display, weight: AppTheme.FontWeight.light)
                             Text("Unavailable")
-                                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                             Text("Moved or deleted")
-                                .font(.system(size: AppTheme.FontSize.xxs))
+                                .interfaceFont(size: AppTheme.Typography.metadata)
                                 .foregroundStyle(AppTheme.Text.mutedColor)
                         }
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
@@ -138,12 +164,19 @@ struct ProjectCard: View {
 
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text(entry.name)
-                    .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.regular))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.regular)
                     .foregroundStyle(entry.isAccessible ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
                     .lineLimit(1)
 
+                if let packLabel {
+                    Label(packLabel, systemImage: "puzzlepiece.extension.fill")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(packPalette.accent)
+                        .lineLimit(1)
+                        .help(packLabel)
+                }
                 Text(Self.relativeString(for: entry.createdDate))
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.medium))
             }
             .padding(.horizontal, AppTheme.Spacing.md)
@@ -156,7 +189,7 @@ struct ProjectCard: View {
             perform(.removal)
         } label: {
             Image(systemName: entry.isAccessible ? "trash.fill" : "xmark")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(
                     entry.isAccessible ? AppTheme.Status.errorColor : AppTheme.Text.primaryColor
                 )

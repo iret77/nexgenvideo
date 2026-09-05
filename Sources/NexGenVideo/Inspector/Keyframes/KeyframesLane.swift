@@ -34,7 +34,7 @@ struct ClipRulerBlock: View {
                     .fill(tint.opacity(AppTheme.Opacity.medium))
                     .overlay(alignment: .leading) {
                         Text(editor.clipDisplayLabel(for: clip))
-                            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                             .foregroundStyle(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.nearOpaque))
                             .padding(.horizontal, AppTheme.Spacing.sm)
                             .lineLimit(1)

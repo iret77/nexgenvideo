@@ -59,6 +59,7 @@ enum PipelineSurfaceRouting {
 
 struct PipelinePanelView: View {
     @Environment(EditorViewModel.self) private var editor
+    @Environment(\.interfaceScale) private var interfaceScale
 
     private enum LoadState: Equatable {
         case idle
@@ -139,41 +140,45 @@ struct PipelinePanelView: View {
     @ViewBuilder
     private func loadedBody(_ data: ProjectStateData) -> some View {
         let activeRunningPhase = runningPhase
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                summaryHeader(data)
-                if let gateError {
-                    gateErrorBanner(gateError)
-                }
-                if data.phases.isEmpty {
-                    CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No phases",
-                                           message: "This project has no defined phases.")
-                } else {
-                    VStack(spacing: AppTheme.Spacing.none) {
-                        ForEach(Array(data.phases.enumerated()), id: \.element.id) { index, phase in
-                            phaseRow(phase, isNext: phase.phase == data.nextPhaseName,
-                                     isLast: index == data.phases.count - 1,
-                                     runningPhase: activeRunningPhase)
-                        }
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+                    summaryHeader(data)
+                    if let gateError {
+                        gateErrorBanner(gateError)
                     }
-                    .padding(AppTheme.Spacing.mdLg)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                            .fill(AppTheme.Background.raisedColor)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AppTheme.Radius.md)
-                            .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
-                    )
+                    if data.phases.isEmpty {
+                        CockpitStateView.empty(icon: "list.bullet.rectangle", title: "No phases",
+                                               message: "This project has no defined phases.")
+                    } else {
+                        VStack(spacing: AppTheme.Spacing.none) {
+                            ForEach(Array(data.phases.enumerated()), id: \.element.id) { index, phase in
+                                phaseRow(phase, isNext: phase.phase == data.nextPhaseName,
+                                         isLast: index == data.phases.count - 1,
+                                         runningPhase: activeRunningPhase,
+                                         compact: geometry.size.width < AppTheme.ComponentSize.pipelineCompactWidth * interfaceScale,
+                                         stackedActions: geometry.size.width < AppTheme.ComponentSize.pipelineActionFitWidth * interfaceScale)
+                            }
+                        }
+                        .padding(AppTheme.Spacing.xs)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                                .fill(AppTheme.Background.raisedColor)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppTheme.Radius.md)
+                                .strokeBorder(AppTheme.Border.subtleColor, lineWidth: AppTheme.BorderWidth.hairline)
+                        )
+                    }
+                    if data.budgetEur > 0 || data.budgetSpentEur > 0 {
+                        budgetCard(data)
+                    }
                 }
-                if data.budgetEur > 0 || data.budgetSpentEur > 0 {
-                    budgetCard(data)
-                }
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .padding(.vertical, AppTheme.Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, AppTheme.Spacing.lg)
-            .padding(.vertical, AppTheme.Spacing.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -185,7 +190,7 @@ struct PipelinePanelView: View {
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.mdLg) {
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                 Text("BUDGET")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 Spacer(minLength: 0)
@@ -193,7 +198,7 @@ struct PipelinePanelView: View {
                     Label(data.budgetRemainingEur <= 0 ? "Over budget" : "Low budget",
                           systemImage: "exclamationmark.triangle.fill")
                         .labelStyle(.titleAndIcon)
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Status.errorColor)
                 }
             }
@@ -202,7 +207,7 @@ struct PipelinePanelView: View {
 
             if let next = data.nextPhaseName {
                 Text("Next up: \(PhaseDisplay.label(next)) — \(String(format: "€%.2f", data.budgetRemainingEur)) available")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
 
@@ -243,8 +248,8 @@ struct PipelinePanelView: View {
     private func amountRow(label: String, amount: Double, color: Color, emphasized: Bool = false) -> some View {
         HStack {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.sm,
-                              weight: emphasized ? .semibold : .regular))
+                .interfaceFont(size: AppTheme.Typography.ui,
+                              weight: emphasized ? .semibold : .regular)
                 .foregroundStyle(emphasized ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
             Spacer()
             Text(String(format: "€%.2f", amount))
@@ -256,12 +261,16 @@ struct PipelinePanelView: View {
     }
 
     private func summaryHeader(_ data: ProjectStateData) -> some View {
-        // Just the progress count — the next phase is already marked with a NEXT badge on its row below,
-        // so a separate "Next: …" line here is redundant.
-        Text(data.isComplete ? "All phases complete" : "\(data.phases.filter(\.approved).count) of \(data.phases.count) phases approved")
-            .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
-            .foregroundStyle(AppTheme.Text.primaryColor)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            Text(data.isComplete ? "All phases complete" : "\(data.phases.filter(\.approved).count) of \(data.phases.count) phases approved")
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .foregroundStyle(AppTheme.Text.primaryColor)
+            ProgressView(value: data.progress)
+                .tint(AppTheme.Status.successColor)
+                .accessibilityLabel("Approved phases")
+                .accessibilityValue("\(data.phases.filter(\.approved).count) of \(data.phases.count)")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -269,7 +278,9 @@ struct PipelinePanelView: View {
         _ phase: ProjectPhase,
         isNext: Bool,
         isLast: Bool,
-        runningPhase: String?
+        runningPhase: String?,
+        compact: Bool,
+        stackedActions: Bool
     ) -> some View {
         let isRunning = runningPhase == phase.phase
         let pipelineIsRunning = runningPhase != nil
@@ -285,55 +296,84 @@ struct PipelinePanelView: View {
             hostDecisionPending: hostDecisionPending
         )
         VStack(spacing: AppTheme.Spacing.none) {
-            HStack(spacing: AppTheme.Spacing.smMd) {
-                statusDot(approved: phase.approved, isNext: isNext, state: phase.state)
+            let layout = compact
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.sm))
+                : AnyLayout(HStackLayout(spacing: AppTheme.Spacing.sm))
+            layout {
+                phaseIdentity(phase, isNext: isNext)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                let actionLayout = stackedActions
+                    ? AnyLayout(VStackLayout(alignment: .trailing, spacing: AppTheme.Spacing.sm))
+                    : AnyLayout(HStackLayout(spacing: AppTheme.Spacing.sm))
+                actionLayout {
+                    surfaceIcon(for: phase.phase)
+                        .frame(width: AppTheme.ComponentSize.pipelineSurfaceWidth * interfaceScale, alignment: .leading)
+                    ZStack {
+                        AppTheme.Background.clearColor
+                        if isRunning {
+                            Text("Running")
+                                .foregroundStyle(AppTheme.Accent.timecodeColor)
+                        } else if isNext {
+                            approveButton(phase, enabled: approvalEnabled)
+                        } else if phase.approved {
+                            Text("Approved")
+                                .foregroundStyle(AppTheme.Text.tertiaryColor)
+                        }
+                    }
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
+                    .frame(width: AppTheme.ComponentSize.pipelineApprovalWidth * interfaceScale, height: (AppTheme.Control.compactHeight + AppTheme.Spacing.xs) * interfaceScale)
+                    gateMenu(
+                        phase,
+                        isNext: isNext,
+                        canApprove: approvalEnabled,
+                        controlsAvailable: mutationReadiness.isReady && !hostDecisionPending,
+                        pipelineIsRunning: pipelineIsRunning
+                    )
+                    .frame(width: AppTheme.IconSize.md)
+                }
+                .frame(maxWidth: compact ? .infinity : nil, alignment: .trailing)
+            }
+            .padding(.horizontal, AppTheme.Spacing.sm)
+            .padding(.vertical, AppTheme.Spacing.smMd)
+            .frame(minHeight: AppTheme.ComponentSize.pipelineRowMinHeight)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
+                    .fill(isNext
+                          ? editor.projectPalette.accent.opacity(AppTheme.Opacity.subtle)
+                          : AppTheme.Background.clearColor)
+            )
+            if !isLast {
+                Rectangle()
+                    .fill(AppTheme.Border.subtleColor)
+                    .frame(height: AppTheme.BorderWidth.hairline)
+                    .padding(.horizontal, AppTheme.Spacing.sm)
+            }
+        }
+    }
+
+    private func phaseIdentity(_ phase: ProjectPhase, isNext: Bool) -> some View {
+        HStack(spacing: AppTheme.Spacing.smMd) {
+            statusDot(approved: phase.approved, isNext: isNext, state: phase.state)
+                .accessibilityLabel(phase.approved ? "Approved" : (isNext ? "Current phase" : "Pending"))
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text(PhaseDisplay.label(phase.phase))
-                    .font(.system(size: AppTheme.FontSize.sm,
-                                  weight: isNext ? .semibold : (phase.approved ? .regular : .medium)))
-                    .foregroundStyle(phase.approved ? AppTheme.Text.tertiaryColor
-                                     : (isNext ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor))
-                    .lineLimit(1)
+                    .interfaceFont(size: AppTheme.Typography.ui,
+                                  weight: isNext ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
+                    .foregroundStyle(isNext ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
                     .textSelection(.enabled)
-                Spacer(minLength: 0)
                 if phase.state == "needs_revision" {
-                    Text("NEEDS REVISION")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.bold))
-                        .tracking(AppTheme.Tracking.wide)
+                    Text("Needs revision")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
                         .foregroundStyle(AppTheme.Status.errorColor)
                         .help(phase.notes ?? "Sent back for revision")
                 } else if phase.state == "approved_with_notes" {
-                    Image(systemName: "text.bubble")
-                        .font(.system(size: AppTheme.FontSize.xxs))
-                        .foregroundStyle(AppTheme.Status.successColor)
+                    Text("Approved with notes")
+                        .interfaceFont(size: AppTheme.Typography.metadata)
+                        .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .help(phase.notes ?? "Approved with notes")
                 }
-                surfaceIcon(for: phase.phase)
-                if isRunning {
-                    Text("Running")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
-                        .foregroundStyle(AppTheme.Accent.timecodeColor)
-                } else if isNext {
-                    approveButton(
-                        phase,
-                        enabled: approvalEnabled
-                    )
-                } else if phase.approved {
-                    Text("Approved")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
-                        .foregroundStyle(AppTheme.Status.successColor)
-                }
-                gateMenu(
-                    phase,
-                    isNext: isNext,
-                    canApprove: approvalEnabled,
-                    controlsAvailable: mutationReadiness.isReady && !hostDecisionPending,
-                    pipelineIsRunning: pipelineIsRunning
-                )
             }
-            .frame(height: AppTheme.IconSize.md)
-            if !isLast {
-                AppDivider()
-            }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -357,7 +397,8 @@ struct PipelinePanelView: View {
             }
         } label: {
             Text("Approve")
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .frame(minHeight: AppTheme.IconSize.smMd)
         }
         .buttonStyle(.inlineAction(.approval))
         .disabled(!enabled)
@@ -432,9 +473,10 @@ struct PipelinePanelView: View {
             .disabled(isFuture || !controlsAvailable)
         } label: {
             Image(systemName: "ellipsis.circle")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
         }
+        .accessibilityLabel("Actions for \(PhaseDisplay.label(phase.phase))")
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         // A borderless Menu overrides its label's foreground style with the control tint.
@@ -504,10 +546,10 @@ struct PipelinePanelView: View {
     private func gateErrorBanner(_ error: GateErrorState) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Status.errorColor)
             Text(error.message)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: AppTheme.Spacing.sm)
@@ -518,14 +560,14 @@ struct PipelinePanelView: View {
                 gateError = nil
             } label: {
                 Text("Ask the agent")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Accent.timecodeColor)
             }
             .buttonStyle(.plain)
             .help("Hand this refusal to the agent so it can resolve it")
             Button { gateError = nil } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .buttonStyle(.plain)
@@ -573,9 +615,13 @@ struct PipelinePanelView: View {
             } label: {
                 HStack(spacing: AppTheme.Spacing.xxs) {
                     Image(systemName: route.icon)
+                        .frame(width: AppTheme.IconSize.xs)
                     Text(route.label)
                 }
-                .font(.system(size: AppTheme.FontSize.xxs))
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .lineLimit(1)
+                .padding(.horizontal, isPackRoute ? AppTheme.Spacing.none : AppTheme.Spacing.xs)
+                .frame(maxWidth: .infinity, minHeight: AppTheme.IconSize.smMd, alignment: .leading)
             }
             .buttonStyle(.inlineAction(isPackRoute ? .pack : .neutral))
             .disabled(!isEnabled)
@@ -601,7 +647,7 @@ struct PipelinePanelView: View {
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
         }
-        .font(.system(size: AppTheme.FontSize.md))
+        .interfaceFont(size: AppTheme.Typography.ui)
         .frame(width: AppTheme.IconSize.xs)
     }
 

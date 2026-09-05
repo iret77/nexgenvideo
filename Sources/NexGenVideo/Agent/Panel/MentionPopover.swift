@@ -67,11 +67,11 @@ struct MentionPopover: View {
     private var uploadRow: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "paperclip")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .frame(width: AppTheme.IconSize.lgXl, height: AppTheme.IconSize.smMd)
             Text("Upload a file\u{2026}")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer()
         }
@@ -85,7 +85,7 @@ struct MentionPopover: View {
     private var contentArea: some View {
         if candidates.isEmpty {
             Text(query.isEmpty ? tab.emptyLabel : "No matches for \"\(query)\"")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(AppTheme.Spacing.md)
@@ -140,7 +140,7 @@ struct MentionPopover: View {
         HStack(spacing: AppTheme.Spacing.none) {
             ForEach(MentionTab.allCases, id: \.self) { t in
                 Text(t.label)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: t == tab ? .semibold : .regular))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: t == tab ? .semibold : .regular)
                     .foregroundStyle(t == tab ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, AppTheme.Spacing.xsSm)

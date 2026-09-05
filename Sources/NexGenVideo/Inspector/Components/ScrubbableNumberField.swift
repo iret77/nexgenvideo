@@ -69,7 +69,7 @@ struct ScrubbableNumberField: View {
 
             if let trailingLabel {
                 Text(trailingLabel)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize()
             }
