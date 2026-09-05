@@ -124,6 +124,72 @@ struct SpendPipelineScope: Equatable, Sendable {
     }
 }
 
+enum SpendSelectionScope: String, Equatable, Sendable {
+    case image
+    case video
+    case audio
+    case upscale
+}
+
+enum SpendSelectionPreferences {
+    private static let defaultsKeyPrefix = "agentSpendApprovalSelection"
+
+    static func defaultsKey(for scope: SpendSelectionScope) -> String {
+        "\(defaultsKeyPrefix).\(scope.rawValue)"
+    }
+
+    static func applyingStoredSelection(
+        to approval: SpendApproval,
+        defaults: UserDefaults = .standard
+    ) -> SpendApproval {
+        guard let scope = approval.selectionScope,
+              let stored = defaults.dictionary(forKey: defaultsKey(for: scope)),
+              let providerRaw = stored["provider"] as? String,
+              let provider = GenerationProvider(rawValue: providerRaw) else {
+            return approval
+        }
+        let optionID = stored["option_id"] as? String
+        let modelID = stored["model_id"] as? String
+        let recommended = approval.options.first {
+            $0.id == approval.recommendedOptionId
+        }
+        let preferred = approval.options.first { $0.id == optionID }
+            ?? approval.options.first {
+                $0.target.provider == provider && $0.modelId == modelID
+            }
+            ?? recommended.flatMap { recommended in
+                approval.options.first {
+                    $0.target.provider == provider
+                        && $0.modelId == recommended.modelId
+                }
+            }
+            ?? approval.options.first { $0.target.provider == provider }
+        guard let preferred else { return approval }
+        let ordered = [preferred] + approval.options.filter { $0.id != preferred.id }
+        return SpendApproval(
+            id: approval.id,
+            recommendedOptionId: preferred.id,
+            options: ordered,
+            actionLabel: approval.actionLabel,
+            providerScope: approval.providerScope,
+            selectionScope: scope
+        )
+    }
+
+    static func record(
+        _ option: SpendOption,
+        for approval: SpendApproval,
+        defaults: UserDefaults = .standard
+    ) {
+        guard let scope = approval.selectionScope else { return }
+        defaults.set([
+            "option_id": option.id,
+            "model_id": option.modelId,
+            "provider": option.target.provider.rawValue,
+        ], forKey: defaultsKey(for: scope))
+    }
+}
+
 /// The pending spend confirmation surfaced in the composer dock (never a modal — LOCKED placement).
 struct SpendApproval: Identifiable, Equatable, Sendable {
     let id: String
@@ -133,18 +199,21 @@ struct SpendApproval: Identifiable, Equatable, Sendable {
     /// Verb for the action, e.g. "Generate video", used on the approve button.
     let actionLabel: String
     let providerScope: [GenerationProvider]
+    let selectionScope: SpendSelectionScope?
 
     init(
         id: String,
         recommendedOptionId: String,
         options: [SpendOption],
         actionLabel: String,
-        providerScope: [GenerationProvider]? = nil
+        providerScope: [GenerationProvider]? = nil,
+        selectionScope: SpendSelectionScope? = nil
     ) {
         self.id = id
         self.recommendedOptionId = recommendedOptionId
         self.options = options
         self.actionLabel = actionLabel
+        self.selectionScope = selectionScope
         var seen = Set<GenerationProvider>()
         self.providerScope = (providerScope ?? options.map(\.target.provider)).filter {
             seen.insert($0).inserted

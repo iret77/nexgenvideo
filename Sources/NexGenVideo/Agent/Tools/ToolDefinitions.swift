@@ -197,7 +197,7 @@ enum ToolDefinitions {
         ),
         AgentTool(
             name: .showDialog,
-            description: "Present a native structured dialog in the chat composer for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
+            description: "Present a native structured dialog in the chat composer for an enumerable user decision instead of asking with an option list in prose. It is the one input surface while open. Keep it focused: at most 3 sections; split larger decisions. Use allowsCustom for a non-exhaustive choice set, textField only for focused typed notes, and costHint when confirmation spends money. Format-pack inputs such as the track, lyrics, scripts, prepared identities, and style references are host-owned hard steps: never ask for, combine, replace, or duplicate them with this tool. During Audio Analysis, workflowDecision is mandatory and the host accepts only its three bounded decisions; story, identity, style, and later-phase questions are rejected. At the start of Treatment, workflowDecision=treatment_path is mandatory and must offer agent_proposal before user_supplied; never require the user to bring a treatment. Use fileIntake only for ad-hoc media-library input the workflow did not declare. The sole recovery exception is replacing a track after run_phase(\"analysis\") proved it undecodable: collect one audio file as ordinary media, then call attach_song(media, replace:true). Only one decision may be pending; after calling, STOP and wait for the user's answer. Use projection.timelineRanges for visible timeline spans and projection.reviewShot for generated-frame choices.",
             inputSchema: objectSchema(
                 properties: [
                     "title": ["type": "string", "description": "Short imperative title, e.g. 'Shape the B-roll'."],
@@ -211,8 +211,9 @@ enum ToolDefinitions {
                             "analysis_tempo",
                             "analysis_interpretation_review",
                             "analysis_track_replacement",
+                            "treatment_path",
                         ],
-                        "description": "Required only during Audio Analysis. Declares the exact phase-owned decision so the host can reject story or later-phase questions.",
+                        "description": "Declares a phase-owned bounded decision. Required for Audio Analysis decisions and for the initial Treatment path choice.",
                     ],
                     "textField": [
                         "type": "object",

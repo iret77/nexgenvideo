@@ -823,16 +823,39 @@ private struct ToolRunDetail: View {
 private struct ToolResultImageView: View {
     let base64: String
     @State private var image: NSImage?
+    @State private var showsPreview = false
 
     var body: some View {
         Group {
             if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxHeight: AppTheme.ComponentSize.toolImagePreviewMaxHeight)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous))
+                Button {
+                    showsPreview = true
+                } label: {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: AppTheme.ComponentSize.toolImagePreviewMaxHeight)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .clipShape(RoundedRectangle(
+                                cornerRadius: AppTheme.Radius.sm,
+                                style: .continuous
+                            ))
+                        Label("Open image", systemImage: "arrow.up.left.and.arrow.down.right")
+                            .interfaceFont(
+                                size: AppTheme.Typography.ui,
+                                weight: AppTheme.FontWeight.medium
+                            )
+                            .foregroundStyle(AppTheme.Text.secondaryColor)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open image")
+                .accessibilityLabel("Open generated image")
+                .sheet(isPresented: $showsPreview) {
+                    ToolResultImagePreview(image: image)
+                }
             } else {
                 Text("(image payload)").foregroundStyle(AppTheme.Text.mutedColor)
             }
@@ -842,5 +865,103 @@ private struct ToolResultImageView: View {
             let data = await Task.detached { Data(base64Encoded: base64) }.value
             if let data { image = NSImage(data: data) }
         }
+    }
+}
+
+private struct ToolResultImagePreview: View {
+    let image: NSImage
+    @Environment(\.dismiss) private var dismiss
+    @State private var zoomScale = AppTheme.ComponentSize.toolImageViewerMinZoom
+    @GestureState private var gestureScale = AppTheme.ComponentSize.toolImageViewerMinZoom
+
+    private var effectiveZoom: CGFloat {
+        limitedZoom(zoomScale * gestureScale)
+    }
+
+    var body: some View {
+        VStack(spacing: AppTheme.Spacing.none) {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Text("Generated image")
+                    .interfaceFont(
+                        size: AppTheme.Typography.ui,
+                        weight: AppTheme.FontWeight.semibold
+                    )
+                    .foregroundStyle(AppTheme.Text.primaryColor)
+                Spacer(minLength: AppTheme.Spacing.lg)
+                Button {
+                    zoomScale = limitedZoom(
+                        zoomScale / AppTheme.ComponentSize.toolImageViewerZoomStep
+                    )
+                } label: {
+                    Label("Smaller", systemImage: "minus.magnifyingglass")
+                }
+                .buttonStyle(.capsule)
+                .disabled(zoomScale <= AppTheme.ComponentSize.toolImageViewerMinZoom)
+
+                Button("Fit") {
+                    zoomScale = AppTheme.ComponentSize.toolImageViewerMinZoom
+                }
+                .buttonStyle(.capsule)
+                .disabled(zoomScale == AppTheme.ComponentSize.toolImageViewerMinZoom)
+
+                Button {
+                    zoomScale = limitedZoom(
+                        zoomScale * AppTheme.ComponentSize.toolImageViewerZoomStep
+                    )
+                } label: {
+                    Label("Larger", systemImage: "plus.magnifyingglass")
+                }
+                .buttonStyle(.capsule)
+                .disabled(zoomScale >= AppTheme.ComponentSize.toolImageViewerMaxZoom)
+
+                Button("Done") { dismiss() }
+                    .buttonStyle(.capsule(.prominent))
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, AppTheme.Spacing.lg)
+            .padding(.vertical, AppTheme.Spacing.md)
+            .background(AppTheme.Background.raisedColor)
+
+            AppDivider()
+
+            GeometryReader { proxy in
+                ScrollView([.horizontal, .vertical]) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(
+                            width: proxy.size.width * effectiveZoom,
+                            height: proxy.size.height * effectiveZoom
+                        )
+                }
+                .defaultScrollAnchor(.center, for: .initialOffset)
+                .defaultScrollAnchor(.center, for: .sizeChanges)
+                .simultaneousGesture(
+                    MagnifyGesture()
+                        .updating($gestureScale) { value, state, _ in
+                            state = value.magnification
+                        }
+                        .onEnded { value in
+                            zoomScale = limitedZoom(zoomScale * value.magnification)
+                        }
+                )
+            }
+            .background(AppTheme.Background.previewCanvasColor)
+        }
+        .frame(
+            minWidth: AppTheme.ComponentSize.toolImageViewerMin.width,
+            idealWidth: AppTheme.ComponentSize.toolImageViewerIdeal.width,
+            minHeight: AppTheme.ComponentSize.toolImageViewerMin.height,
+            idealHeight: AppTheme.ComponentSize.toolImageViewerIdeal.height
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Generated image preview")
+    }
+
+    private func limitedZoom(_ scale: CGFloat) -> CGFloat {
+        min(
+            AppTheme.ComponentSize.toolImageViewerMaxZoom,
+            max(AppTheme.ComponentSize.toolImageViewerMinZoom, scale)
+        )
     }
 }

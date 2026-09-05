@@ -57,7 +57,7 @@ extension GenerationProvider {
     /// entry per modality).
     var mcpModelCatalog: MCPModelCatalog? {
         switch self {
-        // Higgsfield exposes its free-form `job_set_type` catalog through `models_explore`.
+        // Higgsfield exposes its free-form model catalog through `models_explore`.
         case .higgsfield:
             return MCPModelCatalog(tool: "models_explore", listArgs: ["action": "list"],
                                    typeArg: "type", cursorArg: "after",

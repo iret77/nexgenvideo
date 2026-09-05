@@ -72,6 +72,13 @@ final class ClaudeCodeRuntime {
         mapper.appendTranscriptOnly(message)
     }
 
+    func replaceToolResult(
+        containingText text: String,
+        with result: ToolResult
+    ) {
+        mapper.replaceToolResult(containingText: text, with: result)
+    }
+
     /// `context` (e.g. the user's current selection) is prepended to the payload sent to the model but
     /// never shown in the transcript — the user sees exactly what they typed.
     @discardableResult

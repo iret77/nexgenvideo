@@ -109,7 +109,7 @@ struct ToolDefinitionContractTests {
         ])
         #expect(
             ToolHarness.textOf(badWorkflowDecision)
-                .contains("expected one of analysis_tempo, analysis_interpretation_review, analysis_track_replacement")
+                .contains("expected one of analysis_tempo, analysis_interpretation_review, analysis_track_replacement, treatment_path")
         )
 
         let longChoiceLabel = String(

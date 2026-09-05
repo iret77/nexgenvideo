@@ -169,6 +169,40 @@ struct ProjectDocumentIOTests {
         #expect(doc.fileModificationDate == hostMutationDate)
     }
 
+    @Test func successfulSaveRecordsItsOwnAtomicPackageReplacement() async throws {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+            "pp-save-state-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let package = root.appendingPathComponent(
+            "Project.ngv",
+            isDirectory: true
+        )
+        try Fixtures.prepareProjectPackage(at: package)
+        try makePackage(at: package)
+        defer { try? fm.removeItem(at: root) }
+        let doc = configuredDocument(fileURL: package)
+        try doc.recordKnownPackageState(at: package)
+
+        let saveError: Error? = await withCheckedContinuation { continuation in
+            doc.save(
+                to: package,
+                ofType: VideoProject.typeIdentifier,
+                for: .saveOperation
+            ) {
+                continuation.resume(returning: $0)
+            }
+        }
+        let savedPackageDate = try #require(
+            package.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate
+        )
+
+        #expect(saveError == nil)
+        #expect(doc.fileModificationDate == savedPackageDate)
+    }
+
     private func makePackage(at url: URL) throws {
         let media = url.appendingPathComponent(Project.mediaDirectoryName, isDirectory: true)
         try fm.createDirectory(at: media, withIntermediateDirectories: true)

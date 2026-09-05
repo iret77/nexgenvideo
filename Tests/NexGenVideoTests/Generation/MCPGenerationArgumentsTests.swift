@@ -108,6 +108,36 @@ struct MCPGenerationArgumentsTests {
         #expect(arguments["prompt"] == .string("compiled prompt"))
     }
 
+    @Test func jobTypeReceivesTheSelectedModel() throws {
+        let schema: Value = .object([
+            "properties": .object([
+                "job_type": .object(["type": .string("string")]),
+                "prompt": .object(["type": .string("string")]),
+            ]),
+            "required": .array([
+                .string("job_type"),
+                .string("prompt"),
+            ]),
+        ])
+        let params = BackendGenerationParams.image(ImageGenerationParams(
+            prompt: "compiled prompt",
+            aspectRatio: "9:16",
+            resolution: nil,
+            quality: nil,
+            imageURLs: [],
+            numImages: 1
+        ))
+
+        let arguments = try MCPGenerationArguments.make(
+            for: params,
+            model: "nano_banana_pro",
+            schema: schema
+        )
+
+        #expect(arguments["job_type"] == .string("nano_banana_pro"))
+        #expect(arguments["prompt"] == .string("compiled prompt"))
+    }
+
     @Test func rootSchemaAlternativesChooseTheCompleteMediaContract() throws {
         let textOnly: Value = .object([
             "properties": .object([

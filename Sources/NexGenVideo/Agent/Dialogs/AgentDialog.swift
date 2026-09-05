@@ -131,10 +131,11 @@ struct AgentDialog: Identifiable, Equatable, Sendable {
         case workflowIntake
     }
 
-    enum WorkflowDecision: String, Equatable, Sendable {
+    enum WorkflowDecision: String, Equatable, Hashable, Sendable {
         case analysisTempo = "analysis_tempo"
         case analysisInterpretationReview = "analysis_interpretation_review"
         case analysisTrackReplacement = "analysis_track_replacement"
+        case treatmentPath = "treatment_path"
     }
 
     struct Choice: Identifiable, Equatable, Sendable {

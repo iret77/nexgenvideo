@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import NexGenVideo
 
 @Suite("Agent transcript layout policy")
 struct AgentTranscriptLayoutPolicyTests {
@@ -186,6 +187,21 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(activity.contains("Show technical details"))
     }
 
+    @Test func generatedImagesHaveLegiblePreviewsAndAnInspectableViewer() throws {
+        let source = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift"
+        )
+        let start = try #require(source.range(of: "private struct ToolResultImageView"))
+        let implementation = source[start.lowerBound..<source.endIndex]
+
+        #expect(AppTheme.ComponentSize.toolImagePreviewMaxHeight >= 180)
+        #expect(implementation.contains("Label(\"Open image\""))
+        #expect(implementation.contains(".sheet(isPresented: $showsPreview)"))
+        #expect(implementation.contains("ToolResultImagePreview(image: image)"))
+        #expect(implementation.contains("MagnifyGesture()"))
+        #expect(implementation.contains("Button(\"Fit\")"))
+    }
+
     @Test func composerIsAbsentWhileAHostDecisionIsOpen() throws {
         let panel = try agentPanelSource()
         let input = try sourceFile(
@@ -281,6 +297,22 @@ struct AgentTranscriptLayoutPolicyTests {
         #expect(dialog.contains(".focused($focusedControl"))
     }
 
+    @Test func gateApprovalUsesBodyTypographyForDecisionContent() throws {
+        let source = try sourceFile(
+            "Sources/NexGenVideo/Agent/Panel/GateApprovalCard.swift"
+        )
+        let start = try #require(source.range(of: "private var summary"))
+        let end = try #require(source.range(
+            of: "private var footerRow",
+            range: start.upperBound..<source.endIndex
+        ))
+        let summary = source[start.lowerBound..<end.lowerBound]
+
+        #expect(summary.contains(".interfaceFont(size: AppTheme.Typography.ui)"))
+        #expect(!summary.contains("AppTheme.FontSize.xxs"))
+        #expect(!summary.contains("AppTheme.Text.mutedColor"))
+    }
+
     @Test func spendApprovalKeepsValidProviderAndModelChoicesInTheCard() throws {
         let card = try sourceFile(
             "Sources/NexGenVideo/Agent/Panel/SpendApprovalCard.swift"
@@ -288,11 +320,19 @@ struct AgentTranscriptLayoutPolicyTests {
         let executor = try sourceFile(
             "Sources/NexGenVideo/Agent/Tools/ToolExecutor+Generate.swift"
         )
+        let service = try sourceFile(
+            "Sources/NexGenVideo/Agent/AgentService.swift"
+        )
 
-        #expect(card.contains("approval.options.filter { $0.isCurrentlyAvailable }"))
+        #expect(card.contains("private var availableOptions: [SpendOption]"))
+        #expect(card.contains("approval.options"))
+        #expect(!card.contains("$0.isCurrentlyAvailable"))
+        #expect(card.contains("let scope = selectedProvider.map { [$0] }"))
         #expect(card.contains("Picker(\"Provider\""))
         #expect(card.contains("Picker(\"Model\""))
         #expect(!card.contains("CHEAPER OPTIONS"))
+        #expect(service.contains("guard option.isCurrentlyAvailable else"))
+        #expect(service.contains("SpendSelectionPreferences.record(option, for: approval)"))
         #expect(executor.contains("availableImageSpendOptions"))
         #expect(executor.contains("target: approved.target"))
         #expect(executor.contains("PromptCompiler.recompile"))

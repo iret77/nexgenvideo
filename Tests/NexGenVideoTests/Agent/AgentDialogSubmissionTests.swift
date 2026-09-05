@@ -5,6 +5,59 @@ import Testing
 @Suite("Agent dialog submission")
 @MainActor
 struct AgentDialogSubmissionTests {
+    @Test func treatmentStartsWithAgentCreationAsARealChoice() throws {
+        let dialog = try AgentDialog.parse([
+            "title": "Choose how to develop the treatment",
+            "workflowDecision": "treatment_path",
+            "sections": [[
+                "id": "treatment_path",
+                "label": "Who develops the treatment?",
+                "type": "choices",
+                "allowsCustom": true,
+                "options": [
+                    ["id": "agent_proposal", "label": "Create 2–3 proposals for me"],
+                    ["id": "user_supplied", "label": "I will supply a treatment"],
+                ],
+            ]],
+        ])
+
+        try PipelineAgentHarness.validateTreatmentPathDialog(dialog)
+        #expect(try PipelineAgentHarness.resolveTreatmentCreationPath(
+            dialog,
+            result: AgentDialogResult(
+                selectedLabels: [:],
+                toggles: [:],
+                direction: ""
+            ),
+            selectedOptionIDs: ["treatment_path": ["agent_proposal"]]
+        ) == .agentProposal)
+    }
+
+    @Test func treatmentCannotStartWithAForcedUploadDialog() throws {
+        let forcedUpload = try AgentDialog.parse([
+            "title": "Hand me your treatment",
+            "workflowDecision": "treatment_path",
+            "textField": [
+                "placeholder": "Paste your treatment here",
+                "multiline": true,
+            ],
+            "sections": [[
+                "id": "treatment_path",
+                "label": "How are you giving it to me?",
+                "type": "choices",
+                "allowsCustom": true,
+                "options": [
+                    ["id": "pasted", "label": "Pasted below"],
+                    ["id": "file", "label": "I'll drop a file"],
+                ],
+            ]],
+        ])
+
+        #expect(throws: ToolError.self) {
+            try PipelineAgentHarness.validateTreatmentPathDialog(forcedUpload)
+        }
+    }
+
     @Test func agentDialogSuspendsItsOwningTurn() async throws {
         let harness = ToolHarness()
         harness.editor.agentService.newChat()

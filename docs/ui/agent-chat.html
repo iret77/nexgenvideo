@@ -20,7 +20,7 @@
     --text: rgba(255, 255, 255, 1);
     --text-2: rgba(255, 255, 255, .80);
     --text-3: rgba(255, 255, 255, .62);
-    --muted: rgba(255, 255, 255, .34);
+    --muted: rgba(255, 255, 255, .50);
     --accent: #f2a044;
     --accent-dim: rgba(242, 160, 68, .13);
     --success: #58bf69;
@@ -43,9 +43,9 @@
     --r-md: 9px;
     --r-lg: 12px;
     --hair: 1px;
-    --f-micro: 9px;
-    --f-xxs: 10px;
-    --f-xs: 11px;
+    --f-micro: 11px;
+    --f-xxs: 11px;
+    --f-xs: 12px;
     --f-sm: 12px;
     --f-md: 13px;
     --f-lg: 15px;
@@ -729,6 +729,7 @@
 
   .decision {
     display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: var(--s-sm-md);
     max-height: 286px;
     overflow: hidden;
@@ -759,8 +760,8 @@
   .decision-scroll {
     min-height: 0;
     overflow: auto;
-    color: var(--text-3);
-    font-size: var(--f-xs);
+    color: var(--text-2);
+    font-size: var(--f-md);
     scrollbar-gutter: stable;
   }
 
@@ -1171,6 +1172,9 @@
         reference/open action, never a phase rail.</li>
       <li>Transcript actions may copy, open or reveal durable artifacts. Approval, selection and
         clarification controls remain in the Dock or their canonical artifact surface.</li>
+      <li>Generated images render as legible aspect-preserving previews, including portrait output.
+        Each preview has a visible <strong>Open image</strong> action that opens a bounded viewer with
+        fit, incremental zoom and trackpad magnification. Viewing never performs approval.</li>
     </ul>
 
     <h2>Composer Dock and #96 compatibility</h2>
@@ -1202,6 +1206,16 @@
         leaf SwiftUI drop target; no parent SwiftUI <code>.onDrop</code> spans nested targets.</li>
       <li>Streaming may replace Send with Stop. A detached paid generation does not take over the
         Dock; its concise state and Cancel remain in Live Status, so composing stays available.</li>
+      <li>A completed paid generation resumes the idle owning Agent session in place. Delivering its
+        result never forces an MCP reconnect or produces a user-facing connection-loss detour.</li>
+      <li>Spend approval remembers the last approved provider and model separately for image, video,
+        audio and upscale work. The next compatible request preselects that choice; if the exact model
+        is unavailable, it keeps the provider when possible and otherwise falls back to the current
+        recommendation. Changing the picker uses the validated card snapshot and performs no discovery
+        or Keychain scan; availability is revalidated once immediately before spending.</li>
+      <li>A new Treatment starts with one bounded path choice: Agent proposals first and recommended,
+        user-supplied material second, plus Other. No upload or long-form text field appears before
+        that choice, and choosing Agent proposals cannot lead to a treatment-upload request.</li>
       <li>Raw prompts never reach a content model. Dock submissions use the existing prompt engine
         and schema-validated tool contracts.</li>
     </ul>
@@ -1351,6 +1365,9 @@
       <li>Native implementation uses only <code>AppTheme</code> spacing, type, weight, radius, border,
         opacity, icon size, shadow, color and animation constants. Add turn spacing, receipt spacing,
         decision maximum height and conversation geometry tokens before use; do not hardcode them.</li>
+      <li>User-readable text never renders below the shared 11-point legibility floor. Decision
+        instructions, approval notes, errors and blockers use body typography and readable contrast;
+        muted styling is reserved for non-essential metadata.</li>
       <li>Disabled controls use the shared button style and do not retain active contrast or hover.</li>
       <li>Agent-visible copy follows the actual app interface localization. OS locale, project content,
         filenames, lyrics and prior generated prose never switch it.</li>
@@ -1379,6 +1396,8 @@
       <li>Pipeline progress answers phase, original file, current stage, count and next stage without
         expanding anything or cloning Pipeline.</li>
       <li>Keyboard and VoiceOver traversal follow the tables above; Reduce Motion changes no information.</li>
+      <li>Every text-size token meets the shared legibility floor, and decision content remains
+        readable without relying on browser or system zoom.</li>
     </ul>
   </section>
 
@@ -1496,9 +1515,9 @@
     function spendDecision() {
       return "<div class='dock'><div class='decision' aria-label='Approve spend'>" +
         "<div class='decision-head'><span class='decision-symbol'>▣</span><div class='decision-title'>Approve spend</div></div>" +
-        "<div class='decision-scroll'><p class='decision-copy'>Generate the lighting anchor with Nano Banana Pro.</p>" +
-        "<div class='decision-fields'><div><span class='decision-field-label'>Provider</span><div class='field filled'>Google AI⌄</div></div>" +
-        "<div><span class='decision-field-label'>Model</span><div class='field filled'>Nano Banana Pro⌄</div></div></div>" +
+        "<div class='decision-scroll'><p class='decision-copy'>Generate the lighting anchor with Nano Banana Pro (edit).</p>" +
+        "<div class='decision-fields'><div><span class='decision-field-label'>Provider</span><div class='field filled'>fal.ai⌄</div></div>" +
+        "<div><span class='decision-field-label'>Model</span><div class='field filled'>Nano Banana Pro (edit)⌄</div></div></div>" +
         "<p>Only connected models compatible with this request are shown.</p></div>" +
         "<div class='decision-actions'><span class='button'>Decline</span><span class='button primary'>Generate image · €0.04</span></div>" +
         "</div></div>";
@@ -1720,7 +1739,7 @@
       {
         id: "spend",
         title: "Pending spend approval",
-        description: "Provider, compatible model, price and the only Generate action live in the decision Dock.",
+        description: "The last compatible provider and model are preselected; price and the only Generate action live in the decision Dock.",
         transcript: function () {
           return turn([intent("Generate the approved lighting anchor."),
             activity("Prepared the provider request", "Completed", "✓")]);
