@@ -116,6 +116,36 @@ struct MusicvideoPackTests {
         ]))
         #expect(!productionDesign.contains { $0.hasPrefix("camera-recipes/") })
         #expect(!treatment.contains { $0.hasPrefix("genre-baselines/") })
+
+        for (phase, metadataTags) in [
+            ("production_design", Set(["stylized-3d", "animation", "shape-language"])),
+            ("treatment", Set(["narrative", "quiet", "poetic"])),
+            ("storyboard", Set(["stylized-3d", "animation", "shape-language"])),
+            ("bible", Set(["stylized-3d", "animation", "shape-language"])),
+            ("shotlist", Set<String>()),
+            ("sanity", Set(["stylized-3d", "animation", "shape-language"])),
+        ] {
+            let selection = try #require(
+                registration.descriptor.selection(for: phase)
+            )
+            for libraryID in selection.libraryIDs {
+                let assembly = try assembler.assemble(
+                    ProductionKnowledgeAssemblyQueryV1(
+                        packID: registration.descriptor.packID,
+                        phase: selection.knowledgePhase,
+                        intentTags: metadataTags.union(selection.intentTags),
+                        activeProfileIDs: [
+                            "generative_film", "narrative_storytelling",
+                        ],
+                        activeLibraryIDs: [libraryID],
+                        budget: registration.descriptor.budget
+                    )
+                )
+                #expect(assembly.libraryEntryIDs.contains {
+                    $0.hasPrefix("\(libraryID.rawValue)/")
+                })
+            }
+        }
     }
 
     @Test("phase artifact inventory includes versioned creative truth")
