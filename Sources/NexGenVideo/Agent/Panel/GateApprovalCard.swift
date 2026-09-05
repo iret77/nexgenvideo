@@ -10,6 +10,9 @@ struct GateApprovalCard: View {
     let onApprove: () -> Void
     let onDecline: () -> Void
     @FocusState private var approveFocused: Bool
+    @Environment(EditorViewModel.self) private var editor
+    @State private var review = GateReviewModel()
+    @State private var showsStoryboard = false
 
     private var reviewHint: String? {
         if approval.phase == "analysis" {
@@ -30,6 +33,22 @@ struct GateApprovalCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
+            if approval.phase == "storyboard" {
+                Button("Open Storyboard") {
+                    Task {
+                        await review.refresh(approval: approval, editor: editor)
+                        showsStoryboard = review.storyboard != nil
+                    }
+                }
+                .buttonStyle(.capsule(.secondary, size: .regular))
+                .disabled(isWorking || isBlocked)
+            }
+            if let blocker = review.blocker, !isBlocked {
+                Text(blocker)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             footerRow
         }
         .padding(AppTheme.Spacing.md)
@@ -40,11 +59,26 @@ struct GateApprovalCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(AppTheme.Accent.primary.opacity(AppTheme.Opacity.medium),
+                .strokeBorder(editor.projectPalette.accent.opacity(AppTheme.Opacity.medium),
                               lineWidth: AppTheme.BorderWidth.thin)
         )
         .padding(.horizontal, AppTheme.Spacing.mdLg)
         .id(approval.id)
+        .task(id: "\(approval.id):\(editor.engineStateRevision):\(isBlocked)") {
+            await review.refresh(approval: approval, editor: editor)
+        }
+        .sheet(isPresented: $showsStoryboard) {
+            if let storyboard = review.storyboard {
+                StoryboardReviewSheet(storyboard: storyboard)
+            } else {
+                VStack(spacing: AppTheme.Spacing.lgXl) {
+                    Text(review.blocker ?? "Checking the storyboard…")
+                    Button("Done") { showsStoryboard = false }
+                        .buttonStyle(.capsule(.secondary, size: .regular))
+                }
+                .padding(AppTheme.Spacing.xlXxl)
+            }
+        }
         .onAppear {
             Task { @MainActor in
                 await Task.yield()
@@ -58,15 +92,15 @@ struct GateApprovalCard: View {
     private var header: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "checkmark.seal")
-                .font(.system(size: AppTheme.FontSize.md))
-                .foregroundStyle(AppTheme.Accent.primary)
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(editor.projectPalette.accent)
             Text("Approve \(approval.phaseLabel)")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: AppTheme.Spacing.sm)
             Button(action: onDecline) {
                 Image(systemName: "xmark")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             .buttonStyle(.plain)
@@ -79,44 +113,56 @@ struct GateApprovalCard: View {
     private var summary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
             Text("The agent is asking you to approve \(approval.phaseLabel).")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             if let notes = approval.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
                 Text(notes)
-                    .font(.system(size: AppTheme.FontSize.xxs))
-                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.secondaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let reviewHint {
                 Text(reviewHint)
-                    .font(.system(size: AppTheme.FontSize.xxs))
-                    .foregroundStyle(AppTheme.Text.mutedColor)
+                    .interfaceFont(size: AppTheme.Typography.ui)
+                    .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, AppTheme.Spacing.xxs)
             }
             if isBlocked {
                 Text("Finish the running phase before approving.")
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.warningColor)
             }
         }
     }
 
     private var footerRow: some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
+        ViewThatFits(in: .horizontal) {
+            approvalActions(horizontal: true)
+            approvalActions(horizontal: false)
+        }
+    }
+
+    private func approvalActions(horizontal: Bool) -> some View {
+        let layout = horizontal ? AnyLayout(HStackLayout(spacing: AppTheme.Spacing.sm))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.sm))
+        return layout {
             Button("Not yet") { onDecline() }
                 .buttonStyle(.capsule(.secondary, size: .regular))
                 .controlSize(.small)
                 .disabled(isWorking || isBlocked)
-            Spacer()
+            if horizontal { Spacer() }
             Button {
-                onApprove()
+                Task {
+                    await review.refresh(approval: approval, editor: editor)
+                    if review.isReady { onApprove() }
+                }
             } label: {
                 if isWorking {
                     ProgressView()
@@ -127,7 +173,7 @@ struct GateApprovalCard: View {
             }
                 .buttonStyle(.capsule(.prominent, size: .regular))
                 .controlSize(.small)
-                .disabled(isWorking || isBlocked)
+                .disabled(isWorking || isBlocked || !review.isReady)
                 .focused($approveFocused)
                 .accessibilityHint(
                     isBlocked ? "Finish the running phase before approving" : ""

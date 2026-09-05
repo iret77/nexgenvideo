@@ -314,3 +314,20 @@ final class PluginUsageSnapshotModel {
         refreshTask = nil
     }
 }
+
+@MainActor
+enum PluginRemovalAttempt: Equatable {
+    case removed(restartRequired: Bool)
+    case blocked(String)
+
+    static func perform(
+        installedVersion: InstalledPluginVersion,
+        usage: PluginVersionUsageState?,
+        uninstall: () -> String?
+    ) -> Self {
+        let presentation = PluginRemovalPresentation.resolve(installedVersion: installedVersion, usage: usage)
+        guard presentation.canRemove else { return .blocked(presentation.removalMessage) }
+        if let error = uninstall() { return .blocked(error) }
+        return .removed(restartRequired: installedVersion.isResident)
+    }
+}

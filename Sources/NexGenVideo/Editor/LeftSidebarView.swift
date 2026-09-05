@@ -56,9 +56,9 @@ struct LeftSidebarView: View {
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Image(systemName: tab.sfSymbol)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: selected ? .semibold : .medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: selected ? .semibold : .medium)
                 Text(tab.label)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: selected ? .medium : .regular))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: selected ? .medium : .regular)
                     .lineLimit(1)
             }
             .foregroundStyle(selected ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)

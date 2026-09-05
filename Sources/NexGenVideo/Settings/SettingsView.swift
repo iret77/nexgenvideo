@@ -116,8 +116,8 @@ struct SettingsWindowShell<Sidebar: View, Detail: View>: View {
             minHeight: AppTheme.Window.settingsMin.height,
             idealHeight: AppTheme.Window.settingsDefault.height
         )
-        .background(.ultraThinMaterial)
-        .focusEffectDisabled()
+        .background(AppTheme.Background.surfaceColor)
+
     }
 }
 
@@ -168,6 +168,7 @@ private struct SettingsDetail: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                 switch tab {
                 case .general:
+                    AppearancePane()
                     NotificationsPane()
                     PrivacyPane()
                 case .models:
@@ -205,11 +206,11 @@ struct SettingsPage<Content: View>: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(title)
-                    .font(.system(size: AppTheme.FontSize.title2, weight: AppTheme.FontWeight.light))
+                    .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.semibold)
                     .tracking(AppTheme.Tracking.tight)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Text(subtitle)
-                    .font(.system(size: AppTheme.FontSize.smMd))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -271,11 +272,11 @@ struct SettingsSection<Content: View>: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(title)
-                    .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -327,23 +328,32 @@ struct SettingsRow<Accessory: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+        ViewThatFits(in: .horizontal) {
+            row(horizontal: true).fixedSize(horizontal: true, vertical: false)
+            row(horizontal: false)
+        }
+        .padding(AppTheme.Spacing.lgXl)
+    }
+
+    private func row(horizontal: Bool) -> some View {
+        let layout = horizontal ? AnyLayout(HStackLayout(alignment: .top, spacing: AppTheme.Spacing.lgXl))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: AppTheme.Spacing.mdLg))
+        return layout {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(title)
-                    .font(.system(size: AppTheme.FontSize.md))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: AppTheme.Spacing.lg)
+            if horizontal { Spacer(minLength: AppTheme.Spacing.lg) }
             accessory
         }
-        .padding(.horizontal, AppTheme.Spacing.mdLg)
-        .padding(.vertical, AppTheme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -384,7 +394,7 @@ struct SettingsStatusBadge: View {
                 )
             Text(text)
         }
-        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
         .foregroundStyle(tone.color)
         .padding(.horizontal, AppTheme.Spacing.sm)
         .padding(.vertical, AppTheme.Spacing.xs)
@@ -401,11 +411,11 @@ struct SettingsNotice: View {
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
             Image(systemName: systemImage)
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
             Text(text)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.system(size: AppTheme.FontSize.sm))
+        .interfaceFont(size: AppTheme.Typography.ui)
         .foregroundStyle(tone.color)
         .padding(.horizontal, AppTheme.Spacing.mdLg)
         .padding(.vertical, AppTheme.Spacing.smMd)
@@ -423,6 +433,7 @@ struct SettingsToggleRow: View {
         SettingsRow(title: title, subtitle: subtitle) {
             Toggle("", isOn: $isOn)
                 .labelsHidden()
+                .accessibilityLabel(title)
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .padding(.top, AppTheme.Spacing.xxs)
@@ -437,8 +448,8 @@ final class SettingsWindowController: NSWindowController {
     private var hosting: NSHostingController<AnyView>?
 
     private init() {
-        let initialView = SettingsView().tint(AppTheme.Accent.primary)
-        let hosting = NSHostingController(rootView: AnyView(initialView))
+        let initialView = SettingsView().interfaceStyle()
+        let hosting = NSHostingController(rootView: AnyView(initialView.interfaceStyle()))
         let window = NSWindow(contentViewController: hosting)
         window.setContentSize(AppTheme.Window.settingsDefault)
         window.minSize = AppTheme.Window.settingsMin
@@ -464,7 +475,7 @@ final class SettingsWindowController: NSWindowController {
             hosting?.rootView = AnyView(
                 SettingsView(initialTab: tab)
                     .id(UUID())
-                    .tint(AppTheme.Accent.primary)
+                    .interfaceStyle()
             )
         }
         showWindow(nil)

@@ -158,17 +158,17 @@ struct MediaTab: View {
         let tint = Color(nsColor: (editor.pendingSwapClip?.mediaType ?? .video).themeColor)
         return HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "arrow.left.arrow.right")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(tint)
             Text("Pick a replacement for \"\(editor.pendingSwapClipName ?? "clip")\"")
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: AppTheme.Spacing.sm)
             Button("Cancel") { editor.cancelMediaSwap() }
                 .buttonStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .padding(.horizontal, AppTheme.Spacing.mdLg)
@@ -184,10 +184,10 @@ struct MediaTab: View {
     private func toastBanner(_ toast: MediaPanelToast) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: toast.kind == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(toast.kind == .success ? AppTheme.Status.successColor : AppTheme.Accent.timecodeColor)
             Text(toast.message)
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -277,7 +277,7 @@ struct MediaTab: View {
             searchIndexStatus
                 .tourAnchor(.smartSearch)
         }
-        .frame(height: AppTheme.Layout.panelHeaderHeight)
+        .frame(minHeight: AppTheme.Layout.panelHeaderHeight)
     }
 
     private var searchControlsRow: some View {
@@ -287,7 +287,7 @@ struct MediaTab: View {
 
             displayControls
         }
-        .frame(height: AppTheme.Layout.panelHeaderHeight)
+        .frame(minHeight: AppTheme.Layout.panelHeaderHeight)
     }
 
     // MARK: - Context bar (breadcrumb + count)
@@ -324,7 +324,7 @@ struct MediaTab: View {
             breadcrumbBar
         } else {
             Text(viewMode.title)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -337,7 +337,7 @@ struct MediaTab: View {
                 ForEach(Array(breadcrumbItems.enumerated()), id: \.element.id) { idx, item in
                     if idx > 0 {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: AppTheme.FontSize.xxs))
+                            .interfaceFont(size: AppTheme.Typography.metadata)
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                     breadcrumbChip(item: item, isLeaf: idx == breadcrumbItems.count - 1)
@@ -406,7 +406,7 @@ struct MediaTab: View {
             if !isLeaf { navigateToFolder(item.folderId) }
         } label: {
             Text(item.name)
-                .font(.system(size: AppTheme.FontSize.xs, weight: isLeaf ? .semibold : .regular))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: isLeaf ? .semibold : .regular)
                 .foregroundStyle(textColor)
                 .lineLimit(1)
                 .padding(.horizontal, AppTheme.Spacing.sm)
@@ -500,7 +500,7 @@ struct MediaTab: View {
 
     private var itemCountText: some View {
         Text(currentFolderItemCount == 1 ? "1 item" : "\(currentFolderItemCount) items")
-            .font(.system(size: AppTheme.FontSize.xs))
+            .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(AppTheme.Text.mutedColor)
             .monospacedDigit()
             .lineLimit(1)
@@ -510,16 +510,16 @@ struct MediaTab: View {
     private var searchField: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             TextField("Search", text: $searchQuery)
                 .textFieldStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             if !searchQuery.isEmpty {
                 Button { searchQuery = "" } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                 }
                 .buttonStyle(.plain)
@@ -603,7 +603,7 @@ struct MediaTab: View {
     ) -> some View {
         Menu(content: content) {
             Image(systemName: systemName)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(foregroundStyle)
                 .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
         }
@@ -709,17 +709,17 @@ struct MediaTab: View {
             Spacer()
 
             Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: AppTheme.FontSize.display, weight: AppTheme.FontWeight.light))
+                .interfaceFont(size: AppTheme.Typography.hero, weight: AppTheme.FontWeight.light)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
 
             VStack(spacing: AppTheme.Spacing.xs) {
                 Text("No media yet")
-                    .font(.system(size: AppTheme.FontSize.title1, weight: AppTheme.FontWeight.light))
+                    .interfaceFont(size: AppTheme.Typography.title, weight: AppTheme.FontWeight.light)
                     .tracking(AppTheme.Tracking.tight)
                     .foregroundStyle(AppTheme.Text.primaryColor)
 
                 Text("Drop files here or copy them into the project")
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
 

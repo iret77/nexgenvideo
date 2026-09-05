@@ -12,6 +12,7 @@ struct EditorView: NSViewControllerRepresentable {
         controller.applyLayoutIfNeeded(editor.layoutPreset)
         controller.applyFocusIfNeeded(editor.workspaceFocus)
         controller.applyPanelFocus(editor.focusedPanel)
+        controller.applyProjectAccent(NSColor(editor.projectPalette.accent))
         controller.applyMediaVisibility(editor.mediaPanelVisible)
         // Produce hides the Inspector unless an object is being inspected; Edit follows the user's pref.
         let inspectorVisible = editor.workspaceFocus == .edit
@@ -467,9 +468,13 @@ final class EditorSplitViewController: PaddedDividerSplitViewController {
         }
     }
 
+    func applyProjectAccent(_ color: NSColor) {
+        for host in panelHosts { host.applyProjectAccent(color) }
+    }
+
     private func makeHosting<V: View>(_ content: V, panel: EditorViewModel.FocusedPanel) -> NSViewController {
         let hc = PanelHostingController(
-            rootView: content
+            rootView: ProjectInterface { content }
                 .environment(editor)
                 .frame(minWidth: AppTheme.Spacing.none, maxWidth: .infinity, minHeight: AppTheme.Spacing.none, maxHeight: .infinity),
             panel: panel
@@ -531,6 +536,7 @@ private struct TimelinePanel: View {
 @MainActor
 private protocol PanelFocusUpdating: AnyObject {
     func applyPanelFocus(_ focusedPanel: EditorViewModel.FocusedPanel?)
+    func applyProjectAccent(_ color: NSColor)
 }
 
 private final class PanelHostingController<Content: View>: NSViewController, PanelFocusUpdating {
@@ -597,6 +603,11 @@ private final class PanelHostingController<Content: View>: NSViewController, Pan
         self.focusedPanel = focusedPanel
         guard isViewLoaded else { return }
         focusRing.opacity = focusRingOpacity
+    }
+
+    func applyProjectAccent(_ color: NSColor) {
+        guard isViewLoaded else { return }
+        focusRing.strokeColor = color.cgColor
     }
 
     private var focusRingOpacity: Float {

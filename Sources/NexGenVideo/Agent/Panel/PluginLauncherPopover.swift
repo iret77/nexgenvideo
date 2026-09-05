@@ -26,10 +26,10 @@ struct PluginLauncherPopover: View {
     private var header: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: "ellipsis")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             Text("More")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer()
         }
@@ -41,17 +41,17 @@ struct PluginLauncherPopover: View {
     private var content: some View {
         if plugins.allSatisfy({ $0.commands.isEmpty }) {
             Text("No workflows available")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(AppTheme.Spacing.md)
         } else {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.none) {
                 Text("Workflows".uppercased())
-                    .font(.system(
-                        size: AppTheme.FontSize.xxs,
+                    .interfaceFont(
+                        size: AppTheme.Typography.metadata,
                         weight: AppTheme.FontWeight.semibold
-                    ))
+                    )
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .padding(.horizontal, AppTheme.Spacing.md)
@@ -59,7 +59,7 @@ struct PluginLauncherPopover: View {
                 workflowSearch
                 if filteredPlugins.isEmpty {
                     Text("No matching workflows")
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                         .padding(AppTheme.Spacing.md)
                 } else {
@@ -82,11 +82,11 @@ struct PluginLauncherPopover: View {
     private var workflowSearch: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             TextField("Search workflows", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
         }
         .padding(.horizontal, AppTheme.Spacing.md)
         .padding(.vertical, AppTheme.Spacing.sm)
@@ -113,7 +113,7 @@ struct PluginLauncherPopover: View {
     private var closeConversationButton: some View {
         Button(action: onCloseConversation) {
             Label("Close conversation", systemImage: "xmark")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.plain)
@@ -125,7 +125,7 @@ struct PluginLauncherPopover: View {
     private func pluginSection(_ plugin: PluginCommandCatalog.PluginInfo) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Text(plugin.name)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .textCase(.uppercase)
                 .padding(.horizontal, AppTheme.Spacing.xs)
@@ -147,11 +147,11 @@ private struct PluginCommandRow: View {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     HStack(spacing: AppTheme.Spacing.xs) {
                         Text(command.title)
-                            .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                             .foregroundStyle(AppTheme.Text.primaryColor)
                         if let hint = command.argumentHint {
                             Text(hint)
-                                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
+                                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                                 .padding(.horizontal, AppTheme.Spacing.xs)
                                 .padding(.vertical, AppTheme.Spacing.xxs)
@@ -163,7 +163,7 @@ private struct PluginCommandRow: View {
                     }
                     if let description = command.description {
                         Text(description)
-                            .font(.system(size: AppTheme.FontSize.xs))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .multilineTextAlignment(.leading)
                             .lineLimit(2)
@@ -171,7 +171,7 @@ private struct PluginCommandRow: View {
                 }
                 Spacer(minLength: AppTheme.Spacing.none)
                 Image(systemName: command.requiresArgument ? "pencil.line" : "arrow.up")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(hovering ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
             }
             .padding(.horizontal, AppTheme.Spacing.sm)

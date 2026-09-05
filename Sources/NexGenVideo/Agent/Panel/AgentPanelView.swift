@@ -283,7 +283,7 @@ struct AgentPanelView: View {
     private var newConversationButton: some View {
         Button { service.newChat() } label: {
             Label("New", systemImage: "plus")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
@@ -298,7 +298,7 @@ struct AgentPanelView: View {
             scrollToLatestRequest &+= 1
         } label: {
             Label("Latest", systemImage: "arrow.down")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
@@ -328,7 +328,7 @@ struct AgentPanelView: View {
             showUtilities.toggle()
         } label: {
             Label("More", systemImage: "ellipsis")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
@@ -369,18 +369,18 @@ struct AgentPanelView: View {
                     .layoutPriority(1)
                 if let cue = currentConversationCue {
                     Label(cue.label, systemImage: cue.symbol)
-                        .font(.system(size: AppTheme.FontSize.xxs))
+                        .interfaceFont(size: AppTheme.Typography.metadata)
                         .foregroundStyle(cue.color)
                         .lineLimit(1)
                 }
                 Image(systemName: "chevron.down")
-                    .font(.system(
-                        size: AppTheme.FontSize.micro,
+                    .interfaceFont(
+                        size: AppTheme.Typography.metadata,
                         weight: AppTheme.FontWeight.semibold
-                    ))
+                    )
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
-            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
@@ -455,10 +455,10 @@ struct AgentPanelView: View {
             } label: {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     Text(service.effectiveModel.displayName)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
             }
@@ -580,13 +580,13 @@ struct AgentPanelView: View {
            !transcriptOwnsTerminalError {
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                 Text(message)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .multilineTextAlignment(.leading)
                 if let cta = errorCTA(for: service.streamError) {
                     Button(action: cta.action) {
                         Text(cta.title)
-                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     }
                     .buttonStyle(.capsule(.secondary))
                     .controlSize(.small)
@@ -636,7 +636,7 @@ struct AgentPanelView: View {
         } else if service.canStream {
             VStack(spacing: AppTheme.Spacing.smMd) {
                 Text("Ask anything, or start with:")
-                    .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .multilineTextAlignment(.center)
                 VStack(spacing: AppTheme.Spacing.xs) {
@@ -689,7 +689,7 @@ struct AgentPanelView: View {
             .buttonStyle(.capsule(.secondary, size: .regular))
             .controlSize(.small)
         }
-        .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
         .padding(.horizontal, AppTheme.Spacing.mdLg)
         .padding(.vertical, AppTheme.Spacing.smMd)
         .frame(maxWidth: AppTheme.Layout.chatColumnMax, alignment: .leading)
@@ -854,11 +854,11 @@ private struct AgentStarterPromptButton: View {
         Button(action: action) {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Image(systemName: starterPrompt.systemImage)
-                    .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
                 Text(starterPrompt.title)
-                    .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -891,14 +891,14 @@ private struct FunctionPill: View {
     var body: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: systemImage)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
             Text(title)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Button(action: onRemove) {
                 Image(systemName: "xmark")
-                    .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.bold))
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.bold)
             }
             .buttonStyle(.plain)
             .help("Remove function")

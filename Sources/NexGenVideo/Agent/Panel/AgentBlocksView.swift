@@ -35,11 +35,11 @@ struct AgentBlocksView: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 if let symbol {
                     Image(systemName: symbol)
-                        .font(.system(size: AppTheme.FontSize.md))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Accent.primary)
                 }
                 Text(text)
-                    .font(.system(size: AppTheme.FontSize.mdLg, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.reading, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
             }
             .padding(.top, AppTheme.Spacing.xs)
@@ -59,18 +59,18 @@ struct AgentBlocksView: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                 if let title {
                     Text(title.uppercased())
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .tracking(AppTheme.Tracking.wide)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                 }
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                         Text(row.0)
-                            .font(.system(size: AppTheme.FontSize.xs))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .frame(width: AppTheme.ComponentSize.agentBlockLabelWidth, alignment: .leading)
                         Text(row.1)
-                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                             .foregroundStyle(AppTheme.Text.secondaryColor)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
@@ -83,10 +83,10 @@ struct AgentBlocksView: View {
         case .callout(let tone, let text):
             HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                 Image(systemName: toneSymbol(tone))
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(toneColor(tone))
                 Text(text)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -104,14 +104,14 @@ struct AgentBlocksView: View {
         HStack(spacing: AppTheme.Spacing.xs) {
             if let symbol = badge.symbol {
                 Image(systemName: symbol)
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Accent.primary)
             }
             Text(badge.label)
-                .font(.system(size: AppTheme.FontSize.xxs))
+                .interfaceFont(size: AppTheme.Typography.metadata)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             Text(badge.value)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .padding(.horizontal, AppTheme.Spacing.sm)

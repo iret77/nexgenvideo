@@ -19,13 +19,16 @@ extension Color {
 }
 
 extension EditorViewModel {
-    /// The active pack's brand accent (from its manifest), or nil when no pack is active or it declares
-    /// none. Surfaces that want to render a control in the pack's colors (the in-chat upload well) fall
-    /// back to `AppTheme.Accent.primary` when this is nil.
+    var projectPalette: ProjectPalette {
+        guard packWiringBroken == nil,
+              let name = activePluginName,
+              let pack = PackCatalog.pack(named: name) else { return .neutral }
+        if let binding = declaredPluginBinding,
+           binding.id != pack.name || binding.version != pack.version { return .neutral }
+        return .resolve(hex: pack.manifest.accentHex)
+    }
+
     var activePackAccentColor: Color? {
-        guard let name = activePluginName,
-              let hex = PackCatalog.pack(named: name)?.manifest.accentHex
-        else { return nil }
-        return Color(hex: hex)
+        activePluginName == nil ? nil : projectPalette.accent
     }
 }

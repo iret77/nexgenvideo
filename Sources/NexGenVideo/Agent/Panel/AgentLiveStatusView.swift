@@ -50,15 +50,15 @@ struct AgentLiveStatusView: View {
                     statusIcon
                         .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
                     Text(status.title)
-                        .font(.system(
-                            size: AppTheme.FontSize.xs,
+                        .interfaceFont(
+                            size: AppTheme.Typography.ui,
                             weight: AppTheme.FontWeight.semibold
-                        ))
+                        )
                         .foregroundStyle(titleColor)
                         .lineLimit(1)
                     if let detail = status.detail, !detail.isEmpty {
                         Text("· \(detail)")
-                            .font(.system(size: AppTheme.FontSize.xxs))
+                            .interfaceFont(size: AppTheme.Typography.metadata)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -101,26 +101,26 @@ struct AgentLiveStatusView: View {
                 .controlSize(.mini)
         case .streaming:
             Image(systemName: "ellipsis")
-                .font(.system(
-                    size: AppTheme.FontSize.xs,
+                .interfaceFont(
+                    size: AppTheme.Typography.ui,
                     weight: AppTheme.FontWeight.semibold
-                ))
+                )
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
         case .waiting:
             Image(systemName: "clock.fill")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Status.warningColor)
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Status.errorColor)
         case .ready:
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Status.successColor)
         case .unavailable:
             Image(systemName: "gearshape.fill")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
         }
     }

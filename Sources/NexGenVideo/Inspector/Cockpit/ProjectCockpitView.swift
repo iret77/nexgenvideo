@@ -41,7 +41,7 @@ struct ProjectCockpitView: View {
                     selected: selectedTitle,
                     accentedTitles: Set(packSurfaces.map(\.title)),
                     markedTitles: Set(packSurfaces.map(\.title)),
-                    accentColor: AppTheme.Accent.pack
+                    accentColor: editor.projectPalette.accent
                 ) { title in
                     if let surface = packSurfaces.first(where: { $0.title == title }) {
                         editor.cockpitPackSurfaceID = surface.id
@@ -119,7 +119,7 @@ struct ProjectCockpitView: View {
             editor.cockpitPackSurfaceID = nil
         } label: {
             Image(systemName: "gearshape")
-                .font(.system(size: AppTheme.FontSize.sm, weight: selected ? .semibold : .medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: selected ? .semibold : .medium)
                 .foregroundStyle(selected ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
                 .contentShape(Rectangle())
@@ -170,7 +170,7 @@ struct ProjectSettingsView: View {
     private var pluginSection: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text("FORMAT PLUGIN")
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             if let active = InstalledPack.named(editor.activePluginName) {
@@ -191,11 +191,11 @@ struct ProjectSettingsView: View {
     private func missingPluginRow(name: String) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Label("The \"\(name)\" plugin isn't installed", systemImage: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Status.warningColor)
                 .fixedSize(horizontal: false, vertical: true)
             Text("This project was built with it. Open the plugin library to add it, or remove it to continue generically.")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             WrapLayout(spacing: AppTheme.Spacing.sm) {
@@ -219,7 +219,7 @@ struct ProjectSettingsView: View {
             Text(editor.canChangeFormat
                  ? "Generic production workflow. Choose a format plugin to specialize this project."
                  : "Generic production workflow. Format is locked now that production has started.")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             if editor.canChangeFormat {
@@ -242,7 +242,7 @@ struct ProjectSettingsView: View {
             Text(initialized
                  ? "Active. Production runs the \(plugin.displayName) workflow. Continue in Pipeline."
                  : "Active and ready. Start production and the agent guides each phase.")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
             WrapLayout(spacing: AppTheme.Spacing.sm) {
@@ -260,7 +260,7 @@ struct ProjectSettingsView: View {
                     HStack(spacing: AppTheme.Spacing.xs) {
                         ProgressView().controlSize(.small)
                         Text("Starting…")
-                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                     }
                 } else if editor.hasProductionPipeline {
@@ -298,7 +298,7 @@ struct ProjectSettingsView: View {
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text(title.uppercased())
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             VStack(spacing: AppTheme.Spacing.sm) { content() }
@@ -308,12 +308,12 @@ struct ProjectSettingsView: View {
     private func plainRow(_ label: String, _ value: String, truncate: Text.TruncationMode = .tail) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize()
             Spacer()
             Text(value)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .lineLimit(1)
                 .truncationMode(truncate)
@@ -326,7 +326,7 @@ struct ProjectSettingsView: View {
     ) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .fixedSize()
             Spacer()
@@ -335,11 +335,11 @@ struct ProjectSettingsView: View {
             } label: {
                 HStack(spacing: AppTheme.Spacing.xxs) {
                     Text(value)
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                 }
                 .padding(.horizontal, AppTheme.Spacing.xs)

@@ -254,7 +254,7 @@ extension MediaTab {
                     }
                 } label: {
                     Image(systemName: "chevron.down")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .rotationEffect(.degrees(isCollapsed ? -90 : 0))
                         .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
@@ -270,7 +270,7 @@ extension MediaTab {
                     } label: {
                         HStack(spacing: AppTheme.Spacing.xs) {
                             Image(systemName: "folder.fill")
-                                .font(.system(size: AppTheme.FontSize.xs))
+                                .interfaceFont(size: AppTheme.Typography.ui)
                                 .foregroundStyle(AppTheme.Accent.primary.opacity(AppTheme.Opacity.emphasis))
                             groupedSectionTitle(title)
                         }
@@ -294,7 +294,7 @@ extension MediaTab {
                     groupedSectionTitle(title)
                 }
                 Text("\(assets.count)")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .monospacedDigit()
                 Spacer(minLength: 0)
@@ -307,7 +307,7 @@ extension MediaTab {
 
                 if assets.isEmpty {
                     Text("Empty")
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                         .padding(.vertical, AppTheme.Spacing.sm)
                 } else {
@@ -344,21 +344,21 @@ extension MediaTab {
         let segments = path.components(separatedBy: " / ")
         if segments.count <= 1 {
             Text(path)
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
         } else {
             HStack(spacing: AppTheme.Spacing.xs) {
                 ForEach(Array(segments.enumerated()), id: \.offset) { idx, segment in
                     if idx > 0 {
                         Text("/")
-                            .font(.system(size: AppTheme.FontSize.xs))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                     Text(segment)
-                        .font(.system(
-                            size: idx == segments.count - 1 ? AppTheme.FontSize.sm : AppTheme.FontSize.xs,
+                        .interfaceFont(
+                            size: idx == segments.count - 1 ? AppTheme.Typography.ui : AppTheme.Typography.ui,
                             weight: idx == segments.count - 1 ? .semibold : .regular
-                        ))
+                        )
                         .foregroundStyle(idx == segments.count - 1 ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                         .lineLimit(1)
                 }
@@ -494,7 +494,7 @@ private struct FolderDragPreview: View {
             Image(systemName: "folder.fill")
                 .foregroundStyle(AppTheme.Accent.primary)
             Text(name)
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .lineLimit(1)
         }
         .padding(.horizontal, AppTheme.Spacing.smMd)

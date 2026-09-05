@@ -117,11 +117,11 @@ struct ProvidersPane: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(provider.displayName)
-                    .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                     Text(provider.modalities)
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .fixedSize(horizontal: false, vertical: true)
                     linkButton(provider)
@@ -136,9 +136,9 @@ struct ProvidersPane: View {
         Button(action: { NSWorkspace.shared.open(provider.keysURL) }) {
             HStack(spacing: AppTheme.Spacing.xxs) {
                 Text(primaryStyle(provider) == .apiKey ? "Get key" : "Website")
-                Image(systemName: "arrow.up.right").font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                Image(systemName: "arrow.up.right").interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
             }
-            .font(.system(size: AppTheme.FontSize.sm))
+            .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(AppTheme.Accent.primary)
         }
         .buttonStyle(.plain)
@@ -186,24 +186,24 @@ struct ProvidersPane: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             if let note = provider.mcpCapability?.note {
                 Text(note)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: AppTheme.Spacing.sm) {
                 if signingIn == provider.id {
                     ProgressView().controlSize(.small)
-                    Text("Opening \(provider.displayName)…").font(.system(size: AppTheme.FontSize.sm)).foregroundStyle(AppTheme.Text.tertiaryColor)
+                    Text("Opening \(provider.displayName)…").interfaceFont(size: AppTheme.Typography.ui).foregroundStyle(AppTheme.Text.tertiaryColor)
                 } else if connected {
                     if case .unavailable = discovery {
                         Label("Connection failed", systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: AppTheme.FontSize.sm))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Status.errorColor)
                         Button("Sign in again") { signIn(provider) }
                             .buttonStyle(.capsule(.prominent, size: .regular))
                     } else {
                         Label("Signed in", systemImage: "checkmark.seal.fill")
-                            .font(.system(size: AppTheme.FontSize.sm))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Accent.primary)
                     }
                     Button("Sign out") { ProviderOAuthStore.disconnect(provider); refresh() }
@@ -215,7 +215,7 @@ struct ProvidersPane: View {
             }
             if let message = discoveryMessage(discovery) {
                 Text(message)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -242,7 +242,7 @@ struct ProvidersPane: View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 Text(provider.mcpCapability?.note ?? "")
-                    .font(.system(size: AppTheme.FontSize.sm)).foregroundStyle(AppTheme.Text.tertiaryColor)
+                    .interfaceFont(size: AppTheme.Typography.ui).foregroundStyle(AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: AppTheme.Spacing.lg)
@@ -268,7 +268,7 @@ struct ProvidersPane: View {
                 SecureField(placeholder(provider), text: draftBinding(provider))
                     .textFieldStyle(.plain)
                     .focused($focusedProvider, equals: provider.id)
-                    .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+                    .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .onSubmit { save(provider) }
                     .padding(.horizontal, AppTheme.Spacing.md).padding(.vertical, AppTheme.Spacing.smMd)
@@ -281,7 +281,7 @@ struct ProvidersPane: View {
             if connectionState(provider).hasKey,
                let message = discoveryMessage(catalog.providerDiscovery[provider]) {
                 Text(message)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
             }

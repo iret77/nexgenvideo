@@ -157,11 +157,11 @@ struct BiblePanelView: View {
     private func keyValueRow(key: String, value: String) -> some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
             Text(key)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.ComponentSize.cockpitLabelWidth, alignment: .leading)
             Text(value)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -174,13 +174,13 @@ struct BiblePanelView: View {
     private func emptyState(icon: String, title: String, message: String) -> some View {
         VStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: icon)
-                .font(.system(size: AppTheme.FontSize.title1))
+                .interfaceFont(size: AppTheme.Typography.title)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             Text(title)
-                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Text(message)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -234,7 +234,7 @@ struct BibleEntityCard: View {
             if !entity.visualPrompt.trimmingCharacters(in: .whitespaces).isEmpty {
                 labeledBlock(label: "VISUAL PROMPT") {
                     Text(entity.visualPrompt)
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -272,13 +272,13 @@ struct BibleEntityCard: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
             Text(entity.name.isEmpty ? entity.id : entity.name)
-                .font(.system(size: AppTheme.FontSize.mdLg, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.reading, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(2)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
             Text(entity.id)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .lineLimit(1)
         }
@@ -287,11 +287,11 @@ struct BibleEntityCard: View {
     private func traitRow(_ trait: String) -> some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.xs) {
             Image(systemName: "target")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Accent.timecodeColor)
                 .padding(.top, AppTheme.Spacing.xxs)
             Text(trait)
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -312,12 +312,12 @@ struct BibleEntityCard: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 if let count {
                     Text("\(count) members")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
                 if !desc.isEmpty {
                     Text(desc)
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -329,11 +329,11 @@ struct BibleEntityCard: View {
     private func attributeRow(key: String, value: String) -> some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
             Text(key)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.ComponentSize.cockpitLabelWidth, alignment: .leading)
             Text(value)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -359,7 +359,7 @@ struct BibleEntityCard: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             content()
@@ -396,7 +396,7 @@ struct SheetThumbnailView: View {
                         .aspectRatio(contentMode: .fit)
                 } else {
                     Image(systemName: didAttempt ? "photo" : "photo.on.rectangle")
-                        .font(.system(size: AppTheme.FontSize.mdLg))
+                        .interfaceFont(size: AppTheme.Typography.reading)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                 }
             }
@@ -408,7 +408,7 @@ struct SheetThumbnailView: View {
                     .strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint), lineWidth: AppTheme.BorderWidth.hairline)
             )
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .lineLimit(1)
         }

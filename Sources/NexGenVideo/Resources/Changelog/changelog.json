@@ -2,6 +2,26 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.1",
+      "date": "2026-09-05",
+      "sections": [
+        {
+          "heading": "Interface",
+          "items": [
+            "Unified readable text, controls and project accents across Welcome, Settings, the editing workspace, cockpit and supporting windows. Interface text can be enlarged in Settings.",
+            "Each project retains its format-pack accent across its panels and sheets, while global windows stay neutral and media colors remain unchanged."
+          ]
+        },
+        {
+          "heading": "Fixes",
+          "items": [
+            "Storyboard approval now opens the current storyboard in a readable view and checks its current source and gate readiness before approval.",
+            "Removing an installed format-pack version keeps confirmation actionable, rechecks project use and reports blocked removals or filesystem errors."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.0",
       "date": "2026-09-03",
       "sections": [

@@ -91,7 +91,7 @@ struct CurveEditorView: View {
             .frame(height: AppTheme.Curve.editorHeight)
 
             Text("Drag to add or shape a point · double-click to remove")
-                .font(.system(size: AppTheme.FontSize.xxs))
+                .interfaceFont(size: AppTheme.Typography.metadata)
                 .foregroundStyle(AppTheme.Text.mutedColor)
         }
         .onAppear { refreshHistogram() }

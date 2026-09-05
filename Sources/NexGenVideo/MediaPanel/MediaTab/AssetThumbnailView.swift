@@ -38,7 +38,7 @@ struct AssetThumbnailView: View {
             ZStack(alignment: .leading) {
                 if isRenaming {
                     TextField("Name", text: $renameDraft)
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .textFieldStyle(.plain)
                         .lineLimit(1)
                         .focused($isRenameFieldFocused)
@@ -49,7 +49,7 @@ struct AssetThumbnailView: View {
                         .onExitCommand { isRenaming = false }
                 } else {
                     Text(asset.name)
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(isSelected ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
@@ -162,7 +162,7 @@ struct AssetThumbnailView: View {
                     .aspectRatio(contentMode: .fit)
             } else {
                 Image(systemName: asset.type.sfSymbolName)
-                    .font(.system(size: AppTheme.FontSize.xl))
+                    .interfaceFont(size: AppTheme.Typography.title)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
         }
@@ -202,7 +202,7 @@ struct AssetThumbnailView: View {
         if isHovering && !asset.isGenerating && !isSwapPickMode {
             Button { editor.agentService.attachMention(for: asset) } label: {
                 Image(systemName: "bubble.left")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
             }
@@ -217,7 +217,7 @@ struct AssetThumbnailView: View {
 
     private var sourceBadge: some View {
         Text("AI")
-            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
             .foregroundStyle(AppTheme.aiGradient)
             .padding(.horizontal, AppTheme.Spacing.sm)
             .padding(.vertical, AppTheme.Spacing.xxs)
@@ -226,7 +226,7 @@ struct AssetThumbnailView: View {
 
     private var durationBadge: some View {
         Text(formatDuration(asset.duration))
-            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
             .foregroundStyle(AppTheme.Text.primaryColor)
             .monospacedDigit()
             .padding(.horizontal, AppTheme.Spacing.sm)
@@ -237,13 +237,13 @@ struct AssetThumbnailView: View {
     private func failedThumbnail(error: String) -> some View {
         VStack(spacing: AppTheme.Spacing.xxs) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: AppTheme.FontSize.mdLg))
+                .interfaceFont(size: AppTheme.Typography.reading)
                 .foregroundStyle(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.prominent))
             Text("Failed")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Text(error)
-                .font(.system(size: AppTheme.FontSize.xxs))
+                .interfaceFont(size: AppTheme.Typography.metadata)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .multilineTextAlignment(.center)
                 .lineLimit(3)
@@ -256,10 +256,10 @@ struct AssetThumbnailView: View {
     private var missingThumbnail: some View {
         VStack(spacing: AppTheme.Spacing.xxs) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: AppTheme.FontSize.mdLg))
+                .interfaceFont(size: AppTheme.Typography.reading)
                 .foregroundStyle(AppTheme.Status.errorColor)
             Text("Media Offline")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .help("NexGenVideo couldn't load this source file. It may be missing, on an ejected drive, or unreadable.")

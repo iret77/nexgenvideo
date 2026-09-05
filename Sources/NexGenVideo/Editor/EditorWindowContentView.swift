@@ -36,7 +36,7 @@ struct EditorWindowContentView: View {
         // The whole editor window takes on the ACTIVE PACK's accent (reactive, overriding the static
         // host-controller tint) — so a musicvideo project actually feels like Music Video mode, not a
         // generic window. Falls back to the app accent for generic projects.
-        .tint(editor.activePackAccentColor ?? AppTheme.Accent.primary)
+        .interfaceStyle(palette: editor.projectPalette)
     }
 }
 
@@ -57,7 +57,7 @@ private struct PackWiringBanner: View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
             Text("The “\(packName)” workflow isn’t active in this session — its analysis and gates are off. This is a bug; please report it.")
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -92,7 +92,7 @@ struct TheaterOverlayView: View {
     private var exitButton: some View {
         Button { editor.theaterActive = false } label: {
             Image(systemName: "xmark")
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .frame(width: AppTheme.IconSize.lg, height: AppTheme.IconSize.lg)
                 .background(Circle().fill(AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.strong)))
@@ -124,7 +124,7 @@ struct TheaterOverlayView: View {
 
     private func timecode(_ frame: Int, fps: Int, color: Color) -> some View {
         Text(formatTimecode(frame: frame, fps: fps))
-            .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+            .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
             .foregroundStyle(color)
             .monospacedDigit()
     }
@@ -132,7 +132,7 @@ struct TheaterOverlayView: View {
     private func controlButton(_ systemName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
         }

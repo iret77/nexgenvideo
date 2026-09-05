@@ -71,10 +71,10 @@ struct SanityPanelView: View {
         return HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: data.errorCount > 0 ? "exclamationmark.octagon.fill"
                   : (data.warningCount > 0 ? "exclamationmark.triangle.fill" : "info.circle.fill"))
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(accent)
             Text(data.summary)
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             Spacer(minLength: 0)
         }
@@ -93,30 +93,30 @@ struct SanityPanelView: View {
         let isInspected = targetShot.map { editor.inspectedObject == .shot($0) } ?? false
         return HStack(alignment: .top, spacing: AppTheme.Spacing.smMd) {
             Image(systemName: icon(for: finding.level))
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(color(for: finding.level))
                 .frame(width: AppTheme.IconSize.xs)
                 .padding(.top, AppTheme.Spacing.xxs)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Text(finding.code)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold).monospaced())
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold, design: .monospaced)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                     if let shot = targetShot {
                         Text(shot)
-                            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium).monospaced())
+                            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium, design: .monospaced)
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                     Spacer(minLength: 0)
                     if targetShot != nil {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
+                            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
                 }
                 Text(finding.message)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)

@@ -31,6 +31,10 @@ struct InstalledPack: Identifiable, Equatable {
         self.badgeURL = pack.manifest.badgeURL
     }
 
+    var palette: ProjectPalette {
+        .resolve(hex: PackCatalog.pack(named: name)?.manifest.accentHex)
+    }
+
     /// Every first-party pack, gallery order.
     static var all: [InstalledPack] { PackCatalog.all.map(InstalledPack.init) }
 

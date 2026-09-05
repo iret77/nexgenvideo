@@ -155,7 +155,7 @@ struct AgentInputBox<LeadingTools: View>: View {
         ZStack(alignment: .topLeading) {
             TextEditor(text: $draft)
                 .id(textEditorID)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .scrollContentBackground(.hidden)
                 .scrollIndicators(.never)
                 .padding(.horizontal, AppTheme.Spacing.mdLg)
@@ -184,7 +184,7 @@ struct AgentInputBox<LeadingTools: View>: View {
 
             if draft.isEmpty {
                 Text("Ask, or type @ to reference media")
-                    .font(.system(size: AppTheme.FontSize.md))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .padding(.horizontal, AppTheme.Spacing.lgXl)
                     .padding(.top, AppTheme.Spacing.mdLg)
@@ -216,7 +216,7 @@ struct AgentInputBox<LeadingTools: View>: View {
         if isSending {
             Button(action: onCancel) {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.bold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.bold)
                     .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
             }
             .buttonStyle(.glass)
@@ -229,7 +229,7 @@ struct AgentInputBox<LeadingTools: View>: View {
         } else {
             Button(action: onSend) {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.bold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.bold)
                     .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.sm)
             }
             .buttonStyle(.glassProminent)
@@ -263,7 +263,7 @@ struct AgentInputBox<LeadingTools: View>: View {
             }
         } label: {
             Image(systemName: "paperclip")
-                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.IconSize.smMd, height: AppTheme.IconSize.smMd)
                 .contentShape(Rectangle())

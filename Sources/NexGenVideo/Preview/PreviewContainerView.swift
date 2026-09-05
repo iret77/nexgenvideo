@@ -128,7 +128,7 @@ struct PreviewContainerView: View {
     private var captureFrameButton: some View {
         Button(action: editor.captureCurrentFrameToMedia) {
             Image(systemName: "camera")
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .frame(width: AppTheme.IconSize.mdLg, height: AppTheme.IconSize.mdLg)
                 .hoverHighlight()
@@ -189,7 +189,7 @@ struct PreviewContainerView: View {
 
     private func badgeLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.bold, design: .rounded))
+            .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.bold, design: .rounded)
             .foregroundStyle(AppTheme.Text.secondaryColor)
             .padding(.horizontal, AppTheme.Spacing.sm)
             .frame(height: AppTheme.IconSize.mdLg)
@@ -351,22 +351,22 @@ struct PreviewContainerView: View {
             AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.strong)
             VStack(spacing: AppTheme.Spacing.md) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: AppTheme.FontSize.display))
+                    .interfaceFont(size: AppTheme.Typography.hero)
                     .foregroundStyle(AppTheme.Status.errorColor)
                 Text(isUnprocessable ? "Couldn't Prepare Media" : "Media Offline")
-                    .font(.system(size: AppTheme.FontSize.lg, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Text(isUnprocessable
                     ? "NexGenVideo loaded this clip's source file but couldn't prepare it for playback. The file may be corrupt or in an unsupported format."
                     : "NexGenVideo couldn't load this clip's source file. It may be missing, on an ejected drive, or unreadable.")
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, AppTheme.Spacing.lg)
                 if let path {
                     Text(path)
-                        .font(.system(size: AppTheme.FontSize.sm))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .multilineTextAlignment(.center)
                         .textSelection(.enabled)
@@ -403,14 +403,14 @@ struct PreviewContainerView: View {
             AppTheme.Background.overlayColor.opacity(AppTheme.Opacity.strong)
             VStack(spacing: AppTheme.Spacing.md) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: AppTheme.FontSize.display))
+                    .interfaceFont(size: AppTheme.Typography.hero)
                     .foregroundStyle(AppTheme.Status.errorColor.opacity(AppTheme.Opacity.prominent))
                 Text("Generation Failed")
-                    .font(.system(size: AppTheme.FontSize.lg, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 ScrollView {
                     Text(error)
-                        .font(.system(size: AppTheme.FontSize.md))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .multilineTextAlignment(.center)
                         .textSelection(.enabled)
@@ -427,7 +427,7 @@ struct PreviewContainerView: View {
                             Image(systemName: "arrow.clockwise")
                             Text("Retry Download")
                         }
-                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.primaryColor)
                         .padding(.horizontal, AppTheme.Spacing.md)
                         .padding(.vertical, AppTheme.Spacing.sm)
@@ -491,7 +491,7 @@ struct PreviewContainerView: View {
         let isHovered = hoveredTabId == tab.id
         return HStack(spacing: AppTheme.Spacing.xs) {
             Text(tab.displayName)
-                .font(.system(size: AppTheme.FontSize.xs, weight: isActive ? .semibold : .medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: isActive ? .semibold : .medium)
                 .foregroundStyle(isActive || isHovered ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
                 .lineLimit(1)
 
@@ -524,7 +524,7 @@ struct PreviewContainerView: View {
     private func navButton(_ systemName: String, enabled: Bool, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(enabled ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
                 .frame(width: AppTheme.IconSize.sm, height: AppTheme.IconSize.md)
                 .hoverHighlight(cornerRadius: AppTheme.Radius.sm)
@@ -544,7 +544,7 @@ struct PreviewContainerView: View {
             .disabled(editor.previewTabs.count <= 1)
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
         }
@@ -562,7 +562,7 @@ struct PreviewContainerView: View {
             }
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.bold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.bold)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
                 .hoverHighlight(cornerRadius: AppTheme.Radius.smMd)
@@ -689,7 +689,7 @@ struct PreviewContainerView: View {
     private func transportButton(_ systemName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .frame(width: AppTheme.ComponentSize.previewControlWidth, height: AppTheme.ComponentSize.previewControlHeight)
                 .hoverHighlight()
@@ -747,7 +747,7 @@ private struct PreviewTimecodeText: View {
                 .foregroundStyle(AppTheme.Text.secondaryColor)
         }
         .monospacedDigit()
-        .font(.system(size: AppTheme.FontSize.sm, design: .monospaced))
+        .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
     }
 }
 

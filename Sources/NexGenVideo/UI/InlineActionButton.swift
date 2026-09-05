@@ -13,9 +13,13 @@ struct InlineActionButtonStyle: ButtonStyle {
         let configuration: ButtonStyleConfiguration
         let variant: Variant
         @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.projectPalette) private var palette
+        @Environment(\.interfaceScale) private var textScale
 
         var body: some View {
             configuration.label
+                .interfaceFont(size: AppTheme.Typography.action, weight: AppTheme.FontWeight.medium)
+                .frame(minHeight: AppTheme.Control.compactHeight * textScale)
                 .foregroundStyle(foreground)
                 .padding(.horizontal, hasBackground ? AppTheme.Spacing.xs : AppTheme.Spacing.none)
                 .padding(.vertical, hasBackground ? AppTheme.Spacing.xxs : AppTheme.Spacing.none)
@@ -30,11 +34,11 @@ struct InlineActionButtonStyle: ButtonStyle {
         private var hasBackground: Bool { variant != .neutral }
 
         private var foreground: Color {
-            guard isEnabled else { return AppTheme.Text.mutedColor }
+            guard isEnabled else { return AppTheme.Text.disabledControlColor }
             switch variant {
             case .neutral: return AppTheme.Text.secondaryColor
-            case .pack: return AppTheme.Accent.pack
-            case .approval: return AppTheme.Accent.timecodeColor
+            case .pack: return palette.accent
+            case .approval: return palette.accent
             }
         }
 
@@ -42,8 +46,8 @@ struct InlineActionButtonStyle: ButtonStyle {
             guard isEnabled else { return AppTheme.Background.raisedColor }
             switch variant {
             case .neutral: return AppTheme.Background.clearColor
-            case .pack: return AppTheme.Accent.pack.opacity(AppTheme.Opacity.faint)
-            case .approval: return AppTheme.Accent.timecodeColor.opacity(AppTheme.Opacity.faint)
+            case .pack: return palette.accent.opacity(AppTheme.Opacity.faint)
+            case .approval: return palette.accent.opacity(AppTheme.Opacity.faint)
             }
         }
 

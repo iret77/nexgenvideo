@@ -6,6 +6,7 @@ import SwiftUI
 /// Second-level navigation: type sits one step below the sidebar's Level-1 tabs, and by default the
 /// bar lies flat on the surface — a panel gets exactly one raised band, at its very top.
 struct SegmentedTabBar: View {
+    @Environment(\.projectPalette) private var palette
     let titles: [String]
     let selected: String?
     var raisedBackground: Bool = false
@@ -18,6 +19,13 @@ struct SegmentedTabBar: View {
     let onSelect: (String) -> Void
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            tabs
+            ScrollView(.horizontal) { tabs }.scrollIndicators(.hidden)
+        }
+    }
+
+    private var tabs: some View {
         HStack(spacing: AppTheme.Spacing.md) {
             ForEach(titles, id: \.self) { title in
                 let isActive = selected == title
@@ -33,7 +41,7 @@ struct SegmentedTabBar: View {
                             isActive ? AppTheme.Opacity.opaque : AppTheme.Opacity.disabled
                         ))
                     }
-                    return AnyShapeStyle(isActive ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
+                    return AnyShapeStyle(isActive ? palette.accent : AppTheme.Text.tertiaryColor)
                 }()
                 Button {
                     onSelect(title)
@@ -50,7 +58,7 @@ struct SegmentedTabBar: View {
                                     .accessibilityHidden(true)
                             }
                             Text(title)
-                                .font(.system(size: AppTheme.FontSize.xs, weight: isActive ? .medium : .regular))
+                                .interfaceFont(size: AppTheme.Typography.ui, weight: isActive ? .medium : .regular)
                                 .foregroundStyle(foreground)
                         }
                         Rectangle()
@@ -61,6 +69,7 @@ struct SegmentedTabBar: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(isActive ? .isSelected : [])
             }
             Spacer()
         }

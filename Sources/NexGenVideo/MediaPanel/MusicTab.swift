@@ -201,9 +201,9 @@ struct MusicTab: View {
     private func menuValueLabel(_ text: String) -> some View {
         HStack(spacing: AppTheme.Spacing.xxs) {
             Text(text)
-            Image(systemName: "chevron.up.chevron.down").font(.system(size: AppTheme.FontSize.xxs))
+            Image(systemName: "chevron.up.chevron.down").interfaceFont(size: AppTheme.Typography.metadata)
         }
-        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
         .foregroundStyle(AppTheme.Text.tertiaryColor)
         .lineLimit(1)
     }
@@ -218,9 +218,9 @@ struct MusicTab: View {
                 } label: {
                     HStack(spacing: AppTheme.Spacing.xxs) {
                         Text(model?.displayName ?? "None")
-                        Image(systemName: "chevron.up.chevron.down").font(.system(size: AppTheme.FontSize.xxs))
+                        Image(systemName: "chevron.up.chevron.down").interfaceFont(size: AppTheme.Typography.metadata)
                     }
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .lineLimit(1)
                 }
@@ -235,7 +235,7 @@ struct MusicTab: View {
                 TextField("Mood, genre, energy, instruments…", text: $prompt, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(2...5)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .padding(AppTheme.Spacing.smMd)
                     .background(
@@ -249,7 +249,7 @@ struct MusicTab: View {
                 // Names the contract: this is intent, not the literal model prompt — NexGenVideo
                 // compiles it (translate, context, model dialect) before anything is generated.
                 Text("NexGenVideo writes the model prompt from this.")
-                    .font(.system(size: AppTheme.FontSize.xxs))
+                    .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
         }
@@ -259,14 +259,14 @@ struct MusicTab: View {
         VStack(spacing: AppTheme.Spacing.sm) {
             if let banner {
                 Text(banner.text)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(banner.kind == .error ? AppTheme.Status.errorColor : AppTheme.Status.successColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let guidance = validationNote {
                 // Calm guidance, not an error — an empty field is "not ready yet", not a failure.
                 Text(guidance)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -274,7 +274,7 @@ struct MusicTab: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Button(action: generate) {
                     Text(generateLabel)
-                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Background.baseColor)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
@@ -297,7 +297,7 @@ struct MusicTab: View {
 
     private func valueText(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
             .foregroundStyle(AppTheme.Text.tertiaryColor)
             .lineLimit(1)
     }
@@ -326,9 +326,9 @@ struct MusicTab: View {
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Text("Agent Mode")
-                Image(systemName: "chevron.down").font(.system(size: AppTheme.FontSize.xs))
+                Image(systemName: "chevron.down").interfaceFont(size: AppTheme.Typography.ui)
             }
-            .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
+            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
             .foregroundStyle(AppTheme.aiGradient)
             .lineLimit(1)
             .fixedSize()

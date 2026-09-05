@@ -24,14 +24,14 @@ struct FolderTileView: View {
                 RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                     .fill(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
                 Image(systemName: "folder.fill")
-                    .font(.system(size: AppTheme.FontSize.display, weight: AppTheme.FontWeight.light))
+                    .interfaceFont(size: AppTheme.Typography.hero, weight: AppTheme.FontWeight.light)
                     .foregroundStyle(AppTheme.Accent.primary.opacity(AppTheme.Opacity.emphasis))
                 if childCount > 0 {
                     VStack {
                         HStack {
                             Spacer()
                             Text("\(childCount)")
-                                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                                 .foregroundStyle(AppTheme.Text.primaryColor)
                                 .monospacedDigit()
                                 .padding(.horizontal, AppTheme.Spacing.sm)
@@ -56,7 +56,7 @@ struct FolderTileView: View {
             ZStack(alignment: .leading) {
                 if isRenaming {
                     TextField("Folder", text: $renameDraft)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .textFieldStyle(.plain)
                         .lineLimit(1)
                         .focused($isRenameFieldFocused)
@@ -67,7 +67,7 @@ struct FolderTileView: View {
                         .onExitCommand { onCancelRename() }
                 } else {
                     Text(folder.name)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(AppTheme.Text.primaryColor)

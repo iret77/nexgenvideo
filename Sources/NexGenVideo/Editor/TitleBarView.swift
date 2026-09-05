@@ -28,7 +28,7 @@ struct TitleBarView: View {
         .padding(.leading, AppTheme.Layout.trafficLightInset)
         .padding(.horizontal, AppTheme.Spacing.lg)
         .frame(maxWidth: .infinity)
-        .frame(height: AppTheme.Layout.titleBarChromeHeight)
+        .frame(minHeight: AppTheme.Layout.titleBarChromeHeight)
         .background(
             // Double-click the bare titlebar to zoom the window (macOS convention). It's a
             // background layer, so the buttons on top take their clicks first — only empty
@@ -63,11 +63,11 @@ struct TitleBarView: View {
     private var projectName: some View {
         HStack(spacing: AppTheme.Spacing.xs) {
             Text("NexGenVideo")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.regular))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.regular)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .fixedSize()
             Text(editor.projectURL?.deletingPathExtension().lastPathComponent ?? "Untitled")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -86,7 +86,7 @@ struct TitleBarView: View {
                     }
                 } label: {
                     Text(focus.label)
-                        .font(.system(size: AppTheme.FontSize.xs, weight: selected ? .semibold : .regular))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: selected ? .semibold : .regular)
                         .foregroundStyle(selected ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                         .padding(.horizontal, AppTheme.Spacing.md)
                         .padding(.vertical, AppTheme.Spacing.xxs)
@@ -160,42 +160,42 @@ struct TitleBarView: View {
         let active = editor.activePluginName != nil
         return HStack(spacing: AppTheme.Spacing.xs) {
             Image(systemName: "puzzlepiece.extension.fill")
-                .font(.system(size: AppTheme.FontSize.sm))
-                .foregroundStyle(active ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor)
+                .interfaceFont(size: AppTheme.Typography.ui)
+                .foregroundStyle(active ? editor.projectPalette.accent : AppTheme.Text.tertiaryColor)
             Text("Format")
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .fixedSize()
             Text(activePluginLabel)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
-                .foregroundStyle(active ? AppTheme.Accent.primary : AppTheme.Text.secondaryColor)
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
+                .foregroundStyle(active ? editor.projectPalette.accent : AppTheme.Text.secondaryColor)
                 .lineLimit(1)
             // Chevron only when it's actually a picker; the locked status pill carries no affordance.
             if interactive {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
             if let attention = activePackAttention {
                 Image(systemName: attention == .restartRequired
                       ? "exclamationmark.circle.fill"
                       : "arrow.clockwise.circle")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(attention == .restartRequired
                                      ? AppTheme.Status.warningColor
-                                     : AppTheme.Accent.primary)
+                                     : editor.projectPalette.accent)
             }
         }
         .padding(.horizontal, AppTheme.Spacing.smMd)
         .padding(.vertical, AppTheme.Spacing.xxs)
         .background(
             Capsule().fill(active
-                           ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.faint)
+                           ? editor.projectPalette.accent.opacity(AppTheme.Opacity.faint)
                            : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.subtle))
         )
         .overlay(
             Capsule().strokeBorder(active
-                                   ? AppTheme.Accent.primary.opacity(AppTheme.Opacity.moderate)
+                                   ? editor.projectPalette.accent.opacity(AppTheme.Opacity.moderate)
                                    : AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint),
                                    lineWidth: AppTheme.BorderWidth.hairline)
         )
@@ -215,15 +215,15 @@ struct TitleBarView: View {
             } label: {
                 HStack(spacing: AppTheme.Spacing.sm) {
                     Image(systemName: state.isComplete ? "checkmark.seal.fill" : "circle.dotted")
-                        .font(.system(size: AppTheme.FontSize.xs))
-                        .foregroundStyle(state.isComplete ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor)
+                        .interfaceFont(size: AppTheme.Typography.ui)
+                        .foregroundStyle(state.isComplete ? editor.projectPalette.accent : AppTheme.Text.tertiaryColor)
                     Text(healthText(state))
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                         .lineLimit(1)
                     if state.budgetEur > 0 {
                         Text(String(format: "€%.0f/%.0f", state.budgetSpentEur, state.budgetEur))
-                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium).monospacedDigit())
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium).monospacedDigit()
                             .foregroundStyle(state.budgetWarning ? AppTheme.Text.primaryColor : AppTheme.Text.tertiaryColor)
                     }
                 }

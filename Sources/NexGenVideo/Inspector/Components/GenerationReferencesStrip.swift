@@ -103,7 +103,7 @@ struct GenerationReferencesStrip: View {
                     Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fit)
                 } else {
                     Image(systemName: asset.type.sfSymbolName)
-                        .font(.system(size: AppTheme.FontSize.mdLg))
+                        .interfaceFont(size: AppTheme.Typography.reading)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
             }
@@ -112,7 +112,7 @@ struct GenerationReferencesStrip: View {
             .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.sm)
                 .strokeBorder(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.faint), lineWidth: AppTheme.BorderWidth.hairline))
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .lineLimit(1)
         }

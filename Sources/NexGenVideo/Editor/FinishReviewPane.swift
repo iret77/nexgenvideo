@@ -21,19 +21,19 @@ struct FinishReviewPane: View {
         HStack(spacing: AppTheme.Spacing.md) {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Review and deliver")
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Text("Check the cut, then export the deliverable.")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
             Spacer(minLength: AppTheme.Spacing.md)
             Button { editor.showExportDialog = true } label: {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                     Text("Export")
-                        .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 }
             }
             .buttonStyle(.capsule(.prominent, size: .regular))

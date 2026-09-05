@@ -161,13 +161,14 @@ enum AppTheme {
         static let primary = NSColor.white.withAlphaComponent(1.0)
         static let secondary = NSColor.white.withAlphaComponent(0.80)
         static let tertiary = NSColor.white.withAlphaComponent(0.62)
-        static let muted = NSColor.white.withAlphaComponent(0.34)
+        static let muted = NSColor.white.withAlphaComponent(0.50)
         static let systemSecondary = NSColor.secondaryLabelColor
 
         static var primaryColor: Color { Color(primary) }
         static var secondaryColor: Color { Color(secondary) }
         static var tertiaryColor: Color { Color(tertiary) }
         static var mutedColor: Color { Color(muted) }
+        static var disabledControlColor: Color { Color(primary) }
     }
 
     // MARK: - Opacity
@@ -250,11 +251,12 @@ enum AppTheme {
     // MARK: - Font sizes
 
     enum FontSize {
-        static let micro: CGFloat = 8
-        static let xxs: CGFloat = 9
-        static let xs: CGFloat = 10
-        static let sm: CGFloat = 11
-        static let smMd: CGFloat = 12
+        static let minimumReadable: CGFloat = 11
+        static let micro = minimumReadable
+        static let xxs = minimumReadable
+        static let xs: CGFloat = 12
+        static let sm: CGFloat = 12
+        static let smMd: CGFloat = 13
         static let md: CGFloat = 13
         static let mdLg: CGFloat = 14
         static let lg: CGFloat = 15
@@ -358,6 +360,12 @@ enum AppTheme {
         static let mcpInstructionsWindow = CGSize(width: 680, height: 560)
         static let shortcutsWindow = CGSize(width: 700, height: 520)
         static let shortcutKeyColumnWidth: CGFloat = 118
+        static let storyboardReviewWidth: CGFloat = 900
+        static let pipelineActionFitWidth: CGFloat = 240
+        static let pipelineCompactWidth: CGFloat = 380
+        static let pipelineRowMinHeight: CGFloat = 40
+        static let pipelineSurfaceWidth: CGFloat = 76
+        static let pipelineApprovalWidth: CGFloat = 62
         static let cockpitLabelWidth: CGFloat = 76
         static let cockpitMessageMaxWidth: CGFloat = 320
         static let packSurfaceRowHeight: CGFloat = 68
@@ -616,7 +624,7 @@ extension View {
 
     func panelHeaderBar() -> some View {
         frame(maxWidth: .infinity)
-            .frame(height: AppTheme.Layout.panelHeaderHeight)
+            .frame(minHeight: AppTheme.Layout.panelHeaderHeight)
             .background(AppTheme.Background.raisedColor)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.thin)

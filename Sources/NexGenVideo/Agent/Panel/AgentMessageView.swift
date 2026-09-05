@@ -36,7 +36,7 @@ private struct AgentUserIntentView: View {
         HStack {
             Spacer(minLength: AppTheme.Spacing.xxl)
             Text(text)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineSpacing(AppTheme.Spacing.xxs)
                 .padding(.horizontal, AppTheme.Spacing.lg)
@@ -57,10 +57,10 @@ private struct AgentReceiptGroupView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             if let phase = group.phase {
                 Text(PhaseDisplay.label(phase).uppercased())
-                    .font(.system(
-                        size: AppTheme.FontSize.xxs,
+                    .interfaceFont(
+                        size: AppTheme.Typography.metadata,
                         weight: AppTheme.FontWeight.semibold
-                    ))
+                    )
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
@@ -78,11 +78,11 @@ private struct AgentReceiptView: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
             Image(systemName: symbol)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(color)
                 .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
             Text(summary)
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -200,7 +200,7 @@ struct AgentMessageView: View {
         HStack {
             Spacer(minLength: AppTheme.Spacing.xxl)
             Text(text)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.primaryColor)
                 .lineSpacing(AppTheme.Spacing.xxs)
                 .padding(.horizontal, AppTheme.Spacing.lg)
@@ -317,41 +317,41 @@ private struct WorkflowRecordView: View {
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
             Image(systemName: record.symbol)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Accent.timecodeColor)
                 .frame(width: AppTheme.IconSize.md, height: AppTheme.IconSize.md)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                 HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
                     Text(record.title)
-                        .font(.system(
-                            size: AppTheme.FontSize.sm,
+                        .interfaceFont(
+                            size: AppTheme.Typography.ui,
                             weight: AppTheme.FontWeight.semibold
-                        ))
+                        )
                         .foregroundStyle(AppTheme.Text.primaryColor)
                     Spacer(minLength: AppTheme.Spacing.sm)
                     Label(outcomeLabel, systemImage: outcomeSymbol)
-                        .font(.system(
-                            size: AppTheme.FontSize.xs,
+                        .interfaceFont(
+                            size: AppTheme.Typography.ui,
                             weight: AppTheme.FontWeight.medium
-                        ))
+                        )
                         .foregroundStyle(outcomeColor)
                 }
                 if let phase = record.phase {
                     Text(PhaseDisplay.label(phase))
-                        .font(.system(
-                            size: AppTheme.FontSize.xxs,
+                        .interfaceFont(
+                            size: AppTheme.Typography.metadata,
                             weight: AppTheme.FontWeight.medium
-                        ))
+                        )
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
                 if let detail = record.detail, !detail.isEmpty {
                     Text(detail)
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                 }
                 if !record.attachmentNames.isEmpty {
                     Text(record.attachmentNames.joined(separator: ", "))
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .lineLimit(2)
                         .truncationMode(.middle)
@@ -388,11 +388,11 @@ private struct DialogChoiceRecordView: View {
     var body: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
             Text(record.summary)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -416,7 +416,7 @@ private struct DialogNoticeView: View {
 
     var body: some View {
         Label(text, systemImage: "exclamationmark.triangle.fill")
-            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
             .foregroundStyle(AppTheme.Status.errorColor)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, AppTheme.Spacing.smMd)
@@ -439,7 +439,7 @@ private struct CopyMessageButton: View {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 Text(copied ? "Copied" : "Copy")
             }
-            .font(.system(size: AppTheme.FontSize.xs))
+            .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(AppTheme.Text.tertiaryColor)
             .padding(.horizontal, AppTheme.Spacing.sm)
             .padding(.vertical, AppTheme.Spacing.xxs)
@@ -556,18 +556,18 @@ struct AgentActivityView: View {
                     HStack(spacing: AppTheme.Spacing.sm) {
                         statusIcon
                         Text(label)
-                            .font(.system(
-                                size: AppTheme.FontSize.sm,
+                            .interfaceFont(
+                                size: AppTheme.Typography.ui,
                                 weight: AppTheme.FontWeight.medium
-                            ))
+                            )
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .lineLimit(2)
                         Spacer(minLength: AppTheme.Spacing.sm)
                         Image(systemName: "chevron.right")
-                            .font(.system(
-                                size: AppTheme.FontSize.micro,
+                            .interfaceFont(
+                                size: AppTheme.Typography.metadata,
                                 weight: AppTheme.FontWeight.semibold
-                            ))
+                            )
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                             .foregroundStyle(AppTheme.Text.mutedColor)
                     }
@@ -590,7 +590,7 @@ struct AgentActivityView: View {
                                 id: \.offset
                             ) { _, status in
                                 Text(status)
-                                    .font(.system(size: AppTheme.FontSize.xs))
+                                    .interfaceFont(size: AppTheme.Typography.ui)
                                     .foregroundStyle(AppTheme.Text.mutedColor)
                             }
                         }
@@ -622,7 +622,7 @@ struct AgentActivityView: View {
             Image(systemName: hasError || hasIncompleteStep
                 ? "exclamationmark.circle.fill"
                 : "checkmark.circle.fill")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(
                     hasError || hasIncompleteStep
                         ? AppTheme.Status.warningColor.opacity(AppTheme.Opacity.prominent)
@@ -677,15 +677,15 @@ private struct ToolRunRow: View {
                             .frame(width: AppTheme.Spacing.md, height: AppTheme.Spacing.md)
                     } else {
                         Image(systemName: statusIcon)
-                            .font(.system(size: AppTheme.FontSize.xs))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(statusTint)
                     }
                     Text(ToolRunPresentation.label(for: name))
-                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                         .opacity(isRunning ? AppTheme.Opacity.prominent : AppTheme.Opacity.opaque)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: AppTheme.FontSize.micro, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
@@ -748,24 +748,24 @@ private struct ToolRunDetail: View {
                             .frame(width: AppTheme.Spacing.md, height: AppTheme.Spacing.md)
                     } else {
                         Image(systemName: statusIcon)
-                            .font(.system(size: AppTheme.FontSize.xs))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(statusTint)
                     }
                     Text(ToolRunPresentation.label(for: name))
-                        .font(.system(
-                            size: AppTheme.FontSize.sm,
+                        .interfaceFont(
+                            size: AppTheme.Typography.ui,
                             weight: AppTheme.FontWeight.medium
-                        ))
+                        )
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
             }
             Text(name)
-                .font(.system(size: AppTheme.FontSize.xxs, design: .monospaced))
+                .interfaceFont(size: AppTheme.Typography.metadata, design: .monospaced)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             argsSection
             if let result { resultSection(result) }
         }
-        .font(.system(size: AppTheme.FontSize.xs, design: .monospaced))
+        .interfaceFont(size: AppTheme.Typography.ui, design: .monospaced)
         .foregroundStyle(AppTheme.Text.tertiaryColor)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(AppTheme.Spacing.md)
@@ -779,7 +779,7 @@ private struct ToolRunDetail: View {
     @ViewBuilder
     private var argsSection: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            Text("args").font(.system(size: AppTheme.FontSize.xxs)).foregroundStyle(AppTheme.Text.mutedColor)
+            Text("args").interfaceFont(size: AppTheme.Typography.metadata).foregroundStyle(AppTheme.Text.mutedColor)
             Text(prettyPrinted(inputJSON))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -789,7 +789,7 @@ private struct ToolRunDetail: View {
     private func resultSection(_ r: ToolRunResult) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             Text(r.isError ? "error" : "result")
-                .font(.system(size: AppTheme.FontSize.xxs))
+                .interfaceFont(size: AppTheme.Typography.metadata)
                 .foregroundStyle(
                     r.isError
                         ? AppTheme.Status.errorColor.opacity(AppTheme.Opacity.prominent)

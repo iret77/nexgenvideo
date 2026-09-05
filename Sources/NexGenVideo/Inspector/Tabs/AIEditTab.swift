@@ -102,7 +102,7 @@ struct AIEditTab: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.smMd) {
             Text(title.uppercased())
-                .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                 .tracking(AppTheme.Tracking.wide)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             VStack(spacing: AppTheme.Spacing.smMd) {
@@ -124,11 +124,11 @@ struct AIEditTab: View {
             } label: {
                 HStack(spacing: AppTheme.Spacing.xs) {
                     Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                         .frame(width: AppTheme.IconSize.xs, height: AppTheme.IconSize.xs)
                     Text(title.uppercased())
-                        .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.metadata, weight: AppTheme.FontWeight.semibold)
                         .tracking(AppTheme.Tracking.wide)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                     Spacer(minLength: AppTheme.Spacing.xs)
@@ -184,11 +184,11 @@ struct AIEditTab: View {
     ) -> some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: icon)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(isOn.wrappedValue ? AppTheme.Accent.primary : AppTheme.Text.tertiaryColor)
                 .frame(width: AppTheme.Spacing.lgXl, alignment: .center)
             Text(label)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Spacer(minLength: AppTheme.Spacing.xs)
             Toggle("", isOn: isOn)
@@ -243,15 +243,15 @@ struct AIEditTab: View {
 
         HStack(alignment: .firstTextBaseline, spacing: AppTheme.Spacing.sm) {
             Image(systemName: icon)
-                .font(.system(size: AppTheme.FontSize.md))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(isEnabled ? AppTheme.Text.secondaryColor : AppTheme.Text.mutedColor)
                 .frame(width: AppTheme.Spacing.lgXl, alignment: .center)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text(title)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(isEnabled ? AppTheme.Text.primaryColor : AppTheme.Text.mutedColor)
                 Text(disabledReason ?? description)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(disabledReason != nil ? AppTheme.Text.secondaryColor : AppTheme.Text.tertiaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }

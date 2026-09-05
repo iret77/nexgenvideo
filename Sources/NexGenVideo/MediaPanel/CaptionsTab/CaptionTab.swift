@@ -192,9 +192,9 @@ struct CaptionTab: View {
                 } label: {
                     HStack(spacing: AppTheme.Spacing.xxs) {
                         Text(textCase.label)
-                        Image(systemName: "chevron.up.chevron.down").font(.system(size: AppTheme.FontSize.xxs))
+                        Image(systemName: "chevron.up.chevron.down").interfaceFont(size: AppTheme.Typography.metadata)
                     }
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
                 }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().focusable(false)
@@ -241,9 +241,9 @@ struct CaptionTab: View {
         } label: {
             HStack(spacing: AppTheme.Spacing.xs) {
                 Text("Agent Mode")
-                Image(systemName: "chevron.down").font(.system(size: AppTheme.FontSize.xs))
+                Image(systemName: "chevron.down").interfaceFont(size: AppTheme.Typography.ui)
             }
-            .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
+            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
             .foregroundStyle(AppTheme.aiGradient)
             .lineLimit(1)
             .fixedSize()
@@ -272,9 +272,9 @@ struct CaptionTab: View {
     private func menuValueLabel(_ text: String) -> some View {
         HStack(spacing: AppTheme.Spacing.xxs) {
             Text(text)
-            Image(systemName: "chevron.up.chevron.down").font(.system(size: AppTheme.FontSize.xxs))
+            Image(systemName: "chevron.up.chevron.down").interfaceFont(size: AppTheme.Typography.metadata)
         }
-        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
         .foregroundStyle(AppTheme.Text.tertiaryColor)
         .lineLimit(1)
     }
@@ -341,7 +341,7 @@ struct CaptionTab: View {
     private func posField(_ label: String, value: CGFloat, onChange: @escaping (CGFloat) -> Void) -> some View {
         HStack(spacing: AppTheme.Spacing.xxs) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
             ScrubbableNumberField(
                 value: Double(value),
@@ -358,7 +358,7 @@ struct CaptionTab: View {
         VStack(spacing: AppTheme.Spacing.sm) {
             if let note {
                 Text(note)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
@@ -366,7 +366,7 @@ struct CaptionTab: View {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Button(action: generate) {
                     Text("Generate Captions")
-                        .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.semibold))
+                        .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                         .foregroundStyle(AppTheme.Background.baseColor)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)

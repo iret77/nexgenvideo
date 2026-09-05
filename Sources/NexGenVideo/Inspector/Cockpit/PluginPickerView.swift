@@ -18,7 +18,7 @@ struct PluginPickerView: View {
             subtitle
             if let error = manager.lastError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Status.errorColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -33,7 +33,7 @@ struct PluginPickerView: View {
     private var header: some View {
         HStack {
             Text("Format Plugins")
-                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.primaryColor)
             if manager.catalogState == .loading {
                 ProgressView().controlSize(.small).padding(.leading, AppTheme.Spacing.xs)
@@ -51,7 +51,7 @@ struct PluginPickerView: View {
         Text(offline
              ? "Offline. Showing the workflows already installed for this project."
              : "Choose the workflow for this project.")
-            .font(.system(size: AppTheme.FontSize.xs))
+            .interfaceFont(size: AppTheme.Typography.ui)
             .foregroundStyle(AppTheme.Text.tertiaryColor)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -62,7 +62,7 @@ struct PluginPickerView: View {
             VStack(spacing: AppTheme.Spacing.sm) {
                 Spacer()
                 Text(manager.catalogState == .loading ? "Loading the plugin library…" : "No plugins available yet.")
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 Spacer()
             }
@@ -99,13 +99,13 @@ struct PluginPickerView: View {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                     if let pitch = row.pitch {
                         Text(pitch)
-                            .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                             .foregroundStyle(AppTheme.Text.primaryColor)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let benefit = row.benefitLine {
                         Text(benefit)
-                            .font(.system(size: AppTheme.FontSize.xs))
+                            .interfaceFont(size: AppTheme.Typography.ui)
                             .foregroundStyle(AppTheme.Text.tertiaryColor)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -132,12 +132,12 @@ struct PluginPickerView: View {
         switch status {
         case .incompatible(let reason, _), .unavailable(let reason):
             Label(reason, systemImage: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Status.warningColor)
                 .fixedSize(horizontal: false, vertical: true)
         case .updatePendingRestart:
             Label("Update ready — restart to finish. A plugin's code can't be swapped while the app runs.", systemImage: "arrow.clockwise.circle")
-                .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                 .foregroundStyle(AppTheme.Accent.primary)
                 .fixedSize(horizontal: false, vertical: true)
         default:
@@ -150,7 +150,7 @@ struct PluginPickerView: View {
             HStack(spacing: AppTheme.Spacing.xs) {
                 ProgressView().controlSize(.small)
                 Text("Installing…")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Text.tertiaryColor)
             }
         } else {
@@ -172,7 +172,7 @@ struct PluginPickerView: View {
                 if active {
                     HStack(spacing: AppTheme.Spacing.sm) {
                         Label("Active", systemImage: "checkmark.circle.fill")
-                            .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.medium))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                             .foregroundStyle(AppTheme.Accent.primary)
                         if let update {
                             Button("Update") { Task { await manager.install(update) } }
@@ -268,7 +268,7 @@ struct PluginBadgeView: View {
                     .aspectRatio(AppTheme.ComponentSize.pluginBadgeAspect, contentMode: .fit)
                     .overlay(alignment: .bottomLeading) {
                         Text(displayName)
-                            .font(.system(size: AppTheme.FontSize.smMd, weight: AppTheme.FontWeight.semibold))
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                             .foregroundStyle(AppTheme.Text.primaryColor)
                             .padding(AppTheme.Spacing.md)
                     }

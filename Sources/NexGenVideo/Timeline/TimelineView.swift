@@ -443,7 +443,7 @@ final class TimelineView: NSView {
         let minX = geo.xForFrame(range.startFrame)
         let maxX = geo.xForFrame(range.endFrame)
 
-        ctx.setStrokeColor(AppTheme.Accent.timecodeNSColor.withAlphaComponent(AppTheme.Opacity.prominent).cgColor)
+        ctx.setStrokeColor(NSColor(editor.projectPalette.accent).withAlphaComponent(AppTheme.Opacity.prominent).cgColor)
         ctx.setLineWidth(AppTheme.BorderWidth.medium)
         for x in [minX, maxX] {
             ctx.move(to: CGPoint(x: x, y: Double(scrollOffset.y)))

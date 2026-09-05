@@ -108,7 +108,7 @@ struct DeclarativePackSurfaceView: View {
                     primitiveView(item.element, loaded: loaded)
                 }
                 Text("Measured ground truth — read-only.")
-                    .font(.system(size: AppTheme.FontSize.micro))
+                    .interfaceFont(size: AppTheme.Typography.metadata)
                     .foregroundStyle(AppTheme.Text.mutedColor)
             }
             .padding(.horizontal, AppTheme.Spacing.lg)
@@ -230,14 +230,14 @@ struct DeclarativePackSurfaceView: View {
             ?? "This analysis predates structural confidence tracking. Re-run analysis before approval."
         return HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
             Image(systemName: "xmark.octagon")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Status.errorColor)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Section structure unresolved")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Text(detail)
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -255,17 +255,17 @@ struct DeclarativePackSurfaceView: View {
     private func structureReviewBanner(_ data: AnalysisSurfaceData) -> some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Status.warningColor)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Review section boundaries")
-                    .font(.system(
-                        size: AppTheme.FontSize.xs,
+                    .interfaceFont(
+                        size: AppTheme.Typography.ui,
                         weight: AppTheme.FontWeight.semibold
-                    ))
+                    )
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 Text(data.structureResolution?.detail ?? "Some boundaries have one acoustic detector source.")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -286,15 +286,15 @@ struct DeclarativePackSurfaceView: View {
         let failures = data.nonSuccessStageDiagnostics
         return HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Status.warningColor)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
                 Text("Analysis completed with reduced evidence")
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.primaryColor)
                 ForEach(Array(failures.enumerated()), id: \.offset) { item in
                     Text("\(item.element.stage.replacingOccurrences(of: "_", with: " ")): \(item.element.detail)")
-                        .font(.system(size: AppTheme.FontSize.xs))
+                        .interfaceFont(size: AppTheme.Typography.ui)
                         .foregroundStyle(AppTheme.Text.secondaryColor)
                 }
             }
@@ -341,12 +341,12 @@ struct DeclarativePackSurfaceView: View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
             HStack(spacing: AppTheme.Spacing.sm) {
                 Text(title)
-                    .font(.system(size: AppTheme.FontSize.xs, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 Spacer(minLength: 0)
                 if let detail {
                     Text(detail)
-                        .font(.system(size: AppTheme.FontSize.micro))
+                        .interfaceFont(size: AppTheme.Typography.metadata)
                         .foregroundStyle(AppTheme.Text.mutedColor)
                         .lineLimit(1)
                 }
@@ -358,10 +358,10 @@ struct DeclarativePackSurfaceView: View {
     private var degradedBanner: some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Status.warningColor)
             Text("No stable beat grid detected — this track is rubato / beatless. Beat-synced cutting is unavailable; the key and duration are still usable.")
-                .font(.system(size: AppTheme.FontSize.xs))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -382,18 +382,18 @@ struct DeclarativePackSurfaceView: View {
             Spacer()
             VStack(spacing: AppTheme.Spacing.smMd) {
                 Image(systemName: "music.note")
-                    .font(.system(size: AppTheme.FontSize.title1))
+                    .interfaceFont(size: AppTheme.Typography.title)
                     .foregroundStyle(AppTheme.Accent.timecodeColor)
                 Text("Re-measuring \(progress.trackName)")
-                    .font(.system(
-                        size: AppTheme.FontSize.md,
+                    .interfaceFont(
+                        size: AppTheme.Typography.ui,
                         weight: AppTheme.FontWeight.semibold
-                    ))
+                    )
                     .foregroundStyle(AppTheme.Text.primaryColor)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text("A new analysis is running; the last-known grid stays until it completes.")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                     .multilineTextAlignment(.center)
                 if progress.totalUnitCount > 0 {
@@ -404,7 +404,7 @@ struct DeclarativePackSurfaceView: View {
                     .progressViewStyle(.linear)
                     .tint(AppTheme.Accent.timecodeColor)
                     Text("\(progress.completedUnitCount) of \(progress.totalUnitCount)")
-                        .font(.system(size: AppTheme.FontSize.xxs).monospacedDigit())
+                        .interfaceFont(size: AppTheme.Typography.metadata).monospacedDigit()
                         .foregroundStyle(AppTheme.Text.tertiaryColor)
                 } else {
                     ProgressView()

@@ -4,6 +4,7 @@ import SwiftUI
 // Shared loading / empty / error / engine-not-ready state views for the cockpit panels, factored out
 // of the Bible panel's idiom so Pipeline / Shotlist / Sanity / Cost render identical states. Read-only.
 
+@MainActor
 enum CockpitStateView {
 
     /// Error / not-initialized state. `subject` is retained for call-site symmetry across the panels;
@@ -44,13 +45,13 @@ enum CockpitStateView {
                 packHero(pack)
             } else {
                 Image(systemName: icon)
-                    .font(.system(size: AppTheme.FontSize.title1))
+                    .interfaceFont(size: AppTheme.Typography.title)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                 Text(headline)
-                    .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                     .foregroundStyle(AppTheme.Text.secondaryColor)
                 Text(detail)
-                    .font(.system(size: AppTheme.FontSize.sm))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.mutedColor)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -63,7 +64,7 @@ enum CockpitStateView {
                         HStack(spacing: AppTheme.Spacing.sm) {
                             ProgressView().controlSize(.small)
                             Text("Starting…")
-                                .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                         }
                         .padding(.top, AppTheme.Spacing.xs)
@@ -76,7 +77,7 @@ enum CockpitStateView {
             } else {
                 Button("Retry", action: retry)
                     .buttonStyle(.plain)
-                    .font(.system(size: AppTheme.FontSize.sm, weight: AppTheme.FontWeight.medium))
+                    .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .foregroundStyle(AppTheme.Accent.primary)
                     .padding(.top, AppTheme.Spacing.xs)
             }
@@ -89,13 +90,13 @@ enum CockpitStateView {
     static func empty(icon: String, title: String, message: String) -> some View {
         VStack(spacing: AppTheme.Spacing.sm) {
             Image(systemName: icon)
-                .font(.system(size: AppTheme.FontSize.title1))
+                .interfaceFont(size: AppTheme.Typography.title)
                 .foregroundStyle(AppTheme.Text.mutedColor)
             Text(title)
-                .font(.system(size: AppTheme.FontSize.md, weight: AppTheme.FontWeight.semibold))
+                .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.semibold)
                 .foregroundStyle(AppTheme.Text.secondaryColor)
             Text(message)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.mutedColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -120,13 +121,13 @@ enum CockpitStateView {
                 .padding(.bottom, AppTheme.Spacing.sm)
         }
         Text(pack.headline ?? pack.displayName)
-            .font(.system(size: AppTheme.FontSize.lg, weight: AppTheme.FontWeight.semibold))
+            .interfaceFont(size: AppTheme.Typography.section, weight: AppTheme.FontWeight.semibold)
             .foregroundStyle(AppTheme.Text.primaryColor)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
         if let benefit = pack.benefit {
             Text(benefit)
-                .font(.system(size: AppTheme.FontSize.sm))
+                .interfaceFont(size: AppTheme.Typography.ui)
                 .foregroundStyle(AppTheme.Text.tertiaryColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)

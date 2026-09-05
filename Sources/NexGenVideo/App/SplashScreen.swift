@@ -81,7 +81,7 @@ private struct SplashView: View {
             artwork
             if let version = AppVersion.marketing {
                 Text("Version \(version)")
-                    .font(.system(size: AppTheme.FontSize.xs))
+                    .interfaceFont(size: AppTheme.Typography.ui)
                     .foregroundStyle(AppTheme.Text.primaryColor.opacity(AppTheme.Opacity.prominent))
                     .shadow(AppTheme.Shadow.sm)
                     .padding(AppTheme.Spacing.md)
