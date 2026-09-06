@@ -602,6 +602,10 @@ struct ProjectWorkingCopyTests {
         let reopened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
         editor.adoptWorkingCopy(reopened, key: key, packageURL: pkg)
         #expect(editor.declaredPluginBinding == target)
+        let expectedPalette = ProjectPalette.resolve(hex: MusicvideoPack().manifest.accentHex)
+        #expect(expectedPalette != .neutral)
+        #expect(editor.projectPalette == expectedPalette)
+        #expect(editor.activePackAccentColor == expectedPalette.accent)
         #expect(ProjectPluginSettings.bindingResolution(projectURL: pkg) == .bound(source))
         #expect(try ProjectPackGate.requireLiveMutation(
             projectURL: reopened.home,
