@@ -177,14 +177,13 @@ struct SpendApprovalCard: View {
                     .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
-                Picker("Provider", selection: providerSelection) {
-                    ForEach(availableProviders) { provider in
-                        Text(provider.displayName).tag(provider.rawValue)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .controlSize(.small)
+                NativeChoicePicker(
+                    label: "Provider",
+                    options: availableProviders.map {
+                        .init(id: $0.rawValue, title: $0.displayName)
+                    },
+                    selection: providerSelection
+                )
                 .disabled(isWorking || availableProviders.count < 2)
                 .focused($focusedControl, equals: .provider)
             }
@@ -195,16 +194,13 @@ struct SpendApprovalCard: View {
                     .font(.system(size: AppTheme.FontSize.xxs, weight: AppTheme.FontWeight.semibold))
                     .tracking(AppTheme.Tracking.wide)
                     .foregroundStyle(AppTheme.Text.mutedColor)
-                Picker("Model", selection: $selectedOptionId) {
-                    ForEach(modelOptions) { option in
-                        Text(displayName(option))
-                            .tag(option.id)
-                            .help(option.modelName)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .controlSize(.small)
+                NativeChoicePicker(
+                    label: "Model",
+                    options: modelOptions.map {
+                        .init(id: $0.id, title: $0.modelName)
+                    },
+                    selection: $selectedOptionId
+                )
                 .disabled(isWorking || modelOptions.count < 2)
                 .focused($focusedControl, equals: .model)
             }

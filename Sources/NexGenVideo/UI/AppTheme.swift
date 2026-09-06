@@ -409,6 +409,8 @@ enum AppTheme {
         static let agentComposerMaxHeight: CGFloat = 280
         static let agentComposerGrabHeight: CGFloat = 10
         static let agentDecisionMaxHeight: CGFloat = 318
+        static let choicePickerIdealWidth: CGFloat = 180
+        static let choicePickerHeight: CGFloat = 32
         static let agentBlockLabelWidth: CGFloat = 96
         static let agentAssetPickerWidth: CGFloat = 280
         static let agentAssetPickerHeight: CGFloat = 260
