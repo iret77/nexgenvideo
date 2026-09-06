@@ -3,7 +3,7 @@ import NexGenEngine
 
 @MainActor
 enum ProjectPackMigration {
-    struct Request: Codable, Equatable {
+    struct Request: Codable, Equatable, Sendable {
         let source: ProjectPackBinding
         let target: ProjectPackBinding
     }
@@ -57,8 +57,36 @@ enum ProjectPackMigration {
         }
     }
 
-    private static let keyPrefix = "NGVPackMigration."
-    private static let legacyKeyPrefix = "NGVLegacyPackMigration."
+    nonisolated private static let keyPrefix = "NGVPackMigration."
+    nonisolated private static let legacyKeyPrefix = "NGVLegacyPackMigration."
+
+    nonisolated static func authorizesRecoveredUpgrade(
+        projectURL: URL,
+        recoveryURL: URL,
+        workingCopyKey: String
+    ) -> Bool {
+        guard ProjectIdentity.existingKey(for: projectURL) == workingCopyKey,
+              ProjectIdentity.existingKey(for: recoveryURL) == workingCopyKey,
+              case .bound(let recovered) = ProjectPluginSettings.bindingResolution(
+                projectURL: recoveryURL
+              ) else { return false }
+        let persisted = ProjectPluginSettings.bindingResolution(projectURL: projectURL)
+        if let data = UserDefaults.standard.data(forKey: keyPrefix + workingCopyKey),
+           let request = try? JSONDecoder().decode(Request.self, from: data),
+           request.source.id == request.target.id,
+           request.source != request.target,
+           persisted == .bound(request.source),
+           recovered == request.target {
+            return true
+        }
+        if let data = UserDefaults.standard.data(forKey: legacyKeyPrefix + workingCopyKey),
+           let target = try? JSONDecoder().decode(ProjectPackBinding.self, from: data),
+           persisted == .legacy(target.id),
+           recovered == target {
+            return true
+        }
+        return false
+    }
 
     static func request(for projectURL: URL) -> Request? {
         guard let key = ProjectIdentity.existingKey(for: projectURL),
