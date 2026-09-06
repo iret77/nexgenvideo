@@ -576,6 +576,71 @@ struct ProjectWorkingCopyTests {
         #expect(ProjectPluginSettings.bindingResolution(projectURL: pkg) == .legacy("musicvideo"))
     }
 
+    @Test("an upgraded editor trusts the authorized target without trusting later recovery edits")
+    func upgradedEditorUsesAuthorizedTarget() throws {
+        PackCatalog.register(MusicvideoPack())
+        let pkg = try tempPackage(pipelineName: nil)
+        let source = try musicvideoBinding(version: "0.5.0")
+        let target = try musicvideoBinding()
+        let unrelated = try musicvideoBinding(version: "0.9.9")
+        try ProjectPluginSettings.setActivePlugin(source, projectURL: pkg)
+        let key = try ProjectIdentity.key(for: pkg)
+        let editor = EditorViewModel()
+        defer {
+            editor.releaseWorkingCopy()
+            ProjectPackMigration.complete(projectURL: pkg)
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        _ = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        UserDefaults.standard.set(try JSONEncoder().encode(
+            ProjectPackMigration.Request(source: source, target: target)
+        ), forKey: "NGVPackMigration." + key)
+        try ProjectWorkingCopy.transact(key: key) { staging in
+            try ProjectPluginSettings.setActivePlugin(target, projectURL: staging)
+        }
+        let reopened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        editor.adoptWorkingCopy(reopened, key: key, packageURL: pkg)
+        #expect(editor.declaredPluginBinding == target)
+        #expect(ProjectPluginSettings.bindingResolution(projectURL: pkg) == .bound(source))
+        #expect(try ProjectPackGate.requireLiveMutation(
+            projectURL: reopened.home,
+            declaredPack: editor.declaredPluginName,
+            declaredBinding: editor.declaredPluginBinding
+        ) == target.id)
+        try ProjectPluginSettings.setActivePlugin(unrelated, projectURL: reopened.home)
+        #expect(editor.declaredPluginBinding == target)
+        #expect(throws: (any Error).self) {
+            try ProjectPackGate.requireLiveMutation(
+                projectURL: reopened.home,
+                declaredPack: editor.declaredPluginName,
+                declaredBinding: editor.declaredPluginBinding
+            )
+        }
+    }
+
+    @Test("a rejected Continue action reports failure in the agent instead of only the media tab")
+    func starterFailureIsVisibleInAgent() throws {
+        PackCatalog.register(MusicvideoPack())
+        let pkg = try tempPackage()
+        let binding = try musicvideoBinding()
+        try ProjectPluginSettings.setActivePlugin(binding, projectURL: pkg)
+        let editor = EditorViewModel()
+        editor.projectURL = pkg
+        defer {
+            editor.releaseWorkingCopy()
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        let home = try #require(editor.workingRoot)
+        try ProjectPluginSettings.setActivePlugin(
+            musicvideoBinding(version: "0.9.9"), projectURL: home
+        )
+        editor.runActivePackStarter()
+        #expect(editor.agentService.streamError != nil)
+        #expect(editor.agentService.messages.isEmpty)
+        #expect(!editor.agentService.isStreaming)
+    }
+
     @Test("the package declaration stays independent from live working-copy verification")
     func packagePluginDeclarationIsIndependent() throws {
         PackCatalog.register(MusicvideoPack())

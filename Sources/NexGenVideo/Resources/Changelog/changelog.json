@@ -22,6 +22,7 @@
         {
           "heading": "Fixes",
           "items": [
+            "Continue uses the explicitly approved target pack after a project upgrade, and preparation failures appear in the Agent panel.",
             "Project pack upgrades now reopen their authorized migrated recovery copy, preserving unsaved work and leaving the saved project untouched until Save.",
             "Storyboard approval now opens the current storyboard in a readable view and checks its current source and gate readiness before approval.",
             "Removing an installed format-pack version keeps confirmation actionable, rechecks project use and reports blocked removals or filesystem errors.",
