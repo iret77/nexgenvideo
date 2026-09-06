@@ -500,11 +500,12 @@ struct PreviewContainerView: View {
             }
         }
         .padding(.horizontal, AppTheme.Spacing.xs)
-        .padding(.bottom, AppTheme.Spacing.xs)
+        .workspaceHeaderContent()
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(isActive ? tab.underlineColor : AppTheme.Background.clearColor)
                 .frame(height: AppTheme.BorderWidth.medium)
+                .padding(.bottom, AppTheme.Spacing.xs)
         }
         .fixedSize()
         .contentShape(Rectangle())

@@ -102,6 +102,14 @@ private struct InterfaceFont: ViewModifier {
     }
 }
 
+private struct WorkspaceHeaderContent: ViewModifier {
+    @Environment(\.interfaceScale) private var scale
+
+    func body(content: Content) -> some View {
+        content.frame(height: AppTheme.Layout.workspaceHeaderHeight * scale)
+    }
+}
+
 struct ProjectInterface<Content: View>: View {
     @Environment(EditorViewModel.self) private var editor
     let content: Content
@@ -110,6 +118,10 @@ struct ProjectInterface<Content: View>: View {
 }
 
 extension View {
+    func workspaceHeaderContent() -> some View {
+        modifier(WorkspaceHeaderContent())
+    }
+
     func interfaceStyle(palette: ProjectPalette = .neutral) -> some View {
         modifier(InterfaceStyle(palette: palette))
     }

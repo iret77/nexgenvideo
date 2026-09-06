@@ -41,12 +41,7 @@ struct LeftSidebarView: View {
             }
         }
         .padding(.horizontal, AppTheme.Spacing.sm)
-        .padding(.vertical, AppTheme.Spacing.xs)
-        .frame(maxWidth: .infinity)
-        .background(AppTheme.Background.raisedColor)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.hairline)
-        }
+        .panelHeaderBar()
     }
 
     private func tabButton(_ tab: EditorViewModel.LeftSidebarTab) -> some View {

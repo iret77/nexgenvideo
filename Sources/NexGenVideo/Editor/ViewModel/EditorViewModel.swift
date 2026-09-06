@@ -477,11 +477,15 @@ final class EditorViewModel {
         case .legacy(let id):
             activePluginName = id
             declaredPluginName = id
-            declaredPluginBinding = nil
+            declaredPluginBinding = projectURL.flatMap {
+                ProjectPackMigration.legacyTarget(for: $0)
+            }.flatMap { $0.id == id ? $0 : nil }
         case .bound(let binding):
             activePluginName = binding.id
             declaredPluginName = binding.id
-            declaredPluginBinding = binding
+            declaredPluginBinding = projectURL.map {
+                ProjectPackMigration.effectiveBinding(persisted: binding, projectURL: $0)
+            } ?? binding
         case .unreadable:
             activePluginName = nil
             declaredPluginName = nil
@@ -624,10 +628,11 @@ final class EditorViewModel {
     func runActivePackStarter() {
         guard activePluginName != nil else { return }
         guard !productionStarting else { return }
+        agentService.streamError = nil
         if hasProductionPipeline {
             let reconciliation = pipelineAgentHarness.reconcile(editor: self)
             if let failure = reconciliation.failure {
-                mediaPanelToast = MediaPanelToast(message: failure)
+                reportWorkflowPreparationFailure(failure)
                 workflowHandoffPending = false
                 return
             }
@@ -645,6 +650,13 @@ final class EditorViewModel {
         } else {
             startProduction()
         }
+    }
+
+    private func reportWorkflowPreparationFailure(_ diagnostic: String) {
+        Log.agent.error("Workflow preparation failed: \(diagnostic)")
+        agentService.streamError = .upstream(
+            "Couldn't prepare the next production phase. Reopen the project and try again."
+        )
     }
 
     /// Complete live project root used by the editor, agent, media layer, and pipeline engine.
@@ -868,7 +880,7 @@ final class EditorViewModel {
         let reconciliation = pipelineAgentHarness.reconcile(editor: self)
         if let failure = reconciliation.failure {
             workflowHandoffPending = false
-            mediaPanelToast = MediaPanelToast(message: failure)
+            reportWorkflowPreparationFailure(failure)
             return
         }
         if !reconciliation.isReady, agentService.pendingDialog?.purpose == .workflowIntake {

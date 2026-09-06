@@ -310,18 +310,14 @@ struct PipelinePanelView: View {
                         .frame(width: AppTheme.ComponentSize.pipelineSurfaceWidth * interfaceScale, alignment: .leading)
                     ZStack {
                         AppTheme.Background.clearColor
-                        if isRunning {
-                            Text("Running")
-                                .foregroundStyle(AppTheme.Accent.timecodeColor)
-                        } else if isNext {
+                        if isNext && !isRunning {
                             approveButton(phase, enabled: approvalEnabled)
-                        } else if phase.approved {
-                            Text("Approved")
-                                .foregroundStyle(AppTheme.Text.tertiaryColor)
                         }
                     }
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
                     .frame(width: AppTheme.ComponentSize.pipelineApprovalWidth * interfaceScale, height: (AppTheme.Control.compactHeight + AppTheme.Spacing.xs) * interfaceScale)
+                    phaseStatus(phase, isRunning: isRunning, awaitingApproval: isNext && readiness.isReady)
+                        .frame(width: AppTheme.Control.iconTarget * interfaceScale)
                     gateMenu(
                         phase,
                         isNext: isNext,
@@ -352,29 +348,12 @@ struct PipelinePanelView: View {
     }
 
     private func phaseIdentity(_ phase: ProjectPhase, isNext: Bool) -> some View {
-        HStack(spacing: AppTheme.Spacing.smMd) {
-            statusDot(approved: phase.approved, isNext: isNext, state: phase.state)
-                .accessibilityLabel(phase.approved ? "Approved" : (isNext ? "Current phase" : "Pending"))
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xxs) {
-                Text(PhaseDisplay.label(phase.phase))
-                    .interfaceFont(size: AppTheme.Typography.ui,
-                                  weight: isNext ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
-                    .foregroundStyle(isNext ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
-                    .textSelection(.enabled)
-                if phase.state == "needs_revision" {
-                    Text("Needs revision")
-                        .interfaceFont(size: AppTheme.Typography.metadata)
-                        .foregroundStyle(AppTheme.Status.errorColor)
-                        .help(phase.notes ?? "Sent back for revision")
-                } else if phase.state == "approved_with_notes" {
-                    Text("Approved with notes")
-                        .interfaceFont(size: AppTheme.Typography.metadata)
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .help(phase.notes ?? "Approved with notes")
-                }
-            }
+        Text(PhaseDisplay.label(phase.phase))
+            .interfaceFont(size: AppTheme.Typography.ui,
+                           weight: isNext ? AppTheme.FontWeight.semibold : AppTheme.FontWeight.medium)
+            .foregroundStyle(isNext ? AppTheme.Text.primaryColor : AppTheme.Text.secondaryColor)
+            .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     /// Approving a phase is the one action the pipeline cannot advance without — it belongs in the row,
@@ -631,24 +610,23 @@ struct PipelinePanelView: View {
         }
     }
 
-    private func statusDot(approved: Bool, isNext: Bool, state: String = "pending") -> some View {
-        Group {
-            if approved {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(AppTheme.Status.successColor)
-            } else if state == "needs_revision" {
-                Image(systemName: "arrow.uturn.backward.circle.fill")
-                    .foregroundStyle(AppTheme.Status.errorColor)
-            } else if isNext {
-                Image(systemName: "circle.dashed.inset.filled")
-                    .foregroundStyle(AppTheme.Accent.timecodeColor)
-            } else {
-                Image(systemName: "circle")
-                    .foregroundStyle(AppTheme.Text.mutedColor)
-            }
-        }
-        .interfaceFont(size: AppTheme.Typography.ui)
-        .frame(width: AppTheme.IconSize.xs)
+    private func phaseStatus(_ phase: ProjectPhase, isRunning: Bool, awaitingApproval: Bool) -> some View {
+        let label = isRunning ? "In progress"
+            : phase.approved ? "Approved"
+            : phase.state == "needs_revision" ? "Needs revision"
+            : awaitingApproval ? "In progress" : "Not started"
+        let symbol = isRunning ? "circle.dotted.circle"
+            : phase.approved ? "checkmark.circle.fill"
+            : phase.state == "needs_revision" ? "exclamationmark.triangle.fill"
+            : awaitingApproval ? "circle.dotted.circle" : "circle"
+        let color = isRunning ? editor.projectPalette.accent
+            : phase.approved ? AppTheme.Status.successColor
+            : phase.state == "needs_revision" ? AppTheme.Status.errorColor : AppTheme.Text.mutedColor
+        return Image(systemName: symbol)
+            .interfaceFont(size: AppTheme.Typography.ui)
+            .foregroundStyle(color)
+            .accessibilityLabel(label)
+            .help(phase.notes.map { "\(label): \($0)" } ?? label)
     }
 
     private func centeredProgress() -> some View {
