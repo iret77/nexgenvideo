@@ -316,8 +316,10 @@ struct PipelinePanelView: View {
                         } else if isNext {
                             approveButton(phase, enabled: approvalEnabled)
                         } else if phase.approved {
-                            Text("Approved")
+                            Image(systemName: "checkmark")
                                 .foregroundStyle(AppTheme.Text.tertiaryColor)
+                                .accessibilityLabel("Approved")
+                                .help(phase.notes ?? "Approved")
                         }
                     }
                     .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
@@ -366,11 +368,6 @@ struct PipelinePanelView: View {
                         .interfaceFont(size: AppTheme.Typography.metadata)
                         .foregroundStyle(AppTheme.Status.errorColor)
                         .help(phase.notes ?? "Sent back for revision")
-                } else if phase.state == "approved_with_notes" {
-                    Text("Approved with notes")
-                        .interfaceFont(size: AppTheme.Typography.metadata)
-                        .foregroundStyle(AppTheme.Text.tertiaryColor)
-                        .help(phase.notes ?? "Approved with notes")
                 }
             }
             .fixedSize(horizontal: false, vertical: true)

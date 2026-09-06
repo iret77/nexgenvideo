@@ -20,9 +20,13 @@ struct SegmentedTabBar: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            tabs
-            ScrollView(.horizontal) { tabs }.scrollIndicators(.hidden)
+            tabs.fixedSize(horizontal: true, vertical: false)
+            ScrollView(.horizontal) {
+                tabs.fixedSize(horizontal: true, vertical: false)
+            }
+            .scrollIndicators(.automatic)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var tabs: some View {
@@ -58,6 +62,8 @@ struct SegmentedTabBar: View {
                                     .accessibilityHidden(true)
                             }
                             Text(title)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
                                 .interfaceFont(size: AppTheme.Typography.ui, weight: isActive ? .medium : .regular)
                                 .foregroundStyle(foreground)
                         }
