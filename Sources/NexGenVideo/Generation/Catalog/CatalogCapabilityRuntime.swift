@@ -7,15 +7,27 @@ enum CatalogCapabilityRuntimeError: Error {
 }
 
 enum CatalogCapabilityRuntime {
-    private static let loadResult: Result<ModelCapabilityResolver, Error> = Result {
+    private struct State: Sendable {
+        let corpus: ModelCapabilityCorpusDocument
+        let resolver: ModelCapabilityResolver
+    }
+
+    private static let loadResult: Result<State, Error> = Result {
         let corpus = try BundledModelCapabilityCorpus.load()
-        return try ModelCapabilityResolver(
-            knowledgeBase: corpus.productionKnowledgeBase()
+        return State(
+            corpus: corpus,
+            resolver: try ModelCapabilityResolver(
+                knowledgeBase: corpus.productionKnowledgeBase()
+            )
         )
     }
 
     static var resolver: ModelCapabilityResolver? {
-        try? loadResult.get()
+        try? loadResult.get().resolver
+    }
+
+    static var corpus: ModelCapabilityCorpusDocument? {
+        try? loadResult.get().corpus
     }
 
     static var loadError: Error? {

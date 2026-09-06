@@ -1,8 +1,8 @@
 # Model capability research subsystem
 
-This subsystem resolves issue #436 without widening the normal agent runtime. It is host-owned,
-project-independent, and inert until a future owner-approved UI explicitly starts research and later
-accepts its reviewed result.
+This subsystem resolves issue #436 without widening the normal agent runtime. It is host-owned and
+project-independent. The Models settings surface starts research explicitly, presents the verified
+field diff, and applies only the fields the user accepts.
 
 ## Boundaries
 
@@ -93,5 +93,5 @@ authoritative curated value can supersede a local field without deleting the loc
 Checked-in fixtures cover image, video, and music capabilities plus a recorded Claude CLI help/init
 contract. CI tests use only those fixtures. They perform no web request, catalog mutation, provider
 request, generation, or deliberately invalid probe. The visual contract is normative in
-[`docs/ui/model-capability-research.html`](ui/model-capability-research.html); native SwiftUI is
-deliberately not implemented without owner approval.
+[`docs/ui/model-capability-research.html`](ui/model-capability-research.html), and the native SwiftUI
+implementation follows that contract in Models settings.

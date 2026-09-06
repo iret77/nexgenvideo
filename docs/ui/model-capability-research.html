@@ -245,7 +245,7 @@
 <main class="doc">
   <section id="spec">
     <h1>Model capability research</h1>
-    <p>Normative contract for researching an inherited, defensive, stale, or conflicting model profile and reviewing a local evidence overlay. This document defines future UI behavior; no native UI is authorized by this specification alone.</p>
+    <p>Normative contract for researching an inherited, defensive, stale, or conflicting model profile and reviewing a local evidence overlay. The native Models settings implementation follows this behavior.</p>
 
     <h2>Entry and ownership</h2>
     <ul>
@@ -286,7 +286,7 @@
       <li>States: eligible, capability check, unavailable, researching, review, accepted, disabled, archived, superseded, and failed. Researching has one bounded progress row and Cancel; it never uses an indefinite duplicate spinner.</li>
       <li>Disabled buttons use the shared disabled treatment and never retain active contrast or hover response. Status is conveyed by text and symbol, not color alone.</li>
       <li>All copy follows the app interface language. Source titles remain provider-authored.</li>
-      <li>Future SwiftUI must use <code>AppTheme</code> tokens and existing Settings row, badge, button, disclosure, and confirmation patterns. No one-off control style is introduced.</li>
+      <li>SwiftUI uses <code>AppTheme</code> tokens and existing Settings row, badge, button, disclosure, and confirmation patterns. No one-off control style is introduced.</li>
     </ul>
 
     <h2>Acceptance</h2>
@@ -373,7 +373,7 @@
         <div class="record"><div><div class="record-title">Eleven Music · 1 <span class="badge"><span class="dot"></span>Disabled</span></div><div class="record-meta">Intrinsic · previous curated profile restored · evidence retained locally</div></div><div class="record-actions"><div class="button">Compare</div><div class="button">Enable</div><div class="button danger">Delete…</div></div></div>
       </div>
     </div>
-    <p class="caption">Mockups show information architecture and states only. Native implementation requires separate owner approval.</p>
+    <p class="caption">Mockups show the information architecture and states implemented in the native Models settings surface.</p>
   </section>
 </main>
 </body>

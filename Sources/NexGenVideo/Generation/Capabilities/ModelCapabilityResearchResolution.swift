@@ -398,6 +398,112 @@ enum ModelCapabilityResearchOverlayResolver {
         )
     }
 
+    static func applyingResolvedEndpointBoundary(
+        _ boundary: ResolvedCapabilityProfileV1,
+        to resolution: ModelCapabilityResearchEffectiveResolutionV1
+    ) -> ModelCapabilityResearchEffectiveResolutionV1 {
+        var fields = resolution.profile.fields
+        var decisions = resolution.fieldDecisions
+
+        for (fieldID, endpoint) in boundary.fields.integers
+        where endpoint.origin.kind == .endpointOverlay {
+            guard let policy = CapabilityFieldRegistryV1.byID[fieldID]?.endpointMergePolicy,
+                  policy != .intrinsicOnly else { continue }
+            guard let current = fields.integers[fieldID] else {
+                fields.integers[fieldID] = endpoint
+                markBounded(fieldID, changed: true, decisions: &decisions)
+                continue
+            }
+            let value: Int
+            switch policy {
+            case .maximum: value = min(current.value, endpoint.value)
+            case .minimum: value = max(current.value, endpoint.value)
+            default: value = endpoint.value
+            }
+            fields.integers[fieldID] = boundedValue(value, current: current, endpoint: endpoint)
+            markBounded(fieldID, changed: value != current.value, decisions: &decisions)
+        }
+        for (fieldID, endpoint) in boundary.fields.decimals
+        where endpoint.origin.kind == .endpointOverlay {
+            guard let policy = CapabilityFieldRegistryV1.byID[fieldID]?.endpointMergePolicy,
+                  policy != .intrinsicOnly else { continue }
+            guard let current = fields.decimals[fieldID] else {
+                fields.decimals[fieldID] = endpoint
+                markBounded(fieldID, changed: true, decisions: &decisions)
+                continue
+            }
+            let value: Double
+            switch policy {
+            case .maximum: value = min(current.value, endpoint.value)
+            case .minimum: value = max(current.value, endpoint.value)
+            default: value = endpoint.value
+            }
+            fields.decimals[fieldID] = boundedValue(value, current: current, endpoint: endpoint)
+            markBounded(fieldID, changed: value != current.value, decisions: &decisions)
+        }
+        for (fieldID, endpoint) in boundary.fields.booleans
+        where endpoint.origin.kind == .endpointOverlay {
+            guard let policy = CapabilityFieldRegistryV1.byID[fieldID]?.endpointMergePolicy,
+                  policy != .intrinsicOnly else { continue }
+            guard let current = fields.booleans[fieldID] else {
+                fields.booleans[fieldID] = endpoint
+                markBounded(fieldID, changed: true, decisions: &decisions)
+                continue
+            }
+            let value = policy == .booleanAnd
+                ? current.value && endpoint.value
+                : endpoint.value
+            fields.booleans[fieldID] = boundedValue(value, current: current, endpoint: endpoint)
+            markBounded(fieldID, changed: value != current.value, decisions: &decisions)
+        }
+        for (fieldID, endpoint) in boundary.fields.strings
+        where endpoint.origin.kind == .endpointOverlay {
+            guard let policy = CapabilityFieldRegistryV1.byID[fieldID]?.endpointMergePolicy,
+                  policy != .intrinsicOnly else { continue }
+            guard let current = fields.strings[fieldID] else {
+                fields.strings[fieldID] = endpoint
+                markBounded(fieldID, changed: true, decisions: &decisions)
+                continue
+            }
+            let value = policy == .setIntersection
+                ? current.value.filter(Set(endpoint.value).contains)
+                : endpoint.value
+            fields.strings[fieldID] = boundedValue(value, current: current, endpoint: endpoint)
+            markBounded(fieldID, changed: value != current.value, decisions: &decisions)
+        }
+        for (fieldID, endpoint) in boundary.fields.integerLists
+        where endpoint.origin.kind == .endpointOverlay {
+            guard let policy = CapabilityFieldRegistryV1.byID[fieldID]?.endpointMergePolicy,
+                  policy != .intrinsicOnly else { continue }
+            guard let current = fields.integerLists[fieldID] else {
+                fields.integerLists[fieldID] = endpoint
+                markBounded(fieldID, changed: true, decisions: &decisions)
+                continue
+            }
+            let value = policy == .setIntersection
+                ? current.value.filter(Set(endpoint.value).contains)
+                : endpoint.value
+            fields.integerLists[fieldID] = boundedValue(
+                value,
+                current: current,
+                endpoint: endpoint
+            )
+            markBounded(fieldID, changed: value != current.value, decisions: &decisions)
+        }
+
+        return ModelCapabilityResearchEffectiveResolutionV1(
+            profile: ResolvedCapabilityProfileV1(
+                requestedIdentity: resolution.profile.requestedIdentity,
+                resolvedIdentity: resolution.profile.resolvedIdentity,
+                defensiveProfileID: resolution.profile.defensiveProfileID,
+                researchNeeded: resolution.profile.researchNeeded,
+                fields: fields
+            ),
+            fieldDecisions: decisions,
+            localEvidenceIsStale: resolution.localEvidenceIsStale
+        )
+    }
+
     private static func merge<Value>(
         current: inout [String: ResolvedCapabilityValueV1<Value>],
         proposed: [String: EvidencedCapabilityFieldV1<Value>],
@@ -467,6 +573,20 @@ enum ModelCapabilityResearchOverlayResolver {
         proposed.reduce(into: existing) { result, evidence in
             if !result.contains(evidence) { result.append(evidence) }
         }
+    }
+
+    private static func boundedValue<Value>(
+        _ value: Value,
+        current: ResolvedCapabilityValueV1<Value>,
+        endpoint: ResolvedCapabilityValueV1<Value>
+    ) -> ResolvedCapabilityValueV1<Value>
+    where Value: Codable & Sendable & Equatable {
+        ResolvedCapabilityValueV1(
+            value: value,
+            semantics: value == current.value ? current.semantics : endpoint.semantics,
+            origin: endpoint.origin,
+            evidence: combinedEvidence(current.evidence, endpoint.evidence)
+        )
     }
 
     private struct EndpointResult {

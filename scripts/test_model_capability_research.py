@@ -135,7 +135,7 @@ def validate_html() -> None:
         "WebFetch",
         "Application Support",
         "Accept 2 proven fields",
-        "Native implementation requires separate owner approval",
+        "native Models settings implementation follows this behavior",
     ):
         require(phrase in text, f"HTML omits {phrase}")
 

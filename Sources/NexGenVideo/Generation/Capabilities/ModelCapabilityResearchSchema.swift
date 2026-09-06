@@ -249,6 +249,17 @@ enum ModelCapabilityResearchSourceAuthority {
         }
         return trusted.contains { host == $0 || host.hasSuffix(".\($0)") }
     }
+
+    static func allowedHosts(
+        binding: ModelCapabilityResearchBindingV1,
+        scope: ModelCapabilityResearchScopeV1
+    ) -> [String] {
+        var trusted = providerHosts[binding.providerID, default: []]
+        if scope == .intrinsic {
+            trusted.formUnion(modelOwnerHosts[binding.identity.familyID.rawValue, default: []])
+        }
+        return trusted.sorted()
+    }
 }
 
 enum ModelCapabilityResearchDatePolicy {
