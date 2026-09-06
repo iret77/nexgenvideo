@@ -33,8 +33,9 @@ def main():
                     last_step = row["step"]
                     last_progress = time.monotonic()
                 completed |= row.get("event") == "completed"
-            if time.monotonic() - last_progress > 15 or time.monotonic() - started > 180:
-                reason = "main-thread-stall" if last_step >= 0 else "startup-timeout"
+            stalled = time.monotonic() - last_progress > 15
+            if stalled or time.monotonic() - started > 300:
+                reason = ("main-thread-stall" if last_step >= 0 else "startup-timeout") if stalled else "runtime-limit"
                 try:
                     subprocess.run(["/usr/bin/sample", str(process.pid), "3", "-file",
                                     str(output / "sample.txt")], timeout=15, check=False)
