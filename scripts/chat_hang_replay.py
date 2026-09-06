@@ -14,7 +14,8 @@ def main():
     log_path = output / "replay.log"
     with log_path.open("w") as log:
         process = subprocess.Popen([executable], stdout=log, stderr=subprocess.STDOUT,
-                                   env={**os.environ, "NGV_CHAT_HANG_REPLAY": "1"})
+                                   env={**os.environ, "NGV_CHAT_HANG_REPLAY": "1",
+                                        "NGV_CHAT_REPLAY_EVIDENCE": str(output.resolve())})
         started = last_progress = time.monotonic()
         last_step = -1
         completed = False

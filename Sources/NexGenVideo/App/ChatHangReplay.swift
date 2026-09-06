@@ -28,6 +28,15 @@ enum ChatHangReplay {
                 NotificationCenter.default.post(name: .claudeCodeStatusChanged, object:
                     ClaudeCodeLocator.Status(executableURL: nil, version: "offline-replay", isAuthenticated: true))
                 if step == 1 { service.restoreComposerFocus() }
+                if step % 80 == 20 {
+                    service.isStreaming = false
+                    do { try service.presentDialog(reviewDialog(step)) }
+                    catch { emit("dialog-failed", step: step); exit(2) }
+                } else if step % 80 == 35 {
+                    service.abandonDialog()
+                    service.isStreaming = true
+                    service.restoreComposerFocus()
+                }
                 if step.isMultiple(of: 40) {
                     service.isStreaming = false
                     appendGeneration(24 + step / 40, image: image, service: service)
@@ -42,6 +51,13 @@ enum ChatHangReplay {
                     window.setContentSize(NSSize(width: widths[(step / 60) % widths.count], height: 950))
                 }
                 host.layoutSubtreeIfNeeded()
+                if step.isMultiple(of: 15), let scroll = scrollViews(in: host).max(by: { $0.bounds.height < $1.bounds.height }),
+                   let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                       wheel1: step % 30 == 0 ? -240 : 240, wheel2: 0, wheel3: 0),
+                   let wheel = NSEvent(cgEvent: event) {
+                    scroll.scrollWheel(with: wheel)
+                }
+                if [10, 25, 600, 1200].contains(step) { snapshot(host, step: step) }
                 if step.isMultiple(of: 10) { emit("progress", step: step) }
                 try? await Task.sleep(for: .milliseconds(50))
             }
@@ -51,6 +67,31 @@ enum ChatHangReplay {
         }
         app.run()
         exit(1)
+    }
+
+    private static func reviewDialog(_ step: Int) -> AgentDialog {
+        AgentDialog(id: "replay-review-\(step)", title: "Review the two front sheets", symbol: "photo",
+                    intro: "Front sheets are the primary anchor. Side, back and three-quarter follow your approval.",
+                    costHint: nil, confirmLabel: "Apply",
+                    textField: .init(placeholder: "Extra correction for either sheet (optional)", multiline: true),
+                    sections: ["AI cat — front sheet", "Claude Mouse — front sheet (pink inner ears missing)"].enumerated().map { index, label in
+                        .init(id: "sheet-\(index)", label: label,
+                              kind: .choices(options: [.init(id: "keep", label: "Keep"),
+                                                       .init(id: "redo", label: "Regenerate")], multiSelect: false),
+                              allowsCustom: true)
+                    })
+    }
+
+    private static func scrollViews(in view: NSView) -> [NSScrollView] {
+        (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+    }
+
+    private static func snapshot(_ view: NSView, step: Int) {
+        guard let directory = ProcessInfo.processInfo.environment["NGV_CHAT_REPLAY_EVIDENCE"],
+              let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return }
+        try? data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("panel-\(step).png"))
     }
 
     private static func appendGeneration(_ index: Int, image: String, service: AgentService) {
