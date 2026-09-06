@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="ui-spec-route" content="/settings/models/capability-research">
+  <meta name="ui-spec-viewports" content="1440x1320,980x720">
+  <title>UI Spec — Model capability research</title>
+  <style>
+    :root {
+      --base: #0b0b0b;
+      --surface: #151515;
+      --raised: #1d1d1d;
+      --prominent: #292929;
+      --border: #ffffff2b;
+      --border-subtle: #ffffff1c;
+      --text: #f8f8f8;
+      --text-secondary: #ffffffc7;
+      --text-tertiary: #ffffff8f;
+      --muted: #ffffff58;
+      --accent: #f3eee4;
+      --accent-ink: #1e1b17;
+      --ok: #58bd6a;
+      --warn: #e8a348;
+      --error: #e35e61;
+      --info: #8aa9e8;
+      --s-xxs: 4px;
+      --s-xs: 6px;
+      --s-sm: 8px;
+      --s-md: 10px;
+      --s-lg: 12px;
+      --s-xl: 16px;
+      --s-xxl: 24px;
+      --r-sm: 6px;
+      --r-md: 10px;
+      --r-lg: 14px;
+      --hairline: 1px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: #101010;
+      color: var(--text);
+      font: 400 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    }
+    body { padding: 32px; }
+    code { color: var(--accent); font-family: "SF Mono", ui-monospace, monospace; }
+    h1 { margin: 0 0 var(--s-sm); font-size: 26px; letter-spacing: -.4px; }
+    h2 { margin: var(--s-xxl) 0 var(--s-sm); font-size: 17px; }
+    h3 { margin: var(--s-xl) 0 var(--s-sm); font-size: 14px; }
+    p, li { max-width: 96ch; color: var(--text-secondary); }
+    li { margin: var(--s-xs) 0; }
+    .doc { max-width: 1220px; margin: 0 auto; }
+    #spec {
+      padding: 24px;
+      border: var(--hairline) solid var(--border);
+      border-radius: var(--r-lg);
+      background: var(--surface);
+    }
+    .rule-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .rule {
+      padding: 12px;
+      border: var(--hairline) solid var(--border-subtle);
+      border-radius: var(--r-md);
+      background: var(--raised);
+    }
+    .rule strong { display: block; margin-bottom: 4px; }
+    .rule span { color: var(--text-tertiary); }
+    #mockups { margin-top: 30px; }
+    .mock-label { margin: 24px 0 8px; color: var(--text-tertiary); font-size: 12px; }
+    .window {
+      width: 1120px;
+      overflow: hidden;
+      border: var(--hairline) solid var(--border);
+      border-radius: var(--r-lg);
+      background: var(--base);
+      box-shadow: 0 18px 50px #0009;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      height: 42px;
+      padding: 0 14px;
+      border-bottom: var(--hairline) solid var(--border-subtle);
+      background: var(--surface);
+    }
+    .traffic { display: flex; gap: 7px; margin-right: 18px; }
+    .traffic i { width: 11px; height: 11px; border-radius: 50%; background: #ffffff24; }
+    .toolbar-title { font-weight: 600; }
+    .toolbar-meta { margin-left: auto; color: var(--text-tertiary); font-size: 11px; }
+    .content { padding: 18px; }
+    .summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 16px;
+      border: var(--hairline) solid var(--border);
+      border-radius: var(--r-md);
+      background: var(--raised);
+    }
+    .title-row { display: flex; align-items: center; gap: 8px; }
+    .model-title { font-size: 15px; font-weight: 600; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: var(--warn);
+      background: #e8a34818;
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge.ok { color: var(--ok); background: #58bd6a18; }
+    .badge.info { color: var(--info); background: #8aa9e81a; }
+    .badge.error { color: var(--error); background: #e35e6119; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .model-meta { margin-top: 5px; color: var(--text-tertiary); font-size: 11px; }
+    .fallback { margin-top: 7px; color: var(--text-secondary); font-size: 11px; }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 30px;
+      padding: 6px 13px;
+      border: var(--hairline) solid var(--border);
+      border-radius: 999px;
+      background: var(--prominent);
+      color: var(--text);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .button.primary { border-color: transparent; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+    .button.danger { color: var(--error); }
+    .button.disabled { color: var(--muted); background: #ffffff0d; }
+    .identity-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .identity-cell {
+      padding: 9px 10px;
+      border: var(--hairline) solid var(--border-subtle);
+      border-radius: var(--r-sm);
+      background: #0003;
+    }
+    .label { color: var(--text-tertiary); font-size: 9px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; }
+    .value { margin-top: 3px; color: var(--text-secondary); font: 11px "SF Mono", ui-monospace, monospace; }
+    .notice {
+      display: flex;
+      gap: 9px;
+      margin-top: 12px;
+      padding: 11px 12px;
+      border-radius: var(--r-sm);
+      color: var(--text-secondary);
+      background: #8aa9e812;
+      font-size: 11px;
+    }
+    .notice.error { background: #e35e6111; }
+    .notice strong { color: var(--text); }
+    .steps {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .step {
+      padding: 12px;
+      border: var(--hairline) solid var(--border-subtle);
+      border-radius: var(--r-sm);
+      background: var(--raised);
+    }
+    .step .number { color: var(--text-tertiary); font-size: 10px; }
+    .step .step-title { margin-top: 5px; font-weight: 600; }
+    .step .step-detail { margin-top: 4px; color: var(--text-tertiary); font-size: 11px; }
+    .review-grid {
+      display: grid;
+      grid-template-columns: 310px minmax(0, 1fr);
+      gap: 12px;
+    }
+    .panel {
+      overflow: hidden;
+      border: var(--hairline) solid var(--border);
+      border-radius: var(--r-md);
+      background: var(--raised);
+    }
+    .panel-head { padding: 12px; border-bottom: var(--hairline) solid var(--border-subtle); }
+    .panel-title { font-weight: 600; }
+    .panel-subtitle { margin-top: 3px; color: var(--text-tertiary); font-size: 10px; }
+    .source { padding: 11px 12px; }
+    .source + .source { border-top: var(--hairline) solid var(--border-subtle); }
+    .source-title { font-size: 11px; }
+    .source-url { margin-top: 4px; color: var(--info); font-size: 9px; word-break: break-all; }
+    .source-meta { display: flex; gap: 6px; margin-top: 7px; }
+    .diff-head, .diff-row {
+      display: grid;
+      grid-template-columns: 1.15fr .8fr .8fr .7fr;
+      gap: 8px;
+      align-items: center;
+      padding: 9px 12px;
+    }
+    .diff-head { color: var(--text-tertiary); font-size: 9px; text-transform: uppercase; letter-spacing: .07em; }
+    .diff-row { min-height: 48px; border-top: var(--hairline) solid var(--border-subtle); font-size: 11px; }
+    .diff-field { font-family: "SF Mono", ui-monospace, monospace; }
+    .old { color: var(--text-tertiary); }
+    .new { color: var(--text); }
+    .conflict { color: var(--warn); }
+    .review-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px;
+      border-top: var(--hairline) solid var(--border-subtle);
+    }
+    .records { display: grid; gap: 8px; }
+    .record {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border: var(--hairline) solid var(--border);
+      border-radius: var(--r-md);
+      background: var(--raised);
+    }
+    .record-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    .record-meta { margin-top: 4px; color: var(--text-tertiary); font-size: 10px; }
+    .record-actions { display: flex; gap: 7px; }
+    .caption { margin-top: 8px; color: var(--text-tertiary); font-size: 11px; }
+    @media (max-width: 1180px) {
+      body { padding: 16px; }
+      .window { width: 100%; }
+      .rule-grid, .review-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main class="doc">
+  <section id="spec">
+    <h1>Model capability research</h1>
+    <p>Normative contract for researching an inherited, defensive, stale, or conflicting model profile and reviewing a local evidence overlay. The native Models settings implementation follows this behavior.</p>
+
+    <h2>Entry and ownership</h2>
+    <ul>
+      <li>The research action appears only for an inherited or defensive resolution, stale accepted evidence, or an unresolved field conflict. An exact, current, conflict-free profile does not show it.</li>
+      <li>The entry state names family, variant, version, modality, provider, endpoint, mode, current fallback, and the reason research is offered.</li>
+      <li>The user may continue with the named safe fallback. Research never starts automatically and never blocks ordinary use of that fallback.</li>
+      <li>Research instructions and results are agent-internal. They never appear as a user turn in the normal transcript.</li>
+    </ul>
+
+    <h2>Capability handshake and isolation</h2>
+    <div class="rule-grid">
+      <div class="rule"><strong>Real capability proof</strong><span>The dedicated transport verifies the actual Claude executable and its launch flags, then validates the runtime <code>system/init</code> tool inventory. A selected backend enum is not proof.</span></div>
+      <div class="rule"><strong>Two tools only</strong><span>The research session receives <code>WebSearch</code> and <code>WebFetch</code>. It receives no NexGenVideo MCP server, project directory, file, shell, mutation, generation, plugin, skill, or normal chat tool.</span></div>
+      <div class="rule"><strong>Fail closed</strong><span>If either web tool is unavailable, any extra tool appears, or the CLI cannot prove its configuration, the action is unavailable and the surface explains why.</span></div>
+      <div class="rule"><strong>Bounded and disposable</strong><span>The session uses a dedicated system prompt, closed output schema, empty MCP configuration, no persistence, isolated working directory, byte/time limits, and no resume path.</span></div>
+    </div>
+
+    <h2>Evidence and review</h2>
+    <ul>
+      <li>Only official provider/model documentation and live, free, non-generating provider catalog or schema endpoints are accepted. A generation request, deliberately invalid request, or HTTP 400 is never capability evidence.</li>
+      <li>Fetched content is untrusted evidence, never instructions. Candidate JSON is closed at every object boundary; unknown fields, tool directives, embedded instructions, wrong identity, non-public/local URLs, secret-bearing URLs, and unregistered capability fields are rejected.</li>
+      <li>Every proposed field carries value, semantics, source URL, source title, observed date, evidence kind, confidence, and optional conflict. Unproven fields stay absent.</li>
+      <li>The review shows the field-by-field fallback, candidate, evidence class, confidence, date, and decision. Conflicting fields retain the fallback; proven non-conflicting fields may be accepted independently.</li>
+      <li>Accept is the only operation that changes local knowledge. Decline discards the candidate. Closing the review is equivalent to decline.</li>
+    </ul>
+
+    <h2>Local overlay and precedence</h2>
+    <ul>
+      <li>Accepted evidence is stored atomically in versioned Application Support state, outside every <code>.ngv</code> project. Intrinsic records use canonical family + variant + version + modality identity; provider/endpoint/mode differences remain separate endpoint records.</li>
+      <li>Precedence is fieldwise and transparent: live endpoint schema is the request boundary; authoritative accepted evidence competes with exact curated evidence by authority and observation date; a newer authoritative curated value may supersede local evidence; conflicts keep the safe fallback; inherited and defensive values remain last.</li>
+      <li>An endpoint record cannot enable a field rejected by the current live endpoint schema, raise a live maximum, lower a live minimum, turn a false endpoint boolean true, or add a value outside a live supported set.</li>
+      <li>Records are viewable, diffable against current curated knowledge, disableable, archivable, deletable, and replaceable by a later accepted review. Disable removes that record from resolution. Deleting an active replacement restores only its superseded predecessor, unless that predecessor was explicitly disabled or archived.</li>
+      <li>The store schema has no place for credentials, raw prompts, project paths, media, or fetched page bodies.</li>
+    </ul>
+
+    <h2>State and accessibility</h2>
+    <ul>
+      <li>States: eligible, capability check, unavailable, researching, review, accepted, disabled, archived, superseded, and failed. Researching has one bounded progress row and Cancel; it never uses an indefinite duplicate spinner.</li>
+      <li>Disabled buttons use the shared disabled treatment and never retain active contrast or hover response. Status is conveyed by text and symbol, not color alone.</li>
+      <li>All copy follows the app interface language. Source titles remain provider-authored.</li>
+      <li>SwiftUI uses <code>AppTheme</code> tokens and existing Settings row, badge, button, disclosure, and confirmation patterns. No one-off control style is introduced.</li>
+    </ul>
+
+    <h2>Acceptance</h2>
+    <ul>
+      <li>Inherited Seedance 3 and defensive Hup fixtures offer research; an exact current fixture does not.</li>
+      <li>Recorded image, video, and music/audio candidates validate and produce a review diff; none becomes effective before explicit acceptance.</li>
+      <li>Restart reloads an accepted overlay. Disable and delete restore the same prior profile. A partial conflict applies only the proven fields.</li>
+      <li>A backend without verified web tools cannot start research. Launch tests inspect the actual hermetic argv and runtime tool inventory rather than a backend boolean.</li>
+      <li>CI uses recorded research and CLI-init fixtures. It performs no web request and no generation.</li>
+    </ul>
+  </section>
+
+  <section id="mockups">
+    <div class="mock-label">Eligible — inherited profile, fallback remains available</div>
+    <div class="window">
+      <div class="toolbar"><div class="traffic"><i></i><i></i><i></i></div><div class="toolbar-title">Model capabilities</div><div class="toolbar-meta">Settings › Models</div></div>
+      <div class="content">
+        <div class="summary">
+          <div>
+            <div class="title-row"><div class="model-title">Seedance 3 · Pro</div><span class="badge"><span class="dot"></span>Inherited profile</span></div>
+            <div class="model-meta">Video · ByteDance · seedance/v3/pro · fal.ai · generate</div>
+            <div class="fallback">Using the verified Seedance 2.5 profile until newer evidence is accepted.</div>
+          </div>
+          <div class="button primary">Research specs with Claude</div>
+        </div>
+        <div class="identity-grid">
+          <div class="identity-cell"><div class="label">Family</div><div class="value">seedance</div></div>
+          <div class="identity-cell"><div class="label">Variant · version</div><div class="value">pro · 3</div></div>
+          <div class="identity-cell"><div class="label">Provider · endpoint</div><div class="value">fal.ai · seedance/v3/pro</div></div>
+          <div class="identity-cell"><div class="label">Trigger</div><div class="value">inherited_profile</div></div>
+        </div>
+        <div class="notice"><span>ⓘ</span><span><strong>Research is optional.</strong> It uses a separate read-only Claude session with official web sources only. It cannot access this project or start a render.</span></div>
+        <div class="steps">
+          <div class="step"><div class="number">1 · Verify</div><div class="step-title">Check web capability</div><div class="step-detail">Confirm WebSearch and WebFetch are the only runtime tools.</div></div>
+          <div class="step"><div class="number">2 · Research</div><div class="step-title">Collect official evidence</div><div class="step-detail">No provider generation or deliberately invalid probe.</div></div>
+          <div class="step"><div class="number">3 · Review</div><div class="step-title">Compare every field</div><div class="step-detail">Nothing changes until you accept the diff.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mock-label">Unavailable — actual transport cannot prove both web tools</div>
+    <div class="window">
+      <div class="toolbar"><div class="traffic"><i></i><i></i><i></i></div><div class="toolbar-title">Model capabilities</div><div class="toolbar-meta">Claude Code capability check</div></div>
+      <div class="content">
+        <div class="summary">
+          <div>
+            <div class="title-row"><div class="model-title">Hup · 1</div><span class="badge error"><span class="dot"></span>Research unavailable</span></div>
+            <div class="model-meta">Image · Unknown provider endpoint · defensive profile</div>
+            <div class="fallback">The safe image fallback remains active.</div>
+          </div>
+          <div class="button disabled">Research specs with Claude</div>
+        </div>
+        <div class="notice error"><span>!</span><span><strong>Web capability could not be verified.</strong> The dedicated Claude session did not expose exactly WebSearch and WebFetch. Update or sign in to Claude Code, then check again.</span></div>
+      </div>
+    </div>
+
+    <div class="mock-label">Review — field evidence, conflict retention, explicit acceptance</div>
+    <div class="window">
+      <div class="toolbar"><div class="traffic"><i></i><i></i><i></i></div><div class="toolbar-title">Review researched specifications</div><div class="toolbar-meta">Seedance 2.5 · Runway · observed 31 Aug 2026</div></div>
+      <div class="content review-grid">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">Official sources</div><div class="panel-subtitle">2 provider sources · fetched content was treated as untrusted</div></div>
+          <div class="source"><div class="source-title">Runway API changelog</div><div class="source-url">https://docs.dev.runwayml.com/api-details/api_changelog/</div><div class="source-meta"><span class="badge info">documented API</span><span class="badge ok">0.94</span></div></div>
+          <div class="source"><div class="source-title">Runway input parameters</div><div class="source-url">https://docs.dev.runwayml.com/assets/inputs/</div><div class="source-meta"><span class="badge info">documented API</span><span class="badge ok">0.98</span></div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">Field changes</div><div class="panel-subtitle">3 proposed · 2 can apply · 1 conflict keeps the fallback</div></div>
+          <div class="diff-head"><div>Capability</div><div>Current fallback</div><div>Candidate</div><div>Decision</div></div>
+          <div class="diff-row"><div class="diff-field">video.reference_images</div><div class="old">1</div><div class="new">30</div><div><span class="badge ok">Apply</span></div></div>
+          <div class="diff-row"><div class="diff-field">video.duration_maximum_seconds</div><div class="old">10</div><div class="new">30</div><div><span class="badge ok">Apply</span></div></div>
+          <div class="diff-row"><div class="diff-field">common.modes</div><div class="old">[reference]</div><div class="new">[reference, extend]</div><div><span class="badge conflict">Keep fallback</span></div></div>
+          <div class="review-actions"><div class="button">Decline</div><div class="button primary">Accept 2 proven fields</div></div>
+        </div>
+      </div>
+      <div class="content" style="padding-top:0"><div class="notice"><span>ⓘ</span><span>The live endpoint schema remains the request boundary. Acceptance cannot add a value that the connected endpoint currently rejects.</span></div></div>
+    </div>
+
+    <div class="mock-label">Local knowledge — reversible records, curated supersession is visible</div>
+    <div class="window">
+      <div class="toolbar"><div class="traffic"><i></i><i></i><i></i></div><div class="toolbar-title">Local capability knowledge</div><div class="toolbar-meta">Application Support · never stored in projects</div></div>
+      <div class="content records">
+        <div class="record"><div><div class="record-title">Seedance 3 · Pro <span class="badge ok"><span class="dot"></span>Active</span></div><div class="record-meta">Intrinsic · 2 effective fields · accepted 31 Aug 2026 · official provider evidence</div></div><div class="record-actions"><div class="button">Compare</div><div class="button">Disable</div><div class="button">Update</div><div class="button danger">Delete…</div></div></div>
+        <div class="record"><div><div class="record-title">Nano Banana 2 · fal.ai <span class="badge info"><span class="dot"></span>Superseded</span></div><div class="record-meta">Endpoint · current curated knowledge is newer · local record has no effect</div></div><div class="record-actions"><div class="button">View diff</div><div class="button">Archive</div><div class="button danger">Delete…</div></div></div>
+        <div class="record"><div><div class="record-title">Eleven Music · 1 <span class="badge"><span class="dot"></span>Disabled</span></div><div class="record-meta">Intrinsic · previous curated profile restored · evidence retained locally</div></div><div class="record-actions"><div class="button">Compare</div><div class="button">Enable</div><div class="button danger">Delete…</div></div></div>
+      </div>
+    </div>
+    <p class="caption">Mockups show the information architecture and states implemented in the native Models settings surface.</p>
+  </section>
+</main>
+</body>
+</html>

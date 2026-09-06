@@ -19,7 +19,8 @@
           "heading": "Production intelligence",
           "items": [
             "Music Video now selects only the production doctrine, camera, story, continuity, and production-sheet guidance relevant to the current phase and intent, within a deterministic context budget.",
-            "Shot planning and sanity checks can evaluate visible-character, duration, and reference demands against the selected generation route instead of fixed global limits."
+            "Shot planning and sanity checks can evaluate visible-character, duration, and reference demands against the selected generation route instead of fixed global limits.",
+            "Inherited, defensive, stale, or conflicting model specifications can be researched from Models settings in an isolated Claude web session, reviewed field by field, and saved as reversible local evidence without weakening live provider limits."
           ]
         },
         {
