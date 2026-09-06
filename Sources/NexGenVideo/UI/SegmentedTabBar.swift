@@ -27,6 +27,7 @@ struct SegmentedTabBar: View {
             .scrollIndicators(.automatic)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .workspaceHeaderContent()
     }
 
     private var tabs: some View {
@@ -50,28 +51,29 @@ struct SegmentedTabBar: View {
                 Button {
                     onSelect(title)
                 } label: {
-                    VStack(spacing: AppTheme.Spacing.xs) {
-                        HStack(spacing: AppTheme.Spacing.xxs) {
-                            if markedTitles.contains(title) {
-                                Circle()
-                                    .fill(accentColor ?? AppTheme.Text.tertiaryColor)
-                                    .frame(
-                                        width: AppTheme.ComponentSize.segmentedTabMarkerDiameter,
-                                        height: AppTheme.ComponentSize.segmentedTabMarkerDiameter
-                                    )
-                                    .accessibilityHidden(true)
-                            }
-                            Text(title)
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                                .interfaceFont(size: AppTheme.Typography.ui, weight: isActive ? .medium : .regular)
-                                .foregroundStyle(foreground)
+                    HStack(spacing: AppTheme.Spacing.xxs) {
+                        if markedTitles.contains(title) {
+                            Circle()
+                                .fill(accentColor ?? AppTheme.Text.tertiaryColor)
+                                .frame(
+                                    width: AppTheme.ComponentSize.segmentedTabMarkerDiameter,
+                                    height: AppTheme.ComponentSize.segmentedTabMarkerDiameter
+                                )
+                                .accessibilityHidden(true)
                         }
+                        Text(title)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .interfaceFont(size: AppTheme.Typography.ui, weight: isActive ? .medium : .regular)
+                            .foregroundStyle(foreground)
+                    }
+                    .workspaceHeaderContent()
+                    .overlay(alignment: .bottom) {
                         Rectangle()
                             .fill(isActive ? foreground : AnyShapeStyle(AppTheme.Background.clearColor))
                             .frame(height: AppTheme.BorderWidth.medium)
+                            .padding(.bottom, AppTheme.Spacing.xs)
                     }
-                    .padding(.vertical, AppTheme.Spacing.xs)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -80,7 +82,7 @@ struct SegmentedTabBar: View {
             Spacer()
         }
         .padding(.horizontal, AppTheme.Spacing.lg)
-        .padding(.top, AppTheme.Spacing.xs)
+        .workspaceHeaderContent()
         .background(raisedBackground ? AppTheme.Background.raisedColor : AppTheme.Background.clearColor)
         .overlay(alignment: .bottom) {
             if raisedBackground {

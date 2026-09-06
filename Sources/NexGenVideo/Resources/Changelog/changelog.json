@@ -8,6 +8,7 @@
         {
           "heading": "Interface",
           "items": [
+            "Workspace headers share the same height, centered labels and separator, including enlarged interface text.",
             "New conversation is inactive when the current chat is already empty; starting a new conversation from existing content preserves the draft and focuses the input.",
             "Pipeline tabs remain on one line. Completed phases use a quiet approval checkmark without repetitive approval subtitles.",
             "Unified readable text, controls and project accents across Welcome, Settings, the editing workspace, cockpit and supporting windows. Interface text can be enlarged in Settings.",

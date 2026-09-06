@@ -52,6 +52,7 @@ struct ProjectCockpitView: View {
                 }
                 settingsButton
             }
+            .panelHeaderBar()
             Group {
                 if let surface = selectedSurface {
                     packSurfaceView(surface)

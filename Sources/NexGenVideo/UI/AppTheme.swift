@@ -438,6 +438,7 @@ enum AppTheme {
         static let agentPanelMax: CGFloat = 640
         static let chatColumnMax: CGFloat = 640
         static let panelHeaderHeight: CGFloat = 28
+        static let workspaceHeaderHeight: CGFloat = 40
         static let toolbarHeight: CGFloat = 38
         static let titleBarChromeHeight: CGFloat = 36
         static let trafficLightInset: CGFloat = 70
@@ -630,7 +631,7 @@ extension View {
 
     func panelHeaderBar() -> some View {
         frame(maxWidth: .infinity)
-            .frame(minHeight: AppTheme.Layout.panelHeaderHeight)
+            .workspaceHeaderContent()
             .background(AppTheme.Background.raisedColor)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(AppTheme.Border.primaryColor).frame(height: AppTheme.BorderWidth.thin)
