@@ -38,7 +38,12 @@ enum ProjectWorkingCopy {
            fm.fileExists(atPath: existing.appendingPathComponent(dirtyMarker).path) {
             guard let packageURL,
                   ProjectPluginSettings.bindingResolution(projectURL: packageURL)
-                    == ProjectPluginSettings.bindingResolution(projectURL: existing) else {
+                    == ProjectPluginSettings.bindingResolution(projectURL: existing)
+                    || ProjectPackMigration.authorizesRecoveredUpgrade(
+                        projectURL: packageURL,
+                        recoveryURL: existing,
+                        workingCopyKey: key
+                    ) else {
                 throw PersistError.recoveredFormatMismatch
             }
             migrateSchemas(in: home(key))

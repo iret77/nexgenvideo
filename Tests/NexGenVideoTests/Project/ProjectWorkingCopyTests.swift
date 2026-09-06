@@ -482,6 +482,100 @@ struct ProjectWorkingCopyTests {
         }
     }
 
+    @Test("an authorized upgraded recovery reopens and saves without rewriting the source early",
+          arguments: ["musicvideo/2.0.0", "musicvideo/1.0.0"])
+    func reopensPendingUpgrade(sourceSchema: String) throws {
+        let pkg = try tempPackage(pipelineName: nil)
+        let source = try musicvideoBinding(version: "0.5.0", schema: sourceSchema)
+        let target = try musicvideoBinding(version: "0.5.1")
+        try ProjectPluginSettings.setActivePlugin(source, projectURL: pkg)
+        let key = try ProjectIdentity.key(for: pkg)
+        let requestKey = "NGVPackMigration." + key
+        defer {
+            UserDefaults.standard.removeObject(forKey: requestKey)
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        let savedSettings = try Data(contentsOf: pkg.appendingPathComponent("ngv.json"))
+        let opened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        UserDefaults.standard.set(try JSONEncoder().encode(
+            ProjectPackMigration.Request(source: source, target: target)
+        ), forKey: requestKey)
+        try ProjectWorkingCopy.transact(key: key) { staging in
+            try ProjectPluginSettings.setActivePlugin(target, projectURL: staging)
+            try Data("unsaved edit".utf8).write(to: staging.appendingPathComponent("edit.txt"))
+        }
+        for _ in 0..<2 {
+            let resumed = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+            #expect(resumed.recoveredUnsaved)
+            #expect(resumed.home == opened.home)
+            #expect(ProjectPluginSettings.bindingResolution(projectURL: resumed.home) == .bound(target))
+            #expect(try Data(contentsOf: pkg.appendingPathComponent("ngv.json")) == savedSettings)
+            #expect(try String(contentsOf: resumed.home.appendingPathComponent("edit.txt"), encoding: .utf8) == "unsaved edit")
+        }
+        try ProjectWorkingCopy.persist(key: key, to: pkg)
+        ProjectPackMigration.complete(projectURL: pkg)
+        #expect(ProjectPluginSettings.bindingResolution(projectURL: pkg) == .bound(target))
+        #expect(try ProjectWorkingCopy.open(key: key, packageURL: pkg).recoveredUnsaved)
+    }
+
+    @Test("a pending upgrade cannot authorize a changed source, target, identity or cancelled request",
+          arguments: ["source", "target", "identity", "cancelled", "corrupt"])
+    func rejectsUnrelatedUpgradeRecovery(change: String) throws {
+        let pkg = try tempPackage(pipelineName: nil)
+        let source = try musicvideoBinding(version: "0.5.0")
+        let target = try musicvideoBinding(version: "0.5.1")
+        let unrelated = try musicvideoBinding(version: "0.5.2")
+        try ProjectPluginSettings.setActivePlugin(source, projectURL: pkg)
+        let key = try ProjectIdentity.key(for: pkg)
+        let requestKey = "NGVPackMigration." + key
+        defer {
+            UserDefaults.standard.removeObject(forKey: requestKey)
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        let opened = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        UserDefaults.standard.set(try JSONEncoder().encode(
+            ProjectPackMigration.Request(source: source, target: target)
+        ), forKey: requestKey)
+        try ProjectWorkingCopy.transact(key: key) { staging in
+            try ProjectPluginSettings.setActivePlugin(target, projectURL: staging)
+        }
+        switch change {
+        case "source": try ProjectPluginSettings.setActivePlugin(unrelated, projectURL: pkg)
+        case "target": try ProjectPluginSettings.setActivePlugin(unrelated, projectURL: opened.home)
+        case "identity": try ProjectIdentity.regenerate(at: opened.home)
+        case "corrupt": UserDefaults.standard.set(Data("invalid".utf8), forKey: requestKey)
+        default: ProjectPackMigration.complete(projectURL: pkg)
+        }
+        let saved = try Data(contentsOf: pkg.appendingPathComponent("ngv.json"))
+        let recovered = try Data(contentsOf: opened.home.appendingPathComponent("ngv.json"))
+        #expect(throws: ProjectWorkingCopy.PersistError.self) {
+            try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        }
+        #expect(try Data(contentsOf: pkg.appendingPathComponent("ngv.json")) == saved)
+        #expect(try Data(contentsOf: opened.home.appendingPathComponent("ngv.json")) == recovered)
+    }
+
+    @Test("a declared legacy upgrade can resume its exact migrated recovery")
+    func reopensLegacyUpgradeRecovery() throws {
+        let pkg = try tempPackage(pipelineName: nil)
+        let target = try musicvideoBinding(version: "0.5.1")
+        let key = try ProjectIdentity.key(for: pkg)
+        defer {
+            ProjectPackMigration.complete(projectURL: pkg)
+            ProjectWorkingCopy.discard(key: key)
+            try? FileManager.default.removeItem(at: pkg)
+        }
+        _ = try ProjectWorkingCopy.open(key: key, packageURL: pkg)
+        try ProjectPackMigration.scheduleLegacy(projectURL: pkg, target: target)
+        try ProjectWorkingCopy.transact(key: key) { staging in
+            try ProjectPluginSettings.setActivePlugin(target, projectURL: staging)
+        }
+        #expect(try ProjectWorkingCopy.open(key: key, packageURL: pkg).recoveredUnsaved)
+        #expect(ProjectPluginSettings.bindingResolution(projectURL: pkg) == .legacy("musicvideo"))
+    }
+
     @Test("the package declaration stays independent from live working-copy verification")
     func packagePluginDeclarationIsIndependent() throws {
         PackCatalog.register(MusicvideoPack())

@@ -3,7 +3,7 @@
   "entries": [
     {
       "version": "1.5.1",
-      "date": "2026-09-05",
+      "date": "2026-09-06",
       "sections": [
         {
           "heading": "Interface",
@@ -22,6 +22,7 @@
         {
           "heading": "Fixes",
           "items": [
+            "Project pack upgrades now reopen their authorized migrated recovery copy, preserving unsaved work and leaving the saved project untouched until Save.",
             "Storyboard approval now opens the current storyboard in a readable view and checks its current source and gate readiness before approval.",
             "Removing an installed format-pack version keeps confirmation actionable, rechecks project use and reports blocked removals or filesystem errors.",
             "Generated Agent images now open from a legible preview into a bounded viewer with fit and zoom controls.",
