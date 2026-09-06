@@ -6,6 +6,54 @@ import Testing
 @Suite("Native choice picker", .serialized)
 @MainActor
 struct NativeChoicePickerTests {
+    @Test func hostedScrollLayoutSettlesAcrossWidthAndMenuChanges() {
+        let host = NSHostingView(rootView: layoutFixture(width: 320, expanded: false))
+        for width: CGFloat in [320, 480, 240, 640, 320] {
+            for expanded in [false, true, false] {
+                host.rootView = layoutFixture(width: width, expanded: expanded)
+                host.setFrameSize(NSSize(width: width, height: 700))
+                host.layoutSubtreeIfNeeded()
+                let first = host.fittingSize
+                host.layoutSubtreeIfNeeded()
+                #expect(host.fittingSize == first)
+                #expect(first.width.isFinite && first.height.isFinite)
+            }
+        }
+    }
+
+    private func layoutFixture(width: CGFloat, expanded: Bool) -> some View {
+        VStack {
+            ScrollView {
+                LazyVStack {
+                    ForEach(0..<20) { index in Text("Transcript message \(index)") }
+                    if expanded { Rectangle().frame(height: 220) }
+                }
+            }
+            VStack {
+                Text("Approve spend")
+                ScrollView {
+                    HStack {
+                        NativeChoicePicker(
+                            label: "Provider",
+                            options: [.init(id: "provider", title: "fal.ai")],
+                            selection: .constant("provider")
+                        )
+                        NativeChoicePicker(
+                            label: "Model",
+                            options: [.init(id: "model", title: expanded
+                                ? String(repeating: "Long model name ", count: 40)
+                                : "Nano Banana Pro (edit)")],
+                            selection: .constant("model")
+                        )
+                    }
+                }
+                Button("Generate image") {}
+            }
+            .frame(maxHeight: 318)
+        }
+        .frame(width: width, height: 700)
+    }
+
     @Test func menuContentDoesNotChangeLayoutOrRebuildOnSelection() {
         let button = ChoicePopUpButton(frame: .zero, pullsDown: false)
         let options: [NativeChoicePicker.Option] = [
