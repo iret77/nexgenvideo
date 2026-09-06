@@ -281,13 +281,15 @@ struct AgentPanelView: View {
     }
 
     private var newConversationButton: some View {
-        Button { service.newChat() } label: {
+        Button { service.startNewConversation() } label: {
             Label("New", systemImage: "plus")
                 .interfaceFont(size: AppTheme.Typography.ui, weight: AppTheme.FontWeight.medium)
         }
         .buttonStyle(.capsule(.secondary, size: .small))
         .controlSize(.small)
-        .disabled(service.isComposerBlocked || service.isStreaming)
+        .disabled(!service.canStartNewConversation)
+        .help(service.canStartNewConversation
+              ? "Start a new conversation" : "This conversation is already empty or has an action in progress")
         .accessibilityLabel("New conversation")
     }
 

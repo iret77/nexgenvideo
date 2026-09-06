@@ -278,7 +278,7 @@ extension EditorWindowController: EditorActions {
         guard !editorViewModel.agentService.isComposerBlocked,
               !editorViewModel.agentService.isStreaming else { return }
         editorViewModel.agentPanelVisible = true
-        editorViewModel.agentService.newChat()
+        editorViewModel.agentService.startNewConversation()
     }
     @objc func showAgentConversationHistory(_ sender: Any?) {
         editorViewModel.agentPanelVisible = true
@@ -326,7 +326,9 @@ extension EditorWindowController: EditorActions {
         case #selector(toggleAgentPanel(_:)):
             menuItem.state = editorViewModel.agentPanelVisible ? .on : .off
             return true
-        case #selector(newAgentConversation(_:)), #selector(closeAgentConversation(_:)):
+        case #selector(newAgentConversation(_:)):
+            return editorViewModel.agentService.canStartNewConversation
+        case #selector(closeAgentConversation(_:)):
             return !editorViewModel.agentService.isComposerBlocked
                 && !editorViewModel.agentService.isStreaming
         case #selector(selectPreviousAgentConversation(_:)),

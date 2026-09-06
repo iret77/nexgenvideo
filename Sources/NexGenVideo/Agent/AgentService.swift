@@ -2258,6 +2258,22 @@ final class AgentService {
         toolExecutor?.resetFeedbackState()
     }
 
+    var canStartNewConversation: Bool {
+        guard !isComposerBlocked, !isStreaming else { return false }
+        return currentSessionId == nil || !messages.isEmpty
+            || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !mentions.isEmpty || pendingFunction != nil || streamError != nil
+    }
+
+    @discardableResult
+    func startNewConversation() -> Bool {
+        guard canStartNewConversation else { return false }
+        newChat()
+        composerWantsFocus = true
+        focusInputRequestTick &+= 1
+        return true
+    }
+
     func newChat() {
         saveComposerState()
         currentTask?.cancel()

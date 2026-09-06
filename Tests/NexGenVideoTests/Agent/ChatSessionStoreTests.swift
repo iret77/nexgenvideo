@@ -99,6 +99,50 @@ struct ChatSessionStoreTests {
         #expect(title.hasSuffix("distinct ending"))
     }
 
+    @Test("New is unavailable in an already empty conversation without replacing its identity")
+    @MainActor
+    func newConversationRequiresAnObservableChange() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: nil)
+        let id = try #require(service.currentSessionId)
+        #expect(!service.canStartNewConversation)
+        #expect(!service.startNewConversation())
+        #expect(service.currentSessionId == id)
+        #expect(service.sessions.count == 1)
+    }
+
+    @Test("New preserves the current draft and focuses the new conversation")
+    @MainActor
+    func explicitNewConversationPreservesDraftAndFocusesInput() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: nil)
+        let first = try #require(service.currentSessionId)
+        service.draft = "My next scene"
+        #expect(service.canStartNewConversation)
+        #expect(service.startNewConversation())
+        #expect(service.currentSessionId != first)
+        #expect(service.draft.isEmpty)
+        #expect(service.composerShouldFocus)
+        #expect(!service.canStartNewConversation)
+        service.selectSession(first)
+        #expect(service.draft == "My next scene")
+    }
+
+    @Test("New cannot interrupt a running turn")
+    @MainActor
+    func explicitNewConversationHonorsRunningState() throws {
+        let service = AgentService(refreshBackendStatusOnInit: false)
+        service.loadSessions(from: nil)
+        let id = try #require(service.currentSessionId)
+        service.messages = [AgentMessage(role: .user, blocks: [.text("Continue")])]
+        service.isStreaming = true
+        defer { service.isStreaming = false }
+        #expect(!service.canStartNewConversation)
+        #expect(!service.startNewConversation())
+        #expect(service.currentSessionId == id)
+        #expect(service.messages.count == 1)
+    }
+
     @Test("conversation switching restores only that conversation's composer state")
     @MainActor
     func composerStateIsScopedToConversation() throws {
