@@ -10,13 +10,15 @@ enum ChatHangReplay {
         BundledFonts.register()
         AgentBackendPreference.set(.claudeCode)
         let editor = EditorViewModel()
+        editor.workspaceFocus = .produce
+        editor.agentPanelVisible = true
         let service = editor.agentService
         service.currentSessionId = UUID()
         let image = imagePayload()
         for index in 0..<24 { appendGeneration(index, image: image, service: service) }
         service.isStreaming = true
-        let host = NSHostingView(rootView: AgentPanelView().environment(editor))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 950),
+        let host = NSHostingView(rootView: EditorWindowContentView().environment(editor))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1470, height: 950),
                               styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
@@ -47,7 +49,7 @@ enum ChatHangReplay {
                         "Two deviations from the approved front. Waiting on your verdict. ", count: step % 40 + 1))]
                 }
                 if step.isMultiple(of: 60) {
-                    let widths: [CGFloat] = [320, 540, 420, 640]
+                    let widths: [CGFloat] = [1100, 1470, 1280, 1600]
                     window.setContentSize(NSSize(width: widths[(step / 60) % widths.count], height: 950))
                 }
                 host.layoutSubtreeIfNeeded()
