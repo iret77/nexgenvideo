@@ -1,0 +1,66 @@
+name: Chat Hang Replay
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/chat-hang-replay.yml'
+      - 'scripts/chat_hang_replay.py'
+      - 'Sources/NexGenVideo/App/ChatHangReplay.swift'
+      - 'Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift'
+      - 'Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift'
+
+concurrency:
+  group: chat-hang-replay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-xcode-27
+      - uses: ./.github/actions/cache-swiftpm-dependencies
+      - name: Restore released message layout for control
+        if: matrix.variant == 'baseline'
+        run: git show 5adddf7de4bb837e8d77faa7d5f5c3c0e5c005e7:Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift > Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift
+      - name: Build replay app
+        run: |
+          scripts/bundle.sh debug
+          tar -czf "$RUNNER_TEMP/chat-replay.tar.gz" -C .build NexGenVideo.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chat-replay-${{ matrix.variant }}
+          path: ${{ runner.temp }}/chat-replay.tar.gz
+          retention-days: 3
+  replay:
+    needs: build
+    runs-on: macos-26
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, candidate]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: chat-replay-${{ matrix.variant }}
+          path: ${{ runner.temp }}/chat-replay
+      - name: Require production macOS and run real panel
+        run: |
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          tar -xzf "$RUNNER_TEMP/chat-replay/chat-replay.tar.gz" -C "$RUNNER_TEMP/chat-replay"
+          python3 scripts/chat_hang_replay.py "$RUNNER_TEMP/chat-replay/NexGenVideo.app/Contents/MacOS/NexGenVideo" "$RUNNER_TEMP/evidence"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chat-replay-evidence-${{ matrix.variant }}
+          path: ${{ runner.temp }}/evidence
+          retention-days: 7
