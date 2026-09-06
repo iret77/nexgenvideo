@@ -2,6 +2,18 @@
   "changelogURL": "https://github.com/iret77/nexgenvideo/releases",
   "entries": [
     {
+      "version": "1.5.2",
+      "date": "2026-09-06",
+      "sections": [
+        {
+          "heading": "Fixes",
+          "items": [
+            "Provider and model selectors in spend approval use bounded native sizing to avoid repeated layout negotiation during Agent chat updates."
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.5.1",
       "date": "2026-09-06",
       "sections": [
