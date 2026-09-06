@@ -29,6 +29,24 @@ struct AgentTranscriptLayoutTests {
         #expect(abs(host.fittingSize.width - 320) < 1)
     }
 
+    @Test func descendantAlignmentGuidesDoNotEscapeTheBoundary() {
+        var observations: [(CGFloat?, CGFloat?)] = []
+        let host = NSHostingView(rootView: TranscriptAlignmentProbe(report: { horizontal, vertical in
+            observations.append((horizontal, vertical))
+        }) {
+            AgentTranscriptLayout {
+                Text("Nested content")
+                    .alignmentGuide(.leading) { _ in 17 }
+                    .alignmentGuide(.top) { _ in 23 }
+            }
+        })
+        host.setFrameSize(.init(width: 320, height: 100))
+        host.layoutSubtreeIfNeeded()
+        _ = host.fittingSize
+        #expect(!observations.isEmpty)
+        #expect(observations.allSatisfy { $0.0 == nil && $0.1 == nil })
+    }
+
     @Test func realTranscriptMessagesSettleDuringStreamingAndResizing() {
         let turnID = UUID()
         var message = AgentMessage(role: .assistant, blocks: [.text("Waiting on your verdict.")])
@@ -67,5 +85,21 @@ struct AgentTranscriptLayoutTests {
             TextField("Ask", text: .constant(""))
         }
         .frame(width: width, height: 700)
+    }
+}
+
+private struct TranscriptAlignmentProbe: SwiftUI.Layout {
+    let report: (CGFloat?, CGFloat?) -> Void
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let dimensions = child.dimensions(in: .init(width: 320, height: nil))
+        report(dimensions[explicit: .leading], dimensions[explicit: .top])
+        return .init(width: dimensions.width, height: dimensions.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                              proposal: .init(width: 320, height: nil))
     }
 }
