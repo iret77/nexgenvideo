@@ -8,6 +8,7 @@ enum ChatHangReplay {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         BundledFonts.register()
+        AgentBackendPreference.set(.claudeCode)
         let editor = EditorViewModel()
         let service = editor.agentService
         service.currentSessionId = UUID()
@@ -24,6 +25,9 @@ enum ChatHangReplay {
         emit("started", step: 0)
         Task { @MainActor in
             for step in 1...1200 {
+                NotificationCenter.default.post(name: .claudeCodeStatusChanged, object:
+                    ClaudeCodeLocator.Status(executableURL: nil, version: "offline-replay", isAuthenticated: true))
+                if step == 1 { service.restoreComposerFocus() }
                 if step.isMultiple(of: 40) {
                     service.isStreaming = false
                     appendGeneration(24 + step / 40, image: image, service: service)
