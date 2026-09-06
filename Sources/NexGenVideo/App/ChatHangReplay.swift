@@ -15,6 +15,7 @@ enum ChatHangReplay {
         let service = editor.agentService
         let fixturePath = ProcessInfo.processInfo.environment["NGV_CHAT_REPLAY_FIXTURE"]
         let image: String
+        let recordedMessages: [AgentMessage]
         if let fixturePath {
             do {
                 let decoder = JSONDecoder()
@@ -23,14 +24,15 @@ enum ChatHangReplay {
                 guard !session.messages.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
                 service.sessions = [session]
                 service.currentSessionId = session.id
-                service.messages = session.messages
-                service.messages.append(AgentMessage(role: .assistant, blocks: [.text("")]))
+                recordedMessages = session.messages
+                service.messages = []
                 image = ""
             } catch {
                 emit("fixture-load-failed", step: 0)
                 exit(2)
             }
         } else {
+            recordedMessages = []
             service.currentSessionId = UUID()
             image = imagePayload()
             for index in 0..<24 { appendGeneration(index, image: image, service: service) }
@@ -45,25 +47,32 @@ enum ChatHangReplay {
         app.activate(ignoringOtherApps: true)
         emit("started", step: 0)
         Task { @MainActor in
+            let ticksPerMessage = max(2, 1000 / max(1, recordedMessages.count))
+            var focusedTicks = 0
             for step in 1...1200 {
                 NotificationCenter.default.post(name: .claudeCodeStatusChanged, object:
                     ClaudeCodeLocator.Status(executableURL: nil, version: "offline-replay", isAuthenticated: true))
-                if step == 1 { service.restoreComposerFocus() }
-                if step % 80 == 20 {
+                if step == 1 { service.prefillInput("") }
+                if fixturePath != nil {
+                    do {
+                        try replayRecordedMessages(recordedMessages, step: step,
+                                                   ticksPerMessage: ticksPerMessage, service: service)
+                    } catch { emit("recorded-dialog-failed", step: step); exit(2) }
+                } else if step % 80 == 20 {
                     service.isStreaming = false
                     do { try service.presentDialog(reviewDialog(step)) }
                     catch { emit("dialog-failed", step: step); exit(2) }
-                } else if step % 80 == 35 {
+                } else if fixturePath == nil && step % 80 == 35 {
                     service.abandonDialog()
                     service.isStreaming = true
-                    service.restoreComposerFocus()
+                    service.prefillInput("")
                 }
                 if fixturePath == nil && step.isMultiple(of: 40) {
                     service.isStreaming = false
                     appendGeneration(24 + step / 40, image: image, service: service)
                     service.isStreaming = true
                 }
-                if let last = service.messages.indices.last {
+                if fixturePath == nil, let last = service.messages.indices.last {
                     service.messages[last].blocks = [.text(String(repeating:
                         "Two deviations from the approved front. Waiting on your verdict. ", count: step % 40 + 1))]
                 }
@@ -72,6 +81,7 @@ enum ChatHangReplay {
                     window.setContentSize(NSSize(width: widths[(step / 60) % widths.count], height: 950))
                 }
                 host.layoutSubtreeIfNeeded()
+                if window.firstResponder is NSTextView { focusedTicks += 1 }
                 if step.isMultiple(of: 15), let scroll = scrollViews(in: host).max(by: { $0.bounds.height < $1.bounds.height }),
                    let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
                                        wheel1: step % 30 == 0 ? -240 : 240, wheel2: 0, wheel3: 0),
@@ -82,12 +92,70 @@ enum ChatHangReplay {
                 if step.isMultiple(of: 10) { emit("progress", step: step) }
                 try? await Task.sleep(for: .milliseconds(50))
             }
+            guard focusedTicks > 0 else { emit("composer-focus-missing", step: 1200); exit(2) }
+            emit("composer-focus-verified", step: focusedTicks)
             emit("completed", step: 1200)
             window.orderOut(nil)
             exit(0)
         }
         app.run()
         exit(1)
+    }
+
+    private static func replayRecordedMessages(_ messages: [AgentMessage], step: Int,
+                                               ticksPerMessage: Int, service: AgentService) throws {
+        let index = (step - 1) / ticksPerMessage
+        let tick = (step - 1) % ticksPerMessage
+        guard index < messages.count else {
+            if tick == 0 && index == messages.count {
+                service.abandonDialog()
+                service.prefillInput("")
+                service.isStreaming = true
+                service.messages.append(AgentMessage(role: .assistant, blocks: [.text("")]))
+            }
+            if let last = service.messages.indices.last {
+                service.messages[last].blocks = [.text(String(repeating:
+                    "Waiting on your verdict. ", count: step % 40 + 1))]
+            }
+            return
+        }
+        let message = messages[index]
+        if tick == 0 {
+            service.abandonDialog()
+            service.prefillInput("")
+            service.isStreaming = true
+            var pending = message
+            pending.blocks = []
+            service.messages.append(pending)
+        }
+        let fraction = Double(tick + 1) / Double(ticksPerMessage)
+        let position = fraction * Double(message.blocks.count)
+        var blocks = Array(message.blocks.prefix(Int(position)))
+        if Int(position) < message.blocks.count {
+            let progress = position - Double(Int(position))
+            switch message.blocks[Int(position)] {
+            case .text(let text):
+                blocks.append(.text(String(text.prefix(Int(Double(text.count) * progress)))))
+            case .toolUse(let id, let name, let inputJSON):
+                blocks.append(.toolUse(id: id, name: name,
+                                       inputJSON: String(inputJSON.prefix(Int(Double(inputJSON.count) * progress)))))
+            default: break
+            }
+        }
+        service.messages[service.messages.count - 1].blocks = blocks
+        if tick == ticksPerMessage - 1 {
+            for block in message.blocks {
+                guard case .toolUse(_, let name, let inputJSON) = block,
+                      name == "show_dialog" || name.hasSuffix("__show_dialog") else { continue }
+                guard let args = try JSONSerialization.jsonObject(with: Data(inputJSON.utf8)) as? [String: Any] else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                service.abandonDialog()
+                service.isStreaming = false
+                try service.presentDialog(AgentDialog.parse(args))
+                emit("recorded-dialog-presented", step: step)
+            }
+        }
     }
 
     private static func reviewDialog(_ step: Int) -> AgentDialog {

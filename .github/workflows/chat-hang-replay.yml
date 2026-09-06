@@ -49,6 +49,7 @@ jobs:
       fail-fast: false
       matrix:
         variant: [baseline, candidate]
+        session: [0, 1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -66,13 +67,13 @@ jobs:
           source "$RUNNER_TEMP/replay-venv/bin/activate"
           pip install --quiet cryptography==46.0.5
           python3 scripts/chat_replay_crypto.py unpack "$RUNNER_TEMP/private-fixture" Tests/PrivateFixtures/chat-replay.enc
-          export NGV_CHAT_REPLAY_FIXTURE="$RUNNER_TEMP/private-fixture/session-0.json"
+          export NGV_CHAT_REPLAY_FIXTURE="$RUNNER_TEMP/private-fixture/session-${{ matrix.session }}.json"
           tar -xzf "$RUNNER_TEMP/chat-replay/chat-replay.tar.gz" -C "$RUNNER_TEMP/chat-replay"
           python3 scripts/chat_hang_replay.py "$RUNNER_TEMP/chat-replay/NexGenVideo.app/Contents/MacOS/NexGenVideo" "$RUNNER_TEMP/evidence"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: chat-replay-evidence-${{ matrix.variant }}
+          name: chat-replay-evidence-${{ matrix.variant }}-${{ matrix.session }}
           path: |
             ${{ runner.temp }}/evidence/result.json
             ${{ runner.temp }}/evidence/diagnostics.enc
