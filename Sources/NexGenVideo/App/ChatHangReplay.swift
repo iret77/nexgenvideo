@@ -13,9 +13,28 @@ enum ChatHangReplay {
         editor.workspaceFocus = .produce
         editor.agentPanelVisible = true
         let service = editor.agentService
-        service.currentSessionId = UUID()
-        let image = imagePayload()
-        for index in 0..<24 { appendGeneration(index, image: image, service: service) }
+        let fixturePath = ProcessInfo.processInfo.environment["NGV_CHAT_REPLAY_FIXTURE"]
+        let image: String
+        if let fixturePath {
+            do {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let session = try decoder.decode(ChatSession.self, from: Data(contentsOf: URL(fileURLWithPath: fixturePath)))
+                guard !session.messages.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+                service.sessions = [session]
+                service.currentSessionId = session.id
+                service.messages = session.messages
+                service.messages.append(AgentMessage(role: .assistant, blocks: [.text("")]))
+                image = ""
+            } catch {
+                emit("fixture-load-failed", step: 0)
+                exit(2)
+            }
+        } else {
+            service.currentSessionId = UUID()
+            image = imagePayload()
+            for index in 0..<24 { appendGeneration(index, image: image, service: service) }
+        }
         service.isStreaming = true
         let host = NSHostingView(rootView: EditorWindowContentView().environment(editor))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1470, height: 950),
@@ -39,7 +58,7 @@ enum ChatHangReplay {
                     service.isStreaming = true
                     service.restoreComposerFocus()
                 }
-                if step.isMultiple(of: 40) {
+                if fixturePath == nil && step.isMultiple(of: 40) {
                     service.isStreaming = false
                     appendGeneration(24 + step / 40, image: image, service: service)
                     service.isStreaming = true
@@ -89,6 +108,7 @@ enum ChatHangReplay {
     }
 
     private static func snapshot(_ view: NSView, step: Int) {
+        guard ProcessInfo.processInfo.environment["NGV_CHAT_REPLAY_FIXTURE"] == nil else { return }
         guard let directory = ProcessInfo.processInfo.environment["NGV_CHAT_REPLAY_EVIDENCE"],
               let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
         view.cacheDisplay(in: view.bounds, to: bitmap)

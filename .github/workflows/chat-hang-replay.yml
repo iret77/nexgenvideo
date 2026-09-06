@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/chat-hang-replay.yml'
       - 'scripts/chat_hang_replay.py'
+      - 'scripts/chat_replay_crypto.py'
+      - 'Tests/PrivateFixtures/chat-replay.enc'
       - 'Sources/NexGenVideo/App/ChatHangReplay.swift'
       - 'Sources/NexGenVideo/Agent/Panel/AgentTranscriptLayout.swift'
       - 'Sources/NexGenVideo/Agent/Panel/AgentMessageView.swift'
@@ -54,13 +56,24 @@ jobs:
           name: chat-replay-${{ matrix.variant }}
           path: ${{ runner.temp }}/chat-replay
       - name: Require production macOS and run real panel
+        env:
+          NGV_CHAT_REPLAY_KEY: ${{ secrets.NGV_CHAT_REPLAY_KEY }}
         run: |
+          set -euo pipefail
+          umask 077
           test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          python3 -m venv "$RUNNER_TEMP/replay-venv"
+          source "$RUNNER_TEMP/replay-venv/bin/activate"
+          pip install --quiet cryptography==46.0.5
+          python3 scripts/chat_replay_crypto.py unpack "$RUNNER_TEMP/private-fixture" Tests/PrivateFixtures/chat-replay.enc
+          export NGV_CHAT_REPLAY_FIXTURE="$RUNNER_TEMP/private-fixture/session-0.json"
           tar -xzf "$RUNNER_TEMP/chat-replay/chat-replay.tar.gz" -C "$RUNNER_TEMP/chat-replay"
           python3 scripts/chat_hang_replay.py "$RUNNER_TEMP/chat-replay/NexGenVideo.app/Contents/MacOS/NexGenVideo" "$RUNNER_TEMP/evidence"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: chat-replay-evidence-${{ matrix.variant }}
-          path: ${{ runner.temp }}/evidence
+          path: |
+            ${{ runner.temp }}/evidence/result.json
+            ${{ runner.temp }}/evidence/diagnostics.enc
           retention-days: 7
