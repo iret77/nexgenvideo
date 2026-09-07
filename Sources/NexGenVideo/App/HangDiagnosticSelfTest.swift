@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import HangDiagnostics
 
 enum HangDiagnosticSelfTest {
     @MainActor private static var editor: EditorViewModel?
@@ -56,6 +57,9 @@ enum HangDiagnosticSelfTest {
               messages.contains(where: { message in
                   message.blocks.contains { if case .text("NGV_DIAGNOSTIC_REPLAY_CONTROL") = $0 { true } else { false } }
               }) else { return }
+        if let path = ProcessInfo.processInfo.environment["NGV_DIAGNOSTIC_REPLAY_FAULT_REACHED"] {
+            try? DiagnosticFiles.write(Data("injected-main-thread-wait".utf8), to: URL(fileURLWithPath: path))
+        }
         Thread.sleep(forTimeInterval: 30)
     }
 

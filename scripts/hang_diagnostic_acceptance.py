@@ -6,6 +6,9 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
+
+from analyze_hang_diagnostics import analyze
 
 
 def main():
@@ -65,22 +68,58 @@ def main():
             export = exported / folder.name
             assert list(export.glob("replay-*.enc")), "encrypted replay content missing"
             assert (export / "checksums.json").is_file()
+            summary = analyze(export)
+            assert summary["eventCount"] > 0 and not summary["gaps"], summary
             replay_environment = {**os.environ, "NGV_DIAGNOSTIC_REPLAY": str(export),
                                   "NGV_DIAGNOSTIC_KEY_FILE": str(key_file)}
             command = [str(args.app / "Contents/MacOS/NexGenVideo")]
-            subprocess.run(command, env=replay_environment, check=True, timeout=20,
+            subprocess.run(command, env=replay_environment, check=True, timeout=65,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            fault = subprocess.Popen(command, env={**replay_environment, "NGV_DIAGNOSTIC_REPLAY_FAULT": "1"},
+            reached = Path(temporary.name) / "fault-reached"
+            fault = subprocess.Popen(command, env={**replay_environment, "NGV_DIAGNOSTIC_REPLAY_FAULT": "1",
+                                     "NGV_DIAGNOSTIC_REPLAY_FAULT_REACHED": str(reached)},
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 fault.wait(timeout=12)
             except subprocess.TimeoutExpired:
                 fault.kill()
                 fault.wait()
+                assert reached.is_file(), "replay timed out before reaching the injected blocking frame"
             else:
                 raise AssertionError("fault-enabled replay did not reproduce the injected hang")
         temporary.cleanup()
         results.append({"mode": mode, "samples": len(stacks), "symbolizedMarker": marker, "passed": True})
+    before = set(root.glob("*"))
+    process = subprocess.Popen([str(args.app / "Contents/MacOS/NexGenVideo")],
+        env={**os.environ, "NGV_HANG_SELFTEST": "wait"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 20
+        folder = None
+        while time.monotonic() < deadline:
+            folders = set(root.glob("*")) - before
+            if len(folders) == 1:
+                folder = next(iter(folders))
+                if list(folder.glob("self-*.stacks")):
+                    break
+            time.sleep(0.2)
+        else:
+            raise AssertionError("force-quit control never reached a persisted stack")
+        process.kill()
+        process.wait(timeout=5)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            reports = list(folder.glob("incident-*/incident.json"))
+            if reports and json.loads(reports[0].read_text()).get("processLost"):
+                break
+            time.sleep(0.2)
+        else:
+            raise AssertionError("helper did not finalize after force quit")
+        assert list(folder.glob("events-*.json")), "pre-hang journal missing after force quit"
+        results.append({"mode": "force-quit", "passed": True})
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
     (args.output / "result.json").write_text(json.dumps(results, indent=2))
 
 
