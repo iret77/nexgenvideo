@@ -128,9 +128,13 @@ def main():
             process.wait(timeout=5)
     retained_recordings.append(folder)
     for _ in range(6):
+        before = set(root.glob("*"))
         subprocess.run([str(args.app / "Contents/MacOS/NexGenVideo")],
             env={**os.environ, "NGV_HANG_SELFTEST": "startup"}, check=True, timeout=15,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        started = set(root.glob("*")) - before
+        assert len(started) == 1, "startup did not create exactly one recording"
+        assert (started.pop() / "build.json").is_file(), "startup did not initialize recording"
         assert all(recording.is_dir() for recording in retained_recordings), "restart removed hang evidence"
         preserved_key = subprocess.check_output(["security", "find-generic-password",
             "-s", "de.h5ventures.nexgenvideo", "-a", replay_account, "-w"], text=True).strip()
