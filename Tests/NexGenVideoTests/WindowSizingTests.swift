@@ -1,10 +1,25 @@
 import AppKit
+import SwiftUI
 import Testing
 
 @testable import NexGenVideo
 
 @Suite("Editor window default sizing")
 struct WindowSizingTests {
+    @MainActor @Test func editorUsesAllocatedAreaWithoutContentMeasurement() {
+        for size in [CGSize.zero, CGSize(width: 507, height: 734), CGSize(width: 8192, height: 4096)] {
+            #expect(EditorView.containerSize(for: .init(size)) == size)
+        }
+    }
+
+    @MainActor @Test func editorIdealAndUnboundedProbesStayFinite() {
+        for proposal in [ProposedViewSize.unspecified, .infinity,
+                         .init(width: .nan, height: -.infinity)] {
+            #expect(EditorView.containerSize(for: proposal) == AppTheme.Window.projectDefault)
+        }
+        #expect(EditorView.containerSize(for: .init(width: 507, height: nil))
+            == CGSize(width: 507, height: AppTheme.Window.projectDefault.height))
+    }
 
     // A small laptop screen: the default must fit inside it (never exceed the desktop) with
     // real editor height — a screen fraction here, well below the projectDefault cap.

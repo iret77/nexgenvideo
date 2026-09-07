@@ -8,6 +8,21 @@ struct EditorView: NSViewControllerRepresentable {
         EditorSplitViewController(editor: editor)
     }
 
+    func sizeThatFits(_ proposal: ProposedViewSize, nsViewController: EditorSplitViewController,
+                      context: Context) -> CGSize? {
+        Self.containerSize(for: proposal)
+    }
+
+    // The window allocates the editor; measuring nested hosting views feeds content back into its size.
+    static func containerSize(for proposal: ProposedViewSize) -> CGSize {
+        func dimension(_ value: CGFloat?, fallback: CGFloat) -> CGFloat {
+            guard let value, value.isFinite else { return fallback }
+            return max(0, value)
+        }
+        return CGSize(width: dimension(proposal.width, fallback: AppTheme.Window.projectDefault.width),
+                      height: dimension(proposal.height, fallback: AppTheme.Window.projectDefault.height))
+    }
+
     func updateNSViewController(_ controller: EditorSplitViewController, context: Context) {
         controller.applyLayoutIfNeeded(editor.layoutPreset)
         controller.applyFocusIfNeeded(editor.workspaceFocus)
